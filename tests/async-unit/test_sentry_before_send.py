@@ -116,10 +116,31 @@ class TestMalformedPayloadsDoNotDropEvents:
             {"exception": {"values": ["[Filtered]"]}},
             {"exception": {"values": [{"type": None, "value": None}]}},
             {"message": None},
+            # Containers that are truthy but the wrong type. Each of these
+            # raised before the isinstance guards went in, and a raise inside
+            # before_send discards the event.
+            {"exception": "[Filtered]"},
+            {"exception": {"values": "[Filtered]"}},
+            {"exception": {"values": 42}},
+            {"exception": {"values": [42]}},
+            {"message": 42},
+            {"message": ["not", "a", "string"]},
         ],
     )
     def test_malformed_event_is_kept(self, event):
         assert before_send_filter(event, {}) is event
+
+    def test_non_dict_event_is_kept(self):
+        """sentry types the hook against its own Event, but the annotation is
+        Any precisely because we do not trust that; .get would raise."""
+        event = "[Filtered]"
+        assert before_send_filter(event, {}) is event
+
+    def test_noise_in_a_dict_message_is_still_found(self):
+        """sentry's Message interface allows a dict. `marker in {...}` tests
+        KEYS, so the rule silently stopped matching -- as_text fixes that."""
+        event = {"message": {"formatted": "Logstream proxy failed to connect"}}
+        assert before_send_filter(event, {}) is None
 
     def test_noise_is_still_found_beside_a_malformed_entry(self):
         event = {
@@ -150,6 +171,28 @@ class TestExceptionValues:
         event = {"exception": {"values": [None, "[Filtered]", {"type": "ValueError"}]}}
         assert exception_values(event) == [{"type": "ValueError"}]
 
+    @pytest.mark.parametrize(
+        "event",
+        [
+            {"exception": "[Filtered]"},
+            {"exception": 42},
+            {"exception": {"values": "[Filtered]"}},
+            {"exception": {"values": 42}},
+            "[Filtered]",
+            None,
+        ],
+    )
+    def test_malformed_container_yields_empty_list(self, event):
+        """Every level is type-checked: a scrubbed or non-iterable container
+        must read as 'no exceptions found', never raise."""
+        assert exception_values(event) == []
+
+    def test_tuple_values_are_accepted(self):
+        """JSON has no tuples, but narrowing to `list` exactly would silently
+        stop filtering if a payload ever arrives as one."""
+        event = {"exception": {"values": ({"type": "ValueError"},)}}
+        assert exception_values(event) == [{"type": "ValueError"}]
+
 
 class TestTransactionFilter:
     def test_unrouted_transaction_is_dropped(self):
@@ -173,6 +216,20 @@ class TestTransactionFilter:
         ],
     )
     def test_transaction_without_a_source_is_kept(self, event):
+        assert before_send_transaction_filter(event, {}) is event
+
+    @pytest.mark.parametrize(
+        "event",
+        [
+            {"type": "transaction", "transaction_info": "[Filtered]"},
+            {"type": "transaction", "transaction_info": 42},
+            "[Filtered]",
+            None,
+        ],
+    )
+    def test_malformed_transaction_is_kept(self, event):
+        """Dropping is the destructive outcome, so it needs a positive match
+        on source -- never a failure to parse the payload."""
         assert before_send_transaction_filter(event, {}) is event
 
     def test_unrouted_source_constant_matches_sentry(self):
