@@ -33,6 +33,10 @@
 #   "node_modules" inside their FILENAME (vendors-node_modules_canvg_...js);
 #   --ignore matches path components, so they are unaffected -- and the nginx
 #   deny rule is written as /node_modules/ with slashes for the same reason.
+#
+# shellcheck disable=SC2034  # Consumed by the scripts that source this file,
+# which shellcheck cannot see (it does not follow `source` here -- CI also
+# passes -e SC1091). Without this, ./scripts/check_shell_style.sh fails.
 COLLECTSTATIC_IGNORES=(
   --ignore node_modules
   --ignore '*.ts'
