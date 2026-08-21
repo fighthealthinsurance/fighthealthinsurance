@@ -12,6 +12,9 @@ set +ex
 
 JS_PATH=fighthealthinsurance/static/js
 
+# Shared collectstatic ignore list (node_modules, TS sources, build config).
+source "$(dirname "${BASH_SOURCE[0]}")/collectstatic_ignores.sh"
+
 # Check if JS source files have changed since last build
 JS_CHECKSUM_FILE=".js_build_checksum"
 STATIC_CHECKSUM_FILE=".static_build_checksum"
@@ -118,7 +121,7 @@ if [ "$SKIP_STATIC_COLLECT" = false ]; then
   # exist before collection copies the tree. Generating it after meant a
   # single clean build shipped a STATIC_ROOT with no blog_posts.json.
   ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
-  ./manage.py collectstatic --noinput --clear
+  ./manage.py collectstatic --noinput --clear "${COLLECTSTATIC_IGNORES[@]}"
   ./manage.py compress --force
 
   # Save checksum after successful collect. Recompute rather than reuse
