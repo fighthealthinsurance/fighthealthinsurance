@@ -55,28 +55,43 @@ UNROUTED_WEBSOCKET_MARKER = "No route found for path"
 UNROUTED_TRANSACTION_SOURCE = "url"
 
 
-def as_text(value: Any) -> str:
-    """Coerce a payload field to text for substring matching, never raising.
+# sentry's logentry/Message interface renders text into "formatted" and keeps
+# the pre-substitution template in "message". Everything else it carries --
+# "params" above all -- is metadata, not message text.
+MESSAGE_TEXT_KEYS = ("formatted", "message")
 
-    ``"marker" in value`` raises ``TypeError`` for a non-iterable (an int
-    message), and quietly matches against *keys* rather than text for a dict
-    -- and sentry's Message interface legitimately allows
-    ``{"message": ..., "params": [...], "formatted": ...}``. Stringifying
-    handles both: the marker is still found inside a dict's repr, and nothing
-    raises. See the module docstring for why raising is not an option.
+
+def as_text(value: Any) -> str:
+    """The *message text* of a payload field, for substring matching.
+
+    Deliberately narrow. Stringifying the whole object and matching that
+    would drop a legitimate error whose metadata merely quotes a marker --
+    ``{"message": "Failed to process %s", "params": ["Logstream proxy failed
+    to connect"]}`` is an application failure, not Ray noise, and so is any
+    event that happens to carry a marker in a dict *key*. Dropping is the
+    destructive outcome, so matching here stays as narrow as the rest of this
+    module: only the rendered text, never params or other metadata.
+
+    ``"marker" in value`` cannot be used directly either: it raises
+    ``TypeError`` on a non-iterable (an int message) and silently tests
+    *keys* on a dict.
+
+    Invoking no user-supplied code -- no ``__str__``, ``__bool__`` or
+    ``__len__`` -- is what makes this unable to raise, which the module
+    docstring explains is mandatory. That is a stronger guarantee than
+    catching the raise after the fact.
     """
     if isinstance(value, str):
         return value
-    try:
-        # Both of these run user-supplied code on a non-str: `not value` calls
-        # __bool__/__len__ and str() calls __str__. Either can raise, so both
-        # live inside the try -- outside it, the raise would propagate and
-        # discard the event.
-        if not value:
+    if isinstance(value, dict):
+        try:
+            for key in MESSAGE_TEXT_KEYS:
+                candidate = value.get(key)
+                if isinstance(candidate, str):
+                    return candidate
+        except Exception:  # pragma: no cover - an exotic dict subclass
             return ""
-        return str(value)
-    except Exception:
-        return ""
+    return ""
 
 
 def exception_values(event: Any) -> List[Dict[str, Any]]:

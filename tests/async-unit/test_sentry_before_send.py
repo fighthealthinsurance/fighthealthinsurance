@@ -136,11 +136,44 @@ class TestMalformedPayloadsDoNotDropEvents:
         event = "[Filtered]"
         assert before_send_filter(event, {}) is event
 
-    def test_noise_in_a_dict_message_is_still_found(self):
+    @pytest.mark.parametrize(
+        "message",
+        [
+            {"formatted": "Logstream proxy failed to connect"},
+            {"message": "Unrecoverable error in data channel"},
+        ],
+    )
+    def test_noise_in_a_dict_message_is_still_found(self, message):
         """sentry's Message interface allows a dict. `marker in {...}` tests
-        KEYS, so the rule silently stopped matching -- as_text fixes that."""
-        event = {"message": {"formatted": "Logstream proxy failed to connect"}}
-        assert before_send_filter(event, {}) is None
+        KEYS, so the rule silently stopped matching -- as_text reads the
+        rendered text ("formatted") or the template ("message") instead."""
+        assert before_send_filter({"message": message}, {}) is None
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # The marker is a PARAMETER of an unrelated failure.
+            {"message": "Failed to process job %s",
+             "params": ["Logstream proxy failed to connect"]},
+            # The marker is only a dict KEY.
+            {"Logstream proxy failed to connect": "irrelevant"},
+            # The marker is in a sibling metadata field.
+            {"formatted": "Payment declined for order 42",
+             "debug_hint": "Unrecoverable error in data channel"},
+            # ...or nested deeper in metadata.
+            {"formatted": "DB timeout",
+             "ctx": {"note": "grpc_status:5 Channel for client x"}},
+        ],
+    )
+    def test_marker_in_metadata_does_not_drop_a_real_error(self, message):
+        """The whole point of the filter is that real errors reach Sentry.
+
+        Matching against str(the whole dict) would drop every one of these --
+        an application failure whose parameter merely quotes a marker is not
+        Ray noise. Matching stays narrow: rendered text only.
+        """
+        event = {"message": message}
+        assert before_send_filter(event, {}) is event
 
     def test_message_whose_bool_raises_is_kept(self):
         """`not value` runs user-supplied __bool__/__len__ on a non-str. It
