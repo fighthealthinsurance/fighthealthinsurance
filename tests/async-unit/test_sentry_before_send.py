@@ -142,6 +142,36 @@ class TestMalformedPayloadsDoNotDropEvents:
         event = {"message": {"formatted": "Logstream proxy failed to connect"}}
         assert before_send_filter(event, {}) is None
 
+    def test_message_whose_bool_raises_is_kept(self):
+        """`not value` runs user-supplied __bool__/__len__ on a non-str. It
+        sat outside as_text's try block, so a raise propagated and discarded
+        the event."""
+
+        class HostileBool:
+            def __bool__(self):
+                raise RuntimeError("__bool__ raised")
+
+        event = {"message": HostileBool()}
+        assert before_send_filter(event, {}) is event
+
+    def test_message_whose_str_raises_is_kept(self):
+        class HostileStr:
+            def __str__(self):
+                raise RuntimeError("__str__ raised")
+
+        event = {"message": HostileStr()}
+        assert before_send_filter(event, {}) is event
+
+    def test_exception_value_whose_str_raises_is_kept(self):
+        """The same coercion runs over exc["value"], not just the message."""
+
+        class HostileStr:
+            def __str__(self):
+                raise RuntimeError("__str__ raised")
+
+        event = {"exception": {"values": [{"type": "X", "value": HostileStr()}]}}
+        assert before_send_filter(event, {}) is event
+
     def test_noise_is_still_found_beside_a_malformed_entry(self):
         event = {
             "exception": {
