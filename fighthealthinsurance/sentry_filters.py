@@ -10,6 +10,13 @@ Keep this module Django-free at import time. ``asgi.py`` imports it inside
 the Sentry block, after Django is configured, but a stray ``from django.conf
 import settings`` here would still be a boot hazard if that ever moves.
 
+**Nothing in this module may raise.** sentry-sdk wraps both hooks in
+``capture_internal_exceptions()``, so an exception here does not surface
+anywhere -- it silently DISCARDS the event. A malformed payload would
+therefore stop real errors from reaching Sentry with no signal at all. Every
+field is treated as untrusted shape, not just untrusted content: check types
+before traversing, and coerce to text with :func:`as_text` before matching.
+
 **What does NOT belong here: unrouted-404 suppression.** Django answers
 ``Http404`` (and its ``Resolver404`` subclass) itself, without sending
 ``got_request_exception`` -- the only exception signal ``DjangoIntegration``
@@ -48,18 +55,46 @@ UNROUTED_WEBSOCKET_MARKER = "No route found for path"
 UNROUTED_TRANSACTION_SOURCE = "url"
 
 
-def exception_values(event: Dict[str, Any]) -> List[Dict[str, Any]]:
+def as_text(value: Any) -> str:
+    """Coerce a payload field to text for substring matching, never raising.
+
+    ``"marker" in value`` raises ``TypeError`` for a non-iterable (an int
+    message), and quietly matches against *keys* rather than text for a dict
+    -- and sentry's Message interface legitimately allows
+    ``{"message": ..., "params": [...], "formatted": ...}``. Stringifying
+    handles both: the marker is still found inside a dict's repr, and nothing
+    raises. See the module docstring for why raising is not an option.
+    """
+    if isinstance(value, str):
+        return value
+    if not value:
+        return ""
+    try:
+        return str(value)
+    except Exception:  # pragma: no cover - an exotic __str__
+        return ""
+
+
+def exception_values(event: Any) -> List[Dict[str, Any]]:
     """The event's exception entries, defensively.
 
-    ``event.get("exception", {})`` is not enough: the key can be present with
-    a ``None`` value, and ``None.get`` raises. That matters more than usual
-    here, because sentry-sdk wraps ``before_send`` in
-    ``capture_internal_exceptions()`` -- a raise inside a filter does not
-    surface, it silently DISCARDS the event. Non-dict entries are dropped for
-    the same reason: serialization can substitute a scrubbed string for an
-    entry, and ``str.get`` would raise just as quietly.
+    ``event.get("exception", {})`` is not enough at any level. The key can be
+    present with a ``None`` value (``None.get`` raises); ``exception`` can be
+    a truthy non-dict -- serialization can substitute a scrubbed string --
+    where ``str.get`` raises; ``values`` can be a non-iterable, where the
+    comprehension raises; and an individual entry can be a scrubbed string,
+    where ``str.get`` raises again. Each of those would discard the event
+    rather than surface, so every level is type-checked and a malformed
+    payload yields "no exceptions found", which keeps the event.
     """
-    values = (event.get("exception") or {}).get("values") or []
+    if not isinstance(event, dict):
+        return []
+    exception = event.get("exception")
+    if not isinstance(exception, dict):
+        return []
+    values = exception.get("values")
+    if not isinstance(values, (list, tuple)):
+        return []
     return [value for value in values if isinstance(value, dict)]
 
 
@@ -74,14 +109,17 @@ def before_send_filter(event: Any, hint: Any) -> Any:
     """
     from loguru import logger
 
-    message = event.get("message") or ""
+    if not isinstance(event, dict):
+        return event
+
+    message = as_text(event.get("message"))
     for marker, description in RAY_MESSAGE_MARKERS:
         if marker in message:
             logger.warning(f"{description} (filtered from Sentry)")
             return None
 
     for exc in exception_values(event):
-        exc_value = exc.get("value") or ""
+        exc_value = as_text(exc.get("value"))
         if "Logstream proxy failed to connect" in exc_value:
             logger.warning(
                 f"Ray gRPC logstream error (filtered from Sentry): {exc_value[:200]}"
@@ -120,9 +158,15 @@ def before_send_transaction_filter(event: Any, hint: Any) -> Any:
     still carries its token and hashed email -- into Sentry.
 
     Routed requests carry source "route" and are kept; see
-    :data:`UNROUTED_TRANSACTION_SOURCE`.
+    :data:`UNROUTED_TRANSACTION_SOURCE`. Anything whose shape we cannot read
+    is also kept: dropping is the destructive outcome, so it needs a positive
+    match, never a failure to parse.
     """
-    source = (event.get("transaction_info") or {}).get("source")
-    if source == UNROUTED_TRANSACTION_SOURCE:
+    if not isinstance(event, dict):
+        return event
+    transaction_info = event.get("transaction_info")
+    if not isinstance(transaction_info, dict):
+        return event
+    if transaction_info.get("source") == UNROUTED_TRANSACTION_SOURCE:
         return None
     return event
