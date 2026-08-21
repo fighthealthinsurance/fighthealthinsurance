@@ -93,7 +93,9 @@ class TestSearchTermExtraction(TestCase):
     """Tests for search term extraction from user queries."""
 
     def test_basic_extraction(self):
-        terms = _extract_search_terms("What does my plan say about prior authorization?")
+        terms = _extract_search_terms(
+            "What does my plan say about prior authorization?"
+        )
         assert "prior" in terms
         assert "authorization" in terms
         assert "what" not in terms
@@ -117,7 +119,9 @@ class TestChunkScoring(TestCase):
     """Tests for chunk relevance scoring."""
 
     def test_matching_terms_increase_score(self):
-        chunk_text = "This plan requires prior authorization for all surgical procedures."
+        chunk_text = (
+            "This plan requires prior authorization for all surgical procedures."
+        )
         score = _score_chunk(chunk_text, ["prior", "authorization"])
         assert score > 0
 

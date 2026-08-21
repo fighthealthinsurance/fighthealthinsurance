@@ -20,10 +20,92 @@ SUMMARIZATION_INTERVAL = 10
 
 MISSING_CONTEXT_PREFIX = "Missing context summary, refer to previous chat history"
 
+# Labels used when combining a fresh history summary with accumulated
+# context (see _summarize_history). A previous full-prefix summary is
+# REPLACED, not nested: every summarization call covers the entire dropped
+# prefix, so the fresh summary supersedes the old block. Without the strip,
+# adjacent band triggers (e.g. a failed turn shifting history length from a
+# remainder-0 boundary to remainder 1) nested near-identical summaries
+# inside each other.
+EARLIER_SUMMARY_LABEL = "Earlier conversation summary: "
+ADDITIONAL_CONTEXT_SEPARATOR = "\n\nAdditional context: "
+
+# Wrapper labels chat_interface adds when it hands two stored summaries to the
+# LLM. They must be recognized here so a stale summary block wrapped in them is
+# still stripped (and so a label left dangling by a strip is cleaned up).
+_SUMMARY_WRAPPER_LABELS = (
+    "Previous context summary:",
+    "Most recent context summary:",
+)
+
+
+def strip_previous_summary_blocks(existing_summary: Optional[str]) -> Optional[str]:
+    """Remove already-generated summary blocks, keeping other accreted context.
+
+    A fresh summarization covers the ENTIRE dropped prefix, so any earlier
+    ``EARLIER_SUMMARY_LABEL`` block it contains is superseded and must be
+    dropped rather than nested inside the new one.
+
+    This deliberately searches ANYWHERE in the string rather than testing
+    ``startswith``: the production caller never passes a bare summary. It
+    passes the model's own per-turn summary, or chat_interface's
+    "Previous context summary: ... Most recent context summary: ..." wrapper,
+    optionally prefixed by ``TRIMMED_CONTEXT_PREFIX`` -- so a startswith test
+    never matched and summaries nested on every band.
+    """
+    if not existing_summary:
+        return None
+    index = existing_summary.find(EARLIER_SUMMARY_LABEL)
+    if index < 0:
+        return existing_summary
+    head = existing_summary[:index]
+    # Everything from the label onward is the stale summary, except any
+    # "Additional context:" tail it carried (which may itself nest more).
+    rest = existing_summary[index:].split(ADDITIONAL_CONTEXT_SEPARATOR, 1)
+    tail = strip_previous_summary_blocks(rest[1]) if len(rest) > 1 else None
+    parts = []
+    for part in (head, tail):
+        if not part:
+            continue
+        cleaned = part.strip()
+        # Drop wrapper labels left pointing at content we just removed.
+        for label in _SUMMARY_WRAPPER_LABELS:
+            if cleaned.endswith(label):
+                cleaned = cleaned[: -len(label)].strip()
+        if cleaned and cleaned not in _SUMMARY_WRAPPER_LABELS:
+            parts.append(cleaned)
+    return "\n\n".join(parts) or None
+
 
 def make_placeholder(counter: int) -> str:
     """Create a uniquely-identified placeholder for a missing context summary."""
     return f"{MISSING_CONTEXT_PREFIX} [{counter}]"
+
+
+# Marker prepended when bound_summary_context trims accreted context.
+TRIMMED_CONTEXT_PREFIX = "[...earlier context trimmed...]\n"
+
+
+def bound_summary_context(context: Optional[str], max_chars: int) -> Optional[str]:
+    """Bound an accreted summary-context string to ``max_chars``.
+
+    Summaries accrete over long chats ("Earlier conversation summary: ...
+    Additional context: Earlier conversation summary: ..."), and an unbounded
+    blob crowds the actual conversation out of the model's attention -- one
+    of the ways replies degrade into replaying earlier turns. Keeps the TAIL
+    (most recent context lands last in the accreted string) with a marker so
+    the model knows earlier context was dropped.
+    """
+    if not context or max_chars <= 0 or len(context) <= max_chars:
+        return context
+    keep = max_chars - len(TRIMMED_CONTEXT_PREFIX)
+    if keep <= 0:
+        # No room for the marker plus any content. `context[-0:]` is the WHOLE
+        # string, so returning the marker + slice here produced output LONGER
+        # than the input for any max_chars <= len(TRIMMED_CONTEXT_PREFIX) --
+        # the bound silently inverted. Hard-truncate instead.
+        return context[-max_chars:]
+    return f"{TRIMMED_CONTEXT_PREFIX}{context[-keep:]}"
 
 
 async def prepare_history_for_llm(
@@ -63,9 +145,20 @@ async def prepare_history_for_llm(
     # Preserve full history for models with large context windows
     full_history_for_llm = list(history_for_llm)
 
-    # Check if we should summarize (every N messages after threshold)
+    # Check if we should summarize (once per N-message band after the
+    # threshold). History normally grows by 2 per turn, but consecutive
+    # same-role messages get merged (ensure_message_alternation) so the
+    # length can change parity -- a strict `% N == 0` then never fires again
+    # and dropped messages stop being folded into the summary at all. `<= 1`
+    # fires once per band for either parity. When a +1 length step lands
+    # right after a boundary (e.g. a failed turn persisting only its user
+    # message), remainders 0 and 1 can BOTH fire in one band; that costs one
+    # redundant bounded summarization call, and _summarize_history replaces
+    # (never nests) the previous summary block, so the result is identical.
+    # Tracking the exact summarized boundary would need persisted state,
+    # which this rare case doesn't justify.
     messages_over_threshold = len(history_for_llm) - DEFAULT_MESSAGES_TO_KEEP
-    should_summarize = messages_over_threshold % SUMMARIZATION_INTERVAL == 0
+    should_summarize = messages_over_threshold % SUMMARIZATION_INTERVAL <= 1
 
     if should_summarize:
         summarized_context = await _summarize_history(
@@ -120,12 +213,17 @@ async def _summarize_history(
         )
 
         if history_summary:
+            # The fresh summary covers the whole dropped prefix, so any
+            # previous full-prefix summary block in existing_summary is
+            # superseded -- keep only the non-summary context around it
+            # (microsite/pubmed additions etc.).
+            existing_summary = strip_previous_summary_blocks(existing_summary)
             if existing_summary:
                 return (
-                    f"Earlier conversation summary: {history_summary}\n\n"
-                    f"Additional context: {existing_summary}"
+                    f"{EARLIER_SUMMARY_LABEL}{history_summary}"
+                    f"{ADDITIONAL_CONTEXT_SEPARATOR}{existing_summary}"
                 )
-            return f"Earlier conversation summary: {history_summary}"
+            return f"{EARLIER_SUMMARY_LABEL}{history_summary}"
 
         logger.info("Summarization returned empty, keeping existing context")
         return existing_summary

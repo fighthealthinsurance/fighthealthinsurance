@@ -346,7 +346,9 @@ class TestConfirmDeleteDataView(TestCase):
     def test_email_case_insensitive_integration(self):
         """Integration test: mixed-case stored records are deleted by case-insensitive lookup."""
         # Store a record with mixed-case email
-        MailingListSubscriber.objects.create(email="Test@Test-FHI.COM", name="Test User")
+        MailingListSubscriber.objects.create(
+            email="Test@Test-FHI.COM", name="Test User"
+        )
         assert MailingListSubscriber.objects.filter(email="Test@Test-FHI.COM").exists()
 
         # Create a token for the lowercase version of the email

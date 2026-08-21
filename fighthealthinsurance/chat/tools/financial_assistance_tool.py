@@ -256,6 +256,10 @@ class FinancialAssistanceTool(BaseTool):
                 is_professional=is_professional,
                 fallback_backends=kwargs.get("fallback_backends"),
                 full_history=kwargs.get("full_history"),
+                # Raw user message, so repeat detection/exemption in the
+                # recursive pass keys off what the USER said rather than this
+                # tool payload (which routinely contains words like "repeat").
+                user_message_for_scoring=kwargs.get("user_message_for_scoring"),
             )
 
             if cleaned_response and additional_response:

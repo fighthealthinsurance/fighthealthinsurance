@@ -48,6 +48,7 @@ from fighthealthinsurance.serializers.fields import (
     StringListField,
 )
 from fighthealthinsurance.utils import is_valid_denial_id
+from fighthealthinsurance.chat.chat_persistence import visible_history
 
 # Legacy alias for backwards compatibility (typo in original name)
 NextStepInfoSerizableSerializer = NextStepInfoSerializableSerializer
@@ -780,10 +781,16 @@ class OngoingChatSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(OngoingChatMessageSerializer(many=True))
     def get_messages(self, obj):
-        """Get formatted chat messages."""
+        """Get formatted chat messages.
+
+        LLM-context-only notes (stored with role=user so the model sees them,
+        but never typed by anyone) are filtered out, the same as in WebSocket
+        replay -- otherwise the two views of one chat disagree and this one
+        attributes system text to the user.
+        """
         if not obj.chat_history:
             return []
-        return obj.chat_history
+        return visible_history(obj.chat_history)
 
     @extend_schema_field(serializers.CharField())
     def get_professional_name(self, obj):

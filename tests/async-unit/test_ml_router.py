@@ -126,8 +126,12 @@ class TestMLRouterChatBackends(unittest.TestCase):
         self.assertIsInstance(fallback_models, list)
 
     def test_get_chat_backends_with_fallback_with_external(self):
-        """Test get_chat_backends_with_fallback with use_external=True."""
-        # best_external_models reads external_models_by_cost.
+        """With use_external=True the externals participate in the fan-out.
+
+        They now join the PRIMARY list, and the fallback list carries only
+        externals not already there (so a retry can't issue the same request
+        to the same backend twice).
+        """
         self.router.external_models_by_cost = [
             make_external_mock(quality=80),
             make_external_mock(quality=90),
@@ -138,44 +142,46 @@ class TestMLRouterChatBackends(unittest.TestCase):
             use_external=True
         )
 
-        # Primary models should be returned
         self.assertIsInstance(primary_models, list)
-        # Fallback models should contain external models only
-        self.assertGreater(len(fallback_models), 0)
-        # All fallback models should be external
+        externals_in_primary = [
+            m for m in primary_models if getattr(m, "external", False)
+        ]
+        self.assertGreater(len(externals_in_primary), 0)
+        # Anything left in fallback must be external and not already primary.
+        primary_ids = {id(m) for m in primary_models}
         for model in fallback_models:
             self.assertTrue(model.external)
+            self.assertNotIn(id(model), primary_ids)
 
-    def test_get_chat_backends_with_fallback_sorts_by_quality(self):
-        """Test that fallback models are sorted by quality (highest first)."""
-        # Set up router with external models of differing quality.
+    def test_chat_externals_are_quality_ordered(self):
+        """The externals offered for chat are best-quality first."""
         self.router.external_models_by_cost = [
             make_external_mock(quality=60),
             make_external_mock(quality=95),
             make_external_mock(quality=75),
         ]
 
-        _, fallback_models = self.router.get_chat_backends_with_fallback(
+        primary_models, _ = self.router.get_chat_backends_with_fallback(
             use_external=True
         )
 
-        # Verify models are sorted by quality (highest first)
-        if len(fallback_models) >= 2:
-            qualities = [m.quality() for m in fallback_models]
-            self.assertEqual(qualities, sorted(qualities, reverse=True))
+        qualities = [
+            m.quality() for m in primary_models if getattr(m, "external", False)
+        ]
+        self.assertEqual(qualities, sorted(qualities, reverse=True))
 
-    def test_get_chat_backends_with_fallback_limits_to_three(self):
-        """Test that fallback models are limited to the best ~3 models."""
+    def test_chat_externals_limited_to_three(self):
+        """At most the best ~3 externals join the chat fan-out."""
         self.router.external_models_by_cost = [
             make_external_mock(quality=50 + i) for i in range(10)
         ]
 
-        _, fallback_models = self.router.get_chat_backends_with_fallback(
+        primary_models, _ = self.router.get_chat_backends_with_fallback(
             use_external=True
         )
 
-        # Should limit to the best 3 models
-        self.assertEqual(len(fallback_models), 3)
+        externals = [m for m in primary_models if getattr(m, "external", False)]
+        self.assertEqual(len(externals), 3)
 
     def test_get_chat_backends_with_fallback_no_external_available(self):
         """Test behavior when no external models are available."""
@@ -210,6 +216,66 @@ class TestMLRouterChatBackends(unittest.TestCase):
             # Verify get_chat_backends was called with use_external=False
             mock_get_chat.assert_called_once_with(use_external=False)
             self.assertEqual(primary_models, ["mock_model"])
+
+    def test_externals_join_primary_fanout_when_enabled(self):
+        """With use_external=True, external models participate in the PRIMARY
+        fan-out (scoring keeps preferring internals when they answer well);
+        they are not only a retry fallback."""
+        self.router.external_models_by_cost = [
+            make_external_mock(quality=90),
+            make_external_mock(quality=80),
+        ]
+
+        primary_models, fallback_models = self.router.get_chat_backends_with_fallback(
+            use_external=True
+        )
+
+        external_in_primary = [
+            m for m in primary_models if getattr(m, "external", False)
+        ]
+        self.assertEqual(len(external_in_primary), 2)
+        # They are NOT repeated in the fallback list: build_retry_calls
+        # iterates both, so a backend in each would get four identical
+        # requests per retry.
+        self.assertEqual(fallback_models, [])
+
+    def test_externals_are_not_duplicated_across_primary_and_fallback(self):
+        """build_retry_calls fans out over model_backends AND fallback_backends,
+        so a backend in both lists received four byte-identical requests per
+        retry — doubled paid spend and rate-limit pressure on exactly the turns
+        that already failed."""
+        self.router.external_models_by_cost = [
+            make_external_mock(quality=90),
+            make_external_mock(quality=80),
+        ]
+
+        primary_models, fallback_models = self.router.get_chat_backends_with_fallback(
+            use_external=True
+        )
+
+        overlap = {id(m) for m in primary_models} & {id(m) for m in fallback_models}
+        self.assertEqual(overlap, set(), "externals appear in both fan-out lists")
+
+    def test_internal_chat_backends_ordered_by_quality(self):
+        """The internal slots go to the STRONGEST available internals, not the
+        cheapest (stable sort: equal quality keeps cost order)."""
+
+        def make_internal_mock(quality: int) -> MagicMock:
+            model = MagicMock(spec=RemoteModelLike)
+            model.external = False
+            model.quality.return_value = quality
+            model.is_available.return_value = True
+            model.health_checked_live = True
+            return model
+
+        weak_cheap = make_internal_mock(quality=101)
+        strong_pricier = make_internal_mock(quality=200)
+        self.router.internal_models_by_cost = [weak_cheap, strong_pricier]
+        self.router.models_by_name = {}
+
+        models = self.router.get_chat_backends(use_external=False)
+
+        self.assertEqual(models, [strong_pricier, weak_cheap])
 
 
 class TestMLRouterBestExternalModels(unittest.TestCase):

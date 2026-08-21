@@ -12,6 +12,9 @@ Design goals:
 - Optional: Controlled by ENABLE_AUDIT_LOGGING setting
 """
 
+import ipaddress
+import os
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union, Protocol, Any
@@ -336,31 +339,314 @@ def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
     Returns:
         Tuple of (asn_number, asn_name). Both empty strings if lookup fails.
 
-    Note: This is a placeholder that can be enhanced with geoip2fast or similar.
-    For now, returns empty strings. To enable ASN lookup, install geoip2fast
-    and download the ASN database.
+    Uses the shared cached geoip2fast reader (see _get_geo_reader), which is
+    only constructed when FHI_GEOIP_CITY_DB is set. Point it at an ASN-bearing
+    database (geoip2fast-city-asn-ipv6.dat.gz) to get ASN data alongside the
+    state guess; with the key unset this returns empty strings — the
+    pre-geoip2fast behavior.
     """
     if not ip_address:
         return ("", "")
 
+    reader = _get_geo_reader()
+    if reader is None:
+        return ("", "")
     try:
-        # Try to import geoip2fast if available
-        from geoip2fast import GeoIP2Fast
-
-        geoip = GeoIP2Fast()
-        result = geoip.lookup(ip_address)
-        if result and hasattr(result, "asn"):
-            asn_num = str(result.asn) if result.asn else ""
-            asn_name = str(result.asn_name)[:200] if result.asn_name else ""
-            return (asn_num, asn_name)
-    except ImportError:
-        # geoip2fast not installed, that's fine
-        pass
+        result = reader.lookup(str(ip_address).strip())
+        if result is None:
+            return ("", "")
+        # geoip2fast (1.2.x) exposes asn_name and asn_cidr but NO numeric
+        # ASN field, so the numeric slot stays empty with this library (as it
+        # always has); the probe is kept for forks/builds that add one.
+        asn_num = str(getattr(result, "asn", "") or "")
+        asn_name = str(getattr(result, "asn_name", "") or "")[:200]
+        return (asn_num, asn_name)
     except Exception:
         # Any lookup failure, return empty
-        pass
+        return ("", "")
 
-    return ("", "")
+
+# --- IP -> US state guess (for chat context, transient only) ---
+
+# 2-letter postal code -> full state name, used to normalize whatever the geo
+# database returns into the full name the chat/Medicaid tooling expects.
+_US_STATE_NAMES_BY_CODE = {
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "DC": "District of Columbia",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+}
+_US_STATE_NAMES = {name.lower(): name for name in _US_STATE_NAMES_BY_CODE.values()}
+
+# The configuration key that switches IP geo lookups on: path to a
+# geoip2fast CITY-level database (state guessing needs subdivision data,
+# which the package's bundled country/ASN databases do not carry). Use
+# geoip2fast-city-asn-ipv6.dat.gz to also get ASN data for get_asn_info.
+# See README "GeoIP" section. Without it, guess_us_state and get_asn_info
+# soft-fail to None/empty — a startup warning names this key.
+GEOIP_CITY_DB_ENV = "FHI_GEOIP_CITY_DB"
+
+# Lazily-created, cached geo reader (loading the database per lookup would be
+# far too slow for a per-message call: the city database takes seconds to
+# load). _geo_reader_failed remembers a failed init so we don't retry the
+# import/load on every chat message. The FIRST call still pays the load, so
+# async callers must wrap lookups in a thread (the chat consumer does).
+_geo_reader: Any = None
+_geo_reader_failed = False
+_geo_reader_lock = threading.Lock()
+
+
+def _get_geo_reader() -> Any:
+    global _geo_reader, _geo_reader_failed
+    if _geo_reader is not None or _geo_reader_failed:
+        return _geo_reader
+    with _geo_reader_lock:
+        if _geo_reader is not None or _geo_reader_failed:
+            return _geo_reader
+        # Deliberately gated on the env key rather than falling back to the
+        # package's bundled country database: without city data the state
+        # guess can never work, and silently loading a database that can't
+        # serve the feature just hides the misconfiguration (the startup
+        # check warns instead).
+        db_path = os.environ.get(GEOIP_CITY_DB_ENV)
+        if not db_path:
+            _geo_reader_failed = True
+            return None
+        try:
+            from geoip2fast import GeoIP2Fast
+
+            _geo_reader = GeoIP2Fast(geoip2fast_data_file=db_path)
+        except Exception:
+            # Missing package or unreadable database file: geo features are
+            # an optional enhancement and must never break request handling.
+            logger.opt(exception=True).warning(
+                f"Failed to load GeoIP database from {GEOIP_CITY_DB_ENV}="
+                f"{db_path!r}; IP state guessing and ASN lookups disabled."
+            )
+            _geo_reader_failed = True
+            _geo_reader = None
+    return _geo_reader
+
+
+def _reset_geo_reader_cache_for_tests() -> None:
+    """Test hook: clear the cached geo reader / failure flag."""
+    global _geo_reader, _geo_reader_failed
+    with _geo_reader_lock:
+        _geo_reader = None
+        _geo_reader_failed = False
+
+
+def geo_lookup_status() -> tuple[bool, Optional[str]]:
+    """Whether IP geo lookups (state guess + ASN) are available, and why not.
+
+    Cheap enough for startup: it checks the key and the package import but
+    does NOT load the database (that happens lazily on first lookup).
+
+    Returns:
+        (enabled, reason) — reason is None when enabled, otherwise a short
+        human-readable explanation naming the fix.
+    """
+    db_path = os.environ.get(GEOIP_CITY_DB_ENV)
+    if not db_path:
+        return (
+            False,
+            f"{GEOIP_CITY_DB_ENV} is not set (path to a geoip2fast city-level "
+            f"database, e.g. geoip2fast-city-asn-ipv6.dat.gz)",
+        )
+    try:
+        import geoip2fast  # noqa: F401
+    except ImportError:
+        return (False, "the geoip2fast package is not installed")
+    if not os.path.exists(db_path):
+        return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} does not exist")
+    # Cheap sanity only -- a full parse would load the multi-second database
+    # in every management command's ready(). A corrupt-but-nonempty file is
+    # still caught (and warned about) lazily by _get_geo_reader on first use.
+    if not os.access(db_path, os.R_OK):
+        return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} is not readable")
+    try:
+        if os.path.getsize(db_path) == 0:
+            return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} is an empty file")
+    except OSError as e:
+        return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} is not accessible: {e}")
+    return (True, None)
+
+
+_geo_startup_warning_emitted = False
+
+
+def warn_if_geo_lookups_disabled() -> None:
+    """Log a one-line startup warning when geo lookups are disabled.
+
+    Soft fail by design: the chat state guess and ASN tracking silently
+    degrade without the database, and this warning is the only signal — so
+    it names the exact key to set. Called from AppConfig.ready(); guarded so
+    repeat ready() calls (tests, autoreload) warn once per process.
+    """
+    global _geo_startup_warning_emitted
+    if _geo_startup_warning_emitted:
+        return
+    _geo_startup_warning_emitted = True
+    enabled, reason = geo_lookup_status()
+    if enabled:
+        logger.info(
+            f"GeoIP lookups enabled ({GEOIP_CITY_DB_ENV}="
+            f"{os.environ.get(GEOIP_CITY_DB_ENV)!r})"
+        )
+        return
+    logger.warning(
+        f"GeoIP lookups disabled: {reason}. Chat IP-based state guessing "
+        f"and ASN tracking will soft-fail (return nothing). See the README "
+        f"'GeoIP' section for setup."
+    )
+
+
+def warm_geo_reader_in_background() -> None:
+    """Load the GeoIP database off the request path, at startup.
+
+    The city database takes seconds to parse and the load is serialized on a
+    process-global lock. Left lazy, that cost landed on whichever request
+    touched geo first -- and one of those call sites
+    (extract_tracking_info_from_scope -> get_asn_info) is a plain synchronous
+    call inside the async WebSocket consumer, so the parse ran ON the event
+    loop and stalled every other socket on the worker.
+
+    Daemon thread so it never delays or blocks process shutdown; failures are
+    already logged (and latched) by _get_geo_reader.
+    """
+    enabled, _ = geo_lookup_status()
+    if not enabled:
+        return
+
+    def _warm() -> None:
+        try:
+            _get_geo_reader()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"GeoIP warm-up failed: {type(e).__name__}: {e}")
+
+    threading.Thread(target=_warm, name="geoip-warmup", daemon=True).start()
+
+
+def _normalize_state_guess(value: str) -> Optional[str]:
+    """Map a raw subdivision value (code or name) to a full US state name."""
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    # Some databases prefix subdivision codes with the country ("US-CA").
+    if "-" in cleaned:
+        cleaned = cleaned.rsplit("-", 1)[-1].strip()
+    if len(cleaned) == 2:
+        return _US_STATE_NAMES_BY_CODE.get(cleaned.upper())
+    return _US_STATE_NAMES.get(cleaned.lower())
+
+
+def guess_us_state(ip_address: Optional[str]) -> Optional[str]:
+    """Best-effort guess of the US state for an IP address, or None.
+
+    Used to seed the chat with an UNCONFIRMED location hint so the model can
+    ask "it looks like you might be in California, is that right?" instead of
+    a cold "which state are you in?". Requires geoip2fast with a city-level
+    database (see _get_geo_reader); returns None (never raises) when the
+    dependency, the database, or subdivision data is unavailable, when the IP
+    isn't clearly US, or on any lookup error. Callers must treat the value as
+    a transient guess: present it to the model as unconfirmed and never
+    persist it for anonymous users.
+    """
+    if not ip_address:
+        return None
+    # The caller derives this from X-Forwarded-For / X-Real-IP, which are
+    # client-supplied and never validated upstream, so reject anything that
+    # is not a literal IP address before it reaches the third-party parser
+    # (and bound the work an arbitrary header value can cause).
+    candidate = str(ip_address).strip()
+    if len(candidate) > 45:  # longest possible IPv6 form
+        return None
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+    reader = _get_geo_reader()
+    if reader is None:
+        return None
+    try:
+        result = reader.lookup(candidate)
+    except Exception:
+        return None
+    if result is None:
+        return None
+    # Require an explicit US result: a missing/empty country code with a
+    # subdivision present is unconfirmed data, not a US state.
+    country = str(getattr(result, "country_code", "") or "").strip().upper()
+    if country != "US":
+        return None
+    # Probe the field shapes different geoip2fast versions/databases use for
+    # subdivision info, on both the result and its nested city object.
+    city_obj = getattr(result, "city", None)
+    for source in (result, city_obj):
+        if source is None:
+            continue
+        for attr in (
+            "subdivision_code",
+            "subdivision_name",
+            "region_code",
+            "region_name",
+            "state",
+            "state_code",
+            "state_name",
+        ):
+            raw = getattr(source, attr, None)
+            if isinstance(raw, str) and raw.strip():
+                state = _normalize_state_guess(raw)
+                if state:
+                    return state
+    return None
 
 
 def tracking_metadata_for_request(

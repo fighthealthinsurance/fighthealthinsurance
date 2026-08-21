@@ -73,11 +73,11 @@ export function saveExternalModelsPreference(useExternalModels: boolean): void {
 export function getExternalModelsPreference(): boolean {
   try {
     const stored = localStorage.getItem(EXTERNAL_MODELS_KEY);
-    if (stored === null) {
-      localStorage.setItem(EXTERNAL_MODELS_KEY, "true");
-      return true;
-    }
-    return stored === "true";
+    // Pure read: no key means "no stored choice, use the default", and a read
+    // must not materialize a value. Writing "true" here recorded an explicit
+    // opt-in for anyone who merely opened the chat, which made a real choice
+    // indistinguishable from never having been asked.
+    return stored === null ? true : stored === "true";
   } catch (e) {
     console.error("Error getting external models preference from localStorage:", e);
   }
@@ -148,13 +148,11 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
     );
   }
 
-  // Replace state
-  if (userInfo.state) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.state)}\\b`, "gi"),
-      "{{STATE}}"
-    );
-  }
+  // State is deliberately NOT scrubbed. It is coarse (1 of 50), and the
+  // Medicaid/appeal flows genuinely need it server-side: the assistant asks
+  // "which state are you in?", and when the answer got masked to {{STATE}}
+  // the model could never learn it and re-asked forever — a guaranteed chat
+  // loop. restorePersonalInfo still expands {{STATE}} for legacy history.
 
   // Replace zip code
   if (userInfo.zipCode) {

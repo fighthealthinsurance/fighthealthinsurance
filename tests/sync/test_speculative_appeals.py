@@ -431,7 +431,10 @@ class ConfirmedContextRefreshTest(TestCase):
 
     def _drafts(self, *texts):
         return iter(
-            [GeneratedAppeal(text=t, model_name="m", context_level="full") for t in texts]
+            [
+                GeneratedAppeal(text=t, model_name="m", context_level="full")
+                for t in texts
+            ]
         )
 
     def test_refresh_replaces_held_back_reserve_with_confirmed_rows(self):

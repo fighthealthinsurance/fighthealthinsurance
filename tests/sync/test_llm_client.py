@@ -9,13 +9,21 @@ from fighthealthinsurance.chat.llm_client import (
     normalize_text,
     bag_of_words,
     compute_repetition_penalty,
+    alternate_is_presentable,
+    find_repeated_reply,
+    scores_closely_tied,
+    user_requested_repeat,
+    ALTERNATE_CLOSE_TIE_RATIO,
     EXACT_REPEAT_PENALTY,
     BAG_OF_WORDS_REPEAT_PENALTY,
+    NEAR_REPEAT_PENALTY,
     OLDER_ASSISTANT_REPEAT_PENALTY,
     OLDER_USER_REPEAT_PENALTY,
+    REPEAT_OFFENDER_DECAY,
     BAD_RESPONSE_PATTERNS,
     BAD_CONTEXT_PATTERNS,
 )
+from tests.chat_fixtures import CANNED_MEDICAID_REPLY, FRESH_REPLY, LOOPED_REPLY
 
 
 class TestEstimateHistoryTokens(TestCase):
@@ -233,9 +241,7 @@ class TestComputeRepetitionPenalty(TestCase):
     def test_exact_match_user_message(self):
         """Exact match (ignoring case/spacing) with last user message => -500."""
         history = [{"role": "user", "content": "I need help with my denial"}]
-        penalty = compute_repetition_penalty(
-            "  i need help with  my denial  ", history
-        )
+        penalty = compute_repetition_penalty("  i need help with  my denial  ", history)
         self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
 
     def test_bag_of_words_match_user_message(self):
@@ -357,6 +363,196 @@ class TestComputeRepetitionPenalty(TestCase):
         self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
 
 
+class TestUserRequestedRepeat(TestCase):
+    """The explicit-repeat guard for hard rejection."""
+
+    def test_detects_repeat_requests(self):
+        for msg in [
+            "can you repeat that?",
+            "please say that again",
+            "one more time please",
+            "resend it",
+            "show that again",
+        ]:
+            self.assertTrue(user_requested_repeat(msg), msg)
+
+    def test_normal_messages_not_flagged(self):
+        for msg in ["CA", "I'm in California", "what about my denial?", None, ""]:
+            self.assertFalse(user_requested_repeat(msg), repr(msg))
+
+
+class TestFindRepeatedReply(TestCase):
+    """Detection of candidate replies that repeat the recent conversation."""
+
+    def _history(self):
+        return [
+            {"role": "user", "content": "Help me with the new medicaid requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+
+    def test_verbatim_repeat_of_last_assistant_reply(self):
+        self.assertEqual(
+            find_repeated_reply(LOOPED_REPLY, self._history(), "CA"),
+            "repeats_recent_assistant_reply",
+        )
+
+    def test_alternating_loop_detected(self):
+        # A-B-A loop: the repeat matches the assistant reply two turns back.
+        history = self._history() + [
+            {"role": "user", "content": "CA"},
+            {"role": "assistant", "content": FRESH_REPLY},
+            {"role": "user", "content": "yes please"},
+        ]
+        self.assertEqual(
+            find_repeated_reply(LOOPED_REPLY, history, "yes please"),
+            "repeats_recent_assistant_reply",
+        )
+
+    def test_echo_of_current_message(self):
+        msg = "Help me figure out how to navigate the new medicaid requirements."
+        self.assertEqual(
+            find_repeated_reply(msg, [], msg),
+            "echoes_user_message",
+        )
+
+    def test_fresh_reply_passes(self):
+        self.assertIsNone(find_repeated_reply(FRESH_REPLY, self._history(), "CA"))
+
+    def test_empty_inputs(self):
+        self.assertIsNone(find_repeated_reply("", self._history(), "CA"))
+        self.assertIsNone(find_repeated_reply(FRESH_REPLY, None, None))
+
+
+class TestHardRepeatRejection(TestCase):
+    """score_llm_response must hard-reject (-inf) near-verbatim repeats.
+
+    Soft penalties are not enough: model base scores reach ~8800 via
+    quality**2 scaling, so -500 still let the repeated reply win — the
+    observed production chat loop.
+    """
+
+    def _history(self):
+        return [
+            {"role": "user", "content": "Help me with the new medicaid requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+
+    def test_repeat_of_last_assistant_reply_rejected(self):
+        score = score_llm_response(
+            (LOOPED_REPLY, "Context summary"),
+            call_score=8800,
+            chat_history=self._history(),
+            current_message="CA",
+        )
+        self.assertEqual(score, float("-inf"))
+
+    def test_lightly_reworded_repeat_rejected(self):
+        reworded = LOOPED_REPLY.replace("can be tricky", "are quite tricky")
+        score = score_llm_response(
+            (reworded, "Context summary"),
+            call_score=8800,
+            chat_history=self._history(),
+            current_message="I'm in California",
+        )
+        self.assertEqual(score, float("-inf"))
+
+    def test_fresh_reply_scores_normally(self):
+        score = score_llm_response(
+            (FRESH_REPLY, "Context summary"),
+            call_score=100,
+            chat_history=self._history(),
+            current_message="CA",
+        )
+        self.assertGreater(score, 0)
+
+    def test_user_requested_repeat_not_rejected(self):
+        score = score_llm_response(
+            (LOOPED_REPLY, "Context summary"),
+            call_score=100,
+            chat_history=self._history(),
+            current_message="sorry, can you repeat that?",
+        )
+        self.assertGreater(score, float("-inf"))
+
+    def test_rejection_stats_incremented(self):
+        stats: dict = {}
+        score_llm_response(
+            (LOOPED_REPLY, "Context summary"),
+            call_score=100,
+            chat_history=self._history(),
+            current_message="CA",
+            rejection_stats=stats,
+        )
+        self.assertEqual(stats.get("repeated_rejected"), 1)
+
+    def test_rejection_stats_untouched_for_fresh_reply(self):
+        stats: dict = {}
+        score_llm_response(
+            (FRESH_REPLY, "Context summary"),
+            call_score=100,
+            chat_history=self._history(),
+            current_message="CA",
+            rejection_stats=stats,
+        )
+        self.assertNotIn("repeated_rejected", stats)
+
+
+class TestAlternateIsPresentable(TestCase):
+    """Filtering of runner-up answers for side-by-side display."""
+
+    PRIMARY = FRESH_REPLY
+
+    def test_distinct_clean_answer_is_presentable(self):
+        alternate = (
+            "California's Medicaid program is called Medi-Cal. You can call "
+            "their member help line or I can walk you through the new work "
+            "requirement rules — which would you prefer?"
+        )
+        self.assertTrue(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_near_duplicate_rejected(self):
+        near_dup = self.PRIMARY.replace("Great —", "Good news:")
+        self.assertFalse(alternate_is_presentable(near_dup, self.PRIMARY))
+
+    def test_tool_call_rejected(self):
+        alternate = (
+            'Let me look that up for you. **medicaid_info {"state": '
+            '"California", "topic": "", "limit": 5}**'
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_action_token_rejected(self):
+        alternate = (
+            "Here you go. **create_or_update_appeal**"
+            '{"patient_name": "X", "appeal_text": "..."} and more text to '
+            "reach the minimum length for an alternate answer."
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_panda_residue_rejected(self):
+        alternate = (
+            "Sure, here's another way to think about your appeal options "
+            "🐼 user is in California asking about Medicaid"
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_too_short_rejected(self):
+        self.assertFalse(alternate_is_presentable("Sure!", self.PRIMARY))
+        self.assertFalse(alternate_is_presentable(None, self.PRIMARY))
+        self.assertFalse(alternate_is_presentable("", self.PRIMARY))
+
+    def test_repeat_of_history_rejected(self):
+        history = [
+            {"role": "user", "content": "help"},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        self.assertFalse(
+            alternate_is_presentable(
+                LOOPED_REPLY, self.PRIMARY, chat_history=history, current_message="CA"
+            )
+        )
+
+
 class TestScoreLlmResponseRepetitionPenalty(TestCase):
     """Integration: repetition penalty within score_llm_response."""
 
@@ -370,12 +566,8 @@ class TestScoreLlmResponseRepetitionPenalty(TestCase):
         echo_result = ("I need help with my denial", "Context")
         good_result = ("I can help you appeal that. Let me look into it.", "Context")
 
-        echo_score = score_llm_response(
-            echo_result, 100, current_message=current_msg
-        )
-        good_score = score_llm_response(
-            good_result, 100, current_message=current_msg
-        )
+        echo_score = score_llm_response(echo_result, 100, current_message=current_msg)
+        good_score = score_llm_response(good_result, 100, current_message=current_msg)
         self.assertGreater(good_score, echo_score)
         self.assertLess(echo_score, 0)
 
@@ -398,11 +590,234 @@ class TestScoreLlmResponseRepetitionPenalty(TestCase):
         bow_result = ("my denial please help with", "Context")
         exact_result = ("help with my denial please", "Context")
 
-        bow_score = score_llm_response(
-            bow_result, 100, current_message=current_msg
-        )
-        exact_score = score_llm_response(
-            exact_result, 100, current_message=current_msg
-        )
+        bow_score = score_llm_response(bow_result, 100, current_message=current_msg)
+        exact_score = score_llm_response(exact_result, 100, current_message=current_msg)
         # Both penalized, but exact match more heavily
         self.assertGreater(bow_score, exact_score)
+
+
+class TestCannedReplyExemption(TestCase):
+    """Mandated verbatim replies (e.g. the Medicaid work-requirements block)
+    may legitimately repeat across turns — they are exempt from HARD
+    rejection while soft penalties still apply."""
+
+    def test_canned_reply_repeat_not_hard_rejected(self):
+        history = [
+            {"role": "user", "content": "tell me about the work requirements"},
+            {"role": "assistant", "content": CANNED_MEDICAID_REPLY},
+        ]
+        self.assertIsNone(
+            find_repeated_reply(
+                CANNED_MEDICAID_REPLY, history, "and the work requirements?"
+            )
+        )
+        score = score_llm_response(
+            (CANNED_MEDICAID_REPLY, "ctx"),
+            call_score=100,
+            chat_history=history,
+            current_message="what about the work requirements again?",
+        )
+        self.assertGreater(score, float("-inf"))
+
+    def test_non_canned_repeat_still_rejected(self):
+        history = [
+            {"role": "user", "content": "help"},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        self.assertEqual(
+            find_repeated_reply(LOOPED_REPLY, history, "CA"),
+            "repeats_recent_assistant_reply",
+        )
+
+
+class TestPenaltySeverityOrdering(TestCase):
+    """Near-verbatim detection outranks bag-of-words equality: a LONG reply
+    sharing the exact word set is a near-verbatim reorder and must get
+    NEAR_REPEAT_PENALTY, while short reorders still land in the mild
+    bag-of-words bucket."""
+
+    def test_long_reordered_repeat_gets_near_penalty(self):
+        paragraphs = LOOPED_REPLY.split("\n\n")
+        reordered = "\n\n".join(reversed(paragraphs))
+        history = [
+            {"role": "user", "content": "something distinct entirely"},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        penalty = compute_repetition_penalty(reordered, history)
+        self.assertEqual(penalty, NEAR_REPEAT_PENALTY)
+
+    def test_short_reorder_still_bag_of_words(self):
+        history = [{"role": "user", "content": "help with my denial"}]
+        penalty = compute_repetition_penalty("my denial with help", history)
+        self.assertEqual(penalty, BAG_OF_WORDS_REPEAT_PENALTY)
+
+
+class TestScoresCloselyTied(TestCase):
+    """Alternates only show when the fan-out's top two scores are close."""
+
+    def test_within_ratio_is_tied(self):
+        self.assertTrue(scores_closely_tied(100.0, 100.0 * ALTERNATE_CLOSE_TIE_RATIO))
+        self.assertTrue(scores_closely_tied(2630.0, 2210.0))
+
+    def test_below_ratio_not_tied(self):
+        self.assertFalse(
+            scores_closely_tied(100.0, 100.0 * ALTERNATE_CLOSE_TIE_RATIO - 0.1)
+        )
+        # Cross-tier gap (internal ~8000 base vs external ~2000): never tied.
+        self.assertFalse(scores_closely_tied(8200.0, 2100.0))
+
+    def test_non_positive_scores_never_tied(self):
+        self.assertFalse(scores_closely_tied(0.0, 0.0))
+        self.assertFalse(scores_closely_tied(-50.0, -40.0))
+        self.assertFalse(scores_closely_tied(100.0, 0.0))
+
+    def test_non_finite_scores_never_tied(self):
+        self.assertFalse(scores_closely_tied(float("inf"), 100.0))
+        self.assertFalse(scores_closely_tied(100.0, float("-inf")))
+
+
+class TestRepeatOffenderDemotion(TestCase):
+    """Backends that produced hard-rejected repeats earlier in the session
+    have their base score decayed, and each rejection records a strike."""
+
+    CONTEXT = "context for the reply"
+
+    def _score(self, offenders, base=1000):
+        task = object()
+        score_fn = create_response_scorer(
+            call_scores={task: base},
+            chat_history=None,
+            current_message=None,
+            call_labels={task: "backend-a"},
+            repeat_offenders=offenders,
+        )
+        return score_fn((FRESH_REPLY, self.CONTEXT), task)
+
+    def test_strikes_decay_base_score(self):
+        clean = self._score({})
+        struck = self._score({"backend-a": 2})
+        expected_decayed_base = int(1000 * (REPEAT_OFFENDER_DECAY**2))
+        self.assertEqual(clean - struck, 1000 - expected_decayed_base)
+
+    def test_strike_count_capped(self):
+        at_cap = self._score({"backend-a": 4})
+        past_cap = self._score({"backend-a": 40})
+        self.assertEqual(at_cap, past_cap)
+
+    def test_rejected_repeat_records_strike(self):
+        task = object()
+        offenders: dict = {}
+        rejection_stats: dict = {}
+        history = [
+            {"role": "user", "content": "Help me with the new requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        score_fn = create_response_scorer(
+            call_scores={task: 1000},
+            chat_history=history,
+            current_message="CA",
+            rejection_stats=rejection_stats,
+            call_labels={task: "backend-a"},
+            repeat_offenders=offenders,
+        )
+        score = score_fn((LOOPED_REPLY, self.CONTEXT), task)
+        self.assertEqual(score, float("-inf"))
+        self.assertEqual(offenders, {"backend-a": 1})
+
+    def test_score_log_records_final_scores(self):
+        task = object()
+        score_log: dict = {}
+        score_fn = create_response_scorer(
+            call_scores={task: 1000},
+            chat_history=None,
+            current_message=None,
+            call_labels={task: "backend-a"},
+            score_log=score_log,
+        )
+        score = score_fn((FRESH_REPLY, self.CONTEXT), task)
+        self.assertEqual(score_log, {task: score})
+
+
+class TestAlternateScreensRealToolCalls(TestCase):
+    """The tool handlers detect with DOTALL|MULTILINE|IGNORECASE. A flag-less
+    sweep over the `^...$`-anchored patterns only matched a tool call at the
+    very start of a reply, so an alternate whose tool call followed a line of
+    prose was shown to the user as raw syntax plus its JSON payload."""
+
+    PRIMARY = "Here is a summary of your options for this denial."
+
+    def test_appeal_tool_call_after_prose_is_rejected(self):
+        alternate = (
+            "I can draft that appeal for you.\n\n"
+            'create_or_update_appeal {"patient_name": "Jane Doe", '
+            '"appeal_text": "To whom it may concern..."}'
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_mixed_case_bold_tool_call_is_rejected(self):
+        alternate = (
+            "Sure, drafting now.\n\n"
+            '**Create_Or_Update_Appeal** {"patient_name": "Jane Doe"}'
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_prior_auth_tool_call_after_prose_is_rejected(self):
+        alternate = (
+            "Let me start that prior auth.\n\n"
+            'create_or_update_prior_auth {"procedure": "MRI"}'
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_plain_answer_still_presentable(self):
+        alternate = (
+            "Another angle: ask the plan for its clinical policy bulletin for "
+            "this code, then cite the specific criteria you meet."
+        )
+        self.assertTrue(alternate_is_presentable(alternate, self.PRIMARY))
+
+
+class TestRepeatOffenderStrikesArePerTurn(TestCase):
+    """A backend contributes several candidates to one fan-out (the primary
+    backend is listed twice, each gets a truncated- and full-history call,
+    times message variants). Counting a strike per candidate ranked backends
+    by how many slots they filled and saturated the cap inside one turn."""
+
+    def test_one_looping_turn_costs_one_strike(self):
+        history = [
+            {"role": "user", "content": "Help me with the new requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        offenders: dict = {}
+        tasks = [object() for _ in range(4)]
+        score_fn = create_response_scorer(
+            call_scores={t: 1000 for t in tasks},
+            chat_history=history,
+            current_message="CA",
+            rejection_stats={},
+            call_labels={t: "looping-backend" for t in tasks},
+            repeat_offenders=offenders,
+        )
+        for task in tasks:
+            self.assertEqual(score_fn((LOOPED_REPLY, "ctx"), task), float("-inf"))
+
+        self.assertEqual(offenders, {"looping-backend": 1})
+
+    def test_strikes_accumulate_across_turns(self):
+        history = [
+            {"role": "user", "content": "Help me with the new requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        offenders: dict = {}
+        for _ in range(3):  # three separate turns, each with a fresh scorer
+            task = object()
+            score_fn = create_response_scorer(
+                call_scores={task: 1000},
+                chat_history=history,
+                current_message="CA",
+                rejection_stats={},
+                call_labels={task: "looping-backend"},
+                repeat_offenders=offenders,
+            )
+            score_fn((LOOPED_REPLY, "ctx"), task)
+
+        self.assertEqual(offenders, {"looping-backend": 3})

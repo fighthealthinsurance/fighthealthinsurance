@@ -1,5 +1,7 @@
 import asyncio
+import math
 import re
+import time
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
@@ -16,18 +18,25 @@ from fighthealthinsurance import settings
 from fighthealthinsurance.chat.chat_persistence import (
     apersist_chat_turn,
     apersist_microsite_context,
+    is_internal_history_message,
+    visible_history,
 )
 from fighthealthinsurance.chat.context_manager import (
     MISSING_CONTEXT_PREFIX,
     background_generate_summary,
+    bound_summary_context,
     make_placeholder,
     prepare_history_for_llm,
     should_store_summary,
 )
 from fighthealthinsurance.chat.llm_client import (
+    alternate_is_presentable,
     build_llm_calls,
     build_llm_calls_for_variants,
     create_response_scorer,
+    find_repeated_reply,
+    scores_closely_tied,
+    user_requested_repeat,
 )
 from fighthealthinsurance.chat.message_preprocessor import (
     MessageVariant,
@@ -61,7 +70,11 @@ from fighthealthinsurance.chat.tools import (
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
-from fighthealthinsurance.ml.ml_metrics import record_chat_turn
+from fighthealthinsurance.ml.ml_metrics import (
+    record_chat_alternate_offered,
+    record_chat_repeat,
+    record_chat_turn,
+)
 from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
     _env_float,
@@ -86,7 +99,7 @@ from fighthealthinsurance.clinicaltrials_tools import ClinicalTrialsTools
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rxnorm_tools import RxNormTools
 from fighthealthinsurance.utils import (
-    best_within_timelimit,
+    best_two_within_timelimit,
     fire_and_forget_in_new_threadpool,
 )
 from fighthealthinsurance.ml.ml_policy_doc_helper import MLPolicyDocHelper
@@ -105,14 +118,36 @@ def _detect_policy_analysis_request(text: str) -> bool:
     return bool(_POLICY_ANALYSIS_REGEX.search(text))
 
 
+# A user message at/below this length right after an assistant question gets
+# the terse-reply bridge note (see handle_chat_message): terse answers are
+# where models historically looped by re-asking instead of using the answer.
+TERSE_REPLY_MAX_CHARS = 60
+
+
+def _clean_reply(text: str) -> str:
+    """Strip the model's self-repetition from a reply before it is shown.
+
+    Shared by the primary answer and the side-by-side alternate: the two are
+    displayed next to each other, so cleaning them differently would make the
+    comparison the feature exists for unfair.
+    """
+    stripped = text.strip()
+    cleaned = remove_repeated_blocks(stripped) or stripped
+    return remove_repeated_sentences(cleaned) or cleaned
+
+
 class ChatInterface:
     def __init__(
         self,
         send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
         chat: OngoingChat,
         user: User,
-        use_external_models: bool = False,
+        # External models participate by default (matches the client-side
+        # default; the consent-form toggle sends an explicit opt-out).
+        use_external_models: bool = True,
         server_session_key: Optional[str] = None,
+        state_hint: Optional[str] = None,
+        debug_llm: bool = False,
     ):
         def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
             """Wraps the send_json_message_func to ensure it's always awaited."""
@@ -135,7 +170,25 @@ class ChatInterface:
         # upload store their artifacts under the Django session, so lookups
         # must try this key first.
         self.server_session_key: Optional[str] = server_session_key
+        # Best-effort US-state guess derived from the connection's IP (see
+        # fhi_users.audit.guess_us_state). Transient by design: it flows into
+        # the LLM context as an UNCONFIRMED hint each turn but is never
+        # persisted with the chat, so anonymous users' location is not stored.
+        self.state_hint: Optional[str] = state_hint
+        # When True (gated upstream to settings.DEBUG or staff users), each
+        # turn also sends a debug_llm_input frame showing exactly what was
+        # sent to the backend model.
+        self.debug_llm: bool = debug_llm
         self._doc_fetch_count: list[int] = [0]
+        # Runner-up answer from the most recent top-level LLM fan-out,
+        # offered to the client as a side-by-side alternate when presentable
+        # AND closely tied with the winner (see scores_closely_tied).
+        self._candidate_alternate: Optional[str] = None
+        # Per-session strike counts for backends whose candidates were
+        # hard-rejected as repeats (label -> count). Shared with the scorer,
+        # which decays a striking backend's base score so a looping model
+        # stops winning every fan-out this session. In-memory only.
+        self._repeat_offenders: Dict[str, int] = {}
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -200,11 +253,20 @@ class ChatInterface:
         except asyncio.CancelledError:
             pass
 
-    async def send_message_to_client(self, message: str):
-        """Sends a message to the client."""
-        await self.send_json_message_func(
-            {"content": message, "chat_id": str(self.chat.id), "role": "assistant"}
-        )
+    async def send_message_to_client(
+        self, message: str, alternate_content: Optional[str] = None
+    ):
+        """Sends a message to the client, optionally with a side-by-side
+        alternate answer (rendered behind a toggle client-side; only the
+        primary message is persisted in chat history)."""
+        payload: Dict[str, Any] = {
+            "content": message,
+            "chat_id": str(self.chat.id),
+            "role": "assistant",
+        }
+        if alternate_content:
+            payload["alternate_content"] = alternate_content
+        await self.send_json_message_func(payload)
 
     async def _get_user_info(self) -> str:
         """Generates a descriptive string for the user (either professional or patient)."""
@@ -290,11 +352,20 @@ class ChatInterface:
             else current_message_for_llm
         )
 
+        # Did the user explicitly ask for a repeat? Derived from the RAW
+        # message (scoring_message) BEFORE prompt wrapping -- the wrapped
+        # current_message_for_llm contains system-injected text that itself
+        # says "repeat", so testing it there would always match. Forwarded to
+        # the backends so their per-backend self-heal loop doesn't fight the
+        # user's request (the scorers make the same check independently).
+        allow_repeat = user_requested_repeat(scoring_message)
+
         # Build LLM calls using the extracted module. When message variants are
         # supplied (top-level user turn), fan out per variant and apply each
         # variant's score delta; only the primary_original variant's calls keep
         # the is-primary scoring bonus. Otherwise (recursive tool calls) fall
         # back to the single wrapped message, preserving existing behavior.
+        call_labels: Dict[Awaitable, str] = {}
         if message_variants:
             calls, call_scores, primary_calls = build_llm_calls_for_variants(
                 model_backends=model_backends,
@@ -304,6 +375,8 @@ class ChatInterface:
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
                 full_history=full_history,
+                allow_repeated_reply=allow_repeat,
+                call_labels=call_labels,
             )
         else:
             calls, call_scores = build_llm_calls(
@@ -314,26 +387,61 @@ class ChatInterface:
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
                 full_history=full_history,
+                allow_repeated_reply=allow_repeat,
+                call_labels=call_labels,
             )
             primary_calls = calls
 
-        # Create scoring function using the extracted module
+        # Create scoring function using the extracted module. rejection_stats
+        # is shared with the scorer so we can tell "no usable response" apart
+        # from "responses arrived but all repeated a recent reply" -- the
+        # latter retries with an explicit anti-repeat instruction.
+        # call_labels + self._repeat_offenders let the scorer demote backends
+        # that produced hard-rejected repeats earlier in this session, and
+        # score_log records per-candidate final scores for debug reporting.
+        rejection_stats: Dict[str, int] = {}
+        score_log: Dict[Awaitable, float] = {}
         score_fn = create_response_scorer(
             call_scores,
             primary_calls=primary_calls,
             chat_history=chat.chat_history,
             current_message=scoring_message,
+            rejection_stats=rejection_stats,
+            call_labels=call_labels,
+            repeat_offenders=self._repeat_offenders,
+            score_log=score_log,
         )
 
+        llm_pass_started = time.monotonic()
+        picked_model: Optional[str] = None
+        picked_score: Optional[float] = None
+        runner_up_model: Optional[str] = None
+        runner_up_score: Optional[float] = None
+        runner_up_text: Optional[str] = None
         try:
-            best_call = await best_within_timelimit(
+            # Explicit overtime window: with the defaults (2x timeout) the
+            # primary pass could take 90s and the retry pass 105s -- past the
+            # 150s turn budget, so the budget killed retries that would have
+            # succeeded. 30+30 here plus 35+40 in retry_llm_with_fallback
+            # keeps the whole ladder inside the budget.
+            best_two = await best_two_within_timelimit(
                 calls,
                 score_fn,
                 timeout=30.0,
+                extended_timeout=30.0,
             )
             response_text, context_part = (
-                best_call if best_call is not None else (None, None)
+                best_two.best if best_two.best is not None else (None, None)
             )
+            if best_two.best is not None:
+                picked_score = best_two.best_score
+                if best_two.best_task is not None:
+                    picked_model = call_labels.get(best_two.best_task)
+            if best_two.runner_up is not None:
+                runner_up_text = best_two.runner_up[0]
+                runner_up_score = best_two.runner_up_score
+                if best_two.runner_up_task is not None:
+                    runner_up_model = call_labels.get(best_two.runner_up_task)
         except Exception as e:
             logger.warning(f"Primary models all failed: {e}")
             response_text = None
@@ -341,7 +449,25 @@ class ChatInterface:
 
         response_text = response_text or ""
 
+        # Record rejected repeats for EVERY turn that had them, not only turns
+        # that also needed a retry. The common success case is "an internal
+        # backend looped, its candidates were hard-rejected, another backend's
+        # answer won" -- which needs no retry, and used to leave the counter
+        # flat while the ladder was working hard. That made the metric read as
+        # "loops never happen" exactly when a backend started looping.
+        saw_repeats = bool(rejection_stats.get("repeated_rejected"))
+        if saw_repeats:
+            # Counted once per turn (the stat itself is per candidate).
+            record_chat_repeat("rejected_candidates")
+            logger.info(
+                f"Chat {chat.id}: primary pass rejected "
+                f"{rejection_stats['repeated_rejected']} repeated "
+                f"candidate replies"
+            )
+
         # If primary models failed, use retry handler with fallback
+        retry_used = False
+        retry_debug: Dict[str, Any] = {}
         if should_retry_response(response_text):
             retry_response, retry_context = await retry_llm_with_fallback(
                 model_backends=model_backends,
@@ -355,16 +481,105 @@ class ChatInterface:
                 status_callback=self.send_status_message,
                 chat_history=chat.chat_history,
                 user_message_for_scoring=scoring_message,
+                anti_repeat=saw_repeats,
+                allow_repeated_reply=allow_repeat,
+                debug_info=retry_debug,
             )
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response
                 context_part = retry_context
+                retry_used = True
+                picked_model = retry_debug.get("retry_picked_model") or picked_model
+                picked_score = retry_debug.get("retry_picked_score", picked_score)
+                # The retry winner replaced the primary answer; the primary
+                # pass's runner-up no longer describes a comparable pair.
+                runner_up_text = None
+                runner_up_model = None
+                runner_up_score = None
 
         logger.debug(f"Using best result {response_text:.20}...")
 
         if not response_text:
             logger.debug("Got empty response from LLM")
             return None, None
+
+        # Capture a presentable runner-up as a side-by-side alternate answer
+        # -- but only when the top two scores are CLOSELY TIED (see
+        # scores_closely_tied): when the winner is clearly better, showing a
+        # second answer is noise; when the race was close, the user is the
+        # right tiebreaker. Only for the top-level user turn (depth 0);
+        # recursive tool calls must not clobber it. Cleared again below if
+        # tool processing changes the primary response (action flows don't
+        # get a raw alternate).
+        closely_tied = False
+        if depth == 0:
+            self._candidate_alternate = None
+            closely_tied = (
+                picked_score is not None
+                and runner_up_score is not None
+                and scores_closely_tied(picked_score, runner_up_score)
+            )
+            if runner_up_text and closely_tied:
+                if alternate_is_presentable(
+                    runner_up_text,
+                    response_text,
+                    chat_history=chat.chat_history,
+                    current_message=scoring_message,
+                ):
+                    self._candidate_alternate = runner_up_text.strip()
+            elif runner_up_text:
+                logger.debug(
+                    f"Chat {chat.id}: runner-up not closely tied "
+                    f"({runner_up_score} vs {picked_score}); no alternate"
+                )
+
+        # One compact selection line per LLM pass at INFO: this is the
+        # production-debuggable record of which backend won and why the
+        # alternates/retries behaved as they did (the debug frame below
+        # only reaches DEBUG deployments and staff).
+        elapsed_ms = int((time.monotonic() - llm_pass_started) * 1000)
+        logger.info(
+            f"Chat {chat.id}: picked {picked_model or 'unknown'}"
+            f" (score={picked_score}) runner_up={runner_up_model}"
+            f" (score={runner_up_score}, tied={closely_tied})"
+            f" candidates={len(calls)} rejected_repeats="
+            f"{rejection_stats.get('repeated_rejected', 0)}"
+            f" retry_used={retry_used} elapsed_ms={elapsed_ms} depth={depth}"
+        )
+        if depth == 0 and self.debug_llm:
+            # -inf (hard-rejected candidates) is not valid JSON -- json.dumps
+            # emits `-Infinity`, which browser JSON.parse refuses, killing
+            # the whole frame client-side. Map non-finite scores to None and
+            # mark the rejection explicitly instead.
+            scored_candidates = [
+                {
+                    "model": call_labels.get(task, "unknown"),
+                    "score": score if math.isfinite(score) else None,
+                    "rejected": not math.isfinite(score),
+                }
+                for task, score in score_log.items()
+            ]
+            await self.send_json_message_func(
+                {
+                    "debug_llm_result": {
+                        "picked_model": picked_model,
+                        "picked_score": picked_score,
+                        "runner_up_model": runner_up_model,
+                        "runner_up_score": runner_up_score,
+                        "closely_tied": closely_tied,
+                        "alternate_offered": bool(self._candidate_alternate),
+                        "candidate_count": len(calls),
+                        "scored_candidates": scored_candidates,
+                        "rejected_repeats": rejection_stats.get("repeated_rejected", 0),
+                        "repeat_offenders": dict(self._repeat_offenders),
+                        "retry_used": retry_used,
+                        "anti_repeat_retry": saw_repeats and retry_used,
+                        "allow_repeated_reply": allow_repeat,
+                        "elapsed_ms": elapsed_ms,
+                    }
+                }
+            )
+        response_before_tools = response_text
 
         # Process tool calls via modular tool handlers
         context = context_part or ""
@@ -478,6 +693,11 @@ class ChatInterface:
             response_text, context, **tool_kwargs
         )
 
+        # Tool processing rewrote the reply (an action/tool flow ran): the
+        # raw runner-up no longer corresponds to it, so drop the alternate.
+        if depth == 0 and response_text != response_before_tools:
+            self._candidate_alternate = None
+
         logger.debug(f"Return with context length {len(context) if context else 0}.")
         return response_text, context
 
@@ -494,6 +714,9 @@ class ChatInterface:
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
         """
         chat = self.chat
+        # A stale alternate from a previous turn must never attach to this
+        # turn's reply (early-return paths below don't go through the LLM).
+        self._candidate_alternate = None
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -738,11 +961,14 @@ class ChatInterface:
                 user_facing_message = "This chat is already linked to your prior authorization request. How can I help you with it?"
         if link_message and user_facing_message:
             await asyncio.sleep(0.01)
-            # Transactional merge against the fresh row (see apersist_chat_turn)
+            # Transactional merge against the fresh row (see apersist_chat_turn).
+            # The link note is context for the LLM, not something the user
+            # typed: flag it internal so replays don't render it as a user
+            # bubble (see _is_internal_history_message).
             self.chat = chat = await apersist_chat_turn(
                 chat,
                 new_messages=[
-                    {"role": "user", "content": link_message},
+                    {"role": "user", "content": link_message, "internal": True},
                     {"role": "assistant", "content": user_facing_message},
                 ],
             )
@@ -780,6 +1006,14 @@ class ChatInterface:
                         f"Previous context summary:\n{prev_summary}\n\n"
                         f"Most recent context summary:\n{current_llm_context}"
                     )
+            # Bound the accreted context: summaries nest labels over long
+            # chats ("Earlier conversation summary: ... Additional context:
+            # ...") and an unbounded blob both crowds out the actual history
+            # and degrades weaker models into replaying old turns.
+            current_llm_context = bound_summary_context(
+                current_llm_context,
+                int(_env_float("FHI_CHAT_MAX_SUMMARY_CHARS", 6000.0)),
+            )
 
         # Build message variants: the original/primary path plus lower-scored
         # long-message and weird-Unicode alternatives. A normal short message
@@ -846,13 +1080,41 @@ class ChatInterface:
                 return template.format(user_info=user_info_str, message=text)
 
         else:
+            # Terse-reply bridge: short answers like "CA" or "yes 2 people"
+            # right after we asked a question are exactly where models fell
+            # into re-asking loops -- they'd ignore the terse reply and
+            # re-send the previous message. Make the linkage explicit so the
+            # model treats the reply as the answer to its own question.
+            terse_bridge = ""
+            stripped_message = (user_message or "").strip()
+            if (
+                stripped_message
+                and len(stripped_message) <= TERSE_REPLY_MAX_CHARS
+                and not is_document
+            ):
+                last_assistant_reply = next(
+                    (
+                        m.get("content")
+                        for m in reversed(chat.chat_history or [])
+                        if m.get("role") == "assistant" and m.get("content")
+                    ),
+                    None,
+                )
+                if last_assistant_reply and "?" in last_assistant_reply:
+                    terse_bridge = (
+                        "\n\n[Note from the system, not the user: this short "
+                        "reply answers the question(s) in your previous "
+                        "message. Combine it with the conversation history "
+                        "and take the next step -- do not re-ask questions it "
+                        "answers and do not repeat your previous message.]"
+                    )
 
             def wrap_for_llm(text: str) -> str:
                 # Re-inject the delete-data handoff instruction on every ongoing
                 # turn. The intro template (which contains it) only fires for new
                 # chats, so without this the sentinel fallback would silently
                 # stop working past the first message.
-                return f"{DELETE_DATA_INSTRUCTION}\n\n{text}"
+                return f"{DELETE_DATA_INSTRUCTION}\n\n{text}{terse_bridge}"
 
         llm_message_variants = [
             replace(v, text_for_llm=wrap_for_llm(v.text_for_llm))
@@ -911,6 +1173,29 @@ class ChatInterface:
                 else doc_context_str
             )
 
+        # Transient IP-derived location hint (never persisted): lets the
+        # model skip the "which state are you in?" round-trip when the guess
+        # is right, while the wording keeps it explicitly unconfirmed so the
+        # model verifies rather than assumes when the state matters.
+        if self.state_hint:
+            state_hint_context = (
+                f"Possible user location based on network information "
+                f"(an UNCONFIRMED guess that can be wrong, e.g. VPNs or "
+                f"shared networks): {self.state_hint}. If the user's state "
+                f"matters for your answer (for example Medicaid questions), "
+                f"confirm it with the user -- for instance 'It looks like "
+                f"you might be in {self.state_hint}, is that right?' -- "
+                f"instead of assuming. Do NOT put this guess in your context "
+                f"summary unless the user confirms it: the summary is stored "
+                f"with the chat, and an unconfirmed network-derived location "
+                f"must not be."
+            )
+            summarized_context = (
+                f"{summarized_context}\n\n{state_hint_context}"
+                if summarized_context
+                else state_hint_context
+            )
+
         if self.is_trial_professional:
             await asyncio.sleep(0.5)  # Half a second delay for trial users.
 
@@ -919,6 +1204,66 @@ class ChatInterface:
         # **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
         # (The double asterisks around the entire tool call are required)
         # USPSTF preventive recommendations: **uspstf_lookup {"query": "...", "grade": "A"}**
+
+        # Persist the user's message BEFORE generation. Channels cancels the
+        # consumer's coroutine on disconnect, and persistence used to happen
+        # only after the LLM returned -- so a network blip mid-turn silently
+        # erased the user's message from history (CancelledError skips the
+        # failure-path persist too). The final persist below merges against
+        # fresh state with tail-dedup, so this never duplicates the message.
+        # Deliberately NOT rebinding self.chat/chat: scoring and history prep
+        # treat chat.chat_history as the PRE-turn history (the current
+        # message travels separately). Guarded: persistence problems must
+        # not block the turn -- worst case we fall back to the old
+        # persist-at-end behavior.
+        # Once pre-persisted, the end-of-turn persists must NOT resubmit the
+        # user message: with two connections racing on one chat, the other
+        # turn's pre-persist can merge into this message ("A" -> "A B"), and
+        # resubmitting "A" against that merged tail would append it AGAIN
+        # ("A B A") instead of deduping.
+        user_message_prepersisted = False
+        if user_message and user_message.strip():
+            try:
+                await apersist_chat_turn(
+                    chat,
+                    new_messages=[{"role": "user", "content": user_message}],
+                )
+                user_message_prepersisted = True
+            except OngoingChat.DoesNotExist:
+                logger.warning(
+                    f"Chat {chat.id} vanished before the turn started; "
+                    f"continuing unpersisted"
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not pre-persist user message for chat {chat.id}; "
+                    f"continuing (will persist at turn end)"
+                )
+
+        # Debug visibility: show exactly what is being sent to the backend
+        # model for this turn. Gated upstream (settings.DEBUG or staff), and
+        # the content is the requesting user's own conversation, so sending
+        # it back over their socket exposes nothing new. Also logged
+        # server-side (sizes only -- message content is PHI).
+        if self.debug_llm:
+            debug_payload = {
+                "message_for_llm": llm_input_message,
+                "context_summary": summarized_context,
+                "history_message_count": len(history_for_llm),
+                "full_history_message_count": (
+                    len(full_history_for_llm) if full_history_for_llm else 0
+                ),
+                "message_variants": [v.kind for v in llm_message_variants],
+                "state_hint": self.state_hint,
+            }
+            await self.send_json_message_func({"debug_llm_input": debug_payload})
+        logger.debug(
+            f"Chat {chat.id}: sending turn to LLM "
+            f"(message_chars={len(llm_input_message)}, "
+            f"context_chars={len(summarized_context) if summarized_context else 0}, "
+            f"history_msgs={len(history_for_llm)}, "
+            f"full_history_msgs={len(full_history_for_llm) if full_history_for_llm else 0})"
+        )
 
         # Overall wall-clock budget for this turn's LLM + tool work, plus a
         # heartbeat so the user (and any idle-reaping proxy between us) sees
@@ -946,8 +1291,7 @@ class ChatInterface:
             )
 
             if response_text and response_text.strip():
-                cleaned = remove_repeated_blocks(response_text.strip())
-                cleaned = remove_repeated_sentences(cleaned) or cleaned
+                cleaned = _clean_reply(response_text)
                 if llm_requested_delete_handoff(cleaned):
                     logger.info(
                         f"LLM emitted delete-data sentinel in chat {chat.id}, swapping in canned response"
@@ -955,6 +1299,22 @@ class ChatInterface:
                     cleaned = DELETE_DATA_RESPONSE
                 final_response_text = cleaned
                 final_context_part = context_part
+                # Observability for the loop-prevention ladder: a delivered
+                # reply that STILL repeats a recent reply means every rung
+                # (hard rejection, anti-repeat retry) produced only repeats.
+                # Should stay rare -- alert on this counter growing.
+                if (
+                    final_response_text
+                    and not user_requested_repeat(user_message)
+                    and find_repeated_reply(
+                        final_response_text, chat.chat_history, user_message
+                    )
+                ):
+                    record_chat_repeat("delivered_repeat")
+                    logger.warning(
+                        f"Chat {chat.id}: delivering a reply that repeats a "
+                        f"recent reply (all anti-repeat rungs exhausted)"
+                    )
         except asyncio.TimeoutError:
             logger.error(
                 f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
@@ -1004,12 +1364,18 @@ class ChatInterface:
             # Guarded: the chat row can vanish mid-turn (data deletion); the
             # user still gets the generated reply, it just isn't persisted.
             try:
+                # The user message is only resubmitted when the pre-persist
+                # failed -- see user_message_prepersisted above for why.
+                end_of_turn_messages = [
+                    {"role": "assistant", "content": final_response_text}
+                ]
+                if not user_message_prepersisted:
+                    end_of_turn_messages.insert(
+                        0, {"role": "user", "content": user_message}
+                    )
                 self.chat = chat = await apersist_chat_turn(
                     chat,
-                    new_messages=[
-                        {"role": "user", "content": user_message},
-                        {"role": "assistant", "content": final_response_text},
-                    ],
+                    new_messages=end_of_turn_messages,
                     new_summaries=turn_summaries,
                 )
             except OngoingChat.DoesNotExist:
@@ -1023,15 +1389,53 @@ class ChatInterface:
             if background_summary_task is not None:
                 await fire_and_forget_in_new_threadpool(background_summary_task)
             record_chat_turn("ok")
-            await self.send_message_to_client(final_response_text)
+            # Side-by-side alternate answer (ChatGPT-style "here's another
+            # take"): cleaned like the primary, dropped if cleaning leaves it
+            # too similar to what we're already sending. Ephemeral -- only
+            # the primary reply is persisted, so replays show one answer.
+            alternate_content = self._candidate_alternate
+            self._candidate_alternate = None
+            if alternate_content:
+                alt_cleaned = _clean_reply(alternate_content)
+                # A runner-up that also asked for the delete-data handoff must
+                # never be shown: the primary gets swapped for the approved
+                # DELETE_DATA_RESPONSE, so an unswapped alternate would sit
+                # beside it either leaking the raw sentinel or making
+                # model-authored promises about deleting the user's data.
+                if alt_cleaned and llm_requested_delete_handoff(alt_cleaned):
+                    logger.info(
+                        f"Chat {chat.id}: dropping alternate that requested the "
+                        f"delete-data handoff"
+                    )
+                    alt_cleaned = ""
+                if alt_cleaned and alternate_is_presentable(
+                    alt_cleaned,
+                    final_response_text,
+                    chat_history=chat.chat_history,
+                    current_message=user_message,
+                ):
+                    alternate_content = alt_cleaned
+                    record_chat_alternate_offered()
+                    logger.info(f"Chat {chat.id}: offering an alternate answer")
+                else:
+                    alternate_content = None
+            await self.send_message_to_client(
+                final_response_text, alternate_content=alternate_content
+            )
         else:
             # The turn failed after the user already committed their message:
             # persist it anyway so a reconnect/replay doesn't erase what they
-            # typed (previously the whole turn was dropped on failure).
+            # typed (previously the whole turn was dropped on failure). Only
+            # resubmitted when the pre-persist failed -- see
+            # user_message_prepersisted above.
             try:
                 self.chat = chat = await apersist_chat_turn(
                     chat,
-                    new_messages=[{"role": "user", "content": user_message}],
+                    new_messages=(
+                        []
+                        if user_message_prepersisted
+                        else [{"role": "user", "content": user_message}]
+                    ),
                     new_summaries=turn_summaries,
                 )
             except Exception:
@@ -1064,11 +1468,23 @@ class ChatInterface:
             )
             await self.send_error_message(err_msg)
 
+    # Legacy prefixes of internal (LLM-context-only) user-role messages that
+    # predate the explicit "internal" flag; matched so old chats don't replay
+    # them either.
+    @classmethod
+    def _is_internal_history_message(cls, message: Dict[str, Any]) -> bool:
+        """Messages stored purely as LLM context (e.g. the appeal-linking
+        notes recorded with role=user) must not replay as user bubbles."""
+        return is_internal_history_message(message)
+
     async def replay_chat_history(self):
-        """Sends the existing chat history to the client."""
+        """Sends the existing chat history to the client, minus internal
+        LLM-context-only messages (which would render as user bubbles the
+        user never typed)."""
         chat = self.chat
-        history: Optional[List[Dict[str, Any]]] = chat.chat_history
-        await self.send_json_message_func({"messages": chat.chat_history})
+        await self.send_json_message_func(
+            {"messages": visible_history(chat.chat_history)}
+        )
 
     async def _handle_policy_analysis(
         self, chat: OngoingChat, user_message: str

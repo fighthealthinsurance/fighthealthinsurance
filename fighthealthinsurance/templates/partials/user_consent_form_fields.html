@@ -99,12 +99,15 @@
     <div class="form-check mb-3">
         {{ form.use_external_models }}
         <label for="use_external_models" class="form-check-label">
-            Allow external AI models as fallback (e.g., OpenAI, Google)
+            Allow external AI models (e.g., OpenAI, Google)
         </label>
         <small class="form-text text-muted d-block mt-1">
-            We prefer using our own FHI models when possible. When enabled, external AI providers
-            may be used as a fallback if our models are unavailable. Note that your conversation
-            data will be sent to these third-party services.
+            We prefer our own FHI models and use their answers whenever they respond well.
+            When this is enabled, external AI providers are asked alongside them on each
+            message, so a good answer is ready if our models are slow, unavailable, or stuck
+            repeating themselves. Your conversation is sent to those third-party services
+            (with names and contact details removed in your browser first). Uncheck this to
+            keep your chat on our own models only.
         </small>
     </div>
 </div>

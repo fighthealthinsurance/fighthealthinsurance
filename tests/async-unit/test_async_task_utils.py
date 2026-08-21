@@ -6,6 +6,7 @@ from typing import Awaitable, TypeVar, Any
 
 from fighthealthinsurance.utils import (
     fire_and_forget_in_new_threadpool,
+    best_two_within_timelimit,
     best_within_timelimit,
     best_within_timelimit_static,
     execute_critical_optional_fireandforget,
@@ -144,6 +145,170 @@ class TestAsyncTaskUtils:
         """Test that best_within_timelimit handles empty task list properly"""
         result = await best_within_timelimit([], lambda r, _: 1.0, timeout=0.1)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_neg_inf_scored_result_never_wins(self):
+        """A truthy result scored -inf (hard-rejected) must not be returned
+        when a valid result exists — even if the rejected one finishes first.
+
+        Guards the chat loop fix: repeated replies are scored -inf, and
+        before this semantic a truthy -inf result could still occupy the
+        best slot via the "nothing better yet" fallback.
+        """
+        tasks = [
+            self.async_task_with_delay("rejected_repeat", 0.05),
+            self.async_task_with_delay("valid_answer", 0.2),
+        ]
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return float("-inf") if result == "rejected_repeat" else 1.0
+
+        result = await best_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result == "valid_answer"
+
+    @pytest.mark.asyncio
+    async def test_all_neg_inf_returns_none(self):
+        """When every completed result is hard-rejected, the caller gets None
+        (so its retry ladder runs) instead of a rejected result."""
+        tasks = [
+            self.async_task_with_delay("repeat_a", 0.05),
+            self.async_task_with_delay("repeat_b", 0.1),
+        ]
+
+        result = await best_within_timelimit(
+            tasks, lambda r, _: float("-inf"), timeout=1.0, extended_timeout=0.2
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_neg_inf_skipped_in_overtime_window(self):
+        """In the overtime window the first USABLE result wins — a rejected
+        (-inf) straggler must not end the wait."""
+        tasks = [
+            self.async_task_with_delay("rejected", 0.3),
+            self.async_task_with_delay("valid_late", 0.6),
+        ]
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return float("-inf") if result == "rejected" else 1.0
+
+        # Main window (0.1s) sees nothing; overtime sees the rejected result
+        # first and must keep waiting for the valid one.
+        result = await best_within_timelimit(
+            tasks, score_fn, timeout=0.1, extended_timeout=5.0
+        )
+        assert result == "valid_late"
+
+    # Tests for best_two_within_timelimit
+    @pytest.mark.asyncio
+    async def test_best_two_returns_best_and_runner_up(self):
+        tasks = [
+            self.async_task_with_delay("low", 0.05),
+            self.async_task_with_delay("best", 0.1),
+            self.async_task_with_delay("middle", 0.15),
+        ]
+        scores = {"low": 1.0, "best": 3.0, "middle": 2.0}
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return scores.get(result, 0.0)
+
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best == "best"
+        assert result.runner_up == "middle"
+
+    @pytest.mark.asyncio
+    async def test_best_two_reports_scores_and_tasks(self):
+        """The result carries both scores and the ORIGINAL awaitables, so
+        callers can judge how closely tied the race was and attribute each
+        answer to the call that produced it."""
+        tasks = [
+            self.async_task_with_delay("best", 0.05),
+            self.async_task_with_delay("middle", 0.1),
+        ]
+        scores = {"best": 3.0, "middle": 2.5}
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return scores.get(result, 0.0)
+
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best_score == 3.0
+        assert result.runner_up_score == 2.5
+
+    @pytest.mark.asyncio
+    async def test_best_two_reports_originating_tasks(self):
+        """The ORIGINAL awaitables come back, so a caller can map a winner to
+        whatever it keyed its calls by (the chat layer maps them to models)."""
+        tasks = [
+            self.async_task_with_delay("best", 0.05),
+            self.async_task_with_delay("middle", 0.1),
+        ]
+        scores = {"best": 3.0, "middle": 2.5}
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return scores.get(result, 0.0)
+
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best_task is tasks[0]
+        assert result.runner_up_task is tasks[1]
+
+    @pytest.mark.asyncio
+    async def test_best_two_keeps_index_zero_as_best(self):
+        """Field order is load-bearing: older callers index result[0]."""
+        tasks = [self.async_task_with_delay("best", 0.05)]
+
+        result = await best_two_within_timelimit(tasks, lambda r, _: 1.0, timeout=2.0)
+        assert result[0] == "best"
+
+    @pytest.mark.asyncio
+    async def test_best_two_single_task_has_no_runner_up(self):
+        tasks = [self.async_task_with_delay("only", 0.05)]
+        result = await best_two_within_timelimit(tasks, lambda r, _: 1.0, timeout=1.0)
+        assert result.best == "only"
+        assert result.runner_up is None
+        assert result.runner_up_task is None
+
+    @pytest.mark.asyncio
+    async def test_best_two_runner_up_never_neg_inf(self):
+        """A hard-rejected result can't be the runner-up either."""
+        tasks = [
+            self.async_task_with_delay("best", 0.05),
+            self.async_task_with_delay("rejected", 0.1),
+        ]
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return float("-inf") if result == "rejected" else 1.0
+
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best == "best"
+        assert result.runner_up is None
+
+    @pytest.mark.asyncio
+    async def test_best_two_runner_up_skips_duplicates_of_best(self):
+        """Several backends serving the same model return identical answers;
+        the runner-up must be the best DIFFERENT result, not a duplicate."""
+        tasks = [
+            self.async_task_with_delay("same_answer", 0.05),
+            self.async_task_with_delay("same_answer", 0.1),
+            self.async_task_with_delay("different_answer", 0.15),
+        ]
+        scores = {"same_answer": 3.0, "different_answer": 1.0}
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return scores.get(result, 0.0)
+
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best == "same_answer"
+        assert result.runner_up == "different_answer"
+
+    @pytest.mark.asyncio
+    async def test_best_two_all_duplicates_no_runner_up(self):
+        tasks = [
+            self.async_task_with_delay("same_answer", 0.05),
+            self.async_task_with_delay("same_answer", 0.1),
+        ]
+        result = await best_two_within_timelimit(tasks, lambda r, _: 1.0, timeout=2.0)
+        assert result.best == "same_answer"
+        assert result.runner_up is None
 
     @pytest.mark.asyncio
     async def test_best_within_timelimit_with_exceptions(self):

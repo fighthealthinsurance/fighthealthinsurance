@@ -13,6 +13,7 @@ row lock fully serializes writers; on sqlite (tests) ``select_for_update`` is
 a no-op but sqlite serializes writes anyway and the merge logic still runs.
 """
 
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -22,9 +23,42 @@ from django.utils import timezone
 
 from loguru import logger
 
+# Legacy shape of the LLM-context-only link notes, from before they carried an
+# explicit `internal` flag. Deliberately anchored to the FULL generated shape
+# ("... Appeal #12", "... Prior Auth Request #3") rather than the bare prefix:
+# the prefix alone is text a user can type, and matching it hid their own
+# message from their own replay while every server-side view still had it.
+_LEGACY_INTERNAL_NOTE_RE = re.compile(
+    r"^(?:Linked this chat to|This chat is already linked to)\s+"
+    r"(?:Appeal|Prior Auth Request)\s+#\d+",
+)
+
+
+def is_internal_history_message(message: Dict[str, Any]) -> bool:
+    """Whether a stored history entry is LLM-context-only.
+
+    Internal notes are persisted with role=user so the model sees them, but
+    they were never typed by the user and must not be shown as user messages
+    -- in replay OR in any other view of the history (REST listings, chat
+    titles, previews).
+    """
+    if message.get("internal"):
+        return True
+    if message.get("role") != "user":
+        return False
+    content = message.get("content") or ""
+    return bool(_LEGACY_INTERNAL_NOTE_RE.match(content))
+
+
+def visible_history(
+    history: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """History with LLM-context-only messages removed."""
+    return [m for m in (history or []) if not is_internal_history_message(m)]
+
 
 def merge_new_messages(
-    history: List[Dict[str, Any]], new_messages: List[Dict[str, str]]
+    history: List[Dict[str, Any]], new_messages: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """Append messages to a history list with tail-dedupe and user-merge.
 
@@ -44,23 +78,47 @@ def merge_new_messages(
             last = history[-1]
             if last.get("role") == role and last.get("content") == content:
                 continue
-            if role == "user" and last.get("role") == "user":
+            if (
+                role == "user"
+                and last.get("role") == "user"
+                # Only merge messages of the same internal-ness. This branch
+                # returns before the internal flag is applied below, so
+                # merging an internal LLM-context note into a user-authored
+                # message silently dropped the flag -- and the merged text no
+                # longer started with a known internal prefix either, so
+                # replay rendered the system note inside the user's own
+                # bubble. A failed turn leaves a user-role tail, which is
+                # exactly when the next internal note would hit this path.
+                and bool(last.get("internal")) == bool(msg.get("internal"))
+            ):
                 last["content"] = f"{last.get('content')} {content}"
                 last["timestamp"] = timezone.now().isoformat()
                 continue
-        history.append(
-            {
-                "role": role,
-                "content": content,
-                "timestamp": timezone.now().isoformat(),
-            }
-        )
+        entry: Dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "timestamp": timezone.now().isoformat(),
+        }
+        # LLM-context-only messages (e.g. appeal-link notes stored with
+        # role=user) carry an internal flag so history replay can skip them.
+        if msg.get("internal"):
+            entry["internal"] = True
+        history.append(entry)
     return history
+
+
+# Upper bound on stored context summaries. Only the last two are ever read
+# (chat_interface builds the LLM context from them), but every turn appends
+# one -- long chats used to accrete hundreds of KB-sized entries onto the
+# row, bloating each read/write of the chat. Placeholders trimmed away
+# before their background summary lands are fine: the replacement helper
+# no-ops when the tag is gone.
+MAX_STORED_SUMMARIES = 20
 
 
 def _persist_chat_turn_sync(
     chat_id: uuid.UUID,
-    new_messages: List[Dict[str, str]],
+    new_messages: List[Dict[str, Any]],
     new_summaries: List[Optional[str]],
 ):
     from fighthealthinsurance.models import OngoingChat
@@ -80,6 +138,8 @@ def _persist_chat_turn_sync(
                 if not entry or (summary and summary[-1] == entry):
                     continue
                 summary.append(entry)
+            if len(summary) > MAX_STORED_SUMMARIES:
+                summary = summary[-MAX_STORED_SUMMARIES:]
             fresh.summary_for_next_call = summary
             update_fields.append("summary_for_next_call")
         fresh.save(update_fields=update_fields)
@@ -89,7 +149,7 @@ def _persist_chat_turn_sync(
 async def apersist_chat_turn(
     chat,
     *,
-    new_messages: Optional[List[Dict[str, str]]] = None,
+    new_messages: Optional[List[Dict[str, Any]]] = None,
     new_summaries: Optional[List[Optional[str]]] = None,
 ):
     """Persist a turn's additions against the fresh row; return the fresh row.

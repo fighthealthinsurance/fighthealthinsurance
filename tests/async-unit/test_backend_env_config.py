@@ -21,7 +21,6 @@ from llm_result_utils.cleaner_utils import CleanerUtils
 # CleanerUtils (see _bounded_is_valid_url).
 from fighthealthinsurance.ml.ml_models import RemoteHealthInsurance
 
-
 _ENV_VARS = [
     "HEALTH_BACKEND_HOST",
     "HEALTH_BACKEND_PORT",
@@ -71,9 +70,7 @@ class TestIdenticalBackupDisabled:
 
 
 class TestEmptyStringEnvIsUnset:
-    def test_empty_backup_host_falls_back_to_primary_without_racing(
-        self, monkeypatch
-    ):
+    def test_empty_backup_host_falls_back_to_primary_without_racing(self, monkeypatch):
         _clear_env(monkeypatch)
         monkeypatch.setenv("HEALTH_BACKEND_HOST", "primary.internal")
         monkeypatch.setenv("HEALTH_BACKUP_BACKEND_HOST", "")

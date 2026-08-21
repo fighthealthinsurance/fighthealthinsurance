@@ -182,9 +182,7 @@ class ReportClientErrorTest(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         mock_summarize.assert_not_called()
-        self.assertIn(
-            "context_tokens: unauthorized", self._logged_error(mock_logger)
-        )
+        self.assertIn("context_tokens: unauthorized", self._logged_error(mock_logger))
 
     def test_wrong_semi_sekret_is_unauthorized(self):
         denial = self._make_denial(denial_text="x" * 400)
@@ -200,6 +198,4 @@ class ReportClientErrorTest(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         mock_summarize.assert_not_called()
-        self.assertIn(
-            "context_tokens: unauthorized", self._logged_error(mock_logger)
-        )
+        self.assertIn("context_tokens: unauthorized", self._logged_error(mock_logger))

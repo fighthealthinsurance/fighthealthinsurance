@@ -7,15 +7,30 @@ from unittest.mock import AsyncMock, patch
 
 from fighthealthinsurance.chat.context_manager import (
     MISSING_CONTEXT_PREFIX,
+    TRIMMED_CONTEXT_PREFIX,
     background_generate_summary,
+    bound_summary_context,
     make_placeholder,
     prepare_history_for_llm,
     should_store_summary,
+    strip_previous_summary_blocks,
     get_current_context,
     ensure_message_alternation,
     DEFAULT_MESSAGES_TO_KEEP,
     SUMMARIZATION_INTERVAL,
 )
+
+
+def _alternating_history(count):
+    """Alternating user/assistant history of `count` messages.
+
+    Module level so every test class here shares one definition (it was
+    duplicated across two classes).
+    """
+    return [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"Message {i}"}
+        for i in range(count)
+    ]
 
 
 class TestPrepareHistoryForLLM:
@@ -127,6 +142,77 @@ class TestPrepareHistoryForLLM:
         # After alternation, consecutive same-role messages should be merged
         # The exact behavior depends on ensure_message_alternation implementation
         assert len(history) >= 1
+
+
+class TestSummarizationTrigger:
+    """Summarization must fire once per interval band regardless of history
+    length parity (merged consecutive messages shift parity, and the old
+    strict `% N == 0` check then never fired again)."""
+
+    @pytest.mark.asyncio
+    async def test_even_parity_summarizes_at_interval(self):
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="summary of old messages"),
+        ) as mock_summarize:
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=_alternating_history(count),
+                existing_summary=None,
+            )
+        mock_summarize.assert_awaited_once()
+        assert summary is not None and "summary of old messages" in summary
+
+    @pytest.mark.asyncio
+    async def test_odd_parity_still_summarizes(self):
+        # Odd over-threshold counts (from message merging) previously never
+        # hit `% N == 0` and the summary silently stopped updating.
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL + 1
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="summary of old messages"),
+        ) as mock_summarize:
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=_alternating_history(count),
+                existing_summary=None,
+            )
+        mock_summarize.assert_awaited_once()
+        assert summary is not None and "summary of old messages" in summary
+
+    @pytest.mark.asyncio
+    async def test_mid_band_does_not_summarize(self):
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL // 2
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="should not be called"),
+        ) as mock_summarize:
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=_alternating_history(count),
+                existing_summary="keep me",
+            )
+        mock_summarize.assert_not_awaited()
+        assert summary == "keep me"
+
+
+class TestBoundSummaryContext:
+    """Tests for the accreted-summary length bound."""
+
+    def test_short_context_unchanged(self):
+        assert bound_summary_context("short summary", 100) == "short summary"
+
+    def test_none_passthrough(self):
+        assert bound_summary_context(None, 100) is None
+
+    def test_long_context_trimmed_keeps_tail(self):
+        context = "old " * 1000 + "MOST RECENT DETAILS"
+        bounded = bound_summary_context(context, 200)
+        assert bounded is not None
+        assert len(bounded) <= 200
+        assert bounded.startswith(TRIMMED_CONTEXT_PREFIX)
+        assert bounded.endswith("MOST RECENT DETAILS")
+
+    def test_nonpositive_limit_passthrough(self):
+        assert bound_summary_context("anything", 0) == "anything"
 
 
 class TestShouldStoreSummary:
@@ -400,3 +486,115 @@ class TestBackgroundGenerateSummary:
 
         await chat.arefresh_from_db()
         assert chat.summary_for_next_call[-1] == placeholder
+
+
+class TestSummaryReplacesInsteadOfNesting:
+    """Re-summarization covers the whole dropped prefix, so a previous
+    full-prefix summary block is replaced -- adjacent band triggers must not
+    nest near-identical summaries inside each other."""
+
+    @pytest.mark.asyncio
+    async def test_previous_summary_block_is_replaced(self):
+        existing = (
+            "Earlier conversation summary: OLD SUMMARY\n\n"
+            "Additional context: microsite details here"
+        )
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="NEW SUMMARY"),
+        ):
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=_alternating_history(count),
+                existing_summary=existing,
+            )
+        assert summary == (
+            "Earlier conversation summary: NEW SUMMARY\n\n"
+            "Additional context: microsite details here"
+        )
+        assert "OLD SUMMARY" not in summary
+
+    @pytest.mark.asyncio
+    async def test_summary_only_block_is_fully_replaced(self):
+        existing = "Earlier conversation summary: OLD SUMMARY"
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="NEW SUMMARY"),
+        ):
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=_alternating_history(count),
+                existing_summary=existing,
+            )
+        assert summary == "Earlier conversation summary: NEW SUMMARY"
+
+    @pytest.mark.asyncio
+    async def test_non_summary_context_still_appended(self):
+        existing = "PubMed context: relevant study details"
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="NEW SUMMARY"),
+        ):
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=_alternating_history(count),
+                existing_summary=existing,
+            )
+        assert summary == (
+            "Earlier conversation summary: NEW SUMMARY\n\n"
+            "Additional context: PubMed context: relevant study details"
+        )
+
+
+class TestSummaryStripHandlesRealCallerShapes:
+    """The de-nesting guard used to test `startswith(EARLIER_SUMMARY_LABEL)`,
+    but the production caller never passes that shape — it passes the model's
+    own per-turn summary, or chat_interface's
+    "Previous context summary: ... Most recent context summary: ..." wrapper,
+    optionally prefixed by the trim marker. So the strip never fired and
+    summaries nested on every band."""
+
+    def test_wrapped_and_trimmed_summaries_are_stripped(self):
+        existing = (
+            f"{TRIMMED_CONTEXT_PREFIX}Previous context summary:\n"
+            "Earlier conversation summary: OLD SUMMARY\n\n"
+            "Additional context: Microsite context:\nacme-health\n\n"
+            "Most recent context summary:\n"
+            "Earlier conversation summary: NEWER SUMMARY\n\n"
+            "Additional context: PubMed context: an abstract"
+        )
+        stripped = strip_previous_summary_blocks(existing)
+
+        assert "OLD SUMMARY" not in stripped
+        assert "NEWER SUMMARY" not in stripped
+        # Non-summary context survives.
+        assert "Microsite context" in stripped
+        assert "PubMed context" in stripped
+
+    def test_context_without_a_summary_block_is_untouched(self):
+        plain = "User asked about a knee MRI denial from Blue Shield."
+        assert strip_previous_summary_blocks(plain) == plain
+
+    def test_bare_summary_leaves_nothing(self):
+        assert (
+            strip_previous_summary_blocks("Earlier conversation summary: OLD") is None
+        )
+
+
+class TestBoundSummaryContextSmallLimits:
+    """`context[-0:]` is the WHOLE string, so any max_chars at or below the
+    trim marker's length returned MORE than the input — the bound silently
+    inverted, with a marker claiming trimming had happened."""
+
+    def test_limit_below_marker_length_still_bounds(self):
+        context = "old context " * 500
+        for limit in (1, 5, len(TRIMMED_CONTEXT_PREFIX)):
+            bounded = bound_summary_context(context, limit)
+            assert len(bounded) <= limit, f"limit={limit} produced {len(bounded)} chars"
+
+    def test_limit_above_marker_length_keeps_tail_with_marker(self):
+        context = "old " * 500 + "MOST RECENT"
+        bounded = bound_summary_context(context, 100)
+        assert len(bounded) <= 100
+        assert bounded.startswith(TRIMMED_CONTEXT_PREFIX)
+        assert bounded.endswith("MOST RECENT")

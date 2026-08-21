@@ -46,6 +46,7 @@ english-words>=2.0.0
 easy_thumbnails
 exceptionite
 flake8-django
+geoip2fast==1.2.2  # IP -> US state guess + ASN for chat; needs FHI_GEOIP_CITY_DB (see README "GeoIP")
 geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent

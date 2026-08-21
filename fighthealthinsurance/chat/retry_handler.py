@@ -5,7 +5,7 @@ Provides retry logic with fallback strategies for handling LLM failures
 gracefully. Uses parallel calls to multiple backends with quality scoring.
 """
 
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -15,10 +15,39 @@ from fighthealthinsurance.chat.llm_client import (
     _extract_document_names_from_history,
     build_retry_calls,
     compute_repetition_penalty,
+    find_repeated_reply,
+    user_requested_repeat,
 )
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.utils import best_two_within_timelimit
+
+# Decisive (but finite) penalty for a retry candidate that still repeats a
+# recent reply. Retry base scores top out around quality**2 // 2 (~22k), so
+# this guarantees any non-repeating candidate outranks every repeat -- while
+# still allowing a repeat to be delivered as the absolute last resort when
+# nothing else came back at all (a repeat beats a hard error frame here; the
+# PRIMARY pass, by contrast, hard-rejects repeats with -inf so this retry
+# pass gets its chance).
+REPEAT_LAST_RESORT_PENALTY = -1_000_000.0
+
+# Higher sampling temperature for anti-repeat retries: the loops this breaks
+# are often near-deterministic generations, and the temperature bump (plus
+# the changed prompt text) shakes the model out of re-emitting the same
+# reply.
+ANTI_REPEAT_TEMPERATURE = 0.85
+
+# Appended to the user message on an anti-repeat retry. Clearly marked as
+# system-injected so the model doesn't attribute it to the user, and the
+# extra text also changes the prompt bytes, which breaks any upstream
+# response caching that could otherwise serve the same reply again.
+ANTI_REPEAT_NOTE = (
+    "[Note from the system, not the user: your earlier draft repeated your "
+    "previous reply, which the user has already read. Do not send it again. "
+    "Answer the user's newest message directly, using the details they have "
+    "already provided in this conversation (for example a state name or a "
+    "yes/no answer), and move the conversation forward.]"
+)
 
 
 def create_simple_retry_scorer(
@@ -85,6 +114,14 @@ def create_simple_retry_scorer(
                     response_text, chat_history or [], current_message
                 )
 
+            # A retry candidate that still (nearly) repeats a recent reply
+            # loses to ANY non-repeating candidate, but stays deliverable
+            # as the absolute last resort (finite penalty, not -inf).
+            if not user_requested_repeat(current_message) and find_repeated_reply(
+                response_text, chat_history, current_message
+            ):
+                score += REPEAT_LAST_RESORT_PENALTY
+
         # Small bonus for context
         if context_part and len(context_part) > MIN_RESPONSE_LENGTH:
             score += 10
@@ -106,6 +143,10 @@ async def retry_llm_with_fallback(
     status_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     user_message_for_scoring: Optional[str] = None,
+    anti_repeat: bool = False,
+    extended_timeout: float = 40.0,
+    allow_repeated_reply: bool = False,
+    debug_info: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
@@ -130,6 +171,18 @@ async def retry_llm_with_fallback(
             scoring. Distinct from current_message, which may be wrapped with
             intro-template content or the delete-data instruction. Defaults to
             current_message when not provided.
+        anti_repeat: True when the primary pass produced only (rejected)
+            repeats of a recent reply. Appends an explicit do-not-repeat
+            instruction to the message and raises the sampling temperature
+            so the retry actually generates something new.
+        allow_repeated_reply: True when the user explicitly asked for a
+            repeat. Derived from the RAW user message by the caller (the
+            wrapped current_message contains system-injected text mentioning
+            "repeat") and forwarded to the backends so their self-heal loop
+            doesn't fight the user's request.
+        debug_info: Optional mutable dict; on a successful retry it receives
+            "retry_picked_model" (backend label) and "retry_picked_score"
+            so the caller's debug output can attribute the delivered answer.
 
     Returns:
         Tuple of (response_text, context_part) or (None, None) on failure
@@ -137,7 +190,10 @@ async def retry_llm_with_fallback(
     if status_callback:
         await status_callback("Retrying with optimized context...")
 
-    logger.info("Primary attempt failed, retrying with compacted context")
+    logger.info(
+        "Primary attempt failed, retrying with compacted context"
+        + (" and anti-repeat instruction" if anti_repeat else "")
+    )
 
     scoring_message = (
         user_message_for_scoring
@@ -145,15 +201,25 @@ async def retry_llm_with_fallback(
         else current_message
     )
 
+    retry_message = current_message
+    retry_temperature = 0.7
+    if anti_repeat:
+        retry_message = f"{current_message}\n\n{ANTI_REPEAT_NOTE}"
+        retry_temperature = ANTI_REPEAT_TEMPERATURE
+
     # Build retry calls with shortened history and fallbacks
+    call_labels: Dict[Awaitable, str] = {}
     retry_calls, retry_scores = build_retry_calls(
         model_backends=model_backends,
-        current_message=current_message,
+        current_message=retry_message,
         previous_context_summary=previous_context_summary,
         history=history,
         is_professional=is_professional,
         is_logged_in=is_logged_in,
         fallback_backends=fallback_backends,
+        temperature=retry_temperature,
+        allow_repeated_reply=allow_repeated_reply,
+        call_labels=call_labels,
     )
 
     # Create simplified scorer for retries
@@ -162,17 +228,32 @@ async def retry_llm_with_fallback(
     )
 
     try:
-        best_retry = await best_within_timelimit(
+        best_retry = await best_two_within_timelimit(
             retry_calls,
             retry_scorer,
             timeout=timeout,
+            # Bounded overtime so primary (30+30) + retry (35+40) fit inside
+            # the FHI_CHAT_TURN_BUDGET (150s default) instead of the default
+            # 2x-timeout overtime blowing past it mid-retry.
+            extended_timeout=extended_timeout,
         )
         retry_response, retry_context = (
-            best_retry if best_retry is not None else (None, None)
+            best_retry.best if best_retry.best is not None else (None, None)
         )
 
         if retry_response and len(retry_response.strip()) > MIN_RESPONSE_LENGTH:
-            logger.info("Successfully got response from retry/fallback models")
+            picked = (
+                call_labels.get(best_retry.best_task)
+                if best_retry.best_task is not None
+                else None
+            )
+            if debug_info is not None:
+                debug_info["retry_picked_model"] = picked
+                debug_info["retry_picked_score"] = best_retry.best_score
+            logger.info(
+                "Successfully got response from retry/fallback models "
+                f"(picked {picked or 'unknown'}, score={best_retry.best_score})"
+            )
             return retry_response, retry_context
 
     except Exception as e:

@@ -132,6 +132,58 @@ default), every configured model is enabled.
 export ENABLED_REMOTE_MODELS="azure-anthropic/claude-opus-4-8,azure-openai/gpt-5"
 ```
 
+### GeoIP (chat state guessing + ASN tracking)
+
+The chat can seed the model with a *best-effort, unconfirmed* guess of the
+user's US state from their connection IP (so Medicaid questions can start with
+"it looks like you might be in California — is that right?" instead of a cold
+"which state are you in?"), and request tracking can record network-level ASN
+info. Both need a [geoip2fast](https://github.com/rabuchaim/geoip2fast)
+city-level database, switched on by **one key**:
+
+```bash
+export FHI_GEOIP_CITY_DB=/path/to/geoip2fast-city-asn-ipv6.dat.gz
+```
+
+The `geoip2fast` package itself is installed via `requirements.txt`, but it
+only bundles country/ASN databases — state (subdivision) data requires a
+city-level file downloaded from the geoip2fast releases. Use the
+`-city-asn-ipv6` variant so ASN lookups work too:
+
+```bash
+# Pin a specific release tag, never the moving `LATEST`.
+GEOIP2FAST_RELEASE=v1.2.2
+curl -L -o geoip2fast-city-asn-ipv6.dat.gz \
+  "https://github.com/rabuchaim/geoip2fast/releases/download/${GEOIP2FAST_RELEASE}/geoip2fast-city-asn-ipv6.dat.gz"
+
+# Verify against a digest you already trust. GEOIP2FAST_SHA256 must come from
+# somewhere INDEPENDENT of this download -- the value published by the project
+# for this tag, or one you recorded on a trusted machine and then stored in
+# the repo / your secrets manager. Deriving it from the file you just fetched
+# (sha256sum file > file.sha256 && sha256sum -c) verifies nothing: a swapped
+# asset passes its own checksum.
+GEOIP2FAST_SHA256=<expected-digest-for-${GEOIP2FAST_RELEASE}>
+echo "${GEOIP2FAST_SHA256}  geoip2fast-city-asn-ipv6.dat.gz" | sha256sum -c - \
+  || { echo "GeoIP database failed checksum -- refusing to install"; exit 1; }
+
+export FHI_GEOIP_CITY_DB="$PWD/geoip2fast-city-asn-ipv6.dat.gz"
+```
+
+> **Treat this file as trusted code, not data.** geoip2fast loads the database
+> with `pickle.load()`, so anything that can replace the file (a swapped
+> release asset, a MITM on a build box, write access to the deployment volume)
+> can execute code inside the web process — which holds DB credentials and the
+> PHI field-encryption keys. Pin the release, verify the checksum before the
+> file reaches a server, and give the mounted path the same write protections
+> you give application code.
+
+**Soft fail:** when `FHI_GEOIP_CITY_DB` is unset (or the file is missing /
+unreadable, or the package isn't installed) nothing breaks — the state guess
+and ASN lookups simply return nothing, and a single warning naming
+`FHI_GEOIP_CITY_DB` is logged at startup so the misconfiguration is visible.
+The guess is transient by design: it is fed to the model as unconfirmed
+context each turn and is never persisted for anonymous users.
+
 ### Model backend health checks
 
 Every deployment runs an end-to-end health check of all **enabled** model
