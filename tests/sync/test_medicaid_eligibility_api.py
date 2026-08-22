@@ -751,3 +751,178 @@ class TestGetMedicaidInfo(SimpleTestCase):
         # The MISC section looped over columns already projected away, so it
         # emitted a header promising data it structurally could not deliver.
         self.assertNotIn("MISC", get_medicaid_info({"state": "ca"}))
+
+    def test_territory_with_no_csv_row_returns_none(self):
+        # PR/GU/VI/AS/MP normalize to a display name but have no row in
+        # medicaid_resources.csv. Returning "No Medicaid data found for X."
+        # here handed the caller prose it wraps as "Here's the official
+        # Medicaid information for Puerto Rico:" -- presenting a miss as data.
+        self.assertIsNone(get_medicaid_info({"state": "Puerto Rico"}))
+
+
+class TestDeclinedAnswersDoNotBecomeVerdicts(SimpleTestCase):
+    """A question the user declined leaves the category unscored.
+
+    ``ask()`` silently skips declined fields, so every caller that would
+    otherwise fall through to a verdict has to notice the difference between
+    "the answer is no" and "we never got to run this test".
+    """
+
+    def test_declined_assets_leaves_abd_pathway_unscored(self):
+        _, _, _, _, missing, determination_made = is_eligible(
+            **_answers(
+                age=66, monthly_income=900, on_medicare=False,
+                years_worked=40, assets_total="unknown",
+            )
+        )
+        self.assertFalse(determination_made)
+        self.assertEqual(missing, [])
+
+    def test_declined_assets_still_offers_spend_down_in_a_medically_needy_state(self):
+        *_, alts, _, _ = is_eligible(
+            **_answers(
+                age=66, monthly_income=900, on_medicare=False,
+                years_worked=40, assets_total="unknown",
+            )
+        )
+        self.assertIn(
+            "Medically-needy/spend-down Medicaid may help if medical bills are high.",
+            alts,
+        )
+
+    def test_declined_work_hours_leaves_2026_unscored(self):
+        _, _, _, _, missing, determination_made = is_eligible(
+            **_answers(
+                avg_monthly_qualifying_hours_last_3mo="unknown",
+                total_qualifying_hours_last_3mo="unknown",
+            )
+        )
+        self.assertFalse(determination_made)
+        self.assertEqual(missing, [])
+
+    def test_declined_work_hours_keeps_the_settled_2025_verdict(self):
+        eligible_2025, *_ = is_eligible(
+            **_answers(
+                avg_monthly_qualifying_hours_last_3mo="unknown",
+                total_qualifying_hours_last_3mo="unknown",
+            )
+        )
+        self.assertTrue(eligible_2025)
+
+    def test_declined_years_worked_still_offers_the_part_a_buy_in(self):
+        *_, alts, _, _ = is_eligible(
+            **_answers(age=67, on_medicare=False, years_worked="unknown", assets_total=500)
+        )
+        self.assertIn(
+            "You may be eligible to buy Medicare Part A even if you don't "
+            "qualify for premium-free Part A.",
+            alts,
+        )
+
+    def test_declined_years_worked_leaves_medicare_unscored(self):
+        _, _, _, _, _, determination_made = is_eligible(
+            **_answers(age=67, on_medicare=False, years_worked="unknown", assets_total=500)
+        )
+        self.assertFalse(determination_made)
+
+    def test_indeterminate_result_names_the_field_it_could_not_check(self):
+        *_, alts, _, _ = is_eligible(
+            **_answers(
+                age=66, monthly_income=900, on_medicare=False,
+                years_worked=40, assets_total="unknown",
+            )
+        )
+        self.assertTrue(
+            any("could not check assets total" in a for a in alts),
+            f"no disclosure of the unchecked field in {alts}",
+        )
+
+
+class TestTerritoryShortCircuit(SimpleTestCase):
+    """Territories are not modeled, so don't interrogate them about Medicaid."""
+
+    def test_medicaid_only_questions_are_dropped(self):
+        *_, missing, _ = is_eligible(state="pr")
+        for question in missing:
+            self.assertNotIn("household", question.lower())
+            self.assertNotIn("income", question.lower())
+
+    def test_medicare_relevant_questions_survive(self):
+        *_, missing, _ = is_eligible(state="pr")
+        self.assertIn("How old are you?", missing)
+
+    def test_territory_medicare_verdict_is_still_produced(self):
+        _, _, medicare, _, missing, determination_made = is_eligible(
+            **_answers(state="pr", age=67, on_medicare=False, years_worked=40)
+        )
+        self.assertTrue(medicare)
+        self.assertEqual(missing, [])
+        self.assertFalse(determination_made)
+
+
+class TestAmbiguousStateInput(SimpleTestCase):
+    """Program names resolve exactly or not at all -- never fuzzily."""
+
+    def test_misspelled_medicaid_does_not_resolve_to_california(self):
+        *_, missing, _ = is_eligible(state="medicad")
+        self.assertIn("What state do you live in?", missing)
+
+    def test_exact_program_name_still_resolves(self):
+        eligible_2025, *_ = is_eligible(**_answers(state="medi-cal"))
+        self.assertTrue(eligible_2025)
+
+    def test_a_program_name_shared_by_two_states_re_asks(self):
+        *_, missing, _ = is_eligible(state="healthy connections")
+        self.assertIn("What state do you live in?", missing)
+
+    def test_a_genuine_state_typo_still_fuzzy_matches(self):
+        eligible_2025, *_ = is_eligible(**_answers(state="californa"))
+        self.assertTrue(eligible_2025)
+
+
+class TestAnswerVocabulary(SimpleTestCase):
+    """Natural phrasings of common answers must not read as unanswered."""
+
+    def test_no_income_is_recorded_as_zero(self):
+        summary = summarize_eligibility_inputs({"monthly_income": "no income"})
+        self.assertEqual(summary["recorded"]["monthly_income"], 0.0)
+
+    def test_no_income_does_not_re_ask_for_income(self):
+        *_, missing, _ = is_eligible(**_answers(monthly_income="no income"))
+        for question in missing:
+            self.assertNotIn("monthly income", question.lower())
+
+    def test_unemployed_is_not_treated_as_zero_income(self):
+        # A job status is not an amount, and unemployment benefits are income.
+        summary = summarize_eligibility_inputs({"monthly_income": "unemployed"})
+        self.assertIn("monthly_income", summary["unreadable"])
+
+    def test_widowed_answers_the_married_question(self):
+        summary = summarize_eligibility_inputs({"married": "widowed"})
+        self.assertIs(summary["recorded"]["married"], False)
+
+
+class TestSpendDownSuggestion(SimpleTestCase):
+    """Only suggest medically-needy Medicaid where the program exists."""
+
+    def test_not_suggested_in_a_state_without_the_program(self):
+        *_, alts, _, _ = is_eligible(
+            **_answers(
+                state="tx", age=70, monthly_income=3000, on_medicare=True,
+                assets_total=50000, years_worked=40,
+            )
+        )
+        for alt in alts:
+            self.assertNotIn("medically-needy", alt.lower())
+
+    def test_suggested_in_a_state_with_the_program(self):
+        *_, alts, _, _ = is_eligible(
+            **_answers(
+                state="ca", age=70, monthly_income=3000, on_medicare=True,
+                assets_total=50000, years_worked=40,
+            )
+        )
+        self.assertTrue(
+            any("medically-needy" in a.lower() for a in alts),
+            f"expected a spend-down pointer in {alts}",
+        )

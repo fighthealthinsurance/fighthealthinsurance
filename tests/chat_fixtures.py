@@ -45,7 +45,7 @@ CANNED_MEDICAID_REPLY = (
     "New federal rules require many adults (ages 19-64) to complete at least "
     "80 hours per month of work, job training, school, or community service "
     "to keep Medicaid coverage. These requirements go into effect by "
-    "December 31, 2026. For detailed information, visit: "
+    "January 1, 2027. For detailed information, visit: "
     "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
 )
 

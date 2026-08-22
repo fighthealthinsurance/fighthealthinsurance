@@ -167,7 +167,6 @@ _ALIASES = {
     "nj familycare": "new jersey",
     "turquoise care": "new mexico",
     "soonercare": "oklahoma",
-    "healthy connections": "south carolina",
     "tenncare": "tennessee",
     "star+plus": "texas",
     "star plus": "texas",
@@ -187,8 +186,44 @@ _ALIASES = {
 for full, abbr in list(_STATE_MAP.items()):
     _ALIASES[abbr] = full
 
-# Precompute candidate keys (full names + aliases)
-_CANDIDATE_KEYS = set(_STATE_MAP.keys()) | set(_ALIASES.keys())
+# State program names are matched EXACTLY, never fuzzily. "medical" (how
+# "Medi-Cal" survives punctuation stripping) sits 0.857 away from "medicad",
+# a routine misspelling of "medicaid" -- above the 0.84 cutoff -- so leaving
+# these in the fuzzy pool silently scored typo'd input under California's
+# rules. A program name is either recognized exactly or it is not a state.
+_PROGRAM_ALIASES = frozenset(
+    {
+        "medi-cal",
+        "medical",
+        "denalicare",
+        "health first colorado",
+        "husky health",
+        "diamond state health plan",
+        "med-quest",
+        "medquest",
+        "healthchoice illinois",
+        "hoosier healthwise",
+        "kansas medical assistance program",
+        "mainecare",
+        "masshealth",
+        "mo healthnet",
+        "nj familycare",
+        "turquoise care",
+        "soonercare",
+        "tenncare",
+        "star+plus",
+        "star plus",
+        "green mountain care",
+        "cardinal care",
+        "apple health",
+        "forward health",
+        "forwardhealth",
+        "equality care",
+    }
+)
+
+# Precompute candidate keys (full names + aliases) for fuzzy matching
+_CANDIDATE_KEYS = (set(_STATE_MAP.keys()) | set(_ALIASES.keys())) - _PROGRAM_ALIASES
 
 # Reverse map: 2-letter code -> display name, derived from _STATE_MAP so the
 # two never drift apart. Later duplicate full-name keys ("washington dc",
@@ -345,6 +380,12 @@ _FALSE_STRINGS = frozenset(
         "never",
         "i am not",
         "i'm not",
+        # Marital-status answers to "Are you married or single?". Without
+        # these the question is re-asked every turn, since the answer parses
+        # to None (unanswered) rather than to "not currently married".
+        "widowed",
+        "divorced",
+        "separated",
     }
 )
 
@@ -396,6 +437,21 @@ _DECLINE_DEFAULTS: Dict[str, Any] = {
 # Without these there is no estimate to give, so a decline here stops the
 # flow with an explanation instead of a silent "not eligible".
 _REQUIRED_FOR_ESTIMATE = ("state", "age", "household_size", "monthly_income")
+
+# Questions that feed the Medicare determination. Medicare is federal and
+# operates in the territories, so these survive the territory short-circuit
+# while the Medicaid-only questions are dropped.
+_MEDICARE_QUESTION_FIELDS = frozenset(
+    {
+        "age",
+        "on_medicare",
+        "years_worked",
+        "receiving_ssdi",
+        "ssdi_length",
+        "esrd",
+        "als",
+    }
+)
 
 # Every kwarg is_eligible reads. Anything else the model sends is silently
 # ignored today, which looks to the model like the answer was accepted -- so
@@ -457,6 +513,17 @@ def _is_unknown_marker(value: Any) -> bool:
 _WORD_NUMBERS = {
     "zero": 0,
     "none": 0,
+    # Natural answers to "About how much is your household's monthly income?"
+    # from someone with no income. monthly_income is in _REQUIRED_FOR_ESTIMATE
+    # so it cannot be defaulted away -- leaving these unparsed re-asked the
+    # same question every turn. "unemployed" is deliberately absent: it is a
+    # job status, not an amount, and unemployment benefits are income.
+    "no income": 0,
+    "zero income": 0,
+    "nothing": 0,
+    "none at all": 0,
+    "no money": 0,
+    "nil": 0,
     "one": 1,
     "two": 2,
     "three": 3,
@@ -738,6 +805,15 @@ def is_eligible(
         name for name, raw in kwargs.items() if _is_unknown_marker(raw)
     )
     assumed_fields: List[str] = []
+    # Field name behind each queued question, parallel to ``missing`` (every
+    # append goes through ask()). Lets the territory branch keep the
+    # questions that can still produce an answer and drop the rest.
+    asked_fields: List[str] = []
+    # Categories we could not score because the answer they need was
+    # declined. Unlike _REQUIRED_FOR_ESTIMATE (which stops the flow), these
+    # let the rest of the estimate stand while keeping determination_made
+    # False, so the chat tool reports "not scored" instead of "not eligible".
+    indeterminate: List[str] = []
     if declined_fields:
         kwargs = dict(kwargs)
         for name in declined_fields:
@@ -815,11 +891,19 @@ def is_eligible(
     eligible_2026 = False
     eligible_medicare = False
 
-    def ask(field: str, question: str) -> None:
-        """Queue a question unless the user already declined that field."""
+    def ask(field: str, question: str) -> bool:
+        """Queue a question unless the user already declined that field.
+
+        Returns True when the question was actually queued. Callers that
+        would otherwise fall straight through to a verdict need that
+        distinction: a declined field means "we could not score this", not
+        "the answer is no".
+        """
         if field in declined_set:
-            return
+            return False
         missing.append(question)
+        asked_fields.append(field)
+        return True
 
     def _result(
         determination_made: bool = False,
@@ -932,10 +1016,21 @@ def is_eligible(
             eligible_medicare = True
         elif is_65_plus:
             if years_worked is None:
-                ask(
+                if not ask(
                     "years_worked",
                     "How many years did you (or spouse or ex-spouse) work and pay medicare taxes?",
-                )
+                ):
+                    # Declined: we can't confirm premium-free Part A, but a
+                    # 65+ applicant still has the buy-in and MSP pathways.
+                    # Falling through silently left them with no Medicare
+                    # answer AND no alternatives at all.
+                    indeterminate.append("years_worked")
+                    alts.append(
+                        "You may be eligible to buy Medicare Part A even if you don't qualify for premium-free Part A."
+                    )
+                    alts.append(
+                        "Medicare Savings Programs (QMB/SLMB/QI) can help pay Medicare premiums when income and assets are low."
+                    )
             elif years_worked >= 10:
                 # 10 years (40 quarters) of Medicare taxes = premium-free Part A.
                 eligible_medicare = True
@@ -969,6 +1064,18 @@ def is_eligible(
             "Medicaid in US territories follows different rules than the states"
             "—contact your territory's Medicaid agency for eligibility limits."
         )
+        # Drop the Medicaid-only questions the stepwise block queued above: no
+        # answer to them can produce a territory Medicaid estimate, so asking
+        # spent several turns to arrive at the same "not modeled". Keep the
+        # Medicare-relevant ones -- Medicare is federal and does operate here,
+        # so those can still resolve into a real answer.
+        keep = [
+            question
+            for field, question in zip(asked_fields, missing)
+            if field in _MEDICARE_QUESTION_FIELDS
+        ]
+        asked_fields[:] = [f for f in asked_fields if f in _MEDICARE_QUESTION_FIELDS]
+        missing[:] = keep
         return _result()
 
     # LTC pathways. Note: living_situation is accepted as context but is not
@@ -1051,7 +1158,20 @@ def is_eligible(
         # LTC branch below (LTC applicants are almost always 65+/disabled, so
         # without this carve-out they'd be evaluated under the wrong rules).
         if assets_total is None:
-            ask("assets_total", _Q_ASSETS)
+            if not ask("assets_total", _Q_ASSETS):
+                # Declined: an asset test we cannot run is not a failed asset
+                # test. Without this the else-arm never ran, so a 66-year-old
+                # at 69% FPL who simply didn't know their asset total got a
+                # flat "may not be eligible" and none of the pathways below.
+                indeterminate.append("assets_total")
+                if on_medicare:
+                    alts.append(
+                        "Medicare Savings Programs (QMB/SLMB/QI) can help pay Part A/B premiums and cost-sharing."
+                    )
+                if medically_needy:
+                    alts.append(
+                        "Medically-needy/spend-down Medicaid may help if medical bills are high."
+                    )
         else:
             asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
             assets_ok = assets_total <= asset_limit
@@ -1078,10 +1198,11 @@ def is_eligible(
                     alts.append(
                         "Medically-needy/spend-down Medicaid may help if medical bills are high."
                     )
-                else:
-                    alts.append(
-                        "Ask about medically-needy/spend-down Medicaid in your state."
-                    )
+                # No else: the ~17 states without a medically-needy program
+                # for aged/disabled adults have nothing to ask about, and
+                # sending someone to their agency for a program that doesn't
+                # exist there wastes a call. The generic pointers below
+                # (state page, navigator, appeal) still apply.
     elif applying_reason in _LTC_REASONS:
         ltc_evaluated = True
         # The stepwise block above already queued these questions; here we
@@ -1232,15 +1353,21 @@ def is_eligible(
             # total_qualifying_hours_last_3mo) so the answer has a slot to
             # land in instead of being silently dropped.
             if monthly_data is None:
-                ask(
+                asked_avg = ask(
                     "avg_monthly_qualifying_hours_last_3mo",
                     "For 2026, about how many qualifying hours per month (work, school, volunteering, or caregiving) do you average?",
                 )
-                ask(
+                asked_total = ask(
                     "total_qualifying_hours_last_3mo",
                     "If easier, share your total qualifying hours over the last 3 months.",
                 )
                 eligible_2026 = False  # unknown until we get this
+                if not asked_avg and not asked_total:
+                    # Both hour questions declined, so there is no way to
+                    # apply the 80-hrs/month rule. Without this the "unknown"
+                    # above shipped as a confident "may not be eligible under
+                    # the 2026 rules" to someone who just couldn't estimate.
+                    indeterminate.append("qualifying work hours")
             else:
                 # Check monthly requirement
                 avg_monthly = sum(monthly_data) / REQUIRED_MONTHS
@@ -1291,7 +1418,13 @@ def is_eligible(
             "We can’t find a pathway with the current info—consider speaking with a benefits navigator or attorney."
         )
 
-    return _result(determination_made=True)
+    if indeterminate:
+        readable = ", ".join(f.replace("_", " ") for f in indeterminate)
+        alts.append(
+            f"We could not check {readable} because that answer wasn't "
+            "available—your state Medicaid agency can check it directly."
+        )
+    return _result(determination_made=not indeterminate)
 
 
 @lru_cache(maxsize=1)
@@ -1442,7 +1575,13 @@ def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
         df = df[df["state"].astype(str).str.lower() == state.lower()]
 
     if df.empty:
-        return f"No Medicaid data found for {state}."
+        # No row for this state. The territories (PR/GU/VI/AS/MP) normalize to
+        # a display name but have no entry in medicaid_resources.csv, and the
+        # caller wraps whatever comes back as "Here's the official Medicaid
+        # information for X:" -- so returning prose here presented "no data
+        # found" to the model as retrieved data. None routes it to the same
+        # re-ask/decline path as an unrecognized state.
+        return None
 
     # Focus on the most important contact info
     important_cols = [

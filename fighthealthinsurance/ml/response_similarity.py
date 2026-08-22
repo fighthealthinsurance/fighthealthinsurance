@@ -57,11 +57,16 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 # link the Medicaid FAQ whenever work requirements come up, so matching on
 # the link alone exempted every ordinary Medicaid reply -- including the
 # looping ones this module exists to catch -- from the whole ladder.
+# NOTE: every marker must be a DURABLE phrase, never a date. An earlier
+# version keyed the third marker on "December 31, 2026"; when the prompt's
+# block was corrected to the statutory January 1, 2027 deadline the signature
+# silently stopped matching, so the mandated block was hard-rejected as a
+# repeat and retried away from the text the prompt requires.
 CANNED_REPLY_SIGNATURES = (
     (
         "Medicaid Work Requirements FAQ",
         "80 hours per month",
-        "December 31, 2026",
+        "work, job training, school, or community service",
     ),
 )
 

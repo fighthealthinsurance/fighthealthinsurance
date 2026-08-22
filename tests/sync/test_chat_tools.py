@@ -24,6 +24,10 @@ from fighthealthinsurance.chat.tools import (
     RxNormLookupTool,
     USPSTFLookupTool,
 )
+from fighthealthinsurance.medicaid_api import (
+    is_eligible,
+    summarize_eligibility_inputs,
+)
 from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
     MAX_FETCHES_PER_SESSION,
     _sanitize_url_for_display,
@@ -1009,3 +1013,81 @@ class TestUSPSTFLookupTool(TestCase):
         # lookup so the LLM follow-up call gets the correct provenance label.
         call_args = callback.call_args
         self.assertEqual(call_args.args[2], "USPSTF preventive-services lookup")
+
+
+class TestMedicaidDeclinedAnswerRoundTrip(TestCase):
+    """A declined answer has to survive into the next tool call.
+
+    ``declined_set`` is rebuilt from the current payload each call, so the
+    "unknown" marker only suppresses its question for as long as the model
+    keeps re-sending it. The parsed-input echo is the only place the model is
+    told what to re-send, so it has to name the declined fields explicitly.
+    """
+
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+
+    def test_summary_tells_the_model_to_resend_declined_fields(self):
+        summary = summarize_eligibility_inputs(
+            {"state": "ca", "age": 66, "assets_total": "unknown"}
+        )
+        text = self.tool._build_parsed_summary(summary)
+        self.assertIn("assets_total", text)
+        self.assertIn('"unknown"', text)
+
+    def test_resending_the_unknown_marker_keeps_the_question_suppressed(self):
+        first = dict(
+            state="ca", age=66, married=False, household_size=1,
+            monthly_income=900, children_in_household=0, pregnant=False,
+            receiving_ssdi=False, on_medicare=False, years_worked=40,
+            assets_total="unknown",
+        )
+        # What the echo tells the model to send back, plus the declined marker
+        # the echo now names separately.
+        summary = summarize_eligibility_inputs(first)
+        second = dict(summary["recorded"])
+        for field in summary["declined"]:
+            second[field] = "unknown"
+
+        *_, missing, _ = is_eligible(**second)
+        self.assertEqual(missing, [])
+
+
+class TestMedicaidIndeterminateWithQuestions(TestCase):
+    """An unscorable result's next steps are actionable before the interview ends."""
+
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+
+    def test_next_steps_are_shared_while_questions_remain(self):
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Contact your territory's Medicaid agency."],
+            missing=["How old are you?"],
+            determination_made=False,
+        )
+        self.assertIn("Contact your territory's Medicaid agency.", info)
+
+    def test_no_ineligibility_claim_while_questions_remain(self):
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Contact your territory's Medicaid agency."],
+            missing=["How old are you?"],
+            determination_made=False,
+        )
+        self.assertNotIn("may not be eligible", info)
+
+    def test_a_scored_result_does_not_get_the_cannot_estimate_banner(self):
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=True,
+            medicare=False,
+            alternatives=["Visit your state Medicaid page."],
+            missing=["How old are you?"],
+            determination_made=True,
+        )
+        self.assertNotIn("canNOT produce a Medicaid estimate", info)

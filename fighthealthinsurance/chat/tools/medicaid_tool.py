@@ -452,10 +452,17 @@ class MedicaidEligibilityTool(BaseTool):
 
         declined = summary.get("declined") or []
         if declined:
+            # The declined marker lives only in the payload, so it has to come
+            # back on every subsequent call. Omitting it from the re-send list
+            # made the decline last exactly one turn: the next call arrived
+            # without it, the field read as unanswered again, and the
+            # suppressed question came straight back -- the stall this channel
+            # exists to prevent.
+            names = ", ".join(sorted(declined))
             parts.append(
-                "The user couldn't answer "
-                + ", ".join(sorted(declined))
-                + " — don't ask about those again."
+                f"The user couldn't answer {names} — don't ask about those "
+                f'again, and keep sending {names} back as "unknown" on '
+                "every following call so they stay marked as declined."
             )
 
         return "\n\n".join(parts)
@@ -522,6 +529,17 @@ class MedicaidEligibilityTool(BaseTool):
             if medicare:
                 parts.append(
                     "Our data already suggests they may be eligible for medicare."
+                )
+            if not determination_made and len(alternatives) > 0:
+                # Indeterminate with questions still outstanding -- a
+                # territory resident whose Medicare answer is still coming.
+                # The reason we can't estimate Medicaid is actionable right
+                # now, so don't sit on it until the interview finishes.
+                alternative_lines = "\n".join(f"- {a}" for a in alternatives)
+                parts.append(
+                    "Separately, we canNOT produce a Medicaid estimate for "
+                    "this person — do not say they may be ineligible. Share "
+                    "these next steps now:\n" + alternative_lines
                 )
         elif not determination_made:
             # We could not score this person at all (a US territory, or a
