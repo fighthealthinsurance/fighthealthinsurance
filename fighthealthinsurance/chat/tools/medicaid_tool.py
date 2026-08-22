@@ -486,6 +486,10 @@ class MedicaidEligibilityTool(BaseTool):
             medicare: Whether eligible for Medicare
             alternatives: List of alternative suggestions
             missing: List of missing-information questions still to ask
+            determination_made: False when the checker could not score this
+                person at all (a US territory, or a required answer they
+                declined). A False here must never be rendered as an
+                ineligibility verdict -- that is the whole point of the flag.
 
         Returns:
             Formatted information text

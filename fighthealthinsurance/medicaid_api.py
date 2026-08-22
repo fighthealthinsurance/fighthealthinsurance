@@ -151,7 +151,6 @@ _ALIASES = {
     # state from these; this is the backstop for when it passes the program
     # name straight through as the "state".
     "medi-cal": "california",
-    "medical": "california",
     "denalicare": "alaska",
     "health first colorado": "colorado",
     "husky health": "connecticut",
@@ -194,7 +193,6 @@ for full, abbr in list(_STATE_MAP.items()):
 _PROGRAM_ALIASES = frozenset(
     {
         "medi-cal",
-        "medical",
         "denalicare",
         "health first colorado",
         "husky health",
@@ -670,7 +668,8 @@ def is_eligible(
 ) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
     """
     Perform an approximate eligibility check for Medicaid / Medicare based on the provided parameters.
-    Returns a tuple of (2025 eligibility, 2026 eligibility, medicare, alternatives, missing_info).
+    Returns a tuple of (2025 eligibility, 2026 eligibility, medicare,
+    alternatives, missing_info, determination_made).
 
     IMPORTANT: This uses simplified heuristics. Medicaid rules vary by state and change often.
     Treat results as a best guess only and confirm with state resources.
@@ -1034,9 +1033,15 @@ def is_eligible(
             elif years_worked >= 10:
                 # 10 years (40 quarters) of Medicare taxes = premium-free Part A.
                 eligible_medicare = True
-            elif receiving_ssdi and ssdi_length is None:
+            elif ssdi_answer and ssdi_length is None:
                 # Don't rule Medicare out yet: 24+ months of SSDI would
                 # qualify them and that question is still outstanding.
+                #
+                # Gate on ssdi_answer, not receiving_ssdi: the latter is
+                # ORed with `disabled`, so someone who answered "disabled,
+                # not on SSDI" waited here for an ssdi_length question that
+                # is never asked (it is gated on ssdi_answer too). They fell
+                # out with a silent Medicare False and no alternatives.
                 pass
             else:
                 eligible_medicare = False
@@ -1433,6 +1438,11 @@ def _load_medicaid_resources() -> "Optional[pd.DataFrame]":
 
     The file is ~400 KB and only ever yields one state's row, so re-parsing
     it on every lookup was pure overhead on a chat turn.
+
+    The cache hands every caller the SAME DataFrame for the life of the
+    process, so callers must treat it as read-only: slice and filter (which
+    build new objects) rather than mutating in place. An ``inplace=True``
+    rename or a column assignment here would corrupt every later lookup.
     """
     file_path = DATA_DIR / DEFAULT_FILE
     if not file_path.exists():

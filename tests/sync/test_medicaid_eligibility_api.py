@@ -212,6 +212,10 @@ class TestQuestionFlow(SimpleTestCase):
             als=False,
         )
         self.assertTrue(eligible_2025)
+        # The stall this name refers to: pregnancy was required by the
+        # completeness gate but never asked for a 2-year-old, so the flow
+        # dead-ended. Assert it is neither asked nor outstanding.
+        self.assertEqual(missing, [])
 
     def test_sixty_five_year_old_is_asked_about_medicare(self):
         # Regression: the medicare question used `age > 65`, skipping
@@ -926,3 +930,59 @@ class TestSpendDownSuggestion(SimpleTestCase):
             any("medically-needy" in a.lower() for a in alts),
             f"expected a spend-down pointer in {alts}",
         )
+
+
+class TestDisabledButNotOnSsdi(SimpleTestCase):
+    """`receiving_ssdi` is ORed with `disabled`; the SSDI question is not.
+
+    Regression: the "don't rule Medicare out yet" branch waited on
+    ``receiving_ssdi``, which is true when only ``disabled`` was supplied,
+    but the ssdi_length question it waits for is gated on the SSDI answer
+    alone. Someone who said "disabled, not on SSDI" therefore waited on a
+    question that never got asked.
+    """
+
+    def _disabled_senior(self):
+        return is_eligible(
+            **_answers(
+                age=66, receiving_ssdi=False, disabled=True,
+                on_medicare=False, years_worked=5, assets_total=500,
+            )
+        )
+
+    def test_no_silent_medicare_denial(self):
+        *_, alts, missing, _ = self._disabled_senior()
+        self.assertTrue(
+            missing or alts,
+            "a 66-year-old got no Medicare verdict, no question, and no next step",
+        )
+
+    def test_part_a_buy_in_is_offered(self):
+        *_, alts, _, _ = self._disabled_senior()
+        self.assertTrue(
+            any("buy Medicare Part A" in a for a in alts),
+            f"expected the Part-A buy-in pointer in {alts}",
+        )
+
+    def test_actual_ssdi_recipient_still_defers(self):
+        # The deferral is still correct when they really are on SSDI: the
+        # ssdi_length question is asked, so don't conclude anything yet.
+        *_, missing, _ = is_eligible(
+            **_answers(
+                age=66, receiving_ssdi=True, on_medicare=False,
+                years_worked=5, assets_total=500,
+            )
+        )
+        self.assertIn("How many months have you been receiving SSDI?", missing)
+
+
+class TestBareMedicalIsAmbiguous(SimpleTestCase):
+    """Pennsylvania, Minnesota and Maryland all call their program "Medical Assistance"."""
+
+    def test_bare_medical_re_asks_instead_of_guessing_california(self):
+        *_, missing, _ = is_eligible(state="medical", age=30)
+        self.assertTrue(any("state" in q.lower() for q in missing))
+
+    def test_hyphenated_medi_cal_still_resolves(self):
+        eligible_2025, *_ = is_eligible(**_answers(state="medi-cal"))
+        self.assertTrue(eligible_2025)

@@ -1714,6 +1714,4 @@ def medicaid_eligibility_page_enabled() -> bool:
     hand-copied ``getattr(settings, ...)`` checks could drift, which would
     either hide a live page from crawlers or advertise a 404 to them.
     """
-    from django.conf import settings
-
     return bool(getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False))

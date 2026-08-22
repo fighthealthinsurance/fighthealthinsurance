@@ -19,7 +19,7 @@
                     <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
                     <p class="hero-subcopy">Answer a few questions with our free, <strong>experimental</strong> AI assistant and get a rough estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required. It's an estimate only, <strong>not</strong> an official determination&mdash;always confirm with your state.</p>
                     <div class="hero-cta-group">
-                        <a href="{% url 'chat' %}" class="section-btn btn btn-default primary-cta">Try the Experimental Eligibility Check</a>
+                        <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="section-btn btn btn-default primary-cta">Try the Experimental Eligibility Check</a>
                     </div>
                     <div class="hero-cta-group hero-cta-secondary">
                         <a href="#how-it-works" class="btn btn-outline-green smoothScroll secondary-cta">How It Works</a>
@@ -131,7 +131,7 @@
                 </div>
 
                 <div class="text-center mt-4">
-                    <a href="{% url 'chat' %}" class="btn btn-green btn-lg">Start the Free Eligibility Check (Experimental)</a>
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green btn-lg">Start the Free Eligibility Check (Experimental)</a>
                     <p class="text-muted small mt-2 mb-0">Experimental: results are estimates only&mdash;confirm with your state.</p>
                 </div>
             </div>
@@ -362,7 +362,7 @@
                 <h2 class="mb-3">Find Out Where You Stand&mdash;In Minutes</h2>
                 <p class="lead mb-4">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
                 <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap">
-                    <a href="{% url 'chat' %}" class="btn btn-green btn-lg">Check My Eligibility (Experimental)</a>
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green btn-lg">Check My Eligibility (Experimental)</a>
                     <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green btn-lg">Work Requirements FAQ</a>
                     <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
                 </div>
