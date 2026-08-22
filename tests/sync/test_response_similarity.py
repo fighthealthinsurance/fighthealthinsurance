@@ -17,6 +17,7 @@ from fighthealthinsurance.ml.response_similarity import (
     sequence_similarity,
     user_requested_repeat,
 )
+from fighthealthinsurance.ml.ml_models import MEDICAID_WORK_REQUIREMENTS_BLOCK
 from tests.chat_fixtures import CANNED_MEDICAID_REPLY, LOOPED_REPLY
 
 
@@ -226,16 +227,18 @@ class TestCannedSignatureTracksTheActualPrompt(TestCase):
     Asserting against the live prompt keeps the two from drifting again.
     """
 
-    def _mandated_block(self):
+    def test_prompt_block_is_recognized_as_canned(self):
+        self.assertTrue(is_canned_reply(MEDICAID_WORK_REQUIREMENTS_BLOCK))
+
+    def test_prompt_is_built_from_the_named_block(self):
+        # The constant is only a useful anchor while the prompt is actually
+        # built from it; re-inlining the text would leave the test above
+        # passing against a string nothing sends.
         from fighthealthinsurance.ml import ml_models
 
-        source = inspect.getsource(ml_models)
-        start = source.index("New federal rules require many adults")
-        end = source.index("(/faq/medicaid/)", start) + len("(/faq/medicaid/)")
-        return source[start:end]
-
-    def test_prompt_block_is_recognized_as_canned(self):
-        self.assertTrue(is_canned_reply(self._mandated_block()))
+        self.assertIn(
+            "+ MEDICAID_WORK_REQUIREMENTS_BLOCK", inspect.getsource(ml_models)
+        )
 
     def test_signature_carries_no_date_marker(self):
         # Dates rot; the phrases describing the requirement do not.

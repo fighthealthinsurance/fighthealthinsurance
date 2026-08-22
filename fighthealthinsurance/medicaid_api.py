@@ -147,9 +147,26 @@ _ALIASES = {
     "s. carolina": "south carolina",
     "n. dakota": "north dakota",
     "s. dakota": "south dakota",
-    # State Medicaid program names. The prompt asks the model to infer the
-    # state from these; this is the backstop for when it passes the program
-    # name straight through as the "state".
+    # “state of …” forms
+    "state of california": "california",
+    "state of new york": "new york",
+    "state of washington": "washington",
+}
+
+# State Medicaid program names. The prompt asks the model to infer the state
+# from these; this is the backstop for when it passes the program name
+# straight through as the "state".
+#
+# Kept separate from _ALIASES (and merged in below) so the fuzzy-exclusion
+# set can be DERIVED from it rather than hand-copied. A second hand-kept
+# list would drift, silently readmitting a program name to the fuzzy pool.
+#
+# Deliberately absent: a bare "medical". Pennsylvania, Minnesota and
+# Maryland all call their programs "Medical Assistance", so users there say
+# "Medical" and it must not resolve to California. Likewise "healthy
+# connections", which names both South Carolina's and Idaho's programs --
+# and they sit on opposite sides of the expansion line.
+_PROGRAM_NAME_TO_STATE = {
     "medi-cal": "california",
     "denalicare": "alaska",
     "health first colorado": "colorado",
@@ -175,50 +192,18 @@ _ALIASES = {
     "forward health": "wisconsin",
     "forwardhealth": "wisconsin",
     "equality care": "wyoming",
-    # “state of …” forms
-    "state of california": "california",
-    "state of new york": "new york",
-    "state of washington": "washington",
 }
+_ALIASES.update(_PROGRAM_NAME_TO_STATE)
 
 # Add 2-letter codes themselves as valid keys (so "CA"→"ca")
 for full, abbr in list(_STATE_MAP.items()):
     _ALIASES[abbr] = full
 
-# State program names are matched EXACTLY, never fuzzily. "medical" (how
-# "Medi-Cal" survives punctuation stripping) sits 0.857 away from "medicad",
-# a routine misspelling of "medicaid" -- above the 0.84 cutoff -- so leaving
-# these in the fuzzy pool silently scored typo'd input under California's
-# rules. A program name is either recognized exactly or it is not a state.
-_PROGRAM_ALIASES = frozenset(
-    {
-        "medi-cal",
-        "denalicare",
-        "health first colorado",
-        "husky health",
-        "diamond state health plan",
-        "med-quest",
-        "medquest",
-        "healthchoice illinois",
-        "hoosier healthwise",
-        "kansas medical assistance program",
-        "mainecare",
-        "masshealth",
-        "mo healthnet",
-        "nj familycare",
-        "turquoise care",
-        "soonercare",
-        "tenncare",
-        "star+plus",
-        "star plus",
-        "green mountain care",
-        "cardinal care",
-        "apple health",
-        "forward health",
-        "forwardhealth",
-        "equality care",
-    }
-)
+# Program names are matched EXACTLY, never fuzzily: they are short and
+# collide with ordinary words and with each other's typos, so fuzzy matching
+# them silently scores one state's applicant under another's rules. A
+# program name is either recognized exactly or it is not a state.
+_PROGRAM_ALIASES = frozenset(_PROGRAM_NAME_TO_STATE)
 
 # Precompute candidate keys (full names + aliases) for fuzzy matching
 _CANDIDATE_KEYS = (set(_STATE_MAP.keys()) | set(_ALIASES.keys())) - _PROGRAM_ALIASES
@@ -431,6 +416,13 @@ _DECLINE_DEFAULTS: Dict[str, Any] = {
     "veteran_or_spouse_of_veteran": False,
     "work_req_exempt_2026": False,
 }
+
+# Percent-of-FPL ceilings by category. Module scope because the stepwise
+# question block consults them to skip questions that cannot change the
+# answer, and it runs before the category chain.
+THRESH_ADULT_MAGI = 138.0
+THRESH_CHILD = 200.0
+THRESH_PREG = 200.0
 
 # Without these there is no estimate to give, so a decline here stops the
 # flow with an explanation instead of a silent "not eligible".
@@ -1076,7 +1068,7 @@ def is_eligible(
         # so those can still resolve into a real answer.
         keep = [
             question
-            for field, question in zip(asked_fields, missing)
+            for field, question in zip(asked_fields, missing, strict=True)
             if field in _MEDICARE_QUESTION_FIELDS
         ]
         asked_fields[:] = [f for f in asked_fields if f in _MEDICARE_QUESTION_FIELDS]
@@ -1101,7 +1093,22 @@ def is_eligible(
         abd_candidate = (
             (age is not None and age >= 65) or (receiving_ssdi is True)
         ) and not ((age is not None and age < 19) or pregnant is True)
-        if abd_candidate and assets_total is None:
+        # ACA expansion applies no asset test, so for an adult 19-64 already
+        # under the threshold the answer cannot change the verdict -- don't
+        # spend a turn collecting it. Guarded on having the inputs, since
+        # this runs before the completeness gate.
+        covered_without_assets = False
+        if (
+            age is not None
+            and 19 <= age <= 64
+            and monthly_income is not None
+            and household_size is not None
+        ):
+            pct = pct_fpl(monthly_income, household_size, 2025)
+            covered_without_assets = (
+                state in _EXPANSION_STATES and pct <= THRESH_ADULT_MAGI
+            ) or (state in _WAIVER_100FPL_STATES and pct <= 100.0)
+        if abd_candidate and assets_total is None and not covered_without_assets:
             ask("assets_total", _Q_ASSETS)
 
     # mypy isn't smart enough to infer the types with a loop :/
@@ -1141,10 +1148,6 @@ def is_eligible(
     is_abd_disability = bool(receiving_ssdi)
     is_preg = bool(pregnant)
 
-    THRESH_ADULT_MAGI = 138.0
-    THRESH_CHILD = 200.0
-    THRESH_PREG = 200.0
-
     # Category decisions → 2025 base eligibility (pre-work overlay)
     if is_child:
         eligible_2025 = pfpl_2025 <= THRESH_CHILD
@@ -1162,21 +1165,52 @@ def is_eligible(
         # Someone explicitly applying for long-term care falls through to the
         # LTC branch below (LTC applicants are almost always 65+/disabled, so
         # without this carve-out they'd be evaluated under the wrong rules).
+        def qualifies_on_magi_alone() -> bool:
+            """Whether ACA expansion covers them on income alone.
+
+            Disability does not bar the expansion pathway, and that pathway
+            applies NO asset test -- so for an adult 19-64 under the
+            threshold the asset question cannot change the answer.
+            """
+            if not is_adult_magi:
+                return False
+            if state in _EXPANSION_STATES and pfpl_2025 <= THRESH_ADULT_MAGI:
+                return True
+            return state in _WAIVER_100FPL_STATES and pfpl_2025 <= 100.0
+
+        def abd_alternatives() -> None:
+            """Pathways worth naming when the ABD test does not come out yes."""
+            if on_medicare:
+                alts.append(
+                    "Medicare Savings Programs (QMB/SLMB/QI) can help pay Part A/B premiums and cost-sharing."
+                )
+            if medically_needy:
+                alts.append(
+                    "Medically-needy/spend-down Medicaid may help if medical bills are high."
+                )
+            # No else: the ~17 states without a medically-needy program for
+            # aged/disabled adults have nothing to ask about, and sending
+            # someone to their agency for a program that doesn't exist there
+            # wastes a call. The generic pointers below (state page,
+            # navigator, appeal) still apply.
+
         if assets_total is None:
-            if not ask("assets_total", _Q_ASSETS):
-                # Declined: an asset test we cannot run is not a failed asset
-                # test. Without this the else-arm never ran, so a 66-year-old
-                # at 69% FPL who simply didn't know their asset total got a
-                # flat "may not be eligible" and none of the pathways below.
+            if qualifies_on_magi_alone():
+                # Score it rather than asking: expansion applies no asset
+                # test, so the answer is already determined. Treating this
+                # as indeterminate on a declined asset figure was worse than
+                # a wrong answer -- the same person who reported assets far
+                # OVER the ABD limit came back eligible via this pathway,
+                # while declining the question came back "we can't estimate".
+                eligible_2025 = True
+            elif not ask("assets_total", _Q_ASSETS):
+                # Declined, and no asset-free pathway applies: an asset test
+                # we cannot run is not a failed asset test. Without this the
+                # else-arm never ran, so a 66-year-old at 69% FPL who simply
+                # didn't know their asset total got a flat "may not be
+                # eligible" and none of the pathways below.
                 indeterminate.append("assets_total")
-                if on_medicare:
-                    alts.append(
-                        "Medicare Savings Programs (QMB/SLMB/QI) can help pay Part A/B premiums and cost-sharing."
-                    )
-                if medically_needy:
-                    alts.append(
-                        "Medically-needy/spend-down Medicaid may help if medical bills are high."
-                    )
+                abd_alternatives()
         else:
             asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
             assets_ok = assets_total <= asset_limit
@@ -1185,29 +1219,10 @@ def is_eligible(
             # waiver -- treating it as one reported six-figure earners as
             # "probably eligible". It stays a suggestion below instead.
             eligible_2025 = assets_ok and income_ok_2025
-            if not eligible_2025 and is_adult_magi:
-                # Disability doesn't bar the ACA expansion pathway: adults
-                # 19-64 in expansion (or 100%-FPL-waiver) states qualify on
-                # income alone with no asset test, so check MAGI before
-                # concluding ineligibility.
-                if state in _EXPANSION_STATES and pfpl_2025 <= THRESH_ADULT_MAGI:
-                    eligible_2025 = True
-                elif state in _WAIVER_100FPL_STATES and pfpl_2025 <= 100.0:
-                    eligible_2025 = True
             if not eligible_2025:
-                if on_medicare:
-                    alts.append(
-                        "Medicare Savings Programs (QMB/SLMB/QI) can help pay Part A/B premiums and cost-sharing."
-                    )
-                if medically_needy:
-                    alts.append(
-                        "Medically-needy/spend-down Medicaid may help if medical bills are high."
-                    )
-                # No else: the ~17 states without a medically-needy program
-                # for aged/disabled adults have nothing to ask about, and
-                # sending someone to their agency for a program that doesn't
-                # exist there wastes a call. The generic pointers below
-                # (state page, navigator, appeal) still apply.
+                eligible_2025 = qualifies_on_magi_alone()
+            if not eligible_2025:
+                abd_alternatives()
     elif applying_reason in _LTC_REASONS:
         ltc_evaluated = True
         # The stepwise block above already queued these questions; here we

@@ -1058,28 +1058,24 @@ class TestMedicaidIndeterminateWithQuestions(TestCase):
 
     def setUp(self):
         self.tool = MedicaidEligibilityTool(AsyncMock())
+        # An unscorable result that still has an outstanding question -- the
+        # territory case, where Medicare may yet resolve.
+        self.indeterminate_info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Contact your territory's Medicaid agency."],
+            missing=["How old are you?"],
+            determination_made=False,
+        )
 
     def test_next_steps_are_shared_while_questions_remain(self):
-        info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
-            medicare=False,
-            alternatives=["Contact your territory's Medicaid agency."],
-            missing=["How old are you?"],
-            determination_made=False,
+        self.assertIn(
+            "Contact your territory's Medicaid agency.", self.indeterminate_info
         )
-        self.assertIn("Contact your territory's Medicaid agency.", info)
 
     def test_no_ineligibility_claim_while_questions_remain(self):
-        info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
-            medicare=False,
-            alternatives=["Contact your territory's Medicaid agency."],
-            missing=["How old are you?"],
-            determination_made=False,
-        )
-        self.assertNotIn("may not be eligible", info)
+        self.assertNotIn("may not be eligible", self.indeterminate_info)
 
     def test_a_scored_result_does_not_get_the_cannot_estimate_banner(self):
         info = self.tool._build_eligibility_info(

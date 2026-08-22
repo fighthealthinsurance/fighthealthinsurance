@@ -772,51 +772,57 @@ class TestDeclinedAnswersDoNotBecomeVerdicts(SimpleTestCase):
     "the answer is no" and "we never got to run this test".
     """
 
-    def test_declined_assets_leaves_abd_pathway_unscored(self):
-        _, _, _, _, missing, determination_made = is_eligible(
+    def setUp(self):
+        # Three scenarios, each shared by the tests that split its
+        # assertions. Age 66 keeps the assets case on the ABD pathway rather
+        # than the MAGI expansion one, which applies no asset test.
+        self.declined_assets = is_eligible(
             **_answers(
-                age=66, monthly_income=900, on_medicare=False,
-                years_worked=40, assets_total="unknown",
+                age=66,
+                monthly_income=900,
+                on_medicare=False,
+                years_worked=40,
+                assets_total="unknown",
             )
         )
+        self.declined_work_hours = is_eligible(
+            **_answers(
+                avg_monthly_qualifying_hours_last_3mo="unknown",
+                total_qualifying_hours_last_3mo="unknown",
+            )
+        )
+        self.declined_years_worked = is_eligible(
+            **_answers(
+                age=67,
+                on_medicare=False,
+                years_worked="unknown",
+                assets_total=500,
+            )
+        )
+
+    def test_declined_assets_leaves_abd_pathway_unscored(self):
+        *_, missing, determination_made = self.declined_assets
         self.assertFalse(determination_made)
         self.assertEqual(missing, [])
 
     def test_declined_assets_still_offers_spend_down_in_a_medically_needy_state(self):
-        *_, alts, _, _ = is_eligible(
-            **_answers(
-                age=66, monthly_income=900, on_medicare=False,
-                years_worked=40, assets_total="unknown",
-            )
-        )
+        *_, alts, _, _ = self.declined_assets
         self.assertIn(
             "Medically-needy/spend-down Medicaid may help if medical bills are high.",
             alts,
         )
 
     def test_declined_work_hours_leaves_2026_unscored(self):
-        _, _, _, _, missing, determination_made = is_eligible(
-            **_answers(
-                avg_monthly_qualifying_hours_last_3mo="unknown",
-                total_qualifying_hours_last_3mo="unknown",
-            )
-        )
+        *_, missing, determination_made = self.declined_work_hours
         self.assertFalse(determination_made)
         self.assertEqual(missing, [])
 
     def test_declined_work_hours_keeps_the_settled_2025_verdict(self):
-        eligible_2025, *_ = is_eligible(
-            **_answers(
-                avg_monthly_qualifying_hours_last_3mo="unknown",
-                total_qualifying_hours_last_3mo="unknown",
-            )
-        )
+        eligible_2025, *_ = self.declined_work_hours
         self.assertTrue(eligible_2025)
 
     def test_declined_years_worked_still_offers_the_part_a_buy_in(self):
-        *_, alts, _, _ = is_eligible(
-            **_answers(age=67, on_medicare=False, years_worked="unknown", assets_total=500)
-        )
+        *_, alts, _, _ = self.declined_years_worked
         self.assertIn(
             "You may be eligible to buy Medicare Part A even if you don't "
             "qualify for premium-free Part A.",
@@ -824,18 +830,11 @@ class TestDeclinedAnswersDoNotBecomeVerdicts(SimpleTestCase):
         )
 
     def test_declined_years_worked_leaves_medicare_unscored(self):
-        _, _, _, _, _, determination_made = is_eligible(
-            **_answers(age=67, on_medicare=False, years_worked="unknown", assets_total=500)
-        )
+        *_, determination_made = self.declined_years_worked
         self.assertFalse(determination_made)
 
     def test_indeterminate_result_names_the_field_it_could_not_check(self):
-        *_, alts, _, _ = is_eligible(
-            **_answers(
-                age=66, monthly_income=900, on_medicare=False,
-                years_worked=40, assets_total="unknown",
-            )
-        )
+        *_, alts, _, _ = self.declined_assets
         self.assertTrue(
             any("could not check assets total" in a for a in alts),
             f"no disclosure of the unchecked field in {alts}",
@@ -942,23 +941,27 @@ class TestDisabledButNotOnSsdi(SimpleTestCase):
     question that never got asked.
     """
 
-    def _disabled_senior(self):
-        return is_eligible(
+    def setUp(self):
+        self.result = is_eligible(
             **_answers(
-                age=66, receiving_ssdi=False, disabled=True,
-                on_medicare=False, years_worked=5, assets_total=500,
+                age=66,
+                receiving_ssdi=False,
+                disabled=True,
+                on_medicare=False,
+                years_worked=5,
+                assets_total=500,
             )
         )
 
     def test_no_silent_medicare_denial(self):
-        *_, alts, missing, _ = self._disabled_senior()
+        *_, alts, missing, _ = self.result
         self.assertTrue(
             missing or alts,
             "a 66-year-old got no Medicare verdict, no question, and no next step",
         )
 
     def test_part_a_buy_in_is_offered(self):
-        *_, alts, _, _ = self._disabled_senior()
+        *_, alts, _, _ = self.result
         self.assertTrue(
             any("buy Medicare Part A" in a for a in alts),
             f"expected the Part-A buy-in pointer in {alts}",
@@ -986,3 +989,54 @@ class TestBareMedicalIsAmbiguous(SimpleTestCase):
     def test_hyphenated_medi_cal_still_resolves(self):
         eligible_2025, *_ = is_eligible(**_answers(state="medi-cal"))
         self.assertTrue(eligible_2025)
+
+
+class TestAssetTestIsSkippedWhenIrrelevant(SimpleTestCase):
+    """ACA expansion applies no asset test, so a missing asset figure can't matter.
+
+    Regression: marking a declined ``assets_total`` indeterminate was applied
+    before checking the expansion pathway, so a disabled 19-64 adult in an
+    expansion state under 138% FPL got "we could not produce an estimate" --
+    while the same person reporting assets far OVER the ABD limit came back
+    eligible through that very pathway. Declining was worse than answering
+    badly.
+    """
+
+    def _disabled_expansion_adult(self, **overrides):
+        return is_eligible(
+            **_answers(
+                age=40,
+                receiving_ssdi=True,
+                ssdi_length=6,
+                on_medicare=False,
+                avg_monthly_qualifying_hours_last_3mo=100,
+                **overrides,
+            )
+        )
+
+    def test_declined_assets_still_scores_via_expansion(self):
+        eligible_2025, _, _, _, _, determination_made = self._disabled_expansion_adult(
+            assets_total="unknown"
+        )
+        self.assertTrue(eligible_2025)
+        self.assertTrue(determination_made)
+
+    def test_declining_matches_answering_when_assets_are_irrelevant(self):
+        declined, *_ = self._disabled_expansion_adult(assets_total="unknown")
+        over_limit, *_ = self._disabled_expansion_adult(assets_total=99999)
+        self.assertEqual(declined, over_limit)
+
+    def test_the_asset_question_is_not_even_asked(self):
+        *_, missing, _ = self._disabled_expansion_adult()
+        for question in missing:
+            self.assertNotIn("assets", question.lower())
+
+    def test_non_expansion_state_still_needs_the_asset_answer(self):
+        # Texas has no expansion pathway, so the asset test genuinely applies.
+        *_, missing, _ = is_eligible(
+            **_answers(
+                state="tx", age=40, receiving_ssdi=True, ssdi_length=6,
+                on_medicare=False, avg_monthly_qualifying_hours_last_3mo=100,
+            )
+        )
+        self.assertTrue(any("assets" in q.lower() for q in missing))

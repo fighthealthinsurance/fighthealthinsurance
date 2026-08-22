@@ -111,6 +111,26 @@ from fighthealthinsurance.utils import all_concrete_subclasses
 # followed by whitespace and a capital letter (avoids splitting on "Dr.", "U.S.", etc.)
 _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
+# The work-requirements answer the system prompt mandates VERBATIM. Named
+# here, rather than buried in the prompt literal, because two other places
+# have to agree with it: response_similarity.CANNED_REPLY_SIGNATURES (which
+# exempts this block from repeat-rejection, so a user who asks twice gets
+# the required text twice) and the drift test that checks the two still
+# match. Editing the wording is fine; editing it in only one of those places
+# is what broke it before.
+MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. States must implement these requirements by January 1, 2027 — a few have started earlier, and some may receive extensions.
+
+**Key Points:**
+- Applies to adults ages 19-64 in most states
+- 80 hours per month minimum requirement (make sure to keep records)
+- Qualifying activities: work, job training, school, community service
+- There are groups which are often exempt, see the FAQ for more information.
+- Implementation deadline: January 1, 2027 (some states earlier; extensions possible)
+- States check the one to three months before you apply or renew, so late-2026 activity can already count
+- State-specific details may vary
+
+For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -1106,7 +1126,8 @@ IMPORTANT: Do NOT ask the user for the patient's name. The patient's name is pro
             base_system_prompt += logged_in_instructions
 
         # Continue with the rest of the system prompt
-        medicaid_resources_tool = """**Medicaid Information Tool**: For Medicaid/Medicare questions, you MUST use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
+        medicaid_resources_tool = (
+            """**Medicaid Information Tool**: For Medicaid/Medicare questions, you MUST use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
 
 (note: fill in the statename with the actual name of the state).
 When possible even if the user has not explicitily provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
@@ -1129,21 +1150,13 @@ WRONG Examples:
 "California has a great Medicaid program called Medi-Cal. **medicaid_info {...}**"
 **Medicaid Work Requirements Information**: If users ask about or reference Medicaid work requirements, you must only respond with this exact text:
 
-New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. States must implement these requirements by January 1, 2027 — a few have started earlier, and some may receive extensions.
-
-**Key Points:**
-- Applies to adults ages 19-64 in most states
-- 80 hours per month minimum requirement (make sure to keep records)
-- Qualifying activities: work, job training, school, community service
-- There are groups which are often exempt, see the FAQ for more information.
-- Implementation deadline: January 1, 2027 (some states earlier; extensions possible)
-- States check the one to three months before you apply or renew, so late-2026 activity can already count
-- State-specific details may vary
-
-For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)
+"""
+            + MEDICAID_WORK_REQUIREMENTS_BLOCK
+            + """
 
 RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use ONLY the text above.
 """
+        )
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
 
         clinical_trials_tool = """**ClinicalTrials.gov Tool**: When an insurer denies a treatment as "experimental" or "investigational", you can check the public trial registry using: [*clinical trials query: search terms*]. The system returns clinicaltrialscontext:[...] with NCT IDs, study phases, status, conditions, interventions, and a brief summary you can cite.
