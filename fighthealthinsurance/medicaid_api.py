@@ -916,6 +916,29 @@ def is_eligible(
             determination_made,
         )
 
+    def magi_expansion_covers(*, require_inputs: bool = False) -> bool:
+        """Whether ACA expansion covers this adult on income alone.
+
+        Expansion (and the 100%-FPL waiver states) apply NO asset test, so
+        wherever this is true the asset question cannot change the verdict.
+        Shared by the stepwise block, which uses it to skip asking, and by
+        the ABD branch, which uses it to score -- keeping the question we
+        suppress and the answer we give from disagreeing.
+
+        ``require_inputs`` guards the stepwise call, which runs before the
+        completeness gate and so may not have income or household size yet.
+        """
+        if age is None or not (19 <= age <= 64):
+            return False
+        if monthly_income is None or household_size is None:
+            if require_inputs:
+                return False
+            raise AssertionError("scoring call needs income and household size")
+        pct = pct_fpl(monthly_income, household_size, 2025)
+        if state in _EXPANSION_STATES and pct <= THRESH_ADULT_MAGI:
+            return True
+        return state in _WAIVER_100FPL_STATES and pct <= 100.0
+
     # ---- prioritize missing info for stepwise questioning ----
     if not state:
         ask("state", "What state do you live in?")
@@ -961,10 +984,11 @@ def is_eligible(
     # who said "disabled, but not on SSDI" cannot answer it, and the prompt
     # forbids the model from inventing a value -- so asking anyway stalls the
     # conversation on a question with no possible answer.
+    ssdi_length_pending = False
     if ssdi_answer and ssdi_length is None:
         # Needed at any age: 24+ months of SSDI is its own Medicare pathway,
         # so a 67-year-old on SSDI must be asked too, not just under-65s.
-        ask("ssdi_length", _Q_SSDI_MONTHS)
+        ssdi_length_pending = ask("ssdi_length", _Q_SSDI_MONTHS)
     if age is not None and age < 65:
         # ESRD and ALS each open a Medicare pathway at any age, but they are
         # rare enough that asking every healthy young adult about kidney
@@ -1025,15 +1049,19 @@ def is_eligible(
             elif years_worked >= 10:
                 # 10 years (40 quarters) of Medicare taxes = premium-free Part A.
                 eligible_medicare = True
-            elif ssdi_answer and ssdi_length is None:
+            elif ssdi_length_pending:
                 # Don't rule Medicare out yet: 24+ months of SSDI would
                 # qualify them and that question is still outstanding.
                 #
-                # Gate on ssdi_answer, not receiving_ssdi: the latter is
-                # ORed with `disabled`, so someone who answered "disabled,
-                # not on SSDI" waited here for an ssdi_length question that
-                # is never asked (it is gated on ssdi_answer too). They fell
-                # out with a silent Medicare False and no alternatives.
+                # Gate on whether the question was actually QUEUED, not on
+                # the answers. Two ways to get this wrong, both of which
+                # ended in a silent Medicare False with no question and no
+                # alternatives: `receiving_ssdi` is ORed with `disabled`, so
+                # "disabled, not on SSDI" waited on a question gated behind
+                # the SSDI answer and never asked; and `ssdi_answer and
+                # ssdi_length is None` still waited when the duration was
+                # DECLINED, which suppresses the ask. Deferring only while
+                # the ask is outstanding covers both.
                 pass
             else:
                 eligible_medicare = False
@@ -1093,21 +1121,10 @@ def is_eligible(
         abd_candidate = (
             (age is not None and age >= 65) or (receiving_ssdi is True)
         ) and not ((age is not None and age < 19) or pregnant is True)
-        # ACA expansion applies no asset test, so for an adult 19-64 already
-        # under the threshold the answer cannot change the verdict -- don't
-        # spend a turn collecting it. Guarded on having the inputs, since
-        # this runs before the completeness gate.
-        covered_without_assets = False
-        if (
-            age is not None
-            and 19 <= age <= 64
-            and monthly_income is not None
-            and household_size is not None
-        ):
-            pct = pct_fpl(monthly_income, household_size, 2025)
-            covered_without_assets = (
-                state in _EXPANSION_STATES and pct <= THRESH_ADULT_MAGI
-            ) or (state in _WAIVER_100FPL_STATES and pct <= 100.0)
+        # Expansion applies no asset test, so for an adult already under the
+        # threshold the answer cannot change the verdict -- don't spend a
+        # turn collecting it.
+        covered_without_assets = magi_expansion_covers(require_inputs=True)
         if abd_candidate and assets_total is None and not covered_without_assets:
             ask("assets_total", _Q_ASSETS)
 
@@ -1165,19 +1182,6 @@ def is_eligible(
         # Someone explicitly applying for long-term care falls through to the
         # LTC branch below (LTC applicants are almost always 65+/disabled, so
         # without this carve-out they'd be evaluated under the wrong rules).
-        def qualifies_on_magi_alone() -> bool:
-            """Whether ACA expansion covers them on income alone.
-
-            Disability does not bar the expansion pathway, and that pathway
-            applies NO asset test -- so for an adult 19-64 under the
-            threshold the asset question cannot change the answer.
-            """
-            if not is_adult_magi:
-                return False
-            if state in _EXPANSION_STATES and pfpl_2025 <= THRESH_ADULT_MAGI:
-                return True
-            return state in _WAIVER_100FPL_STATES and pfpl_2025 <= 100.0
-
         def abd_alternatives() -> None:
             """Pathways worth naming when the ABD test does not come out yes."""
             if on_medicare:
@@ -1195,7 +1199,7 @@ def is_eligible(
             # navigator, appeal) still apply.
 
         if assets_total is None:
-            if qualifies_on_magi_alone():
+            if magi_expansion_covers():
                 # Score it rather than asking: expansion applies no asset
                 # test, so the answer is already determined. Treating this
                 # as indeterminate on a declined asset figure was worse than
@@ -1220,7 +1224,7 @@ def is_eligible(
             # "probably eligible". It stays a suggestion below instead.
             eligible_2025 = assets_ok and income_ok_2025
             if not eligible_2025:
-                eligible_2025 = qualifies_on_magi_alone()
+                eligible_2025 = magi_expansion_covers()
             if not eligible_2025:
                 abd_alternatives()
     elif applying_reason in _LTC_REASONS:

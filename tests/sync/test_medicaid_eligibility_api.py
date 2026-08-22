@@ -967,6 +967,26 @@ class TestDisabledButNotOnSsdi(SimpleTestCase):
             f"expected the Part-A buy-in pointer in {alts}",
         )
 
+    def test_declining_the_ssdi_duration_does_not_deny_medicare_silently(self):
+        # Same silent-denial shape one step further along: they ARE on SSDI,
+        # so the duration question is relevant -- but declining it suppresses
+        # the ask, and deferring on "no answer yet" then waited forever.
+        *_, alts, missing, _ = is_eligible(
+            **_answers(
+                age=66,
+                receiving_ssdi=True,
+                ssdi_length="unknown",
+                on_medicare=False,
+                years_worked=5,
+                assets_total=500,
+            )
+        )
+        self.assertEqual(missing, [])
+        self.assertTrue(
+            any("buy Medicare Part A" in a for a in alts),
+            f"declined SSDI duration left no Medicare next step: {alts}",
+        )
+
     def test_actual_ssdi_recipient_still_defers(self):
         # The deferral is still correct when they really are on SSDI: the
         # ssdi_length question is asked, so don't conclude anything yet.

@@ -234,11 +234,16 @@ class TestCannedSignatureTracksTheActualPrompt(TestCase):
         # The constant is only a useful anchor while the prompt is actually
         # built from it; re-inlining the text would leave the test above
         # passing against a string nothing sends.
+        #
+        # Match the identifier, not the concatenation syntax: a Black reflow
+        # or a switch to an f-string placeholder keeps the prompt correct,
+        # and this test should not fail for either. Scoped to the
+        # prompt-building method so an unrelated reference elsewhere in the
+        # module can't satisfy it.
         from fighthealthinsurance.ml import ml_models
 
-        self.assertIn(
-            "+ MEDICAID_WORK_REQUIREMENTS_BLOCK", inspect.getsource(ml_models)
-        )
+        source = inspect.getsource(ml_models.RemoteModelLike.generate_chat_response)
+        self.assertIn("MEDICAID_WORK_REQUIREMENTS_BLOCK", source)
 
     def test_signature_carries_no_date_marker(self):
         # Dates rot; the phrases describing the requirement do not.
