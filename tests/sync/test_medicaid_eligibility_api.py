@@ -11,6 +11,7 @@ never going to be asked (the pre-2026-08 stall bugs).
 from django.test import SimpleTestCase
 
 from fighthealthinsurance.medicaid_api import (
+    _normalize_applying_reason,
     get_medicaid_info,
     is_eligible,
     summarize_eligibility_inputs,
@@ -1060,3 +1061,56 @@ class TestAssetTestIsSkippedWhenIrrelevant(SimpleTestCase):
             )
         )
         self.assertTrue(any("assets" in q.lower() for q in missing))
+
+
+class TestLongTermCareReasonIsRecognized(SimpleTestCase):
+    """Free-text LTC reasons must reach the LTC branch, not the ABD one.
+
+    Found by sweeping the answer space rather than from a report:
+    applying_reason was the one decision-critical field with no tolerant
+    parsing. An unrecognized value doesn't re-ask -- it silently routes to
+    the MAGI/ABD branch, skipping the home-equity test, and reports a
+    nursing-home applicant as probably eligible. A false positive is the
+    worst answer this engine can give.
+    """
+
+    def _nursing_home_applicant(self, **overrides):
+        return is_eligible(
+            **_answers(
+                state="tx",
+                age=80,
+                monthly_income=900,
+                years_worked=40,
+                assets_total=1000,
+                home_owner="unknown",
+                **overrides,
+            )
+        )
+
+    def test_free_text_nursing_home_does_not_produce_a_false_positive(self):
+        eligible_2025, _, _, _, _, determination_made = self._nursing_home_applicant(
+            applying_reason="nursing home"
+        )
+        self.assertFalse(eligible_2025)
+        self.assertFalse(determination_made)
+
+    def test_canonical_token_behaves_the_same(self):
+        free_text = self._nursing_home_applicant(applying_reason="nursing home")
+        canonical = self._nursing_home_applicant(applying_reason="ltc_nursing_home")
+        self.assertEqual(free_text, canonical)
+
+    def test_living_situation_alone_still_reaches_the_ltc_branch(self):
+        # The model may put the nursing-home fact here instead.
+        _, _, _, _, _, determination_made = self._nursing_home_applicant(
+            living_situation="nursing_home_perm"
+        )
+        self.assertFalse(determination_made)
+
+    def test_home_care_phrasings_map_to_the_home_care_reason(self):
+        self.assertEqual(_normalize_applying_reason("HCBS"), "ltc_home_care")
+        self.assertEqual(_normalize_applying_reason("in-home care"), "ltc_home_care")
+
+    def test_an_ordinary_application_is_not_treated_as_long_term_care(self):
+        self.assertEqual(_normalize_applying_reason("standard"), "standard")
+        self.assertEqual(_normalize_applying_reason("applying for medicaid"), "standard")
+        self.assertEqual(_normalize_applying_reason(None), "standard")

@@ -309,6 +309,67 @@ _MEDICALLY_NEEDY_STATES = frozenset(
 # applying_reason values that mean a long-term-care application.
 _LTC_REASONS = ("ltc_nursing_home", "ltc_home_care")
 
+# Substrings that mean "this is a long-term-care application", however the
+# model phrases it. Every other field here has tolerant parsing because the
+# model does not reliably emit canonical tokens -- applying_reason had none,
+# and an unrecognized value does not re-ask or go indeterminate. It silently
+# routes to the MAGI/ABD branch, skipping the home-equity test entirely, and
+# reports a nursing-home applicant as PROBABLY ELIGIBLE. A false positive is
+# the worst answer this engine can give, so the matching is deliberately
+# generous: over-matching costs an extra question, under-matching costs a
+# wrong "yes". The branch treats the two LTC reasons identically, so a
+# generic "long term care" can land on either.
+_LTC_REASON_MARKERS = (
+    "nursing home",
+    "nursing facility",
+    "nursing_home",
+    "skilled nursing",
+    "snf",
+    "long term care",
+    "long-term care",
+    "longterm care",
+    "ltc",
+    "custodial care",
+    "home care",
+    "home-care",
+    "home_care",
+    "in-home care",
+    "in home care",
+    "home health",
+    "personal care",
+    "hcbs",
+    "home and community based",
+    "assisted living",
+    "assisted_living",
+)
+
+
+def _normalize_applying_reason(raw: Any, living_situation: Any = None) -> str:
+    """Map free-text application reasons onto the canonical LTC tokens.
+
+    ``living_situation`` is consulted only as a fallback: if the model put
+    the nursing-home fact there instead of in applying_reason, the LTC tests
+    still need to run. Routing into the LTC branch is the conservative
+    direction -- it applies MORE tests and returns indeterminate rather than
+    eligible when information is missing.
+    """
+    for value in (raw, living_situation):
+        if not isinstance(value, str):
+            continue
+        text = value.strip().lower()
+        if not text:
+            continue
+        if text in _LTC_REASONS:
+            return text
+        if any(marker in text for marker in _LTC_REASON_MARKERS):
+            return (
+                "ltc_home_care"
+                if ("home care" in text or "home-care" in text or "hcbs" in text)
+                else "ltc_nursing_home"
+            )
+    return "standard"
+
+
 # Stepwise questions raised from more than one branch. Shared constants keep
 # every site byte-identical so the result dedup can collapse repeats
 # (divergent phrasings previously got the same question asked twice).
@@ -844,7 +905,9 @@ def is_eligible(
     on_medicare = get_bool("on_medicare")
     veteran = get_bool("veteran_or_spouse_of_veteran")
     living_situation = kwargs.get("living_situation")
-    applying_reason = kwargs.get("applying_reason") or "standard"
+    applying_reason = _normalize_applying_reason(
+        kwargs.get("applying_reason"), living_situation
+    )
     household_size = get_int("household_size")
     monthly_income = get_float("monthly_income")
     assets_total = get_float("assets_total")
