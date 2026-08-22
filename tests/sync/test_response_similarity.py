@@ -1,8 +1,11 @@
 """Tests for the shared response-similarity helpers (chat loop prevention)."""
 
+import inspect
+
 from django.test import TestCase
 
 from fighthealthinsurance.ml.response_similarity import (
+    CANNED_REPLY_SIGNATURES,
     EXACT_REPEAT_MIN_CHARS,
     NEAR_REPEAT_MIN_CHARS,
     bag_of_words,
@@ -14,6 +17,7 @@ from fighthealthinsurance.ml.response_similarity import (
     sequence_similarity,
     user_requested_repeat,
 )
+from fighthealthinsurance.ml.ml_models import MEDICAID_WORK_REQUIREMENTS_BLOCK
 from tests.chat_fixtures import CANNED_MEDICAID_REPLY, LOOPED_REPLY
 
 
@@ -210,3 +214,43 @@ class TestCannedReplyRequiresTheWholeBlock(TestCase):
             + "\n\nSee the [Medicaid Work Requirements FAQ](/faq/medicaid/)."
         )
         self.assertFalse(is_canned_reply(linking))
+
+
+class TestCannedSignatureTracksTheActualPrompt(TestCase):
+    """The signature must recognize the block the system prompt mandates.
+
+    Regression: the third marker used to be the literal date "December 31,
+    2026". When the prompt's block was corrected to the statutory January 1,
+    2027 deadline the signature silently stopped matching, so a second
+    work-requirements reply was hard-rejected as a repeat and the self-heal
+    retry steered the model away from text the prompt requires verbatim.
+    Asserting against the live prompt keeps the two from drifting again.
+    """
+
+    def test_prompt_block_is_recognized_as_canned(self):
+        self.assertTrue(is_canned_reply(MEDICAID_WORK_REQUIREMENTS_BLOCK))
+
+    def test_prompt_is_built_from_the_named_block(self):
+        # The constant is only a useful anchor while the prompt is actually
+        # built from it; re-inlining the text would leave the test above
+        # passing against a string nothing sends.
+        #
+        # Match the identifier, not the concatenation syntax: a Black reflow
+        # or a switch to an f-string placeholder keeps the prompt correct,
+        # and this test should not fail for either. Scoped to the
+        # prompt-building method so an unrelated reference elsewhere in the
+        # module can't satisfy it.
+        from fighthealthinsurance.ml import ml_models
+
+        source = inspect.getsource(ml_models.RemoteModelLike.generate_chat_response)
+        self.assertIn("MEDICAID_WORK_REQUIREMENTS_BLOCK", source)
+
+    def test_signature_carries_no_date_marker(self):
+        # Dates rot; the phrases describing the requirement do not.
+        for signature in CANNED_REPLY_SIGNATURES:
+            for marker in signature:
+                self.assertNotRegex(
+                    marker,
+                    r"\b(19|20)\d{2}\b",
+                    f"{marker!r} pins the signature to a date that will change",
+                )

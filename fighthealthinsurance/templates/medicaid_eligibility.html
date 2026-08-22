@@ -1,0 +1,710 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Do I Qualify for Medicaid? Free Experimental Eligibility Check{% endblock title %}
+{% block metatitle %}Do I Qualify for Medicaid? Free Experimental Eligibility Check - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Check if you may qualify for Medicaid or Medicare with our free, experimental AI-powered eligibility assistant. It's an estimate only — not an official determination. Understand income limits, the new federal work requirements taking effect January 1, 2027, and your alternatives if you don't qualify.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="medicaid-eligibility-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner" style="max-width: 900px;">
+                    <div class="mb-3">
+                        {% include "partials/experimental_badge.html" %}
+                    </div>
+                    <p class="hero-tagline">Medicaid rules are confusing&mdash;checking shouldn't be</p>
+                    <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
+                    <p class="hero-subcopy">Answer a few questions with our free, <strong>experimental</strong> AI assistant and get a rough estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required. It's an estimate only, <strong>not</strong> an official determination&mdash;always confirm with your state.</p>
+                    <div class="hero-cta-group">
+                        <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="section-btn btn btn-default primary-cta">Try the Experimental Eligibility Check</a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="#how-it-works" class="btn btn-outline-green smoothScroll secondary-cta">How It Works</a>
+                        <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green tertiary-cta">Work Requirements FAQ</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Experimental Notice Banner -->
+<section id="experimental-notice" class="pt-4 pb-2">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="alert alert-warning experimental-banner mb-0" role="alert">
+                    <div class="banner-icon" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+                    </div>
+                    <div class="banner-body">
+                        <h2 class="alert-heading">This eligibility check is an experimental feature</h2>
+                        <p>It is <strong>new, under active development, and can be wrong, incomplete, or out of date</strong>. It gives a rough estimate&mdash;<strong>not</strong> an official eligibility determination, and not legal, medical, or financial advice. Only your state Medicaid agency can determine your eligibility for real. Please double-check everything it tells you with <a href="{% url 'state_help_index' %}" class="alert-link">your state</a> before making any decisions about your coverage.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- How It Works Section -->
+<section id="how-it-works" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">How Our Eligibility Check Works</h2>
+                <p class="lead text-center mb-4">Medicaid eligibility depends on your state, income, household, age, and situation. Our AI assistant walks through it with you a few questions at a time.</p>
+
+                <div class="row g-4">
+                    <div class="col-md-4">
+                        <div class="card h-100 step-card">
+                            <div class="card-body">
+                                <div class="step-num" aria-hidden="true">1</div>
+                                <h5 class="card-title">Tell us your state</h5>
+                                <p class="card-text">Medicaid is run by states and goes by many names&mdash;Medi-Cal (California), Apple Health (Washington), MassHealth (Massachusetts), TennCare (Tennessee), and more. Rules differ a lot between states.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 step-card">
+                            <div class="card-body">
+                                <div class="step-num" aria-hidden="true">2</div>
+                                <h5 class="card-title">Answer a few questions</h5>
+                                <p class="card-text">The assistant only asks what it actually needs: things like your age, household size, monthly income, and whether you're pregnant, disabled, or applying for long-term care.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 step-card">
+                            <div class="card-body">
+                                <div class="step-num" aria-hidden="true">3</div>
+                                <h5 class="card-title">Get an estimate + next steps</h5>
+                                <p class="card-text">You'll get an experimental, best-guess estimate for today's rules and for the new work requirements, alternatives if you don't qualify, and your state's contact info to confirm and apply.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mt-4 border-warning callout-card">
+                    <div class="card-body">
+                        <h5 class="card-title"><span class="text-warning me-2" aria-hidden="true">&#9888;</span>Experimental: An Estimate, Not a Determination</h5>
+                        <p class="card-text mb-0">This checker is an <strong>experimental feature</strong>&mdash;the AI can make mistakes, and Medicaid rules change often. Only your state Medicaid agency can officially determine eligibility. Our check is a free, fast way to understand where you likely stand and what to gather before you apply&mdash;always confirm with your state.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- What You'll Need Section -->
+<section id="what-you-need" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">What You'll Want Handy</h2>
+                <p class="text-center text-muted mb-4">You don't need documents to get an estimate&mdash;rough numbers are fine. For the actual application, this is what states typically ask about.</p>
+
+                <div class="list-group">
+                    <div class="list-group-item">
+                        <h5 class="mb-1">Household basics</h5>
+                        <p class="mb-1">Your state, age, marital status, how many people are in your tax household, and how many children (under 19) live with you.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <h5 class="mb-1">Monthly income before taxes</h5>
+                        <p class="mb-1">A rough total for your household&mdash;wages, self-employment, Social Security, unemployment. Most Medicaid categories compare this against a percentage of the Federal Poverty Level.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <h5 class="mb-1">Health and disability status</h5>
+                        <p class="mb-1">Whether you're pregnant, receiving SSDI or otherwise disabled, on Medicare, or have conditions like ESRD (kidney failure) or ALS&mdash;these open different eligibility pathways.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <h5 class="mb-1">Assets (65+, disabled, or long-term care)</h5>
+                        <p class="mb-1">For aged/blind/disabled and nursing-home pathways, states also look at countable assets (usually excluding your primary home) and, for long-term care, home equity.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <h5 class="mb-1">Work, school, or volunteer hours</h5>
+                        <p class="mb-1">Under the new federal work requirements, many adults will need about 80 qualifying hours per month&mdash;so knowing your typical weekly hours helps estimate whether you'd keep coverage once they apply.</p>
+                    </div>
+                </div>
+
+                <div class="text-center mt-4">
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green btn-lg">Start the Free Eligibility Check (Experimental)</a>
+                    <p class="text-muted small mt-2 mb-0">Experimental: results are estimates only&mdash;confirm with your state.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Pathways Section -->
+<section id="pathways" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Common Ways People Qualify</h2>
+                <p class="text-center text-muted mb-4">Exact income limits vary by state and change yearly&mdash;these are the broad categories our assistant checks.</p>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Children &amp; CHIP</h5>
+                                <p class="card-text">Children under 19 generally qualify at higher household incomes than adults (often 200% of the poverty level or more). Even when parents don't qualify, kids frequently do&mdash;through Medicaid or the Children's Health Insurance Program (CHIP).</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Pregnancy</h5>
+                                <p class="card-text">Pregnant people qualify at higher income limits in most states (often around 200% of the poverty level, sometimes higher), with coverage that continues postpartum. Pregnancy is also generally exempt from work requirements.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Adults 19&ndash;64 (Expansion States)</h5>
+                                <p class="card-text">In the 40 states (plus DC) that expanded Medicaid, adults generally qualify with household income up to 138% of the poverty level. Ten states haven't expanded&mdash;there, childless adults often can't qualify regardless of income.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">65+ or Disabled (ABD)</h5>
+                                <p class="card-text">Aged/blind/disabled pathways look at both income and countable assets (roughly $2,000 single / $3,000 married in many states, excluding your home). Medicare Savings Programs and medically-needy "spend-down" options can help near the limits.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Long-Term Care</h5>
+                                <p class="card-text">Nursing home and home-care (HCBS) Medicaid has its own income cap (around $3,000/month in many states), asset limits, and home-equity rules. Miller trusts and spend-down planning can help if you're just over the limits.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Medicare (65+, SSDI, ESRD, ALS)</h5>
+                                <p class="card-text">Our assistant also checks Medicare: most people qualify at 65 with 10 years of work history, after 24 months on SSDI, or at any age with ESRD or ALS. Some people qualify for both Medicare and Medicaid ("dual eligible").</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Work Requirements Section -->
+<section id="work-requirements" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">The New Work Requirements</h2>
+
+                <div class="card mb-4 border-warning callout-card">
+                    <div class="card-body">
+                        <h5 class="card-title"><span class="text-warning me-2" aria-hidden="true">&#9888;</span>New Federal Rules</h5>
+                        <p class="card-text mb-0">New federal rules require many adults (ages 19&ndash;64) to complete at least <strong>80 hours per month</strong> of qualifying activities to keep Medicaid coverage. States must implement them by <strong>January 1, 2027</strong>&mdash;a few have started earlier, and some may get extensions. Because states check the one to three months before you apply or renew, your activity in late 2026 can already count.</p>
+                    </div>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-3 wr-label">What Counts Toward 80 Hours</h6>
+                                <ul class="check-list mb-0">
+                                    <li>Work (including self-employment)</li>
+                                    <li>School or job training</li>
+                                    <li>Volunteering / community service</li>
+                                    <li>Caregiving (varies by state)</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-3 wr-label">Groups Often Exempt</h6>
+                                <ul class="check-list mb-0">
+                                    <li>Pregnant people</li>
+                                    <li>People with disabilities or who are medically frail</li>
+                                    <li>People on Medicare</li>
+                                    <li>Children and many caretakers&mdash;see the FAQ for details</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mt-4 callout-card callout-tip">
+                    <div class="card-body">
+                        <h5 class="card-title"><span class="me-2" aria-hidden="true">&#128161;</span>Keep Records Now</h5>
+                        <p class="card-text mb-0">States may look back up to 3 months when checking hours. Keep pay stubs, class schedules, and volunteer logs&mdash;it's unfair paperwork, but good records are the best defense against wrongly losing coverage. If you're short of 80 hours, adding a class or regular volunteering can close the gap.</p>
+                    </div>
+                </div>
+
+                <div class="text-center mt-4">
+                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green btn-lg">Read the Work Requirements FAQ</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- If You Don't Qualify Section -->
+<section id="alternatives" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">If You Don't Qualify (or Lose Coverage)</h2>
+                <p class="text-center text-muted mb-4">A "no" on Medicaid isn't the end of the road. The assistant will point you to alternatives like these based on your situation.</p>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">ACA Marketplace Subsidies</h5>
+                                <p class="card-text">If your income is at or above 100% of the poverty level, premium tax credits on Healthcare.gov (or your state's marketplace) can make plans much cheaper. Losing Medicaid also triggers a Special Enrollment Period.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">CHIP for Your Kids</h5>
+                                <p class="card-text">Children often qualify for CHIP even when adults in the household earn too much for Medicaid. It's worth applying for kids regardless of your own result.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Medically Needy / Spend-Down</h5>
+                                <p class="card-text">Over 30 states let you qualify by "spending down"&mdash;subtracting high medical bills from your income. This can work for older adults and people with disabilities who are just over the limits.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Medicare Savings Programs &amp; Clinics</h5>
+                                <p class="card-text">If you're on Medicare with limited income, QMB/SLMB/QI programs can pay premiums and cost-sharing. Community health centers offer sliding-scale care while you sort out coverage.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mt-4 border-warning callout-card">
+                    <div class="card-body">
+                        <h5 class="card-title">Denied or Terminated? You Can Appeal.</h5>
+                        <p class="card-text">If your state denies your Medicaid application or ends your coverage&mdash;including over work-requirement paperwork&mdash;you have the right to a fair hearing, and deadlines matter. Our free tools can help you fight back, and your state's legal aid resources can help too.</p>
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            <a href="{% url 'scan' %}" class="btn btn-green">Generate an Appeal</a>
+                            <a href="{% url 'chat' %}" class="btn btn-outline-green">Ask the AI Assistant</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- State Resources Section -->
+<section id="state-resources" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Confirm With Your State</h2>
+                <p class="text-center mb-4">Ready to apply, or want the official word? Go straight to the source.</p>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body d-flex flex-column">
+                                <h5 class="card-title">Your State's Resources</h5>
+                                <p class="card-text">Find your state Medicaid agency, consumer assistance programs, and legal aid contacts&mdash;the assistant can also look these up for you in chat.</p>
+                                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green mt-auto align-self-start">Find Your State's Resources</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body d-flex flex-column">
+                                <h5 class="card-title">Apply Through Healthcare.gov</h5>
+                                <p class="card-text">The Marketplace application automatically checks your Medicaid and CHIP eligibility and forwards your info to your state&mdash;one application covers both.</p>
+                                <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green mt-auto align-self-start">Learn More at Healthcare.gov</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <div class="mb-3">
+                    {% include "partials/experimental_badge.html" %}
+                </div>
+                <h2 class="mb-3">Find Out Where You Stand&mdash;In Minutes</h2>
+                <p class="lead mb-4">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
+                <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap">
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green btn-lg">Check My Eligibility (Experimental)</a>
+                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green btn-lg">Work Requirements FAQ</a>
+                    <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> The Medicaid eligibility check is an <strong>EXPERIMENTAL feature</strong> that is under active development and can produce incorrect, incomplete, or outdated results. This page and our AI assistant provide informational estimates only&mdash;not legal, medical, or financial advice, and not an official eligibility determination. Medicaid and Medicare rules vary by state and change frequently, including the phase-in of federal work requirements. Always confirm with your state Medicaid agency or a benefits navigator before making decisions about your coverage. Last updated: August 2026.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    /* ============================================================
+       Page palette (matches the site theme):
+       brand green #a5c422 / #7B920A, experimental amber #ffc107,
+       ink #212529, body gray #575757
+       ============================================================ */
+
+    /* ---------- Hero ---------- */
+    #medicaid-eligibility-hero .hero-inner {
+        background: rgba(24, 18, 48, 0.30);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        padding: 2.25rem 2.5rem;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    #medicaid-eligibility-hero .hero-headline {
+        line-height: 1.12;
+    }
+
+    #medicaid-eligibility-hero .hero-subcopy {
+        max-width: 46rem;
+    }
+
+    /* Let "Work Requirements FAQ" fit on one line next to "How It Works" */
+    #medicaid-eligibility-hero .hero-cta-secondary a {
+        max-width: 300px;
+    }
+
+    /* ---------- Experimental badge (hero + final CTA) ---------- */
+    .experimental-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5em;
+        background-color: #ffc107;
+        color: #332701;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        line-height: 1;
+        padding: 0.55em 1.1em;
+        border: 1px solid rgba(90, 64, 0, 0.35);
+        border-radius: 999px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+        text-transform: uppercase;
+    }
+
+    .experimental-badge svg {
+        flex: 0 0 auto;
+        margin-top: -1px;
+    }
+
+    /* ---------- Experimental notice banner ---------- */
+    .experimental-banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        background: linear-gradient(180deg, #fffdf5 0%, #fff8e6 100%);
+        border: 1px solid #f0dda2;
+        border-left: 4px solid #ffc107;
+        border-radius: 10px;
+        padding: 1.35rem 1.5rem;
+        box-shadow: 0 2px 10px rgba(120, 90, 0, 0.06);
+    }
+
+    .experimental-banner .banner-icon {
+        flex: 0 0 auto;
+        width: 2.4rem;
+        height: 2.4rem;
+        border-radius: 50%;
+        background: #ffc107;
+        color: #332701;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 0.1rem;
+    }
+
+    /* Beat custom.css `.alert-warning h4` mustard and main.css h2 sizing */
+    .experimental-banner .alert-heading {
+        color: #212529;
+        font-size: 1.2rem;
+        font-weight: 700;
+        letter-spacing: 0;
+        line-height: 1.35;
+        padding-bottom: 0;
+        margin-bottom: 0.4rem;
+    }
+
+    /* Beat main.css `p { color: #757575 }` for contrast on the cream panel */
+    .experimental-banner p {
+        color: #45412f;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        margin-bottom: 0;
+    }
+
+    .experimental-banner .alert-link {
+        color: #6a7f0a;
+        font-weight: 600;
+        text-decoration: underline;
+    }
+
+    /* ---------- Typography rhythm ---------- */
+    #main-content h2 {
+        line-height: 1.25;
+    }
+
+    /* ---------- Cards ---------- */
+    #main-content .card {
+        border: 1px solid #e8e8e8;
+        border-radius: 10px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    #main-content .card-title {
+        color: #272727;
+        font-weight: 600;
+    }
+
+    /* Numbered step cards */
+    .step-num {
+        width: 2.3rem;
+        height: 2.3rem;
+        border-radius: 50%;
+        background: #7B920A;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 1.05rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 0.85rem;
+        box-shadow: 0 2px 6px rgba(123, 146, 10, 0.35);
+    }
+
+    .step-card .card-body {
+        padding: 1.5rem 1.4rem;
+    }
+
+    .step-card .card-title {
+        font-size: 1.1rem;
+        margin-bottom: 0.5rem;
+    }
+
+    @media (min-width: 768px) {
+        /* keep step bodies aligned when titles wrap to two lines */
+        .step-card .card-title {
+            min-height: 3.05em;
+        }
+    }
+
+    /* Callout cards: amber = experimental/warning, green = tip */
+    .callout-card .card-body {
+        padding: 1.35rem 1.5rem;
+    }
+
+    .card.border-warning {
+        border-color: #f0dda2 !important;
+        border-left: 4px solid #ffc107 !important;
+        background: #fffdf7;
+    }
+
+    .card.callout-tip {
+        border-color: #dfe8bc !important;
+        border-left: 4px solid #a5c422 !important;
+        background: #fbfdf2;
+    }
+
+    /* ---------- "What you'll want handy" list ---------- */
+    .list-group-item {
+        border-left: 4px solid #a5c422;
+        padding: 1rem 1.25rem;
+    }
+
+    .list-group-item:hover {
+        background-color: rgba(165, 196, 34, 0.05);
+    }
+
+    .list-group-item h5 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: #272727;
+    }
+
+    /* ---------- Work requirements ---------- */
+    .wr-label {
+        color: #6a7f0a;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .check-list {
+        list-style: none;
+        padding-left: 0;
+        margin-bottom: 0;
+    }
+
+    .check-list li {
+        position: relative;
+        padding-left: 1.5rem;
+        margin-bottom: 0.5rem;
+        color: #575757;
+        line-height: 1.5;
+    }
+
+    .check-list li:last-child {
+        margin-bottom: 0;
+    }
+
+    .check-list li::before {
+        content: "\2713";
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: #7B920A;
+        font-weight: 700;
+    }
+
+    /* ---------- Buttons ---------- */
+    /* .btn-green's gradient comes from the site-wide custom.css -- don't
+       re-declare it here or the page drifts when the brand style changes.
+       Only the page-specific sizing/recolor overrides below are local. */
+
+    /* Page-scoped recolor: the site default (#a5c422 + black hover) reads
+       poorly on this page's white sections. */
+    .btn-outline-green {
+        color: #7B920A;
+        border-color: #7B920A;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #7B920A;
+        border-color: #7B920A;
+        color: white;
+    }
+
+    /* Restore a real size hierarchy: custom.css pins .btn-green to 1rem,
+       which made the primary CTA smaller than its outline neighbors. */
+    .btn-green.btn-lg {
+        font-size: 1.15rem;
+        font-weight: 700;
+        padding: 0.8rem 1.5rem;
+    }
+
+    .btn-outline-green.btn-lg,
+    .btn-outline-secondary.btn-lg {
+        font-size: 1.05rem;
+        padding: 0.75rem 1.2rem;
+    }
+
+    .btn:focus-visible {
+        outline: 3px solid rgba(123, 146, 10, 0.5);
+        outline-offset: 2px;
+    }
+
+    /* ---------- Final CTA ---------- */
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #eef1e0 100%);
+    }
+
+    #final-cta .lead {
+        max-width: 44rem;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    section {
+        scroll-margin-top: 80px;
+    }
+
+    /* ---------- Mobile ---------- */
+    @media (max-width: 768px) {
+        #medicaid-eligibility-hero .hero-inner {
+            padding: 1.5rem 1.15rem;
+        }
+
+        .experimental-badge {
+            font-size: 0.72rem;
+        }
+
+        /* stacked hero buttons get one consistent width */
+        #medicaid-eligibility-hero .hero-cta-secondary a {
+            flex: 1 1 100%;
+            max-width: 320px;
+        }
+
+        .experimental-banner {
+            gap: 0.75rem;
+            padding: 1.1rem 1.15rem;
+        }
+
+        .experimental-banner .banner-icon {
+            width: 2rem;
+            height: 2rem;
+        }
+
+        .experimental-banner .alert-heading {
+            font-size: 1.1rem;
+        }
+
+        .btn-green.btn-lg,
+        .btn-outline-green.btn-lg,
+        .btn-outline-secondary.btn-lg {
+            font-size: 1rem;
+            padding: 0.6rem 1.1rem;
+        }
+    }
+
+    @media (max-width: 576px) {
+        #final-cta .d-flex .btn {
+            flex: 1 1 100%;
+            max-width: 340px;
+        }
+    }
+</style>
+{% endblock extra_style %}

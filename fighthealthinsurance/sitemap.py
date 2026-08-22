@@ -23,6 +23,8 @@ from django.urls import reverse
 
 from loguru import logger
 
+from fighthealthinsurance.utils import medicaid_eligibility_page_enabled
+
 
 class StaticViewSitemap(Sitemap):
     """Sitemap for static pages that don't change frequently."""
@@ -32,7 +34,7 @@ class StaticViewSitemap(Sitemap):
 
     def items(self) -> list[str]:
         """Return list of URL names for static pages."""
-        return [
+        items = [
             "root",
             "about",
             "pbs-newshour",
@@ -50,6 +52,11 @@ class StaticViewSitemap(Sitemap):
             "blog",
             "microsite_directory",
         ]
+        # The experimental Medicaid eligibility page only serves (and is only
+        # discoverable) when its staging flag is on; see views.py.
+        if medicaid_eligibility_page_enabled():
+            items.append("medicaid-eligibility")
+        return items
 
     def location(self, item: str) -> str:
         """Return the URL for a given item."""

@@ -17,7 +17,7 @@ Tens of millions could be at risk of losing healthcare. Here’s what the new ru
 
 Medicaid is the largest public health insurance program in the U.S. and big changes are coming.
 
-Congress has passed new rules that will require many adults to prove they’re working in order to keep their coverage. These Medicaid work requirements will go into effect in most states by **December 31, 2026**, but some may move even faster.
+Congress has passed new rules that will require many adults to prove they’re working in order to keep their coverage. These Medicaid work requirements must be in place in most states by **January 1, 2027**, but some have moved faster and others may receive extensions.
 
 ## Who's Affected and What’s Required
 

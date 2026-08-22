@@ -172,12 +172,18 @@ class MedicaidInfoTool(BaseTool):
                 return cleaned_response, context
 
             else:
+                # get_medicaid_info returns None when it can't tell which
+                # state was meant -- ask, rather than guessing or reporting a
+                # successful lookup.
                 await self.send_status_message(
-                    "No Medicaid info found for the provided data."
+                    "Need the user's state before looking up Medicaid info."
                 )
+                # BaseTool.handle propagates this as the assistant's reply,
+                # so it has to read as something we'd say to the user, not as
+                # an instruction addressed to the model.
                 return (
-                    "I couldn't find Medicaid information for the requested state. "
-                    "Please check the state name and try again.",
+                    "Which state are you in? I need it to look up your "
+                    "state's Medicaid contact information.",
                     context,
                 )
 
@@ -305,9 +311,20 @@ class MedicaidEligibilityTool(BaseTool):
 
         try:
             # Import here to avoid circular imports
-            from fighthealthinsurance.medicaid_api import is_eligible
+            from fighthealthinsurance.medicaid_api import (
+                is_eligible,
+                summarize_eligibility_inputs,
+            )
 
             await self.send_status_message("Processing Medicaid eligibility data")
+
+            # What we actually understood from the payload. The LLM parses
+            # the user's free text and carries the running answers in its
+            # own context, so it needs this echo to stay in sync with us --
+            # especially for values we normalized and keys we ignored.
+            parsed_summary = self._build_parsed_summary(
+                summarize_eligibility_inputs(loaded)
+            )
 
             (
                 eligible_2025,
@@ -315,19 +332,37 @@ class MedicaidEligibilityTool(BaseTool):
                 medicare,
                 alternatives,
                 missing,
+                determination_made,
             ) = is_eligible(**loaded)
 
             info_text = self._build_eligibility_info(
-                eligible_2025, eligible_2026, medicare, alternatives, missing
+                eligible_2025,
+                eligible_2026,
+                medicare,
+                alternatives,
+                missing,
+                determination_made,
             )
+            if parsed_summary:
+                info_text += "\n\n" + parsed_summary
 
             action_text = (
-                "Use this info to ask the user any follow up questions or deliver "
-                "the news of our determiniation and alternatives. Always be careful "
-                "to indicate that this is an approximation and they should contact "
-                "the state to know for sure (you can use the state tool call to get "
-                "more info to provide to the user). Remember to use the panda emoji "
-                "and context."
+                "\n\nUse this info to either ask the user the next follow-up "
+                "questions (no more than two or three per message, in the "
+                "order listed, rephrased naturally) or deliver the news of "
+                "our determination along with the alternatives. Don't re-ask "
+                "anything the user already answered. Always make it very "
+                "clear that this eligibility check is an EXPERIMENTAL "
+                "feature and only an approximation -- it can be wrong or "
+                "out of date -- and they must contact the state to know for "
+                "sure (you can use the "
+                "medicaid_info tool call to get state-specific contact info "
+                "to provide to the user). If the 2026 work requirement is "
+                "the barrier, suggest ways to reach 80 qualifying hours a "
+                "month (work, school, volunteering, or caregiving) and "
+                "remind them to keep good records -- with empathy, since "
+                "this is stressful and unfair. Remember to use the panda "
+                "emoji and context."
             )
 
             await self.send_status_message("Formatting response...")
@@ -379,6 +414,59 @@ class MedicaidEligibilityTool(BaseTool):
                 context,
             )
 
+    def _build_parsed_summary(self, summary: dict) -> str:
+        """Tell the LLM what we recorded, ignored, and couldn't read.
+
+        Without this the model gets no feedback on its own parsing: an
+        unrecognized key (``income`` instead of ``monthly_income``) is
+        dropped silently, which is indistinguishable from being accepted, so
+        the model believes it answered and the same question comes back.
+        """
+        parts: List[str] = []
+
+        recorded = summary.get("recorded") or {}
+        if recorded:
+            lines = "\n".join(f"- {k}: {v}" for k, v in sorted(recorded.items()))
+            parts.append(
+                "This is what we have recorded so far — keep these in your "
+                "context and send them all back on the next call:\n" + lines
+            )
+
+        unrecognized = summary.get("unrecognized") or []
+        if unrecognized:
+            parts.append(
+                "We do NOT have a parameter named "
+                + ", ".join(sorted(unrecognized))
+                + " so those values were ignored. Re-send them under the "
+                "documented parameter names if they still apply."
+            )
+
+        unreadable = summary.get("unreadable") or []
+        if unreadable:
+            parts.append(
+                "We couldn't read the value given for "
+                + ", ".join(sorted(unreadable))
+                + ". Send a plain number, a JSON true/false, or a US state "
+                'name — or "unknown" if the user can\'t answer.'
+            )
+
+        declined = summary.get("declined") or []
+        if declined:
+            # The declined marker lives only in the payload, so it has to come
+            # back on every subsequent call. Omitting it from the re-send list
+            # made the decline last exactly one turn: the next call arrived
+            # without it, the field read as unanswered again, and the
+            # suppressed question came straight back -- the stall this channel
+            # exists to prevent.
+            names = ", ".join(sorted(declined))
+            parts.append(
+                f"The user couldn't answer {names} — don't ask about those "
+                f'again, and keep sending {names} back as "unknown" on '
+                "every following call so they stay marked as declined."
+            )
+
+        return "\n\n".join(parts)
+
     def _build_eligibility_info(
         self,
         eligible_2025: bool,
@@ -386,59 +474,118 @@ class MedicaidEligibilityTool(BaseTool):
         medicare: bool,
         alternatives: List[str],
         missing: List[str],
+        determination_made: bool = True,
     ) -> str:
         """
-        Build the eligibility information text.
+        Build the eligibility information text passed back to the LLM.
 
         Args:
-            eligible_2025: Whether eligible under 2025 rules
-            eligible_2026: Whether eligible under 2026 rules
+            eligible_2025: Whether eligible under the 2025 rules
+            eligible_2026: Whether eligible under the 2026 rules (which add
+                the federal work/community-engagement requirement)
             medicare: Whether eligible for Medicare
             alternatives: List of alternative suggestions
-            missing: List of missing information needed
+            missing: List of missing-information questions still to ask
+            determination_made: False when the checker could not score this
+                person at all (a US territory, or a required answer they
+                declined). A False here must never be rendered as an
+                ineligibility verdict -- that is the whole point of the flag.
 
         Returns:
             Formatted information text
         """
-        info_text = (
-            "We're helping figure out if someone is likely eligible for Medicaid. "
-            "Be clear this is an approximation and they'll need to confirm with "
-            "the state to be sure."
+        # One shared description of the 2026 rules so the eligible and
+        # not-eligible wordings can't drift apart.
+        work_req_note = (
+            " (once the federal 80-hours-per-month work/community-engagement "
+            "requirement applies to them — states must implement it by "
+            "January 1, 2027, a few earlier)"
         )
 
-        if len(missing) > 0:
-            info_text += (
-                f"To figure out if they're eligible we have {missing} questions to ask."
-            )
-        else:
-            if eligible_2025:
-                info_text += (
-                    "Our data so far suggests they could be eligible for medicaid "
-                    "under the 2025 rules."
-                )
-            else:
-                info_text += (
-                    "Our data so far suggests they may not be eligible for medicaid "
-                    "under the 2025 rules."
-                )
+        parts: List[str] = [
+            "We're helping figure out if someone is likely eligible for "
+            "Medicaid using our EXPERIMENTAL eligibility checker. Be very "
+            "clear with the user that this is an experimental feature that "
+            "can be wrong: it only gives an approximation, and they'll need "
+            "to confirm with the state to be sure."
+        ]
 
-            if eligible_2026:
-                info_text += (
-                    "Our data so far suggests they could be eligible for medicaid "
-                    "under the 2026 rules."
+        if len(missing) > 0:
+            question_lines = "\n".join(f"- {q}" for q in missing)
+            parts.append(
+                "We don't have enough information yet, so we have the "
+                "following questions to ask (ask only two or three at a "
+                "time, in this order, rephrased naturally):\n"
+                f"{question_lines}"
+            )
+            # Report findings that are already settled. Withholding them
+            # until every question is answered meant a firm "yes, you look
+            # eligible" sat unsaid behind an unrelated follow-up. Only
+            # positives are reported here: a False at this stage means "not
+            # established yet", not "no".
+            if eligible_2025:
+                parts.append(
+                    "Based on what we have so far they already look eligible "
+                    "for medicaid under the current (2025) rules -- you can "
+                    "share that, while noting the questions above are still "
+                    "needed to be sure."
                 )
-            else:
-                info_text += (
-                    "Our data so far suggests they may not be eligible for medicaid "
-                    "under the 2026 rules."
+            if medicare:
+                parts.append(
+                    "Our data already suggests they may be eligible for medicare."
+                )
+            if not determination_made and len(alternatives) > 0:
+                # Indeterminate with questions still outstanding -- a
+                # territory resident whose Medicare answer is still coming.
+                # The reason we can't estimate Medicaid is actionable right
+                # now, so don't sit on it until the interview finishes.
+                alternative_lines = "\n".join(f"- {a}" for a in alternatives)
+                parts.append(
+                    "Separately, we canNOT produce a Medicaid estimate for "
+                    "this person — do not say they may be ineligible. Share "
+                    "these next steps now:\n" + alternative_lines
+                )
+        elif not determination_made:
+            # We could not score this person at all (a US territory, or a
+            # required answer they declined). Saying "may not be eligible"
+            # here would be a confident denial we never actually computed --
+            # and it would contradict the explanation in the alternatives.
+            parts.append(
+                "We could NOT produce a Medicaid estimate for this person — "
+                "do not tell them they may be ineligible. Explain that their "
+                "situation isn't something our checker can estimate and point "
+                "them at the next step below."
+            )
+            if medicare:
+                parts.append(
+                    "We were able to check Medicare, and our data suggests "
+                    "they may be eligible for it."
+                )
+            if len(alternatives) > 0:
+                alternative_lines = "\n".join(f"- {a}" for a in alternatives)
+                parts.append("Next steps to share:\n" + alternative_lines)
+        else:
+            for label, is_eligible_for_year, note in (
+                ("current (2025)", eligible_2025, ""),
+                ("2026", eligible_2026, work_req_note),
+            ):
+                verdict = "could be" if is_eligible_for_year else "may not be"
+                parts.append(
+                    f"Our data so far suggests they {verdict} eligible for "
+                    f"medicaid under the {label} rules{note}."
                 )
 
             if medicare:
-                info_text += "Our data suggests they may be eligible for medicare."
+                parts.append("Our data suggests they may be eligible for medicare.")
 
-        if len(alternatives) > 0:
-            info_text += (
-                f"Some possible alternative suggestions to help are {alternatives}."
-            )
+            # Alternatives are next-steps for a finished determination (they
+            # include appeal-after-denial advice), so they'd be confusing
+            # mid-interview for someone who currently looks eligible.
+            if len(alternatives) > 0:
+                alternative_lines = "\n".join(f"- {a}" for a in alternatives)
+                parts.append(
+                    "Alternative programs and next steps worth mentioning:\n"
+                    f"{alternative_lines}"
+                )
 
-        return info_text
+        return "\n\n".join(parts)

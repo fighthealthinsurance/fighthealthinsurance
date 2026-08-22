@@ -650,7 +650,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 }),
               );
             }, 500);
-          } else if (defaultProcedure && !hasSentInitialMessage.current) {
+          } else if (
+            (defaultProcedure || micrositeSlug === "medicaid-eligibility") &&
+            !hasSentInitialMessage.current
+          ) {
             hasSentInitialMessage.current = true;
             console.log("Sending initial message for procedure:", defaultProcedure);
             if (defaultCondition) {
@@ -671,6 +674,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               // Special message for medicare-work-requirements microsite
               if (micrositeSlug === "medicare-work-requirements") {
                 initialMessage = `I need help understanding the new Medicare work requirements. Can you explain what I need to know?`;
+              } else if (micrositeSlug === "medicaid-eligibility") {
+                // The /medicaid-eligibility landing page CTA. Without this the
+                // button dropped the user into an empty chat and they had to
+                // work out for themselves how to start an eligibility check.
+                initialMessage = `I'd like to check whether I might be eligible for Medicaid. Can you walk me through it?`;
               } else {
                 // Default message for appeals
                 initialMessage = `I'm working on an appeal for ${defaultProcedure}`;
