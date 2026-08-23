@@ -5,6 +5,7 @@ import asyncio
 from typing import Optional, Tuple, List
 
 from fighthealthinsurance.ml.ml_models import (
+    MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION,
     RemoteOpenLike,
     ModelDescription,
     RemoteModel,
@@ -432,10 +433,22 @@ class TestMedicaidPathPrompt(TestCase):
         prompt = self._medicaid_system_prompt()
         self.assertIn("THE MEDICAID PATH", prompt)
 
-    def test_prompt_starts_the_eligibility_tool_after_general_info(self):
+    def test_prompt_offers_the_eligibility_check_after_general_info(self):
         prompt = self._medicaid_system_prompt()
         self.assertIn("medicaid_eligibility", prompt)
-        self.assertIn("offer the EXPERIMENTAL eligibility check", prompt)
+        self.assertIn(MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION, prompt)
+
+    def test_prompt_frames_the_check_as_an_offer_not_a_redirect(self):
+        # Someone asking "what is Medicaid?" doesn't necessarily want an
+        # eligibility interview; the prompt has to answer them first and let
+        # the offer go if they aren't interested.
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("Offer it, don't push it", prompt)
+        self.assertIn("let it go and help them with what they actually asked", prompt)
+
+    def test_prompt_forbids_stating_an_uncomputed_verdict(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("NEVER state or guess an eligibility verdict yourself", prompt)
 
     def test_prompt_documents_the_target_year_parameter(self):
         prompt = self._medicaid_system_prompt()

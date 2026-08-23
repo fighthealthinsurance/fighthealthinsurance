@@ -22,6 +22,7 @@ from fighthealthinsurance.chat.llm_client import (
     REPEAT_OFFENDER_DECAY,
     BAD_RESPONSE_PATTERNS,
     BAD_CONTEXT_PATTERNS,
+    INVENTED_ELIGIBILITY_VERDICT_PENALTY,
 )
 from tests.chat_fixtures import CANNED_MEDICAID_REPLY, FRESH_REPLY, LOOPED_REPLY
 
@@ -158,6 +159,62 @@ class TestScoreLlmResponse(TestCase):
         self.assertGreater(
             score_llm_response(tool_call, 8000),
             score_llm_response(invented_verdict, 8000),
+        )
+
+    def test_invented_eligibility_verdict_is_penalized(self):
+        # Only the medicaid_eligibility checker can produce a verdict. A model
+        # asserting one from the conversation alone is guessing about
+        # someone's health coverage.
+        invented = (
+            "Good news — based on your income you are eligible for Medicaid.",
+            "Medicaid eligibility for California",
+        )
+        neutral = (
+            "Medicaid income limits vary by state and household size.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertEqual(
+            score_llm_response(neutral, 8000) - score_llm_response(invented, 8000),
+            INVENTED_ELIGIBILITY_VERDICT_PENALTY,
+        )
+
+    def test_verdict_is_not_penalized_once_the_checker_has_run(self):
+        # After the tool computes a determination, relaying it is the point.
+        verdict = (
+            "Good news — based on your income you are eligible for Medicaid.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(verdict, 8000, eligibility_verified=True),
+            score_llm_response(verdict, 8000),
+        )
+
+    def test_offering_the_check_is_not_a_verdict(self):
+        # The Medicaid path asks the model to say exactly this before the
+        # checker has run, so penalizing it would fight our own prompt.
+        offer = (
+            "You may be eligible for Medicaid — want me to run our "
+            "experimental eligibility check with you?",
+            "Medicaid question",
+        )
+
+        self.assertEqual(
+            score_llm_response(offer, 8000),
+            score_llm_response(offer, 8000, eligibility_verified=True),
+        )
+
+    def test_invented_verdict_loses_to_the_tool_call_that_would_compute_it(self):
+        tool_call = ('**medicaid_eligibility {"state": "CA", "age": 39}**', None)
+        invented = (
+            "Based on your income you do not qualify for Medicaid in California.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(tool_call, 8000),
+            score_llm_response(invented, 8000),
         )
 
     def test_missing_context_still_penalized_without_a_tool_call(self):

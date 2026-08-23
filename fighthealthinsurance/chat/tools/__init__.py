@@ -29,6 +29,8 @@ from .patterns import (
     PUBMED_QUERY_REGEX,
     RXNORM_LOOKUP_REGEX,
     USPSTF_LOOKUP_REGEX,
+    contains_tool_call,
+    count_tool_invocations,
 )
 from .prior_auth_tool import PriorAuthTool
 from .pubmed_tool import PubMedTool
@@ -49,6 +51,8 @@ __all__ = [
     "CLINICAL_TRIALS_QUERY_REGEX",
     "FINANCIAL_ASSISTANCE_REGEX",
     "ALL_TOOL_PATTERNS",
+    "contains_tool_call",
+    "count_tool_invocations",
     # Tool handlers
     "BaseTool",
     "JsonFollowupTool",

@@ -313,10 +313,47 @@ class TestMLRouterAppealOnlyBackends(unittest.TestCase):
         self.assertIn(self.general, models)
 
     def test_chat_doubles_a_general_fhi_backend_not_the_appeal_only_one(self):
-        # "fhi-2025" sorts after "fhi-legacy", so name order alone would have
-        # doubled the appeal-only backend for every chat turn.
+        # The doubled chat slot is picked by sorted name order, so give the
+        # appeal-only backend the name that sorts FIRST -- otherwise the
+        # assertion passes whether or not the capability filter runs.
+        self.router.models_by_name = {
+            "fhi-aaa-appeal": [self.appeal_only],
+            "fhi-zzz-chat": [self.general],
+        }
+
         models = self.router.get_chat_backends(use_external=False)
+
         self.assertEqual(models.count(self.general), 3)
+        self.assertNotIn(self.appeal_only, models)
+
+    def test_chat_keeps_the_doubled_slot_when_every_fhi_backend_is_narrow(self):
+        # Fail open: a deployment whose only fhi backend is the appeal
+        # fine-tune should still get its doubled slot rather than silently
+        # dropping it.
+        self.router.internal_models_by_cost = [self.appeal_only]
+        self.router.all_models_by_cost = [self.appeal_only]
+        self.router.models_by_name = {"fhi-legacy": [self.appeal_only]}
+
+        models = self.router.get_chat_backends(use_external=False)
+
+        self.assertGreaterEqual(models.count(self.appeal_only), 2)
+
+    def test_best_internal_model_skips_the_appeal_only_backend(self):
+        # The appeal fine-tune is not the strongest here, but this also has
+        # to hold when it is -- quality alone would pick it for chat
+        # synthesis and document parsing.
+        self.appeal_only.quality.return_value = 999
+        self.assertIs(self.router.best_internal_model(), self.general)
+
+    def test_generation_can_still_ask_for_the_appeal_only_backend(self):
+        self.appeal_only.quality.return_value = 999
+        self.assertIs(
+            self.router.best_internal_model(general_only=False), self.appeal_only
+        )
+
+    def test_general_purpose_internal_models_excludes_the_appeal_only_backend(self):
+        pool = self.router.general_purpose_internal_models()
+        self.assertEqual(pool, [self.general])
 
     def test_entity_extraction_excludes_the_appeal_only_backend(self):
         self.assertNotIn(
@@ -351,11 +388,26 @@ class TestMLRouterAppealOnlyBackends(unittest.TestCase):
 class TestAppealOnlyModelCapability(unittest.TestCase):
     """The capability flag itself, on the classes that set it."""
 
+    @staticmethod
+    def _bare(cls):
+        # The backends' __init__ wants live config; the capability flag is a
+        # property of the class, so an uninitialized instance is enough (and
+        # is a real instance, unlike passing None as self).
+        return object.__new__(cls)
+
     def test_legacy_fhi_backend_is_not_general_purpose(self):
-        self.assertFalse(RemoteHealthInsurance.supports_general_instructions(None))
+        self.assertFalse(
+            self._bare(RemoteHealthInsurance).supports_general_instructions()
+        )
 
     def test_models_are_general_purpose_by_default(self):
-        self.assertTrue(RemoteModelLike.supports_general_instructions(None))
+        # RemoteModelLike is abstract, so a new backend that inherits the
+        # default without overriding it is what we actually want to check.
+        class _NewBackend(RemoteModelLike):
+            async def _infer(self, *args, **kwargs):  # pragma: no cover
+                return None
+
+        self.assertTrue(self._bare(_NewBackend).supports_general_instructions())
 
 
 class TestMLRouterBestExternalModels(unittest.TestCase):

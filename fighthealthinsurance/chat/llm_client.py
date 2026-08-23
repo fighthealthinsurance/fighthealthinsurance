@@ -11,10 +11,13 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 from loguru import logger
 
 from fighthealthinsurance.chat.message_preprocessor import MessageVariant
-from fighthealthinsurance.chat.safety_filters import detect_false_promises
+from fighthealthinsurance.chat.safety_filters import (
+    detect_eligibility_verdict,
+    detect_false_promises,
+)
 from fighthealthinsurance.chat.tools.patterns import (
-    ALL_TOOL_PATTERNS as tools_regex,
     contains_tool_call,
+    count_tool_invocations,
 )
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
 
@@ -54,6 +57,13 @@ BAD_CONTEXT_PATTERNS = re.compile(
 
 # Minimum length for a valid LLM response or context
 MIN_RESPONSE_LENGTH = 5
+
+# Penalty for stating a Medicaid/Medicare eligibility verdict that the
+# medicaid_eligibility checker never produced. Sized against the model-quality
+# prior (quality**2 // 5, up to ~8800) rather than against the content
+# signals (~100 each): a smaller nudge left the invented verdict winning on
+# backend preference alone, which is the failure this exists to stop.
+INVENTED_ELIGIBILITY_VERDICT_PENALTY = 2000
 
 # Pattern to detect when the response asks for the patient's name
 ASKS_FOR_PATIENT_NAME = re.compile(
@@ -276,6 +286,7 @@ def score_llm_response(
     chat_history: Optional[List[Dict[str, str]]] = None,
     current_message: Optional[str] = None,
     rejection_stats: Optional[Dict[str, int]] = None,
+    eligibility_verified: bool = False,
 ) -> float:
     """
     Score an LLM response for quality and safety.
@@ -292,6 +303,11 @@ def score_llm_response(
             its "repeated_rejected" counter so the caller can tell "no
             usable response" apart from "responses arrived but all repeated
             earlier replies" and retry with an anti-repeat instruction.
+        eligibility_verified: True when the medicaid_eligibility checker has
+            actually produced a determination for this chat (the tool's
+            follow-up pass, or any later turn in the same session). While
+            False, a candidate that flatly asserts an eligibility verdict is
+            inventing it and gets INVENTED_ELIGIBILITY_VERDICT_PENALTY.
 
     Returns:
         Float score (higher is better, -inf for invalid responses).
@@ -334,11 +350,7 @@ def score_llm_response(
     # writes those. Counted with the same patterns the tool bonus uses (NOT
     # contains_tool_call, which also fires on a bare mention of a token) so
     # only a real call earns the full model prior below.
-    tool_call_matches = (
-        sum(1 for pattern in tools_regex if re.search(pattern, response_text))
-        if response_text
-        else 0
-    )
+    tool_call_matches = count_tool_invocations(response_text)
     has_tool_call = tool_call_matches > 0
 
     # Bonus for being a primary call
@@ -366,6 +378,19 @@ def score_llm_response(
         if detect_false_promises(response_text):
             score -= 200
             logger.warning("Detected false promise in response, penalizing score")
+
+        # Safety: an eligibility verdict the checker never computed is a
+        # guess about someone's health coverage dressed up as a
+        # determination. Penalized hard enough to cross the model-quality
+        # prior (base scores reach ~8800) so an internal-tier candidate that
+        # invents "you qualify for Medicaid" loses to one that either calls
+        # the checker or answers without a verdict.
+        if not eligibility_verified and detect_eligibility_verdict(response_text):
+            score -= INVENTED_ELIGIBILITY_VERDICT_PENALTY
+            logger.warning(
+                "Response asserts a Medicaid/Medicare eligibility verdict the "
+                "checker never computed, penalizing score"
+            )
 
         # Bonus for referencing an uploaded document by name (derived from history)
         if chat_history:
@@ -441,6 +466,7 @@ def create_response_scorer(
     call_labels: Optional[Dict[Awaitable, str]] = None,
     repeat_offenders: Optional[Dict[str, int]] = None,
     score_log: Optional[Dict[Awaitable, float]] = None,
+    eligibility_verified: bool = False,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a scoring function for use with best_within_timelimit.
@@ -465,6 +491,8 @@ def create_response_scorer(
         score_log: Optional mutable dict; every scored call's final score is
             recorded here (keyed by the original awaitable) so the caller
             can report per-candidate scores in debug output.
+        eligibility_verified: Whether the medicaid_eligibility checker has
+            produced a determination for this chat; see score_llm_response.
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -503,6 +531,7 @@ def create_response_scorer(
             chat_history=chat_history,
             current_message=current_message,
             rejection_stats=rejection_stats,
+            eligibility_verified=eligibility_verified,
         )
         if (
             label

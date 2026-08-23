@@ -279,7 +279,11 @@ class MLRouter(object):
         general = [m for m in candidates if m.supports_general_instructions()]
         if not general:
             if candidates:
-                logger.debug(
+                # WARNING, not DEBUG: falling back means an instruction-following
+                # path is about to be served by an appeal-text fine-tune, which
+                # is the failure this filter exists to prevent. It is still
+                # better than routing nowhere, but it should be visible.
+                logger.warning(
                     f"MLRouter: no general-purpose backend for {context}; "
                     f"falling back to {[str(m) for m in candidates]}"
                 )
@@ -630,15 +634,29 @@ class MLRouter(object):
         # fhi backend (dict insertion order used to vary with registration
         # order). Narrow fine-tunes are excluded first, so a deployment where
         # the appeal-only backend sorts first doesn't double IT for chat.
-        fhi_models = sorted(
-            name
-            for name, backends in self.models_by_name.items()
-            if name.startswith("fhi-")
-            and any(m.supports_general_instructions() for m in backends)
+        fhi_names = sorted(
+            name for name in self.models_by_name if name.startswith("fhi-")
         )
-        if fhi_models:
+        general_fhi_names = [
+            name
+            for name in fhi_names
+            if any(m.supports_general_instructions() for m in self.models_by_name[name])
+        ]
+        # Fail open like the other filters: a deployment whose only fhi
+        # backend is the appeal fine-tune should still get its doubled chat
+        # slot rather than silently losing it.
+        chosen_fhi_names = general_fhi_names or fhi_names
+        if chosen_fhi_names:
+            # Filtered again per INSTANCE, not just per name: a name can hold
+            # a mix of backends, and _general_purpose_only logs (and fails
+            # open) if they are all narrow.
             models += (
-                self._filter_available(self.models_by_name[fhi_models[0]], "chat-fhi")
+                self._general_purpose_only(
+                    self._filter_available(
+                        self.models_by_name[chosen_fhi_names[0]], "chat-fhi"
+                    ),
+                    "chat-fhi",
+                )
                 * 2
             )
         if use_external:
@@ -794,11 +812,33 @@ class MLRouter(object):
 
         return None
 
-    def best_internal_model(self) -> Optional[RemoteModelLike]:
-        """Return the highest-quality internal model available, or None."""
+    def general_purpose_internal_models(self) -> list[RemoteModelLike]:
+        """Internal backends that follow instructions, cheapest-first.
+
+        The default pool for one-shot inference helpers (entity extraction,
+        document/policy parsing, chat synthesis). Fails open, so it is never
+        empty when ``internal_models_by_cost`` isn't.
+        """
+        return self._general_purpose_only(
+            self.internal_models_by_cost, "internal-inference"
+        )
+
+    def best_internal_model(
+        self, *, general_only: bool = True
+    ) -> Optional[RemoteModelLike]:
+        """Return the highest-quality internal model available, or None.
+
+        ``general_only`` (the default) skips the appeal-text fine-tunes,
+        which is what every instruction-following caller wants. Appeal and
+        prior-auth GENERATION must pass ``general_only=False`` -- there the
+        fine-tune is the point.
+        """
         if not self.internal_models_by_cost:
             return None
-        return max(self.internal_models_by_cost, key=lambda m: m.quality())
+        candidates: Sequence[RemoteModelLike] = self.internal_models_by_cost
+        if general_only:
+            candidates = self._general_purpose_only(candidates, "best-internal")
+        return max(candidates, key=lambda m: m.quality())
 
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:

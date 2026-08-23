@@ -100,6 +100,7 @@ CleanerUtils.is_valid_url = classmethod(  # type: ignore[assignment,method-assig
 )
 
 from fighthealthinsurance.exec import *
+from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_ALIASES
 from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
     strip_boilerplate_service,
@@ -130,6 +131,34 @@ MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (age
 - State-specific details may vary
 
 For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
+
+
+# How we invite someone into the eligibility check. Four places have to say
+# the same thing -- the medicaid_info rules, the work-requirements rule, step
+# 2 of THE MEDICAID PATH, and the handoff MedicaidInfoTool appends to a
+# successful lookup -- so the wording lives here instead of being retyped
+# (and drifting) in each of them.
+#
+# It is an OFFER. Someone who asked "what is Medicaid?" wants an answer to
+# that question; being marched into an eligibility interview instead is worse
+# service, not better. The tool only starts once they show they want it.
+MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION = (
+    "close with ONE short sentence offering our EXPERIMENTAL Medicaid/Medicare "
+    "eligibility check — say plainly that it is experimental, only a rough "
+    "estimate, and not an official determination"
+)
+
+MEDICAID_ELIGIBILITY_OFFER_RULE = (
+    MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION + ". Offer it, don't push it: make it "
+    "an invitation, and drop it if they decline or move on to something else. "
+    "If they take you up on it — or have already shown they want to know "
+    "whether they qualify (asking about income limits, whether they'd be "
+    "covered, or how the work requirements apply to them) — call "
+    "**medicaid_eligibility** with everything you already know and let the "
+    "tool tell you which questions to ask; never ask eligibility questions "
+    "before calling it. If a check is already underway in this conversation, "
+    "continue it instead of re-offering it."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1224,12 +1253,14 @@ When possible even if the user has not explicitily provided the state if they're
 This means, for example, you get the phone number for medical (california medicaid) by calling this tool and looking at the response.
 
 Rules for medicaid questions:
-- If user mentions Medicaid/Medicare + state → ONLY respond with the tool call, no other text
+- If user mentions Medicaid/Medicare + state → ONLY respond with the tool call, no other text. The tool comes back with the state's information and you write the actual answer then — so the rules below about what the answer contains apply to THAT message, not to this one.
 - If user mentions Medicaid/Medicare but no state → Ask "Which state?" then ONLY use tool call
 - NEVER provide generic Medicaid information, websites, or advice
 - NEVER mix tool calls with long explanations
 - The tool provides ALL necessary information, although you can reformat it's output.
-- After you have delivered the state information, close with ONE short sentence offering our experimental eligibility check (see the eligibility tool above) — say plainly that it's experimental and only a rough estimate, not an official determination.
+- After you have delivered the state information, """
+            + MEDICAID_ELIGIBILITY_OFFER_RULE
+            + """
 
 CORRECT Examples:
 User: "medicaid info in california" → Response: **medicaid_info {"state": "California", "topic": "", "limit": 5}**
@@ -1244,7 +1275,9 @@ WRONG Examples:
             + MEDICAID_WORK_REQUIREMENTS_BLOCK
             + """
 
-RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use the text above, followed at most by ONE short sentence offering the experimental eligibility check (e.g. "I can run our experimental eligibility check with you to estimate how this affects you — it's a rough estimate, not an official determination."). Nothing else.
+RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use the text above, then """
+            + MEDICAID_ELIGIBILITY_OFFER_RULE
+            + """ Nothing else.
 """
         )
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
@@ -1291,7 +1324,7 @@ Use this tool when the user asks about cost, affordability, copay assistance, "h
 
 THIS ELIGIBILITY CHECK IS AN EXPERIMENTAL FEATURE. Every time you start an eligibility check or deliver an estimate, tell the user in plain language that this is an experimental feature that can be wrong or out of date, that it is only a rough estimate and NOT an official eligibility determination, and that only their state Medicaid agency can determine eligibility for real. Do not let a whole eligibility conversation go by without this being said clearly.
 
-ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
+USE THIS TOOL WHENEVER SOMEONE WANTS TO KNOW WHETHER THEY CAN GET MEDICAID/MEDICARE — they asked outright, they said yes to your offer of the check, or they asked something only a check can answer ("would I qualify?", "what are the limits for someone like me?", "do the work requirements apply to me?"). Don't run it on someone who only wanted to know what Medicaid is and hasn't shown any interest in it, and NEVER state or guess an eligibility verdict yourself — the only eligibility answer you may give is the one this tool returns.
 
 When the user asks whether they qualify or are eligible for Medicaid or Medicare, use **medicaid_eligibility** — NOT medicaid_info, even when they also name their state. medicaid_info is only for looking up a state's contact info and resources, which is a good follow-up AFTER the eligibility check.
 
@@ -1384,15 +1417,15 @@ This means if someone asks if their eligible for medical, medicaid, medicare, or
 You can call these tools, but not the person chatting with you. So, for example, you can offer to lookup more info for them.
 
 ***THE MEDICAID PATH***
-Most people asking about Medicaid in general ("what is Medicaid?", "how do I apply?", "what are the income limits?", "what are these work requirements?") really want to know whether THEY can get covered, so a general answer is the start of the path, not the end of it:
-1. Answer what they actually asked (using medicaid_info for anything state-specific, or the work requirements text above).
-2. Then offer the EXPERIMENTAL eligibility check in one short sentence, making clear it's a rough estimate and not an official determination.
-3. The moment they show any interest — "yes", "how do I know?", "would I qualify?", "what are the limits for me?", asking about their own income, household, or coverage — call **medicaid_eligibility** with everything you already know (at minimum the state, plus their target year if they named one). Do NOT ask them eligibility questions first; the tool tells you which questions to ask.
+A lot of people asking about Medicaid in general ("what is Medicaid?", "how do I apply?", "what are the income limits?", "what are these work requirements?") are really wondering whether THEY can get covered — and some just want the general answer. So answer the question first, and leave the door open:
+1. Answer what they actually asked (using medicaid_info for anything state-specific, or the work requirements text above). This is the part they came for — answer it properly, don't cut it short to get to the check.
+2. Then {MEDICAID_ELIGIBILITY_OFFER_RULE}
+3. Once they show interest — "yes", "how do I know?", "would I qualify?", "what are the limits for me?", asking about their own income, household, or coverage — call **medicaid_eligibility** with everything you already know (at minimum the state, plus their target year if they named one). Do NOT ask them eligibility questions first; the tool tells you which questions to ask.
 4. Keep going: each answer they give goes back into the tool call along with everything collected so far, until the tool gives a determination. Then finish with the state contact info from **medicaid_info** and https://www.fighthealthinsurance.com/faq/medicaid/ .
-Don't re-offer the check if one is already underway in this conversation — just continue it. And don't push it on someone who has said no or who is asking about something else entirely.
+Plenty of people just want the answer to their question. If they say no, ignore the offer, or move on to something else, let it go and help them with what they actually asked.
 """
-            medicaid_names_reminder = """
-Remember that medicaid can go by many names, including but not limited to: DenaliCare, Medi-Cal, Health First Colorado, Husky Health, Diamond State Health Plan, Med-QUEST, Medical Assistance Program, HealthChoice Illinois, Hoosier Healthwise, Iowa Medicaid, Kansas Medical Assistance Program, MaineCare, MassHealth, MO HealthNet, NJ FamilyCare, Turquoise Care, New York State Medicaid, SoonerCare, Medical Assistance, Healthy Connections, TennCare, STAR+PLUS, Green Mountain Care, Cardinal Care, Apple Health, Forward Health, STAR, and Equality Care. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
+            medicaid_names_reminder = f"""
+Remember that medicaid can go by many names, including but not limited to: {", ".join(MEDICAID_PROGRAM_ALIASES)}. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
 """
         else:
             # Only include PubMed tool for non-Medicaid conversations

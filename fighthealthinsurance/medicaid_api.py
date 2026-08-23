@@ -502,8 +502,16 @@ DEFAULT_TARGET_YEAR = WORK_REQUIREMENT_FIRST_YEAR
 MAX_TARGET_YEAR = BASE_ELIGIBILITY_YEAR + 10
 
 # Rough annual bump applied to the FPL table and the LTC income cap for years
-# past the published guidelines. A guess, and labelled as one to the user.
+# past the published guidelines. A guess, and labelled as one to the user --
+# which is why it is only applied when the user actually asked about a future
+# year. On the default path the two verdicts differ by the work requirement
+# alone, so a guessed inflation number can't manufacture a difference nobody
+# asked about.
 ANNUAL_THRESHOLD_INFLATION = 0.03
+
+# Below this a number isn't a year at all, it's whatever _parse_numeric found
+# in the sentence ("in 3 years", "for the next 5 years").
+_MIN_PLAUSIBLE_YEAR = 1900
 
 # Percent-of-FPL ceilings by category. Module scope because the stepwise
 # question block consults them to skip questions that cannot change the
@@ -673,7 +681,16 @@ def _parse_target_year(value: Any) -> Optional[int]:
         return None
     year = int(number)
     if 0 <= year < 100:
+        # A two-digit year, but only if it can BE one: "26" is 2026, while
+        # the 3 that _parse_numeric pulls out of "in 3 years" is not 2003.
+        # Reading it as one used to clamp to the base year, which quietly
+        # switched the work-requirement overlay off for a user who was
+        # asking about a year the overlay applies to.
         year += 2000
+        if year < BASE_ELIGIBILITY_YEAR:
+            return None
+    elif year < _MIN_PLAUSIBLE_YEAR:
+        return None
     if year < BASE_ELIGIBILITY_YEAR:
         return BASE_ELIGIBILITY_YEAR
     if year > MAX_TARGET_YEAR:
@@ -688,6 +705,16 @@ def resolve_target_year(value: Any) -> int:
     user sees can't disagree about which year was checked.
     """
     return _parse_target_year(value) or DEFAULT_TARGET_YEAR
+
+
+def target_year_requested(value: Any) -> bool:
+    """Whether the caller actually named a target year we could read.
+
+    Distinguishes "what about 2028?" from the DEFAULT_TARGET_YEAR path. Only
+    the former projects income thresholds forward, so only the former should
+    tell the user the thresholds were estimated.
+    """
+    return _parse_target_year(value) is not None
 
 
 def _clean_token(s: str) -> str:
@@ -893,7 +920,18 @@ def is_eligible(
     # The year the caller wants the second verdict for. Anything we can't
     # read falls back to the default rather than failing the whole check;
     # summarize_eligibility_inputs reports what we actually used.
-    target_year = resolve_target_year(kwargs.get("target_year"))
+    requested_year = _parse_target_year(kwargs.get("target_year"))
+    target_year = requested_year or DEFAULT_TARGET_YEAR
+
+    # Which year's income thresholds the target verdict is scored against.
+    # Only a year the user ASKED about gets projected forward: on the default
+    # path, inflating the table by a guessed 3% could flip someone sitting on
+    # a threshold to "eligible next year, not this year" -- a difference
+    # invented by our own guess, about a year they never mentioned. There the
+    # two verdicts differ by the work requirement and nothing else.
+    threshold_year = (
+        requested_year if requested_year is not None else BASE_ELIGIBILITY_YEAR
+    )
 
     def inflate(amount: float, year: int) -> float:
         """Roll a base-year threshold forward to ``year``."""
@@ -921,7 +959,7 @@ def is_eligible(
     LTC_INCOME_CAP_BASE = (
         3000.0  # rough nursing home / HCBS cap (varies by state/waiver)
     )
-    LTC_INCOME_CAP_TARGET = inflate(LTC_INCOME_CAP_BASE, target_year)
+    LTC_INCOME_CAP_TARGET = inflate(LTC_INCOME_CAP_BASE, threshold_year)
     ABD_ASSET_LIMIT_SINGLE = 2000.0
     ABD_ASSET_LIMIT_MARRIED = 3000.0
     HOME_EQUITY_CAP_DEFAULT = 750000.0
@@ -1309,11 +1347,13 @@ def is_eligible(
 
     # ---- with core info present, evaluate categories ----
     pfpl_base = pct_fpl(monthly_income, household_size, BASE_ELIGIBILITY_YEAR)
-    # The target year's FPL guidelines aren't published yet, so they're the
-    # base table rolled forward. Someone a hair over a threshold today can
-    # land under an inflated one, which is exactly what "will I qualify in
-    # 2028?" is asking -- so the categories below score both years.
-    pfpl_target = pct_fpl(monthly_income, household_size, target_year)
+    # When the user asked about a specific future year, its FPL guidelines
+    # aren't published yet, so they're the base table rolled forward: someone
+    # a hair over a threshold today can land under an inflated one, which is
+    # exactly what "will I qualify in 2028?" is asking. On the default path
+    # threshold_year IS the base year, so this is the same number as
+    # pfpl_base and the target verdict differs only by the work overlay.
+    pfpl_target = pct_fpl(monthly_income, household_size, threshold_year)
 
     # Income-only verdict for the target year, when it can differ from the
     # base year's. None means "no separate target-year test applied", so the
@@ -1375,7 +1415,7 @@ def is_eligible(
                 # OVER the ABD limit came back eligible via this pathway,
                 # while declining the question came back "we can't estimate".
                 eligible_base = True
-                target_income_eligible = magi_expansion_covers(year=target_year)
+                target_income_eligible = magi_expansion_covers(year=threshold_year)
             elif not ask("assets_total", _Q_ASSETS):
                 # Declined, and no asset-free pathway applies: an asset test
                 # we cannot run is not a failed asset test. Without this the
@@ -1397,7 +1437,7 @@ def is_eligible(
             if not eligible_base:
                 eligible_base = magi_expansion_covers()
             if not target_income_eligible:
-                target_income_eligible = magi_expansion_covers(year=target_year)
+                target_income_eligible = magi_expansion_covers(year=threshold_year)
             if not eligible_base:
                 abd_alternatives()
     elif applying_reason in _LTC_REASONS:

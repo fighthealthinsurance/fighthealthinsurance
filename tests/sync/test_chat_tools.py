@@ -16,6 +16,7 @@ from fighthealthinsurance.chat.tools import (
     RXNORM_LOOKUP_REGEX,
     USPSTF_LOOKUP_REGEX,
     BaseTool,
+    count_tool_invocations,
     ClinicalTrialsTool,
     PubMedTool,
     MedicaidInfoTool,
@@ -52,6 +53,45 @@ class TestToolPatterns(TestCase):
             match = re.search(PUBMED_QUERY_REGEX, text, re.IGNORECASE)
             self.assertIsNotNone(match, f"Failed to match: {text}")
             self.assertEqual(match.group(1).strip(), expected_query)
+
+    def test_pubmed_query_pattern_ignores_prose(self):
+        """An offer to search is not a search.
+
+        The colon used to be optional, so "I can run a pubmed query for you"
+        fired the handler AND earned the fan-out's tool-call bonus -- letting
+        a candidate that offered to use a tool outscore one that used it.
+        """
+        prose = [
+            "I can run a pubmed query for you if that would help.",
+            "Want me to do a pubmed query?",
+            "A PubMed query might turn up supporting studies.",
+        ]
+        for text in prose:
+            with self.subTest(text=text):
+                self.assertIsNone(re.search(PUBMED_QUERY_REGEX, text, re.IGNORECASE))
+
+    def test_count_tool_invocations_counts_distinct_tools(self):
+        text = (
+            "Let me look at a couple of things.\n"
+            '**medicaid_eligibility {"state": "CA"}**\n'
+            "[*pubmed query: metformin*]"
+        )
+        self.assertEqual(count_tool_invocations(text), 2)
+
+    def test_count_tool_invocations_finds_an_anchored_call_after_prose(self):
+        # CREATE_OR_UPDATE_* are `^...$`-anchored, so a flag-less re.search
+        # only ever saw them at the very start of a reply.
+        text = 'Sure, here it is.\n**create_or_update_appeal**{"a": 1}\n'
+        self.assertEqual(count_tool_invocations(text), 1)
+
+    def test_count_tool_invocations_ignores_a_bare_mention(self):
+        self.assertEqual(
+            count_tool_invocations("I will use create_or_update_appeal shortly"), 0
+        )
+
+    def test_count_tool_invocations_handles_empty_input(self):
+        self.assertEqual(count_tool_invocations(""), 0)
+        self.assertEqual(count_tool_invocations(None), 0)
 
     def test_clinical_trials_query_pattern(self):
         """Test ClinicalTrials.gov query pattern matches various formats."""
@@ -651,9 +691,40 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2029,
+            thresholds_estimated=True,
         )
 
         self.assertIn("aren't published yet", info)
+
+    def test_default_year_is_not_described_as_an_estimated_threshold(self):
+        # The checker only projects income limits forward for a year the user
+        # named, so on the default path there is no estimate to disclaim --
+        # saying there was described arithmetic we never did.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=DEFAULT_TARGET_YEAR,
+        )
+
+        self.assertNotIn("aren't published yet", info)
+
+    def test_target_year_positive_is_reported_mid_interview(self):
+        # The base-year positive was already shared while questions were
+        # outstanding; the target-year one sat unsaid behind them, which is
+        # the half someone asking "will I still qualify in 2029?" wanted.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=["What is your household size?"],
+            target_year=2029,
+        )
+
+        self.assertIn("already look eligible in 2029", info)
 
     def test_default_target_year_still_covers_the_work_requirement(self):
         info = self.tool._build_eligibility_info(
@@ -689,7 +760,21 @@ class TestMedicaidInfoStartsTheEligibilityPath(TestCase):
         self.assertIn("EXPERIMENTAL", self.handoff)
 
     def test_handoff_forbids_questions_before_the_tool_call(self):
-        self.assertIn("Never ask eligibility questions before", self.handoff)
+        self.assertIn("never ask eligibility questions before", self.handoff)
+
+    def test_handoff_offers_rather_than_forces_the_check(self):
+        # Someone who asked what Medicaid is may just want that answered;
+        # the handoff has to read as an invitation, not a redirect.
+        self.assertIn("Offer it, don't push it", self.handoff)
+        self.assertIn("drop it if they decline", self.handoff)
+
+    def test_handoff_omits_the_state_line_when_none_was_given(self):
+        # The old handoff pasted the state into a literal JSON tool call, so
+        # a lookup with no "state" key emitted **medicaid_eligibility
+        # {"state": "the state"}** -- a made-up value the model then re-sent.
+        handoff = MedicaidInfoTool._build_eligibility_handoff(None)
+        self.assertNotIn("You already know their state", handoff)
+        self.assertNotIn("the state", handoff)
 
     def test_handoff_does_not_restart_a_check_already_underway(self):
         self.assertIn("already underway", self.handoff)

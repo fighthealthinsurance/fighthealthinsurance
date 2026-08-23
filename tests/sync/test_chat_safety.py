@@ -5,6 +5,7 @@ from django.test import TestCase
 from fighthealthinsurance.chat.safety_filters import (
     detect_crisis_keywords,
     detect_delete_data_request,
+    detect_eligibility_verdict,
     detect_false_promises,
     llm_requested_delete_handoff,
     CRISIS_RESOURCES,
@@ -409,3 +410,63 @@ class TestPromptTemplateSentinelCoupling(TestCase):
         from fighthealthinsurance.prompt_templates import DELETE_DATA_INSTRUCTION
 
         self.assertTrue(llm_requested_delete_handoff(DELETE_DATA_INSTRUCTION))
+
+
+class TestEligibilityVerdictDetection(TestCase):
+    """Only the medicaid_eligibility checker may hand down a verdict.
+
+    The scorer uses this to descore a reply that states one the checker never
+    computed, so what counts as "a verdict" has to be the definite claims and
+    nothing else -- the Medicaid path deliberately has the model float the
+    possibility before the check runs.
+    """
+
+    def test_definite_verdicts_are_detected(self):
+        verdicts = [
+            "Based on what you told me, you are eligible for Medicaid.",
+            "Unfortunately you do not qualify for Medicaid in Texas.",
+            "Good news: you qualify for Medicaid expansion coverage.",
+            "You're not eligible for Medicare at your age.",
+            "Your household is Medicaid-eligible.",
+        ]
+        for text in verdicts:
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
+    def test_hedged_offers_are_not_verdicts(self):
+        offers = [
+            "You may be eligible for Medicaid — want me to run our "
+            "experimental check?",
+            "You might qualify for Medicaid depending on your income.",
+            "I can check if you are eligible for Medicaid.",
+            "If you are eligible for Medicaid, the state will mail you a card.",
+        ]
+        for text in offers:
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
+    def test_questions_are_not_verdicts(self):
+        self.assertFalse(detect_eligibility_verdict("Are you eligible for Medicaid?"))
+
+    def test_general_medicaid_information_is_not_a_verdict(self):
+        self.assertFalse(
+            detect_eligibility_verdict(
+                "Medicaid is a joint federal and state program that covers "
+                "low-income adults, children, pregnant people, and people "
+                "with disabilities."
+            )
+        )
+
+    def test_a_verdict_later_in_a_reply_is_still_detected(self):
+        # The reply that beat the real tool call opened with a friendly
+        # paragraph and put the invented verdict at the bottom.
+        reply = (
+            "Thanks for sharing all that — I know this is stressful.\n\n"
+            "Here is what Medicaid covers in California.\n\n"
+            "You qualify for Medi-Cal."
+        )
+        self.assertTrue(detect_eligibility_verdict(reply))
+
+    def test_empty_text_is_not_a_verdict(self):
+        self.assertFalse(detect_eligibility_verdict(""))
+        self.assertFalse(detect_eligibility_verdict(None))

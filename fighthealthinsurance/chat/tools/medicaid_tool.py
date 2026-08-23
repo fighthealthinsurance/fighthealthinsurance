@@ -118,12 +118,13 @@ class MedicaidInfoTool(BaseTool):
                     "Medicaid info lookup completed successfully."
                 )
 
-                state_name = medicaid_info_data.get("state", "the state")
+                state = medicaid_info_data.get("state")
+                state_name = state or "the state"
                 medicaid_info_text = (
                     f"Here's the official Medicaid information for {state_name}:\n\n"
                     f"{medicaid_info}\n\n"
                     f" -- use it to answer the question {current_message_for_llm}"
-                    f"\n\n{self._build_eligibility_handoff(state_name)}"
+                    f"\n\n{self._build_eligibility_handoff(state)}"
                 )
 
                 # Call LLM with the Medicaid info context
@@ -205,31 +206,38 @@ class MedicaidInfoTool(BaseTool):
             raise
 
     @staticmethod
-    def _build_eligibility_handoff(state_name: str) -> str:
-        """Guidance that turns a general Medicaid answer into the next step.
+    def _build_eligibility_handoff(state: Optional[str]) -> str:
+        """Guidance that leaves the door open to the eligibility check.
 
         A general "how does Medicaid work in my state?" question used to end
         with contact details and nothing else, so someone who came to us
-        wondering whether they qualify left without ever being offered the
-        check that answers it. The info lookup is the natural jumping-off
-        point, so every successful one now hands the model the handoff.
+        wondering whether they qualify left without ever hearing that we can
+        estimate it. The info lookup is the natural jumping-off point, so
+        every successful one now hands the model the offer.
+
+        It is an OFFER, not a redirect: the wording comes from
+        MEDICAID_ELIGIBILITY_OFFER_RULE, which the system prompt uses too, so
+        the two can't drift into telling the model different things. No tool
+        call is spelled out here -- the model already has the tool's format,
+        and building one by string-concatenating an unescaped state name
+        produced invalid JSON whenever the payload had no "state" key.
         """
-        return (
-            "Then start them down the Medicaid path: after answering, offer "
-            "our EXPERIMENTAL Medicaid/Medicare eligibility check in one "
-            "short sentence (make clear it's experimental, a rough estimate, "
-            "and not an official determination). If they've shown any sign "
-            "of wanting to know whether they qualify -- asking about income "
-            "limits, whether they'd be covered, how to apply, or the work "
-            "requirements -- don't wait for a yes: call "
-            '**medicaid_eligibility {"state": "'
-            + str(state_name)
-            + '"}** now, adding anything '
-            "else they've already told you, and let the tool tell you which "
-            "questions to ask. Never ask eligibility questions before "
-            "calling the tool. If an eligibility check is already underway "
-            "in this conversation, continue it instead of re-offering it."
+        # Imported lazily: ml_models is a heavy module and this file
+        # otherwise stays free of it (same reason medicaid_api is imported
+        # inside execute()).
+        from fighthealthinsurance.ml.ml_models import (
+            MEDICAID_ELIGIBILITY_OFFER_RULE,
         )
+
+        handoff = "Then, after you have answered their question, " + (
+            MEDICAID_ELIGIBILITY_OFFER_RULE
+        )
+        if state:
+            handoff += (
+                f" You already know their state is {state}, so send it in the "
+                "first call along with anything else they have told you."
+            )
+        return handoff
 
 
 class MedicaidEligibilityTool(BaseTool):
@@ -252,6 +260,7 @@ class MedicaidEligibilityTool(BaseTool):
         call_llm_callback: Optional[
             Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
         ] = None,
+        eligibility_computed: Optional[List[bool]] = None,
     ):
         """
         Initialize the Medicaid eligibility tool.
@@ -259,9 +268,16 @@ class MedicaidEligibilityTool(BaseTool):
         Args:
             send_status_message: Async function to send status updates
             call_llm_callback: Callback to call LLM with additional context
+            eligibility_computed: Optional one-element list owned by the
+                ChatInterface, flipped to True once this tool produces a
+                determination. The tool is rebuilt every turn, so the session
+                needs somewhere outside it to remember that a verdict is now
+                legitimate to state (see score_llm_response's invented-verdict
+                penalty).
         """
         super().__init__(send_status_message)
         self.call_llm_callback = call_llm_callback
+        self.eligibility_computed = eligibility_computed
 
     async def execute(
         self,
@@ -340,9 +356,12 @@ class MedicaidEligibilityTool(BaseTool):
         try:
             # Import here to avoid circular imports
             from fighthealthinsurance.medicaid_api import (
+                BASE_ELIGIBILITY_YEAR,
+                WORK_REQUIREMENT_FIRST_YEAR,
                 is_eligible,
                 resolve_target_year,
                 summarize_eligibility_inputs,
+                target_year_requested,
             )
 
             await self.send_status_message("Processing Medicaid eligibility data")
@@ -351,6 +370,16 @@ class MedicaidEligibilityTool(BaseTool):
             # helper the checker uses, so the label we hand the LLM can't
             # claim a different year than the one that was scored.
             target_year = resolve_target_year(loaded.get("target_year"))
+
+            # The checker only projects income limits forward for a year the
+            # user actually named; on the default path both verdicts use the
+            # published table. Recomputed with the same helpers the checker
+            # uses so the caveat we print and the arithmetic it did agree.
+            thresholds_estimated = (
+                target_year_requested(loaded.get("target_year"))
+                and target_year > BASE_ELIGIBILITY_YEAR
+            )
+            work_req_applies = target_year >= WORK_REQUIREMENT_FIRST_YEAR
 
             # What we actually understood from the payload. The LLM parses
             # the user's free text and carries the running answers in its
@@ -369,6 +398,11 @@ class MedicaidEligibilityTool(BaseTool):
                 determination_made,
             ) = is_eligible(**loaded)
 
+            # From here on the checker's own output is in play, so the
+            # write-up pass (and the rest of the session) may state a verdict.
+            if self.eligibility_computed is not None:
+                self.eligibility_computed[0] = True
+
             info_text = self._build_eligibility_info(
                 eligible_base,
                 eligible_target,
@@ -377,26 +411,40 @@ class MedicaidEligibilityTool(BaseTool):
                 missing,
                 determination_made,
                 target_year=target_year,
+                thresholds_estimated=thresholds_estimated,
             )
             if parsed_summary:
                 info_text += "\n\n" + parsed_summary
 
+            # The work-requirement coaching only makes sense for years the
+            # overlay actually applies to. Offering it for a base-year check
+            # told the user to chase 80 hours a month for a rule that isn't
+            # in force in the year they asked about.
+            work_req_advice = (
+                (
+                    f"If the {target_year} work "
+                    "requirement is the barrier, suggest ways to reach 80 "
+                    "qualifying hours a month (work, school, volunteering, or "
+                    "caregiving) and remind them to keep good records -- with "
+                    "empathy, since this is stressful and unfair. "
+                )
+                if work_req_applies
+                else ""
+            )
             action_text = (
                 "\n\nUse this info to either ask the user the next follow-up "
                 "questions (no more than two or three per message, in the "
                 "order listed, rephrased naturally) or deliver the news of "
                 "our determination along with the alternatives. Don't re-ask "
-                "anything the user already answered. Always make it very "
-                "clear that this eligibility check is an EXPERIMENTAL "
-                "feature and only an approximation -- it can be wrong or "
-                "out of date -- and they must contact the state to know for "
-                "sure (you can use the "
+                "anything the user already answered. Never state an "
+                "eligibility answer this check did not produce -- the "
+                "verdicts above are the only ones you may give. Always make "
+                "it very clear that this eligibility check is an "
+                "EXPERIMENTAL feature and only an approximation -- it can be "
+                "wrong or out of date -- and they must contact the state to "
+                "know for sure (you can use the "
                 "medicaid_info tool call to get state-specific contact info "
-                f"to provide to the user). If the {target_year} work "
-                "requirement is the barrier, suggest ways to reach 80 "
-                "qualifying hours a month (work, school, volunteering, or "
-                "caregiving) and remind them to keep good records -- with "
-                "empathy, since this is stressful and unfair. This check "
+                f"to provide to the user). {work_req_advice}This check "
                 f"covered {target_year}; if the user asks about a different "
                 'year, call the tool again with "target_year" set to it '
                 "(along with everything else you already have). Remember to "
@@ -419,6 +467,9 @@ class MedicaidEligibilityTool(BaseTool):
                     "Medicaid eligibility investigation",
                     history_for_llm,
                     depth=depth + 1,
+                    # This pass is writing up what the checker computed, so a
+                    # verdict in its reply is earned, not invented.
+                    eligibility_verified=True,
                     is_logged_in=is_logged_in,
                     is_professional=is_professional,
                     fallback_backends=kwargs.get("fallback_backends"),
@@ -514,6 +565,7 @@ class MedicaidEligibilityTool(BaseTool):
         missing: List[str],
         determination_made: bool = True,
         target_year: Optional[int] = None,
+        thresholds_estimated: bool = False,
     ) -> str:
         """
         Build the eligibility information text passed back to the LLM.
@@ -535,6 +587,10 @@ class MedicaidEligibilityTool(BaseTool):
                 ``resolve_target_year`` returned for this payload, or the
                 label would name a year we didn't score. Defaults to the
                 checker's own default year.
+            thresholds_estimated: True only when the checker projected income
+                limits forward because the USER asked about a future year. On
+                the default path it doesn't, so telling the user the limits
+                were estimated would be describing arithmetic we never did.
 
         Returns:
             Formatted information text
@@ -593,6 +649,16 @@ class MedicaidEligibilityTool(BaseTool):
                     "share that, while noting the questions above are still "
                     "needed to be sure."
                 )
+            if target_is_separate_year and eligible_target:
+                # The target year clears too. Held back with the base-year
+                # positive above, this was the good half of the answer for
+                # someone who asked "will I still qualify in 2028?" and it
+                # sat unsaid behind whatever question was still outstanding.
+                parts.append(
+                    f"They also already look eligible in {target_year}"
+                    f"{work_req_note} -- same caveat, the questions above are "
+                    "still needed to be sure."
+                )
             if medicare:
                 parts.append(
                     "Our data already suggests they may be eligible for medicare."
@@ -638,10 +704,10 @@ class MedicaidEligibilityTool(BaseTool):
                     f"medicaid under the {label} rules{note}."
                 )
 
-            if target_is_separate_year:
-                # The later year's income limits are the published base-year
-                # guidelines rolled forward by an inflation guess, so a
-                # borderline verdict there is softer than it sounds.
+            if thresholds_estimated:
+                # The requested year's income limits are the published
+                # base-year guidelines rolled forward by an inflation guess,
+                # so a borderline verdict there is softer than it sounds.
                 parts.append(
                     f"Note: {target_year} income limits aren't published yet, "
                     f"so we estimated them from the {BASE_ELIGIBILITY_YEAR} "

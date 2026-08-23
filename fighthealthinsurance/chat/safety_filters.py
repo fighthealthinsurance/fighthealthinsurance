@@ -8,6 +8,8 @@ Extracted from chat_interface.py for better organization and testability.
 import re
 from typing import Optional, Pattern
 
+from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_ALIASES
+
 # Crisis/self-harm detection - phrases indicating the user may need immediate help
 # IMPORTANT: These must be specific enough to NOT block legitimate mental health
 # insurance denial appeals. Someone saying "my coverage for suicidal ideation
@@ -172,3 +174,91 @@ def llm_requested_delete_handoff(text: Optional[str]) -> bool:
     if not text:
         return False
     return bool(_DELETE_DATA_SENTINEL_REGEX.search(text))
+
+
+# Program-eligibility verdicts the model must NOT state on its own. Only the
+# medicaid_eligibility checker can produce one: it applies the FPL tables, the
+# MAGI/ABD/LTC branches and the work-requirement overlay. A model asserting
+# "you are eligible for Medicaid" from the conversation alone is guessing
+# about someone's health coverage, and in the observed fan-out that guess beat
+# the candidate that actually called the checker.
+#
+# These deliberately match only DEFINITE verdicts. Hedged, invitational
+# phrasing ("you may be eligible -- want me to check?") is exactly what the
+# Medicaid path is supposed to say before the checker has run, so it must not
+# be caught; _ELIGIBILITY_HEDGE_REGEX below clears those sentences.
+# The programs a verdict can be about. State names are in here because the
+# system prompt tells the model to use whichever name the user does, so
+# "you qualify for Medi-Cal" is the same claim as "you qualify for Medicaid".
+# Longest-first so the alternation prefers "Medical Assistance Program" over
+# its own prefix.
+_PROGRAM_ALTERNATION = "|".join(
+    re.escape(name)
+    for name in sorted(
+        ("Medicaid", "Medicare", "CHIP", "Medicaid expansion")
+        + MEDICAID_PROGRAM_ALIASES,
+        key=len,
+        reverse=True,
+    )
+)
+
+_ELIGIBILITY_VERDICT_PATTERNS = [
+    # "you are eligible for Medicaid", "you're not eligible for Medicare",
+    # "you are likely ineligible for CHIP"
+    r"\byou(?:'re|\s+are|\s+would\s+be|\s+appear\s+to\s+be|\s+seem\s+to\s+be)"
+    r"(?:\s+(?:not|likely|probably|clearly|definitely|indeed|already))*"
+    rf"\s+(?:in)?eligible\s+for\s+(?:\w+[-\s]+){{0,3}}?(?:{_PROGRAM_ALTERNATION})\b",
+    # "you qualify for Medicaid", "you do not qualify for Medicare"
+    r"\byou(?:\s+(?:do|does|will|would|should|clearly|likely|probably|"
+    r"definitely|already|do\s+not|don't|won't|wouldn't))*"
+    rf"\s+qualif(?:y|ies)\s+for\s+(?:\w+[-\s]+){{0,3}}?(?:{_PROGRAM_ALTERNATION})\b",
+    # "you are Medicaid-eligible", "your household is not MassHealth eligible"
+    r"\b(?:you|your\s+household)\s+(?:is|are)\s+(?:not\s+)?(?:currently\s+)?"
+    rf"(?:{_PROGRAM_ALTERNATION})[- ]eligible\b",
+]
+
+_ELIGIBILITY_VERDICT_REGEX: Pattern[str] = re.compile(
+    r"|".join(rf"(?:{pattern})" for pattern in _ELIGIBILITY_VERDICT_PATTERNS),
+    re.IGNORECASE,
+)
+
+# Anything in the same sentence that turns the verdict back into a
+# possibility, a condition, or an offer to run the real check.
+_ELIGIBILITY_HEDGE_REGEX: Pattern[str] = re.compile(
+    r"\b(?:may|might|could|maybe|perhaps|possibly|potentially|likely\s+to\s+be|"
+    r"if\s+you|whether|depending|depends|assuming|to\s+find\s+out|let(?:'s|\s+us)|"
+    r"want\s+me\s+to|would\s+you\s+like|i\s+can\s+(?:check|run|walk)|"
+    r"can\s+(?:i|we)\s+(?:check|run)|check\s+(?:if|whether|your))\b",
+    re.IGNORECASE,
+)
+
+# Sentence-ish split: a terminator followed by whitespace, or a line break.
+# Bullet lists arrive one verdict per line, so newlines have to split too.
+_SENTENCE_SPLIT_REGEX: Pattern[str] = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def detect_eligibility_verdict(text: Optional[str]) -> bool:
+    """
+    Check whether a reply flatly ASSERTS a Medicaid/Medicare eligibility verdict.
+
+    Returns True only for definite claims. A sentence is ignored when it is a
+    question or when it hedges the claim (see _ELIGIBILITY_HEDGE_REGEX), so
+    offering the eligibility check ("you may be eligible -- want me to check?")
+    reads as clean.
+
+    Whether such a verdict is legitimate is the CALLER's call: after the
+    medicaid_eligibility checker has run, restating its determination is the
+    whole point. See score_llm_response, which only penalizes a verdict the
+    checker never computed.
+    """
+    if not text:
+        return False
+    for sentence in _SENTENCE_SPLIT_REGEX.split(text):
+        if not _ELIGIBILITY_VERDICT_REGEX.search(sentence):
+            continue
+        if sentence.rstrip().endswith("?"):
+            continue
+        if _ELIGIBILITY_HEDGE_REGEX.search(sentence):
+            continue
+        return True
+    return False

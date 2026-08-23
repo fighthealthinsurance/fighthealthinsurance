@@ -19,6 +19,7 @@ from fighthealthinsurance.medicaid_api import (
     is_eligible,
     resolve_target_year,
     summarize_eligibility_inputs,
+    target_year_requested,
 )
 
 
@@ -624,15 +625,27 @@ class TestLongTermCareFlow(SimpleTestCase):
         self.assertTrue(eligible_2026)
         self.assertFalse(any("hours" in q for q in missing))
 
-    def test_ltc_income_between_year_caps_keeps_2026_eligibility(self):
+    def test_ltc_income_between_year_caps_keeps_requested_year_eligibility(self):
         # Review regression: the work overlay's not-eligible-2025 clamp
-        # discarded the LTC branch's own 2026 result. $3,050/month is over
-        # the $3,000 2025 cap but under the inflated 2026 cap.
-        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
+        # discarded the LTC branch's own target-year result. $3,050/month is
+        # over the $3,000 base-year cap but under the cap projected forward
+        # to the year the user asked about.
+        eligible_base, eligible_target, _, _, _, _ = is_eligible(
+            **self._ltc_answers(monthly_income=3050.0, target_year=2026)
+        )
+        self.assertFalse(eligible_base)
+        self.assertTrue(eligible_target)
+
+    def test_ltc_income_over_the_cap_does_not_flip_on_the_default_path(self):
+        # Nobody asked about a future year here, so the only thing separating
+        # the two verdicts should be the work requirement. Projecting the
+        # income cap forward anyway turned a guessed 3% bump into "not
+        # eligible now, eligible next year" for someone on the line.
+        eligible_base, eligible_target, _, _, _, _ = is_eligible(
             **self._ltc_answers(monthly_income=3050.0)
         )
-        self.assertFalse(eligible_2025)
-        self.assertTrue(eligible_2026)
+        self.assertFalse(eligible_base)
+        self.assertFalse(eligible_target)
 
     def test_ltc_missing_info_return_preserves_medicare_verdict(self):
         # Review regression: the LTC ask-for-more-info early return clobbered
@@ -1142,6 +1155,19 @@ class TestTargetYear(SimpleTestCase):
         self.assertEqual(resolve_target_year(1998), BASE_ELIGIBILITY_YEAR)
         self.assertEqual(resolve_target_year(2199), MAX_TARGET_YEAR)
 
+    def test_a_relative_phrase_is_not_read_as_a_two_digit_year(self):
+        # "in 3 years" used to parse as 2003, clamp to the base year, and
+        # silently switch the work-requirement overlay off for someone
+        # asking about a year it very much applies to. No readable year
+        # means the default, not a wrong one.
+        self.assertEqual(resolve_target_year("in 3 years"), DEFAULT_TARGET_YEAR)
+        self.assertEqual(resolve_target_year("for the next 5 years"), DEFAULT_TARGET_YEAR)
+        self.assertFalse(target_year_requested("in 3 years"))
+
+    def test_a_real_two_digit_year_still_works(self):
+        self.assertTrue(target_year_requested("28"))
+        self.assertEqual(resolve_target_year("28"), 2028)
+
     def test_an_unreadable_year_falls_back_to_the_default(self):
         self.assertEqual(resolve_target_year("sometime soon"), DEFAULT_TARGET_YEAR)
 
@@ -1188,6 +1214,19 @@ class TestTargetYear(SimpleTestCase):
         )
         self.assertFalse(eligible_base)
         self.assertTrue(eligible_target)
+
+    def test_the_default_path_does_not_inflate_income_thresholds(self):
+        # Same income as test_later_year_thresholds_are_inflated, but nobody
+        # asked about a future year. Rolling the table forward anyway turned
+        # our own 3% guess into "not eligible now, eligible next year".
+        eligible_base, eligible_target, _, _, _, _ = is_eligible(
+            **_answers(
+                monthly_income=1810.0,
+                avg_monthly_qualifying_hours_last_3mo=100,
+            )
+        )
+        self.assertFalse(eligible_base)
+        self.assertFalse(eligible_target)
 
     def test_the_year_neutral_work_exemption_spelling_is_accepted(self):
         _, eligible_target, _, _, missing, _ = is_eligible(
