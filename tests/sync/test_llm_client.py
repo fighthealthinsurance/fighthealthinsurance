@@ -208,6 +208,18 @@ class TestScoreLlmResponse(TestCase):
         # A better backend buys an invented verdict nothing at all.
         self.assertEqual(low_prior, high_prior)
 
+    def test_invented_verdict_without_context_is_not_double_penalized(self):
+        # A candidate with no context summary and no tool call only receives
+        # call_score/100, so taking back the full call_score drove it
+        # thousands of points below its peers and ranked invented verdicts by
+        # model quality -- the inverse of the intended levelling.
+        no_context = ("Based on your income you do not qualify for Medicaid.", None)
+
+        strong = score_llm_response(no_context, 11000)
+        weak = score_llm_response(no_context, 2000)
+
+        self.assertEqual(strong, weak)
+
     def test_invented_verdict_is_not_hard_rejected(self):
         # Deliberately not -inf: the detector is a regex over free text, and
         # one false positive must not be able to empty a fan-out.

@@ -875,6 +875,17 @@ class TestEligibilityVerifiedFlag(TestCase):
         self.assertTrue(flag)
         self.assertTrue(kwargs["eligibility_verified"])
 
+    def test_medicare_only_positive_does_not_earn_the_exemption(self):
+        # A 67-year-old's age settles Medicare on the very first call while
+        # every Medicaid question is still outstanding. The exemption is
+        # program-blind, so latching it there let the rest of the session
+        # assert uncomputed MEDICAID verdicts for free.
+        flag, kwargs = self._run(
+            (False, False, True, [], ["What is your monthly income?"], True)
+        )
+        self.assertFalse(flag)
+        self.assertFalse(kwargs["eligibility_verified"])
+
     def test_unscoreable_person_does_not_earn_the_exemption(self):
         # determination_made=False: a territory, or a declined required
         # answer. The info text explicitly says not to call them ineligible.

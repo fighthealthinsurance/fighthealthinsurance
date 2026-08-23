@@ -428,10 +428,12 @@ def score_llm_response(
     # prior sank real tool calls (score ~315) under chatty candidates that
     # skipped the tool (~5810). That is how an eligibility verdict invented by
     # a model instead of computed by the checker won a fan-out.
+    prior_applied = 0.0
     if response_text and (context_part or has_tool_call):
-        score += call_score
+        prior_applied = call_score
     else:
-        score += call_score / 100
+        prior_applied = call_score / 100
+    score += prior_applied
 
     # An invented eligibility verdict forfeits the model prior outright, then
     # takes a fixed penalty on top.
@@ -453,8 +455,13 @@ def score_llm_response(
     # able to empty a fan-out and break the turn. When every candidate
     # invents a verdict they are all levelled equally and the best of them
     # still gets delivered.
+    # Subtract exactly what was added: a candidate with no context summary and
+    # no tool call only received call_score/100, so taking back the full
+    # call_score drove it thousands of points below its peers and inverted the
+    # ranking among invented verdicts on model quality -- the opposite of the
+    # "levelled equally" property this is supposed to have.
     if invented_verdict:
-        score -= call_score + INVENTED_ELIGIBILITY_VERDICT_PENALTY
+        score -= prior_applied + INVENTED_ELIGIBILITY_VERDICT_PENALTY
 
     logger.debug(f"Scored response as {score}")
     return score

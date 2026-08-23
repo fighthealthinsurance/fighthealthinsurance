@@ -415,8 +415,15 @@ class MedicaidEligibilityTool(BaseTool):
             # An early POSITIVE is different: with questions still outstanding
             # the checker reports it and the write-up is told to share it, so
             # that does earn the exemption.
+            #
+            # `medicare` deliberately does NOT count. The exemption is
+            # program-blind, and the Medicare answer often lands on the very
+            # first call (a 67-year-old's age alone settles it) while every
+            # Medicaid question is still outstanding -- which latched the
+            # session flag and let the rest of the conversation assert
+            # uncomputed MEDICAID verdicts for free.
             checker_produced_verdict = determination_made and (
-                not missing or eligible_base or eligible_target or medicare
+                not missing or eligible_base or eligible_target
             )
             if checker_produced_verdict and self.eligibility_computed is not None:
                 self.eligibility_computed[0] = True

@@ -251,15 +251,42 @@ _ELIGIBILITY_VERDICT_REGEX: Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
-# Anything in the same sentence that turns the verdict back into a
-# possibility, a condition, or an offer to run the real check.
+# Wording that turns the verdict back into a possibility, a condition, or an
+# offer to run the real check -- but ONLY where it actually scopes the claim.
+# Position matters, and ignoring it broke the detector in both directions:
+#
+#   "You qualify for Medicaid, but check your state's website to confirm."
+#   "You are eligible for Medicaid, though you may need documentation."
+#
+# were both read as hedged and let through, even though the system prompt
+# REQUIRES those caveats on every eligibility answer -- so in practice almost
+# no invented verdict was ever caught. Meanwhile
+#
+#   "You are eligible for Medicaid if your income is under 138% FPL."
+#
+# was flagged as a definite verdict, because `if\s+you\b` cannot match "if
+# your" -- and that is the phrasing the prompt asks for on "what are the
+# income limits?".
 _ELIGIBILITY_HEDGE_REGEX: Pattern[str] = re.compile(
     r"\b(?:may|might|could|maybe|perhaps|possibly|potentially|likely\s+to\s+be|"
-    r"if\s+you|whether|depending|depends|assuming|to\s+find\s+out|let(?:'s|\s+us)|"
+    r"if|whether|depending|depends|assuming|to\s+find\s+out|let(?:'s|\s+us)|"
     r"want\s+me\s+to|would\s+you\s+like|i\s+can\s+(?:check|run|walk)|"
     r"can\s+(?:i|we)\s+(?:check|run)|check\s+(?:if|whether|your))\b",
     re.IGNORECASE,
 )
+
+# A condition ATTACHED to the verdict ("...eligible for Medicaid if your
+# income is under X") still hedges it even though it trails the claim. One
+# that sits in its own clause ("...eligible for Medicaid; if you apply this
+# month, coverage starts right away") does not.
+_ELIGIBILITY_TRAILING_CONDITION_REGEX: Pattern[str] = re.compile(
+    r"\b(?:if|unless|as\s+long\s+as|provided|assuming|depending|whether)\b",
+    re.IGNORECASE,
+)
+
+# What separates the verdict from a following clause. A trailing condition
+# only reaches back to the claim when nothing like this stands between them.
+_CLAUSE_BREAK_REGEX: Pattern[str] = re.compile(r"[,;:]|--|\u2014")
 
 # Sentence-ish split: a terminator followed by whitespace, or a line break.
 # Bullet lists arrive one verdict per line, so newlines have to split too.
@@ -271,9 +298,16 @@ def detect_eligibility_verdict(text: Optional[str]) -> bool:
     Check whether a reply flatly ASSERTS a Medicaid/Medicare eligibility verdict.
 
     Returns True only for definite claims. A sentence is ignored when it is a
-    question or when it hedges the claim (see _ELIGIBILITY_HEDGE_REGEX), so
-    offering the eligibility check ("you may be eligible -- want me to check?")
-    reads as clean.
+    question, when hedging wording SCOPES the claim (anything before the end
+    of the verdict itself), or when a condition is attached directly to it, so
+    offering the eligibility check ("you may be eligible -- want me to
+    check?") and stating a rule ("you are eligible for Medicaid if your income
+    is under 138% FPL") both read as clean.
+
+    Hedging that trails the verdict in its own clause does NOT clear it: the
+    system prompt requires an experimental/confirm-with-your-state caveat on
+    every eligibility answer, so treating those as hedges let essentially
+    every invented verdict through.
 
     Whether such a verdict is legitimate is the CALLER's call: after the
     medicaid_eligibility checker has run, restating its determination is the
@@ -283,11 +317,20 @@ def detect_eligibility_verdict(text: Optional[str]) -> bool:
     if not text:
         return False
     for sentence in _SENTENCE_SPLIT_REGEX.split(text):
-        if not _ELIGIBILITY_VERDICT_REGEX.search(sentence):
+        match = _ELIGIBILITY_VERDICT_REGEX.search(sentence)
+        if not match:
             continue
         if sentence.rstrip().endswith("?"):
             continue
-        if _ELIGIBILITY_HEDGE_REGEX.search(sentence):
+        # Hedging that scopes the claim: everything up to and including the
+        # verdict wording itself.
+        if _ELIGIBILITY_HEDGE_REGEX.search(sentence[: match.end()]):
+            continue
+        # A condition attached to the verdict, i.e. before any clause break.
+        trailing = sentence[match.end() :]
+        clause_break = _CLAUSE_BREAK_REGEX.search(trailing)
+        attached = trailing[: clause_break.start()] if clause_break else trailing
+        if _ELIGIBILITY_TRAILING_CONDITION_REGEX.search(attached):
             continue
         return True
     return False

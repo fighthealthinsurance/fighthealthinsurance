@@ -514,6 +514,36 @@ class TestEligibilityVerdictDetection(TestCase):
             with self.subTest(text=text):
                 self.assertTrue(detect_eligibility_verdict(text))
 
+    def test_a_required_caveat_does_not_launder_a_verdict(self):
+        # The system prompt REQUIRES an experimental / confirm-with-your-state
+        # caveat on every eligibility answer, so treating trailing hedges as
+        # hedges let essentially every invented verdict through.
+        for text in (
+            "You qualify for Medicaid, but you should check your state's "
+            "website to confirm.",
+            "Based on this you are eligible for Medicaid, though you may need "
+            "to provide documentation.",
+            "You are eligible for Medicaid; if you apply this month coverage "
+            "starts right away.",
+            "Good news: you qualify for Medicaid expansion coverage. This is "
+            "an experimental estimate, so confirm with your state.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
+    def test_a_condition_attached_to_the_verdict_still_hedges_it(self):
+        # Stating the rule is what the Medicaid path asks for on "what are the
+        # income limits?". "if your" also has to work -- the old `if\s+you\b`
+        # could not match it.
+        for text in (
+            "You are eligible for Medicaid if your income is under 138% FPL.",
+            "You are eligible for Medicaid if you make under $1,800 a month.",
+            "You qualify for Medicaid as long as your household stays under "
+            "the limit.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
     def test_empty_text_is_not_a_verdict(self):
         self.assertFalse(detect_eligibility_verdict(""))
         self.assertFalse(detect_eligibility_verdict(None))
