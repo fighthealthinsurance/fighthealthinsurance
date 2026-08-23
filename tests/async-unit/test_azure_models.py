@@ -222,6 +222,9 @@ class TestAzureBackends(unittest.TestCase):
         costs = [m.cost for m in models]
         self.assertEqual(costs, sorted(costs))  # cheapest -> premium
         self.assertEqual(models[-1].name, "azure-anthropic/claude-fable-5")
+        # Pin the proxy value: it is what orders Fable behind Opus in the
+        # router's tie-break, so a drift here silently changes routing.
+        self.assertEqual(models[-1].cost, 175)
         self.assertEqual(
             RemoteAzureClaude(model="claude-fable-5").get_tier(), "premium"
         )
@@ -441,6 +444,11 @@ class TestAzureInfer(unittest.TestCase):
 class TestAzureClaudeMessages(unittest.TestCase):
     """RemoteAzureClaude's Anthropic Messages API transport (Foundry)."""
 
+    _TEMPERATURE_REJECTION_TEXT = (
+        "Unsupported value: 'temperature' does not support 0.7 with this "
+        "model. Only the default (1) value is supported."
+    )
+
     def setUp(self):
         """Reset Claude rate-limiter state and Azure env before each test."""
         RemoteAzureClaude._rate_limiters.clear()
@@ -516,6 +524,86 @@ class TestAzureClaudeMessages(unittest.TestCase):
             with patch.object(aiohttp, "ClientSession", return_value=session):
                 await m._infer(system_prompts=["x"], prompt="y", temperature=1.8)
             self.assertEqual(capture["json"]["temperature"], 1.0)
+
+        asyncio.run(run())
+
+    def _capture_messages_body(self, model: str, **infer_kwargs) -> dict:
+        """Drive the Messages transport against a fake session and return the
+        captured request body."""
+        capture: dict = {}
+
+        async def run():
+            """Run _infer with a canned 200 Messages response."""
+            m = RemoteAzureClaude(model=model)
+            response = _FakeAiohttpResponse(
+                {"content": [{"type": "text", "text": "ok"}]}
+            )
+            session = _FakeAiohttpSession(response, capture)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                await m._infer(system_prompts=["x"], prompt="y", **infer_kwargs)
+
+        asyncio.run(run())
+        return capture["json"]
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_fable_request_omits_temperature(self):
+        """Claude 4.7+ deployments (Fable 5 here) reject the sampling
+        parameters with HTTP 400, so the body must omit temperature."""
+        self.assertNotIn("temperature", self._capture_messages_body("claude-fable-5"))
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_opus_48_request_omits_temperature(self):
+        """The same removal applies to the Opus 4.8 deployment."""
+        self.assertNotIn("temperature", self._capture_messages_body("claude-opus-4-8"))
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_sonnet_46_request_keeps_temperature(self):
+        """Claude 4.6 and older still accept a custom temperature."""
+        body = self._capture_messages_body("claude-sonnet-4-6")
+        self.assertEqual(body["temperature"], 0.7)
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_custom_claude_deployment_temperature_rejection_retries_without(self):
+        """A sampling-free Claude behind a custom AZURE_ANTHROPIC_MODELS name
+        can't be recognized by name, so the 400 must trigger a single retry
+        with temperature stripped instead of failing the call."""
+
+        async def run():
+            """Queue a temperature-rejection 400 then a 200 and inspect bodies."""
+            m = RemoteAzureClaude(model="appeals-fable")
+            bodies: list = []
+            session = _FakeSequencedSession(
+                [
+                    _FakeAiohttpResponse(
+                        status=400, text=self._TEMPERATURE_REJECTION_TEXT
+                    ),
+                    _FakeAiohttpResponse({"content": [{"type": "text", "text": "ok"}]}),
+                ],
+                bodies,
+            )
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                result = await m._infer(system_prompts=["x"], prompt="y")
+            self.assertEqual(result, ("ok", []))
+            self.assertEqual(len(bodies), 2)
+            self.assertIn("temperature", bodies[0])
+            self.assertNotIn("temperature", bodies[1])
+            # Remembered, so a later call skips the wasted 400 round-trip.
+            self.assertIn("appeals-fable", m._temperature_unsupported_models)
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_non_temperature_400_still_propagates(self):
+        """A 400 that isn't a temperature rejection is not retried."""
+
+        async def run():
+            """Force an unrelated 400 and assert it raises."""
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            response = _FakeAiohttpResponse(status=400, text="invalid_request: nope")
+            session = _FakeAiohttpSession(response)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                with self.assertRaises(aiohttp.ClientResponseError):
+                    await m._infer(system_prompts=["x"], prompt="y")
 
         asyncio.run(run())
 

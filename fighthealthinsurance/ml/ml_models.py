@@ -286,6 +286,21 @@ def _http_error_indicates_context_overflow(status: int, body: Optional[str]) -> 
     return "prompt is too long" in lowered or "input is too long" in lowered
 
 
+# Claude models that dropped the sampling parameters: on Claude 4.7 and newer
+# (including the Claude 5 family) ``temperature``/``top_p``/``top_k`` are not
+# just clamped but rejected outright with HTTP 400, so the field has to be
+# omitted from the request body. Claude 4.6 and older still accept it. Matched
+# as a prefix so dated snapshot ids (``claude-opus-4-8-20260115``) are covered.
+_CLAUDE_NO_SAMPLING_PREFIXES: tuple[str, ...] = (
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+)
+
+
 def _http_error_indicates_unsupported_temperature(status: int, body: str) -> bool:
     """True when a 400 means the model rejected the ``temperature`` parameter
     outright (OpenAI/Azure reasoning models accept only the default value).
@@ -2709,9 +2724,12 @@ class RemoteOpenLike(RemoteModel):
         OpenAI's reasoning models (the gpt-5 family and o-series) reject any
         temperature other than the default with HTTP 400 ("Only the default
         (1) value is supported"), on both openai.com and Azure OpenAI
-        deployments. For those models the request body must omit the field
-        entirely or every call fails. Matched on the bare deployment/model
-        name so provider-prefixed registrations (``azure-openai/gpt-5``) are
+        deployments; Claude 4.7 and newer removed the sampling parameters
+        altogether and 400 the same way (see
+        ``_CLAUDE_NO_SAMPLING_PREFIXES``). For those models the request body
+        must omit the field entirely or every call fails. Matched on the bare
+        deployment/model name so provider-prefixed registrations
+        (``azure-openai/gpt-5``, ``azure-anthropic/claude-fable-5``) are
         covered too. Deployments that can't be recognized by name are caught
         at runtime instead: a temperature-rejection 400 lands them in
         ``_temperature_unsupported_models`` (see ``__infer``).
@@ -2722,6 +2740,8 @@ class RemoteOpenLike(RemoteModel):
         if name == "gpt-5" or name.startswith("gpt-5-"):
             return False
         if re.match(r"^o[134](-|$)", name):
+            return False
+        if name.startswith(_CLAUDE_NO_SAMPLING_PREFIXES):
             return False
         return True
 
@@ -4867,6 +4887,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         # OpenAI surface's 2.0); clamp so a shared router temperature that's
         # valid for other providers can't trigger a 400 here.
         temperature = max(0.0, min(temperature, 1.0))
+        # Claude 4.7+ deployments (Fable 5 among them) reject the field
+        # outright rather than clamping it, so it has to be left out. A
+        # deployment name we can't recognize is handled at runtime by the
+        # rejection retry below.
+        send_temperature = self._supports_custom_temperature(self.model)
         context_extra = self._build_context_extra(
             patient_context,
             pubmed_context,
@@ -4893,14 +4918,42 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             cleaned_messages = [
                 {"role": m.get("role"), "content": m.get("content")} for m in messages
             ]
-            body = {
+            body: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": self.MAX_OUTPUT_TOKENS,
                 "system": system_prompt,
                 "messages": cleaned_messages,
-                "temperature": temperature,
             }
-            result = await self._messages_request(url, headers, body, timeout=timeout)
+            if send_temperature:
+                body["temperature"] = temperature
+            try:
+                result = await self._messages_request(
+                    url, headers, body, timeout=timeout
+                )
+            except aiohttp.ClientResponseError as e:
+                if not (
+                    send_temperature
+                    and _http_error_indicates_unsupported_temperature(
+                        e.status, e.message or ""
+                    )
+                ):
+                    raise
+                # A sampling-free Claude behind a deployment name the
+                # name-based check couldn't recognize. Remember it so later
+                # calls skip the field, and retry this one without it.
+                logger.warning(
+                    f"Model {self.model} at {self.api_base} rejected "
+                    f"'temperature'; retrying without it and omitting it for "
+                    f"this deployment from now on."
+                )
+                self._temperature_unsupported_models.add(self.model)
+                send_temperature = False
+                # Fresh dict rather than popping in place: the sent body may
+                # still be referenced elsewhere (e.g. captured by tests).
+                body = {k: v for k, v in body.items() if k != "temperature"}
+                result = await self._messages_request(
+                    url, headers, body, timeout=timeout
+                )
             if result and result[0]:
                 return result
         return None
@@ -4928,7 +4981,23 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             )
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
                 async with session.post(url, headers=headers, json=body) as response:
-                    response.raise_for_status()
+                    # Read the error body BEFORE raise_for_status() (same
+                    # rationale as RemoteOpenLike.__infer: raising can release
+                    # the connection and make text() unreadable afterwards),
+                    # then carry it on the exception -- aiohttp's own message
+                    # is only the HTTP reason phrase, and _do_infer's
+                    # unsupported-temperature retry classifies on the body.
+                    response_body = ""
+                    if response.status >= 400:
+                        try:
+                            response_body = await response.text()
+                        except Exception:
+                            response_body = "<failed to read response body>"
+                    try:
+                        response.raise_for_status()
+                    except aiohttp.ClientResponseError as e:
+                        e.message = response_body or e.message
+                        raise
                     json_result = await response.json()
             return self._parse_messages_response(json_result)
 
