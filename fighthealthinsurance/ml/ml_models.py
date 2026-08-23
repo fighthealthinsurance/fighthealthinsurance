@@ -4943,11 +4943,6 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         # OpenAI surface's 2.0); clamp so a shared router temperature that's
         # valid for other providers can't trigger a 400 here.
         temperature = max(0.0, min(temperature, 1.0))
-        # Claude 4.7+ deployments (Fable 5 among them) reject the field
-        # outright rather than clamping it, so it has to be left out. A
-        # deployment name we can't recognize is handled at runtime by the
-        # rejection retry below.
-        send_temperature = self._supports_custom_temperature(self.model)
         context_extra = self._build_context_extra(
             patient_context,
             pubmed_context,
@@ -4980,6 +4975,23 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 "system": system_prompt,
                 "messages": cleaned_messages,
             }
+            # Claude 4.7+ deployments (Fable 5 among them) reject the field
+            # outright rather than clamping it, so it has to be left out. A
+            # deployment name we can't recognize is handled at runtime by the
+            # rejection retry below.
+            #
+            # Re-read per prompt rather than once per call: parallel_infer
+            # fans out concurrently, so a sibling leg may have recorded the
+            # rejection since this call started, and picking that up here
+            # skips a wasted 400. It cannot close the window entirely --
+            # legs that start together both send the field once, and after
+            # their retries post identical bodies. That costs one duplicate
+            # premium call per system prompt, once per unrecognized
+            # deployment per process; every later appeal takes the
+            # single-leg path in parallel_infer. Closing it fully would need
+            # a pre-flight probe on every deployment or cross-leg locking on
+            # the request path, which costs more than the duplicate it saves.
+            send_temperature = self._supports_custom_temperature(self.model)
             if send_temperature:
                 body["temperature"] = temperature
             attempt_timeout = timeout if timeout is not None else self._timeout
@@ -5001,7 +5013,6 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                         f"for this deployment from now on."
                     )
                     self._temperature_unsupported_models.add(self.model)
-                    send_temperature = False
                     # Fresh dict rather than popping in place: the sent body may
                     # still be referenced elsewhere (e.g. captured by tests).
                     body = {k: v for k, v in body.items() if k != "temperature"}

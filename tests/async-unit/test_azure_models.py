@@ -667,6 +667,79 @@ class TestAzureClaudeMessages(unittest.TestCase):
         self.assertEqual(sonnet_calls, 2 * fable_calls)
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_concurrent_legs_rejection_is_picked_up_mid_call(self):
+        """parallel_infer fans out concurrently, so a sibling leg can record a
+        rejection while this call is between system prompts. The memo is
+        re-read per prompt so the next request skips the field instead of
+        spending another 400 to learn what the process already knows."""
+
+        async def run():
+            """Have a sibling record the rejection after the first request."""
+            m = RemoteAzureClaude(model="appeals-fable")
+            bodies: list = []
+
+            class _SiblingLearnsSession(_FakeSequencedSession):
+                """Stand-in whose first POST simulates a concurrent leg
+                recording the deployment as sampling-free."""
+
+                def post(self, url, headers=None, json=None):
+                    """Record the body, then poison the memo like a sibling."""
+                    response = super().post(url, headers=headers, json=json)
+                    m._temperature_unsupported_models.add("appeals-fable")
+                    return response
+
+            ok = {"content": [{"type": "text", "text": ""}]}
+            session = _SiblingLearnsSession(
+                [
+                    _FakeAiohttpResponse(ok),
+                    _FakeAiohttpResponse({"content": [{"type": "text", "text": "ok"}]}),
+                ],
+                bodies,
+            )
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                result = await m._infer(system_prompts=["a", "b"], prompt="y")
+            self.assertEqual(result, ("ok", []))
+            self.assertEqual(len(bodies), 2)
+            self.assertIn("temperature", bodies[0])
+            self.assertNotIn("temperature", bodies[1])
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_learned_rejection_skips_the_field_on_the_next_prompt(self):
+        """A rejection learned on one system prompt stops the field being sent
+        on the next one in the same call."""
+
+        async def run():
+            """Reject the first prompt's request, then inspect both bodies."""
+            m = RemoteAzureClaude(model="appeals-fable")
+            bodies: list = []
+            ok = {"content": [{"type": "text", "text": ""}]}
+            session = _FakeSequencedSession(
+                [
+                    # Prompt 1: rejection, then the stripped retry -- which
+                    # returns no text, so _do_infer moves to prompt 2.
+                    _FakeAiohttpResponse(
+                        status=400, text=ANTHROPIC_TEMPERATURE_REJECTION_TEXT
+                    ),
+                    _FakeAiohttpResponse(ok),
+                    _FakeAiohttpResponse({"content": [{"type": "text", "text": "ok"}]}),
+                ],
+                bodies,
+            )
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                result = await m._infer(system_prompts=["a", "b"], prompt="y")
+            self.assertEqual(result, ("ok", []))
+            # 1st sent it, 1st retry stripped it, and the 2nd prompt never
+            # sent it again -- three requests, not four.
+            self.assertEqual(len(bodies), 3)
+            self.assertIn("temperature", bodies[0])
+            self.assertNotIn("temperature", bodies[1])
+            self.assertNotIn("temperature", bodies[2])
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_non_temperature_400_still_propagates_without_retrying(self):
         """A 400 that isn't a temperature rejection raises on the first
         attempt: the classifier matches loosely, so a mismatch would other-
