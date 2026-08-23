@@ -58,11 +58,11 @@ BAD_CONTEXT_PATTERNS = re.compile(
 # Minimum length for a valid LLM response or context
 MIN_RESPONSE_LENGTH = 5
 
-# Penalty for stating a Medicaid/Medicare eligibility verdict that the
-# medicaid_eligibility checker never produced. Sized against the model-quality
-# prior (quality**2 // 5, up to ~8800) rather than against the content
-# signals (~100 each): a smaller nudge left the invented verdict winning on
-# backend preference alone, which is the failure this exists to stop.
+# Penalty applied ON TOP of forfeiting the model prior when a reply states a
+# Medicaid/Medicare eligibility verdict the checker never produced. The
+# forfeit is what makes the guard hold across backends; this margin keeps an
+# invented verdict below a plain answer from the SAME call, whose content
+# signals would otherwise be identical.
 INVENTED_ELIGIBILITY_VERDICT_PENALTY = 2000
 
 # Pattern to detect when the response asks for the patient's name
@@ -307,7 +307,8 @@ def score_llm_response(
             actually produced a determination for this chat (the tool's
             follow-up pass, or any later turn in the same session). While
             False, a candidate that flatly asserts an eligibility verdict is
-            inventing it and gets INVENTED_ELIGIBILITY_VERDICT_PENALTY.
+            inventing it: it forfeits its model prior and takes
+            INVENTED_ELIGIBILITY_VERDICT_PENALTY on top.
 
     Returns:
         Float score (higher is better, -inf for invalid responses).
@@ -344,6 +345,7 @@ def score_llm_response(
             return float("-inf")
 
     score = 0.0
+    invented_verdict = False
 
     # A tool call is a legitimate reply shape even though it carries no
     # user-facing prose or panda context summary -- the tool's follow-up pass
@@ -381,15 +383,13 @@ def score_llm_response(
 
         # Safety: an eligibility verdict the checker never computed is a
         # guess about someone's health coverage dressed up as a
-        # determination. Penalized hard enough to cross the model-quality
-        # prior (base scores reach ~8800) so an internal-tier candidate that
-        # invents "you qualify for Medicaid" loses to one that either calls
-        # the checker or answers without a verdict.
+        # determination. The prior is FORFEITED below rather than nudged --
+        # see the invented_verdict handling after the base score is added.
         if not eligibility_verified and detect_eligibility_verdict(response_text):
-            score -= INVENTED_ELIGIBILITY_VERDICT_PENALTY
+            invented_verdict = True
             logger.warning(
                 "Response asserts a Medicaid/Medicare eligibility verdict the "
-                "checker never computed, penalizing score"
+                "checker never computed, forfeiting its model prior"
             )
 
         # Bonus for referencing an uploaded document by name (derived from history)
@@ -432,6 +432,29 @@ def score_llm_response(
         score += call_score
     else:
         score += call_score / 100
+
+    # An invented eligibility verdict forfeits the model prior outright, then
+    # takes a fixed penalty on top.
+    #
+    # A fixed nudge alone could not work: the prior is the dominant term and
+    # the gaps between priors are bigger than any constant worth using. One
+    # quality-210 backend contributes BOTH a truncated-history call
+    # (210**2//5 = 8820) and a full-history one (210**2//4 = 11025), so a
+    # 2000-point penalty still left the full-history call's invented verdict
+    # (~9235) beating the truncated call's real checker invocation (~9120) --
+    # the exact swap this guard exists to prevent, from a single backend.
+    # Cross-backend gaps are larger still.
+    #
+    # Forfeiting the prior leaves only the content signals, so an invented
+    # verdict loses to any candidate that either called the checker or
+    # answered without a verdict, whatever backend it came from. It is
+    # deliberately NOT a hard -inf rejection like a repeated reply: the
+    # detector is a regex over free text, and one false positive must not be
+    # able to empty a fan-out and break the turn. When every candidate
+    # invents a verdict they are all levelled equally and the best of them
+    # still gets delivered.
+    if invented_verdict:
+        score -= call_score + INVENTED_ELIGIBILITY_VERDICT_PENALTY
 
     logger.debug(f"Scored response as {score}")
     return score

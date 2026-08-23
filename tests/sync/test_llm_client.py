@@ -176,8 +176,47 @@ class TestScoreLlmResponse(TestCase):
 
         self.assertEqual(
             score_llm_response(neutral, 8000) - score_llm_response(invented, 8000),
-            INVENTED_ELIGIBILITY_VERDICT_PENALTY,
+            8000 + INVENTED_ELIGIBILITY_VERDICT_PENALTY,
         )
+
+    def test_invented_verdict_loses_to_a_higher_prior_tool_call(self):
+        # The failure a fixed nudge could not stop: ONE quality-210 backend
+        # contributes a truncated-history call (210**2//5 = 8820) and a
+        # full-history one (210**2//4 = 11025). A 2000-point penalty left the
+        # full-history invented verdict beating the truncated call's real
+        # checker invocation, so the prior is forfeited instead.
+        tool_call = ('**medicaid_eligibility {"state": "CA"}**', None)
+        invented = (
+            "Based on your income you do not qualify for Medicaid in California.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(tool_call, 210**2 // 5),
+            score_llm_response(invented, 210**2 // 4),
+        )
+
+    def test_invented_verdict_forfeits_the_model_prior(self):
+        invented = (
+            "Based on your income you do not qualify for Medicaid.",
+            "Medicaid eligibility",
+        )
+
+        low_prior = score_llm_response(invented, 2000)
+        high_prior = score_llm_response(invented, 11000)
+
+        # A better backend buys an invented verdict nothing at all.
+        self.assertEqual(low_prior, high_prior)
+
+    def test_invented_verdict_is_not_hard_rejected(self):
+        # Deliberately not -inf: the detector is a regex over free text, and
+        # one false positive must not be able to empty a fan-out.
+        invented = (
+            "Based on your income you do not qualify for Medicaid.",
+            "Medicaid eligibility",
+        )
+
+        self.assertNotEqual(score_llm_response(invented, 8000), float("-inf"))
 
     def test_verdict_is_not_penalized_once_the_checker_has_run(self):
         # After the tool computes a determination, relaying it is the point.

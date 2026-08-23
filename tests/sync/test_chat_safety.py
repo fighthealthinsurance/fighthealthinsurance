@@ -467,6 +467,53 @@ class TestEligibilityVerdictDetection(TestCase):
         )
         self.assertTrue(detect_eligibility_verdict(reply))
 
+    def test_forward_looking_approval_and_denial_are_verdicts(self):
+        # Predicting an agency decision is at least as much of an invention
+        # as predicting eligibility.
+        for text in (
+            "You will be approved for Medicaid.",
+            "You'll be denied Medicaid.",
+            "You would be denied for Medicare.",
+            "You are going to be approved for MassHealth.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
+    def test_past_and_present_approval_is_not_a_verdict(self):
+        # This is an insurance-DENIAL product: a user's own approval or
+        # denial is the normal subject of the conversation, so the model
+        # repeating it back is not a hallucination. A false positive costs a
+        # correct reply its entire model prior.
+        for text in (
+            "You were denied Medicaid coverage last year.",
+            "You are approved for Medi-Cal, so your refills are covered.",
+            "Your surgery was denied by your insurer.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
+    def test_generically_named_programs_do_not_trigger_a_verdict(self):
+        # "STAR" and "Medical Assistance" are ordinary English before they
+        # are program names; treating them as verdict evidence penalized
+        # sentences that were not eligibility determinations at all.
+        for text in (
+            "You qualify for STAR.",
+            "You qualify for medical assistance benefits.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
+    def test_distinctively_named_programs_still_trigger_a_verdict(self):
+        # The ambiguity carve-out must not blunt the state names that are
+        # unmistakably Medicaid.
+        for text in (
+            "You qualify for MassHealth.",
+            "You are eligible for TennCare.",
+            "You qualify for Apple Health.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
     def test_empty_text_is_not_a_verdict(self):
         self.assertFalse(detect_eligibility_verdict(""))
         self.assertFalse(detect_eligibility_verdict(None))

@@ -192,11 +192,27 @@ def llm_requested_delete_handoff(text: Optional[str]) -> bool:
 # "you qualify for Medi-Cal" is the same claim as "you qualify for Medicaid".
 # Longest-first so the alternation prefers "Medical Assistance Program" over
 # its own prefix.
+# Aliases that are ordinary English before they are program names. They stay
+# in MEDICAID_PROGRAM_ALIASES -- the prompt wants them, because a user saying
+# "STAR" tells the model they are in Texas -- but they are NOT evidence that a
+# sentence is handing down an eligibility verdict. "You qualify for medical
+# assistance benefits" and "you qualify for STAR" were both being read as
+# invented Medicaid verdicts, and a false positive here now costs a candidate
+# its whole model prior, so the detector errs toward missing a verdict about a
+# generically-named program rather than penalizing a legitimate reply.
+_AMBIGUOUS_FOR_VERDICTS = frozenset(
+    {"STAR", "Medical Assistance", "Medical Assistance Program"}
+)
+
 _PROGRAM_ALTERNATION = "|".join(
     re.escape(name)
     for name in sorted(
         ("Medicaid", "Medicare", "CHIP", "Medicaid expansion")
-        + MEDICAID_PROGRAM_ALIASES,
+        + tuple(
+            name
+            for name in MEDICAID_PROGRAM_ALIASES
+            if name not in _AMBIGUOUS_FOR_VERDICTS
+        ),
         key=len,
         reverse=True,
     )
@@ -215,6 +231,19 @@ _ELIGIBILITY_VERDICT_PATTERNS = [
     # "you are Medicaid-eligible", "your household is not MassHealth eligible"
     r"\b(?:you|your\s+household)\s+(?:is|are)\s+(?:not\s+)?(?:currently\s+)?"
     rf"(?:{_PROGRAM_ALTERNATION})[- ]eligible\b",
+    # "you will be approved for Medicaid" -- an approval the model is
+    # predicting rather than one the checker (or an agency) decided.
+    #
+    # Only the FORWARD-LOOKING forms are here. Present and past tense
+    # ("you are approved for Medi-Cal", "you were denied Medicaid coverage")
+    # are usually the model repeating something the USER told it -- this is an
+    # insurance-DENIAL product, so a user's own denial is the normal subject
+    # of the conversation, not a hallucination -- and penalizing that would
+    # cost a correct reply its model prior.
+    r"\byou(?:'ll|\s+will|\s+would|\s+are\s+going\s+to)"
+    r"(?:\s+(?:not|likely|probably|clearly|definitely))*"
+    r"\s+be\s+(?:approved\s+for|denied(?:\s+for)?)\s+"
+    rf"(?:\w+[-\s]+){{0,3}}?(?:{_PROGRAM_ALTERNATION})\b",
 ]
 
 _ELIGIBILITY_VERDICT_REGEX: Pattern[str] = re.compile(
