@@ -3,6 +3,9 @@ set -ex
 
 pwd
 
+# Shared collectstatic ignore list (node_modules, TS sources, build config).
+source "$(dirname "${BASH_SOURCE[0]}")/collectstatic_ignores.sh"
+
 # Activate the venv if present.
 if [ -f ./build_venv/bin/activate ]; then
   source ./build_venv/bin/activate
@@ -44,7 +47,7 @@ fi
 
 ./manage.py makemigrations --check || (./manage.py makemigrations && ./manage.py migrate)
 ./manage.py validate_templates &
-./manage.py collectstatic --no-input &
+./manage.py collectstatic --no-input "${COLLECTSTATIC_IGNORES[@]}" &
 wait
 
 pushd ./static/js
