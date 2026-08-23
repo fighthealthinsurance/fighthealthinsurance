@@ -9,11 +9,13 @@ record readable model names, and the ENABLED_REMOTE_MODELS allow-list.
 import asyncio
 import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import aiohttp
 
 from fighthealthinsurance.ml.ml_models import (
+    _CLAUDE_NO_SAMPLING_PREFIXES,
     ModelDescription,
     RemoteAzureClaude,
     RemoteAzureOpenAI,
@@ -45,6 +47,18 @@ def _clear_azure_env():
         "ENABLED_REMOTE_MODELS",
     ):
         os.environ.pop(k, None)
+
+
+# Provider wording for a temperature rejection. The two surfaces phrase it
+# differently, and both must reach _http_error_indicates_unsupported_temperature.
+OPENAI_TEMPERATURE_REJECTION_TEXT = (
+    "Unsupported value: 'temperature' does not support 0.7 with this "
+    "model. Only the default (1) value is supported."
+)
+ANTHROPIC_TEMPERATURE_REJECTION_TEXT = (
+    '{"type":"error","error":{"type":"invalid_request_error",'
+    '"message":"temperature: Extra inputs are not permitted"}}'
+)
 
 
 class _FakeAiohttpResponse:
@@ -379,10 +393,7 @@ class TestAzureInfer(unittest.TestCase):
         body = self._capture_chat_completions_body("gpt-4.1-mini")
         self.assertIn("temperature", body)
 
-    _TEMPERATURE_REJECTION_TEXT = (
-        "Unsupported value: 'temperature' does not support 0.7 with this "
-        "model. Only the default (1) value is supported."
-    )
+    _TEMPERATURE_REJECTION_TEXT = OPENAI_TEMPERATURE_REJECTION_TEXT
     _OK_COMPLETION = {"choices": [{"message": {"content": "Dear insurer, please."}}]}
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
@@ -444,10 +455,6 @@ class TestAzureInfer(unittest.TestCase):
 class TestAzureClaudeMessages(unittest.TestCase):
     """RemoteAzureClaude's Anthropic Messages API transport (Foundry)."""
 
-    _TEMPERATURE_REJECTION_TEXT = (
-        "Unsupported value: 'temperature' does not support 0.7 with this "
-        "model. Only the default (1) value is supported."
-    )
 
     def setUp(self):
         """Reset Claude rate-limiter state and Azure env before each test."""
@@ -540,7 +547,12 @@ class TestAzureClaudeMessages(unittest.TestCase):
             )
             session = _FakeAiohttpSession(response, capture)
             with patch.object(aiohttp, "ClientSession", return_value=session):
-                await m._infer(system_prompts=["x"], prompt="y", **infer_kwargs)
+                result = await m._infer(
+                    system_prompts=["x"], prompt="y", **infer_kwargs
+                )
+            # _infer swallows post-POST failures and returns None, which would
+            # leave the captured body asserting over a crashed call.
+            self.assertEqual(result, ("ok", []))
 
         asyncio.run(run())
         return capture["json"]
@@ -565,8 +577,9 @@ class TestAzureClaudeMessages(unittest.TestCase):
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_custom_claude_deployment_temperature_rejection_retries_without(self):
         """A sampling-free Claude behind a custom AZURE_ANTHROPIC_MODELS name
-        can't be recognized by name, so the 400 must trigger a single retry
-        with temperature stripped instead of failing the call."""
+        can't be recognized by name, so the Messages API's own rejection
+        wording must trigger a single retry with temperature stripped instead
+        of failing the call."""
 
         async def run():
             """Queue a temperature-rejection 400 then a 200 and inspect bodies."""
@@ -575,7 +588,7 @@ class TestAzureClaudeMessages(unittest.TestCase):
             session = _FakeSequencedSession(
                 [
                     _FakeAiohttpResponse(
-                        status=400, text=self._TEMPERATURE_REJECTION_TEXT
+                        status=400, text=ANTHROPIC_TEMPERATURE_REJECTION_TEXT
                     ),
                     _FakeAiohttpResponse({"content": [{"type": "text", "text": "ok"}]}),
                 ],
@@ -593,17 +606,89 @@ class TestAzureClaudeMessages(unittest.TestCase):
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
-    def test_non_temperature_400_still_propagates(self):
-        """A 400 that isn't a temperature rejection is not retried."""
+    def test_error_body_does_not_overwrite_http_reason_phrase(self):
+        """The provider body rides alongside ClientResponseError.message, never
+        over it: model_health_check._categorize_http_error classifies a 400 as
+        MODEL_NOT_FOUND when .message mentions "model", and every log site and
+        the persisted attempt record interpolate it."""
 
         async def run():
-            """Force an unrelated 400 and assert it raises."""
+            """Force a 400 whose body mentions "model" and inspect the error."""
             m = RemoteAzureClaude(model="claude-sonnet-4-6")
-            response = _FakeAiohttpResponse(status=400, text="invalid_request: nope")
+            response = _FakeAiohttpResponse(
+                status=400,
+                text="max_tokens: 8192 exceeds the maximum for this model",
+            )
             session = _FakeAiohttpSession(response)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                with self.assertRaises(aiohttp.ClientResponseError) as ctx:
+                    await m._infer(system_prompts=["x"], prompt="y")
+            self.assertEqual(ctx.exception.message, "error")
+            self.assertIn("max_tokens", getattr(ctx.exception, "fhi_response_body"))
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_every_no_sampling_prefix_is_recognized(self):
+        """Each id in _CLAUDE_NO_SAMPLING_PREFIXES must actually be matched — a
+        typo there ships silently and 400s every call to that deployment."""
+        m = RemoteAzureClaude(model="claude-sonnet-4-6")
+        for name in _CLAUDE_NO_SAMPLING_PREFIXES:
+            with self.subTest(model=name):
+                self.assertFalse(m._supports_custom_temperature(name))
+                # Dated snapshot ids of the same model match too.
+                self.assertFalse(m._supports_custom_temperature(f"{name}-20260115"))
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_full_appeal_does_not_fan_out_identical_legs(self):
+        """parallel_infer explores with two temperatures; for a model that
+        drops the field both legs would post the same body, so it must submit
+        one leg instead of paying twice for an identical request."""
+        with patch.object(
+            RemoteAzureClaude, "_blocking_checked_infer", return_value=("x", None)
+        ):
+            fable = RemoteAzureClaude(model="claude-fable-5")
+            sonnet = RemoteAzureClaude(model="claude-sonnet-4-6")
+            executor = ThreadPoolExecutor(max_workers=2)
+            try:
+                kwargs = dict(
+                    prompt="appeal this",
+                    infer_type="full",
+                    patient_context=None,
+                    plan_context=None,
+                    pubmed_context=None,
+                    submit_executor=executor,
+                )
+                fable_calls = len(fable.parallel_infer(**kwargs))
+                sonnet_calls = len(sonnet.parallel_infer(**kwargs))
+            finally:
+                executor.shutdown(wait=True)
+        # Same system prompts either way, so the ratio is the temperature legs.
+        self.assertEqual(sonnet_calls, 2 * fable_calls)
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_non_temperature_400_still_propagates_without_retrying(self):
+        """A 400 that isn't a temperature rejection raises on the first
+        attempt: the classifier matches loosely, so a mismatch would other-
+        wise turn every unrelated 400 into two paid round-trips and poison
+        the deployment's memo."""
+
+        async def run():
+            """Force an unrelated 400 and count the POSTs it produced."""
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            bodies: list = []
+            session = _FakeSequencedSession(
+                [
+                    _FakeAiohttpResponse(status=400, text="invalid_request: nope"),
+                    _FakeAiohttpResponse({"content": [{"type": "text", "text": "ok"}]}),
+                ],
+                bodies,
+            )
             with patch.object(aiohttp, "ClientSession", return_value=session):
                 with self.assertRaises(aiohttp.ClientResponseError):
                     await m._infer(system_prompts=["x"], prompt="y")
+            self.assertEqual(len(bodies), 1)
+            self.assertNotIn("claude-sonnet-4-6", m._temperature_unsupported_models)
 
         asyncio.run(run())
 

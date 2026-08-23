@@ -286,11 +286,19 @@ def _http_error_indicates_context_overflow(status: int, body: Optional[str]) -> 
     return "prompt is too long" in lowered or "input is too long" in lowered
 
 
-# Claude models that dropped the sampling parameters: on Claude 4.7 and newer
-# (including the Claude 5 family) ``temperature``/``top_p``/``top_k`` are not
-# just clamped but rejected outright with HTTP 400, so the field has to be
-# omitted from the request body. Claude 4.6 and older still accept it. Matched
-# as a prefix so dated snapshot ids (``claude-opus-4-8-20260115``) are covered.
+# Claude models that dropped the sampling parameters: ``temperature`` /
+# ``top_p`` / ``top_k`` are not clamped but rejected outright with HTTP 400, so
+# the field has to be omitted from the request body. Claude 4.6 and older still
+# accept it. Matched as a prefix so dated snapshot ids
+# (``claude-opus-4-8-20260115``) are covered.
+#
+# This ENUMERATES the released model ids that behave this way rather than
+# deriving them from a version rule -- there is no Sonnet/Haiku 4.7 or Haiku 5
+# to list, and guessing a rule for ids that do not exist yet would be a
+# fiction. A model missing from this table is not stranded: the transports
+# classify a rejection at runtime (see
+# ``_http_error_indicates_unsupported_temperature``) and drop the field from
+# then on. Add new ids here so that costs one 400 instead of nothing.
 _CLAUDE_NO_SAMPLING_PREFIXES: tuple[str, ...] = (
     "claude-fable-5",
     "claude-mythos-5",
@@ -303,14 +311,20 @@ _CLAUDE_NO_SAMPLING_PREFIXES: tuple[str, ...] = (
 
 def _http_error_indicates_unsupported_temperature(status: int, body: str) -> bool:
     """True when a 400 means the model rejected the ``temperature`` parameter
-    outright (OpenAI/Azure reasoning models accept only the default value).
+    outright (reasoning/no-sampling models accept only the default value).
 
     Name-based detection in ``_supports_custom_temperature`` can't recognize a
-    reasoning model behind a custom deployment name (e.g. an Azure gpt-5
-    deployment called "appeals-prod"), so the transport uses this to fall back
-    at runtime: retry the request once without the field and remember the
-    deployment. Matched loosely on the error text, e.g. "Unsupported value:
-    'temperature' ... Only the default (1) value is supported."
+    model behind a custom deployment name (e.g. an Azure gpt-5 deployment
+    called "appeals-prod", or a Foundry Fable deployment called
+    "appeals-fable"), so the transports use this to fall back at runtime:
+    retry the request once without the field and remember the deployment.
+
+    Matched loosely, because the two surfaces word it differently: OpenAI and
+    Azure OpenAI say "Unsupported value: 'temperature' ... Only the default
+    (1) value is supported.", while the Anthropic Messages API rejects a
+    removed field as an ``invalid_request_error`` reading "temperature: Extra
+    inputs are not permitted". Matching only the OpenAI phrasing would leave
+    the fallback dead on the Messages transport.
     """
     if status != 400 or not body:
         return False
@@ -321,7 +335,53 @@ def _http_error_indicates_unsupported_temperature(status: int, body: str) -> boo
         "unsupported" in lowered
         or "only the default" in lowered
         or "not supported" in lowered
+        or "not permitted" in lowered
+        or "extra input" in lowered
+        or "unexpected" in lowered
     )
+
+
+# Cap on the provider error body we retain. Long enough for every classifier
+# and log preview here, short enough that a gateway's HTML error page can't
+# reach a log line or the persisted attempt record whole.
+_ERROR_BODY_LIMIT = 4000
+
+
+async def _read_error_body(response) -> str:
+    """Read an aiohttp error response body for classification, or "" if the
+    status is not an error.
+
+    Read BEFORE raise_for_status(): depending on the aiohttp version, raising
+    can release the connection and make text() unreadable afterwards, which
+    would reduce every error body to the fallback string — hiding the payload
+    from the logs and from the error classifiers the retry paths depend on.
+    Truncated to ``_ERROR_BODY_LIMIT``; callers may shorten further for logs.
+    """
+    if response.status < 400:
+        return ""
+    try:
+        body = str(await response.text())
+    except Exception:
+        return "<failed to read response body>"
+    return body[:_ERROR_BODY_LIMIT]
+
+
+def _attach_error_body(exc: aiohttp.ClientResponseError, body: str) -> None:
+    """Carry the provider's response body on the exception for callers that
+    classify on it.
+
+    A dedicated attribute rather than ``exc.message``: that field is the HTTP
+    reason phrase every log site, ``describe_model_error``, the persisted
+    attempt record, and ``model_health_check._categorize_http_error`` read, and
+    overwriting it with a body would both bloat those and flip the health
+    check's "400 mentioning model" heuristic to MODEL_NOT_FOUND.
+    """
+    setattr(exc, "fhi_response_body", body)
+
+
+def _error_body_of(exc: aiohttp.ClientResponseError) -> str:
+    """The body attached by ``_attach_error_body``, or "" when there is none."""
+    return getattr(exc, "fhi_response_body", "") or ""
 
 
 def _count_items(items: list[str]) -> dict[str, int]:
@@ -2120,6 +2180,12 @@ class RemoteOpenLike(RemoteModel):
         if infer_type == "full" and not self._expensive and not self.slow:
             # Special case for the full one where we really want to explore the problem space
             temperatures = [0.6, 0.1]
+            if not self._supports_custom_temperature(self.model):
+                # Models that reject the sampling parameters (Claude 4.7+) get
+                # the field omitted, so the two legs would post byte-identical
+                # bodies: a second paid call per system prompt buying no
+                # diversity. Keep one leg rather than pay twice for it.
+                temperatures = [0.6]
         system_prompts = self.get_system_prompts(infer_type, prof_pov)
         calls = itertools.chain.from_iterable(
             map(
@@ -2732,7 +2798,9 @@ class RemoteOpenLike(RemoteModel):
         (``azure-openai/gpt-5``, ``azure-anthropic/claude-fable-5``) are
         covered too. Deployments that can't be recognized by name are caught
         at runtime instead: a temperature-rejection 400 lands them in
-        ``_temperature_unsupported_models`` (see ``__infer``).
+        ``_temperature_unsupported_models`` (see ``__infer`` for the
+        OpenAI-compatible transport and ``RemoteAzureClaude._do_infer`` for
+        the Anthropic Messages one).
         """
         if model in self._temperature_unsupported_models:
             return False
@@ -3068,19 +3136,7 @@ class RemoteOpenLike(RemoteModel):
                         headers={"Authorization": f"Bearer {self.token}"},
                         json=request_body,
                     ) as response:
-                        # Read the error body BEFORE raise_for_status():
-                        # depending on the aiohttp version, raising can
-                        # release the connection and make text() unreadable
-                        # afterwards, which would reduce every error body to
-                        # the fallback string — hiding the payload from the
-                        # logs and from the unsupported-temperature detection
-                        # the retry below depends on.
-                        response_body = ""
-                        if response.status >= 400:
-                            try:
-                                response_body = await response.text()
-                            except Exception:
-                                response_body = "<failed to read response body>"
+                        response_body = await _read_error_body(response)
                         # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                         # This allows subclasses to catch and handle specific errors like 429
                         try:
@@ -4926,34 +4982,47 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             }
             if send_temperature:
                 body["temperature"] = temperature
+            attempt_timeout = timeout if timeout is not None else self._timeout
+            started = time.monotonic()
             try:
                 result = await self._messages_request(
-                    url, headers, body, timeout=timeout
+                    url, headers, body, timeout=attempt_timeout
                 )
             except aiohttp.ClientResponseError as e:
-                if not (
-                    send_temperature
-                    and _http_error_indicates_unsupported_temperature(
-                        e.status, e.message or ""
-                    )
+                if send_temperature and _http_error_indicates_unsupported_temperature(
+                    e.status, _error_body_of(e)
                 ):
+                    # A sampling-free Claude behind a deployment name the
+                    # name-based check couldn't recognize. Remember it so later
+                    # calls skip the field, and retry this one without it.
+                    logger.warning(
+                        f"Model {self.model} at {self.api_base} rejected "
+                        f"'temperature'; retrying without it and omitting it "
+                        f"for this deployment from now on."
+                    )
+                    self._temperature_unsupported_models.add(self.model)
+                    send_temperature = False
+                    # Fresh dict rather than popping in place: the sent body may
+                    # still be referenced elsewhere (e.g. captured by tests).
+                    body = {k: v for k, v in body.items() if k != "temperature"}
+                    # The retry shares the first attempt's budget rather than
+                    # starting a fresh one, so a slow rejection can't let one
+                    # _do_infer call run for twice the caller's timeout.
+                    retry_timeout = None
+                    if attempt_timeout is not None:
+                        retry_timeout = attempt_timeout - (time.monotonic() - started)
+                        if retry_timeout <= 0:
+                            logger.warning(
+                                f"No budget left to retry {self.model} without "
+                                f"'temperature' after a {attempt_timeout:.0f}s "
+                                f"attempt."
+                            )
+                            return None
+                    result = await self._messages_request(
+                        url, headers, body, timeout=retry_timeout
+                    )
+                else:
                     raise
-                # A sampling-free Claude behind a deployment name the
-                # name-based check couldn't recognize. Remember it so later
-                # calls skip the field, and retry this one without it.
-                logger.warning(
-                    f"Model {self.model} at {self.api_base} rejected "
-                    f"'temperature'; retrying without it and omitting it for "
-                    f"this deployment from now on."
-                )
-                self._temperature_unsupported_models.add(self.model)
-                send_temperature = False
-                # Fresh dict rather than popping in place: the sent body may
-                # still be referenced elsewhere (e.g. captured by tests).
-                body = {k: v for k, v in body.items() if k != "temperature"}
-                result = await self._messages_request(
-                    url, headers, body, timeout=timeout
-                )
             if result and result[0]:
                 return result
         return None
@@ -4981,22 +5050,13 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             )
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
                 async with session.post(url, headers=headers, json=body) as response:
-                    # Read the error body BEFORE raise_for_status() (same
-                    # rationale as RemoteOpenLike.__infer: raising can release
-                    # the connection and make text() unreadable afterwards),
-                    # then carry it on the exception -- aiohttp's own message
-                    # is only the HTTP reason phrase, and _do_infer's
-                    # unsupported-temperature retry classifies on the body.
-                    response_body = ""
-                    if response.status >= 400:
-                        try:
-                            response_body = await response.text()
-                        except Exception:
-                            response_body = "<failed to read response body>"
+                    response_body = await _read_error_body(response)
                     try:
                         response.raise_for_status()
                     except aiohttp.ClientResponseError as e:
-                        e.message = response_body or e.message
+                        # Carry the body alongside the reason phrase (never
+                        # over it) so _do_infer can classify a rejection.
+                        _attach_error_body(e, response_body)
                         raise
                     json_result = await response.json()
             return self._parse_messages_response(json_result)
@@ -5019,6 +5079,15 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         ``text`` content blocks, then apply the same validity check and
         reasoning-answer extraction as the OpenAI path."""
         blocks = json_result.get("content") or []
+        if json_result.get("stop_reason") == "max_tokens":
+            # The letter is cut off mid-sentence but still reads as valid text,
+            # so nothing downstream would notice. Most likely on a deployment
+            # whose thinking cannot be turned off (Claude 5 family): thinking
+            # tokens are drawn from the same MAX_OUTPUT_TOKENS budget.
+            logger.warning(
+                f"{self.model} hit its {self.MAX_OUTPUT_TOKENS}-token output "
+                f"budget; the response is truncated."
+            )
         text = "".join(
             block.get("text", "")
             for block in blocks
