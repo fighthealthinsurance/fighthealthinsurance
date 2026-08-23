@@ -7,9 +7,6 @@
 const USER_INFO_KEY = "fhi_user_info";
 // Storage key for external models preference
 const EXTERNAL_MODELS_KEY = "fhi_use_external_models";
-// External models are opt-out: anything other than an explicit stored "false"
-// (no key, an unreadable store, a value written by an older build) means on.
-const EXTERNAL_MODELS_DEFAULT = true;
 
 // Interface for user information
 export interface UserInfo {
@@ -71,37 +68,20 @@ export function saveExternalModelsPreference(useExternalModels: boolean): void {
 }
 
 /**
- * Read an explicitly stored external models preference, or null when the user
- * has never made a choice.
- *
- * Pure read: a missing key means "no stored choice", and a read must not
- * materialize a value. Writing "true" here recorded an explicit opt-in for
- * anyone who merely opened the chat, which made a real choice indistinguishable
- * from never having been asked.
- *
- * Only an exact "false" counts as opting out. Any other value (a stray or
- * legacy string, an unreadable store) is not a choice to turn external models
- * off, so it falls back to the default.
+ * Get external models preference from localStorage
  */
-export function getStoredExternalModelsPreference(): boolean | null {
+export function getExternalModelsPreference(): boolean {
   try {
     const stored = localStorage.getItem(EXTERNAL_MODELS_KEY);
-    if (stored === null) return null;
-    if (stored === "false") return false;
-    if (stored === "true") return true;
-    return null;
+    // Pure read: no key means "no stored choice, use the default", and a read
+    // must not materialize a value. Writing "true" here recorded an explicit
+    // opt-in for anyone who merely opened the chat, which made a real choice
+    // indistinguishable from never having been asked.
+    return stored === null ? true : stored === "true";
   } catch (e) {
     console.error("Error getting external models preference from localStorage:", e);
   }
-  return null;
-}
-
-/**
- * Get external models preference, defaulting to on when nothing was chosen.
- */
-export function getExternalModelsPreference(): boolean {
-  const stored = getStoredExternalModelsPreference();
-  return stored === null ? EXTERNAL_MODELS_DEFAULT : stored;
+  return true;
 }
 
 /**
@@ -331,13 +311,10 @@ export function setupFormPersistence(formId: string): void {
     populateFormFromUserInfo(storedInfo);
   }
 
-  // Restore external models preference. Only an explicit stored choice
-  // overrides the checkbox; with nothing stored we leave the server-rendered
-  // state alone so the default (on) lives in the form, not in two places.
+  // Restore external models preference
   const externalModelsCheckbox = document.getElementById("use_external_models") as HTMLInputElement | null;
-  const storedExternalModels = getStoredExternalModelsPreference();
-  if (externalModelsCheckbox && storedExternalModels !== null) {
-    externalModelsCheckbox.checked = storedExternalModels;
+  if (externalModelsCheckbox) {
+    externalModelsCheckbox.checked = getExternalModelsPreference();
   }
 
   // Save to localStorage on form submit
@@ -361,7 +338,6 @@ if (typeof window !== "undefined") {
     clearUserInfo,
     saveExternalModelsPreference,
     getExternalModelsPreference,
-    getStoredExternalModelsPreference,
     scrubPersonalInfo,
     restorePersonalInfo,
     collectUserInfoFromForm,

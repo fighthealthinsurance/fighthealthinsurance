@@ -1,37 +1,36 @@
 """External AI models must be opt-out: the consent form ships with the box checked.
 
-These cover the Django half only — the checkbox state the consent pages render
-before any stored preference is applied. The client-side half (localStorage
-resolution in ``user_info_storage.ts``, which is what actually reaches the chat)
-is covered by ``tests/selenium/test_selenium_chat_status.py``.
+These cover the Django half — the checkbox state the consent pages render. The
+client-side half (localStorage resolution in ``user_info_storage.ts``) is covered
+by ``tests/selenium/test_selenium_chat_status.py``.
 """
 
-import re
-
-from django.test import Client, TestCase
+from django.test import TestCase
 from django.urls import reverse
 
 from fighthealthinsurance.chat_forms import UserConsentForm
 
-# The rendered checkbox tag, whatever order Django emits its attributes in.
-EXTERNAL_MODELS_INPUT = re.compile(r'<input[^>]*id="use_external_models"[^>]*>')
+CHECKED_CHECKBOX = (
+    '<input type="checkbox" name="use_external_models" '
+    'class="form-check-input" id="use_external_models" checked>'
+)
 
 
 class ChatConsentExternalModelsDefaultTest(TestCase):
     """The rendered default is what a user sees before any prior choice applies."""
 
-    def setUp(self):
-        self.client = Client()
-
     def assertRendersCheckboxChecked(self, response):
-        self.assertEqual(response.status_code, 200)
-        match = EXTERNAL_MODELS_INPUT.search(response.content.decode())
-        self.assertIsNotNone(match, "use_external_models checkbox missing from page")
-        self.assertIn("checked", match.group(0))
+        # Exact widget markup, not a substring search for "checked": a tag
+        # carrying value="checked" but no boolean checked attribute (the style
+        # used in scrub.html) must not satisfy this. html=True would be the
+        # house idiom, but it parses the whole response and both pages carry a
+        # pre-existing unbalanced </div> that trips the parser.
+        self.assertContains(response, CHECKED_CHECKBOX)
 
-    def test_form_field_defaults_to_enabled(self):
-        form = UserConsentForm()
-        self.assertTrue(form.fields["use_external_models"].initial)
+    def test_form_renders_field_enabled(self):
+        # value(), not fields[...].initial: a view's get_initial() overrides the
+        # field default, and value() is what actually reaches the template.
+        self.assertTrue(UserConsentForm()["use_external_models"].value())
 
     def test_consent_page_renders_checkbox_checked(self):
         self.assertRendersCheckboxChecked(self.client.get(reverse("chat_consent")))
@@ -40,8 +39,12 @@ class ChatConsentExternalModelsDefaultTest(TestCase):
         """The other page sharing the consent partial gets the same default."""
         self.assertRendersCheckboxChecked(self.client.get(reverse("explain_denial")))
 
-    def test_unchecked_submission_is_still_respected(self):
-        """Default-on must not be hardened into force-on (required, or clean()ed True)."""
+    def test_unchecked_submission_cleans_to_false(self):
+        """Default-on must not be hardened into force-on (required, or clean()ed True).
+
+        The consent POST does not carry the preference to the backend — that
+        travels via localStorage — so this guards the form, not the request.
+        """
         form = UserConsentForm(
             data={
                 "first_name": "Test",
