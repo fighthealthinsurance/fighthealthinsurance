@@ -202,3 +202,46 @@ class TestMissingModelCooldown:
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
         assert fake_post.calls == 2
+
+
+AZURE_DEPLOYMENT_404_BODY = (
+    '{"error":{"type":"invalid_request_error","code":"DeploymentNotFound",'
+    '"message":"The API deployment for this resource does not exist. If you '
+    'created the deployment within the last 5 minutes, please wait a moment '
+    'and try again."}}'
+)
+
+
+class TestAzureDeploymentNotFound:
+    """Azure OpenAI reports an unknown deployment with its own vocabulary --
+    "deployment", never "model" -- so it used to miss the missing-model
+    detector and re-warn (and re-request) on every single inference."""
+
+    def test_azure_deployment_not_found_body_matches(self):
+        assert _error_text_indicates_missing_model(AZURE_DEPLOYMENT_404_BODY)
+
+    def test_azure_error_code_alone_matches(self):
+        assert _error_text_indicates_missing_model('{"code":"DeploymentNotFound"}')
+
+    def test_azure_wrong_url_404_still_does_not_match(self):
+        assert not _error_text_indicates_missing_model('{"detail":"Not Found"}')
+
+    @pytest.mark.asyncio
+    async def test_azure_404_flags_pair_and_warns_once(
+        self, monkeypatch, make_fake_model_post, log_capture
+    ):
+        model = RemoteFullOpenLike(
+            "https://res.openai.azure.com/openai/v1", "tok", "gpt-5.5"
+        )
+        fake_post = make_fake_model_post(404, AZURE_DEPLOYMENT_404_BODY)
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+
+        with log_capture() as cap:
+            await model._infer(system_prompts=["sys"], prompt="hi")
+            await model._infer(system_prompts=["sys"], prompt="hi")
+
+        assert fake_post.calls == 1
+        warnings = cap.messages("WARNING")
+        assert len(warnings) == 1
+        assert "not served" in warnings[0]
+        assert "gpt-5.5" in warnings[0]

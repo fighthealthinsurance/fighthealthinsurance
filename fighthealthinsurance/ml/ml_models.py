@@ -152,6 +152,20 @@ def _http_status_is_expected(status: Optional[int]) -> bool:
     return status in EXPECTED_HTTP_STATUS_CODES
 
 
+# The subset of the above that reflects a standing ACCOUNT-level condition --
+# an invalid/disabled key (401), an unpaid balance (402), or a key without
+# access to this resource (403). Unlike a 429 (which clears on its own within
+# seconds) these persist until a human changes the key, the billing, or the
+# access policy, so a backend answering one gets put on a cooldown instead of
+# being re-hit -- and re-warned about -- on every single inference.
+AUTH_HTTP_STATUS_CODES: frozenset[int] = frozenset({401, 402, 403})
+
+
+def _http_status_is_auth_failure(status: Optional[int]) -> bool:
+    """Whether ``status`` is a standing auth/quota/billing rejection."""
+    return status in AUTH_HTTP_STATUS_CODES
+
+
 # Transport-level exception classes that represent an expected operational
 # failure of a remote backend -- the service being down, unreachable, slow, or
 # restarting -- rather than a bug in our code. aiohttp.ClientError covers the
@@ -242,14 +256,21 @@ def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
     Matches the OpenAI-compatible local servers we point at: vLLM ("The model
     `X` does not exist.", type NotFoundError), llama.cpp ("model not found"),
     Ollama ("model 'X' not found, try pulling it first"), and OpenAI/LM Studio
-    ("model_not_found"). Requiring the word "model" keeps a wrong-URL 404
-    (e.g. vLLM's {"detail": "Not Found"}) from matching -- that's a config
-    problem, not a missing model.
+    ("model_not_found"). Azure OpenAI says the same thing in its own
+    vocabulary -- code "DeploymentNotFound" / "The API deployment for this
+    resource does not exist" -- and never uses the word "model", so
+    "deployment" counts as the noun too: a deployment the resource doesn't
+    have is the same deploy-level fact as a model a server doesn't serve.
+    Requiring one of those nouns keeps a wrong-URL 404 (e.g. vLLM's
+    {"detail": "Not Found"}) from matching -- that's a config problem, not a
+    missing model.
     """
     if not text:
         return False
     lowered = text.lower()
-    if "model" not in lowered:
+    if "deploymentnotfound" in lowered.replace("_", "").replace(" ", ""):
+        return True
+    if "model" not in lowered and "deployment" not in lowered:
         return False
     return (
         "does not exist" in lowered
@@ -1751,6 +1772,14 @@ class RemoteOpenLike(RemoteModel):
     # after a redeploy brings the model back.
     MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 3600.0
 
+    # How long to skip an (api_base, model) pair after the provider rejected
+    # our credentials (see _note_auth_failure). A 401/402/403 is a standing
+    # account state -- a rotated key, an unpaid balance, a deployment the key
+    # can't reach -- so re-hitting it every inference only burns a round trip
+    # and re-prints the same warning; 15 minutes is short enough to pick up a
+    # fixed key on its own without a restart.
+    AUTH_FAILURE_BACKOFF_SECONDS: ClassVar[float] = 900.0
+
     def __init__(
         self,
         api_base,
@@ -1796,6 +1825,10 @@ class RemoteOpenLike(RemoteModel):
         # _note_missing_model). Keyed per pair because primary and backup use
         # different endpoints/models.
         self._missing_models: dict[tuple[str, str], float] = {}
+        # (api_base, model) pairs whose credentials the provider rejected,
+        # mapped to the monotonic deadline until which we skip them (see
+        # _note_auth_failure).
+        self._auth_failures: dict[tuple[str, str], float] = {}
         # Short cooldown for repeated TRANSPORT failures (refused/DNS/timeout)
         # between health sweeps: recent strike timestamps per (api_base,
         # model), and pairs currently cooling down. See
@@ -2668,11 +2701,20 @@ class RemoteOpenLike(RemoteModel):
             # original contract of returning None on transport errors.
             if self._propagate_http_errors or raise_http_errors:
                 raise
-            if _http_status_is_expected(e.status):
-                # Quota/auth/rate-limit conditions are an operational state of
-                # the provider account, not an application error. Emit a single
-                # concise line without a stack trace so it doesn't read like a
-                # crash (e.g. Perplexity returning 401 insufficient_quota).
+            if _http_status_is_auth_failure(e.status):
+                # Quota/auth/billing conditions are an operational state of the
+                # provider account, not an application error: one concise line
+                # without a stack trace so it doesn't read like a crash (e.g.
+                # Perplexity returning 401 insufficient_quota), and a cooldown
+                # so it isn't repeated on every later call.
+                failing_base, failing_model = self._auth_pair_for_error(e)
+                if failing_base:
+                    self._note_auth_failure(
+                        failing_base, failing_model, e.status, e.message
+                    )
+            elif _http_status_is_expected(e.status):
+                # Rate limiting (429) clears on its own; warn but don't cool
+                # the backend down.
                 logger.warning(
                     f"{self}: skipping backend -- {self.api_base} returned "
                     f"HTTP {e.status} ({e.message}); "
@@ -2758,6 +2800,56 @@ class RemoteOpenLike(RemoteModel):
             time.monotonic() + self.MODEL_MISSING_BACKOFF_SECONDS
         )
 
+    def _auth_cooling(self, api_base: str, model: str) -> bool:
+        """Whether the pair is inside a rejected-credentials cooldown.
+
+        Expired entries are dropped so the next call probes the endpoint live
+        again (the key or the billing may have been fixed since).
+        """
+        deadline = self._auth_failures.get((api_base, model))
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            self._auth_failures.pop((api_base, model), None)
+            return False
+        return True
+
+    def _note_auth_failure(
+        self, api_base: str, model: str, status: int, detail: str
+    ) -> None:
+        """Flag ``model`` at ``api_base`` as rejecting our credentials.
+
+        Logs a single WARNING per cooldown window and then skips the pair
+        until it expires: an invalid key or an exhausted balance answers
+        identically on every call, so without this the same "check
+        quota/billing/API key" line is printed -- and a round trip paid --
+        once per inference for as long as the misconfiguration lasts.
+        """
+        cooldown = _env_float(
+            "FHI_AUTH_COOLDOWN_SECONDS", self.AUTH_FAILURE_BACKOFF_SECONDS
+        )
+        if not self._auth_cooling(api_base, model):
+            logger.warning(
+                f"{self}: skipping backend -- {api_base} returned HTTP {status} "
+                f"({detail}); check quota/billing/API key. Skipping {model} "
+                f"here for the next {cooldown:.0f}s."
+            )
+        self._auth_failures[(api_base, model)] = time.monotonic() + cooldown
+
+    def _auth_pair_for_error(
+        self, e: aiohttp.ClientResponseError
+    ) -> Tuple[Optional[str], str]:
+        """The (api_base, model) pair an HTTP error came from.
+
+        _infer's handlers see the exception after it has bubbled out of the
+        primary or the backup leg, so flag whichever endpoint the request
+        actually went to rather than assuming the primary.
+        """
+        url = str(getattr(getattr(e, "request_info", None), "url", "") or "")
+        if self.backup_api_base and url.startswith(self.backup_api_base):
+            return (self.backup_api_base, self.backup_model)
+        return (self.api_base, self.model)
+
     # Transport-failure cooldown: the hourly health sweep can leave a dead
     # backend routable for up to an hour, and every request fanned to it
     # burns its whole timeout. Three transport-classified failures inside a
@@ -2813,15 +2905,19 @@ class RemoteOpenLike(RemoteModel):
 
     def is_available(self) -> bool:
         """False while EVERY endpoint this instance can serve is inside a
-        transport-failure cooldown, so the router stops selecting it for
-        fan-out; fail-open otherwise. The router's own fail-open guard
-        (_filter_available) still keeps a last resort if this empties a pool.
+        transport-failure or rejected-credentials cooldown, so the router stops
+        selecting it for fan-out; fail-open otherwise. The router's own
+        fail-open guard (_filter_available) still keeps a last resort if this
+        empties a pool.
         """
         pairs = [(self.api_base, self.model)]
         if self.backup_api_base:
             pairs.append((self.backup_api_base, self.backup_model))
         live_pairs = [(a, m) for a, m in pairs if a]
-        if live_pairs and all(self._transport_cooling(a, m) for a, m in live_pairs):
+        if live_pairs and all(
+            self._transport_cooling(a, m) or self._auth_cooling(a, m)
+            for a, m in live_pairs
+        ):
             return False
         return True
 
@@ -2952,6 +3048,14 @@ class RemoteOpenLike(RemoteModel):
         if not raise_http_errors and self._transport_cooling(api_base, model):
             logger.debug(
                 f"{self}: skipping {model} at {api_base} -- transport-failure cooldown"
+            )
+            return None
+        # And for rejected credentials (401/402/403): the answer won't change
+        # until someone fixes the key or the billing, so skip quietly rather
+        # than paying a round trip to be told again. Probes bypass this too.
+        if not raise_http_errors and self._auth_cooling(api_base, model):
+            logger.debug(
+                f"{self}: skipping {model} at {api_base} -- auth-failure cooldown"
             )
             return None
         if self.token is None:
@@ -4191,6 +4295,16 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
             )
             return None
+        # Rejected credentials cool the whole backend down. Checked here, not
+        # only in RemoteOpenLike.__infer, because subclasses with their own
+        # transport (e.g. RemoteAzureClaude's Messages API) never reach that
+        # gate. Probes still go live so startup reports current reality.
+        if not raise_http_errors and self._auth_cooling(self.api_base, self.model):
+            logger.debug(
+                f"{self}: skipping {self.model} at {self.api_base} -- "
+                f"auth-failure cooldown"
+            )
+            return None
         try:
             return await self._do_infer(
                 system_prompts=system_prompts,
@@ -4215,10 +4329,19 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                     f"for {self.model}, backing off for {retry_after}s"
                 )
                 return None
-            if _http_status_is_expected(e.status):
+            if _http_status_is_auth_failure(e.status):
                 # Quota/auth/billing conditions are operational, not bugs:
                 # degrade to the next backend with a concise warning rather
-                # than raising a scary error up the generation path.
+                # than raising a scary error up the generation path, and cool
+                # the pair down so the warning (and the round trip) isn't
+                # repeated on every inference until someone fixes the key.
+                failing_base, failing_model = self._auth_pair_for_error(e)
+                if failing_base:
+                    self._note_auth_failure(
+                        failing_base, failing_model, e.status, e.message
+                    )
+                return None
+            if _http_status_is_expected(e.status):
                 logger.warning(
                     f"{self}: skipping backend -- {self.api_base} returned "
                     f"HTTP {e.status} ({e.message}); check quota/billing/API key."
