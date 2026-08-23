@@ -1,0 +1,38 @@
+# =============================================================================
+# PodMonitor for the web deployment -- the in-cluster replacement for scraping
+# /metrics through the public ingress.
+#
+# /metrics is now denied at the ingress (k8s/deploy.yaml) and 404s for anything
+# that reached the pods through a proxy (MetricsAccessMiddleware), so a scraper
+# has to talk to the pods directly. That is also the only *correct* way to
+# scrape this app: each of the 6 replicas keeps its own registry (one uvicorn
+# worker per pod, no multiprocess dir), so an ingress scrape returned whichever
+# pod the session-affinity cookie landed on -- a random sixth of the numbers.
+# Per-pod scraping gives complete series, labelled by pod.
+#
+# ==> VERIFY-LIVE: the Prometheus operator only picks this up if its
+#     podMonitorSelector / podMonitorNamespaceSelector match. Check what the
+#     existing CNPG PodMonitor carries and mirror any required label here:
+#       kubectl -n <prom-ns> get prometheus -o yaml | grep -A5 podMonitorSelector
+#       kubectl -n totallylegitco get podmonitor -o yaml | head -30
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: fhi-web
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+spec:
+  selector:
+    matchLabels:
+      group: fight-health-insurance-prod-webbackend
+  podMetricsEndpoints:
+    # "web" is the named containerPort (80) on the web Deployment.
+    - port: web
+      path: /metrics
+      scheme: http
+      interval: 30s
+      # The app 404s /metrics when a request carries proxy headers; the
+      # operator's scraper sets none, so this stays a direct pod-IP hit.
+      honorLabels: false

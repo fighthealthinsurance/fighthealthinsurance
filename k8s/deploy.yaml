@@ -170,6 +170,13 @@ spec:
           env:
           - name: BRB
             value: "LIVE"
+          # The PodMonitor scrapes this pod by IP, so the scrape's Host header
+          # is the pod IP; settings.py adds this to ALLOWED_HOSTS, without which
+          # every scrape 400s as a DisallowedHost.
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
           # One uvicorn worker per pod so the probes below can see a wedged
           # worker; scale via replicas, not workers (see start-server.sh).
           - name: UVICORN_WORKERS
@@ -323,6 +330,74 @@ spec:
         paths:
           - path: /
             pathType: Prefix
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+---
+# /metrics is for in-cluster scrapers (see the PodMonitor in
+# k8s/fhi-web-podmonitor.yaml) plus UptimeRobot. django_prometheus mounts it at
+# the URL root, so every host above would otherwise serve the full metric set to
+# the internet. An Exact-path rule beats the "/" Prefix rules on the same hosts,
+# and the source-range allowlist (loopback only == nobody) makes the controller
+# answer 403 without ever proxying to the pods. TLS/cert-manager config stays on
+# the ingress above; ingress-nginx merges both rule sets into one server per
+# host. On ingress-nginx >= 1.12 the annotation is also spelled
+# allowlist-source-range.
+#
+# monitor.fighthealthinsurance.com is deliberately ABSENT from the rules below:
+# that host is the UptimeRobot door. Requests to it reach the app, where
+# MetricsAccessMiddleware serves /metrics only to UptimeRobot's published probe
+# addresses (fighthealthinsurance/uptimerobot_ips.py) and 404s everyone else.
+# Keeping the probe list in the app rather than in this annotation means it
+# lives in exactly one place -- refresh it with
+# scripts/update_uptimerobot_ips.py.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fight-health-insurance-metrics-deny
+  namespace: totallylegitco
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "127.0.0.1/32"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: www.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: api.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: api.fightpaperwork.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
             backend:
               service:
                 name:  web-svc

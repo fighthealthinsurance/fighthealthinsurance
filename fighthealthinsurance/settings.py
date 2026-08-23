@@ -68,6 +68,14 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return (os.getenv(name) or default).strip().lower() in ("1", "true", "yes", "on")
 
 
+# This pod's own IP, from the downward API (k8s/deploy.yaml). Needed in
+# ALLOWED_HOSTS so the Prometheus PodMonitor -- which scrapes pods by IP, making
+# the pod IP the Host header -- isn't rejected as a DisallowedHost. Empty
+# outside the cluster. Module level rather than a class attribute: a class-body
+# comprehension can't see class scope.
+POD_IP = (os.getenv("POD_IP") or "").strip()
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -340,6 +348,8 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        # First: /metrics is gated before any session/auth/audit work happens.
+        "fighthealthinsurance.middleware.MetricsAccessMiddleware",
         "fighthealthinsurance.middleware.DomainRedirectMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
@@ -552,6 +562,29 @@ class Base(Configuration):
     ]
 
     PROMETHEUS_METRIC_NAMESPACE = "fhi"
+
+    # django_prometheus mounts /metrics at the URL root and the Ingress routes
+    # every path to the app, so MetricsAccessMiddleware only serves it to
+    # callers whose peer address falls in these ranges (and who did not come
+    # through the ingress). Pod/node IPs are private, so the private + loopback
+    # defaults are what "inside the cluster" means; override with a comma
+    # separated METRICS_ALLOWED_CIDRS on clusters with public pod CIDRs.
+    # Unset (the normal case) leaves the middleware on its own defaults.
+    METRICS_ALLOWED_CIDRS = [
+        cidr.strip()
+        for cidr in os.getenv("METRICS_ALLOWED_CIDRS", "").split(",")
+        if cidr.strip()
+    ]
+
+    # External monitors allowed to fetch /metrics *through* the ingress, on top
+    # of UptimeRobot's published probe addresses (which the middleware always
+    # honors -- see fighthealthinsurance/uptimerobot_ips.py). Matched against
+    # the client address the ingress observed, not the peer address.
+    METRICS_ALLOWED_FORWARDED_CIDRS = [
+        cidr.strip()
+        for cidr in os.getenv("METRICS_ALLOWED_FORWARDED_CIDRS", "").split(",")
+        if cidr.strip()
+    ]
 
     # STRIPE SETTINGS
     STRIPE_LIVE_MODE = False
@@ -891,7 +924,12 @@ class Prod(Base):
         "www.fuckhealthinsurance.com",
         "fightinsurance.ai",
         "www.fightinsurance.ai",
-    ]
+        # Prometheus scrapes each pod directly at http://<pod-ip>:80/metrics, so
+        # the Host header is the pod IP and host validation would 400 the scrape
+        # (DomainRedirectMiddleware calls get_host() on every request). POD_IP is
+        # injected from the downward API in k8s/deploy.yaml; empty off-cluster,
+        # where the entry is dropped below.
+    ] + ([POD_IP] if POD_IP else [])
 
     DOMAIN_REDIRECTS = {
         "fuckhealthinsurance.com": "www.fighthealthinsurance.com",
