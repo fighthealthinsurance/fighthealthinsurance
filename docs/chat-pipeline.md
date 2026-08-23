@@ -271,35 +271,31 @@ Three levels, in increasing detail:
 
 ## 8. Known gaps and roadmap (prioritized)
 
-1. **Ship the city DB in k8s.** guess_us_state and ASN tracking soft-fail
-   without FHI_GEOIP_CITY_DB (startup warns exactly this); the chart
-   doesn't yet mount a geoip2fast city database. Low effort, unlocks the
-   state hint in prod.
-2. **Streaming responses.** The infra streams status heartbeats but final
+1. **Streaming responses.** The infra streams status heartbeats but final
    answers arrive whole. Token streaming from the winning backend would
    cut perceived latency drastically — but it collides with fan-out
    scoring (you can't score a stream you haven't finished). A pragmatic
    shape: keep the fan-out for the first N seconds, then stream the
    leader's remainder. Biggest UX win, medium-large effort.
-3. **Legacy backend prompt shape.** RemoteHealthInsurance
+2. **Legacy backend prompt shape.** RemoteHealthInsurance
    (supports_system=False) receives the system prompt folded into the
    final user message. It's quality 101 so it rarely wins, but its calls
    burn capacity; consider dropping it from the chat pool entirely.
-4. **Retry-button double turns.** The client retry sends the same message
+3. **Retry-button double turns.** The client retry sends the same message
    again; the server merges duplicates at persist time (serial + deduped)
    but the second LLM turn still runs. An in-flight turn-id (client echoes
    it, server drops re-submits of a live turn) would make retry free.
-5. **Per-model win/lose metrics.** The debug frame reports the picked
+4. **Per-model win/lose metrics.** The debug frame reports the picked
    model; promote that to a bounded-cardinality counter
    (fhi_chat_model_wins_total{model}) so the quality map can be tuned
    from dashboards, not log greps. (Deliberately deferred: needs a label
    allowlist to keep cardinality bounded.)
-6. **Summarization model diversity.** summarize_chat_history routes to one
+5. **Summarization model diversity.** summarize_chat_history routes to one
    summarizer; a bad summary quietly poisons every later turn's context.
    Cheap guard: score summaries with the repetition detector before
    storing (a summary that mostly repeats the raw history is fine; one
    that repeats the model's last REPLY is the poison case).
-7. **Evaluation harness.** The loop bug shipped because nothing exercised
+6. **Evaluation harness.** The loop bug shipped because nothing exercised
    multi-turn conversations against scripted "sticky" backends. The test
    suite now covers the ladder with RecordingChatModel; a nightly
    scripted-conversation eval against the real internal backends (no

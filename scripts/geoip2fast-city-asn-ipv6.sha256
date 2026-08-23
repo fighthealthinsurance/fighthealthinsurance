@@ -1,0 +1,30 @@
+# Pinned sha256 of the geoip2fast city+ASN database (geoip2fast-city-asn-ipv6.dat.gz)
+# that FHI_GEOIP_CITY_DB points at. scripts/fetch_geoip_db.sh refuses to install
+# anything whose digest does not match the value below, and installs nothing at
+# all if this file holds no digest.
+#
+# geoip2fast loads the database with pickle.load(), so its bytes run as code
+# inside the web process -- which holds the DB credentials and the PHI
+# field-encryption keys. That is what this pin is protecting.
+#
+# Provenance of the value below: downloaded 2026-08-23 from
+#   https://github.com/rabuchaim/geoip2fast/releases/download/LATEST/geoip2fast-city-asn-ipv6.dat.gz
+# 20988890 bytes, self-described (its `info` field) as
+#   MAXMIND:GeoLite2-CityASN-IPv4IPv6-en-20260605
+# with top-level sections country/city/asn/ipv6 -- i.e. the city+ASN+IPv6 build
+# both features need. Disassembling all 22,144,910 pickle opcodes found no
+# code-execution opcode (no GLOBAL/STACK_GLOBAL/REDUCE/INST/OBJ/NEWOBJ/BUILD),
+# so this particular file is pure data -- which is a property of these bytes,
+# not of whatever the URL serves next, hence the pin.
+# RE-VERIFY IT YOURSELF before you trust it in production:
+#
+#     scripts/fetch_geoip_db.sh --print-sha
+#
+# on a machine and network you trust, and compare. If your digest differs, do
+# NOT deploy it -- either upstream republished the moving LATEST asset (re-pin
+# deliberately, after checking what changed) or something rewrote the download.
+#
+# Upstream publishes these databases only under the moving LATEST tag, so a
+# republished file surfaces here as a checksum failure -- loud, and never a
+# silent swap. Re-pin whenever you intentionally move to a newer release.
+60205b43af2b9d04374cb5528ae31a6c2a9cc96cb20478b80016c2b8f457b04b

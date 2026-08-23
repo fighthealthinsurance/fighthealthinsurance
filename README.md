@@ -146,36 +146,48 @@ export FHI_GEOIP_CITY_DB=/path/to/geoip2fast-city-asn-ipv6.dat.gz
 ```
 
 The `geoip2fast` package itself is installed via `requirements.txt`, but it
-only bundles country/ASN databases — state (subdivision) data requires a
-city-level file downloaded from the geoip2fast releases. Use the
-`-city-asn-ipv6` variant so ASN lookups work too:
+only bundles country/ASN databases — state (subdivision) data requires the
+city-level `-city-asn-ipv6` file, which also carries the ASN data.
+`scripts/fetch_geoip_db.sh` is the one place that knows how to get it, so dev
+boxes and images install identical, identically-verified bytes:
 
 ```bash
-# Pin a specific release tag, never the moving `LATEST`.
-GEOIP2FAST_RELEASE=v1.2.2
-curl -L -o geoip2fast-city-asn-ipv6.dat.gz \
-  "https://github.com/rabuchaim/geoip2fast/releases/download/${GEOIP2FAST_RELEASE}/geoip2fast-city-asn-ipv6.dat.gz"
-
-# Verify against a digest you already trust. GEOIP2FAST_SHA256 must come from
-# somewhere INDEPENDENT of this download -- the value published by the project
-# for this tag, or one you recorded on a trusted machine and then stored in
-# the repo / your secrets manager. Deriving it from the file you just fetched
-# (sha256sum file > file.sha256 && sha256sum -c) verifies nothing: a swapped
-# asset passes its own checksum.
-GEOIP2FAST_SHA256=<expected-digest-for-${GEOIP2FAST_RELEASE}>
-echo "${GEOIP2FAST_SHA256}  geoip2fast-city-asn-ipv6.dat.gz" | sha256sum -c - \
-  || { echo "GeoIP database failed checksum -- refusing to install"; exit 1; }
-
-export FHI_GEOIP_CITY_DB="$PWD/geoip2fast-city-asn-ipv6.dat.gz"
+scripts/fetch_geoip_db.sh                 # -> geoip_data/ (gitignored)
+scripts/fetch_geoip_db.sh --print-sha     # digest only, installs nothing
 ```
+
+It downloads the file, checks it against the digest pinned in
+`scripts/geoip2fast-city-asn-ipv6.sha256`, and installs nothing at all on a
+mismatch (a previously installed copy that no longer matches is removed too).
+Re-running is a no-op once the file is in place.
+
+* **Local dev:** `scripts/run_local.sh` runs the fetch (in parallel with the
+  other startup work) and exports `FHI_GEOIP_CITY_DB` when the file is there.
+  Nothing to do by hand.
+* **Deployments:** `k8s/Dockerfile` runs the same script at build time into
+  `/opt/geoip/`, root-owned and read-only to the app, and bakes
+  `ENV FHI_GEOIP_CITY_DB` into the image. No runtime download, nothing to
+  mount, and the bytes are fixed at build time. Kubernetes needs no extra
+  config; a pod picks it up from the image.
+
+Upstream publishes these databases only under the moving `LATEST` tag, so the
+pinned digest — not a version tag — is what makes the fetch reproducible: a
+republished asset fails verification loudly instead of swapping itself in. When
+you deliberately move to a newer release, record the new digest with
+`--print-sha` **on a machine and network you trust** and commit it. A build
+with no digest pinned, an unreachable upstream, or a republished (mismatching)
+asset still succeeds; it just ships without the database and the app warns at
+startup. Pass `--require` where shipping without it should fail instead.
 
 > **Treat this file as trusted code, not data.** geoip2fast loads the database
 > with `pickle.load()`, so anything that can replace the file (a swapped
 > release asset, a MITM on a build box, write access to the deployment volume)
 > can execute code inside the web process — which holds DB credentials and the
-> PHI field-encryption keys. Pin the release, verify the checksum before the
-> file reaches a server, and give the mounted path the same write protections
-> you give application code.
+> PHI field-encryption keys. That is what the pinned digest protects, which is
+> why bytes that fail verification are never installed -- and a stale copy that
+> stops matching is removed -- even though a missing database is otherwise
+> tolerated, and why the file is baked into the image instead of downloaded at
+> pod start.
 
 **Soft fail:** when `FHI_GEOIP_CITY_DB` is unset (or the file is missing /
 unreadable, or the package isn't installed) nothing breaks — the state guess

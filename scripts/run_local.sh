@@ -14,6 +14,7 @@
 
 
 SCRIPT_DIR="$(dirname "$0")"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if [ ! -f "cert.pem" ]; then
   "${SCRIPT_DIR}/install.sh"
@@ -170,6 +171,23 @@ backup_pid=$!
 check_alpha_backend &
 alpha_pid=$!
 
+# 2b) GeoIP city database (background). Without it the chat's US-state hint and
+# ASN tracking soft-fail and the server warns at startup. The fetch is
+# sha256-verified against the digest pinned in the repo and is a no-op once the
+# file is in place, so this costs nothing after the first run. It installs
+# nothing when no digest is pinned -- set GEOIP_ALLOW_UNVERIFIED=1 to override
+# that on a dev box (never for anything that reaches a server).
+GEOIP_DB="${REPO_ROOT}/geoip_data/geoip2fast-city-asn-ipv6.dat.gz"
+fetch_geoip_db() {
+  "${SCRIPT_DIR}/fetch_geoip_db.sh" --dest "${GEOIP_DB}" || true
+  if [ -f "${GEOIP_DB}" ]; then
+    echo "export FHI_GEOIP_CITY_DB=${GEOIP_DB}" > "$TMPDIR/geoip"
+  fi
+}
+
+fetch_geoip_db &
+geoip_pid=$!
+
 # 3) DB setup (background, unless FAST mode)
 if [ "$FAST" != "FAST" ]; then
   python manage.py setup_local_db &
@@ -178,7 +196,7 @@ fi
 
 # Wait for all parallel tasks
 wait "$static_pid" || { echo "Static build failed!"; exit 1; }
-wait "$vllm_pid" "$slipstream_pid" "$backup_pid" "$alpha_pid" 2>/dev/null || true
+wait "$vllm_pid" "$slipstream_pid" "$backup_pid" "$alpha_pid" "$geoip_pid" 2>/dev/null || true
 if [ -n "$db_pid" ]; then
   wait "$db_pid" || { echo "DB setup failed!"; exit 1; }
 fi
