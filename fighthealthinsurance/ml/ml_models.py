@@ -864,6 +864,20 @@ class RemoteModelLike(DenialBase):
     def quality(self) -> int:
         return 100
 
+    def supports_general_instructions(self) -> bool:
+        """Whether this backend can follow arbitrary instructions.
+
+        True for general-purpose models: they can hold a chat turn, emit a
+        tool call, extract an entity, or summarize. False for narrow
+        fine-tunes that only reliably produce the one artifact they were
+        trained on (the appeal/prior-auth text), which answer everything
+        else with filler or digit soup. Those stay eligible for generation
+        and are kept out of the conversational/extraction fan-outs, where a
+        garbage candidate costs a slot, a timeout, and occasionally the
+        race.
+        """
+        return True
+
     def get_max_context(self) -> int:
         """Return the maximum context length in tokens for this model."""
         if hasattr(self, "max_len"):
@@ -1215,6 +1229,7 @@ Rules for medicaid questions:
 - NEVER provide generic Medicaid information, websites, or advice
 - NEVER mix tool calls with long explanations
 - The tool provides ALL necessary information, although you can reformat it's output.
+- After you have delivered the state information, close with ONE short sentence offering our experimental eligibility check (see the eligibility tool above) — say plainly that it's experimental and only a rough estimate, not an official determination.
 
 CORRECT Examples:
 User: "medicaid info in california" → Response: **medicaid_info {"state": "California", "topic": "", "limit": 5}**
@@ -1229,7 +1244,7 @@ WRONG Examples:
             + MEDICAID_WORK_REQUIREMENTS_BLOCK
             + """
 
-RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use ONLY the text above.
+RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use the text above, followed at most by ONE short sentence offering the experimental eligibility check (e.g. "I can run our experimental eligibility check with you to estimate how this affects you — it's a rough estimate, not an official determination."). Nothing else.
 """
         )
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
@@ -1294,7 +1309,7 @@ At each step add the user's new answers to the parameters you've already collect
 
 Rules for medicaid eligibility:
 
-Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under today's rules only, probably eligible under today's rules and with the 2026 work requirements, or can't find eligibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
+Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under today's rules only, probably eligible under today's rules and in the year being checked (by default 2026, with the work requirements), or can't find eligibility. The tool tells you which year it scored — use that year in your answer, never a different one. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
 
 Possible kwargs (all optional; function will ask for missing, step-by-step):
       - state: str
@@ -1316,8 +1331,10 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
       - esrd: bool
       - ssdi_length: int # how many MONTHS they have been receiving SSDI
       - years_worked: int # how many years you or your spouse worked and paid medicare taxes
-      # 2026 federal work / community engagement requirement (80 qualifying hours per month;
-      # hours from work, school, volunteering, or caregiving all count):
+      - target_year: int  # which year to check besides today's rules (defaults to 2026)
+      # federal work / community engagement requirement (80 qualifying hours per month;
+      # hours from work, school, volunteering, or caregiving all count -- it applies from
+      # 2026 on, so a target_year of 2025 is checked without it):
       - work_req_exempt_2026: bool                    # true if you know they're exempt (pregnant, disabled/medically frail, on medicare, etc.)
       - avg_monthly_qualifying_hours_last_3mo: float  # average qualifying hours per MONTH (the units the tool asks in)
       - avg_weekly_qualifying_hours_last_3mo: float   # or average per WEEK -- watch the units, never put a monthly number here
@@ -1329,6 +1346,7 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
 - Numbers: a plain number with no currency symbol, comma, or unit. ("about twelve hundred a month" -> `"monthly_income": 1200`.)
 - State: the state name or its 2-letter code. If they name their program (Medi-Cal, MassHealth, TennCare, Apple Health...) infer the state yourself.
 - Hours: mind the units — `avg_monthly_qualifying_hours_last_3mo` is per MONTH, `avg_weekly_qualifying_hours_last_3mo` is per WEEK.
+- Year: every check covers today's rules plus one other year. If the user names a year ("what about 2028?", "will I still qualify next year?", "when the work requirements start"), send it as a 4-digit `target_year` — convert relative phrases yourself, and re-send the same `target_year` on every following call so the estimate doesn't silently switch years mid-conversation. Leave it out when they haven't asked about a particular year. If they ask about several years, run the check once per year and say which is which.
 
 **When the user can't answer**, send the string `"unknown"` for that parameter (e.g. `"assets_total": "unknown"`). That tells us to stop asking it and either assume the conservative answer or explain what we can't determine. Never invent a value, and never silently drop the question — an unanswered question comes back every turn.
 
@@ -1364,6 +1382,14 @@ We have a selection of tools to help you. You should try and use these tools whe
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
 This means if someone asks if their eligible for medical, medicaid, medicare, or similar you must use the tool.
 You can call these tools, but not the person chatting with you. So, for example, you can offer to lookup more info for them.
+
+***THE MEDICAID PATH***
+Most people asking about Medicaid in general ("what is Medicaid?", "how do I apply?", "what are the income limits?", "what are these work requirements?") really want to know whether THEY can get covered, so a general answer is the start of the path, not the end of it:
+1. Answer what they actually asked (using medicaid_info for anything state-specific, or the work requirements text above).
+2. Then offer the EXPERIMENTAL eligibility check in one short sentence, making clear it's a rough estimate and not an official determination.
+3. The moment they show any interest — "yes", "how do I know?", "would I qualify?", "what are the limits for me?", asking about their own income, household, or coverage — call **medicaid_eligibility** with everything you already know (at minimum the state, plus their target year if they named one). Do NOT ask them eligibility questions first; the tool tells you which questions to ask.
+4. Keep going: each answer they give goes back into the tool call along with everything collected so far, until the tool gives a determination. Then finish with the state contact info from **medicaid_info** and https://www.fighthealthinsurance.com/faq/medicaid/ .
+Don't re-offer the check if one is already underway in this conversation — just continue it. And don't push it on someone who has said no or who is asking about something else entirely.
 """
             medicaid_names_reminder = """
 Remember that medicaid can go by many names, including but not limited to: DenaliCare, Medi-Cal, Health First Colorado, Husky Health, Diamond State Health Plan, Med-QUEST, Medical Assistance Program, HealthChoice Illinois, Hoosier Healthwise, Iowa Medicaid, Kansas Medical Assistance Program, MaineCare, MassHealth, MO HealthNet, NJ FamilyCare, Turquoise Care, New York State Medicaid, SoonerCare, Medical Assistance, Healthy Connections, TennCare, STAR+PLUS, Green Mountain Care, Cardinal Care, Apple Health, Forward Health, STAR, and Equality Care. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
@@ -3842,6 +3868,16 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
     @property
     def external(self):
+        return False
+
+    def supports_general_instructions(self) -> bool:
+        """fhi-legacy is an appeal-text fine-tune, not a general model.
+
+        Asked to hold a chat turn it returns blank lines and stray digits
+        ("1.50, 777&#2,302,36,..."), so it was contributing a guaranteed-dead
+        candidate to every chat fan-out. It stays in the appeal and prior-auth
+        pools, which are the job it was actually trained for.
+        """
         return False
 
     @classmethod

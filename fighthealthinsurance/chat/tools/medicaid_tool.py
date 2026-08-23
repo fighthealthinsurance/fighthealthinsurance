@@ -123,6 +123,7 @@ class MedicaidInfoTool(BaseTool):
                     f"Here's the official Medicaid information for {state_name}:\n\n"
                     f"{medicaid_info}\n\n"
                     f" -- use it to answer the question {current_message_for_llm}"
+                    f"\n\n{self._build_eligibility_handoff(state_name)}"
                 )
 
                 # Call LLM with the Medicaid info context
@@ -202,6 +203,33 @@ class MedicaidInfoTool(BaseTool):
                 f"Error processing Medicaid info data: {str(e)}"
             )
             raise
+
+    @staticmethod
+    def _build_eligibility_handoff(state_name: str) -> str:
+        """Guidance that turns a general Medicaid answer into the next step.
+
+        A general "how does Medicaid work in my state?" question used to end
+        with contact details and nothing else, so someone who came to us
+        wondering whether they qualify left without ever being offered the
+        check that answers it. The info lookup is the natural jumping-off
+        point, so every successful one now hands the model the handoff.
+        """
+        return (
+            "Then start them down the Medicaid path: after answering, offer "
+            "our EXPERIMENTAL Medicaid/Medicare eligibility check in one "
+            "short sentence (make clear it's experimental, a rough estimate, "
+            "and not an official determination). If they've shown any sign "
+            "of wanting to know whether they qualify -- asking about income "
+            "limits, whether they'd be covered, how to apply, or the work "
+            "requirements -- don't wait for a yes: call "
+            '**medicaid_eligibility {"state": "'
+            + str(state_name)
+            + '"}** now, adding anything '
+            "else they've already told you, and let the tool tell you which "
+            "questions to ask. Never ask eligibility questions before "
+            "calling the tool. If an eligibility check is already underway "
+            "in this conversation, continue it instead of re-offering it."
+        )
 
 
 class MedicaidEligibilityTool(BaseTool):
@@ -313,10 +341,16 @@ class MedicaidEligibilityTool(BaseTool):
             # Import here to avoid circular imports
             from fighthealthinsurance.medicaid_api import (
                 is_eligible,
+                resolve_target_year,
                 summarize_eligibility_inputs,
             )
 
             await self.send_status_message("Processing Medicaid eligibility data")
+
+            # Which year the second verdict covers. Resolved with the same
+            # helper the checker uses, so the label we hand the LLM can't
+            # claim a different year than the one that was scored.
+            target_year = resolve_target_year(loaded.get("target_year"))
 
             # What we actually understood from the payload. The LLM parses
             # the user's free text and carries the running answers in its
@@ -327,8 +361,8 @@ class MedicaidEligibilityTool(BaseTool):
             )
 
             (
-                eligible_2025,
-                eligible_2026,
+                eligible_base,
+                eligible_target,
                 medicare,
                 alternatives,
                 missing,
@@ -336,12 +370,13 @@ class MedicaidEligibilityTool(BaseTool):
             ) = is_eligible(**loaded)
 
             info_text = self._build_eligibility_info(
-                eligible_2025,
-                eligible_2026,
+                eligible_base,
+                eligible_target,
                 medicare,
                 alternatives,
                 missing,
                 determination_made,
+                target_year=target_year,
             )
             if parsed_summary:
                 info_text += "\n\n" + parsed_summary
@@ -357,12 +392,15 @@ class MedicaidEligibilityTool(BaseTool):
                 "out of date -- and they must contact the state to know for "
                 "sure (you can use the "
                 "medicaid_info tool call to get state-specific contact info "
-                "to provide to the user). If the 2026 work requirement is "
-                "the barrier, suggest ways to reach 80 qualifying hours a "
-                "month (work, school, volunteering, or caregiving) and "
-                "remind them to keep good records -- with empathy, since "
-                "this is stressful and unfair. Remember to use the panda "
-                "emoji and context."
+                f"to provide to the user). If the {target_year} work "
+                "requirement is the barrier, suggest ways to reach 80 "
+                "qualifying hours a month (work, school, volunteering, or "
+                "caregiving) and remind them to keep good records -- with "
+                "empathy, since this is stressful and unfair. This check "
+                f"covered {target_year}; if the user asks about a different "
+                'year, call the tool again with "target_year" set to it '
+                "(along with everything else you already have). Remember to "
+                "use the panda emoji and context."
             )
 
             await self.send_status_message("Formatting response...")
@@ -469,20 +507,22 @@ class MedicaidEligibilityTool(BaseTool):
 
     def _build_eligibility_info(
         self,
-        eligible_2025: bool,
-        eligible_2026: bool,
+        eligible_base: bool,
+        eligible_target: bool,
         medicare: bool,
         alternatives: List[str],
         missing: List[str],
         determination_made: bool = True,
+        target_year: Optional[int] = None,
     ) -> str:
         """
         Build the eligibility information text passed back to the LLM.
 
         Args:
-            eligible_2025: Whether eligible under the 2025 rules
-            eligible_2026: Whether eligible under the 2026 rules (which add
-                the federal work/community-engagement requirement)
+            eligible_base: Whether eligible under today's (base-year) rules
+            eligible_target: Whether eligible in ``target_year`` (which adds
+                the federal work/community-engagement requirement from
+                ``WORK_REQUIREMENT_FIRST_YEAR`` on)
             medicare: Whether eligible for Medicare
             alternatives: List of alternative suggestions
             missing: List of missing-information questions still to ask
@@ -490,17 +530,40 @@ class MedicaidEligibilityTool(BaseTool):
                 person at all (a US territory, or a required answer they
                 declined). A False here must never be rendered as an
                 ineligibility verdict -- that is the whole point of the flag.
+            target_year: The year the second verdict covers -- the user's own
+                year when they asked about one. Must be the year
+                ``resolve_target_year`` returned for this payload, or the
+                label would name a year we didn't score. Defaults to the
+                checker's own default year.
 
         Returns:
             Formatted information text
         """
-        # One shared description of the 2026 rules so the eligible and
-        # not-eligible wordings can't drift apart.
-        work_req_note = (
-            " (once the federal 80-hours-per-month work/community-engagement "
-            "requirement applies to them — states must implement it by "
-            "January 1, 2027, a few earlier)"
+        # Imported lazily like the rest of medicaid_api here: the module
+        # pulls in pandas, and the chat tools are imported on every chat.
+        from fighthealthinsurance.medicaid_api import (
+            BASE_ELIGIBILITY_YEAR,
+            DEFAULT_TARGET_YEAR,
+            WORK_REQUIREMENT_FIRST_YEAR,
         )
+
+        if target_year is None:
+            target_year = DEFAULT_TARGET_YEAR
+
+        # One shared description of the work-requirement rules so the
+        # eligible and not-eligible wordings can't drift apart. Only years
+        # the requirement can apply to get it.
+        work_req_note = ""
+        if target_year >= WORK_REQUIREMENT_FIRST_YEAR:
+            work_req_note = (
+                " (once the federal 80-hours-per-month work/community-engagement "
+                "requirement applies to them — states must implement it by "
+                "January 1, 2027, a few earlier)"
+            )
+        base_label = f"current ({BASE_ELIGIBILITY_YEAR})"
+        # A user who asked about this year gets one verdict, not the same
+        # verdict printed twice under two labels.
+        target_is_separate_year = target_year > BASE_ELIGIBILITY_YEAR
 
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
@@ -523,10 +586,10 @@ class MedicaidEligibilityTool(BaseTool):
             # eligible" sat unsaid behind an unrelated follow-up. Only
             # positives are reported here: a False at this stage means "not
             # established yet", not "no".
-            if eligible_2025:
+            if eligible_base:
                 parts.append(
                     "Based on what we have so far they already look eligible "
-                    "for medicaid under the current (2025) rules -- you can "
+                    f"for medicaid under the {base_label} rules -- you can "
                     "share that, while noting the questions above are still "
                     "needed to be sure."
                 )
@@ -565,14 +628,24 @@ class MedicaidEligibilityTool(BaseTool):
                 alternative_lines = "\n".join(f"- {a}" for a in alternatives)
                 parts.append("Next steps to share:\n" + alternative_lines)
         else:
-            for label, is_eligible_for_year, note in (
-                ("current (2025)", eligible_2025, ""),
-                ("2026", eligible_2026, work_req_note),
-            ):
+            verdicts = [(base_label, eligible_base, "")]
+            if target_is_separate_year:
+                verdicts.append((str(target_year), eligible_target, work_req_note))
+            for label, is_eligible_for_year, note in verdicts:
                 verdict = "could be" if is_eligible_for_year else "may not be"
                 parts.append(
                     f"Our data so far suggests they {verdict} eligible for "
                     f"medicaid under the {label} rules{note}."
+                )
+
+            if target_is_separate_year:
+                # The later year's income limits are the published base-year
+                # guidelines rolled forward by an inflation guess, so a
+                # borderline verdict there is softer than it sounds.
+                parts.append(
+                    f"Note: {target_year} income limits aren't published yet, "
+                    f"so we estimated them from the {BASE_ELIGIBILITY_YEAR} "
+                    "guidelines. Say so if the answer is close to the line."
                 )
 
             if medicare:

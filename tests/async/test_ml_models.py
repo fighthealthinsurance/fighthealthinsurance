@@ -395,6 +395,77 @@ class TestMedicaidDetection(TestCase):
         self.assertFalse(result, "Should not detect Medicaid without keywords")
 
 
+class TestMedicaidPathPrompt(TestCase):
+    """The Medicaid tool prompt has to route general questions into the check.
+
+    Someone who asks "what is Medicaid?" or "what are the work requirements?"
+    is usually trying to find out whether they can get covered, so the prompt
+    tells the model to answer, offer the experimental check, and then call the
+    tool -- rather than ending at a phone number.
+    """
+
+    def _medicaid_system_prompt(self) -> str:
+        model = RemoteOpenLike(
+            api_base="http://test.com",
+            token="test_token",
+            model="test_model",
+            system_prompts_map={"test": ["test prompt"]},
+        )
+
+        captured: dict[str, str] = {}
+
+        async def capture(*args, **kwargs):
+            captured["system_prompt"] = kwargs["system_prompts"][0]
+            return ("An answer 🐼 context", [])
+
+        with patch.object(model, "_infer", side_effect=capture):
+            asyncio.run(
+                model.generate_chat_response(
+                    "What is Medicaid?",
+                    is_medicaid_related=True,
+                )
+            )
+
+        return captured["system_prompt"]
+
+    def test_prompt_describes_the_medicaid_path(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("THE MEDICAID PATH", prompt)
+
+    def test_prompt_starts_the_eligibility_tool_after_general_info(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("medicaid_eligibility", prompt)
+        self.assertIn("offer the EXPERIMENTAL eligibility check", prompt)
+
+    def test_prompt_documents_the_target_year_parameter(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("target_year", prompt)
+
+    def test_non_medicaid_chats_do_not_get_the_medicaid_path(self):
+        model = RemoteOpenLike(
+            api_base="http://test.com",
+            token="test_token",
+            model="test_model",
+            system_prompts_map={"test": ["test prompt"]},
+        )
+
+        captured: dict[str, str] = {}
+
+        async def capture(*args, **kwargs):
+            captured["system_prompt"] = kwargs["system_prompts"][0]
+            return ("An answer 🐼 context", [])
+
+        with patch.object(model, "_infer", side_effect=capture):
+            asyncio.run(
+                model.generate_chat_response(
+                    "Help me appeal my knee surgery denial",
+                    is_medicaid_related=False,
+                )
+            )
+
+        self.assertNotIn("THE MEDICAID PATH", captured["system_prompt"])
+
+
 class TestRemoteFullOpenLike(TestCase):
     """Test for the RemoteFullOpenLike class."""
 

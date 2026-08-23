@@ -11,9 +11,13 @@ never going to be asked (the pre-2026-08 stall bugs).
 from django.test import SimpleTestCase
 
 from fighthealthinsurance.medicaid_api import (
+    BASE_ELIGIBILITY_YEAR,
+    DEFAULT_TARGET_YEAR,
+    MAX_TARGET_YEAR,
     _normalize_applying_reason,
     get_medicaid_info,
     is_eligible,
+    resolve_target_year,
     summarize_eligibility_inputs,
 )
 
@@ -1114,3 +1118,80 @@ class TestLongTermCareReasonIsRecognized(SimpleTestCase):
         self.assertEqual(_normalize_applying_reason("standard"), "standard")
         self.assertEqual(_normalize_applying_reason("applying for medicaid"), "standard")
         self.assertEqual(_normalize_applying_reason(None), "standard")
+
+
+class TestTargetYear(SimpleTestCase):
+    """The caller picks which year the second verdict covers.
+
+    "Will I still qualify in 2028?" is one of the most common Medicaid
+    questions, and it used to be unanswerable: the checker only ever scored
+    2026 and the year in the wording was a constant.
+    """
+
+    def test_default_target_year_is_unchanged(self):
+        self.assertEqual(resolve_target_year(None), DEFAULT_TARGET_YEAR)
+
+    def test_a_year_the_user_named_is_used(self):
+        self.assertEqual(resolve_target_year("2028"), 2028)
+        self.assertEqual(resolve_target_year("what about 2029?"), 2029)
+
+    def test_two_digit_years_are_read_as_this_century(self):
+        self.assertEqual(resolve_target_year(27), 2027)
+
+    def test_years_we_cannot_model_are_clamped(self):
+        self.assertEqual(resolve_target_year(1998), BASE_ELIGIBILITY_YEAR)
+        self.assertEqual(resolve_target_year(2199), MAX_TARGET_YEAR)
+
+    def test_an_unreadable_year_falls_back_to_the_default(self):
+        self.assertEqual(resolve_target_year("sometime soon"), DEFAULT_TARGET_YEAR)
+
+    def test_work_hours_question_names_the_requested_year(self):
+        _, _, _, _, missing, _ = is_eligible(**_answers(target_year=2028))
+        self.assertTrue(any("2028" in q for q in missing))
+
+    def test_a_target_year_before_the_work_requirement_skips_the_hours_question(self):
+        _, eligible_target, _, _, missing, _ = is_eligible(
+            **_answers(target_year=BASE_ELIGIBILITY_YEAR)
+        )
+        self.assertFalse(any("qualifying hours" in q for q in missing))
+        self.assertTrue(eligible_target)
+
+    def test_a_later_target_year_still_applies_the_work_overlay(self):
+        _, eligible_target, _, _, missing, _ = is_eligible(**_answers(target_year=2030))
+        self.assertFalse(eligible_target)
+        self.assertTrue(any("qualifying hours" in q for q in missing))
+
+        _, eligible_with_hours, _, _, _, _ = is_eligible(
+            **_answers(target_year=2030, avg_monthly_qualifying_hours_last_3mo=100)
+        )
+        self.assertTrue(eligible_with_hours)
+
+    def test_target_year_is_echoed_back_normalized(self):
+        summary = summarize_eligibility_inputs({"state": "ca", "target_year": "2027"})
+        self.assertEqual(summary["recorded"]["target_year"], 2027)
+        self.assertNotIn("target_year", summary["unrecognized"])
+
+    def test_an_unreadable_target_year_is_reported(self):
+        summary = summarize_eligibility_inputs({"target_year": "whenever"})
+        self.assertIn("target_year", summary["unreadable"])
+
+    def test_later_year_thresholds_are_inflated(self):
+        # Right above the 138% FPL line today (1 person, $15,650/yr base):
+        # the same income clears an inflated later-year threshold, which is
+        # what makes asking about a future year worth anything.
+        just_over = dict(
+            monthly_income=1810.0,
+            avg_monthly_qualifying_hours_last_3mo=100,
+        )
+        eligible_base, eligible_target, _, _, _, _ = is_eligible(
+            **_answers(target_year=2030, **just_over)
+        )
+        self.assertFalse(eligible_base)
+        self.assertTrue(eligible_target)
+
+    def test_the_year_neutral_work_exemption_spelling_is_accepted(self):
+        _, eligible_target, _, _, missing, _ = is_eligible(
+            **_answers(work_req_exempt=True)
+        )
+        self.assertTrue(eligible_target)
+        self.assertFalse(any("qualifying hours" in q for q in missing))

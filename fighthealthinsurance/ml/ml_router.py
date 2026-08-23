@@ -261,6 +261,31 @@ class MLRouter(object):
             return candidates
         return available
 
+    def _general_purpose_only(
+        self, models: Sequence[RemoteModelLike], context: str
+    ) -> list[RemoteModelLike]:
+        """Drop backends that only produce their fine-tuned artifact.
+
+        Chat turns, tool calls, entity extraction, QA and summarization all
+        need a model that follows instructions; the appeal-text fine-tunes
+        (fhi-legacy) answer those with blank lines and stray digits, which
+        cost a fan-out slot and a full timeout every time. Generation paths
+        (appeals, prior auth) deliberately do NOT call this.
+
+        Fails open like ``_filter_available``: if every candidate is narrow,
+        keep them rather than returning nothing to route to.
+        """
+        candidates = list(models)
+        general = [m for m in candidates if m.supports_general_instructions()]
+        if not general:
+            if candidates:
+                logger.debug(
+                    f"MLRouter: no general-purpose backend for {context}; "
+                    f"falling back to {[str(m) for m in candidates]}"
+                )
+            return candidates
+        return general
+
     def _get_forced_models(
         self, task_description: str = "", *, use_external: bool = True
     ) -> Optional[list[RemoteModelLike]]:
@@ -330,10 +355,16 @@ class MLRouter(object):
     def entity_extract_backends(self, use_external) -> list[RemoteModelLike]:
         """Backends for entity extraction."""
         if use_external:
-            return self._filter_available(self.all_models_by_cost, "entity-extract")
+            return self._general_purpose_only(
+                self._filter_available(self.all_models_by_cost, "entity-extract"),
+                "entity-extract",
+            )
         else:
-            return self._filter_available(
-                self.internal_models_by_cost, "entity-extract-internal"
+            return self._general_purpose_only(
+                self._filter_available(
+                    self.internal_models_by_cost, "entity-extract-internal"
+                ),
+                "entity-extract-internal",
             )
 
     def generate_text_backends(
@@ -493,7 +524,9 @@ class MLRouter(object):
 
         models: list[RemoteModelLike] = []
         # Always include internal FHI models for question generation
-        models += self._filter_available(self.internal_models_by_cost, "full-qa")[:3]
+        models += self._general_purpose_only(
+            self._filter_available(self.internal_models_by_cost, "full-qa"), "full-qa"
+        )[:3]
 
         if use_external:
             # Add a cheap external generalist if available (successor to the
@@ -527,7 +560,10 @@ class MLRouter(object):
         """
         models: list[RemoteModelLike] = []
         # Always include internal FHI models
-        models += self._filter_available(self.internal_models_by_cost, "partial-qa")
+        models += self._general_purpose_only(
+            self._filter_available(self.internal_models_by_cost, "partial-qa"),
+            "partial-qa",
+        )
         return models
 
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
@@ -592,9 +628,13 @@ class MLRouter(object):
         models = []
         # Try each fhi model twice. Sorted so every pod doubles the SAME
         # fhi backend (dict insertion order used to vary with registration
-        # order).
+        # order). Narrow fine-tunes are excluded first, so a deployment where
+        # the appeal-only backend sorts first doesn't double IT for chat.
         fhi_models = sorted(
-            name for name in self.models_by_name.keys() if name.startswith("fhi-")
+            name
+            for name, backends in self.models_by_name.items()
+            if name.startswith("fhi-")
+            and any(m.supports_general_instructions() for m in backends)
         )
         if fhi_models:
             models += (
@@ -608,8 +648,9 @@ class MLRouter(object):
         # wrong end of the list when strong and weak internals coexist. The
         # sort is stable over the cost ordering, so equal-quality models
         # still resolve cheapest-first.
-        internal_available = self._filter_available(
-            self.internal_models_by_cost, "chat-internal"
+        internal_available = self._general_purpose_only(
+            self._filter_available(self.internal_models_by_cost, "chat-internal"),
+            "chat-internal",
         )
         internal_to_add = sorted(internal_available, key=lambda m: -m.quality())[:6]
         models += internal_to_add
@@ -727,8 +768,11 @@ class MLRouter(object):
                 "skipping summarization and returning None."
             )
             return None
-        models = self._filter_available(
-            self.internal_models_by_cost, "summarize-chat-history"
+        models = self._general_purpose_only(
+            self._filter_available(
+                self.internal_models_by_cost, "summarize-chat-history"
+            ),
+            "summarize-chat-history",
         )[:2]
         for m in models:
             try:
@@ -790,8 +834,9 @@ class MLRouter(object):
         # would silently return None. Gated on availability AND on
         # use_external so a PHI caller (or a sweep-marked-down DeepInfra)
         # doesn't add a doomed/disallowed call before the internal fallbacks.
-        internal_pool = self._filter_available(
-            self.internal_models_by_cost, "summarize"
+        internal_pool = self._general_purpose_only(
+            self._filter_available(self.internal_models_by_cost, "summarize"),
+            "summarize",
         )
         if use_external and "google/gemma-4-26B-A4B-it" in self.models_by_name:
             models = [

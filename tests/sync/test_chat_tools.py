@@ -25,6 +25,8 @@ from fighthealthinsurance.chat.tools import (
     USPSTFLookupTool,
 )
 from fighthealthinsurance.medicaid_api import (
+    BASE_ELIGIBILITY_YEAR,
+    DEFAULT_TARGET_YEAR,
     is_eligible,
     summarize_eligibility_inputs,
 )
@@ -433,8 +435,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_eligible(self):
         """Test eligibility info text generation for eligible user."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=True,
+            eligible_base=True,
+            eligible_target=True,
             medicare=False,
             alternatives=[],
             missing=[],
@@ -447,8 +449,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_with_missing(self):
         """Test eligibility info text when questions are missing."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["income", "household_size"],
@@ -459,8 +461,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_lists_questions_not_python_repr(self):
         """Missing questions render as a readable list, not a list repr."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["What state do you live in?", "How old are you?"],
@@ -472,8 +474,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_flags_experimental_when_asking(self):
         """The LLM is told to disclose the experimental status while asking."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["What state do you live in?"],
@@ -484,8 +486,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_flags_experimental_on_verdict(self):
         """The LLM is told to disclose the experimental status with verdicts."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=True,
+            eligible_base=True,
+            eligible_target=True,
             medicare=False,
             alternatives=[],
             missing=[],
@@ -496,8 +498,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_paces_questions(self):
         """The LLM is told to ask only a few questions at a time."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["q1", "q2", "q3", "q4"],
@@ -508,8 +510,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_reports_settled_verdict_while_asking(self):
         """A determination already reached isn't withheld behind a question."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=False,
+            eligible_base=True,
+            eligible_target=False,
             medicare=True,
             alternatives=[],
             missing=["Do you have ALS?"],
@@ -521,8 +523,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_holds_alternatives_until_verdict(self):
         """Denial-flavored next steps don't surface mid-interview."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=False,
+            eligible_base=True,
+            eligible_target=False,
             medicare=False,
             alternatives=["If denied, you can appeal; gather documentation."],
             missing=["Do you have ALS?"],
@@ -533,8 +535,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_indeterminate_result_is_not_rendered_as_a_denial(self):
         """"Couldn't score them" must not become "may not be eligible"."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=["Contact your territory's Medicaid agency."],
             missing=[],
@@ -547,8 +549,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_indeterminate_result_still_reports_medicare(self):
         """Medicare is federal, so a territory resident still gets that answer."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=True,
             alternatives=[],
             missing=[],
@@ -559,8 +561,8 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_scored_ineligible_still_reads_as_a_verdict(self):
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=[],
@@ -596,8 +598,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_lists_alternatives_not_python_repr(self):
         """Alternatives render as a readable list, not a list repr."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=["Consider CHIP for the kids."],
             missing=[],
@@ -605,6 +607,123 @@ class TestMedicaidEligibilityTool(TestCase):
 
         self.assertIn("- Consider CHIP for the kids.", info)
         self.assertNotIn("['Consider", info)
+
+
+class TestMedicaidTargetYear(TestCase):
+    """The user picks which year the second verdict covers."""
+
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+
+    def test_verdict_names_the_requested_year(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2028,
+        )
+
+        self.assertIn("2028", info)
+        self.assertNotIn("the 2026 rules", info)
+
+    def test_current_year_target_is_reported_once(self):
+        # Asking about this year should not produce the same verdict twice
+        # under two labels, nor a work requirement that doesn't apply yet.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=BASE_ELIGIBILITY_YEAR,
+        )
+
+        self.assertEqual(info.count("could be eligible for medicaid"), 1)
+        self.assertNotIn("work/community-engagement", info)
+
+    def test_future_year_thresholds_are_flagged_as_estimates(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2029,
+        )
+
+        self.assertIn("aren't published yet", info)
+
+    def test_default_target_year_still_covers_the_work_requirement(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+        )
+
+        self.assertIn(str(DEFAULT_TARGET_YEAR), info)
+        self.assertIn("work/community-engagement", info)
+
+
+class TestMedicaidInfoStartsTheEligibilityPath(TestCase):
+    """A general Medicaid answer has to lead somewhere.
+
+    Someone who asks how Medicaid works in their state is usually trying to
+    find out whether they can get covered, so the info lookup hands the model
+    the next step instead of ending at a phone number.
+    """
+
+    def setUp(self):
+        self.handoff = MedicaidInfoTool._build_eligibility_handoff("California")
+
+    def test_handoff_names_the_eligibility_tool(self):
+        self.assertIn("medicaid_eligibility", self.handoff)
+
+    def test_handoff_carries_the_state_we_just_looked_up(self):
+        self.assertIn("California", self.handoff)
+
+    def test_handoff_calls_the_check_experimental(self):
+        self.assertIn("EXPERIMENTAL", self.handoff)
+
+    def test_handoff_forbids_questions_before_the_tool_call(self):
+        self.assertIn("Never ask eligibility questions before", self.handoff)
+
+    def test_handoff_does_not_restart_a_check_already_underway(self):
+        self.assertIn("already underway", self.handoff)
+
+    def test_lookup_result_carries_the_handoff(self):
+        # The guidance is only useful if it actually rides along with the
+        # info the model is answering from.
+        tool = MedicaidInfoTool(AsyncMock())
+        match = tool.detect('**medicaid_info {"state": "California"}**')
+        self.assertIsNotNone(match)
+
+        with patch(
+            "fighthealthinsurance.medicaid_api.get_medicaid_info",
+            return_value="Call 1-800-555-0100 to apply.",
+        ):
+            captured = {}
+
+            async def fake_call_llm(model_backends, message, *args, **kwargs):
+                captured["message"] = message
+                return ("ok", "")
+
+            tool.call_llm_callback = fake_call_llm
+            asyncio.run(
+                tool.execute(
+                    match,
+                    '**medicaid_info {"state": "California"}**',
+                    "",
+                    model_backends=["backend"],
+                    current_message_for_llm="How does Medi-Cal work?",
+                    history_for_llm=[],
+                )
+            )
+
+        self.assertIn("medicaid_eligibility", captured["message"])
 
 
 class TestDocFetcherPatterns(TestCase):
@@ -1061,8 +1180,8 @@ class TestMedicaidIndeterminateWithQuestions(TestCase):
         # An unscorable result that still has an outstanding question -- the
         # territory case, where Medicare may yet resolve.
         self.indeterminate_info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=["Contact your territory's Medicaid agency."],
             missing=["How old are you?"],
@@ -1079,8 +1198,8 @@ class TestMedicaidIndeterminateWithQuestions(TestCase):
 
     def test_a_scored_result_does_not_get_the_cannot_estimate_banner(self):
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=True,
+            eligible_base=True,
+            eligible_target=True,
             medicare=False,
             alternatives=["Visit your state Medicaid page."],
             missing=["How old are you?"],

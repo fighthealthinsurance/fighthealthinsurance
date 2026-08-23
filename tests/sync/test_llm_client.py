@@ -127,6 +127,48 @@ class TestBadPatterns(TestCase):
 class TestScoreLlmResponse(TestCase):
     """Test LLM response scoring."""
 
+    def test_tool_call_keeps_the_full_model_prior(self):
+        """A bare tool call is a finished reply, not a truncated one.
+
+        The model prior is normally divided by 100 when a candidate has no
+        panda context summary, on the theory that it's half-generated. A tool
+        call never has one -- the tool's follow-up pass writes it -- so that
+        division sank real tool calls under chatty candidates that skipped
+        the tool and invented an answer instead.
+        """
+        tool_call = ('**medicaid_eligibility {"state": "CA"}**', None)
+        prose_without_context = ("Here is a fairly long chatty answer.", None)
+
+        tool_score = score_llm_response(tool_call, 8000)
+        prose_score = score_llm_response(prose_without_context, 8000)
+
+        self.assertGreater(tool_score, prose_score)
+        self.assertGreater(tool_score, 8000)
+
+    def test_tool_call_outranks_an_answer_that_skipped_the_tool(self):
+        # The observed failure: a local model's invented eligibility verdict
+        # (with a context summary) beat the tool call that would have computed
+        # one, so the checker never ran.
+        tool_call = ('**medicaid_eligibility {"state": "CA", "age": 39}**', None)
+        invented_verdict = (
+            "Based on what you've told me you're likely eligible under today's rules.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(tool_call, 8000),
+            score_llm_response(invented_verdict, 8000),
+        )
+
+    def test_missing_context_still_penalized_without_a_tool_call(self):
+        with_context = ("A helpful answer for the user.", "Context summary")
+        without_context = ("A helpful answer for the user.", None)
+
+        self.assertGreater(
+            score_llm_response(with_context, 8000),
+            score_llm_response(without_context, 8000),
+        )
+
     def test_none_result_returns_negative_inf(self):
         """None result should return -inf."""
         score = score_llm_response(None, 100)

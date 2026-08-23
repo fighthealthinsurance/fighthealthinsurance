@@ -329,6 +329,18 @@ def score_llm_response(
 
     score = 0.0
 
+    # A tool call is a legitimate reply shape even though it carries no
+    # user-facing prose or panda context summary -- the tool's follow-up pass
+    # writes those. Counted with the same patterns the tool bonus uses (NOT
+    # contains_tool_call, which also fires on a bare mention of a token) so
+    # only a real call earns the full model prior below.
+    tool_call_matches = (
+        sum(1 for pattern in tools_regex if re.search(pattern, response_text))
+        if response_text
+        else 0
+    )
+    has_tool_call = tool_call_matches > 0
+
     # Bonus for being a primary call
     if is_primary_call:
         score += 100
@@ -348,9 +360,7 @@ def score_llm_response(
             score -= 75
 
         # Bonus for tool usage (search anywhere in response)
-        for pattern in tools_regex:
-            if re.search(pattern, response_text):
-                score += 100
+        score += 100 * tool_call_matches
 
         # Safety: Penalize false promises
         if detect_false_promises(response_text):
@@ -387,8 +397,13 @@ def score_llm_response(
                 response_text, chat_history or [], current_message
             )
 
-    # Add base quality score from model
-    if response_text and context_part:
+    # Add base quality score from model. A reply with no context summary is
+    # normally half-finished, so it only gets a hundredth of the model
+    # prior -- but a TOOL CALL has no summary by design, and dividing its
+    # prior sank real tool calls (score ~315) under chatty candidates that
+    # skipped the tool (~5810). That is how an eligibility verdict invented by
+    # a model instead of computed by the checker won a fan-out.
+    if response_text and (context_part or has_tool_call):
         score += call_score
     else:
         score += call_score / 100
