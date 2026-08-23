@@ -25,6 +25,7 @@ from fighthealthinsurance.proconnector import (
     build_address_search_link,
     build_base_intro_email,
     build_intro_letter_blocks,
+    build_letter_document_title,
     build_search_links,
     cofactor_cc_problem,
     default_intro_cc_recipients,
@@ -1589,6 +1590,52 @@ class IntroLetterWordingTest(TestCase):
         self.assertIsNone(proconnector.intro_wording_problem(_rendered_letter(pro)))
 
 
+class LetterDocumentTitleTest(TestCase):
+    """The title is what the browser suggests as the print-to-PDF file name."""
+
+    def test_title_includes_person_and_organization(self):
+        pro = _make_pro(name="Dr. Jane Smith", business_name="Acme Health Clinic")
+        self.assertEqual(
+            build_letter_document_title(pro),
+            "Letter - Dr. Jane Smith - Acme Health Clinic",
+        )
+
+    def test_title_has_no_date(self):
+        # Letters are printed ahead of time and mailed later, so no date.
+        pro = _make_pro()
+        title = build_letter_document_title(pro)
+        self.assertNotIn(str(timezone.now().year), title)
+
+    def test_title_omits_missing_organization(self):
+        pro = _make_pro(name="Dr. Jane Smith", business_name="")
+        self.assertEqual(build_letter_document_title(pro), "Letter - Dr. Jane Smith")
+
+    def test_title_omits_missing_name(self):
+        pro = _make_pro(name="", business_name="Acme Health Clinic")
+        self.assertEqual(build_letter_document_title(pro), "Letter - Acme Health Clinic")
+
+    def test_title_falls_back_when_nothing_known(self):
+        pro = _make_pro(name="", business_name="")
+        self.assertEqual(build_letter_document_title(pro), "Letter")
+
+    def test_title_does_not_repeat_organization_matching_name(self):
+        pro = _make_pro(name="Jane Smith MD", business_name="jane smith md")
+        self.assertEqual(build_letter_document_title(pro), "Letter - Jane Smith MD")
+
+    def test_title_strips_characters_illegal_in_file_names(self):
+        pro = _make_pro(name="Dr. Jane/Smith", business_name='Acme: "Health" <Clinic>')
+        title = build_letter_document_title(pro)
+        for char in '\\/:*?"<>|':
+            self.assertNotIn(char, title)
+        self.assertEqual(title, "Letter - Dr. Jane Smith - Acme Health Clinic")
+
+    def test_title_collapses_whitespace_and_caps_long_parts(self):
+        pro = _make_pro(name="Dr.   Jane\n Smith", business_name="B" * 200)
+        title = build_letter_document_title(pro)
+        self.assertIn("Letter - Dr. Jane Smith - ", title)
+        self.assertLessEqual(len(title.split(" - ")[-1]), 60)
+
+
 class LetterViewTest(TestCase):
     def setUp(self):
         self.pro = _make_pro(
@@ -1720,6 +1767,22 @@ class LetterViewTest(TestCase):
         _login(self.client, is_staff=True)
         response = self.client.get(self.url)
         self.assertNotContains(response, "No mailing address on file")
+
+    def test_letter_title_names_recipient_and_organization(self):
+        # Browsers name the saved PDF after the document title.
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertContains(
+            response, "<title>Letter - Dr. Jane Smith - Acme Health Clinic</title>"
+        )
+
+    def test_letter_is_not_dated(self):
+        # Printed in batches and mailed later, so the letter carries no date.
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        today = timezone.now().date()
+        self.assertNotContains(response, today.strftime("%B %-d, %Y"))
+        self.assertNotContains(response, str(today.year))
 
     def test_missing_record_redirects_to_process(self):
         _login(self.client, is_staff=True)

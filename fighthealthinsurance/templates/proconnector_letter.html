@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+{% load static %}<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ title|default:"Pro Connector Letter" }}</title>
+  <title>{{ title|default:"Letter" }}</title>
   <style>
     /* This page exists to be printed and mailed, so the on-screen view is a
        true-to-size US Letter sheet (8.5in x 11in, 1in margins) laid out in the
@@ -84,11 +84,22 @@
     }
 
     .letterhead {
+      display: flex;
+      align-items: center;
+      gap: 12pt;
       border-bottom: 1.5pt solid #000;
       padding-bottom: 7pt;
       margin-bottom: 24pt;
       page-break-inside: avoid;
       break-inside: avoid;
+    }
+    .letterhead img {
+      width: 44pt;
+      height: 44pt;
+      flex: none;
+      /* Keep the mark from being dropped as a "background" graphic. */
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
     }
     .letterhead .org { font-size: 16pt; font-weight: bold; }
     /* The URL and the contact address are both long unbreakable runs; let
@@ -99,8 +110,6 @@
       overflow-wrap: anywhere;
     }
     .letterhead a { color: #0b4f9e; text-decoration: none; }
-
-    .date { margin: 0 0 22pt; }
 
     .recipient {
       margin: 0 0 24pt;
@@ -188,7 +197,7 @@
       Prints on US Letter with 1&Prime; margins. In the print dialog choose
       <strong>Letter</strong> paper and turn <strong>off</strong> &ldquo;Headers
       and footers&rdquo; so the browser doesn&rsquo;t stamp a URL and date on the
-      page.
+      page. Saving as PDF names the file &ldquo;{{ title }}&rdquo;.
     </p>
   </div>
 
@@ -202,14 +211,15 @@
 
   <main class="sheet">
     <div class="letterhead">
-      <div class="org">Fight Health Insurance</div>
-      <div class="contact">
-        <a href="https://www.fighthealthinsurance.com">www.fighthealthinsurance.com</a>
-        &middot; {{ contact_email }}
+      <img src="{% static 'images/better-logo-optimized.png' %}" alt="">
+      <div>
+        <div class="org">Fight Health Insurance</div>
+        <div class="contact">
+          <a href="https://www.fighthealthinsurance.com">www.fighthealthinsurance.com</a>
+          &middot; {{ contact_email }}
+        </div>
       </div>
     </div>
-
-    <div class="date">{{ today|date:"F j, Y" }}</div>
 
     <div class="recipient">
       {% if pro.name %}<span class="line">{{ pro.name }}</span>{% endif %}

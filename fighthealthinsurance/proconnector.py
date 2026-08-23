@@ -115,6 +115,20 @@ PROCONNECTOR_INTRO_SUBJECT = (
     "An introduction to Cofactor AI from Fight Health Insurance"
 )
 
+# Leading word of the printable letter's document title. Browsers seed the
+# "Save as PDF" file name from the title, so the title is what staff end up
+# with on disk (see build_letter_document_title).
+LETTER_TITLE_PREFIX = "Letter"
+
+# Per-part cap on the letter title, so a very long practice name still yields a
+# manageable file name.
+LETTER_TITLE_PART_MAX_LEN = 60
+
+# Characters that are illegal or awkward in a file name on common platforms;
+# browsers substitute their own placeholder for these, so we replace them with
+# a space first.
+_UNSAFE_TITLE_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
 # The approved base email. Staff can edit it before sending, the AI draft is
 # personalized from it, and it is the always-safe fallback when AI drafting is
 # unavailable or produces unsafe output. ``{greeting_name}`` is filled with the
@@ -295,6 +309,38 @@ def build_intro_letter_blocks(pro: InterestedProfessional) -> dict[str, Any]:
         "closing": BASE_INTRO_LETTER_CLOSING,
         "signature": BASE_INTRO_LETTER_SIGNATURE,
     }
+
+
+def _letter_title_part(value: Optional[str]) -> str:
+    """Clean one piece of the letter document title for use in a file name.
+
+    Browsers turn the page title into the suggested "Save as PDF" file name, so
+    characters that are illegal (or merely awkward) in a file name are replaced
+    with a space, runs of whitespace collapse, and the result is capped so a
+    long practice name can't produce an unwieldy name.
+    """
+    text = _UNSAFE_TITLE_CHARS.sub(" ", (value or "").strip())
+    text = re.sub(r"\s+", " ", text).strip(" .-")
+    return text[:LETTER_TITLE_PART_MAX_LEN].strip()
+
+
+def build_letter_document_title(pro: InterestedProfessional) -> str:
+    """Document title (and so print-to-PDF file name) for ``pro``'s letter.
+
+    Staff print these in batches, so the title names the recipient and their
+    organization -- ``Letter - Dr. Jane Smith - Acme Health Clinic`` rather than
+    a stack of identically named files. Deliberately un-dated: letters are
+    printed ahead of time and mailed later, so a date only goes stale (the
+    letter body carries no date either). Falls back to the bare prefix when we
+    know neither a name nor an organization.
+    """
+    parts = [LETTER_TITLE_PREFIX]
+    for value in (pro.name, pro.business_name):
+        cleaned = _letter_title_part(value)
+        # Skip a business name that just repeats the person's name.
+        if cleaned and cleaned.lower() not in {p.lower() for p in parts}:
+            parts.append(cleaned)
+    return " - ".join(parts)
 
 
 def build_search_links(pro: InterestedProfessional) -> dict[str, Optional[str]]:

@@ -50,6 +50,7 @@ from fighthealthinsurance.ml.model_identity import (
 from fighthealthinsurance.proconnector import (
     PROCONNECTOR_INTRO_SUBJECT,
     build_intro_letter_blocks,
+    build_letter_document_title,
     build_search_links,
     claim_email_for_send,
     cofactor_cc_problem,
@@ -1442,7 +1443,11 @@ class ProConnectorLetterView(View):
             # to the processing page rather than 404 on a transient link.
             return redirect("proconnector_process")
         context = {
-            "title": "Pro Connector Letter",
+            # Browsers seed the print-to-PDF file name from the page title, so
+            # this names the recipient and their organization; staff printing a
+            # batch get distinguishable files instead of a stack of identical
+            # ones.
+            "title": build_letter_document_title(pro),
             "pro": pro,
             # The letter's blocks, laid out by the template so the printed page
             # paginates like a letter -- see build_intro_letter_blocks.
@@ -1452,7 +1457,6 @@ class ProConnectorLetterView(View):
             # processing page already treats it (see build_address_search_link).
             "recipient_address": (pro.address or "").strip(),
             "contact_email": get_professional_cc_email(),
-            "today": timezone.now().date(),
         }
         return render(request, self.template_name, context)
 
