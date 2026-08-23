@@ -18,12 +18,13 @@ from fighthealthinsurance import proconnector
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
 from fighthealthinsurance.proconnector import (
     BASE_INTRO_EMAIL,
-    BASE_INTRO_LETTER,
+    BASE_INTRO_LETTER_CLOSING,
+    BASE_INTRO_LETTER_SIGNATURE,
     _claims_cofactor_relationship,
     _is_safe_intro_draft,
     build_address_search_link,
     build_base_intro_email,
-    build_base_intro_letter,
+    build_intro_letter_blocks,
     build_search_links,
     cofactor_cc_problem,
     default_intro_cc_recipients,
@@ -49,6 +50,17 @@ def _make_pro(**kwargs) -> InterestedProfessional:
     }
     defaults.update(kwargs)
     return InterestedProfessional.objects.create(**defaults)
+
+
+def _rendered_letter(pro: InterestedProfessional) -> str:
+    """The physical intro letter as the print view lays it out, as plain text.
+
+    Joins exactly the blocks the template renders, so the wording guards below
+    assert against what actually reaches the page instead of a separate
+    whole-letter string that nothing ships.
+    """
+    blocks = build_intro_letter_blocks(pro)
+    return "\n\n".join(blocks["paragraphs"] + [blocks["closing"], blocks["signature"]])
 
 
 def _set_signup(pro: InterestedProfessional, days_ago: int) -> None:
@@ -1525,32 +1537,55 @@ class IntroLetterWordingTest(TestCase):
     def test_letter_wording_constraints(self):
         # Same hard rules as the email: no "partner" framing, keeps the sourcing
         # agreement framing and the compensation disclosure.
-        self.assertNotIn("partner", BASE_INTRO_LETTER.lower())
-        self.assertIn("sourcing agreement", BASE_INTRO_LETTER)
-        self.assertIn("compensation", BASE_INTRO_LETTER)
+        letter = _rendered_letter(_make_pro(name="Dr. Jane"))
+        self.assertNotIn("partner", letter.lower())
+        self.assertIn("sourcing agreement", letter)
+        self.assertIn("compensation", letter)
 
     def test_letter_does_not_mention_cc(self):
         # A physical letter can't CC anyone; the print wording must not claim it.
-        self.assertNotIn("cc", BASE_INTRO_LETTER.lower())
+        self.assertNotIn("cc", _rendered_letter(_make_pro(name="Dr. Jane")).lower())
 
     def test_letter_directs_recipient_to_professional_email(self):
         pro = _make_pro(name="Dr. Jane")
-        letter = build_base_intro_letter(pro)
+        letter = _rendered_letter(pro)
         self.assertIn("Dear Dr. Jane,", letter)
         # Points them at the professional contact address for the introduction.
         self.assertIn("professional@fighthealthinsurance.com", letter)
 
     def test_letter_uses_neutral_greeting_when_no_name(self):
         pro = _make_pro(name="", email="x@xclinic.com")
-        self.assertIn("Dear there,", build_base_intro_letter(pro))
+        self.assertIn("Dear there,", _rendered_letter(pro))
+
+    def test_blocks_cover_the_whole_letter(self):
+        # Every paragraph of the source body reaches the view, in order, and the
+        # closing follows it -- nothing is dropped by the split.
+        pro = _make_pro(name="Dr. Jane")
+        expected = [
+            paragraph.strip()
+            for paragraph in proconnector.BASE_INTRO_LETTER_BODY.format(
+                greeting_name="Dr. Jane",
+                contact_email=get_professional_cc_email(),
+            ).split("\n\n")
+            if paragraph.strip()
+        ]
+        self.assertEqual(build_intro_letter_blocks(pro)["paragraphs"], expected)
+
+    def test_blocks_keep_the_closing_out_of_the_body_paragraphs(self):
+        # The closing is rendered as its own keep-together block, so it must not
+        # also appear among the body paragraphs.
+        blocks = build_intro_letter_blocks(_make_pro(name="Dr. Jane"))
+        self.assertNotIn(blocks["closing"], blocks["paragraphs"])
+
+    def test_blocks_open_with_the_salutation(self):
+        blocks = build_intro_letter_blocks(_make_pro(name="Dr. Jane"))
+        self.assertEqual(blocks["paragraphs"][0], "Dear Dr. Jane,")
 
     def test_letter_passes_email_wording_rules(self):
         # The letter keeps the compensation disclosure and avoids partner
         # framing, so it also satisfies the shared wording guard.
         pro = _make_pro(name="Dr. Jane")
-        self.assertIsNone(
-            proconnector.intro_wording_problem(build_base_intro_letter(pro))
-        )
+        self.assertIsNone(proconnector.intro_wording_problem(_rendered_letter(pro)))
 
 
 class LetterViewTest(TestCase):
@@ -1583,6 +1618,107 @@ class LetterViewTest(TestCase):
         self.assertContains(response, "professional@fighthealthinsurance.com")
         # An easy print button and a print stylesheet.
         self.assertContains(response, "window.print()")
+
+    def _print_block(self, response) -> str:
+        """The body of the letter's ``@media print`` rule, and nothing else.
+
+        Sliced to the rule's own closing brace so an assertion about the print
+        stylesheet cannot be satisfied by markup or by a screen rule further
+        down the document.
+        """
+        body = response.content.decode()
+        start = body.index("@media print")
+        end = body.index("\n    }", start)
+        return body[start:end]
+
+    def test_the_letter_sets_its_own_page_size_and_margins(self):
+        # The page's whole job is to come out of a printer as a business letter,
+        # so its geometry comes from the page rather than from whatever the
+        # browser's print dialog happens to default to.
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, "@page")
+        self.assertContains(response, "size: letter")
+        self.assertContains(response, "margin: 1in")
+
+    def test_body_paragraphs_are_separate_elements(self):
+        # Separate elements so pages break between paragraphs rather than
+        # wherever a single pre-formatted block runs off the page.
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, "<p>Dear Dr. Jane Smith,</p>")
+
+    def test_the_closing_is_one_keep_together_block(self):
+        # A page break must never split "Sincerely," from the names under it.
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'class="closing"')
+        self.assertContains(response, BASE_INTRO_LETTER_CLOSING)
+        self.assertContains(response, BASE_INTRO_LETTER_SIGNATURE)
+        self.assertContains(response, "break-inside: avoid")
+
+    def test_the_closing_stays_with_the_end_of_the_letter(self):
+        # Keeping the closing together is not enough on its own: without this
+        # the whole block slides onto a second page carrying only a signature.
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, "break-after: avoid")
+
+    def test_the_toolbar_is_hidden_when_printing(self):
+        # The print button, back link and print-settings tip are screen furniture.
+        _login(self.client, is_staff=True)
+        self.assertIn(".toolbar", self._print_block(self.client.get(self.url)))
+
+    def test_the_missing_address_warning_is_hidden_when_printing(self):
+        # This banner explains why the address lines are blank. Printed, it would
+        # sit at the top of a letter that then gets dropped in the mail.
+        _login(self.client, is_staff=True)
+        self.assertIn(".warning", self._print_block(self.client.get(self.url)))
+
+    def test_screen_only_chrome_is_actually_hidden_not_merely_named(self):
+        _login(self.client, is_staff=True)
+        self.assertIn("display: none", self._print_block(self.client.get(self.url)))
+
+    def test_missing_address_prints_blank_guide_lines(self):
+        _login(self.client, is_staff=True)
+        pro = _make_pro(name="Dr. No Address", address="", email="noaddr@clinic.com")
+        response = self.client.get(reverse("proconnector_letter", args=[pro.id]))
+        self.assertContains(response, 'class="address-blank"')
+
+    def test_a_whitespace_only_address_counts_as_missing(self):
+        # An address of blanks would otherwise render as an invisible gap: no
+        # guide lines to write on and no warning, while the processing page's
+        # address lookup already treats such a record as address-less.
+        _login(self.client, is_staff=True)
+        pro = _make_pro(name="Dr. Blank", address="   ", email="blank@clinic.com")
+        response = self.client.get(reverse("proconnector_letter", args=[pro.id]))
+        self.assertContains(response, 'class="address-blank"')
+
+    def test_missing_address_warns_on_screen(self):
+        _login(self.client, is_staff=True)
+        pro = _make_pro(name="Dr. No Address", address="", email="noaddr@clinic.com")
+        response = self.client.get(reverse("proconnector_letter", args=[pro.id]))
+        self.assertContains(response, "No mailing address on file")
+
+    def test_the_missing_address_warning_sits_outside_the_letter(self):
+        # It is staff chrome, not letterhead, so it belongs above the sheet.
+        _login(self.client, is_staff=True)
+        pro = _make_pro(name="Dr. No Address", address="", email="noaddr@clinic.com")
+        body = self.client.get(
+            reverse("proconnector_letter", args=[pro.id])
+        ).content.decode()
+        self.assertLess(body.index("No mailing address on file"), body.index("<main"))
+
+    def test_known_address_prints_without_blank_lines(self):
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, "123 Main St")
+        self.assertNotContains(response, 'class="address-blank"')
+
+    def test_known_address_does_not_warn(self):
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, "No mailing address on file")
 
     def test_missing_record_redirects_to_process(self):
         _login(self.client, is_staff=True)

@@ -1,23 +1,41 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title|default:"Pro Connector Letter" }}</title>
   <style>
-    body {
-      font-family: "Times New Roman", Georgia, serif;
-      max-width: 720px;
-      margin: 0 auto;
-      padding: 40px 20px;
-      color: #111;
-      background-color: #f5f5f5;
+    /* This page exists to be printed and mailed, so the on-screen view is a
+       true-to-size US Letter sheet (8.5in x 11in, 1in margins) laid out in the
+       same units the print stylesheet uses. What staff see here is what comes
+       out of the printer. */
+    @page {
+      size: letter;
+      margin: 1in;
     }
+
+    :root { color-scheme: light; }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px 16px 56px;
+      background-color: #eceff3;
+      color: #111;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    /* --- Screen-only controls ------------------------------------------- */
+
     .toolbar {
-      max-width: 720px;
-      margin: 0 auto 20px;
+      width: 8.5in;
+      max-width: 100%;
+      margin: 0 auto 16px;
       display: flex;
+      flex-wrap: wrap;
       gap: 12px;
       align-items: center;
-      font-family: Arial, sans-serif;
     }
     .toolbar button {
       padding: 10px 18px;
@@ -30,29 +48,135 @@
     }
     .toolbar button:hover { background-color: #59339d; }
     .toolbar a { color: #007bff; text-decoration: none; }
-    .letter {
-      background: white;
-      padding: 56px 64px;
+    .toolbar a:hover { text-decoration: underline; }
+    .toolbar .hint {
+      flex-basis: 100%;
+      margin: 0;
+      font-size: 13px;
+      color: #555;
+    }
+    .warning {
+      width: 8.5in;
+      max-width: 100%;
+      margin: 0 auto 16px;
+      padding: 10px 14px;
+      border-left: 4px solid #b8860b;
       border-radius: 4px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      line-height: 1.5;
+      background-color: #fff6dd;
+      font-size: 14px;
+      color: #4a3800;
     }
+
+    /* --- The sheet ------------------------------------------------------- */
+
+    .sheet {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0 auto;
+      padding: 1in;
+      background: white;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+      /* Point sizes below so screen and print typography agree exactly. */
+      font-family: "Times New Roman", Times, Georgia, serif;
+      font-size: 11.5pt;
+      line-height: 1.45;
+      color: #000;
+    }
+
     .letterhead {
-      border-bottom: 2px solid #333;
-      padding-bottom: 10px;
-      margin-bottom: 28px;
+      border-bottom: 1.5pt solid #000;
+      padding-bottom: 7pt;
+      margin-bottom: 24pt;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
-    .letterhead .org { font-size: 1.4em; font-weight: bold; }
-    .letterhead .contact { font-size: 0.9em; color: #444; margin-top: 4px; }
-    .date { margin-bottom: 24px; }
-    .recipient { margin-bottom: 28px; }
+    .letterhead .org { font-size: 16pt; font-weight: bold; }
+    /* The URL and the contact address are both long unbreakable runs; let
+       them wrap rather than overflow the sheet on a narrow screen. */
+    .letterhead .contact {
+      font-size: 9.5pt;
+      margin-top: 4pt;
+      overflow-wrap: anywhere;
+    }
+    .letterhead a { color: #0b4f9e; text-decoration: none; }
+
+    .date { margin: 0 0 22pt; }
+
+    .recipient {
+      margin: 0 0 24pt;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
     .recipient .line { display: block; }
-    .muted { color: #888; font-style: italic; }
-    .body { white-space: pre-wrap; }
+
+    /* No address on file: print faint guide lines so it can be written in by
+       hand. The "why is this blank" explanation is screen-only -- it must never
+       end up printed on a letter that gets dropped in the mail. */
+    .address-blank { display: block; max-width: 3.25in; }
+    .address-blank .rule {
+      display: block;
+      height: 19pt;
+      border-bottom: 0.5pt solid #999;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
+
+    /* Paragraphs are real elements rather than one pre-formatted block, so the
+       browser breaks pages between them; orphans/widows stop a lone line of a
+       paragraph from being stranded on its own page. */
+    .letter-body p {
+      margin: 0 0 11pt;
+      orphans: 3;
+      widows: 3;
+    }
+    /* Keep the last paragraph with the closing. Without this, a long recipient
+       block pushes the (unbreakable) closing onto a page of its own, and the
+       letter is mailed with a second page carrying nothing but a signature. */
+    .letter-body p:last-of-type {
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+
+    /* The valediction, the space for a wet signature, and the typed names are
+       one unbreakable unit -- a page break here would look like an unsigned
+       letter. */
+    .closing {
+      margin-top: 16pt;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .closing p { margin: 0; }
+    .closing .signature { padding-top: 40pt; }
+
+    /* Narrow screens: the sheet stops being literal inches so it still fits. */
+    @media screen and (max-width: 848px) {
+      .sheet { width: 100%; min-height: 0; padding: 7%; }
+    }
+
     @media print {
-      body { background: white; padding: 0; max-width: none; }
-      .toolbar { display: none; }
-      .letter { box-shadow: none; border-radius: 0; padding: 0; }
+      /* The @page margin above is the letter's margin now, so the sheet drops
+         its own padding and page furniture and becomes plain flowed content. */
+      body {
+        margin: 0;
+        padding: 0;
+        background: white;
+      }
+      .toolbar,
+      .warning {
+        display: none !important;
+      }
+      .sheet {
+        width: auto;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+        background: white;
+      }
+      /* A letterhead URL is read, not clicked: print it as plain black text and
+         suppress any user-agent habit of appending the href. */
+      .letterhead a { color: #000; text-decoration: none; }
+      a[href]::after { content: none !important; }
     }
   </style>
 </head>
@@ -60,9 +184,23 @@
   <div class="toolbar">
     <button type="button" onclick="window.print()">🖨 Print letter</button>
     <a href="{% url 'proconnector_process' %}">&larr; Back to Pro Connector</a>
+    <p class="hint">
+      Prints on US Letter with 1&Prime; margins. In the print dialog choose
+      <strong>Letter</strong> paper and turn <strong>off</strong> &ldquo;Headers
+      and footers&rdquo; so the browser doesn&rsquo;t stamp a URL and date on the
+      page.
+    </p>
   </div>
 
-  <div class="letter">
+  {% if not recipient_address %}
+    <p class="warning">
+      No mailing address on file for this professional, so the letter prints
+      with blank guide lines to write one on. Use the <em>Google address</em>
+      link on the Pro Connector page to look one up before mailing.
+    </p>
+  {% endif %}
+
+  <main class="sheet">
     <div class="letterhead">
       <div class="org">Fight Health Insurance</div>
       <div class="contact">
@@ -76,10 +214,25 @@
     <div class="recipient">
       {% if pro.name %}<span class="line">{{ pro.name }}</span>{% endif %}
       {% if pro.business_name %}<span class="line">{{ pro.business_name }}</span>{% endif %}
-      {% if pro.address %}<span class="line">{{ pro.address|linebreaksbr }}</span>{% else %}<span class="line muted">[mailing address &mdash; fill in before mailing]</span>{% endif %}
+      {% if recipient_address %}
+        <span class="line">{{ recipient_address|linebreaksbr }}</span>
+      {% else %}
+        <span class="address-blank">
+          <span class="rule"></span>
+          <span class="rule"></span>
+          <span class="rule"></span>
+        </span>
+      {% endif %}
     </div>
 
-    <div class="body">{{ letter_body }}</div>
-  </div>
+    <div class="letter-body">
+      {% for paragraph in letter.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+    </div>
+
+    <div class="closing">
+      <p class="valediction">{{ letter.closing }}</p>
+      <p class="signature">{{ letter.signature }}</p>
+    </div>
+  </main>
 </body>
 </html>

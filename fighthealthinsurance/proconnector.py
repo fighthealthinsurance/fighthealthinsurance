@@ -23,7 +23,7 @@ Wording constraints (enforced by ``_is_safe_intro_draft``):
 
 import re
 import urllib.parse
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -143,7 +143,14 @@ Holden Karau, Melanie Warrick, and the Fight Health Insurance team"""
 # ``{greeting_name}`` is the recipient's name (or a neutral greeting) and
 # ``{contact_email}`` is the professional contact address they should reach
 # out to.
-BASE_INTRO_LETTER = """Dear {greeting_name},
+#
+# The body and the closing live in separate constants so the printable
+# letter view can render each body paragraph as its own element and keep
+# the closing -- the valediction plus the signature line -- together as one
+# unbreakable block: on a letter that runs onto a second page a page break
+# must never land between "Sincerely," and the names under it.
+# :func:`build_intro_letter_blocks` is what assembles them for the view.
+BASE_INTRO_LETTER_BODY = """Dear {greeting_name},
 
 Thank you so much for your interest in the professional version of Fight Health Insurance.
 
@@ -155,11 +162,13 @@ We've spent a lot of time talking with the Cofactor AI team, and they've built s
 
 To schedule a demo or learn more, reach out to {contact_email} and we'll get the process started.
 
-Thank you again for your interest and for trusting us with this work.
+Thank you again for your interest and for trusting us with this work."""
 
-Sincerely,
+BASE_INTRO_LETTER_CLOSING = "Sincerely,"
 
-Holden Karau, Melanie Warrick, and the Fight Health Insurance team"""
+BASE_INTRO_LETTER_SIGNATURE = (
+    "Holden Karau, Melanie Warrick, and the Fight Health Insurance team"
+)
 
 
 INTRO_SYSTEM_PROMPT = (
@@ -241,26 +250,51 @@ def _greeting_name(pro: InterestedProfessional) -> str:
     return name if name else "there"
 
 
+def _intro_format_kwargs(pro: InterestedProfessional) -> dict[str, str]:
+    """Placeholders shared by every rendering of the intro email and letter.
+
+    Kept in one place so a new placeholder is added to the templates and to
+    their renderers together; otherwise whichever renderer was missed raises
+    ``KeyError`` the first time it runs.
+    """
+    return {
+        "greeting_name": _greeting_name(pro),
+        "contact_email": get_professional_cc_email(),
+    }
+
+
 def build_base_intro_email(pro: InterestedProfessional) -> str:
     """Render the approved base email for ``pro`` (the always-safe fallback)."""
-    return BASE_INTRO_EMAIL.format(
-        greeting_name=_greeting_name(pro),
-        contact_email=get_professional_cc_email(),
-    )
+    return BASE_INTRO_EMAIL.format(**_intro_format_kwargs(pro))
 
 
-def build_base_intro_letter(pro: InterestedProfessional) -> str:
-    """Render the print-only physical intro letter for ``pro``.
+def build_intro_letter_blocks(pro: InterestedProfessional) -> dict[str, Any]:
+    """The physical intro letter for ``pro``, in the blocks the print view lays out.
 
-    Uses the same warm framing and compensation disclosure as the email, but the
+    Same warm framing and compensation disclosure as the email, but the
     print-specific wording: a mailed letter can't CC Cofactor AI, so it asks the
     recipient to email the professional contact address for the introduction
     instead of naming a CC.
+
+    The split is what lets the printed page paginate like a letter rather than
+    like a wall of text. ``paragraphs`` are rendered one element each so the
+    browser breaks pages between them, and ``closing``/``signature`` are
+    rendered as a single keep-together block so a page break can never strand a
+    signature.
+
+    Returning the whole shape from here keeps it in one place: the view passes
+    this through and the template reads it, so adding a P.S. or a second
+    signatory is an edit to this module rather than to three files.
     """
-    return BASE_INTRO_LETTER.format(
-        greeting_name=_greeting_name(pro),
-        contact_email=get_professional_cc_email(),
-    )
+    body = BASE_INTRO_LETTER_BODY.format(**_intro_format_kwargs(pro))
+    paragraphs = [
+        stripped for stripped in map(str.strip, body.split("\n\n")) if stripped
+    ]
+    return {
+        "paragraphs": paragraphs,
+        "closing": BASE_INTRO_LETTER_CLOSING,
+        "signature": BASE_INTRO_LETTER_SIGNATURE,
+    }
 
 
 def build_search_links(pro: InterestedProfessional) -> dict[str, Optional[str]]:
