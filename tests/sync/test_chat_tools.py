@@ -811,6 +811,80 @@ class TestMedicaidInfoStartsTheEligibilityPath(TestCase):
         self.assertIn("medicaid_eligibility", captured["message"])
 
 
+class TestEligibilityVerifiedFlag(TestCase):
+    """Running the checker is not the same as the checker reaching a verdict.
+
+    The flag exempts a reply from the invented-verdict penalty, so it must
+    only be set once there is a real determination to relay. Setting it on
+    every call handed out the exemption in exactly the cases the guard exists
+    for -- a mid-interview model jumping to "you don't qualify", or one
+    ignoring "we could NOT produce an estimate for this person".
+    """
+
+    def _run(self, verdict):
+        """Execute the tool with a stubbed checker, return (flag, kwargs)."""
+        computed = [False]
+        tool = MedicaidEligibilityTool(AsyncMock(), eligibility_computed=computed)
+        call = '**medicaid_eligibility {"state": "CA"}**'
+        match = tool.detect(call)
+        self.assertIsNotNone(match)
+
+        captured: dict = {}
+
+        async def fake_call_llm(model_backends, message, *args, **kwargs):
+            captured.update(kwargs)
+            return ("ok", "")
+
+        tool.call_llm_callback = fake_call_llm
+        with patch(
+            "fighthealthinsurance.medicaid_api.is_eligible", return_value=verdict
+        ):
+            asyncio.run(
+                tool.execute(
+                    match,
+                    call,
+                    "",
+                    model_backends=["backend"],
+                    current_message_for_llm="Am I eligible?",
+                    history_for_llm=[],
+                )
+            )
+        return computed[0], captured
+
+    def test_final_determination_earns_the_exemption(self):
+        flag, kwargs = self._run((True, True, False, [], [], True))
+        self.assertTrue(flag)
+        self.assertTrue(kwargs["eligibility_verified"])
+
+    def test_final_ineligible_determination_earns_the_exemption(self):
+        # A computed "no" is still a verdict the model may relay.
+        flag, kwargs = self._run((False, False, False, ["Try the marketplace"], [], True))
+        self.assertTrue(flag)
+        self.assertTrue(kwargs["eligibility_verified"])
+
+    def test_mid_interview_with_nothing_settled_does_not(self):
+        flag, kwargs = self._run((False, False, False, [], ["What is your income?"], True))
+        self.assertFalse(flag)
+        self.assertFalse(kwargs["eligibility_verified"])
+
+    def test_mid_interview_positive_does_earn_the_exemption(self):
+        # The checker reports an already-settled positive while questions are
+        # outstanding, and _build_eligibility_info tells the model to share
+        # it -- penalizing that would fight our own tool output.
+        flag, kwargs = self._run((True, False, False, [], ["What is your income?"], True))
+        self.assertTrue(flag)
+        self.assertTrue(kwargs["eligibility_verified"])
+
+    def test_unscoreable_person_does_not_earn_the_exemption(self):
+        # determination_made=False: a territory, or a declined required
+        # answer. The info text explicitly says not to call them ineligible.
+        flag, kwargs = self._run(
+            (False, False, False, ["Contact your territory's agency"], [], False)
+        )
+        self.assertFalse(flag)
+        self.assertFalse(kwargs["eligibility_verified"])
+
+
 class TestDocFetcherPatterns(TestCase):
     """Test FETCH_DOC_REGEX pattern matching."""
 

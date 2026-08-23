@@ -398,9 +398,27 @@ class MedicaidEligibilityTool(BaseTool):
                 determination_made,
             ) = is_eligible(**loaded)
 
-            # From here on the checker's own output is in play, so the
-            # write-up pass (and the rest of the session) may state a verdict.
-            if self.eligibility_computed is not None:
+            # Has the checker actually produced a verdict the model is
+            # allowed to state? Running the checker is NOT the same as it
+            # reaching an answer, and the invented-verdict penalty keys off
+            # this flag, so flipping it on every call handed out the
+            # exemption in the two cases that need the guard most:
+            #
+            #   * determination_made=False -- a territory, or a required
+            #     answer the user declined. _build_eligibility_info tells the
+            #     model in so many words NOT to say they may be ineligible.
+            #   * mid-interview with nothing settled yet -- a False here means
+            #     "not established", not "no", and jumping to "you don't
+            #     qualify" instead of asking the next question is exactly the
+            #     failure mode.
+            #
+            # An early POSITIVE is different: with questions still outstanding
+            # the checker reports it and the write-up is told to share it, so
+            # that does earn the exemption.
+            checker_produced_verdict = determination_made and (
+                not missing or eligible_base or eligible_target or medicare
+            )
+            if checker_produced_verdict and self.eligibility_computed is not None:
                 self.eligibility_computed[0] = True
 
             info_text = self._build_eligibility_info(
@@ -467,9 +485,11 @@ class MedicaidEligibilityTool(BaseTool):
                     "Medicaid eligibility investigation",
                     history_for_llm,
                     depth=depth + 1,
-                    # This pass is writing up what the checker computed, so a
-                    # verdict in its reply is earned, not invented.
-                    eligibility_verified=True,
+                    # Only exempt this write-up from the invented-verdict
+                    # penalty when the checker actually reached a verdict for
+                    # it to relay; otherwise it is as capable of inventing one
+                    # as any other pass.
+                    eligibility_verified=checker_produced_verdict,
                     is_logged_in=is_logged_in,
                     is_professional=is_professional,
                     fallback_backends=kwargs.get("fallback_backends"),
