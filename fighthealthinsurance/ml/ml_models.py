@@ -4805,11 +4805,15 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
 
     # Latest Claude models (cheapest -> premium). Deployment names default to
     # the canonical model ids; override with AZURE_ANTHROPIC_MODELS if your
-    # Foundry deployments use different names.
+    # Foundry deployments use different names. Fable 5 is the most capable (and
+    # priciest, ~2x Opus per token) deployment, so it sorts last: it shares the
+    # "premium" tier with Opus, and cost-ordering breaks the routing tie in
+    # Opus's favor (see MLRouter.best_external_models).
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
         ("claude-haiku-4-5", 55, "speed"),
         ("claude-sonnet-4-6", 95, "quality"),
         ("claude-opus-4-8", 135, "premium"),
+        ("claude-fable-5", 175, "premium"),
     ]
 
     # Per-subclass rate-limit state (do not share across providers).

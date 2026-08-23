@@ -203,7 +203,7 @@ class TestAzureBackends(unittest.TestCase):
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_claude_models_use_latest_ids(self):
-        """Azure Claude exposes the latest Haiku/Sonnet/Opus-4.8 deployments."""
+        """Azure Claude exposes the latest Haiku/Sonnet/Opus/Fable deployments."""
         names = {m.name for m in RemoteAzureClaude.models()}
         self.assertEqual(
             names,
@@ -211,7 +211,19 @@ class TestAzureBackends(unittest.TestCase):
                 "azure-anthropic/claude-haiku-4-5",
                 "azure-anthropic/claude-sonnet-4-6",
                 "azure-anthropic/claude-opus-4-8",
+                "azure-anthropic/claude-fable-5",
             },
+        )
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_claude_fable_is_priciest_premium_deployment(self):
+        """Fable 5 is premium-tier and sorts last (priciest) in models()."""
+        models = RemoteAzureClaude.models()
+        costs = [m.cost for m in models]
+        self.assertEqual(costs, sorted(costs))  # cheapest -> premium
+        self.assertEqual(models[-1].name, "azure-anthropic/claude-fable-5")
+        self.assertEqual(
+            RemoteAzureClaude(model="claude-fable-5").get_tier(), "premium"
         )
 
     def test_models_disabled_without_env(self):

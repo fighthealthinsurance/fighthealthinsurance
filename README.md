@@ -116,7 +116,7 @@ recorded for usage tracking in both the regular appeal workflow and the chooser
    ```
 4. By default the latest models are exposed (Azure OpenAI: `gpt-4.1-mini`,
    `gpt-5-mini`, `gpt-5`; Azure Claude: `claude-haiku-4-5`, `claude-sonnet-4-6`,
-   `claude-opus-4-8`). If your Azure *deployment names* differ from these model
+   `claude-opus-4-8`, `claude-fable-5`). If your Azure *deployment names* differ from these model
    ids, list them explicitly with `AZURE_OPENAI_MODELS` /
    `AZURE_ANTHROPIC_MODELS` (comma-separated).
 
