@@ -25,12 +25,16 @@ from loguru import logger
 
 # Legacy shape of the LLM-context-only link notes, from before they carried an
 # explicit `internal` flag. Deliberately anchored to the FULL generated shape
-# ("... Appeal #12", "... Prior Auth Request #3") rather than the bare prefix:
-# the prefix alone is text a user can type, and matching it hid their own
-# message from their own replay while every server-side view still had it.
+# ("... Appeal #12", "... Prior Auth Request #3f2a...") rather than the bare
+# prefix: the prefix alone is text a user can type, and matching it hid their
+# own message from their own replay while every server-side view still had it.
+# The id part must accept UUIDs, not just integers: Appeal pks are ints but
+# PriorAuthRequest pks are UUIDs, and `#\d+` silently missed every legacy
+# prior-auth note whose UUID starts with a hex letter -- rendering the
+# internal note as a user bubble and letting previews/titles pick it up.
 _LEGACY_INTERNAL_NOTE_RE = re.compile(
     r"^(?:Linked this chat to|This chat is already linked to)\s+"
-    r"(?:Appeal|Prior Auth Request)\s+#\d+",
+    r"(?:Appeal|Prior Auth Request)\s+#[0-9a-fA-F-]+",
 )
 
 
@@ -50,11 +54,25 @@ def is_internal_history_message(message: Dict[str, Any]) -> bool:
     return bool(_LEGACY_INTERNAL_NOTE_RE.match(content))
 
 
+def iter_visible_history(
+    history: Optional[List[Dict[str, Any]]],
+):
+    """Lazily yield history entries that are not LLM-context-only.
+
+    Prefer this in consumers that stop at the first match (chat previews,
+    titles): ``visible_history`` materializes a full filtered copy, which is
+    O(history) per chat just to find one message.
+    """
+    for m in history or []:
+        if not is_internal_history_message(m):
+            yield m
+
+
 def visible_history(
     history: Optional[List[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
     """History with LLM-context-only messages removed."""
-    return [m for m in (history or []) if not is_internal_history_message(m)]
+    return list(iter_visible_history(history))
 
 
 def merge_new_messages(

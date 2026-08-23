@@ -86,10 +86,21 @@ CANNED_REPLY_SIGNATURES = (
 _REPEAT_VERB = r"(?:repeat|say|send|resend|re-send|show|write|state|tell)"
 USER_REQUESTED_REPEAT_RE = re.compile(
     r"(?:"
-    # "repeat that", "repeat your last reply", "repeat the above"
-    r"\brepeat\s+(?:that|it|this|those|your|the|last|previous|above)\b"
-    # "say that again", "send it again", "show me that one more time"
-    rf"|\b{_REPEAT_VERB}\b[^.?!\n]{{0,40}}?\b(?:again|one more time|once more)\b"
+    # "repeat that", "repeat your last reply", "repeat the above". A bare
+    # "repeat the <anything>" is NOT enough -- "I need to repeat the MRI"
+    # is procedure talk -- so "the" must introduce a reference to something
+    # we previously said.
+    r"\brepeat\s+(?:that|it|this|those|your|last|previous|above"
+    r"|the\s+(?:above|last|previous|question|answer|response|reply"
+    r"|message|summary|list|steps?|options?|info(?:rmation)?|instructions?))\b"
+    # "say that again", "send it again", "show me that one more time". The
+    # object must be a reference to prior content (that/it/this): with any
+    # words allowed between verb and "again", ordinary denial vocabulary
+    # matched ("My STATE denied my Medicaid AGAIN", "TELL them AGAIN") and
+    # switched the whole ladder off on exactly the turns most likely to be
+    # mid-loop.
+    rf"|\b{_REPEAT_VERB}\s+(?:me\s+)?(?:that|it|this)\b"
+    r"[^.?!\n]{0,20}?\b(?:again|one more time|once more)\b"
     # "can you repeat", "could you please repeat"
     r"|\b(?:can|could|would|will|please|plz)\s+(?:you\s+)?(?:please\s+)?repeat\b"
     # "resend it", "re-send that" -- but NOT "resend the fax to my doctor",
@@ -103,6 +114,36 @@ USER_REQUESTED_REPEAT_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+
+# When the user asks us to TRANSFORM text (proofread, fix the grammar,
+# reformat) -- their own paste OR our previous reply ("now reformat it") --
+# a faithful transformation is SUPPOSED to read nearly the same as the text
+# being transformed. So the whole anti-repeat ladder stands down on these
+# turns: the hard rejection in find_repeated_reply (both rungs), the soft
+# compute_repetition_penalty, and the backends' self-heal loop via
+# allow_repeated_reply. Without that every correct candidate got -inf and
+# the anti-repeat retry actively steered models AWAY from the right answer.
+# Scoped narrowly per NOTE 2's err-toward-not-matching principle.
+TRANSFORM_REQUEST_RE = re.compile(
+    r"(?:"
+    # Verbs that are only ever about editing text.
+    r"\b(?:proofread|copy-?edit|re-?word|rephrase|reformat)\b"
+    # Generic verbs, only when aimed at language mechanics.
+    r"|\b(?:fix|correct|check|clean\s*up|edit|rewrite|revise|polish|improve)\b"
+    r"[^.?!\n]{0,60}?"
+    r"\b(?:grammar|spelling|punctuation|typos?|wording|phrasing|formatting)\b"
+    # "rewrite this", "edit the following", "polish my draft"
+    r"|\b(?:rewrite|revise|edit|polish)\s+(?:this|my|the\s+(?:following"
+    r"|below|above|text|letter|draft|email|message|paragraph|appeal))\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def user_requested_transformation(message: Optional[str]) -> bool:
+    """True when the user asked us to edit/rework text they provided."""
+    return bool(message and TRANSFORM_REQUEST_RE.search(message))
 
 
 def is_canned_reply(text: Optional[str]) -> bool:

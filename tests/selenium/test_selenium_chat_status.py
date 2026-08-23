@@ -475,12 +475,15 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
             return toggle ? toggle.checked : null;
         """)
 
+        # Clean up BEFORE asserting: with cleanup as the last statement it
+        # only ran when the assertion passed, so a regression here leaked
+        # the stray value into sibling tests and buried the one real
+        # failure under cascading ones.
+        self.execute_script("localStorage.removeItem('fhi_use_external_models');")
+
         assert (
             is_checked is False
         ), f"Unrecognized stored value should not opt in, got checked={is_checked}"
-
-        # Clean up so we don't leak the stray value into sibling tests
-        self.execute_script("localStorage.removeItem('fhi_use_external_models');")
 
     def test_external_models_toggled_off_is_respected(self):
         """Test that explicitly disabling external models is saved and respected."""

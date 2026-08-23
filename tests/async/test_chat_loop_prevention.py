@@ -11,7 +11,6 @@ state hint, and the LLM-input debug frame.
 import typing
 from unittest.mock import AsyncMock, patch
 
-from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from prometheus_client import REGISTRY
 from rest_framework.test import APITestCase
@@ -54,7 +53,7 @@ def _metric(name, labels=None):
 
 
 async def _make_chat(username, npi, chat_history=None):
-    user = await sync_to_async(User.objects.create_user)(
+    user = await User.objects.acreate_user(
         username=username, password="testpass", email=f"{username}@example.com"
     )
     professional = await ProfessionalUser.objects.acreate(
@@ -382,7 +381,7 @@ class ChatDebugFrameTest(APITestCase):
         assert result["runner_up_model"] == "second-model"
         assert result["picked_score"] > result["runner_up_score"]
         assert result["closely_tied"] is True
-        assert result["alternate_offered"] is True
+        assert result["alternate_candidate"] is True
         assert result["candidate_count"] == 2
         assert result["rejected_repeats"] == 0
         assert result["retry_used"] is False

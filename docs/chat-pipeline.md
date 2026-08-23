@@ -263,7 +263,7 @@ Three levels, in increasing detail:
    - `debug_llm_input` — the EXACT wrapped message, context summary,
      history counts, variants, state hint;
    - `debug_llm_result` — picked/runner-up models and scores, per-candidate
-     score log, closely_tied, alternate_offered, rejected repeats, current
+     score log, closely_tied, alternate_candidate, rejected repeats, current
      repeat-offender strikes, retry path, allow_repeated_reply, elapsed.
    The frontend logs both to the console AND renders them as a collapsed
    "🔧 Debug" panel under the assistant message they produced, so

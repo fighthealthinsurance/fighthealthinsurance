@@ -34,6 +34,7 @@ from fighthealthinsurance.ml.response_similarity import (
     normalize_text,
     response_similarity,
     user_requested_repeat,
+    user_requested_transformation,
 )
 from fighthealthinsurance.utils import ensure_message_alternation
 
@@ -148,6 +149,17 @@ def find_repeated_reply(
         return None
     if is_canned_reply(response_text):
         return None
+    # A faithful transformation (proofread / fix the grammar / "now
+    # reformat it into three paragraphs") is SUPPOSED to read nearly the
+    # same as the text being transformed -- the user's pasted message OR
+    # our own previous reply, and normalize_text collapses exactly the
+    # differences a reformat introduces. So BOTH rungs stand down on
+    # transform requests: with only the echoes-the-user rung exempted,
+    # every faithful iterative edit of our last answer was still
+    # hard-rejected and the anti-repeat retry steered models AWAY from
+    # the requested output.
+    if current_message and user_requested_transformation(current_message):
+        return None
     if current_message and is_mostly_repeated(response_text, current_message):
         return "echoes_user_message"
     if not chat_history:
@@ -188,6 +200,15 @@ def compute_repetition_penalty(
         return 0.0
 
     if not chat_history and not current_message:
+        return 0.0
+
+    # Transform requests expect output that reads like existing text (the
+    # user's paste or our previous reply), so similarity is compliance, not
+    # looping. Without this the soft -400/-500 penalties made the compliant
+    # candidate lose to one that ignored the request even after the hard
+    # rung (find_repeated_reply) stood down -- content-quality deltas
+    # between candidates are only ~100 points.
+    if current_message and user_requested_transformation(current_message):
         return 0.0
 
     penalty = 0.0
@@ -373,7 +394,10 @@ def score_llm_response(
         if BAD_RESPONSE_PATTERNS.search(response_text):
             score -= 75
 
-        # Bonus for tool usage (search anywhere in response)
+        # Bonus for tool usage (search anywhere in response).
+        # count_tool_invocations applies TOOL_DETECT_FLAGS, which the
+        # ^...$-anchored patterns need -- a flag-less search only ever
+        # matched a tool call at the very start of the reply.
         score += 100 * tool_call_matches
 
         # Safety: Penalize false promises
@@ -416,8 +440,15 @@ def score_llm_response(
                 "Response asks for patient name, penalizing (known client-side)"
             )
 
-        # Penalize responses that repeat previous messages
-        if chat_history or current_message:
+        # Penalize responses that repeat previous messages -- unless the
+        # user explicitly asked for a repeat: every other rung of the
+        # ladder (hard rejection, self-heal, retry last-resort penalty) is
+        # exempted on those turns, and leaving this -400/-500 nudge in
+        # place made the compliant repeat lose to a candidate that ignored
+        # the user's request.
+        if (chat_history or current_message) and not user_requested_repeat(
+            current_message
+        ):
             score += compute_repetition_penalty(
                 response_text, chat_history or [], current_message
             )

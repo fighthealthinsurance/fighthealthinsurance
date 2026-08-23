@@ -572,6 +572,46 @@ class TestFindRepeatedReply(TestCase):
         self.assertIsNone(find_repeated_reply("", self._history(), "CA"))
         self.assertIsNone(find_repeated_reply(FRESH_REPLY, None, None))
 
+    def test_transform_of_pasted_text_not_flagged_as_echo(self):
+        """A faithful edit of user-pasted text legitimately echoes the paste."""
+        paste = "Fix the grammar of this: " + LOOPED_REPLY
+        self.assertIsNone(find_repeated_reply(LOOPED_REPLY, [], paste))
+
+    def test_iterative_edit_of_own_reply_not_flagged(self):
+        """"Now reformat it" makes output that normalizes equal to our last
+        reply -- normalize_text collapses exactly the differences a reformat
+        introduces, so the own-reply rung must stand down too."""
+        self.assertIsNone(
+            find_repeated_reply(
+                LOOPED_REPLY,
+                self._history(),
+                "Now reformat it into three paragraphs",
+            )
+        )
+
+
+class TestTransformRequestSoftPenalty(TestCase):
+    """compute_repetition_penalty stands down entirely on transform requests:
+    similarity to the paste or to our previous reply is compliance, and the
+    -400/-500 penalties otherwise beat the ~100-point content-quality deltas
+    even after the hard rung stands down."""
+
+    def test_no_penalty_for_faithful_transform_of_paste(self):
+        paste = "Please proofread this and fix the grammar: " + LOOPED_REPLY
+        self.assertEqual(compute_repetition_penalty(LOOPED_REPLY, [], paste), 0.0)
+
+    def test_no_penalty_for_iterative_edit_of_own_reply(self):
+        history = [
+            {"role": "user", "content": "draft an appeal for the MRI denial"},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        self.assertEqual(
+            compute_repetition_penalty(
+                LOOPED_REPLY, history, "now rephrase it a bit more formally"
+            ),
+            0.0,
+        )
+
 
 class TestHardRepeatRejection(TestCase):
     """score_llm_response must hard-reject (-inf) near-verbatim repeats.

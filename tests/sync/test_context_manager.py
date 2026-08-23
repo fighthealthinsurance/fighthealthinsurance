@@ -575,6 +575,22 @@ class TestSummaryStripHandlesRealCallerShapes:
         plain = "User asked about a knee MRI denial from Blue Shield."
         assert strip_previous_summary_blocks(plain) == plain
 
+    def test_tailless_stale_block_does_not_swallow_newest_section(self):
+        """A stale block with NO Additional-context tail used to consume
+        everything after it -- including the "Most recent context summary:"
+        section holding the newest per-turn context (collected eligibility
+        answers etc.), which was silently discarded and the loss persisted
+        back into summary_for_next_call."""
+        existing = (
+            "Previous context summary:\n"
+            "Earlier conversation summary: OLD SUMMARY\n\n"
+            "Most recent context summary:\n"
+            "state=CA, income=$1200/mo"
+        )
+        stripped = strip_previous_summary_blocks(existing)
+
+        assert stripped == "state=CA, income=$1200/mo"
+
     def test_bare_summary_leaves_nothing(self):
         assert (
             strip_previous_summary_blocks("Earlier conversation summary: OLD") is None

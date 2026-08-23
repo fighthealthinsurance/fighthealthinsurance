@@ -76,6 +76,43 @@ class TestRetryScorerRepeatPenalty:
         repeat_score = scorer((LOOPED_REPLY, "ctx"), None)
         assert repeat_score > REPEAT_LAST_RESORT_PENALTY / 2
 
+    def test_requested_repeat_not_soft_penalized_below_fresh(self):
+        """When the user explicitly asks for a repeat, the compliant repeat
+        must not lose to a candidate that ignores the request: the soft
+        compute_repetition_penalty (-400/-500) has to stand down along with
+        the hard rungs."""
+        scorer = create_simple_retry_scorer(
+            call_scores={},
+            chat_history=CHAT_HISTORY,
+            current_message="can you repeat that?",
+        )
+        repeat_score = scorer((LOOPED_REPLY, "ctx"), None)
+        fresh_score = scorer((FRESH_REPLY, "ctx"), None)
+        assert repeat_score >= fresh_score - 1
+
+    def test_empty_response_scores_below_any_real_answer(self):
+        """A ('', context) tuple -- e.g. a reply that was only a panda
+        context summary -- can never be delivered (the post-selection
+        length check discards it), so it must lose to ANY real answer no
+        matter how high its backend's base score. It used to keep the full
+        base score, win selection, and collapse the retry to (None, None)."""
+
+        async def high_base():  # pragma: no cover - never awaited
+            return None
+
+        task = high_base()
+        try:
+            scorer = create_simple_retry_scorer(
+                call_scores={task: 100000},
+                chat_history=CHAT_HISTORY,
+                current_message="CA",
+            )
+            assert scorer(("", "a long context part " * 10), task) == float("-inf")
+            assert scorer(("   ", "ctx"), task) == float("-inf")
+            assert scorer((FRESH_REPLY, None), None) > float("-inf")
+        finally:
+            task.close()
+
 
 class TestRetryAntiRepeatInstruction:
     """retry_llm_with_fallback(anti_repeat=True) changes what the model sees."""

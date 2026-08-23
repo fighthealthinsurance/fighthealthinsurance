@@ -16,6 +16,7 @@ from fighthealthinsurance.ml.response_similarity import (
     response_similarity,
     sequence_similarity,
     user_requested_repeat,
+    user_requested_transformation,
 )
 from fighthealthinsurance.ml.ml_models import MEDICAID_WORK_REQUIREMENTS_BLOCK
 from tests.chat_fixtures import CANNED_MEDICAID_REPLY, LOOPED_REPLY
@@ -175,6 +176,13 @@ class TestUserRequestedRepeatPrecision(TestCase):
         "The insurer keeps denying repeat imaging",
         "Can you resend the fax to my doctor?",
         "I filed an appeal one more time last month",
+        # Verb + "again" with arbitrary words between is ordinary denial
+        # vocabulary, not a repeat request -- these used to match and switch
+        # the whole ladder off on exactly the turns most likely to be
+        # mid-loop.
+        "My state denied my Medicaid again, what can I do?",
+        "I need to repeat the MRI but insurance denied it",
+        "Please tell them again that this is urgent",
     )
 
     EXPLICIT_REQUESTS = (
@@ -187,6 +195,9 @@ class TestUserRequestedRepeatPrecision(TestCase):
         "one more time please",
         "resend it",
         "show that again",
+        "state that again",
+        "tell me that again",
+        "show me that one more time",
     )
 
     def test_clinical_mentions_do_not_disable_the_ladder(self):
@@ -198,6 +209,41 @@ class TestUserRequestedRepeatPrecision(TestCase):
         for message in self.EXPLICIT_REQUESTS:
             with self.subTest(message=message):
                 self.assertTrue(user_requested_repeat(message))
+
+
+class TestTransformRequestExemption(TestCase):
+    """A faithful transformation (proofread / fix the grammar / reformat) of
+    the user's paste or of our previous reply is SUPPOSED to read nearly the
+    same as the source text, so the anti-repeat ladder stands down on
+    transform requests -- but only on explicit ones, per the
+    err-toward-not-matching rule."""
+
+    TRANSFORM_REQUESTS = (
+        "Can you fix the grammar of this: We was denied coverage for the MRI",
+        "proofread this and correct any typos",
+        "Please rewrite this paragraph so it sounds more professional",
+        "reformat my appeal so I can send it",
+        "check the spelling in the letter below",
+        "copy-edit the following",
+    )
+
+    NON_TRANSFORM_MESSAGES = (
+        "They denied the claim and won't fix the billing error",
+        "My doctor said she would revise the prior auth request",
+        "How do I improve my chances of approval?",
+        "I want to check whether I might be eligible for Medicaid",
+        "Can you help me appeal this denial?",
+    )
+
+    def test_transform_requests_are_recognized(self):
+        for message in self.TRANSFORM_REQUESTS:
+            with self.subTest(message=message):
+                self.assertTrue(user_requested_transformation(message))
+
+    def test_ordinary_messages_keep_the_ladder_armed(self):
+        for message in self.NON_TRANSFORM_MESSAGES:
+            with self.subTest(message=message):
+                self.assertFalse(user_requested_transformation(message))
 
 
 class TestCannedReplyRequiresTheWholeBlock(TestCase):

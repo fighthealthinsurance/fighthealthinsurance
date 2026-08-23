@@ -463,6 +463,20 @@ def get_microsite(slug: str) -> Optional[Microsite]:
     return None
 
 
+# Attribution-only funnel slugs: landing pages (e.g. /medicaid-eligibility)
+# that funnel users into chat without being content microsites -- there is no
+# Microsite entry and no generated microsite page for them. Chat entry points
+# validate incoming microsite_slug values with is_valid_attribution_slug so
+# these funnels keep their attribution instead of being warned about as
+# invalid and nulled before OngoingChat.microsite_slug is persisted.
+ATTRIBUTION_ONLY_SLUGS = frozenset({"medicaid-eligibility"})
+
+
+def is_valid_attribution_slug(slug: str) -> bool:
+    """Whether ``slug`` may be recorded as a chat's microsite_slug."""
+    return slug in ATTRIBUTION_ONLY_SLUGS or get_microsite(slug) is not None
+
+
 def get_all_microsites() -> dict[str, Microsite]:
     """
     Get all available microsites.

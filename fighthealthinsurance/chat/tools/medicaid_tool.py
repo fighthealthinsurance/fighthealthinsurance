@@ -129,13 +129,40 @@ class MedicaidInfoTool(BaseTool):
             await self.send_status_message("Processing Medicaid info lookup data...")
 
             # Import here to avoid circular imports
-            from fighthealthinsurance.medicaid_api import get_medicaid_info
+            from fighthealthinsurance.medicaid_api import (
+                MedicaidDataUnavailableError,
+                get_medicaid_info,
+            )
 
             # get_medicaid_info does blocking pandas/IO work (no ORM, so
             # plain sync_to_async is right; database_sync_to_async is
             # reserved for ORM-touching callables). Running it inline blocked
             # the event loop -- freezing every OTHER chat on this worker.
-            medicaid_info = await sync_to_async(get_medicaid_info)(medicaid_info_data)
+            try:
+                medicaid_info = await sync_to_async(get_medicaid_info)(
+                    medicaid_info_data
+                )
+            except MedicaidDataUnavailableError as unavailable:
+                # The state WAS understood -- what's missing is OUR data (a
+                # territory with no resources row, or the CSV is broken).
+                # Falling through to the None path below re-asked "Which
+                # state are you in?" forever against a user who had already
+                # answered, with no way to ever succeed.
+                logger.warning(f"Medicaid info unavailable: {unavailable}")
+                await self.send_status_message(
+                    f"No Medicaid contact data available for {unavailable.state}."
+                )
+                # Like the None branch below, this propagates as the
+                # assistant's reply, so it must read as something we'd say
+                # to the user.
+                return (
+                    f"I wasn't able to pull up the official Medicaid contact "
+                    f"information for {unavailable.state}. Your best bet is "
+                    f'to search for "{unavailable.state} Medicaid" to find '
+                    f"the official agency site, or dial 211 for local help "
+                    f"with applying.",
+                    context,
+                )
             logger.debug(
                 f"Got Medicaid info response: {medicaid_info[:200] if medicaid_info else 'None'}..."
             )
@@ -803,6 +830,30 @@ class MedicaidEligibilityTool(BaseTool):
                 "situation isn't something our checker can estimate and point "
                 "them at the next step below."
             )
+            # Sub-checks that DID complete with a firm positive are real
+            # answers -- e.g. only the 2026 work-hours answer or the
+            # Medicare-side years-worked answer was declined, while the
+            # 2025-rules check finished with a yes. Hiding those behind the
+            # blanket "no estimate" withheld a computed verdict from someone
+            # the checker did score (mirrors the "we were able to check
+            # Medicare" report below). Only positives: a False here means
+            # "not established", not "no".
+            established = [
+                label
+                for label, is_eligible_for_year in (
+                    ("current (2025)", eligible_2025),
+                    ("2026", eligible_2026),
+                )
+                if is_eligible_for_year
+            ]
+            if established:
+                parts.append(
+                    "We WERE able to check the "
+                    + " and ".join(established)
+                    + " Medicaid rules though, and based on what we have "
+                    "they already look eligible under those — you can share "
+                    "that result."
+                )
             if medicare:
                 parts.append(
                     "We were able to check Medicare, and our data suggests "

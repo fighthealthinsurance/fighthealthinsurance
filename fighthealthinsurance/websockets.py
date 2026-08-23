@@ -1383,6 +1383,9 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         message_raw = data.get("message", data.get("content", None))
         message: str = message_raw if isinstance(message_raw, str) else ""
         chat_id = data.get("chat_id", self.chat_id)
+        replay_requested = data.get("replay", False)
+        iterate_on_appeal = data.get("iterate_on_appeal")
+        iterate_on_prior_auth = data.get("iterate_on_prior_auth")
 
         # Lightweight side-by-side answer feedback: which answer the user
         # preferred. Metrics + log only (bounded label set) -- no LLM turn.
@@ -1393,23 +1396,40 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 if isinstance(answer_feedback, dict)
                 else None
             )
-            record_answer_feedback(preferred)
-            # chat_id is raw client input: bound and repr it so an
-            # attacker-supplied value can't inject newlines (forged log
-            # records) or flood the log pipeline with one huge line.
-            logger.info(
-                f"chat ws: answer feedback preferred={str(preferred)[:16]!r} "
-                f"chat_id={str(chat_id)[:64]!r}"
-            )
+            # Only count feedback for the chat THIS socket has open: the
+            # real client sends feedback on the same connection the answer
+            # arrived on. Without the gate this branch ran before any
+            # identity/chat validation, so any anonymous connection could
+            # loop forged "alternate preferred" frames and skew the
+            # model-preference signal (and use the INFO line as a
+            # log-volume lever).
+            if chat_id and self.chat_id and str(chat_id) == str(self.chat_id):
+                record_answer_feedback(preferred)
+                # chat_id is raw client input: bound and repr it so an
+                # attacker-supplied value can't inject newlines (forged log
+                # records) or flood the log pipeline with one huge line.
+                logger.info(
+                    f"chat ws: answer feedback preferred={str(preferred)[:16]!r} "
+                    f"chat_id={str(chat_id)[:64]!r}"
+                )
+            else:
+                logger.debug(
+                    f"chat ws: ignoring answer feedback for foreign/unknown "
+                    f"chat_id={str(chat_id)[:64]!r}"
+                )
             # Only short-circuit when the frame carries nothing else. A frame
             # batching feedback with a real message used to have the message
             # silently dropped -- no reply, no error, and the client's
-            # spinner never cleared.
-            if not message and not data.get("replay", False):
+            # spinner never cleared. Empty-message frames are also the
+            # documented carrier for appeal/prior-auth linking (see the
+            # validation below), so those must not short-circuit either.
+            if (
+                not message
+                and not replay_requested
+                and not iterate_on_appeal
+                and not iterate_on_prior_auth
+            ):
                 return
-        replay_requested = data.get("replay", False)
-        iterate_on_appeal = data.get("iterate_on_appeal")
-        iterate_on_prior_auth = data.get("iterate_on_prior_auth")
         is_patient = data.get(
             "is_patient", False
         )  # New parameter to identify patient users
@@ -1430,11 +1450,12 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         # to DEBUG deployments and staff users).
         debug_requested = bool(data.get("debug", False))
 
-        # Validate microsite_slug if provided
+        # Validate microsite_slug if provided (attribution-only funnel slugs
+        # like medicaid-eligibility are valid too -- see microsites.py).
         if microsite_slug:
-            from fighthealthinsurance.microsites import get_microsite
+            from fighthealthinsurance.microsites import is_valid_attribution_slug
 
-            if not get_microsite(microsite_slug):
+            if not is_valid_attribution_slug(microsite_slug):
                 logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
                 microsite_slug = None
 
@@ -1494,10 +1515,16 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                     # Authenticated patient — derive email from user account
                     email = user.email
 
-            # Extract tracking info from websocket scope (privacy-aware)
-            tracking_info = extract_tracking_info_from_scope(
-                scope=self.scope, is_professional=(chat_type == ChatType.PROFESSIONAL)
-            )
+            # Extract tracking info from websocket scope (privacy-aware).
+            # Plain asgiref sync_to_async (no ORM): get_asn_info's first
+            # lookup blocks on the shared geo-reader lock -- held for the
+            # full multi-second database parse while the startup warm-up
+            # thread runs -- so calling it inline froze every websocket on
+            # the worker during the startup window (the state_hint call
+            # below was already offloaded; this path was not).
+            tracking_info = await sync_to_async(
+                extract_tracking_info_from_scope, thread_sensitive=False
+            )(scope=self.scope, is_professional=(chat_type == ChatType.PROFESSIONAL))
             if str(email or "").strip().lower() == "testing@example.com":
                 tracking_info.ip_address = _get_client_ip_from_scope(self.scope)
 

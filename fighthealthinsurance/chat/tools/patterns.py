@@ -31,6 +31,12 @@ MEDICAID_INFO_REGEX = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
 
 # Medicaid eligibility tool - captures JSON parameters
 # Matches: medicaid_eligibility {JSON} or **medicaid_eligibility {JSON}**
+#
+# Deliberately no leading `.*?`: detection uses re.search, which already
+# scans from every position, so the prefix bought nothing for matching --
+# but under the DOTALL detect flags it made every scan of a NON-matching
+# reply quadratic, and made group(0)-based cleaning swallow the model's
+# prose before the call instead of just the call.
 MEDICAID_ELIGIBILITY_REGEX = r"(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
 
 # Create or update appeal tool - captures JSON with appeal data

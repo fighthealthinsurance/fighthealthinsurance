@@ -30,6 +30,29 @@ class MergeNewMessagesInternalFlagTest(TestCase):
         history = merge_new_messages([], [{"role": "user", "content": "hello there"}])
         self.assertNotIn("internal", history[0])
 
+    def test_legacy_note_with_uuid_id_is_internal(self):
+        """PriorAuthRequest pks are UUIDs (Appeal pks are ints); the legacy
+        pattern's `#\\d+` silently missed every un-flagged prior-auth note
+        whose UUID starts with a hex letter, rendering internal system text
+        as a user bubble and letting previews/titles pick it up."""
+        for note in (
+            "Linked this chat to Prior Auth Request "
+            "#f3a91c2e-1d5b-4e6f-9a3c-2b7d8e4f5a6b, details are ...",
+            "This chat is already linked to Prior Auth Request "
+            "#03a91c2e-1d5b-4e6f-9a3c-2b7d8e4f5a6b, current details are ...",
+            "Linked this chat to Appeal #12 -- details",
+        ):
+            with self.subTest(note=note):
+                self.assertTrue(
+                    is_internal_history_message({"role": "user", "content": note})
+                )
+        # A user's own message about their prior auth still is NOT internal.
+        self.assertFalse(
+            is_internal_history_message(
+                {"role": "user", "content": "I linked my prior auth already"}
+            )
+        )
+
     def test_tail_dedup_still_applies(self):
         history = [{"role": "user", "content": "CA", "timestamp": "t"}]
         merged = merge_new_messages(history, [{"role": "user", "content": "CA"}])

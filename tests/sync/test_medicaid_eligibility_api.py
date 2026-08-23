@@ -16,6 +16,7 @@ from fighthealthinsurance.medicaid_api import (
     MAX_TARGET_YEAR,
     WORK_REQUIREMENT_FIRST_YEAR,
     WORK_REQUIREMENT_UNIVERSAL_YEAR,
+    MedicaidDataUnavailableError,
     _normalize_applying_reason,
     current_eligibility_year,
     get_medicaid_info,
@@ -799,12 +800,18 @@ class TestGetMedicaidInfo(SimpleTestCase):
         # emitted a header promising data it structurally could not deliver.
         self.assertNotIn("MISC", get_medicaid_info({"state": "ca"}))
 
-    def test_territory_with_no_csv_row_returns_none(self):
+    def test_territory_with_no_csv_row_raises_data_unavailable(self):
         # PR/GU/VI/AS/MP normalize to a display name but have no row in
         # medicaid_resources.csv. Returning "No Medicaid data found for X."
         # here handed the caller prose it wraps as "Here's the official
-        # Medicaid information for Puerto Rico:" -- presenting a miss as data.
-        self.assertIsNone(get_medicaid_info({"state": "Puerto Rico"}))
+        # Medicaid information for Puerto Rico:" -- presenting a miss as
+        # data. Returning None was no better: None means "which state?" to
+        # the chat tool, which re-asked a question the user had already
+        # answered, forever. A dedicated error lets the tool say something
+        # useful instead.
+        with self.assertRaises(MedicaidDataUnavailableError) as caught:
+            get_medicaid_info({"state": "Puerto Rico"})
+        self.assertEqual(caught.exception.state, "Puerto Rico")
 
 
 class TestDeclinedAnswersDoNotBecomeVerdicts(SimpleTestCase):

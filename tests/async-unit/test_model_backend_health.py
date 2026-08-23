@@ -41,8 +41,14 @@ def _clear_provider_env(monkeypatch):
         "PERPLEXITY_API",
         "AZURE_OPENAI_API_KEY",
         "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_MODELS",
         "AZURE_ANTHROPIC_API_KEY",
         "AZURE_ANTHROPIC_ENDPOINT",
+        # The deployment-list overrides reshape the Azure model catalogs
+        # (not just configuration state), and tox passes the developer's
+        # shell through (passenv = *) — leaving them set breaks the
+        # catalog-shape expectations below.
+        "AZURE_ANTHROPIC_MODELS",
         "HEALTH_BACKEND_HOST",
         "HEALTH_BACKUP_BACKEND_HOST",
         "NEW_HEALTH_BACKEND_HOST",

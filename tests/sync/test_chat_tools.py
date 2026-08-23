@@ -474,6 +474,20 @@ class TestMedicaidEligibilityTool(TestCase):
         self.assertIsNotNone(match)
         self.assertIn("income", match.group(1))
 
+    def test_detect_mid_prose_and_clean_keeps_preamble(self):
+        """The pattern matches a call embedded in prose, and cleaning removes
+        only the call — not the model's prose before it. (The pattern used to
+        carry a leading `.*?`, which swallowed the preamble into group(0) and
+        made every scan of a non-matching reply quadratic under DOTALL.)"""
+        text = 'Let me check that. medicaid_eligibility {"income": 25000} Done.'
+        matches = self.tool.detect_all(text)
+
+        self.assertEqual(len(matches), 1)
+        cleaned = self.tool.clean_all_matches(text, matches)
+        self.assertIn("Let me check that.", cleaned)
+        self.assertIn("Done.", cleaned)
+        self.assertNotIn("medicaid_eligibility", cleaned)
+
     def test_build_eligibility_info_eligible(self):
         """Test eligibility info text generation for eligible user."""
         info = self.tool._build_eligibility_info(
@@ -600,7 +614,30 @@ class TestMedicaidEligibilityTool(TestCase):
 
         self.assertIn("may be eligible for it", info)
 
+    def test_indeterminate_result_still_reports_firm_positive_verdicts(self):
+        """A sub-check that DID finish with a yes is a real answer.
+
+        Declining only the 2026 work-hours question (or the Medicare-side
+        years-worked question) makes determination_made False, but the
+        2025-rules check may have completed with a firm positive -- hiding
+        it behind the blanket "no estimate" withheld a computed verdict.
+        """
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["We could not check qualifying work hours."],
+            missing=[],
+            determination_made=False,
+        )
+
+        self.assertIn("could NOT produce a Medicaid estimate", info)
+        self.assertIn("current (2025)", info)
+        self.assertIn("already look eligible", info)
+        self.assertNotIn("may not be eligible", info)
+
     def test_scored_ineligible_still_reads_as_a_verdict(self):
+        """A completed check that came back negative is a firm answer."""
         info = self.tool._build_eligibility_info(
             eligible_base=False,
             eligible_target=False,

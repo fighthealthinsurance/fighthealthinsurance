@@ -2,7 +2,6 @@ import difflib
 import json
 import re
 from datetime import date
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
@@ -12,6 +11,29 @@ from loguru import logger
 # Look for data/ next to the repo root
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DEFAULT_FILE = "medicaid_resources.csv"
+
+
+class MedicaidDataUnavailableError(Exception):
+    """The state WAS understood but no contact-info row could be produced.
+
+    Distinct from ``get_medicaid_info``'s ``None`` return, which means "we
+    could not tell which state was meant" and which the chat tool renders as
+    "Which state are you in?". Re-asking cannot fix a missing/unreadable CSV
+    or a territory with no resources row, so conflating the two looped the
+    tool on the state question against a user who had already answered it.
+    """
+
+    def __init__(self, state: str, reason: str) -> None:
+        self.state = state
+        self.reason = reason
+        # Pass the real init args to Exception so args round-trips: with a
+        # single formatted string there, unpickling re-called __init__(msg)
+        # and raised TypeError (missing 'reason') the moment this crossed a
+        # pickle boundary (Ray, multiprocessing, an enqueued log sink).
+        super().__init__(state, reason)
+
+    def __str__(self) -> str:
+        return f"No Medicaid resource data for {self.state}: {self.reason}"
 
 
 def _explode_scraped_faq(df: pd.DataFrame) -> pd.DataFrame:
@@ -581,44 +603,6 @@ _MEDICARE_QUESTION_FIELDS = frozenset(
         "ssdi_length",
         "esrd",
         "als",
-    }
-)
-
-# Every kwarg is_eligible reads. Anything else the model sends is silently
-# ignored today, which looks to the model like the answer was accepted -- so
-# summarize_eligibility_inputs reports the strays back to it.
-_KNOWN_ELIGIBILITY_FIELDS = frozenset(
-    {
-        "state",
-        "married",
-        "age",
-        "pregnant",
-        "receiving_ssdi",
-        "disabled",
-        "ssdi_length",
-        "on_medicare",
-        "veteran_or_spouse_of_veteran",
-        "living_situation",
-        "applying_reason",
-        "household_size",
-        "monthly_income",
-        "assets_total",
-        "home_owner",
-        "home_equity",
-        "children_in_household",
-        "als",
-        "esrd",
-        "years_worked",
-        "on_medicaid_past",
-        "work_req_exempt_2026",
-        # Same answer under a year-neutral name, since the target year is now
-        # the caller's choice; both spellings are accepted.
-        "work_req_exempt",
-        "target_year",
-        "qualifying_hours_weekly_last_12",
-        "avg_monthly_qualifying_hours_last_3mo",
-        "avg_weekly_qualifying_hours_last_3mo",
-        "total_qualifying_hours_last_3mo",
     }
 )
 
@@ -1804,7 +1788,9 @@ def _score_eligibility(
     return _result(determination_made=not indeterminate)
 
 
-@lru_cache(maxsize=1)
+_medicaid_resources_cache: "Optional[pd.DataFrame]" = None
+
+
 def _load_medicaid_resources() -> "Optional[pd.DataFrame]":
     """Read the Medicaid resources CSV once per process.
 
@@ -1815,7 +1801,15 @@ def _load_medicaid_resources() -> "Optional[pd.DataFrame]":
     process, so callers must treat it as read-only: slice and filter (which
     build new objects) rather than mutating in place. An ``inplace=True``
     rename or a column assignment here would corrupt every later lookup.
+
+    Only successful reads are cached: the previous ``lru_cache`` also
+    latched the ``None`` from a missing file or transient read failure for
+    the life of the process, so one bad read at startup reported "no data"
+    forever even after the file was fine.
     """
+    global _medicaid_resources_cache
+    if _medicaid_resources_cache is not None:
+        return _medicaid_resources_cache
     file_path = DATA_DIR / DEFAULT_FILE
     if not file_path.exists():
         matches = list(DATA_DIR.glob("*medicaid*.csv"))
@@ -1823,10 +1817,11 @@ def _load_medicaid_resources() -> "Optional[pd.DataFrame]":
             return None
         file_path = matches[0]
     try:
-        return pd.read_csv(file_path)
+        _medicaid_resources_cache = pd.read_csv(file_path)
     except Exception:
         logger.opt(exception=True).warning("Could not read Medicaid resources CSV")
         return None
+    return _medicaid_resources_cache
 
 
 _BOOL_FIELDS = frozenset(
@@ -1857,6 +1852,30 @@ _FLOAT_FIELDS = frozenset(
         "avg_weekly_qualifying_hours_last_3mo",
         "total_qualifying_hours_last_3mo",
     }
+)
+
+# Every kwarg is_eligible reads. Anything else the model sends is silently
+# ignored today, which looks to the model like the answer was accepted -- so
+# summarize_eligibility_inputs reports the strays back to it. Derived from
+# the typed field sets above (plus the free-form fields) so a field added to
+# one list cannot silently be missing from the other -- a hand-maintained
+# copy here either reported a real field as "unrecognized" or echoed an
+# unknown one back unnormalized.
+_KNOWN_ELIGIBILITY_FIELDS = (
+    _BOOL_FIELDS
+    | _INT_FIELDS
+    | _FLOAT_FIELDS
+    | frozenset(
+        {
+            "state",
+            "living_situation",
+            "applying_reason",
+            "qualifying_hours_weekly_last_12",
+            # Normalized by _parse_target_year rather than one of the typed
+            # sets above, so it has to be listed here explicitly.
+            "target_year",
+        }
+    )
 )
 
 
@@ -1935,6 +1954,11 @@ def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
     the user which state they're in. (Returning prose here would be
     indistinguishable from data: the chat tool wraps any string it gets in
     "Here's the official Medicaid information for X".)
+
+    Raises MedicaidDataUnavailableError when the state WAS determined but no
+    data exists for it (territory with no CSV row, or the CSV itself is
+    missing/unreadable): re-asking the state can never fix those, so they
+    must not read as "which state?" to the caller.
     """
     raw_state = str(query.get("state") or query.get("State") or "").strip()
     if not raw_state:
@@ -1959,7 +1983,10 @@ def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
 
     df = _load_medicaid_resources()
     if df is None:
-        return None
+        # The CSV is missing or unreadable. This used to return the same
+        # None as "unknown state", so the tool re-asked the user's state
+        # forever when the real problem was the data file.
+        raise MedicaidDataUnavailableError(state, "resources CSV missing or unreadable")
 
     # Filter by state
     if state and "state" in df.columns:
@@ -1970,9 +1997,11 @@ def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
         # a display name but have no entry in medicaid_resources.csv, and the
         # caller wraps whatever comes back as "Here's the official Medicaid
         # information for X:" -- so returning prose here presented "no data
-        # found" to the model as retrieved data. None routes it to the same
-        # re-ask/decline path as an unrecognized state.
-        return None
+        # found" to the model as retrieved data. Returning None was no better:
+        # it read as "which state?", re-asking a question the user had already
+        # answered with no way to ever succeed. Raise so the caller can say
+        # something useful instead.
+        raise MedicaidDataUnavailableError(state, "no resources row for this state")
 
     # Focus on the most important contact info
     important_cols = [

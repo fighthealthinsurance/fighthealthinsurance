@@ -332,6 +332,26 @@ def get_user_agent(request: Union[HttpRequest, "DRFRequest"]) -> str:
     return str(ua)[:500] if ua else ""
 
 
+def _parse_ip_literal(ip_address: Optional[str]) -> Optional[str]:
+    """Validate a client-supplied address before it reaches the geo parser.
+
+    The callers derive this from X-Forwarded-For / X-Real-IP, which are
+    client-supplied and never validated upstream, so reject anything that is
+    not a literal IP address and bound the work an arbitrary header value can
+    cause. Returns the stripped literal, or None if it isn't one.
+    """
+    if not ip_address:
+        return None
+    candidate = str(ip_address).strip()
+    if len(candidate) > 45:  # longest possible IPv6 form
+        return None
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+    return candidate
+
+
 def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
     """
     Get ASN information for an IP address.
@@ -345,14 +365,15 @@ def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
     state guess; with the key unset this returns empty strings — the
     pre-geoip2fast behavior.
     """
-    if not ip_address:
+    candidate = _parse_ip_literal(ip_address)
+    if candidate is None:
         return ("", "")
 
     reader = _get_geo_reader()
     if reader is None:
         return ("", "")
     try:
-        result = reader.lookup(str(ip_address).strip())
+        result = reader.lookup(candidate)
         if result is None:
             return ("", "")
         # geoip2fast (1.2.x) exposes asn_name and asn_cidr but NO numeric
@@ -368,62 +389,27 @@ def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
 
 # --- IP -> US state guess (for chat context, transient only) ---
 
-# 2-letter postal code -> full state name, used to normalize whatever the geo
-# database returns into the full name the chat/Medicaid tooling expects.
-_US_STATE_NAMES_BY_CODE = {
-    "AL": "Alabama",
-    "AK": "Alaska",
-    "AZ": "Arizona",
-    "AR": "Arkansas",
-    "CA": "California",
-    "CO": "Colorado",
-    "CT": "Connecticut",
-    "DE": "Delaware",
-    "DC": "District of Columbia",
-    "FL": "Florida",
-    "GA": "Georgia",
-    "HI": "Hawaii",
-    "ID": "Idaho",
-    "IL": "Illinois",
-    "IN": "Indiana",
-    "IA": "Iowa",
-    "KS": "Kansas",
-    "KY": "Kentucky",
-    "LA": "Louisiana",
-    "ME": "Maine",
-    "MD": "Maryland",
-    "MA": "Massachusetts",
-    "MI": "Michigan",
-    "MN": "Minnesota",
-    "MS": "Mississippi",
-    "MO": "Missouri",
-    "MT": "Montana",
-    "NE": "Nebraska",
-    "NV": "Nevada",
-    "NH": "New Hampshire",
-    "NJ": "New Jersey",
-    "NM": "New Mexico",
-    "NY": "New York",
-    "NC": "North Carolina",
-    "ND": "North Dakota",
-    "OH": "Ohio",
-    "OK": "Oklahoma",
-    "OR": "Oregon",
-    "PA": "Pennsylvania",
-    "RI": "Rhode Island",
-    "SC": "South Carolina",
-    "SD": "South Dakota",
-    "TN": "Tennessee",
-    "TX": "Texas",
-    "UT": "Utah",
-    "VT": "Vermont",
-    "VA": "Virginia",
-    "WA": "Washington",
-    "WV": "West Virginia",
-    "WI": "Wisconsin",
-    "WY": "Wyoming",
-}
-_US_STATE_NAMES = {name.lower(): name for name in _US_STATE_NAMES_BY_CODE.values()}
+# code -> full state name and lowercased-name -> canonical name, used to
+# normalize whatever the geo database returns into the full name the
+# chat/Medicaid tooling expects. Derived (lazily, on first lookup) from the
+# Medicaid tooling's canonical state map: this file used to carry a third
+# hand-typed 51-entry copy, which could silently drift from the map the
+# chat/Medicaid layer actually matches the hint against. The import happens
+# inside the helper because medicaid_api pulls in pandas, which must not
+# become an import-time dependency of this audit/middleware module.
+_us_state_tables: Optional[tuple[dict, dict]] = None
+
+
+def _get_us_state_tables() -> tuple[dict, dict]:
+    global _us_state_tables
+    if _us_state_tables is None:
+        from fighthealthinsurance.medicaid_api import _ABBR_TO_NAME
+
+        by_code = {code.upper(): name for code, name in _ABBR_TO_NAME.items()}
+        by_lower_name = {name.lower(): name for name in by_code.values()}
+        _us_state_tables = (by_code, by_lower_name)
+    return _us_state_tables
+
 
 # The configuration key that switches IP geo lookups on: path to a
 # geoip2fast CITY-level database (state guessing needs subdivision data,
@@ -582,9 +568,10 @@ def _normalize_state_guess(value: str) -> Optional[str]:
     # Some databases prefix subdivision codes with the country ("US-CA").
     if "-" in cleaned:
         cleaned = cleaned.rsplit("-", 1)[-1].strip()
+    by_code, by_lower_name = _get_us_state_tables()
     if len(cleaned) == 2:
-        return _US_STATE_NAMES_BY_CODE.get(cleaned.upper())
-    return _US_STATE_NAMES.get(cleaned.lower())
+        return by_code.get(cleaned.upper())
+    return by_lower_name.get(cleaned.lower())
 
 
 def guess_us_state(ip_address: Optional[str]) -> Optional[str]:
@@ -599,18 +586,8 @@ def guess_us_state(ip_address: Optional[str]) -> Optional[str]:
     a transient guess: present it to the model as unconfirmed and never
     persist it for anonymous users.
     """
-    if not ip_address:
-        return None
-    # The caller derives this from X-Forwarded-For / X-Real-IP, which are
-    # client-supplied and never validated upstream, so reject anything that
-    # is not a literal IP address before it reaches the third-party parser
-    # (and bound the work an arbitrary header value can cause).
-    candidate = str(ip_address).strip()
-    if len(candidate) > 45:  # longest possible IPv6 form
-        return None
-    try:
-        ipaddress.ip_address(candidate)
-    except ValueError:
+    candidate = _parse_ip_literal(ip_address)
+    if candidate is None:
         return None
     reader = _get_geo_reader()
     if reader is None:
