@@ -137,6 +137,20 @@ class _HealthStatus:
         """
         self._ensure_sweep_scheduled(refresh_now=True)
 
+    def _background_sweep_enabled(self) -> bool:
+        """Whether the recurring background sweep should run in this config.
+
+        Disabled in the ``Test*`` configs: the sweep re-arms itself on a timer
+        thread for the life of the process and writes the cross-pod alert
+        throttle row on every pass, so its writes land in the middle of
+        unrelated tests and can lock the table against a
+        ``TransactionTestCase`` teardown flush. Callers that need a real
+        measurement (``get_snapshot``) still sweep synchronously.
+        """
+        from django.conf import settings
+
+        return bool(getattr(settings, "ML_HEALTH_BACKGROUND_SWEEP", True))
+
     def _ensure_sweep_scheduled(self, refresh_now: bool) -> None:
         """Kick off the recurring sweep exactly once (idempotent, non-blocking).
 
@@ -145,7 +159,7 @@ class _HealthStatus:
         start the timer chain, because the caller already refreshed
         synchronously and the snapshot is warm.
         """
-        if self._sweep_started:
+        if self._sweep_started or not self._background_sweep_enabled():
             return
         with self._start_lock:
             if self._sweep_started:
@@ -159,7 +173,13 @@ class _HealthStatus:
             self._schedule_refresh()
 
     def _schedule_refresh(self):
-        """Schedule the next refresh."""
+        """Schedule the next refresh.
+
+        No-ops when the background sweep is disabled, so a direct ``_refresh``
+        call can't arm a timer chain the config asked us not to run.
+        """
+        if not self._background_sweep_enabled():
+            return
         try:
             interval = 5 if self._fast_mode else REFRESH_INTERVAL_SECONDS
             self._timer = threading.Timer(interval, self._refresh)

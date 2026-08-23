@@ -66,6 +66,20 @@ def _mock_session_returning(payload: Dict[str, Any]):
 class TestFindTrialsForQuery:
     """End-to-end behavior of find_trials_for_query with DB cache."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_trial_cache(self, transactional_db):
+        """Start every test from an empty trial cache.
+
+        These tests assert on cache *misses* (an HTTP fetch happened) as much
+        as on hits, so one leaked ``ClinicalTrialQueryData`` row -- e.g. from a
+        previous attempt whose teardown flush lost a race for the sqlite table
+        lock -- silently turns the first call into a cache hit and fails the
+        assertion for reasons that have nothing to do with the code.
+        """
+        ClinicalTrialQueryData.objects.all().delete()
+        ClinicalTrial.objects.all().delete()
+        yield
+
     async def test_fetches_and_caches_trials(self):
         tools = ClinicalTrialsTools()
         payload = _make_studies_payload(["NCT11111111", "NCT22222222"])
@@ -164,12 +178,6 @@ class TestFindTrialsForQuery:
     async def test_find_trials_for_denial_writes_audit_row_and_global_cache(self):
         """find_trials_for_denial must write a global cache row that the next
         call can hit, plus a separate denial-scoped audit row."""
-        # Drop any leftover cache rows for this query (a failed flush in a
-        # previous attempt leaks rows across the rerun) so the cache-miss
-        # and row-count assertions below start from a clean slate.
-        await ClinicalTrialQueryData.objects.filter(
-            query="pembrolizumab melanoma"
-        ).adelete()
         tools = ClinicalTrialsTools()
         denial = await Denial.objects.acreate(
             procedure="pembrolizumab",
@@ -191,10 +199,6 @@ class TestFindTrialsForQuery:
         assert [t.nct_id for t in trials_again] == ["NCT55555555"]
         assert session_factory.call_count == 1
         # One global cache row + two denial-scoped audit rows (one per call).
-        # Scope the global count to this test's query: with
-        # transaction=True cleanup is a table flush, and if a previous
-        # test's flush failed (e.g. transient sqlite table lock) its global
-        # rows survive into the rerun and an unscoped count flakes.
         global_rows = await ClinicalTrialQueryData.objects.filter(
             denial_id__isnull=True,
             query="pembrolizumab melanoma",
