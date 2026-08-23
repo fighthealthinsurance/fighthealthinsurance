@@ -230,18 +230,37 @@ class TestAzureBackends(unittest.TestCase):
         )
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
-    def test_claude_fable_is_priciest_premium_deployment(self):
-        """Fable 5 is premium-tier and sorts last (priciest) in models()."""
+    def test_claude_fable_is_the_priciest_deployment(self):
+        """Fable 5 sorts last (priciest) in models()."""
         models = RemoteAzureClaude.models()
         costs = [m.cost for m in models]
-        self.assertEqual(costs, sorted(costs))  # cheapest -> premium
+        self.assertEqual(costs, sorted(costs))  # cheapest -> priciest
         self.assertEqual(models[-1].name, "azure-anthropic/claude-fable-5")
-        # Pin the proxy value: it is what orders Fable behind Opus in the
-        # router's tie-break, so a drift here silently changes routing.
         self.assertEqual(models[-1].cost, 175)
-        self.assertEqual(
-            RemoteAzureClaude(model="claude-fable-5").get_tier(), "premium"
-        )
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_claude_fable_outranks_opus_for_routing(self):
+        """Fable is frontier-tier, which must outrank Opus's premium: cost
+        only breaks ties WITHIN a tier, so an equal tier would sort the
+        priciest model last and keep it out of the default fan-out."""
+        fable = RemoteAzureClaude(model="claude-fable-5")
+        opus = RemoteAzureClaude(model="claude-opus-4-8")
+        self.assertEqual(fable.get_tier(), "frontier")
+        self.assertEqual(opus.get_tier(), "premium")
+        self.assertGreater(fable.quality(), opus.quality())
+        # Still below the internal backends' floor, which stay preferred.
+        self.assertLess(fable.quality(), 101)
+
+    @patch.dict(
+        os.environ,
+        {**AZURE_CLAUDE_ENV, **AZURE_OPENAI_ENV, "ANTHROPIC_API_KEY": "test-key"},
+    )
+    def test_router_picks_fable_in_the_default_fan_out(self):
+        """The tier is only worth anything if the router actually reaches the
+        model: with every provider configured, Fable must survive the default
+        limit=3 slice rather than sorting behind the premium models."""
+        names = [str(m) for m in MLRouter().best_external_models(3)]
+        self.assertIn("azure-anthropic/claude-fable-5", names)
 
     def test_models_disabled_without_env(self):
         """Without env config, providers (and the base) register no models."""

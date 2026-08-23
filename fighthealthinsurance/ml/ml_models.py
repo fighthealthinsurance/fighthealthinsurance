@@ -4169,7 +4169,14 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     # (>=101) so internal backends stay preferred. Used to rank the "best"
     # external models for fan-out (MLRouter.best_external_models). Subclasses
     # expose each model's tier via get_tier().
+    #
+    # "frontier" sits above "premium" for the strongest (and priciest) models a
+    # provider offers. Without it every premium model ties at 98 and the
+    # cost-ordered stable sort puts the priciest one last, so a frontier model
+    # would never survive the default limit=3 slice -- registered, probed and
+    # billed, but never actually generating anything.
     _TIER_QUALITY: ClassVar[dict[str, int]] = {
+        "frontier": 100,
         "premium": 98,
         "quality": 92,
         "speed": 80,
@@ -4177,9 +4184,9 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     }
 
     def get_tier(self) -> str:
-        """Provider tier (speed/quality/premium/custom). Concrete subclasses
-        override with their own per-model mapping; this default keeps
-        ``quality()`` robust if a subclass omits it."""
+        """Provider tier (speed/quality/premium/frontier/custom). Concrete
+        subclasses override with their own per-model mapping; this default
+        keeps ``quality()`` robust if a subclass omits it."""
         return "unknown"
 
     def quality(self) -> int:
@@ -4767,7 +4774,8 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
         return True
 
     def get_tier(self) -> str:
-        """Get the tier (speed/quality/premium/custom) for this model."""
+        """Get the tier (speed/quality/premium/frontier/custom) for this
+        model."""
         for deployment, _cost, tier in self._configured_deployments():
             if deployment == self.model:
                 return tier
@@ -4879,19 +4887,21 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     # The Messages API requires an explicit max output token budget.
     MAX_OUTPUT_TOKENS: ClassVar[int] = 8192
 
-    # Latest Claude models (cheapest -> premium). Deployment names default to
+    # Latest Claude models (cheapest -> priciest). Deployment names default to
     # the canonical model ids; override with AZURE_ANTHROPIC_MODELS if your
     # Foundry deployments use different names. The cost column is the router's
-    # rough ordering proxy (see ModelDescription), not a per-token price: Fable
-    # 5 is the most capable and the priciest deployment, so it carries the
-    # highest proxy and sorts last. It shares the "premium" tier with Opus, and
-    # that cost ordering breaks the routing tie in Opus's favor (see
-    # MLRouter.best_external_models).
+    # rough ordering proxy (see ModelDescription), not a per-token price.
+    #
+    # Fable 5 is the most capable and the priciest deployment, so it carries
+    # the highest proxy and the "frontier" tier -- which outranks Opus's
+    # "premium" in MLRouter.best_external_models, so it is preferred rather
+    # than merely registered. Cost only breaks ties WITHIN a tier, so leaving
+    # it at "premium" would have kept it out of the default fan-out entirely.
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
         ("claude-haiku-4-5", 55, "speed"),
         ("claude-sonnet-4-6", 95, "quality"),
         ("claude-opus-4-8", 135, "premium"),
-        ("claude-fable-5", 175, "premium"),
+        ("claude-fable-5", 175, "frontier"),
     ]
 
     # Per-subclass rate-limit state (do not share across providers).
