@@ -111,6 +111,26 @@ from fighthealthinsurance.utils import all_concrete_subclasses
 # followed by whitespace and a capital letter (avoids splitting on "Dr.", "U.S.", etc.)
 _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
+# The work-requirements answer the system prompt mandates VERBATIM. Named
+# here, rather than buried in the prompt literal, because two other places
+# have to agree with it: response_similarity.CANNED_REPLY_SIGNATURES (which
+# exempts this block from repeat-rejection, so a user who asks twice gets
+# the required text twice) and the drift test that checks the two still
+# match. Editing the wording is fine; editing it in only one of those places
+# is what broke it before.
+MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. States must implement these requirements by January 1, 2027 — a few have started earlier, and some may receive extensions.
+
+**Key Points:**
+- Applies to adults ages 19-64 in most states
+- 80 hours per month minimum requirement (make sure to keep records)
+- Qualifying activities: work, job training, school, community service
+- There are groups which are often exempt, see the FAQ for more information.
+- Implementation deadline: January 1, 2027 (some states earlier; extensions possible)
+- States check the one to three months before you apply or renew, so late-2026 activity can already count
+- State-specific details may vary
+
+For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -1106,7 +1126,8 @@ IMPORTANT: Do NOT ask the user for the patient's name. The patient's name is pro
             base_system_prompt += logged_in_instructions
 
         # Continue with the rest of the system prompt
-        medicaid_resources_tool = """**Medicaid Information Tool**: For Medicaid/Medicare questions, you MUST use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
+        medicaid_resources_tool = (
+            """**Medicaid Information Tool**: For Medicaid/Medicare questions, you MUST use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
 
 (note: fill in the statename with the actual name of the state).
 When possible even if the user has not explicitily provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
@@ -1129,20 +1150,13 @@ WRONG Examples:
 "California has a great Medicaid program called Medi-Cal. **medicaid_info {...}**"
 **Medicaid Work Requirements Information**: If users ask about or reference Medicaid work requirements, you must only respond with this exact text:
 
-New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. These requirements go into effect by December 31, 2026.
-
-**Key Points:**
-- Applies to adults ages 19-64 in most states
-- 80 hours per month minimum requirement (make sure to keep records)
-- Qualifying activities: work, job training, school, community service
-- There are groups which are often exempt, see the FAQ for more information.
-- Implementation deadline: December 31, 2026
-- State-specific details may vary
-
-For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)
+"""
+            + MEDICAID_WORK_REQUIREMENTS_BLOCK
+            + """
 
 RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use ONLY the text above.
 """
+        )
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
 
         clinical_trials_tool = """**ClinicalTrials.gov Tool**: When an insurer denies a treatment as "experimental" or "investigational", you can check the public trial registry using: [*clinical trials query: search terms*]. The system returns clinicaltrialscontext:[...] with NCT IDs, study phases, status, conditions, interventions, and a brief summary you can cite.
@@ -1183,25 +1197,29 @@ All three keys are optional - supply whatever you know. The tool returns:
 
 Use this tool when the user asks about cost, affordability, copay assistance, "how can I afford this", coupons, GoodRx, manufacturer help, or whether the drug is available cheaper without insurance. Always remind the user that copay-foundation funds open and close throughout the year, and that pharmacy-discount payments don't count toward their OOP max."""
 
-        medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible Medicaid or medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
+        medicaid_eligibility_tool = """**Medicaid Eligibility Check (EXPERIMENTAL)**: To help check if someone is eligible for Medicaid or Medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
+
+THIS ELIGIBILITY CHECK IS AN EXPERIMENTAL FEATURE. Every time you start an eligibility check or deliver an estimate, tell the user in plain language that this is an experimental feature that can be wrong or out of date, that it is only a rough estimate and NOT an official eligibility determination, and that only their state Medicaid agency can determine eligibility for real. Do not let a whole eligibility conversation go by without this being said clearly.
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
+
+When the user asks whether they qualify or are eligible for Medicaid or Medicare, use **medicaid_eligibility** — NOT medicaid_info, even when they also name their state. medicaid_info is only for looking up a state's contact info and resources, which is a good follow-up AFTER the eligibility check.
 
 DO NOT ASK ANY QUESTIONS UNTIL YOU HAVE CALLED THE TOOL TO FIGURE OUT WHAT QUESTIONS NEED TO BE ASKED.
 
 This tool also checks for medicare eligibility.
 
-The parameters you are providing are in JSON format. If you don't know a parameter do not provide it.
+The parameters you are providing are in JSON format. If you don't know a parameter do not provide it. Never guess or make up a value the user hasn't given you.
 
 Note that format above is for example, you'd fill this in with the actual values when known.
 
-So (for example) if someone asks if their eligible for medicaid in california and you don't yet know anything else you would call **medicaid_eligibility {"state": "ca"}** or if someone were to ask if their eligible for medicaid but you don't yet know which state you would call **medicaid_eligibility {}**.
+So (for example) if someone asks if they're eligible for medicaid in california and you don't yet know anything else you would call **medicaid_eligibility {"state": "ca"}** or if someone were to ask if they're eligible for medicaid but you don't yet know which state you would call **medicaid_eligibility {}**.
 
-At each step call the tool to see what is left.
+At each step add the user's new answers to the parameters you've already collected (keep them in your panda context summary) and call the tool again to see what is left.
 
 Rules for medicaid eligibility:
 
-Call the tool, and the tool will tell you what other information is required until it eventually says probably eligibile under todays rules only, probably eligible under todays rules and with work requirements, or can't find elgibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
+Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under today's rules only, probably eligible under today's rules and with the 2026 work requirements, or can't find eligibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
 
 Possible kwargs (all optional; function will ask for missing, step-by-step):
       - state: str
@@ -1219,21 +1237,36 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
       - home_owner: bool
       - home_equity: float
       - children_in_household: int
-      - state_expanded_medicaid: bool
-      - state_has_medically_needy: bool
       - als: bool
       - esrd: bool
-      - ssdi_length: int # how many months have they been receiving ssdi
+      - ssdi_length: int # how many MONTHS they have been receiving SSDI
       - years_worked: int # how many years you or your spouse worked and paid medicare taxes
+      # 2026 federal work / community engagement requirement (80 qualifying hours per month;
+      # hours from work, school, volunteering, or caregiving all count):
+      - work_req_exempt_2026: bool                    # true if you know they're exempt (pregnant, disabled/medically frail, on medicare, etc.)
+      - avg_monthly_qualifying_hours_last_3mo: float  # average qualifying hours per MONTH (the units the tool asks in)
+      - avg_weekly_qualifying_hours_last_3mo: float   # or average per WEEK -- watch the units, never put a monthly number here
+      - total_qualifying_hours_last_3mo: float        # or the total over the last 3 months
+      - qualifying_hours_weekly_last_12: list of floats  # or 12 weekly numbers if they have detailed records
 
-Be clear that these are only a best guess as the rules are evolving and your an AI system who may not have the latest information and can also make mistakes.
+**How to send values (you do the parsing):** the user answers in plain English; convert their answer into the canonical form before calling the tool, and keep the running set of answers in your panda context so you can re-send them every call.
+- Booleans: JSON `true` / `false`, not the words the user said. ("I'm single" -> `"married": false`.)
+- Numbers: a plain number with no currency symbol, comma, or unit. ("about twelve hundred a month" -> `"monthly_income": 1200`.)
+- State: the state name or its 2-letter code. If they name their program (Medi-Cal, MassHealth, TennCare, Apple Health...) infer the state yourself.
+- Hours: mind the units — `avg_monthly_qualifying_hours_last_3mo` is per MONTH, `avg_weekly_qualifying_hours_last_3mo` is per WEEK.
 
-*Only ask a few questions at a time and only ask those suggested by the tool.*
-For example, if someone asks if their eligible for medi-cal you will call the tool with california and then only ask a few of the questions it gives back (although you can rephrase them).
+**When the user can't answer**, send the string `"unknown"` for that parameter (e.g. `"assets_total": "unknown"`). That tells us to stop asking it and either assume the conservative answer or explain what we can't determine. Never invent a value, and never silently drop the question — an unanswered question comes back every turn.
+
+**The tool answers back with what it recorded.** It lists the values it stored (already normalized), any parameter names it did not recognize, and anything it couldn't read. Treat that list as the source of truth: re-send everything it recorded on your next call, fix anything it says it ignored, and don't re-ask what the user declined.
+
+Be clear that this is an experimental feature and these are only a best guess as the rules are evolving and you're an AI system who may not have the latest information and can also make mistakes.
+
+*Only ask a few (two or three) questions at a time, in the order the tool suggests them, and only ask those suggested by the tool (although you can rephrase them naturally and with empathy). Don't re-ask anything the user already told you — pass it in the parameters instead.*
+For example, if someone asks if they're eligible for medi-cal you will call the tool with california and then only ask a few of the questions it gives back (although you can rephrase them).
 
 When people ask about a state specific medicaid plan (e.g. medi-cal is california and STAR is texas) you can use that to infer the state.
 
-You can and should consider using the medicaid information tool once we've done an initial assesment and point them to state specific resources.
+You can and should consider using the medicaid information tool once we've done an initial assessment and point them to state specific resources (like where to apply and who to call).
 """
 
         # Build tools section conditionally based on whether the chat is Medicaid-related

@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import functools
 import typing
 from typing import TypedDict
 from urllib.parse import quote, urlencode
@@ -58,6 +59,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import (
     is_valid_denial_id,
+    medicaid_eligibility_page_enabled,
     notify_interested_professional,
     send_fallback_email,
     should_notify_returning_lead,
@@ -523,6 +525,45 @@ class Turning26View(StaticIshView):
     """SEO page for young adults aging off a parent's health insurance at 26."""
 
     template_name = "turning_26.html"
+
+
+class MedicaidEligibilityView(StaticIshView):
+    """Landing page for the AI-assisted Medicaid/Medicare eligibility check.
+
+    Staged behind MEDICAID_ELIGIBILITY_PAGE_ENABLED: the route always exists
+    so reverse() and templates never break, but the page 404s until the flag
+    is flipped -- and both states are testable with override_settings.
+
+    The check wraps ``as_view`` OUTSIDE StaticIshView's cache_page, rather
+    than living in ``get``, for two reasons: Django serves a cached response
+    before the view ever runs, so an in-view check could not switch the page
+    back OFF once a 200 had been cached (the direction that matters for a
+    staged experimental page); and ``View.options`` answers 200 without
+    dispatching to ``get``, which left the route enumerable when disabled.
+    """
+
+    template_name = "medicaid_eligibility.html"
+
+    @classonlymethod
+    def as_view(  # type: ignore[override]
+        cls, **initkwargs: typing.Any
+    ) -> typing.Callable[..., HttpResponseBase]:
+        cached_view = super().as_view(**initkwargs)
+
+        @functools.wraps(cached_view)
+        def view(
+            request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
+        ) -> HttpResponseBase:
+            if not medicaid_eligibility_page_enabled():
+                from django.http import Http404
+
+                raise Http404("This page is not available yet.")
+            return cached_view(request, *args, **kwargs)
+
+        # functools.wraps keeps view_class / view_initkwargs / __name__ that
+        # Django attaches to the as_view callable and that middleware and
+        # URL introspection read.
+        return view
 
 
 class PBSNewsHourView(StaticIshView):

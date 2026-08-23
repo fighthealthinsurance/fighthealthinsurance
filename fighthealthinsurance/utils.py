@@ -1704,3 +1704,14 @@ def extract_file_text(path: str) -> str:
         except Exception as e:
             logger.warning(f"Could not read {path} as text: {e}")
             return ""
+
+
+def medicaid_eligibility_page_enabled() -> bool:
+    """Whether the experimental Medicaid eligibility landing page is staged on.
+
+    Single source of truth for the flag: the view uses it to 404 the route
+    and the sitemap uses it to decide whether to advertise the URL. Two
+    hand-copied ``getattr(settings, ...)`` checks could drift, which would
+    either hide a live page from crawlers or advertise a 404 to them.
+    """
+    return bool(getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False))

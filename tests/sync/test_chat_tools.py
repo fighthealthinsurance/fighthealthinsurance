@@ -24,6 +24,10 @@ from fighthealthinsurance.chat.tools import (
     RxNormLookupTool,
     USPSTFLookupTool,
 )
+from fighthealthinsurance.medicaid_api import (
+    is_eligible,
+    summarize_eligibility_inputs,
+)
 from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
     MAX_FETCHES_PER_SESSION,
     _sanitize_url_for_display,
@@ -415,23 +419,20 @@ class TestMedicaidInfoTool(TestCase):
 class TestMedicaidEligibilityTool(TestCase):
     """Test MedicaidEligibilityTool functionality."""
 
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+
     def test_detect_medicaid_eligibility(self):
         """Test Medicaid eligibility tool detects pattern."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
         text = 'medicaid_eligibility {"income": 25000}'
-        match = tool.detect(text)
+        match = self.tool.detect(text)
 
         self.assertIsNotNone(match)
         self.assertIn("income", match.group(1))
 
     def test_build_eligibility_info_eligible(self):
         """Test eligibility info text generation for eligible user."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=True,
             eligible_2026=True,
             medicare=False,
@@ -445,10 +446,7 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_build_eligibility_info_with_missing(self):
         """Test eligibility info text when questions are missing."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=False,
             eligible_2026=False,
             medicare=False,
@@ -457,6 +455,156 @@ class TestMedicaidEligibilityTool(TestCase):
         )
 
         self.assertIn("questions to ask", info)
+
+    def test_build_eligibility_info_lists_questions_not_python_repr(self):
+        """Missing questions render as a readable list, not a list repr."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=["What state do you live in?", "How old are you?"],
+        )
+
+        self.assertIn("- What state do you live in?", info)
+        self.assertNotIn("['What state", info)
+
+    def test_build_eligibility_info_flags_experimental_when_asking(self):
+        """The LLM is told to disclose the experimental status while asking."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=["What state do you live in?"],
+        )
+
+        self.assertIn("EXPERIMENTAL", info)
+
+    def test_build_eligibility_info_flags_experimental_on_verdict(self):
+        """The LLM is told to disclose the experimental status with verdicts."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+        )
+
+        self.assertIn("EXPERIMENTAL", info)
+
+    def test_build_eligibility_info_paces_questions(self):
+        """The LLM is told to ask only a few questions at a time."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=["q1", "q2", "q3", "q4"],
+        )
+
+        self.assertIn("two or three at a time", info)
+
+    def test_build_eligibility_info_reports_settled_verdict_while_asking(self):
+        """A determination already reached isn't withheld behind a question."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=False,
+            medicare=True,
+            alternatives=[],
+            missing=["Do you have ALS?"],
+        )
+
+        self.assertIn("already look eligible", info)
+        self.assertIn("medicare", info.lower())
+
+    def test_build_eligibility_info_holds_alternatives_until_verdict(self):
+        """Denial-flavored next steps don't surface mid-interview."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["If denied, you can appeal; gather documentation."],
+            missing=["Do you have ALS?"],
+        )
+
+        self.assertNotIn("If denied", info)
+
+    def test_indeterminate_result_is_not_rendered_as_a_denial(self):
+        """"Couldn't score them" must not become "may not be eligible"."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Contact your territory's Medicaid agency."],
+            missing=[],
+            determination_made=False,
+        )
+
+        self.assertIn("could NOT produce a Medicaid estimate", info)
+        self.assertNotIn("may not be eligible", info)
+
+    def test_indeterminate_result_still_reports_medicare(self):
+        """Medicare is federal, so a territory resident still gets that answer."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=True,
+            alternatives=[],
+            missing=[],
+            determination_made=False,
+        )
+
+        self.assertIn("may be eligible for it", info)
+
+    def test_scored_ineligible_still_reads_as_a_verdict(self):
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            determination_made=True,
+        )
+
+        self.assertIn("may not be eligible", info)
+
+    def test_parsed_summary_echoes_recorded_values(self):
+        """The LLM keeps its own context, so it must see what we recorded."""
+        text = self.tool._build_parsed_summary(
+            {"recorded": {"state": "ca"}, "unreadable": [], "unrecognized": [], "declined": []}
+        )
+
+        self.assertIn("state: ca", text)
+
+    def test_parsed_summary_flags_unrecognized_parameters(self):
+        """A silently dropped key looks to the model just like acceptance."""
+        text = self.tool._build_parsed_summary(
+            {"recorded": {}, "unreadable": [], "unrecognized": ["income"], "declined": []}
+        )
+
+        self.assertIn("income", text)
+        self.assertIn("ignored", text)
+
+    def test_parsed_summary_tells_llm_not_to_reask_declined_fields(self):
+        text = self.tool._build_parsed_summary(
+            {"recorded": {}, "unreadable": [], "unrecognized": [], "declined": ["assets_total"]}
+        )
+
+        self.assertIn("don't ask about those again", text)
+
+    def test_build_eligibility_info_lists_alternatives_not_python_repr(self):
+        """Alternatives render as a readable list, not a list repr."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Consider CHIP for the kids."],
+            missing=[],
+        )
+
+        self.assertIn("- Consider CHIP for the kids.", info)
+        self.assertNotIn("['Consider", info)
 
 
 class TestDocFetcherPatterns(TestCase):
@@ -865,3 +1013,77 @@ class TestUSPSTFLookupTool(TestCase):
         # lookup so the LLM follow-up call gets the correct provenance label.
         call_args = callback.call_args
         self.assertEqual(call_args.args[2], "USPSTF preventive-services lookup")
+
+
+class TestMedicaidDeclinedAnswerRoundTrip(TestCase):
+    """A declined answer has to survive into the next tool call.
+
+    ``declined_set`` is rebuilt from the current payload each call, so the
+    "unknown" marker only suppresses its question for as long as the model
+    keeps re-sending it. The parsed-input echo is the only place the model is
+    told what to re-send, so it has to name the declined fields explicitly.
+    """
+
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+
+    def test_summary_tells_the_model_to_resend_declined_fields(self):
+        summary = summarize_eligibility_inputs(
+            {"state": "ca", "age": 66, "assets_total": "unknown"}
+        )
+        text = self.tool._build_parsed_summary(summary)
+        self.assertIn("assets_total", text)
+        self.assertIn('"unknown"', text)
+
+    def test_resending_the_unknown_marker_keeps_the_question_suppressed(self):
+        first = dict(
+            state="ca", age=66, married=False, household_size=1,
+            monthly_income=900, children_in_household=0, pregnant=False,
+            receiving_ssdi=False, on_medicare=False, years_worked=40,
+            assets_total="unknown",
+        )
+        # What the echo tells the model to send back, plus the declined marker
+        # the echo now names separately.
+        summary = summarize_eligibility_inputs(first)
+        second = dict(summary["recorded"])
+        for field in summary["declined"]:
+            second[field] = "unknown"
+
+        *_, missing, _ = is_eligible(**second)
+        self.assertEqual(missing, [])
+
+
+class TestMedicaidIndeterminateWithQuestions(TestCase):
+    """An unscorable result's next steps are actionable before the interview ends."""
+
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+        # An unscorable result that still has an outstanding question -- the
+        # territory case, where Medicare may yet resolve.
+        self.indeterminate_info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Contact your territory's Medicaid agency."],
+            missing=["How old are you?"],
+            determination_made=False,
+        )
+
+    def test_next_steps_are_shared_while_questions_remain(self):
+        self.assertIn(
+            "Contact your territory's Medicaid agency.", self.indeterminate_info
+        )
+
+    def test_no_ineligibility_claim_while_questions_remain(self):
+        self.assertNotIn("may not be eligible", self.indeterminate_info)
+
+    def test_a_scored_result_does_not_get_the_cannot_estimate_banner(self):
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=True,
+            medicare=False,
+            alternatives=["Visit your state Medicaid page."],
+            missing=["How old are you?"],
+            determination_made=True,
+        )
+        self.assertNotIn("canNOT produce a Medicaid estimate", info)
