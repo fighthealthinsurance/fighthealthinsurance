@@ -455,6 +455,33 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         assert is_checked is True, "External models toggle should default to on"
         print("✓ External models toggle defaults to on in consent form")
 
+    def test_external_models_unrecognized_stored_value_is_not_opt_in(self):
+        """An unparseable stored preference must not read as consent to share.
+
+        Nothing in the app writes anything but "true"/"false" today, so this
+        pins the fail-closed direction for a third-party data-sharing control:
+        a value we cannot interpret is not an opt-in.
+        """
+        self.open(f"{self.live_server_url}/chat-consent")
+        self.execute_script(
+            "localStorage.setItem('fhi_use_external_models', 'not-a-boolean');"
+        )
+
+        # Reload so user_info_storage.ts re-runs against the stray value
+        self.open(f"{self.live_server_url}/chat-consent")
+
+        is_checked = self.execute_script("""
+            const toggle = document.getElementById('use_external_models');
+            return toggle ? toggle.checked : null;
+        """)
+
+        assert (
+            is_checked is False
+        ), f"Unrecognized stored value should not opt in, got checked={is_checked}"
+
+        # Clean up so we don't leak the stray value into sibling tests
+        self.execute_script("localStorage.removeItem('fhi_use_external_models');")
+
     def test_external_models_toggled_off_is_respected(self):
         """Test that explicitly disabling external models is saved and respected."""
         # Clear any prior preference so we start from the default-on state
