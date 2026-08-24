@@ -49,7 +49,7 @@ from fighthealthinsurance.ml.model_identity import (
 )
 from fighthealthinsurance.proconnector import (
     PROCONNECTOR_INTRO_SUBJECT,
-    build_base_intro_letter,
+    build_intro_letter_blocks,
     build_search_links,
     claim_email_for_send,
     cofactor_cc_problem,
@@ -1416,7 +1416,13 @@ class ProConnectorLetterView(View):
         context = {
             "title": "Pro Connector Letter",
             "pro": pro,
-            "letter_body": build_base_intro_letter(pro),
+            # The letter's blocks, laid out by the template so the printed page
+            # paginates like a letter -- see build_intro_letter_blocks.
+            "letter": build_intro_letter_blocks(pro),
+            # Stripped here because a whitespace-only address is an absent one:
+            # it must reach the guide lines, the way the address lookup on the
+            # processing page already treats it (see build_address_search_link).
+            "recipient_address": (pro.address or "").strip(),
             "contact_email": get_professional_cc_email(),
             "today": timezone.now().date(),
         }
