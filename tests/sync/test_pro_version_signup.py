@@ -31,9 +31,18 @@ class ProVersionSignupSuccessTest(TestCase):
         self.response = self.client.post(reverse("pro_version"), self.PAYLOAD)
         self.pro = InterestedProfessional.objects.get(email=self.PAYLOAD["email"])
 
-    def _team_email(self):
-        subject = f"New pro version signup #{self.pro.id}"
+    def _team_email(self, pro=None):
+        subject = f"New pro version signup #{(pro or self.pro).id}"
         return next(m for m in mail.outbox if m.subject == subject)
+
+    @staticmethod
+    def _team_email_html(email):
+        """The HTML alternative of a team notification email."""
+        return next(
+            content
+            for content, mimetype in email.alternatives
+            if mimetype == "text/html"
+        )
 
     def test_redirects_to_thankyou_page(self):
         self.assertRedirects(self.response, reverse("pro_version_thankyou"))
@@ -79,6 +88,28 @@ class ProVersionSignupSuccessTest(TestCase):
                 for m in mail.outbox
             )
         )
+
+    def test_team_notification_includes_quick_intro_link(self):
+        # The body carries the one-press Cofactor-intro link so the team can
+        # do the introduction straight from the notification.
+        intro_path = reverse("proconnector_quick_intro", args=[self.pro.id])
+        self.assertIn(intro_path, self._team_email().body)
+
+    def test_team_notification_html_renders_intro_button(self):
+        # The HTML alternative renders the same link as a press-able button.
+        html = self._team_email_html(self._team_email())
+        self.assertIn(reverse("proconnector_quick_intro", args=[self.pro.id]), html)
+        self.assertIn("Send the Cofactor AI introduction", html)
+
+    def test_team_notification_html_escapes_submitted_fields(self):
+        # Every field comes from the public form; markup must arrive escaped.
+        payload = dict(self.PAYLOAD, email="mallory@clinic.example")
+        payload["name"] = 'Jane <img src=x onerror="alert(1)">'
+        self.client.post(reverse("pro_version"), payload)
+        pro = InterestedProfessional.objects.get(email="mallory@clinic.example")
+        html = self._team_email_html(self._team_email(pro=pro))
+        self.assertNotIn("<img src=x", html)
+        self.assertIn("Jane &lt;img src=x", html)
 
 
 class ProVersionSignupInvalidSubmissionTest(TestCase):

@@ -42,6 +42,7 @@ from django.core.mail import EmailMultiAlternatives, send_mail
 from django.db.models import ForeignKey, Model
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.html import format_html, format_html_join
 
 if TYPE_CHECKING:
     from fighthealthinsurance.models import InterestedProfessional
@@ -556,15 +557,18 @@ def send_fallback_email(
         pass
 
 
-def notify_professional_signup(subject: str, body: str) -> None:
+def notify_professional_signup(
+    subject: str, body: str, html_body: Optional[str] = None
+) -> None:
     """Send a best-effort team notification about a new professional signup.
 
     Shared by the web /pro_version interest form and the Fight Paperwork REST
     professional sign-up endpoint. Recipients default to
     support42@fighthealthinsurance.com and professional@fighthealthinsurance.com
-    and can be extended via settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS. A
-    mail failure is logged and swallowed so it never breaks the signup it is
-    reporting on.
+    and can be extended via settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS.
+    ``html_body``, when given, is attached as an HTML alternative (used for the
+    one-press Cofactor-intro button). A mail failure is logged and swallowed so
+    it never breaks the signup it is reporting on.
     """
     recipients = list(
         getattr(
@@ -579,7 +583,13 @@ def notify_professional_signup(subject: str, body: str) -> None:
     if not recipients:
         return
     try:
-        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, recipients)
+        send_mail(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            recipients,
+            html_message=html_body,
+        )
     except Exception:
         # Don't interpolate `subject`/`body`: for REST signups the subject
         # embeds the professional's email and the body is full of PII. The
@@ -622,6 +632,51 @@ def should_notify_returning_lead(email: str) -> bool:
         return True
 
 
+def _interested_professional_notification_html(
+    *,
+    source: str,
+    rows: Sequence[Tuple[str, str]],
+    intro_url: str,
+    admin_url: str,
+) -> str:
+    """HTML alternative for the professional-interest team notification.
+
+    Same information as the plain-text body plus a one-press button opening
+    the staff quick-intro page for this signup, where a single press sends the
+    Cofactor AI introduction (the page sits behind the staff login and the
+    send itself is a POST there, so a mail scanner prefetching the link can
+    never trigger it). Every row value comes from the public, unauthenticated
+    signup form, so everything is interpolated via format_html and escaped.
+    """
+    rows_html = format_html_join(
+        "",
+        '<tr><th align="left" style="padding: 4px 12px 4px 0; color: #555555; '
+        'vertical-align: top; white-space: nowrap;">{}</th>'
+        '<td style="padding: 4px 0;">{}</td></tr>',
+        rows,
+    )
+    return format_html(
+        '<div style="font-family: Arial, sans-serif; font-size: 14px; color: #222222;">'
+        "<p>A new professional signed up via {source}.</p>"
+        '<table style="border-collapse: collapse;">{rows}</table>'
+        '<p style="margin: 18px 0;">'
+        '<a href="{intro_url}" style="background-color: #28a745; color: #ffffff; '
+        "padding: 10px 18px; border-radius: 4px; text-decoration: none; "
+        'font-weight: bold; display: inline-block;">'
+        "Send the Cofactor AI introduction</a></p>"
+        '<p style="color: #555555; font-size: 12px;">'
+        "The button opens the staff quick-intro page (staff login required) "
+        "with a ready-to-send draft; the introduction only goes out after you "
+        "confirm there.</p>"
+        '<p><a href="{admin_url}">Open in Django admin</a></p>'
+        "</div>",
+        source=source,
+        rows=rows_html,
+        intro_url=intro_url,
+        admin_url=admin_url,
+    )
+
+
 def notify_interested_professional(
     interested_pro: "InterestedProfessional", *, source: str, subject: str
 ) -> None:
@@ -629,7 +684,8 @@ def notify_interested_professional(
 
     Shared by the web /pro_version interest form and the Fight Paperwork REST
     interested-professional endpoint so both produce an identical inbox format
-    (the same field layout and admin deep-link). `source` names where the lead
+    (the same field layout, admin deep-link, and one-press Cofactor-intro
+    button — see ProConnectorQuickIntroView). `source` names where the lead
     came from (e.g. "/pro_version"); `subject` is the email subject. Best-effort:
     failures building (e.g. a missing admin URL) or sending the notification are
     logged, not raised, so they never fail the already-persisted lead.
@@ -640,17 +696,29 @@ def notify_interested_professional(
             args=[interested_pro.id],
         )
         admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
+        intro_path = reverse("proconnector_quick_intro", args=[interested_pro.id])
+        intro_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{intro_path}"
+        rows = [
+            ("Name", interested_pro.name or "N/A"),
+            ("Email", interested_pro.email),
+            (
+                "Job title / provider type",
+                interested_pro.job_title_or_provider_type or "N/A",
+            ),
+            ("Business", interested_pro.business_name or "N/A"),
+            ("Phone", interested_pro.phone_number or "N/A"),
+            ("Address", interested_pro.address or "N/A"),
+            ("Most common denial", interested_pro.most_common_denial or "N/A"),
+            ("Comments", interested_pro.comments or "N/A"),
+        ]
         body = (
             f"A new professional signed up via {source}.\n\n"
-            f"Name: {interested_pro.name or 'N/A'}\n"
-            f"Email: {interested_pro.email}\n"
-            f"Job title / provider type: {interested_pro.job_title_or_provider_type or 'N/A'}\n"
-            f"Business: {interested_pro.business_name or 'N/A'}\n"
-            f"Phone: {interested_pro.phone_number or 'N/A'}\n"
-            f"Address: {interested_pro.address or 'N/A'}\n"
-            f"Most common denial: {interested_pro.most_common_denial or 'N/A'}\n"
-            f"Comments: {interested_pro.comments or 'N/A'}\n"
-            f"Admin: {admin_url}\n"
+            + "".join(f"{label}: {value}\n" for label, value in rows)
+            + f"Admin: {admin_url}\n"
+            + f"Send the Cofactor AI introduction (staff login): {intro_url}\n"
+        )
+        html_body = _interested_professional_notification_html(
+            source=source, rows=rows, intro_url=intro_url, admin_url=admin_url
         )
     except Exception:
         logger.opt(exception=True).error(
@@ -658,7 +726,7 @@ def notify_interested_professional(
             f"(interested_pro_id={interested_pro.id})"
         )
         return
-    notify_professional_signup(subject, body)
+    notify_professional_signup(subject, body, html_body=html_body)
 
 
 def get_unsubscribe_url(email: str) -> Optional[str]:

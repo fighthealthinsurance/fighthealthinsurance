@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title|default:"Quick Cofactor AI Introduction" }}</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 10px;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    table.info {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    table.info th, table.info td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid #eee;
+      vertical-align: top;
+    }
+    table.info th {
+      width: 230px;
+      color: #555;
+      white-space: nowrap;
+    }
+    .muted { color: #999; font-style: italic; }
+    label { display: block; font-weight: bold; margin-top: 14px; color: #444; }
+    input[type=text], textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    textarea { min-height: 360px; white-space: pre-wrap; }
+    .disclosure {
+      background: #fff8e1;
+      border: 1px solid #ffe0a3;
+      border-radius: 4px;
+      padding: 10px 14px;
+      margin: 14px 0;
+      font-size: 0.92em;
+      color: #6b4e00;
+    }
+    .blocked {
+      background: #e2e3e5;
+      border: 1px solid #c4c8cb;
+      border-radius: 4px;
+      padding: 12px 16px;
+      color: #41464b;
+    }
+    .actions { margin-top: 18px; display: flex; gap: 12px; }
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 4px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button.send { background-color: #28a745; color: white; }
+    button.send:hover { background-color: #218838; }
+    button.queue { background-color: #007bff; color: white; }
+    button.queue:hover { background-color: #0069d9; }
+    .send-window {
+      background: #e7f3ff;
+      border: 1px solid #b6d8ff;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 14px 0 0;
+      font-size: 0.9em;
+      color: #0b4f8a;
+    }
+    .error {
+      background: #f8d7da;
+      border: 1px solid #f5c2c7;
+      color: #842029;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .notice {
+      background: #d1e7dd;
+      border: 1px solid #a3cfbb;
+      color: #0a3622;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .hint {
+      font-size: 0.88em;
+      color: #555;
+      margin: 6px 0 0;
+    }
+    .sent-body {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 12px 14px;
+      white-space: pre-wrap;
+      font-size: 14px;
+    }
+    .readonly { color: #333; }
+    .back { display: inline-block; margin-top: 10px; margin-right: 16px; color: #007bff; }
+  </style>
+</head>
+<body>
+  <h1>{{ title|default:"Quick Cofactor AI Introduction" }}</h1>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+  {% if notice %}
+    <div class="notice">✅ {{ notice }}</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Signup #{{ pro.id }}</h2>
+    <table class="info">
+      <tr><th>Name</th><td>{% if pro.name %}{{ pro.name }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Email</th><td>{{ pro.email }}</td></tr>
+      <tr><th>Organization</th><td>{% if pro.business_name %}{{ pro.business_name }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Role / provider type</th><td>{% if pro.job_title_or_provider_type %}{{ pro.job_title_or_provider_type }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Most common denial / stated needs</th><td>{% if pro.most_common_denial %}{{ pro.most_common_denial }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Notes / comments</th><td>{% if pro.comments %}{{ pro.comments }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Phone number</th><td>{% if pro.phone_number %}{{ pro.phone_number }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Signup / created date</th><td>{{ pro.signup_date }}</td></tr>
+    </table>
+  </div>
+
+  {% if block_reason %}
+    <div class="card">
+      <div class="blocked">ℹ️ {{ block_reason }}</div>
+      {% if pro.proconnector_email_body %}
+        <label>Introduction email on record</label>
+        <div class="sent-body">{{ pro.proconnector_email_body }}</div>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="card">
+      <h2>Introduction email</h2>
+      <div class="disclosure">
+        This draft was generated automatically &mdash; press the button below
+        to send it as-is, or tweak it first. The email includes a
+        plain-language disclosure that FHI may receive compensation under our
+        sourcing agreement if the recipient chooses to work with Cofactor AI
+        &mdash; please keep that disclosure in the email. Cofactor AI is
+        described as a sourcing agreement, not a partnership.
+      </div>
+
+      <form method="post">
+        {% csrf_token %}
+
+        <label>To</label>
+        <input type="text" class="readonly" value="{{ pro.email }}" readonly>
+
+        <label>CC</label>
+        <input type="text" class="readonly" value="{{ cc_emails|join:', ' }}" readonly>
+        {% if cofactor_cc_problem %}
+          <p class="error">⚠️ {{ cofactor_cc_problem }}</p>
+        {% endif %}
+
+        <label>Subject</label>
+        <input type="text" class="readonly" value="{{ subject }}" readonly>
+
+        <label for="email_body">Email body (editable)</label>
+        <textarea id="email_body" name="email_body">{{ email_body }}</textarea>
+
+        {% if send_window_hint %}
+          <p class="send-window">⏰ {{ send_window_hint }}</p>
+        {% endif %}
+
+        <div class="actions">
+          <button type="submit" class="send" name="action" value="send">Send intro email now</button>
+          <button type="submit" class="queue" name="action" value="queue">Send during business hours</button>
+        </div>
+        <p class="hint">
+          To research the professional first, edit further, send a test copy,
+          or skip the record, use the full
+          <a href="{% url 'proconnector_process' %}">Pro Connector workflow</a>.
+        </p>
+      </form>
+    </div>
+  {% endif %}
+
+  <a class="back" href="{% url 'proconnector_process' %}">&larr; Pro Connector queue</a>
+  <a class="back" href="{% url 'staff_dashboard' %}">&larr; Staff dashboard</a>
+
+  <script>
+    // Guard against a double-click / double-submit sending the intro twice.
+    // We only block a second submit of the same form; the first submit (with
+    // the clicked button's action) goes through normally.
+    (function () {
+      var form = document.querySelector("form");
+      if (!form) return;
+      var submitted = false;
+      form.addEventListener("submit", function (e) {
+        if (submitted) {
+          e.preventDefault();
+          return;
+        }
+        submitted = true;
+      });
+    })();
+  </script>
+</body>
+</html>

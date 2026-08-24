@@ -66,6 +66,7 @@ from fighthealthinsurance.proconnector import (
     release_email_claim,
     non_spam_interested_professionals,
     queue_proconnector_intro_email,
+    quick_intro_block_reason,
     subject_wording_problem,
     remaining_interested_professionals_count,
     send_proconnector_intro_email,
@@ -1091,6 +1092,23 @@ class ModelBackendStatusView(generic.TemplateView):
         return last
 
 
+def _intro_action_dispatch() -> (
+    Dict[str, Tuple[Callable[..., Any], Callable[[str, str], int], str]]
+):
+    """Send/queue dispatch shared by the pro-connector intro flows.
+
+    Maps each accepted action to (deliver-now-or-enqueue helper, matching
+    per-email mark helper, past-tense verb for logs/notices). One table so the
+    full processing workflow and the quick-intro view can never disagree about
+    what an action does. Built at call time, not import time, so tests (and
+    anything else) patching this module's helper names still take effect.
+    """
+    return {
+        "send": (send_proconnector_intro_email, mark_email_sent, "sent"),
+        "queue": (queue_proconnector_intro_email, mark_email_queued, "queued"),
+    }
+
+
 class ProConnectorProcessView(View):
     """Staff workflow to introduce interested professionals to Cofactor AI.
 
@@ -1214,17 +1232,12 @@ class ProConnectorProcessView(View):
 
         # "send" delivers now; "queue" defers to the recipient's likely business
         # hours. They share validation and edit-preserving error handling.
-        if action in ("send", "queue"):
+        dispatch = _intro_action_dispatch()
+        if action in dispatch:
             validated = self._validated_intro(request, pro)
             if isinstance(validated, HttpResponse):
                 return validated
             body, subject, skip_reason = validated
-            dispatch: Dict[
-                str, Tuple[Callable[..., Any], Callable[[str, str], int], str]
-            ] = {
-                "send": (send_proconnector_intro_email, mark_email_sent, "sent"),
-                "queue": (queue_proconnector_intro_email, mark_email_queued, "queued"),
-            }
             deliver, mark, verb = dispatch[action]
             failed_msg = f"Failed to {action} the email."
             # Atomically claim the address before sending. Two staff sessions are
@@ -1299,15 +1312,7 @@ class ProConnectorProcessView(View):
             request.POST.get("subject") or ""
         ).strip() or PROCONNECTOR_INTRO_SUBJECT
         skip_reason = (request.POST.get("skip_reason") or "").strip()
-        error = self._intro_form_problem(body, subject)
-        if error is None and not is_sendable_email(pro.email):
-            error = f"{pro.email} is not a sendable address; cannot send."
-        # A misconfigured Cofactor CC makes the send helpers raise. Catch it here
-        # -- before the record is claimed -- so staff get the actual reason instead
-        # of a generic failure, and the record stays in the queue for a retry once
-        # the setting is fixed.
-        if error is None:
-            error = cofactor_cc_problem()
+        error = _intro_send_problem(pro, body, subject)
         if error:
             return self._render_record(
                 request,
@@ -1392,6 +1397,29 @@ class ProConnectorProcessView(View):
         )
 
 
+def _intro_send_problem(
+    pro: InterestedProfessional, body: str, subject: str
+) -> Optional[str]:
+    """First problem blocking a *real* send/queue of the intro to ``pro``, or
+    ``None``.
+
+    The full pre-claim validation chain shared by every real-send path (the
+    processing workflow's ``_validated_intro`` and the quick-intro view), so a
+    rule added for one can never silently miss the other: the editable-field
+    rules (:meth:`ProConnectorProcessView._intro_form_problem`), then the
+    recipient being sendable, then the Cofactor CC configuration -- the latter
+    because a misconfigured CC makes the send helpers raise, and checking
+    before the record is claimed means staff see the actual reason and the
+    record stays in the queue for a retry once the setting is fixed.
+    """
+    problem = ProConnectorProcessView._intro_form_problem(body, subject)
+    if problem is not None:
+        return problem
+    if not is_sendable_email(pro.email):
+        return f"{pro.email} is not a sendable address; cannot send."
+    return cofactor_cc_problem()
+
+
 class ProConnectorLetterView(View):
     """Print-friendly physical intro letter for an interested professional.
 
@@ -1427,6 +1455,159 @@ class ProConnectorLetterView(View):
             "today": timezone.now().date(),
         }
         return render(request, self.template_name, context)
+
+
+class ProConnectorQuickIntroView(View):
+    """One-press Cofactor AI introduction for a specific interested professional.
+
+    Linked (as a button) from the team notification email each new
+    interested-professional signup sends: staff press it, land here behind the
+    staff login, and confirm with a single press -- the intro email is drafted
+    automatically (AI-personalized, falling back to the approved base email)
+    and sent and recorded exactly like a send from the full processing
+    workflow (:class:`ProConnectorProcessView`). The GET only previews the
+    draft; the send itself is a POST, so mail scanners prefetching the email's
+    links can never trigger an introduction.
+
+    The same eligibility rules as the processing queue apply (see
+    :func:`quick_intro_block_reason`): an already-sent/queued/skipped record,
+    an unsubscribed professional, or a filtered test/spam signup gets a status
+    page instead of a send button, so the email link can't bypass the queue.
+    """
+
+    template_name = "proconnector_quick_intro.html"
+
+    def _render(
+        self,
+        request,
+        pro: InterestedProfessional,
+        *,
+        draft: Optional[str] = None,
+        error: Optional[str] = None,
+        notice: Optional[str] = None,
+        status: int = 200,
+    ) -> HttpResponse:
+        """Render the quick-intro page for ``pro``.
+
+        The AI draft is only generated when the record is actually sendable
+        (no block reason) and no ``draft`` was supplied -- re-renders after an
+        error preserve the posted body, and blocked records (including
+        just-sent ones) show their stored state instead of paying for a fresh
+        draft.
+        """
+        block_reason = quick_intro_block_reason(pro)
+        if draft is None and block_reason is None:
+            draft = generate_intro_email(pro)
+        context = {
+            "title": "Quick Cofactor AI Introduction",
+            "pro": pro,
+            "block_reason": block_reason,
+            "email_body": draft,
+            "subject": PROCONNECTOR_INTRO_SUBJECT,
+            "cc_emails": default_intro_cc_recipients(),
+            "cofactor_cc_problem": cofactor_cc_problem(),
+            "error": error,
+            "notice": notice,
+            "send_window_hint": describe_send_window(pro.phone_number),
+        }
+        return render(request, self.template_name, context, status=status)
+
+    def get(self, request, pro_id: int) -> HttpResponse:
+        pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+        if pro is None:
+            # Bad / stale id (deleted record, hand-edited URL). Send staff to
+            # the processing queue rather than 404 on a link from an email.
+            return redirect("proconnector_process")
+        return self._render(request, pro)
+
+    def post(self, request, pro_id: int) -> HttpResponse:
+        pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+        if pro is None:
+            return redirect("proconnector_process")
+        action = request.POST.get("action")
+        body = (request.POST.get("email_body") or "").strip()
+        dispatch = _intro_action_dispatch()
+        if action not in dispatch:
+            # No default action: a POST that lost the submit button's value (a
+            # scripted form.submit(), a mangled resubmission) must fail safe,
+            # never fall through to an irreversible send.
+            return self._render(
+                request, pro, draft=body, error="Unknown action.", status=400
+            )
+        if quick_intro_block_reason(pro) is not None:
+            # Already handled (double press, another session, an unsubscribe)
+            # or filtered; the render shows the reason instead of a button.
+            # claim_email_for_send below re-checks atomically -- this is UX.
+            return self._render(request, pro)
+        # The previewed draft round-trips through the (editable) form, so what
+        # was shown (or hand-edited) is exactly what is sent. An empty body is
+        # rejected like the full workflow's -- never auto-drafted -- so content
+        # nobody reviewed can never go out.
+        subject = PROCONNECTOR_INTRO_SUBJECT
+        error = _intro_send_problem(pro, body, subject)
+        if error:
+            return self._render(request, pro, draft=body, error=error, status=400)
+
+        deliver, mark, verb = dispatch[action]
+        # Atomically claim the address (shared with the processing workflow) so
+        # a double press here, or a concurrent send from the queue view, can
+        # never double-introduce; losing the claim means someone else just
+        # handled it.
+        if claim_email_for_send(pro.email) == 0:
+            # Re-fetch for the freshest state; the notice tells staff this
+            # press did nothing even in the narrow race where the competing
+            # send failed and released the claim (block reason gone again).
+            pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+            if pro is None:
+                return redirect("proconnector_process")
+            return self._render(
+                request,
+                pro,
+                draft=body,
+                notice=(
+                    "This press made no changes -- the record was just "
+                    "handled in another session. Its current state is shown "
+                    "below."
+                ),
+            )
+        try:
+            deliver(pro, subject=subject, body=body)
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Failed to {action} quick pro-connector intro to "
+                f"{mask_email_for_logging(pro.email)}: {e}"
+            )
+            release_email_claim(pro.email)
+            return self._render(
+                request,
+                pro,
+                draft=body,
+                error=(
+                    f"Failed to {action} the email. The error has been "
+                    "logged; please try again."
+                ),
+                status=500,
+            )
+        mark(pro.email, body)
+        logger.info(
+            f"Staff user {request.user.username} {verb} pro-connector intro to "
+            f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)}) "
+            "via the quick-intro flow"
+        )
+        # Re-fetch rather than refresh_from_db(): a concurrent delete of the
+        # record must not 500 after an email that already went out.
+        pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+        if pro is None:
+            return redirect("proconnector_process")
+        notice = (
+            f"Introduction sent to {pro.email}."
+            if action == "send"
+            else (
+                f"Introduction queued to send to {pro.email} during their "
+                "likely business hours."
+            )
+        )
+        return self._render(request, pro, notice=notice)
 
 
 class _CSVEcho:
