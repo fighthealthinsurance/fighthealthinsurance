@@ -28,6 +28,7 @@ from fighthealthinsurance.chat.tools import (
 from fighthealthinsurance.medicaid_api import (
     BASE_ELIGIBILITY_YEAR,
     DEFAULT_TARGET_YEAR,
+    YearVerdict,
     current_eligibility_year,
     is_eligible,
     summarize_eligibility_inputs,
@@ -710,7 +711,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=earlier,
-            timeline=[(earlier, True, [])],
+            timeline=[YearVerdict(earlier, True, [])],
         )
 
         self.assertNotIn("work/community-engagement", info)
@@ -741,9 +742,9 @@ class TestMedicaidTargetYear(TestCase):
             missing=[],
             target_year=current + 3,
             timeline=[
-                (current, True, []),
-                (current + 1, False, []),
-                (current + 3, False, []),
+                YearVerdict(current, True, []),
+                YearVerdict(current + 1, False, []),
+                YearVerdict(current + 3, False, []),
             ],
         )
 
@@ -766,8 +767,8 @@ class TestMedicaidTargetYear(TestCase):
             missing=[],
             target_year=WORK_REQUIREMENT_FIRST_YEAR - 1,
             timeline=[
-                (WORK_REQUIREMENT_FIRST_YEAR - 1, True, []),
-                (WORK_REQUIREMENT_FIRST_YEAR, False, []),
+                YearVerdict(WORK_REQUIREMENT_FIRST_YEAR - 1, True, []),
+                YearVerdict(WORK_REQUIREMENT_FIRST_YEAR, False, []),
             ],
         )
 
@@ -788,8 +789,10 @@ class TestMedicaidTargetYear(TestCase):
             missing=[],
             target_year=current + 1,
             timeline=[
-                (current, True, []),
-                (current + 1, False, ["About how many qualifying hours a month?"]),
+                YearVerdict(current, True, []),
+                YearVerdict(
+                    current + 1, False, ["About how many qualifying hours a month?"]
+                ),
             ],
         )
 
@@ -809,8 +812,79 @@ class TestMedicaidTargetYear(TestCase):
             missing=[],
             target_year=current + 1,
             timeline=[
-                (current, True, []),
-                (current + 1, False, ["About how many qualifying hours a month?"]),
+                YearVerdict(current, True, []),
+                YearVerdict(
+                    current + 1, False, ["About how many qualifying hours a month?"]
+                ),
+            ],
+        )
+
+        self.assertNotIn("CHANGES in", info)
+
+    def test_a_transition_year_shortfall_is_conditional_not_a_denial(self):
+        # The work requirement has reached the states that went early and
+        # nowhere else yet. "May not be eligible" would be a denial for a
+        # rule most states haven't adopted; a plain "could be" would hide
+        # what's coming. The row has to say both.
+        from fighthealthinsurance.medicaid_api import WORK_REQUIREMENT_UNIVERSAL_YEAR
+
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True)
+            ],
+        )
+
+        self.assertIn("could be eligible on income", info)
+        self.assertIn("under 80 qualifying hours", info)
+        self.assertIn("whether their state has already started", info)
+        self.assertIn(f"January 1, {WORK_REQUIREMENT_UNIVERSAL_YEAR}", info)
+        self.assertNotIn("they may not be eligible for medicaid", info)
+
+    def test_a_conditional_row_does_not_swallow_the_work_requirement_note(self):
+        # The shared explanation is attached once, to the first year the rule
+        # bites. A conditional row spells it out itself -- if it consumed the
+        # note on the way past, the year the rule actually bites was left
+        # with no explanation at all.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True),
+                YearVerdict(current + 1, False, []),
+            ],
+        )
+
+        self.assertIn(
+            f"{current + 1}: they may not be eligible for medicaid (once the federal",
+            info,
+        )
+
+    def test_a_conditional_year_does_not_trigger_a_change_callout(self):
+        # A flip announced off a rule that may not have reached them is the
+        # same uncomputed denial in a louder voice.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True),
+                YearVerdict(current + 1, False, []),
             ],
         )
 
@@ -831,7 +905,10 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=current,
-            timeline=[(BASE_ELIGIBILITY_YEAR, True, []), (current, True, [])],
+            timeline=[
+                YearVerdict(BASE_ELIGIBILITY_YEAR, True, []),
+                YearVerdict(current, True, []),
+            ],
         )
 
         self.assertIn(f"current ({current})", info)
@@ -867,7 +944,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, True, []), (2026, False, [])],
+            timeline=[YearVerdict(2025, True, []), YearVerdict(2026, False, [])],
         )
 
         self.assertIn("this CHANGES in 2026", info)
@@ -881,7 +958,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, False, []), (2026, True, [])],
+            timeline=[YearVerdict(2025, False, []), YearVerdict(2026, True, [])],
         )
 
         self.assertIn("IMPROVES in 2026", info)
@@ -894,7 +971,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, True, []), (2026, True, [])],
+            timeline=[YearVerdict(2025, True, []), YearVerdict(2026, True, [])],
         )
 
         self.assertNotIn("CHANGES in", info)
@@ -910,7 +987,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, True, []), (2026, False, [])],
+            timeline=[YearVerdict(2025, True, []), YearVerdict(2026, False, [])],
         )
 
         self.assertIn("an approximation, not a determination", info)

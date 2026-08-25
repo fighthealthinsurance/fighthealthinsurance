@@ -7,7 +7,7 @@ to look up Medicaid information and check eligibility.
 
 import json
 import re
-from typing import Any, Awaitable, Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Optional, Tuple
 
 # Plain asgiref sync_to_async (NOT database_sync_to_async): used below for a
 # non-ORM blocking call, per the repo convention for subprocess/network/file
@@ -18,6 +18,11 @@ from loguru import logger
 
 from .base_tool import BaseTool
 from .patterns import MEDICAID_ELIGIBILITY_REGEX, MEDICAID_INFO_REGEX
+
+if TYPE_CHECKING:
+    # Type-only: medicaid_api pulls in pandas, and the chat tools are
+    # imported on every chat -- the runtime imports stay lazy and local.
+    from fighthealthinsurance.medicaid_api import YearVerdict
 
 
 class MedicaidInfoTool(BaseTool):
@@ -443,7 +448,7 @@ class MedicaidEligibilityTool(BaseTool):
             # told the user to chase 80 hours a month for a rule that isn't
             # in force in the year they asked about.
             years_covered = (
-                ", ".join(str(year) for year, _, _ in timeline)
+                ", ".join(str(row.year) for row in timeline)
                 if timeline
                 else str(target_year)
             )
@@ -599,7 +604,7 @@ class MedicaidEligibilityTool(BaseTool):
         missing: List[str],
         determination_made: bool = True,
         target_year: Optional[int] = None,
-        timeline: Optional[List[Tuple[int, bool, List[str]]]] = None,
+        timeline: Optional[List["YearVerdict"]] = None,
     ) -> str:
         """
         Build the eligibility information text passed back to the LLM.
@@ -621,11 +626,12 @@ class MedicaidEligibilityTool(BaseTool):
                 ``resolve_target_year`` returned for this payload, or the
                 label would name a year we didn't score. Defaults to the
                 checker's own default year.
-            timeline: ``(year, probably_eligible, still_needed)`` rows from
-                ``eligibility_timeline``, ascending. Always rendered in full
-                so a year-over-year change is visible instead of implied. A
-                row with ``still_needed`` is NOT a verdict -- see below.
-                Falls back to the base/target pair when not supplied.
+            timeline: ``YearVerdict`` rows from ``eligibility_timeline``,
+                ascending. Always rendered in full so a year-over-year change
+                is visible instead of implied. A row carrying
+                ``still_needed`` is NOT a verdict, and one flagged
+                ``work_requirement_conditional`` is not a clean pass -- see
+                below. Falls back to the base/target pair when not supplied.
 
         Returns:
             Formatted information text
@@ -636,6 +642,8 @@ class MedicaidEligibilityTool(BaseTool):
             BASE_ELIGIBILITY_YEAR,
             DEFAULT_TARGET_YEAR,
             WORK_REQUIREMENT_FIRST_YEAR,
+            WORK_REQUIREMENT_UNIVERSAL_YEAR,
+            YearVerdict,
             current_eligibility_year,
         )
 
@@ -652,11 +660,11 @@ class MedicaidEligibilityTool(BaseTool):
         # Years to report on, ascending. Falls back to the base/target pair
         # when no timeline was supplied. Deduped so a base-year-only check
         # doesn't print the same verdict twice under two labels.
-        rows: List[Tuple[int, bool, List[str]]] = timeline or [
+        rows: List[YearVerdict] = timeline or [
             row
             for row in (
-                (BASE_ELIGIBILITY_YEAR, eligible_base, []),
-                (target_year, eligible_target, list(missing)),
+                YearVerdict(BASE_ELIGIBILITY_YEAR, eligible_base, []),
+                YearVerdict(target_year, eligible_target, list(missing)),
             )
             # The base row is "the rules before the work requirement". Once
             # that year is behind us nobody is living under it, so it only
@@ -664,11 +672,11 @@ class MedicaidEligibilityTool(BaseTool):
             if row[0] >= current_year or row[0] == target_year
         ]
         seen_years: set = set()
-        deduped_rows: List[Tuple[int, bool, List[str]]] = []
+        deduped_rows: List[YearVerdict] = []
         for row in rows:
-            if row[0] in seen_years:
+            if row.year in seen_years:
                 continue
-            seen_years.add(row[0])
+            seen_years.add(row.year)
             deduped_rows.append(row)
         rows = deduped_rows
 
@@ -682,7 +690,7 @@ class MedicaidEligibilityTool(BaseTool):
         # One shared description of the work-requirement rules so the eligible
         # and not-eligible wordings can't drift apart.
         work_req_note = ""
-        if any(year >= WORK_REQUIREMENT_FIRST_YEAR for year, _, _ in rows):
+        if any(row.year >= WORK_REQUIREMENT_FIRST_YEAR for row in rows):
             work_req_note = (
                 " (once the federal 80-hours-per-month work/community-engagement "
                 "requirement applies to them — states must implement it by "
@@ -690,9 +698,7 @@ class MedicaidEligibilityTool(BaseTool):
             )
         # Any year past the published table's was scored with that table's
         # limits, and we owe the user that fact.
-        scored_beyond_the_table = any(
-            year > BASE_ELIGIBILITY_YEAR for year, _, _ in rows
-        )
+        scored_beyond_the_table = any(row.year > BASE_ELIGIBILITY_YEAR for row in rows)
 
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
@@ -727,9 +733,9 @@ class MedicaidEligibilityTool(BaseTool):
             # that alone. Sharing an early POSITIVE is the point of this
             # branch -- it's the negatives that must never outrun the data.
             later_settled = [
-                year
-                for year, probably_eligible, _ in rows
-                if year > current_year and probably_eligible
+                row.year
+                for row in rows
+                if row.year > current_year and row.probably_eligible
             ]
             if later_settled:
                 # The later years clear too. Held back with the base-year
@@ -780,26 +786,50 @@ class MedicaidEligibilityTool(BaseTool):
             verdict_lines = []
             noted_work_req = False
             unanswered_by_year: List[Tuple[int, List[str]]] = []
-            for year, probably_eligible, still_needed in rows:
-                label = base_label if year == current_year else str(year)
+            for row in rows:
+                label = base_label if row.year == current_year else str(row.year)
                 note = ""
-                if year >= WORK_REQUIREMENT_FIRST_YEAR and not noted_work_req:
+                if (
+                    row.year >= WORK_REQUIREMENT_FIRST_YEAR
+                    and not noted_work_req
+                    # A conditional row spells the requirement out itself, so
+                    # it must not SWALLOW the shared note on the way past --
+                    # doing so left the year the rule actually bites with no
+                    # explanation attached at all.
+                    and not row.work_requirement_conditional
+                ):
                     # Attach the explanation once, to the first year it bites.
                     note = work_req_note
                     noted_work_req = True
-                if still_needed:
+                if row.still_needed:
                     # NOT a verdict. The checker returns False for this year
                     # because it can't score it yet, and printing that as "may
                     # not be eligible" hands the user a denial nobody
                     # computed -- the exact failure the rest of this file
                     # exists to prevent.
-                    unanswered_by_year.append((year, still_needed))
+                    unanswered_by_year.append((row.year, row.still_needed))
                     verdict_lines.append(
                         f"- {label}: NOT ESTABLISHED -- we can't score this "
                         f"year until the questions below are answered{note}"
                     )
                     continue
-                verdict = "could be" if probably_eligible else "may not be"
+                if row.work_requirement_conditional:
+                    # Also not a verdict. They clear the income and category
+                    # tests but fall short on hours in a year the requirement
+                    # has reached some states and not others. "May not be
+                    # eligible" would be a denial for a rule most states
+                    # haven't adopted; a plain "could be" would hide what is
+                    # coming. Say both.
+                    verdict_lines.append(
+                        f"- {label}: they could be eligible on income, BUT they're "
+                        "under 80 qualifying hours a month -- so it depends on "
+                        "whether their state has already started the work "
+                        f"requirement. It applies in every state from January 1, "
+                        f"{WORK_REQUIREMENT_UNIVERSAL_YEAR}. Tell them to check "
+                        "with their state, and do NOT say they're ineligible."
+                    )
+                    continue
+                verdict = "could be" if row.probably_eligible else "may not be"
                 verdict_lines.append(
                     f"- {label}: they {verdict} eligible for medicaid{note}"
                 )
@@ -830,17 +860,20 @@ class MedicaidEligibilityTool(BaseTool):
             # sentences. Someone who probably qualifies today and probably
             # won't once the work requirement applies needs to hear that as
             # the headline, not as a footnote.
-            for (earlier, was_eligible, earlier_needs), (
-                later,
-                now_eligible,
-                later_needs,
-            ) in zip(rows, rows[1:]):
-                if earlier_needs or later_needs:
-                    # One side isn't a verdict, so there is no change to
-                    # announce -- "this CHANGES in 2027" off the back of an
-                    # unanswered question is the denial again, in a louder
-                    # voice.
+            for earlier_row, later_row in zip(rows, rows[1:]):
+                if (
+                    earlier_row.still_needed
+                    or later_row.still_needed
+                    or earlier_row.work_requirement_conditional
+                    or later_row.work_requirement_conditional
+                ):
+                    # One side isn't a settled verdict, so there is no change
+                    # to announce -- "this CHANGES in 2027" off the back of an
+                    # unanswered question, or of a rule that may not have
+                    # reached them, is the denial again in a louder voice.
                     continue
+                earlier, was_eligible = earlier_row.year, earlier_row.probably_eligible
+                later, now_eligible = later_row.year, later_row.probably_eligible
                 if was_eligible == now_eligible:
                     continue
                 if was_eligible:

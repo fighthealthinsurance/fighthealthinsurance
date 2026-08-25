@@ -15,6 +15,7 @@ from fighthealthinsurance.medicaid_api import (
     DEFAULT_TARGET_YEAR,
     MAX_TARGET_YEAR,
     WORK_REQUIREMENT_FIRST_YEAR,
+    WORK_REQUIREMENT_UNIVERSAL_YEAR,
     _normalize_applying_reason,
     current_eligibility_year,
     get_medicaid_info,
@@ -59,22 +60,28 @@ class TestExpansionAdultFlow(SimpleTestCase):
         self.assertTrue(eligible_2025 or len(missing) > 0)
 
     def test_2026_requires_work_hours_question(self):
-        _, eligible_2026, _, _, missing, _ = is_eligible(**_answers())
-        self.assertFalse(eligible_2026)
+        _, eligible_target, _, _, missing, _ = is_eligible(**_answers())
+        self.assertFalse(eligible_target)
         self.assertTrue(any("qualifying hours" in q for q in missing))
 
     def test_2026_eligible_with_sufficient_hours(self):
-        _, eligible_2026, _, _, missing, _ = is_eligible(
-            **_answers(avg_weekly_qualifying_hours_last_3mo=25.0)
+        _, eligible_target, _, _, missing, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                avg_weekly_qualifying_hours_last_3mo=25.0,
+            )
         )
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
         self.assertEqual(missing, [])
 
-    def test_2026_not_eligible_with_insufficient_hours(self):
-        _, eligible_2026, _, alts, _, _ = is_eligible(
-            **_answers(avg_weekly_qualifying_hours_last_3mo=10.0)
+    def test_not_eligible_with_insufficient_hours(self):
+        _, eligible_target, _, alts, _, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                avg_weekly_qualifying_hours_last_3mo=10.0,
+            )
         )
-        self.assertFalse(eligible_2026)
+        self.assertFalse(eligible_target)
         self.assertTrue(any("80" in a for a in alts))
 
     def test_massachusetts_is_an_expansion_state(self):
@@ -116,7 +123,7 @@ class TestExpansionAdultFlow(SimpleTestCase):
         # Review regression: answering yes to SSDI routed 19-64 adults into
         # the asset-tested ABD branch only; SSDI receipt does not bar the
         # MAGI expansion pathway (income-only, up to 138% FPL).
-        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
+        eligible_2025, eligible_target, _, _, _, _ = is_eligible(
             **_answers(
                 state="co",
                 monthly_income=1500.0,
@@ -127,21 +134,27 @@ class TestExpansionAdultFlow(SimpleTestCase):
             )
         )
         self.assertTrue(eligible_2025)
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
 
-    def test_monthly_hours_below_threshold_is_not_eligible_2026(self):
+    def test_monthly_hours_below_threshold_is_not_eligible(self):
         # Review regression: the tool asks for hours per MONTH but only a
         # per-week kwarg existed, inviting a 4x unit error.
-        _, eligible_2026, _, _, _, _ = is_eligible(
-            **_answers(avg_monthly_qualifying_hours_last_3mo=60.0)
+        _, eligible_target, _, _, _, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                avg_monthly_qualifying_hours_last_3mo=60.0,
+            )
         )
-        self.assertFalse(eligible_2026)
+        self.assertFalse(eligible_target)
 
-    def test_monthly_hours_above_threshold_is_eligible_2026(self):
-        _, eligible_2026, _, _, _, _ = is_eligible(
-            **_answers(avg_monthly_qualifying_hours_last_3mo=90.0)
+    def test_monthly_hours_above_threshold_is_eligible(self):
+        _, eligible_target, _, _, _, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                avg_monthly_qualifying_hours_last_3mo=90.0,
+            )
         )
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
 
     def test_weekly_hours_list_agrees_with_weekly_average(self):
         # Review regression: the scalar path used a 13-week quarter while the
@@ -149,10 +162,16 @@ class TestExpansionAdultFlow(SimpleTestCase):
         # got opposite verdicts depending on which kwarg the model filled --
         # and the user with detailed records got the harsher answer.
         _, from_average, _, _, _, _ = is_eligible(
-            **_answers(avg_weekly_qualifying_hours_last_3mo=19.5)
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                avg_weekly_qualifying_hours_last_3mo=19.5,
+            )
         )
         _, from_list, _, _, _, _ = is_eligible(
-            **_answers(qualifying_hours_weekly_last_12=[19.5] * 12)
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                qualifying_hours_weekly_last_12=[19.5] * 12,
+            )
         )
         self.assertEqual(from_average, from_list)
 
@@ -160,33 +179,42 @@ class TestExpansionAdultFlow(SimpleTestCase):
         # Review finding: averaging the whole window and repeating it let
         # [60]*4 + [0]*8 -- two genuinely empty months -- pass a rule that
         # requires each month to reach 80 hours.
-        _, eligible_2026, _, _, _, _ = is_eligible(
-            **_answers(qualifying_hours_weekly_last_12=[60.0] * 4 + [0.0] * 8)
+        _, eligible_target, _, _, _, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                qualifying_hours_weekly_last_12=[60.0] * 4 + [0.0] * 8,
+            )
         )
-        self.assertFalse(eligible_2026)
+        self.assertFalse(eligible_target)
 
     def test_weekly_hours_list_does_not_drop_extra_weeks(self):
         # Bucketing by index silently discarded anything past the 12th entry.
-        _, eligible_2026, _, _, _, _ = is_eligible(
-            **_answers(qualifying_hours_weekly_last_12=[0.0] * 4 + [10.0] * 12)
+        _, eligible_target, _, _, _, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                qualifying_hours_weekly_last_12=[0.0] * 4 + [10.0] * 12,
+            )
         )
-        self.assertFalse(eligible_2026)
+        self.assertFalse(eligible_target)
 
     def test_weekly_hours_use_thirteen_week_quarter(self):
         # Review regression: 4-weeks-per-month undercounted real months by
         # ~8%. 19 hrs/week is ~82.3 hrs per calendar month, which meets 80.
-        _, eligible_2026, _, _, _, _ = is_eligible(
-            **_answers(avg_weekly_qualifying_hours_last_3mo=19.0)
+        _, eligible_target, _, _, _, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                avg_weekly_qualifying_hours_last_3mo=19.0,
+            )
         )
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
 
     def test_esrd_patient_exempt_from_work_requirement(self):
         # Review regression: ESRD/ALS (medically frail) were subjected to the
         # 2026 work-hours demand.
-        _, eligible_2026, _, _, missing, _ = is_eligible(
+        _, eligible_target, _, _, missing, _ = is_eligible(
             **_answers(esrd=True, on_medicare=False, assets_total=500.0)
         )
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
         self.assertFalse(any("hours" in q for q in missing))
 
 
@@ -256,10 +284,10 @@ class TestQuestionFlow(SimpleTestCase):
     def test_string_false_work_exemption_is_not_treated_as_exempt(self):
         # Review regression: work_req_exempt_2026="false" was truthy and
         # skipped the work-hours questions entirely.
-        _, eligible_2026, _, _, missing, _ = is_eligible(
+        _, eligible_target, _, _, missing, _ = is_eligible(
             **_answers(work_req_exempt_2026="false")
         )
-        self.assertFalse(eligible_2026)
+        self.assertFalse(eligible_target)
         self.assertTrue(any("hours" in q for q in missing))
 
     def test_home_equity_question_asked_only_once(self):
@@ -578,7 +606,7 @@ class TestMedicarePathways(SimpleTestCase):
         # Review regression: receiving_ssdi=False silently discarded
         # disabled=True, dropping the disability pathway and its work
         # exemption.
-        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
+        eligible_2025, eligible_target, _, _, _, _ = is_eligible(
             **_answers(
                 state="tx",
                 monthly_income=800.0,
@@ -590,7 +618,7 @@ class TestMedicarePathways(SimpleTestCase):
             )
         )
         self.assertTrue(eligible_2025)
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
 
 
 class TestLongTermCareFlow(SimpleTestCase):
@@ -619,17 +647,17 @@ class TestLongTermCareFlow(SimpleTestCase):
     def test_eligible_ltc_applicant_is_exempt_from_2026_work_overlay(self):
         # Split from the asset test: 2026 exemption is a distinct rule
         # (LTC applicants are medically frail, never asked for work hours).
-        _, eligible_2026, _, _, missing, _ = is_eligible(**self._ltc_answers())
-        self.assertTrue(eligible_2026)
+        _, eligible_target, _, _, missing, _ = is_eligible(**self._ltc_answers())
+        self.assertTrue(eligible_target)
         self.assertFalse(any("hours" in q for q in missing))
 
     def test_under_65_ltc_applicant_not_asked_for_work_hours(self):
         # Review regression: a 55-year-old permanent nursing-home resident
         # was subjected to the 80-hours-per-month work requirement.
-        _, eligible_2026, _, _, missing, _ = is_eligible(
+        _, eligible_target, _, _, missing, _ = is_eligible(
             **self._ltc_answers(age=55, on_medicare=False)
         )
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
         self.assertFalse(any("hours" in q for q in missing))
 
     def test_ltc_income_over_the_cap_fails_both_years(self):
@@ -658,20 +686,20 @@ class TestLongTermCareFlow(SimpleTestCase):
     def test_child_ltc_applicant_keeps_2026_exemption(self):
         # Review regression: the overlay's LTC bypass keyed on applying_reason,
         # but children are matched earlier in the category chain, so the LTC
-        # branch never ran and eligible_2026 kept its False initializer --
+        # branch never ran and eligible_target kept its False initializer --
         # telling a 10-year-old in a nursing home they may lose coverage in
         # 2026 for not working 80 hours a month, with no question left.
-        _, eligible_2026, _, _, missing, _ = is_eligible(
+        _, eligible_target, _, _, missing, _ = is_eligible(
             **self._ltc_answers(age=10, on_medicare=False, children_in_household=1)
         )
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
         self.assertEqual(missing, [])
 
     def test_pregnant_ltc_applicant_keeps_2026_exemption(self):
-        _, eligible_2026, _, _, _, _ = is_eligible(
+        _, eligible_target, _, _, _, _ = is_eligible(
             **self._ltc_answers(age=30, pregnant=True, on_medicare=False)
         )
-        self.assertTrue(eligible_2026)
+        self.assertTrue(eligible_target)
 
     def test_living_situation_does_not_block_the_determination(self):
         # It gated the whole LTC verdict but nothing ever read it, costing
@@ -703,7 +731,7 @@ class TestAbdPathway(SimpleTestCase):
         # Review finding: medically-needy is a spend-down PATHWAY, not an
         # income waiver -- treating it as one reported a $120k/yr earner in
         # New York as "probably eligible" in both years.
-        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
+        eligible_2025, eligible_target, _, _, _, _ = is_eligible(
             **_answers(
                 state="ny",
                 age=70,
@@ -713,7 +741,7 @@ class TestAbdPathway(SimpleTestCase):
             )
         )
         self.assertFalse(eligible_2025)
-        self.assertFalse(eligible_2026)
+        self.assertFalse(eligible_target)
 
     def test_medically_needy_state_still_suggests_spend_down(self):
         _, _, _, alts, _, _ = is_eligible(
@@ -1259,14 +1287,18 @@ class TestTargetYear(SimpleTestCase):
         # as that year is still ahead of them.
         current = current_eligibility_year()
         far = current + 3
+        milestones = sorted(
+            {
+                year
+                for year in (
+                    WORK_REQUIREMENT_FIRST_YEAR,
+                    WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                )
+                if year > current
+            }
+        )
 
-        if WORK_REQUIREMENT_FIRST_YEAR > current:
-            self.assertEqual(
-                timeline_years(far), [current, WORK_REQUIREMENT_FIRST_YEAR, far]
-            )
-        else:
-            # The transition has arrived; there is no future change to flag.
-            self.assertEqual(timeline_years(far), [current, far])
+        self.assertEqual(timeline_years(far), sorted({current, *milestones, far}))
 
     def test_the_timeline_is_never_a_single_year(self):
         # "Will this still be true next year?" is the question people are
@@ -1287,15 +1319,15 @@ class TestTargetYear(SimpleTestCase):
         timeline = eligibility_timeline(**_answers(target_year=2030))
 
         overlay_rows = [
-            row for row in timeline if row[0] >= WORK_REQUIREMENT_FIRST_YEAR
+            row for row in timeline if row.year >= WORK_REQUIREMENT_FIRST_YEAR
         ]
         self.assertTrue(overlay_rows)
-        for year, probably_eligible, still_needed in overlay_rows:
-            with self.subTest(year=year):
-                self.assertFalse(probably_eligible)
+        for row in overlay_rows:
+            with self.subTest(year=row.year):
+                self.assertFalse(row.probably_eligible)
                 self.assertTrue(
-                    any("qualifying hours" in q for q in still_needed),
-                    f"{year} reported a verdict it could not have computed",
+                    any("qualifying hours" in q for q in row.still_needed),
+                    f"{row.year} reported a verdict it could not have computed",
                 )
 
     def test_supplying_the_hours_settles_those_years(self):
@@ -1303,10 +1335,45 @@ class TestTargetYear(SimpleTestCase):
             **_answers(target_year=2030, avg_monthly_qualifying_hours_last_3mo=100)
         )
 
-        for year, probably_eligible, still_needed in timeline:
-            with self.subTest(year=year):
-                self.assertEqual(still_needed, [])
-                self.assertTrue(probably_eligible)
+        for row in timeline:
+            with self.subTest(year=row.year):
+                self.assertEqual(row.still_needed, [])
+                self.assertTrue(row.probably_eligible)
+                self.assertFalse(row.work_requirement_conditional)
+
+    def test_a_shortfall_before_the_universal_year_is_conditional_not_a_denial(self):
+        # The requirement reaches the states that went early and nowhere else
+        # yet, and we don't track which. Reporting "may not be eligible" for a
+        # rule most states haven't adopted can stop someone applying at all.
+        timeline = eligibility_timeline(
+            **_answers(
+                target_year=WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                avg_monthly_qualifying_hours_last_3mo=10,
+            )
+        )
+        by_year = {row.year: row for row in timeline}
+
+        transition = by_year.get(WORK_REQUIREMENT_FIRST_YEAR)
+        if transition is not None:
+            self.assertTrue(transition.probably_eligible)
+            self.assertTrue(transition.work_requirement_conditional)
+
+        # ...and from the universal year it is a real verdict again.
+        universal = by_year[WORK_REQUIREMENT_UNIVERSAL_YEAR]
+        self.assertFalse(universal.probably_eligible)
+        self.assertFalse(universal.work_requirement_conditional)
+
+    def test_a_shortfall_still_earns_the_coaching_in_the_transition_window(self):
+        # The verdict stays positive there, but someone under 80 hours still
+        # needs to hear what is coming.
+        _, _, _, alts, _, _ = is_eligible(
+            **_answers(
+                target_year=WORK_REQUIREMENT_FIRST_YEAR,
+                avg_monthly_qualifying_hours_last_3mo=10,
+            )
+        )
+
+        self.assertTrue(any("80" in a for a in alts))
 
     def test_the_timeline_holds_steady_when_nothing_changes(self):
         timeline = eligibility_timeline(
@@ -1314,9 +1381,9 @@ class TestTargetYear(SimpleTestCase):
         )
 
         self.assertGreater(len(timeline), 1)
-        self.assertTrue(all(probably_eligible for _, probably_eligible, _ in timeline))
-        self.assertTrue(all(not still_needed for _, _, still_needed in timeline))
-        self.assertEqual(timeline[0][0], current_eligibility_year())
+        self.assertTrue(all(row.probably_eligible for row in timeline))
+        self.assertTrue(all(not row.still_needed for row in timeline))
+        self.assertEqual(timeline[0].year, current_eligibility_year())
 
     def test_a_named_year_matches_the_default_path_for_that_year(self):
         # The regression that motivated dropping the projection: an income in

@@ -4,7 +4,7 @@ import re
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import pandas as pd
 from loguru import logger
@@ -516,6 +516,19 @@ BASE_ELIGIBILITY_YEAR = 2026
 # is modelled from 2026 on rather than 2027.
 WORK_REQUIREMENT_FIRST_YEAR = 2026
 
+# ...but "a few started earlier" is not "everyone has started", and we don't
+# track which states went early. Between these two years the requirement is
+# real for some people and not yet in force for most, so a shortfall in that
+# window is reported as CONDITIONAL rather than as a denial: we say it may
+# already apply where they live and will apply everywhere from this year.
+#
+# Getting this wrong is asymmetric. Telling someone "you may not be eligible"
+# for a rule their state hasn't adopted can stop them applying at all, which
+# is the failure this whole product exists to undo. Telling someone they may
+# be eligible when the rule has already reached them costs them an
+# application the state will decide on anyway.
+WORK_REQUIREMENT_UNIVERSAL_YEAR = 2027
+
 DEFAULT_TARGET_YEAR = WORK_REQUIREMENT_FIRST_YEAR
 
 # Past this we would be projecting policy further out than anything we know
@@ -765,15 +778,34 @@ def timeline_years(value: Any = None) -> List[int]:
     """
     current = current_eligibility_year()
     years = {current, resolve_target_year(value)}
-    if WORK_REQUIREMENT_FIRST_YEAR > current:
-        years.add(WORK_REQUIREMENT_FIRST_YEAR)
+    for milestone in (WORK_REQUIREMENT_FIRST_YEAR, WORK_REQUIREMENT_UNIVERSAL_YEAR):
+        if milestone > current:
+            years.add(milestone)
     if len(years) == 1:
         years.add(min(current + 1, MAX_TARGET_YEAR))
     return sorted(years)
 
 
-def eligibility_timeline(**kwargs: Any) -> List[Tuple[int, bool, List[str]]]:
-    """``(year, probably_eligible, still_needed)`` for each timeline year.
+class YearVerdict(NamedTuple):
+    """One row of an eligibility timeline.
+
+    A NamedTuple so rows still unpack and compare like the plain tuples they
+    replaced, while the two things that are NOT verdicts stay named -- both
+    were silently lost when this was a ``(year, bool)`` pair, and both turned
+    into denials nobody computed.
+    """
+
+    year: int
+    probably_eligible: bool
+    # Non-empty means this year is UNSCORED, not negative.
+    still_needed: List[str]
+    # True means the positive above rests on a work requirement that isn't in
+    # force everywhere yet -- report it as conditional, not as a clean pass.
+    work_requirement_conditional: bool = False
+
+
+def eligibility_timeline(**kwargs: Any) -> List[YearVerdict]:
+    """A ``YearVerdict`` for each year in ``timeline_years``.
 
     Runs the checker once per year so a year-over-year change is visible
     rather than implied. ``is_eligible`` is pure and does no IO, so the
@@ -793,13 +825,26 @@ def eligibility_timeline(**kwargs: Any) -> List[Tuple[int, bool, List[str]]]:
     which is a denial nobody computed. Years that still need answers carry
     them here so the renderer can ask instead of concluding.
     """
-    timeline: List[Tuple[int, bool, List[str]]] = []
+    timeline: List[YearVerdict] = []
     for year in timeline_years(kwargs.get("target_year")):
-        _, probably_eligible, _, _, missing, determination_made = is_eligible(
-            **{**kwargs, "target_year": year}
-        )
+        (
+            _,
+            probably_eligible,
+            _,
+            _,
+            missing,
+            determination_made,
+            work_req_conditional,
+        ) = _score_eligibility(**{**kwargs, "target_year": year})
         still_needed = list(missing) if not determination_made or missing else []
-        timeline.append((year, bool(probably_eligible), still_needed))
+        timeline.append(
+            YearVerdict(
+                year=year,
+                probably_eligible=bool(probably_eligible),
+                still_needed=still_needed,
+                work_requirement_conditional=bool(work_req_conditional),
+            )
+        )
     return timeline
 
 
@@ -891,13 +936,26 @@ def _normalize_state(
     raise ValueError(f"Unknown state: {raw}")
 
 
-def is_eligible(
+def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
+    """Approximate Medicaid / Medicare eligibility. See ``_score_eligibility``.
+
+    Thin wrapper so the widely-used six-tuple stays the public shape. The
+    seventh value the scorer computes -- whether the target year's verdict
+    hangs on a work requirement that isn't in force everywhere yet -- is only
+    meaningful to ``eligibility_timeline``, which calls the scorer directly.
+    """
+    return _score_eligibility(**kwargs)[:6]
+
+
+def _score_eligibility(
     **kwargs,
-) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
+) -> Tuple[bool, bool, bool, List[str], List[str], bool, bool]:
     """
     Perform an approximate eligibility check for Medicaid / Medicare based on the provided parameters.
     Returns a tuple of (base-year eligibility, target-year eligibility,
-    medicare, alternatives, missing_info, determination_made).
+    medicare, alternatives, missing_info, determination_made,
+    work_requirement_conditional). Most callers want ``is_eligible``, which
+    drops the last value.
 
     The base year is ``BASE_ELIGIBILITY_YEAR`` (the published FPL table we
     score today's rules against). The target year is whatever the caller
@@ -1159,9 +1217,17 @@ def is_eligible(
         asked_fields.append(field)
         return True
 
+    # Set when the target year's positive verdict rests on a work requirement
+    # that is in force in some states and not others (see
+    # WORK_REQUIREMENT_UNIVERSAL_YEAR). Not a denial and not a clean pass.
+    # Initialised here rather than beside the overlay: the early exits below
+    # (territory, declined required inputs) reach _result long before the
+    # overlay runs.
+    work_req_conditional = False
+
     def _result(
         determination_made: bool = False,
-    ) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
+    ) -> Tuple[bool, bool, bool, List[str], List[str], bool, bool]:
         """Single exit point: casts + dedupes so every return stays consistent.
 
         ``determination_made`` separates "we scored this person and the answer
@@ -1177,6 +1243,7 @@ def is_eligible(
             list(dict.fromkeys(alts)),
             list(dict.fromkeys(missing)),
             determination_made,
+            bool(work_req_conditional),
         )
 
     def magi_expansion_covers(*, require_inputs: bool = False) -> bool:
@@ -1675,8 +1742,21 @@ def is_eligible(
                     avg_monthly >= WORK_REQ_MONTHLY_HOURS
                     and months_meeting >= MIN_MONTHS_MEETING
                 )
-                eligible_target = bool(meets_rule)
-                if not eligible_target:
+                if target_year >= WORK_REQUIREMENT_UNIVERSAL_YEAR:
+                    eligible_target = bool(meets_rule)
+                else:
+                    # Transition window. The requirement is in force in the
+                    # states that went early and nowhere else yet, and we
+                    # don't track which is which -- so a shortfall here is
+                    # NOT a denial. Say the income/category test passed and
+                    # let the renderer carry the "this may already apply
+                    # where you live" caveat.
+                    eligible_target = True
+                    work_req_conditional = not meets_rule
+                # Coaching keys off the hours, not the verdict: in the
+                # transition window the verdict stays positive, but someone
+                # under 80 hours still needs to hear what is coming.
+                if not meets_rule:
                     alts.append(
                         f"For {target_year}, try to reach ~80 hrs/month each month via job, school, or volunteering."
                     )
