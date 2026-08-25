@@ -213,6 +213,32 @@ class TestSitemapParsing(TestCase):
         with self.assertRaises(ValueError):
             _parse_sitemap_xml(xml)
 
+    def test_a_utf16_declaration_is_refused(self):
+        # A document declares its own encoding and the parser honours it, so
+        # in UTF-16 the marker arrives as b"<\x00!\x00D\x00..." and sails
+        # past a plain byte search -- the guard looks like it holds while the
+        # document parses with its entities intact.
+        for encoding in ("utf-16", "utf-16-le", "utf-16-be"):
+            with self.subTest(encoding=encoding):
+                xml = (
+                    '<?xml version="1.0" encoding="UTF-16"?>'
+                    '<!DOCTYPE urlset [<!ENTITY v "renew-info">]>'
+                    "<urlset><url><loc>&v;</loc></url></urlset>"
+                ).encode(encoding)
+                with self.assertRaises(ValueError):
+                    _parse_sitemap_xml(xml)
+
+    def test_a_plain_utf16_sitemap_still_parses(self):
+        # The encoding itself isn't the problem -- only a declaration in it.
+        xml = (
+            '<?xml version="1.0" encoding="UTF-16"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            "<url><loc>https://www.medicaid.gov/renew-info</loc></url>"
+            "</urlset>"
+        ).encode("utf-16")
+
+        self.assertIsNotNone(_parse_sitemap_xml(xml))
+
     def test_an_oversized_document_is_refused(self):
         from fighthealthinsurance.medicaid_gov_api import _MAX_SITEMAP_BYTES
 

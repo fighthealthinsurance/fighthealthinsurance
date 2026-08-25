@@ -87,6 +87,19 @@ _MAX_SITEMAP_BYTES = 8 * 1024 * 1024
 
 _SITEMAP_NS = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
+# Encodings a document can declare for itself that the XML parser will then
+# honour. The doctype scan has to look for its marker in each of them: the
+# bytes we search are whatever the server sent, not UTF-8, and a scan that
+# only knows one encoding is a guard with a documented way around it.
+# ASCII/latin-1 are byte-identical to UTF-8 for these markers.
+_DECLARATION_SCAN_ENCODINGS = (
+    "utf-8",
+    "utf-16-le",
+    "utf-16-be",
+    "utf-32-le",
+    "utf-32-be",
+)
+
 
 @dataclass(frozen=True)
 class CuratedSource:
@@ -281,12 +294,26 @@ def _parse_sitemap_xml(content: bytes) -> ET.Element:
     long enough leading comment pushes ``<!DOCTYPE`` past any fixed window,
     and a guard you can walk around with padding is not a guard. The size cap
     runs first, so the scan is bounded.
+
+    It also scans for the marker in every encoding the parser will accept,
+    not just the one we can read by eye. A UTF-16 document declares its own
+    encoding and the parser honours it, so ``<!DOCTYPE`` arrives as
+    ``<\x00!\x00D\x00...`` and sails straight past a plain byte search --
+    the guard looked like it held while the document parsed with its entities
+    intact.
     """
     if len(content) > _MAX_SITEMAP_BYTES:
         raise ValueError(f"sitemap document too large ({len(content)} bytes)")
+    # bytes.lower() only touches ASCII bytes, so it lowercases the marker's
+    # characters in the wide encodings too and leaves their padding alone.
     lowered = content.lower()
-    if b"<!doctype" in lowered or b"<!entity" in lowered:
-        raise ValueError("sitemap document carries a doctype/entity declaration")
+    for encoding in _DECLARATION_SCAN_ENCODINGS:
+        for marker in ("<!doctype", "<!entity"):
+            if marker.encode(encoding) in lowered:
+                raise ValueError(
+                    "sitemap document carries a doctype/entity declaration "
+                    f"({encoding})"
+                )
     return ET.fromstring(content)
 
 
