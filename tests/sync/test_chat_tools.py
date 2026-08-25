@@ -573,7 +573,7 @@ class TestMedicaidEligibilityTool(TestCase):
         self.assertNotIn("If denied", info)
 
     def test_indeterminate_result_is_not_rendered_as_a_denial(self):
-        """"Couldn't score them" must not become "may not be eligible"."""
+        """ "Couldn't score them" must not become "may not be eligible"."""
         info = self.tool._build_eligibility_info(
             eligible_base=False,
             eligible_target=False,
@@ -614,7 +614,12 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_parsed_summary_echoes_recorded_values(self):
         """The LLM keeps its own context, so it must see what we recorded."""
         text = self.tool._build_parsed_summary(
-            {"recorded": {"state": "ca"}, "unreadable": [], "unrecognized": [], "declined": []}
+            {
+                "recorded": {"state": "ca"},
+                "unreadable": [],
+                "unrecognized": [],
+                "declined": [],
+            }
         )
 
         self.assertIn("state: ca", text)
@@ -622,7 +627,12 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_parsed_summary_flags_unrecognized_parameters(self):
         """A silently dropped key looks to the model just like acceptance."""
         text = self.tool._build_parsed_summary(
-            {"recorded": {}, "unreadable": [], "unrecognized": ["income"], "declined": []}
+            {
+                "recorded": {},
+                "unreadable": [],
+                "unrecognized": ["income"],
+                "declined": [],
+            }
         )
 
         self.assertIn("income", text)
@@ -630,7 +640,12 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_parsed_summary_tells_llm_not_to_reask_declined_fields(self):
         text = self.tool._build_parsed_summary(
-            {"recorded": {}, "unreadable": [], "unrecognized": [], "declined": ["assets_total"]}
+            {
+                "recorded": {},
+                "unreadable": [],
+                "unrecognized": [],
+                "declined": ["assets_total"],
+            }
         )
 
         self.assertIn("don't ask about those again", text)
@@ -715,6 +730,30 @@ class TestMedicaidTargetYear(TestCase):
         self.assertIn(f"current ({current}): they could be eligible", info)
         self.assertIn(f"{current + 1}: they may not be eligible", info)
         self.assertIn(f"{current + 3}: they may not be eligible", info)
+
+    def test_a_change_shown_in_the_timeline_always_says_what_caused_it(self):
+        # Asking about a pre-work-requirement year still renders the
+        # work-requirement year beside it. Keying the caveats off the year the
+        # user NAMED printed "this CHANGES in 2026" with nothing to say what
+        # changed -- a flip with no stated cause.
+        from fighthealthinsurance.medicaid_api import WORK_REQUIREMENT_FIRST_YEAR
+
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=BASE_ELIGIBILITY_YEAR,
+            timeline=[
+                (BASE_ELIGIBILITY_YEAR, True),
+                (WORK_REQUIREMENT_FIRST_YEAR, False),
+            ],
+        )
+
+        self.assertIn(f"this CHANGES in {WORK_REQUIREMENT_FIRST_YEAR}", info)
+        self.assertIn("work/community-engagement", info)
+        self.assertIn("aren't published yet", info)
 
     def test_a_finished_year_is_never_labelled_current(self):
         # The FPL table's year stops being "today" once the calendar passes
@@ -977,12 +1016,16 @@ class TestEligibilityVerifiedFlag(TestCase):
 
     def test_final_ineligible_determination_earns_the_exemption(self):
         # A computed "no" is still a verdict the model may relay.
-        flag, kwargs = self._run((False, False, False, ["Try the marketplace"], [], True))
+        flag, kwargs = self._run(
+            (False, False, False, ["Try the marketplace"], [], True)
+        )
         self.assertTrue(flag)
         self.assertTrue(kwargs["eligibility_verified"])
 
     def test_mid_interview_with_nothing_settled_does_not(self):
-        flag, kwargs = self._run((False, False, False, [], ["What is your income?"], True))
+        flag, kwargs = self._run(
+            (False, False, False, [], ["What is your income?"], True)
+        )
         self.assertFalse(flag)
         self.assertFalse(kwargs["eligibility_verified"])
 
@@ -990,7 +1033,9 @@ class TestEligibilityVerifiedFlag(TestCase):
         # The checker reports an already-settled positive while questions are
         # outstanding, and _build_eligibility_info tells the model to share
         # it -- penalizing that would fight our own tool output.
-        flag, kwargs = self._run((True, False, False, [], ["What is your income?"], True))
+        flag, kwargs = self._run(
+            (True, False, False, [], ["What is your income?"], True)
+        )
         self.assertTrue(flag)
         self.assertTrue(kwargs["eligibility_verified"])
 
@@ -1445,9 +1490,16 @@ class TestMedicaidDeclinedAnswerRoundTrip(TestCase):
 
     def test_resending_the_unknown_marker_keeps_the_question_suppressed(self):
         first = dict(
-            state="ca", age=66, married=False, household_size=1,
-            monthly_income=900, children_in_household=0, pregnant=False,
-            receiving_ssdi=False, on_medicare=False, years_worked=40,
+            state="ca",
+            age=66,
+            married=False,
+            household_size=1,
+            monthly_income=900,
+            children_in_household=0,
+            pregnant=False,
+            receiving_ssdi=False,
+            on_medicare=False,
+            years_worked=40,
             assets_total="unknown",
         )
         # What the echo tells the model to send back, plus the declined marker

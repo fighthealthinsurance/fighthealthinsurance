@@ -641,25 +641,12 @@ class MedicaidEligibilityTool(BaseTool):
         if target_year is None:
             target_year = DEFAULT_TARGET_YEAR
 
-        # One shared description of the work-requirement rules so the
-        # eligible and not-eligible wordings can't drift apart. Only years
-        # the requirement can apply to get it.
-        work_req_note = ""
-        if target_year >= WORK_REQUIREMENT_FIRST_YEAR:
-            work_req_note = (
-                " (once the federal 80-hours-per-month work/community-engagement "
-                "requirement applies to them — states must implement it by "
-                "January 1, 2027, a few earlier)"
-            )
         # "current" means the calendar year, not the year of the FPL table we
         # score against. Those drifted apart the moment the table's year
         # ended, and calling a finished year "current" told people the rules
         # they live under were the ones that had just been replaced.
         current_year = current_eligibility_year()
         base_label = f"current ({current_year})"
-        # A user who asked about this year gets one verdict, not the same
-        # verdict printed twice under two labels.
-        target_is_separate_year = target_year > current_year
 
         # Years to report on, ascending. Falls back to the base/target pair
         # when no timeline was supplied. Deduped so a base-year-only check
@@ -683,6 +670,26 @@ class MedicaidEligibilityTool(BaseTool):
             seen_years.add(row[0])
             deduped_rows.append(row)
         rows = deduped_rows
+
+        # Both caveats below are keyed off the years we actually RENDER, not
+        # the year the user named. The timeline shows the work-requirement
+        # year alongside a request for an earlier one, so keying off
+        # target_year alone printed "this CHANGES in 2026" with nothing to say
+        # what changed -- a flip with no stated cause, which is the worst
+        # version of this answer.
+        #
+        # One shared description of the work-requirement rules so the eligible
+        # and not-eligible wordings can't drift apart.
+        work_req_note = ""
+        if any(year >= WORK_REQUIREMENT_FIRST_YEAR for year, _ in rows):
+            work_req_note = (
+                " (once the federal 80-hours-per-month work/community-engagement "
+                "requirement applies to them — states must implement it by "
+                "January 1, 2027, a few earlier)"
+            )
+        # Any year past the published table's was scored with that table's
+        # limits, and we owe the user that fact.
+        scored_beyond_the_table = any(year > BASE_ELIGIBILITY_YEAR for year, _ in rows)
 
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
@@ -806,7 +813,7 @@ class MedicaidEligibilityTool(BaseTool):
                         "and keep it hedged -- it's an estimate."
                     )
 
-            if target_is_separate_year:
+            if scored_beyond_the_table:
                 # We do NOT guess at future income limits: the same published
                 # table scores both years, so the only thing separating them
                 # is the work requirement. Say that plainly rather than
