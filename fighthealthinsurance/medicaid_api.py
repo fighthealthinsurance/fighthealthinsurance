@@ -2037,4 +2037,113 @@ def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
                 phone = str(row["helpline_contact"]).strip()
                 result.append(f"Phone: {phone}")
 
+    work_req_section = _format_work_requirement_section(df.iloc[0], state)
+    if work_req_section:
+        result.append("")
+        result.extend(work_req_section)
+
     return "\n".join(result)
+
+
+def _has_value(row: "pd.Series", col: str) -> bool:
+    """``True`` when ``row[col]`` exists, isn't NaN, and isn't the CSV's "N/A"."""
+    if col not in row or pd.isna(row[col]):
+        return False
+    value = str(row[col]).strip()
+    return bool(value) and value.upper() != "N/A"
+
+
+def _format_work_requirement_section(row: "pd.Series", state: str) -> List[str]:
+    """Build the guidance-only work-requirement block for ``get_medicaid_info``.
+
+    Always leads with the universal federal deadline (applies to every state
+    regardless of that state's own waiver history), then layers on whatever
+    curated waiver narrative and scraped freshness-check data
+    (``medicaid_work_requirements_fetcher``) the CSV happens to have. Never
+    a legal determination -- state-by-state rollout is still moving, so this
+    is a pointer for the user to verify, not a verdict.
+    """
+    lines = [
+        "Work Requirement Status (guidance only -- confirm with the state; "
+        "hard implementation isn't required nationwide until "
+        f"{WORK_REQUIREMENT_UNIVERSAL_YEAR}):",
+        (
+            f"Federal law requires {state} Medicaid to have a work/community-"
+            f"engagement requirement in place by January 1, "
+            f"{WORK_REQUIREMENT_UNIVERSAL_YEAR} (some states earlier, from "
+            f"{WORK_REQUIREMENT_FIRST_YEAR})."
+        ),
+    ]
+    if _has_value(row, "work_requirement_waiver"):
+        lines.append(
+            f"{state}'s own waiver status as of our last review: "
+            f"{str(row['work_requirement_waiver']).strip()}"
+        )
+    if _has_value(row, "waiver_activity"):
+        lines.append(str(row["waiver_activity"]).strip())
+    if _has_value(row, "work_requirement_last_checked") and _has_value(
+        row, "work_requirement_mentioned"
+    ):
+        checked = str(row["work_requirement_last_checked"]).strip()
+        mentioned = str(row["work_requirement_mentioned"]).strip().lower()
+        source_url = (
+            str(row["work_requirement_source_url"]).strip()
+            if _has_value(row, "work_requirement_source_url")
+            else ""
+        )
+        if mentioned == "yes":
+            lines.append(
+                f"As of {checked}, we found a public mention of work/"
+                f"community-engagement requirements on the state's site"
+                + (f": {source_url}" if source_url else ".")
+            )
+        elif mentioned == "no":
+            lines.append(
+                f"As of {checked}, we did not find a public mention of work "
+                "requirements on the state's homepage"
+                + (f" ({source_url})" if source_url else "")
+                + " -- that does not mean it doesn't apply, check directly."
+            )
+    return lines
+
+
+def get_medicaid_work_requirement_status(state: str) -> Optional[Dict[str, str]]:
+    """Plain-data work-requirement guidance for one state, for non-chat callers.
+
+    Returns a dict with ``state``, ``work_requirement_waiver``,
+    ``waiver_activity``, ``agency_website``, ``work_requirement_last_checked``
+    -- any of which may be ``""`` when the CSV has nothing for that column --
+    or ``None`` when the state can't be resolved or has no CSV row.
+
+    Used by ``common_view_logic._get_outside_help_details`` to surface the
+    same guidance on the appeal "next steps" page, without pulling in the
+    HTML formatting ``get_medicaid_info`` does for the chat surface.
+    """
+    if not state:
+        return None
+    try:
+        state_short = _normalize_state(state)
+    except ValueError:
+        return None
+    if state_short is None:
+        return None
+    state_name = _ABBR_TO_NAME[state_short]
+
+    df = _load_medicaid_resources()
+    if df is None or "state" not in df.columns:
+        return None
+    matches = df[df["state"].astype(str).str.lower() == state_name.lower()]
+    if matches.empty:
+        return None
+    row = matches.iloc[0]
+
+    def _val(col: str) -> str:
+        return str(row[col]).strip() if _has_value(row, col) else ""
+
+    return {
+        "state": state_name,
+        "work_requirement_waiver": _val("work_requirement_waiver"),
+        "waiver_activity": _val("waiver_activity"),
+        "agency_website": _val("agency_website"),
+        "work_requirement_last_checked": _val("work_requirement_last_checked"),
+    }

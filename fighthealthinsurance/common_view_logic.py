@@ -953,6 +953,42 @@ class FindNextStepsHelper:
                     " or ".join(how_to_parts) + ".",
                 )
             )
+
+        if state and denial.plan_source.filter(name__icontains="medicaid").exists():
+            from fighthealthinsurance.medicaid_api import (
+                WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                get_medicaid_work_requirement_status,
+            )
+
+            work_req = get_medicaid_work_requirement_status(state)
+            if work_req:
+                headline = (
+                    f"Federal law requires {work_req['state']} Medicaid to have a "
+                    "work/community-engagement requirement in place by January 1, "
+                    f"{WORK_REQUIREMENT_UNIVERSAL_YEAR} (some states earlier). "
+                    "This is guidance only, not a determination -- confirm your "
+                    "own status with the state."
+                )
+                if work_req["work_requirement_waiver"]:
+                    headline += (
+                        f" {work_req['state']}'s own waiver status as of our last "
+                        f"review: {html_escape(work_req['work_requirement_waiver'])}."
+                    )
+                how_to_parts = []
+                website = sanitize_http_url(work_req["agency_website"])
+                if website:
+                    how_to_parts.append(
+                        f"<a href='{html_escape(website)}' target='_blank' "
+                        f"rel='noopener'>Check {work_req['state']} Medicaid's "
+                        "website</a>"
+                    )
+                how_to = (
+                    " or ".join(how_to_parts)
+                    if how_to_parts
+                    else f"Contact {work_req['state']} Medicaid directly."
+                )
+                outside_help_details.append((headline, how_to))
+
         return outside_help_details
 
     @classmethod
