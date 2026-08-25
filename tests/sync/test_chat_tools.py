@@ -683,10 +683,9 @@ class TestMedicaidTargetYear(TestCase):
         self.assertIn("2028", info)
         self.assertNotIn("the 2026 rules", info)
 
-    def test_a_pre_work_requirement_target_is_reported_once(self):
-        # Asking about a year before the work requirement should not produce
-        # the same verdict twice under two labels, nor a caveat about a
-        # requirement that didn't apply in that year.
+    def test_the_table_year_target_is_reported_once(self):
+        # Asking about the year we score against should not produce the same
+        # verdict twice under two labels.
         info = self.tool._build_eligibility_info(
             eligible_base=True,
             eligible_target=True,
@@ -697,6 +696,23 @@ class TestMedicaidTargetYear(TestCase):
         )
 
         self.assertEqual(info.count("could be eligible for medicaid"), 1)
+
+    def test_a_pre_work_requirement_year_gets_no_work_requirement_caveat(self):
+        # Coaching someone to chase 80 hours a month for a rule that wasn't
+        # in force in the year they asked about is noise at best.
+        from fighthealthinsurance.medicaid_api import WORK_REQUIREMENT_FIRST_YEAR
+
+        earlier = WORK_REQUIREMENT_FIRST_YEAR - 1
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=earlier,
+            timeline=[(earlier, True, [])],
+        )
+
         self.assertNotIn("work/community-engagement", info)
 
     def test_a_future_year_says_current_limits_were_used(self):
@@ -724,7 +740,11 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=current + 3,
-            timeline=[(current, True), (current + 1, False), (current + 3, False)],
+            timeline=[
+                (current, True, []),
+                (current + 1, False, []),
+                (current + 3, False, []),
+            ],
         )
 
         self.assertIn(f"current ({current}): they could be eligible", info)
@@ -744,16 +764,57 @@ class TestMedicaidTargetYear(TestCase):
             medicare=False,
             alternatives=[],
             missing=[],
-            target_year=BASE_ELIGIBILITY_YEAR,
+            target_year=WORK_REQUIREMENT_FIRST_YEAR - 1,
             timeline=[
-                (BASE_ELIGIBILITY_YEAR, True),
-                (WORK_REQUIREMENT_FIRST_YEAR, False),
+                (WORK_REQUIREMENT_FIRST_YEAR - 1, True, []),
+                (WORK_REQUIREMENT_FIRST_YEAR, False, []),
             ],
         )
 
         self.assertIn(f"this CHANGES in {WORK_REQUIREMENT_FIRST_YEAR}", info)
         self.assertIn("work/community-engagement", info)
-        self.assertIn("aren't published yet", info)
+
+    def test_a_year_we_cannot_score_yet_is_not_reported_as_ineligible(self):
+        # is_eligible returns False for BOTH "scored, falls short" and "can't
+        # score until you answer" -- an unanswered work-hours question sets
+        # the flag False on purpose. Rendering that as "may not be eligible"
+        # hands the user a denial nobody computed.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                (current, True, []),
+                (current + 1, False, ["About how many qualifying hours a month?"]),
+            ],
+        )
+
+        self.assertIn(f"{current + 1}: NOT ESTABLISHED", info)
+        self.assertNotIn(f"{current + 1}: they may not be eligible", info)
+        self.assertIn("About how many qualifying hours a month?", info)
+
+    def test_an_unscored_year_does_not_trigger_a_change_callout(self):
+        # "this CHANGES in <year>" off the back of an unanswered question is
+        # the same uncomputed denial in a louder voice.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                (current, True, []),
+                (current + 1, False, ["About how many qualifying hours a month?"]),
+            ],
+        )
+
+        self.assertNotIn("CHANGES in", info)
 
     def test_a_finished_year_is_never_labelled_current(self):
         # The FPL table's year stops being "today" once the calendar passes
@@ -770,7 +831,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=current,
-            timeline=[(BASE_ELIGIBILITY_YEAR, True), (current, True)],
+            timeline=[(BASE_ELIGIBILITY_YEAR, True, []), (current, True, [])],
         )
 
         self.assertIn(f"current ({current})", info)
@@ -806,7 +867,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, True), (2026, False)],
+            timeline=[(2025, True, []), (2026, False, [])],
         )
 
         self.assertIn("this CHANGES in 2026", info)
@@ -820,7 +881,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, False), (2026, True)],
+            timeline=[(2025, False, []), (2026, True, [])],
         )
 
         self.assertIn("IMPROVES in 2026", info)
@@ -833,7 +894,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, True), (2026, True)],
+            timeline=[(2025, True, []), (2026, True, [])],
         )
 
         self.assertNotIn("CHANGES in", info)
@@ -849,7 +910,7 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2026,
-            timeline=[(2025, True), (2026, False)],
+            timeline=[(2025, True, []), (2026, False, [])],
         )
 
         self.assertIn("an approximation, not a determination", info)

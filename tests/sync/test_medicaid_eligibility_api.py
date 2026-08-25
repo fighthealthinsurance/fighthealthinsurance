@@ -248,7 +248,9 @@ class TestQuestionFlow(SimpleTestCase):
     def test_string_no_is_treated_as_no(self):
         # Review regression: bool("no") is True, so LLM string booleans
         # flipped answers. A string "no" must behave like False.
-        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="tx", pregnant="no"))
+        eligible_2025, _, _, _, _, _ = is_eligible(
+            **_answers(state="tx", pregnant="no")
+        )
         self.assertFalse(eligible_2025)
 
     def test_string_false_work_exemption_is_not_treated_as_exempt(self):
@@ -318,9 +320,7 @@ class TestLlmPayloadParsing(SimpleTestCase):
         # Review finding: the territory exit returned False/False with no
         # questions left, which the chat tool rendered as a confident "may
         # not be eligible" -- contradicting the alternative it returned.
-        _, _, _, _, _, determination_made = is_eligible(
-            state="Puerto Rico", age=30
-        )
+        _, _, _, _, _, determination_made = is_eligible(state="Puerto Rico", age=30)
         self.assertFalse(determination_made)
 
     def test_territory_resident_still_gets_a_medicare_answer(self):
@@ -375,7 +375,7 @@ class TestUnknownAnswerChannel(SimpleTestCase):
 
 
 class TestIndeterminateResults(SimpleTestCase):
-    """"Couldn't score them" must never be rendered as "not eligible"."""
+    """ "Couldn't score them" must never be rendered as "not eligible"."""
 
     def test_scored_ineligible_is_a_determination(self):
         _, _, _, _, _, determination_made = is_eligible(
@@ -535,7 +535,9 @@ class TestMedicarePathways(SimpleTestCase):
         # was reported not Medicare-eligible (the enrolled branch was only
         # reachable through the other pathways).
         _, _, medicare, _, _, _ = is_eligible(
-            **_answers(age=40, monthly_income=800.0, on_medicare=True, assets_total=500.0)
+            **_answers(
+                age=40, monthly_income=800.0, on_medicare=True, assets_total=500.0
+            )
         )
         self.assertTrue(medicare)
 
@@ -552,7 +554,9 @@ class TestMedicarePathways(SimpleTestCase):
                 assets_total=500.0,
             )
         )
-        self.assertTrue(any("months have you been receiving SSDI" in q for q in missing))
+        self.assertTrue(
+            any("months have you been receiving SSDI" in q for q in missing)
+        )
         # No definitive verdict while that question is outstanding.
         self.assertFalse(medicare)
 
@@ -644,7 +648,9 @@ class TestLongTermCareFlow(SimpleTestCase):
         # Review regression: the LTC ask-for-more-info early return clobbered
         # an already-computed Medicare verdict back to False.
         _, _, medicare, _, missing, _ = is_eligible(
-            **self._ltc_answers(assets_total=None, home_owner=None, living_situation=None)
+            **self._ltc_answers(
+                assets_total=None, home_owner=None, living_situation=None
+            )
         )
         self.assertTrue(medicare)
         self.assertTrue(len(missing) > 0)
@@ -686,9 +692,7 @@ class TestLongTermCareFlow(SimpleTestCase):
         self.assertTrue(eligible_2025)
 
     def test_income_over_ltc_cap_suggests_miller_trust(self):
-        _, _, _, alts, _, _ = is_eligible(
-            **self._ltc_answers(monthly_income=3500.0)
-        )
+        _, _, _, alts, _, _ = is_eligible(**self._ltc_answers(monthly_income=3500.0))
         self.assertTrue(any("Miller trust" in a for a in alts))
 
 
@@ -922,8 +926,12 @@ class TestSpendDownSuggestion(SimpleTestCase):
     def test_not_suggested_in_a_state_without_the_program(self):
         *_, alts, _, _ = is_eligible(
             **_answers(
-                state="tx", age=70, monthly_income=3000, on_medicare=True,
-                assets_total=50000, years_worked=40,
+                state="tx",
+                age=70,
+                monthly_income=3000,
+                on_medicare=True,
+                assets_total=50000,
+                years_worked=40,
             )
         )
         for alt in alts:
@@ -932,8 +940,12 @@ class TestSpendDownSuggestion(SimpleTestCase):
     def test_suggested_in_a_state_with_the_program(self):
         *_, alts, _, _ = is_eligible(
             **_answers(
-                state="ca", age=70, monthly_income=3000, on_medicare=True,
-                assets_total=50000, years_worked=40,
+                state="ca",
+                age=70,
+                monthly_income=3000,
+                on_medicare=True,
+                assets_total=50000,
+                years_worked=40,
             )
         )
         self.assertTrue(
@@ -1003,8 +1015,11 @@ class TestDisabledButNotOnSsdi(SimpleTestCase):
         # ssdi_length question is asked, so don't conclude anything yet.
         *_, missing, _ = is_eligible(
             **_answers(
-                age=66, receiving_ssdi=True, on_medicare=False,
-                years_worked=5, assets_total=500,
+                age=66,
+                receiving_ssdi=True,
+                on_medicare=False,
+                years_worked=5,
+                assets_total=500,
             )
         )
         self.assertIn("How many months have you been receiving SSDI?", missing)
@@ -1066,8 +1081,12 @@ class TestAssetTestIsSkippedWhenIrrelevant(SimpleTestCase):
         # Texas has no expansion pathway, so the asset test genuinely applies.
         *_, missing, _ = is_eligible(
             **_answers(
-                state="tx", age=40, receiving_ssdi=True, ssdi_length=6,
-                on_medicare=False, avg_monthly_qualifying_hours_last_3mo=100,
+                state="tx",
+                age=40,
+                receiving_ssdi=True,
+                ssdi_length=6,
+                on_medicare=False,
+                avg_monthly_qualifying_hours_last_3mo=100,
             )
         )
         self.assertTrue(any("assets" in q.lower() for q in missing))
@@ -1122,7 +1141,9 @@ class TestLongTermCareReasonIsRecognized(SimpleTestCase):
 
     def test_an_ordinary_application_is_not_treated_as_long_term_care(self):
         self.assertEqual(_normalize_applying_reason("standard"), "standard")
-        self.assertEqual(_normalize_applying_reason("applying for medicaid"), "standard")
+        self.assertEqual(
+            _normalize_applying_reason("applying for medicaid"), "standard"
+        )
         self.assertEqual(_normalize_applying_reason(None), "standard")
 
 
@@ -1168,12 +1189,17 @@ class TestTargetYear(SimpleTestCase):
         _, _, _, _, missing, _ = is_eligible(**_answers(target_year=2028))
         self.assertTrue(any("2028" in q for q in missing))
 
-    def test_a_target_year_before_the_work_requirement_skips_the_hours_question(self):
-        _, eligible_target, _, _, missing, _ = is_eligible(
-            **_answers(target_year=BASE_ELIGIBILITY_YEAR)
+    def test_a_year_below_the_published_table_clamps_up_to_it(self):
+        # We can't score a year the published table doesn't cover, so a
+        # request for one is answered for the table's year instead.
+        #
+        # A consequence worth stating: while the table year and
+        # WORK_REQUIREMENT_FIRST_YEAR coincide, NO reachable target year is
+        # free of the work overlay -- the clamp lands exactly on the year the
+        # requirement starts.
+        self.assertEqual(
+            resolve_target_year(BASE_ELIGIBILITY_YEAR - 1), BASE_ELIGIBILITY_YEAR
         )
-        self.assertFalse(any("qualifying hours" in q for q in missing))
-        self.assertTrue(eligible_target)
 
     def test_a_later_target_year_still_applies_the_work_overlay(self):
         _, eligible_target, _, _, missing, _ = is_eligible(**_answers(target_year=2030))
@@ -1201,8 +1227,9 @@ class TestTargetYear(SimpleTestCase):
         # a number we were guessing, and -- because it only ran for a year the
         # user NAMED -- gave the same person two answers for the same
         # calendar year depending on how they asked.
+        # 138% of the 2026 one-person guideline ($15,960) is $1,835.40/mo.
         just_over = dict(
-            monthly_income=1810.0,
+            monthly_income=1850.0,
             avg_monthly_qualifying_hours_last_3mo=100,
         )
         for target_year in (None, 2026, 2030):
@@ -1252,17 +1279,34 @@ class TestTargetYear(SimpleTestCase):
         self.assertGreater(len(years), 1)
         self.assertEqual(years[0], current)
 
-    def test_the_timeline_renders_a_year_over_year_change(self):
-        # No qualifying hours: probably eligible under the pre-work-requirement
-        # rules, probably not once the requirement applies. That flip is the
-        # point of the timeline.
-        timeline = eligibility_timeline(
-            **_answers(target_year=BASE_ELIGIBILITY_YEAR)
-        )
-        verdicts = dict(timeline)
+    def test_a_year_needing_work_hours_comes_back_unsettled_not_denied(self):
+        # No qualifying hours supplied. is_eligible reports False for those
+        # years because it CANNOT score them yet -- the questions ride
+        # alongside. A caller that keeps only the boolean turns "we don't
+        # know" into "you may not be eligible", a denial nobody computed.
+        timeline = eligibility_timeline(**_answers(target_year=2030))
 
-        self.assertTrue(verdicts[BASE_ELIGIBILITY_YEAR])
-        self.assertFalse(verdicts[WORK_REQUIREMENT_FIRST_YEAR])
+        overlay_rows = [
+            row for row in timeline if row[0] >= WORK_REQUIREMENT_FIRST_YEAR
+        ]
+        self.assertTrue(overlay_rows)
+        for year, probably_eligible, still_needed in overlay_rows:
+            with self.subTest(year=year):
+                self.assertFalse(probably_eligible)
+                self.assertTrue(
+                    any("qualifying hours" in q for q in still_needed),
+                    f"{year} reported a verdict it could not have computed",
+                )
+
+    def test_supplying_the_hours_settles_those_years(self):
+        timeline = eligibility_timeline(
+            **_answers(target_year=2030, avg_monthly_qualifying_hours_last_3mo=100)
+        )
+
+        for year, probably_eligible, still_needed in timeline:
+            with self.subTest(year=year):
+                self.assertEqual(still_needed, [])
+                self.assertTrue(probably_eligible)
 
     def test_the_timeline_holds_steady_when_nothing_changes(self):
         timeline = eligibility_timeline(
@@ -1270,15 +1314,16 @@ class TestTargetYear(SimpleTestCase):
         )
 
         self.assertGreater(len(timeline), 1)
-        self.assertTrue(all(probably_eligible for _, probably_eligible in timeline))
+        self.assertTrue(all(probably_eligible for _, probably_eligible, _ in timeline))
+        self.assertTrue(all(not still_needed for _, _, still_needed in timeline))
         self.assertEqual(timeline[0][0], current_eligibility_year())
 
     def test_a_named_year_matches_the_default_path_for_that_year(self):
-        # The regression that motivated dropping the projection: $1,810/mo in
-        # CA read "may not be eligible" on the default 2026 path and "could be
-        # eligible" when the user typed "what about 2026?".
+        # The regression that motivated dropping the projection: an income in
+        # CA read "may not be eligible" on the default path and "could be
+        # eligible" when the user typed the year out.
         common = dict(
-            monthly_income=1810.0,
+            monthly_income=1850.0,
             avg_monthly_qualifying_hours_last_3mo=100,
         )
         default_path = is_eligible(**_answers(**common))

@@ -443,7 +443,7 @@ class MedicaidEligibilityTool(BaseTool):
             # told the user to chase 80 hours a month for a rule that isn't
             # in force in the year they asked about.
             years_covered = (
-                ", ".join(str(year) for year, _ in timeline)
+                ", ".join(str(year) for year, _, _ in timeline)
                 if timeline
                 else str(target_year)
             )
@@ -599,7 +599,7 @@ class MedicaidEligibilityTool(BaseTool):
         missing: List[str],
         determination_made: bool = True,
         target_year: Optional[int] = None,
-        timeline: Optional[List[Tuple[int, bool]]] = None,
+        timeline: Optional[List[Tuple[int, bool, List[str]]]] = None,
     ) -> str:
         """
         Build the eligibility information text passed back to the LLM.
@@ -621,9 +621,10 @@ class MedicaidEligibilityTool(BaseTool):
                 ``resolve_target_year`` returned for this payload, or the
                 label would name a year we didn't score. Defaults to the
                 checker's own default year.
-            timeline: ``(year, probably_eligible)`` rows from
+            timeline: ``(year, probably_eligible, still_needed)`` rows from
                 ``eligibility_timeline``, ascending. Always rendered in full
-                so a year-over-year change is visible instead of implied.
+                so a year-over-year change is visible instead of implied. A
+                row with ``still_needed`` is NOT a verdict -- see below.
                 Falls back to the base/target pair when not supplied.
 
         Returns:
@@ -651,11 +652,11 @@ class MedicaidEligibilityTool(BaseTool):
         # Years to report on, ascending. Falls back to the base/target pair
         # when no timeline was supplied. Deduped so a base-year-only check
         # doesn't print the same verdict twice under two labels.
-        rows = timeline or [
+        rows: List[Tuple[int, bool, List[str]]] = timeline or [
             row
             for row in (
-                (BASE_ELIGIBILITY_YEAR, eligible_base),
-                (target_year, eligible_target),
+                (BASE_ELIGIBILITY_YEAR, eligible_base, []),
+                (target_year, eligible_target, list(missing)),
             )
             # The base row is "the rules before the work requirement". Once
             # that year is behind us nobody is living under it, so it only
@@ -663,7 +664,7 @@ class MedicaidEligibilityTool(BaseTool):
             if row[0] >= current_year or row[0] == target_year
         ]
         seen_years: set = set()
-        deduped_rows = []
+        deduped_rows: List[Tuple[int, bool, List[str]]] = []
         for row in rows:
             if row[0] in seen_years:
                 continue
@@ -681,7 +682,7 @@ class MedicaidEligibilityTool(BaseTool):
         # One shared description of the work-requirement rules so the eligible
         # and not-eligible wordings can't drift apart.
         work_req_note = ""
-        if any(year >= WORK_REQUIREMENT_FIRST_YEAR for year, _ in rows):
+        if any(year >= WORK_REQUIREMENT_FIRST_YEAR for year, _, _ in rows):
             work_req_note = (
                 " (once the federal 80-hours-per-month work/community-engagement "
                 "requirement applies to them — states must implement it by "
@@ -689,7 +690,9 @@ class MedicaidEligibilityTool(BaseTool):
             )
         # Any year past the published table's was scored with that table's
         # limits, and we owe the user that fact.
-        scored_beyond_the_table = any(year > BASE_ELIGIBILITY_YEAR for year, _ in rows)
+        scored_beyond_the_table = any(
+            year > BASE_ELIGIBILITY_YEAR for year, _, _ in rows
+        )
 
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
@@ -719,9 +722,13 @@ class MedicaidEligibilityTool(BaseTool):
                     "share that, while noting the questions above are still "
                     "needed to be sure."
                 )
+            # Positives only, so the completeness guard isn't needed here: a
+            # year we can't score yet comes back False and is excluded by
+            # that alone. Sharing an early POSITIVE is the point of this
+            # branch -- it's the negatives that must never outrun the data.
             later_settled = [
                 year
-                for year, probably_eligible in rows
+                for year, probably_eligible, _ in rows
                 if year > current_year and probably_eligible
             ]
             if later_settled:
@@ -772,13 +779,26 @@ class MedicaidEligibilityTool(BaseTool):
         else:
             verdict_lines = []
             noted_work_req = False
-            for year, probably_eligible in rows:
+            unanswered_by_year: List[Tuple[int, List[str]]] = []
+            for year, probably_eligible, still_needed in rows:
                 label = base_label if year == current_year else str(year)
                 note = ""
                 if year >= WORK_REQUIREMENT_FIRST_YEAR and not noted_work_req:
                     # Attach the explanation once, to the first year it bites.
                     note = work_req_note
                     noted_work_req = True
+                if still_needed:
+                    # NOT a verdict. The checker returns False for this year
+                    # because it can't score it yet, and printing that as "may
+                    # not be eligible" hands the user a denial nobody
+                    # computed -- the exact failure the rest of this file
+                    # exists to prevent.
+                    unanswered_by_year.append((year, still_needed))
+                    verdict_lines.append(
+                        f"- {label}: NOT ESTABLISHED -- we can't score this "
+                        f"year until the questions below are answered{note}"
+                    )
+                    continue
                 verdict = "could be" if probably_eligible else "may not be"
                 verdict_lines.append(
                     f"- {label}: they {verdict} eligible for medicaid{note}"
@@ -789,12 +809,38 @@ class MedicaidEligibilityTool(BaseTool):
                 + "\n".join(verdict_lines)
             )
 
+            if unanswered_by_year:
+                # The questions a later year needs are not in `missing` --
+                # that list belongs to the year the user asked about. Without
+                # them the model is told a year is unscored and given no way
+                # to fix it.
+                needed_lines = []
+                for year, still_needed in unanswered_by_year:
+                    for question in still_needed:
+                        needed_lines.append(f"- ({year}) {question}")
+                parts.append(
+                    "To settle the years marked NOT ESTABLISHED, ask these "
+                    "(two or three at a time, rephrased naturally). Do NOT "
+                    "guess a verdict for those years in the meantime:\n"
+                    + "\n".join(needed_lines)
+                )
+
             # The whole reason for showing more than one year: say out loud
             # when the answer moves, rather than leaving the user to diff two
             # sentences. Someone who probably qualifies today and probably
             # won't once the work requirement applies needs to hear that as
             # the headline, not as a footnote.
-            for (earlier, was_eligible), (later, now_eligible) in zip(rows, rows[1:]):
+            for (earlier, was_eligible, earlier_needs), (
+                later,
+                now_eligible,
+                later_needs,
+            ) in zip(rows, rows[1:]):
+                if earlier_needs or later_needs:
+                    # One side isn't a verdict, so there is no change to
+                    # announce -- "this CHANGES in 2027" off the back of an
+                    # unanswered question is the denial again, in a louder
+                    # voice.
+                    continue
                 if was_eligible == now_eligible:
                     continue
                 if was_eligible:

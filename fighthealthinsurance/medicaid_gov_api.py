@@ -276,13 +276,32 @@ def _parse_sitemap_xml(content: bytes) -> ET.Element:
       Current expat refuses external entities and is no longer vulnerable to
       the classic expansion attacks, but rejecting the declaration outright
       costs nothing and doesn't depend on the parser version underneath us.
+
+    The declaration scan covers the WHOLE document, not a prefix of it: a
+    long enough leading comment pushes ``<!DOCTYPE`` past any fixed window,
+    and a guard you can walk around with padding is not a guard. The size cap
+    runs first, so the scan is bounded.
     """
     if len(content) > _MAX_SITEMAP_BYTES:
         raise ValueError(f"sitemap document too large ({len(content)} bytes)")
-    head = content[:2048].lower()
-    if b"<!doctype" in head or b"<!entity" in head:
+    lowered = content.lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
         raise ValueError("sitemap document carries a doctype/entity declaration")
     return ET.fromstring(content)
+
+
+def _is_allowed_sitemap_url(url: str) -> bool:
+    """Whether ``url`` is a sitemap document we're willing to go fetch.
+
+    The child sitemap URLs come out of remote XML, so they are attacker-shaped
+    input the moment anything upstream of us is wrong. Without this a spoofed
+    or compromised index turns one lookup into a request at whatever host it
+    names -- a server-side request forgery with our credentials-bearing
+    network position behind it.
+    """
+    if not is_allowed_url(url):
+        return False
+    return (urlparse(url).hostname or "").lower().endswith("medicaid.gov")
 
 
 def _fetch_sitemap_urls() -> List[str]:
@@ -296,9 +315,31 @@ def _fetch_sitemap_urls() -> List[str]:
         return list(cached)
 
     deadline = time.monotonic() + _SITEMAP_TOTAL_BUDGET_SECONDS
+
+    def remaining() -> float:
+        return deadline - time.monotonic()
+
+    def _get(url: str):
+        """One budgeted request. Never outlives the walk's deadline.
+
+        The per-request timeout alone doesn't bound the walk: a request that
+        starts a hair before the deadline still runs the full timeout past it.
+        Redirects are off because the whole point of the host check below is
+        that we choose what we connect to -- a 302 would hand that choice back
+        to whoever served the sitemap.
+        """
+        left = remaining()
+        if left <= 0:
+            raise TimeoutError("sitemap walk budget exhausted")
+        return requests.get(
+            url,
+            timeout=min(_SITEMAP_TIMEOUT_SECONDS, left),
+            allow_redirects=False,
+        )
+
     urls: List[str] = []
     try:
-        index = requests.get(SITEMAP_INDEX_URL, timeout=_SITEMAP_TIMEOUT_SECONDS)
+        index = _get(SITEMAP_INDEX_URL)
         index.raise_for_status()
         root = _parse_sitemap_xml(index.content)
         pages = [
@@ -311,7 +352,7 @@ def _fetch_sitemap_urls() -> List[str]:
             pages = [SITEMAP_INDEX_URL]
 
         for page_url in pages[:_MAX_SITEMAP_PAGES]:
-            if time.monotonic() >= deadline:
+            if remaining() <= 0:
                 # Out of time. Keep what we have rather than dropping the
                 # lookup: a partial index still answers most queries, and the
                 # person is waiting on a chat reply.
@@ -321,7 +362,12 @@ def _fetch_sitemap_urls() -> List[str]:
                     f"{len(urls)} URLs collected"
                 )
                 break
-            page = requests.get(page_url, timeout=_SITEMAP_TIMEOUT_SECONDS)
+            if not _is_allowed_sitemap_url(page_url):
+                logger.warning(
+                    f"medicaid_gov: refusing off-host sitemap entry {page_url}"
+                )
+                continue
+            page = _get(page_url)
             page.raise_for_status()
             page_root = _parse_sitemap_xml(page.content)
             for loc in page_root.findall(".//s:url/s:loc", _SITEMAP_NS):
@@ -432,8 +478,8 @@ def search_medicaid_gov(query: str, limit: int = 5) -> List[Tuple[str, float]]:
 
     Blocking on a cold cache (it walks the sitemap); bridge off the event
     loop rather than awaiting it inline.
-    Returns ``(url, score)`` pairs; an empty list means nothing matched or the
-    sitemap was unreachable.
+    Returns ``(url, score)`` pairs; an empty list means nothing matched, the
+    sitemap was unreachable, or the caller asked for nothing (``limit=0``).
     """
     if not query or not isinstance(query, str):
         return []
@@ -450,4 +496,4 @@ def search_medicaid_gov(query: str, limit: int = 5) -> List[Tuple[str, float]]:
             scored.append((url, score))
 
     scored.sort(key=lambda pair: (-pair[1], len(pair[0]), pair[0]))
-    return scored[: max(1, limit)]
+    return scored[: max(0, limit)]

@@ -153,7 +153,15 @@ class MedicaidGovLookupTool(BaseTool):
         # per-call DB connection cleanup would be pure churn. Bridged rather
         # than awaited inline because a cold-cache walk is seconds of blocking
         # requests, which would freeze every OTHER chat on this worker.
-        url, other_urls, how = await sync_to_async(self._resolve_target)(params)
+        #
+        # thread_sensitive=False for the same reason: the default routes every
+        # such call through ONE shared worker thread, so a cold sitemap walk
+        # would queue up behind (and ahead of) unrelated thread-sensitive work
+        # instead of blocking only itself. Safe here precisely because there's
+        # no ORM or thread-local state to keep on one thread.
+        url, other_urls, how = await sync_to_async(
+            self._resolve_target, thread_sensitive=False
+        )(params)
         if not url:
             # Tell the model what it *could* have asked for rather than
             # failing silently -- a bad page name is a recoverable mistake.

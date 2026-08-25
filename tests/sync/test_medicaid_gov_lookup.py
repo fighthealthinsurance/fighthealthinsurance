@@ -116,7 +116,9 @@ class TestCuratedSuggestions(TestCase):
         self.assertIn("eligibility_levels", keys)
 
     def test_poverty_level_phrasings_reach_an_fpl_reference(self):
-        keys = [s.key for s in suggest_curated_sources("what is the federal poverty level")]
+        keys = [
+            s.key for s in suggest_curated_sources("what is the federal poverty level")
+        ]
         self.assertIn("fpl_glossary", keys)
 
     def test_an_unrelated_question_suggests_nothing(self):
@@ -149,7 +151,9 @@ class TestSitemapSearch(TestCase):
     def test_ranks_matching_pages(self):
         results = search_medicaid_gov("eligibility policy")
         self.assertTrue(results)
-        self.assertEqual(results[0][0], "https://www.medicaid.gov/medicaid/eligibility-policy")
+        self.assertEqual(
+            results[0][0], "https://www.medicaid.gov/medicaid/eligibility-policy"
+        )
 
     def test_word_variants_match_slugs(self):
         # "renewal" has to reach "/renew-info"; slugs and questions rarely
@@ -167,6 +171,10 @@ class TestSitemapSearch(TestCase):
 
     def test_limit_is_respected(self):
         self.assertLessEqual(len(search_medicaid_gov("eligibility", limit=1)), 1)
+
+    def test_a_zero_limit_returns_nothing(self):
+        # "at most N results" has to mean it at zero too.
+        self.assertEqual(search_medicaid_gov("eligibility", limit=0), [])
 
 
 class TestSitemapParsing(TestCase):
@@ -188,6 +196,19 @@ class TestSitemapParsing(TestCase):
             b'<?xml version="1.0"?>'
             b'<!DOCTYPE urlset [<!ENTITY lol "lol">]>'
             b"<urlset><url><loc>&lol;</loc></url></urlset>"
+        )
+        with self.assertRaises(ValueError):
+            _parse_sitemap_xml(xml)
+
+    def test_a_doctype_after_a_long_comment_is_still_refused(self):
+        # A fixed inspection window is a guard you can walk around with
+        # padding: a long enough leading comment pushes the declaration past
+        # any prefix scan.
+        xml = (
+            b'<?xml version="1.0"?>'
+            b"<!--" + b"x" * 4096 + b"-->"
+            b'<!DOCTYPE urlset [<!ENTITY v "renew-info">]>'
+            b"<urlset><url><loc>&v;</loc></url></urlset>"
         )
         with self.assertRaises(ValueError):
             _parse_sitemap_xml(xml)
@@ -232,9 +253,64 @@ class TestSitemapWalkBudget(TestCase):
             with patch.object(medicaid_gov_api.requests, "get", side_effect=fake_get):
                 urls = medicaid_gov_api._fetch_sitemap_urls()
 
-        # The index is fetched; the per-page walk never starts.
+        # No budget, no requests -- not even the index. A per-request timeout
+        # alone doesn't bound the walk: a request that starts a hair before
+        # the deadline still runs the full timeout past it.
+        self.assertEqual(responses, [])
+        self.assertEqual(urls, [])
+
+    def test_an_off_host_sitemap_entry_is_never_requested(self):
+        # Child sitemap URLs come out of remote XML. Without a host check a
+        # spoofed index turns one lookup into a request at whatever host it
+        # names.
+        from fighthealthinsurance import medicaid_gov_api
+
+        evil_index = (
+            b'<?xml version="1.0"?>'
+            b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            b"<sitemap><loc>https://evil.example.com/sitemap-1.xml</loc></sitemap>"
+            b"</sitemapindex>"
+        )
+        responses = []
+
+        class _Response:
+            def __init__(self, content):
+                self.content = content
+
+            def raise_for_status(self):
+                return None
+
+        def fake_get(url, **kwargs):
+            responses.append(url)
+            return _Response(evil_index)
+
+        with patch.object(medicaid_gov_api.requests, "get", side_effect=fake_get):
+            urls = medicaid_gov_api._fetch_sitemap_urls()
+
         self.assertEqual(responses, [medicaid_gov_api.SITEMAP_INDEX_URL])
         self.assertEqual(urls, [])
+
+    def test_redirects_are_not_followed(self):
+        # The host check only means something if we choose what we connect
+        # to; a 302 would hand that choice back to whoever served the sitemap.
+        from fighthealthinsurance import medicaid_gov_api
+
+        seen = {}
+
+        class _Response:
+            content = self.INDEX
+
+            def raise_for_status(self):
+                return None
+
+        def fake_get(url, **kwargs):
+            seen.update(kwargs)
+            return _Response()
+
+        with patch.object(medicaid_gov_api.requests, "get", side_effect=fake_get):
+            medicaid_gov_api._fetch_sitemap_urls()
+
+        self.assertFalse(seen.get("allow_redirects", True))
 
 
 def _run_tool(params_json, *, lookup_count=None, fetch_text="Official page text."):

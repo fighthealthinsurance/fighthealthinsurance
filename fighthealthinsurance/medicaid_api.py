@@ -504,7 +504,12 @@ _DECLINE_DEFAULTS: Dict[str, Any] = {
 # moves past it we keep scoring against the same table (it's the newest one
 # published) but we stop calling it the current year. Use
 # ``current_eligibility_year`` for anything a user reads as "today".
-BASE_ELIGIBILITY_YEAR = 2025
+#
+# Moves with the dollar figures in ``fpl_annual_base``. Leaving it behind
+# while HHS publishes a newer table doesn't just mislabel the answer, it
+# scores people against limits that have been superseded -- and the limits
+# only ever go up, so a stale table denies people who now qualify.
+BASE_ELIGIBILITY_YEAR = 2026
 
 # States must implement the federal work/community-engagement requirement no
 # later than January 1, 2027; a few started earlier, which is why the overlay
@@ -767,8 +772,8 @@ def timeline_years(value: Any = None) -> List[int]:
     return sorted(years)
 
 
-def eligibility_timeline(**kwargs: Any) -> List[Tuple[int, bool]]:
-    """``(year, probably_eligible)`` for each year in ``timeline_years``.
+def eligibility_timeline(**kwargs: Any) -> List[Tuple[int, bool, List[str]]]:
+    """``(year, probably_eligible, still_needed)`` for each timeline year.
 
     Runs the checker once per year so a year-over-year change is visible
     rather than implied. ``is_eligible`` is pure and does no IO, so the
@@ -778,11 +783,23 @@ def eligibility_timeline(**kwargs: Any) -> List[Tuple[int, bool]]:
     verdict for EVERY year, including the base year: the work overlay is
     skipped below WORK_REQUIREMENT_FIRST_YEAR, so it collapses to the
     base-year verdict there.
+
+    The third element is what that year still needs, and dropping it was a
+    bug worth naming: ``is_eligible`` uses ``False`` for BOTH "we scored this
+    and they fall short" and "we can't score this until you answer" -- an
+    unanswered work-hours question sets the target-year flag False on
+    purpose, because the questions ride alongside it. A caller who keeps only
+    the boolean turns "we don't know yet" into "you may not be eligible",
+    which is a denial nobody computed. Years that still need answers carry
+    them here so the renderer can ask instead of concluding.
     """
-    timeline: List[Tuple[int, bool]] = []
+    timeline: List[Tuple[int, bool, List[str]]] = []
     for year in timeline_years(kwargs.get("target_year")):
-        _, probably_eligible, *_ = is_eligible(**{**kwargs, "target_year": year})
-        timeline.append((year, bool(probably_eligible)))
+        _, probably_eligible, _, _, missing, determination_made = is_eligible(
+            **{**kwargs, "target_year": year}
+        )
+        still_needed = list(missing) if not determination_made or missing else []
+        timeline.append((year, bool(probably_eligible), still_needed))
     return timeline
 
 
@@ -992,17 +1009,20 @@ def is_eligible(
     target_year = resolve_target_year(kwargs.get("target_year"))
 
     # FPL table (annual, 48 contiguous states + DC published guidelines:
-    # $15,650 for one person plus $5,500 per additional person). Alaska and
-    # Hawaii run higher; we keep the contiguous values as the approximation.
-    # We'll work monthly: divide by 12.
+    # $15,960 for one person plus $5,680 per additional person -- the 2026 HHS
+    # poverty guidelines, which is what BASE_ELIGIBILITY_YEAR names). Alaska
+    # and Hawaii run higher; we keep the contiguous values as the
+    # approximation. We'll work monthly: divide by 12.
     #
     # The SAME published table scores every year -- see the note on
     # BASE_ELIGIBILITY_YEAR for why future years are not projected forward.
+    # When HHS publishes the next year's guidelines, both numbers here and
+    # BASE_ELIGIBILITY_YEAR move together; they are one fact in two places.
     def fpl_annual_base(hh: int) -> float:
         if hh <= 0:
             hh = 1
-        base = 15650.0
-        add = 5500.0
+        base = 15960.0
+        add = 5680.0
         return base + add * (hh - 1)
 
     def pct_fpl(monthly_income: float, hh: int) -> float:
