@@ -821,6 +821,100 @@ class TestMedicaidTargetYear(TestCase):
 
         self.assertNotIn("CHANGES in", info)
 
+    def test_every_branch_tells_them_to_confirm_with_the_state(self):
+        # Every answer is an estimate off simplified rules against limits that
+        # move. The branch most likely to be taken as final -- "we couldn't
+        # score you" -- is the one that used to end without any pointer at
+        # all.
+        from fighthealthinsurance.chat.tools.medicaid_tool import (
+            CONFIRM_WITH_STATE_INSTRUCTION,
+        )
+
+        branches = {
+            "mid-interview": dict(
+                eligible_base=False,
+                eligible_target=False,
+                missing=["What is your household size?"],
+                determination_made=True,
+            ),
+            "indeterminate": dict(
+                eligible_base=False,
+                eligible_target=False,
+                missing=[],
+                determination_made=False,
+            ),
+            "settled": dict(
+                eligible_base=True,
+                eligible_target=True,
+                missing=[],
+                determination_made=True,
+            ),
+        }
+        for name, kwargs in branches.items():
+            with self.subTest(branch=name):
+                info = self.tool._build_eligibility_info(
+                    medicare=False, alternatives=[], **kwargs
+                )
+                self.assertIn(CONFIRM_WITH_STATE_INSTRUCTION, info)
+
+    def test_a_negative_verdict_carries_its_own_caveat(self):
+        # The negative is the line someone acts on by NOT applying, so the
+        # reminder rides on that line rather than waiting for a caveat
+        # further down that the model may never reach.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[YearVerdict(current, False, [])],
+        )
+
+        line = next(
+            row for row in info.splitlines() if row.startswith(f"- current ({current})")
+        )
+        self.assertIn("NOT a denial", line)
+        self.assertIn("only their state can decide", line)
+
+    def test_an_income_denial_does_not_blame_the_work_requirement(self):
+        # Failing the income test is not the work requirement's doing.
+        # Attaching "(once the 80-hours requirement applies...)" to an income
+        # denial tells someone to go chase hours that would not have changed
+        # the answer.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[YearVerdict(current, False, [])],
+        )
+
+        self.assertNotIn("work/community-engagement", info)
+
+    def test_a_repeated_negative_does_not_repeat_the_whole_caveat(self):
+        # Two rows carrying the same long sentence dilutes it.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, False, []),
+                YearVerdict(current + 1, False, []),
+            ],
+        )
+
+        self.assertEqual(info.count("people do qualify when a checker"), 1)
+        self.assertIn("again, an estimate, not a denial", info)
+
     def test_a_transition_year_shortfall_is_conditional_not_a_denial(self):
         # The work requirement has reached the states that went early and
         # nowhere else yet. "May not be eligible" would be a denial for a

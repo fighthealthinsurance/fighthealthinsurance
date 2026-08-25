@@ -1290,7 +1290,9 @@ Pages you can ask for by name:
 
 You can also pass **medicaid_gov_lookup {"query": "renewal paperwork"}** to search Medicaid.gov, or {"url": "https://www.medicaid.gov/..."} for a specific Medicaid.gov page.
 
-Use this when someone needs the OFFICIAL wording — renewal deadlines, income tables, what a notice means — rather than answering from memory. It reads the real page, so cite the URL it returns. It cannot look up an individual's case: only their state agency can do that."""
+Use this when someone needs the OFFICIAL wording — renewal deadlines, income tables, what a notice means — rather than answering from memory. It reads the real page, so cite the URL it returns. It cannot look up an individual's case: only their state agency can do that.
+
+Offer it proactively after you've given someone an eligibility estimate, or an answer about income limits, deadlines, or what a notice means. Everything we tell them is an estimate off simplified rules; the official page is the thing they can actually check it against, and their own state agency is the only one who decides. Give them the link, don't just describe it."""
 
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
 

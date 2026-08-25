@@ -25,6 +25,28 @@ if TYPE_CHECKING:
     from fighthealthinsurance.medicaid_api import YearVerdict
 
 
+# Every answer this tool produces is an estimate off deliberately simplified
+# rules, against limits that move, in a program whose details vary by state.
+# So every answer has to arrive with the way to check it -- and it is appended
+# to EACH branch rather than stated once at the top, because a model given one
+# blanket caveat in the preamble routinely drops it by the time it writes the
+# sentence that actually matters to the person reading.
+#
+# The pointers are things we can genuinely pull up rather than a vague "look
+# it up", so the offer is worth accepting.
+CONFIRM_WITH_STATE_INSTRUCTION = (
+    "ALWAYS close by telling the user to confirm with their state Medicaid "
+    "agency, whatever the answer was: the state is the only one who can "
+    "actually decide, our rules are simplified, and eligibility limits "
+    "change. Offer to pull up the official pages for them -- "
+    'medicaid_gov_lookup {"page": "renew_info", "state": "<their state>"} '
+    "for their state's Medicaid and renewal hub, or "
+    'medicaid_gov_lookup {"page": "eligibility_levels"} for the official '
+    "income-limit table -- and medicaid_info for state contact details. "
+    "Never present any of this as a decision that has been made."
+)
+
+
 class MedicaidInfoTool(BaseTool):
     """
     Tool handler for Medicaid information lookups.
@@ -474,9 +496,9 @@ class MedicaidEligibilityTool(BaseTool):
                 "it very clear that this eligibility check is an "
                 "EXPERIMENTAL feature and only an approximation -- it can be "
                 "wrong or out of date -- and they must contact the state to "
-                "know for sure (you can use the "
-                "medicaid_info tool call to get state-specific contact info "
-                f"to provide to the user). {work_req_advice}Give the user "
+                "know for sure (medicaid_info gets state-specific contact "
+                "info, and medicaid_gov_lookup pulls up the official pages so "
+                f"they can read the rules themselves). {work_req_advice}Give the user "
                 "EVERY year listed above, not just one -- whether the answer "
                 "holds steady or changes is the most useful thing in this "
                 "check, and if it changes, lead with that. Keep the hedged "
@@ -689,8 +711,15 @@ class MedicaidEligibilityTool(BaseTool):
         #
         # One shared description of the work-requirement rules so the eligible
         # and not-eligible wordings can't drift apart.
+        # Gated on eligible_base as well as the year: when someone fails the
+        # income or category test the work requirement is not what stopped
+        # them, and attaching "(once the 80-hours requirement applies...)" to
+        # an income denial tells them to go chase hours that would not have
+        # changed the answer.
         work_req_note = ""
-        if any(row.year >= WORK_REQUIREMENT_FIRST_YEAR for row in rows):
+        if eligible_base and any(
+            row.year >= WORK_REQUIREMENT_FIRST_YEAR for row in rows
+        ):
             work_req_note = (
                 " (once the federal 80-hours-per-month work/community-engagement "
                 "requirement applies to them — states must implement it by "
@@ -785,6 +814,7 @@ class MedicaidEligibilityTool(BaseTool):
         else:
             verdict_lines = []
             noted_work_req = False
+            noted_not_a_denial = False
             unanswered_by_year: List[Tuple[int, List[str]]] = []
             for row in rows:
                 label = base_label if row.year == current_year else str(row.year)
@@ -829,10 +859,29 @@ class MedicaidEligibilityTool(BaseTool):
                         "with their state, and do NOT say they're ineligible."
                     )
                     continue
-                verdict = "could be" if row.probably_eligible else "may not be"
-                verdict_lines.append(
-                    f"- {label}: they {verdict} eligible for medicaid{note}"
-                )
+                if row.probably_eligible:
+                    verdict_lines.append(
+                        f"- {label}: they could be eligible for medicaid{note}"
+                    )
+                else:
+                    # The negative is the line someone acts on by NOT
+                    # applying, so the reminder rides on the line itself
+                    # rather than waiting for a caveat further down. Spelled
+                    # out once and abbreviated after: repeating the whole
+                    # sentence on every negative row dilutes it.
+                    if noted_not_a_denial:
+                        caveat = " -- again, an estimate, not a denial"
+                    else:
+                        caveat = (
+                            " -- say this is our rough estimate and NOT a "
+                            "denial, and that only their state can decide; "
+                            "people do qualify when a checker like ours says "
+                            "they might not"
+                        )
+                        noted_not_a_denial = True
+                    verdict_lines.append(
+                        f"- {label}: they may not be eligible for medicaid{note}{caveat}"
+                    )
             parts.append(
                 "Our data so far suggests, year by year (every one of these "
                 "is an approximation, not a determination):\n"
@@ -917,5 +966,11 @@ class MedicaidEligibilityTool(BaseTool):
                     "Alternative programs and next steps worth mentioning:\n"
                     f"{alternative_lines}"
                 )
+
+        # Outside the branch chain on purpose: mid-interview, indeterminate
+        # and finished answers all need it, and the one most likely to be
+        # taken as final -- "we couldn't score you" -- is the one that used to
+        # end without it.
+        parts.append(CONFIRM_WITH_STATE_INSTRUCTION)
 
         return "\n\n".join(parts)
