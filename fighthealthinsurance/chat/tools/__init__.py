@@ -25,6 +25,7 @@ from .patterns import (
     FINANCIAL_ASSISTANCE_REGEX,
     LOOKUP_PA_REQUIREMENT_REGEX,
     MEDICAID_ELIGIBILITY_REGEX,
+    MEDICAID_GOV_LOOKUP_REGEX,
     MEDICAID_INFO_REGEX,
     PUBMED_QUERY_REGEX,
     RXNORM_LOOKUP_REGEX,
@@ -32,6 +33,7 @@ from .patterns import (
     contains_tool_call,
     count_tool_invocations,
 )
+from .medicaid_gov_tool import MedicaidGovLookupTool
 from .prior_auth_tool import PriorAuthTool
 from .pubmed_tool import PubMedTool
 from .rxnorm_tool import RxNormLookupTool
@@ -42,6 +44,7 @@ __all__ = [
     "PUBMED_QUERY_REGEX",
     "MEDICAID_INFO_REGEX",
     "MEDICAID_ELIGIBILITY_REGEX",
+    "MEDICAID_GOV_LOOKUP_REGEX",
     "CREATE_OR_UPDATE_APPEAL_REGEX",
     "CREATE_OR_UPDATE_PRIOR_AUTH_REGEX",
     "FETCH_DOC_REGEX",
@@ -59,6 +62,7 @@ __all__ = [
     "PubMedTool",
     "MedicaidInfoTool",
     "MedicaidEligibilityTool",
+    "MedicaidGovLookupTool",
     "AppealTool",
     "PriorAuthTool",
     "DocFetcherTool",

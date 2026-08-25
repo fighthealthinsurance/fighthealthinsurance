@@ -1280,6 +1280,18 @@ RULE: Do NOT add any conversational text, questions, or additional explanations 
             + """ Nothing else.
 """
         )
+        medicaid_gov_tool = """**Medicaid.gov Lookup**: To read an official page from Medicaid.gov (or a trusted federal-poverty-level reference) and answer from it, use: **medicaid_gov_lookup {"page": "renew_info", "state": "Iowa"}**
+
+Pages you can ask for by name:
+- "renew_info" — the official renewal hub: how to keep coverage, what the state mails you, what to do if you were disenrolled. Pass "state" (any spelling, or a program name like Medi-Cal) for that state's renewal page.
+- "eligibility_levels" — the official Medicaid/CHIP/BHP income eligibility levels by state and category.
+- "fpl_chart" — federal-poverty-level dollar amounts by household size and percentage band.
+- "fpl_glossary" — plain-language explanation of what the federal poverty level is.
+
+You can also pass **medicaid_gov_lookup {"query": "renewal paperwork"}** to search Medicaid.gov, or {"url": "https://www.medicaid.gov/..."} for a specific Medicaid.gov page.
+
+Use this when someone needs the OFFICIAL wording — renewal deadlines, income tables, what a notice means — rather than answering from memory. It reads the real page, so cite the URL it returns. It cannot look up an individual's case: only their state agency can do that."""
+
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
 
         clinical_trials_tool = """**ClinicalTrials.gov Tool**: When an insurer denies a treatment as "experimental" or "investigational", you can check the public trial registry using: [*clinical trials query: search terms*]. The system returns clinicaltrialscontext:[...] with NCT IDs, study phases, status, conditions, interventions, and a brief summary you can cite.
@@ -1405,6 +1417,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 
 {medicaid_eligibility_tool}
 {medicaid_resources_tool}
+{medicaid_gov_tool}
 {pubmed_tool}
 {uspstf_tool}
 {clinical_trials_tool}

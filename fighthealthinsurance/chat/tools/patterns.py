@@ -45,6 +45,12 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
     r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
 )
 
+# Medicaid.gov page lookup - captures JSON parameters
+# Matches: medicaid_gov_lookup {JSON} or **medicaid_gov_lookup {JSON}**
+# Resolves a curated page, an allowlisted URL, or a free-text query to a
+# page on Medicaid.gov (see medicaid_gov_api).
+MEDICAID_GOV_LOOKUP_REGEX = r"(?:\*\*)?medicaid_gov_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
+
 # Document fetcher tool - captures JSON with URL
 # Matches: fetch_doc {JSON} or **fetch_doc {JSON}**
 FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
@@ -131,6 +137,7 @@ ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
     MEDICAID_INFO_REGEX,
     MEDICAID_ELIGIBILITY_REGEX,
+    MEDICAID_GOV_LOOKUP_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,

@@ -61,6 +61,7 @@ from fighthealthinsurance.chat.tools import (
     DocFetcherTool,
     FinancialAssistanceTool,
     MedicaidEligibilityTool,
+    MedicaidGovLookupTool,
     MedicaidInfoTool,
     PaRequirementLookupTool,
     PriorAuthTool,
@@ -195,6 +196,9 @@ class ChatInterface:
         # tool is rebuilt per turn. Until it flips, the scorer treats a
         # candidate that asserts an eligibility verdict as inventing one.
         self._eligibility_computed: list[bool] = [False]
+        # Per-session cap for medicaid_gov_lookup, kept out here because the
+        # tool is rebuilt every turn (same shape as _doc_fetch_count).
+        self._medicaid_gov_lookup_count: list[int] = [0]
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -640,6 +644,15 @@ class ChatInterface:
             self.send_status_message, self._call_llm_with_actions
         )
         response_text, context, _ = await medicaid_info_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        medicaid_gov_tool = MedicaidGovLookupTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+            lookup_count=self._medicaid_gov_lookup_count,
+        )
+        response_text, context, _ = await medicaid_gov_tool.handle(
             response_text, context, **tool_kwargs
         )
 
