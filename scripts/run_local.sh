@@ -181,7 +181,9 @@ GEOIP_DB="${REPO_ROOT}/geoip_data/geoip2fast-city-asn-ipv6.dat.gz"
 fetch_geoip_db() {
   "${SCRIPT_DIR}/fetch_geoip_db.sh" --dest "${GEOIP_DB}" || true
   if [ -f "${GEOIP_DB}" ]; then
-    echo "export FHI_GEOIP_CITY_DB=${GEOIP_DB}" > "$TMPDIR/geoip"
+    # %q-escape the path: this file gets source'd below, and a checkout under
+    # a directory with spaces would otherwise break the export.
+    printf 'export FHI_GEOIP_CITY_DB=%q\n' "${GEOIP_DB}" > "$TMPDIR/geoip"
   fi
 }
 
