@@ -5,6 +5,7 @@ from django.test import TestCase
 from fighthealthinsurance.chat.safety_filters import (
     detect_crisis_keywords,
     detect_delete_data_request,
+    detect_eligibility_verdict,
     detect_false_promises,
     llm_requested_delete_handoff,
     CRISIS_RESOURCES,
@@ -409,3 +410,140 @@ class TestPromptTemplateSentinelCoupling(TestCase):
         from fighthealthinsurance.prompt_templates import DELETE_DATA_INSTRUCTION
 
         self.assertTrue(llm_requested_delete_handoff(DELETE_DATA_INSTRUCTION))
+
+
+class TestEligibilityVerdictDetection(TestCase):
+    """Only the medicaid_eligibility checker may hand down a verdict.
+
+    The scorer uses this to descore a reply that states one the checker never
+    computed, so what counts as "a verdict" has to be the definite claims and
+    nothing else -- the Medicaid path deliberately has the model float the
+    possibility before the check runs.
+    """
+
+    def test_definite_verdicts_are_detected(self):
+        verdicts = [
+            "Based on what you told me, you are eligible for Medicaid.",
+            "Unfortunately you do not qualify for Medicaid in Texas.",
+            "Good news: you qualify for Medicaid expansion coverage.",
+            "You're not eligible for Medicare at your age.",
+            "Your household is Medicaid-eligible.",
+        ]
+        for text in verdicts:
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
+    def test_hedged_offers_are_not_verdicts(self):
+        offers = [
+            "You may be eligible for Medicaid — want me to run our "
+            "experimental check?",
+            "You might qualify for Medicaid depending on your income.",
+            "I can check if you are eligible for Medicaid.",
+            "If you are eligible for Medicaid, the state will mail you a card.",
+        ]
+        for text in offers:
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
+    def test_questions_are_not_verdicts(self):
+        self.assertFalse(detect_eligibility_verdict("Are you eligible for Medicaid?"))
+
+    def test_general_medicaid_information_is_not_a_verdict(self):
+        self.assertFalse(
+            detect_eligibility_verdict(
+                "Medicaid is a joint federal and state program that covers "
+                "low-income adults, children, pregnant people, and people "
+                "with disabilities."
+            )
+        )
+
+    def test_a_verdict_later_in_a_reply_is_still_detected(self):
+        # The reply that beat the real tool call opened with a friendly
+        # paragraph and put the invented verdict at the bottom.
+        reply = (
+            "Thanks for sharing all that — I know this is stressful.\n\n"
+            "Here is what Medicaid covers in California.\n\n"
+            "You qualify for Medi-Cal."
+        )
+        self.assertTrue(detect_eligibility_verdict(reply))
+
+    def test_forward_looking_approval_and_denial_are_verdicts(self):
+        # Predicting an agency decision is at least as much of an invention
+        # as predicting eligibility.
+        for text in (
+            "You will be approved for Medicaid.",
+            "You'll be denied Medicaid.",
+            "You would be denied for Medicare.",
+            "You are going to be approved for MassHealth.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
+    def test_past_and_present_approval_is_not_a_verdict(self):
+        # This is an insurance-DENIAL product: a user's own approval or
+        # denial is the normal subject of the conversation, so the model
+        # repeating it back is not a hallucination. A false positive costs a
+        # correct reply its entire model prior.
+        for text in (
+            "You were denied Medicaid coverage last year.",
+            "You are approved for Medi-Cal, so your refills are covered.",
+            "Your surgery was denied by your insurer.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
+    def test_generically_named_programs_do_not_trigger_a_verdict(self):
+        # "STAR" and "Medical Assistance" are ordinary English before they
+        # are program names; treating them as verdict evidence penalized
+        # sentences that were not eligibility determinations at all.
+        for text in (
+            "You qualify for STAR.",
+            "You qualify for medical assistance benefits.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
+    def test_distinctively_named_programs_still_trigger_a_verdict(self):
+        # The ambiguity carve-out must not blunt the state names that are
+        # unmistakably Medicaid.
+        for text in (
+            "You qualify for MassHealth.",
+            "You are eligible for TennCare.",
+            "You qualify for Apple Health.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
+    def test_a_required_caveat_does_not_launder_a_verdict(self):
+        # The system prompt REQUIRES an experimental / confirm-with-your-state
+        # caveat on every eligibility answer, so treating trailing hedges as
+        # hedges let essentially every invented verdict through.
+        for text in (
+            "You qualify for Medicaid, but you should check your state's "
+            "website to confirm.",
+            "Based on this you are eligible for Medicaid, though you may need "
+            "to provide documentation.",
+            "You are eligible for Medicaid; if you apply this month coverage "
+            "starts right away.",
+            "Good news: you qualify for Medicaid expansion coverage. This is "
+            "an experimental estimate, so confirm with your state.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(detect_eligibility_verdict(text))
+
+    def test_a_condition_attached_to_the_verdict_still_hedges_it(self):
+        # Stating the rule is what the Medicaid path asks for on "what are the
+        # income limits?". "if your" also has to work -- the old `if\s+you\b`
+        # could not match it.
+        for text in (
+            "You are eligible for Medicaid if your income is under 138% FPL.",
+            "You are eligible for Medicaid if you make under $1,800 a month.",
+            "You qualify for Medicaid as long as your household stays under "
+            "the limit.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(detect_eligibility_verdict(text))
+
+    def test_empty_text_is_not_a_verdict(self):
+        self.assertFalse(detect_eligibility_verdict(""))
+        self.assertFalse(detect_eligibility_verdict(None))

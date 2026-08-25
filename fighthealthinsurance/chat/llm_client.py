@@ -11,10 +11,13 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 from loguru import logger
 
 from fighthealthinsurance.chat.message_preprocessor import MessageVariant
-from fighthealthinsurance.chat.safety_filters import detect_false_promises
+from fighthealthinsurance.chat.safety_filters import (
+    detect_eligibility_verdict,
+    detect_false_promises,
+)
 from fighthealthinsurance.chat.tools.patterns import (
-    ALL_TOOL_PATTERNS as tools_regex,
     contains_tool_call,
+    count_tool_invocations,
 )
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
 
@@ -54,6 +57,13 @@ BAD_CONTEXT_PATTERNS = re.compile(
 
 # Minimum length for a valid LLM response or context
 MIN_RESPONSE_LENGTH = 5
+
+# Penalty applied ON TOP of forfeiting the model prior when a reply states a
+# Medicaid/Medicare eligibility verdict the checker never produced. The
+# forfeit is what makes the guard hold across backends; this margin keeps an
+# invented verdict below a plain answer from the SAME call, whose content
+# signals would otherwise be identical.
+INVENTED_ELIGIBILITY_VERDICT_PENALTY = 2000
 
 # Pattern to detect when the response asks for the patient's name
 ASKS_FOR_PATIENT_NAME = re.compile(
@@ -276,6 +286,7 @@ def score_llm_response(
     chat_history: Optional[List[Dict[str, str]]] = None,
     current_message: Optional[str] = None,
     rejection_stats: Optional[Dict[str, int]] = None,
+    eligibility_verified: bool = False,
 ) -> float:
     """
     Score an LLM response for quality and safety.
@@ -292,6 +303,12 @@ def score_llm_response(
             its "repeated_rejected" counter so the caller can tell "no
             usable response" apart from "responses arrived but all repeated
             earlier replies" and retry with an anti-repeat instruction.
+        eligibility_verified: True when the medicaid_eligibility checker has
+            actually produced a determination for this chat (the tool's
+            follow-up pass, or any later turn in the same session). While
+            False, a candidate that flatly asserts an eligibility verdict is
+            inventing it: it forfeits its model prior and takes
+            INVENTED_ELIGIBILITY_VERDICT_PENALTY on top.
 
     Returns:
         Float score (higher is better, -inf for invalid responses).
@@ -328,6 +345,15 @@ def score_llm_response(
             return float("-inf")
 
     score = 0.0
+    invented_verdict = False
+
+    # A tool call is a legitimate reply shape even though it carries no
+    # user-facing prose or panda context summary -- the tool's follow-up pass
+    # writes those. Counted with the same patterns the tool bonus uses (NOT
+    # contains_tool_call, which also fires on a bare mention of a token) so
+    # only a real call earns the full model prior below.
+    tool_call_matches = count_tool_invocations(response_text)
+    has_tool_call = tool_call_matches > 0
 
     # Bonus for being a primary call
     if is_primary_call:
@@ -348,14 +374,23 @@ def score_llm_response(
             score -= 75
 
         # Bonus for tool usage (search anywhere in response)
-        for pattern in tools_regex:
-            if re.search(pattern, response_text):
-                score += 100
+        score += 100 * tool_call_matches
 
         # Safety: Penalize false promises
         if detect_false_promises(response_text):
             score -= 200
             logger.warning("Detected false promise in response, penalizing score")
+
+        # Safety: an eligibility verdict the checker never computed is a
+        # guess about someone's health coverage dressed up as a
+        # determination. The prior is FORFEITED below rather than nudged --
+        # see the invented_verdict handling after the base score is added.
+        if not eligibility_verified and detect_eligibility_verdict(response_text):
+            invented_verdict = True
+            logger.warning(
+                "Response asserts a Medicaid/Medicare eligibility verdict the "
+                "checker never computed, forfeiting its model prior"
+            )
 
         # Bonus for referencing an uploaded document by name (derived from history)
         if chat_history:
@@ -387,11 +422,46 @@ def score_llm_response(
                 response_text, chat_history or [], current_message
             )
 
-    # Add base quality score from model
-    if response_text and context_part:
-        score += call_score
+    # Add base quality score from model. A reply with no context summary is
+    # normally half-finished, so it only gets a hundredth of the model
+    # prior -- but a TOOL CALL has no summary by design, and dividing its
+    # prior sank real tool calls (score ~315) under chatty candidates that
+    # skipped the tool (~5810). That is how an eligibility verdict invented by
+    # a model instead of computed by the checker won a fan-out.
+    prior_applied = 0.0
+    if response_text and (context_part or has_tool_call):
+        prior_applied = call_score
     else:
-        score += call_score / 100
+        prior_applied = call_score / 100
+    score += prior_applied
+
+    # An invented eligibility verdict forfeits the model prior outright, then
+    # takes a fixed penalty on top.
+    #
+    # A fixed nudge alone could not work: the prior is the dominant term and
+    # the gaps between priors are bigger than any constant worth using. One
+    # quality-210 backend contributes BOTH a truncated-history call
+    # (210**2//5 = 8820) and a full-history one (210**2//4 = 11025), so a
+    # 2000-point penalty still left the full-history call's invented verdict
+    # (~9235) beating the truncated call's real checker invocation (~9120) --
+    # the exact swap this guard exists to prevent, from a single backend.
+    # Cross-backend gaps are larger still.
+    #
+    # Forfeiting the prior leaves only the content signals, so an invented
+    # verdict loses to any candidate that either called the checker or
+    # answered without a verdict, whatever backend it came from. It is
+    # deliberately NOT a hard -inf rejection like a repeated reply: the
+    # detector is a regex over free text, and one false positive must not be
+    # able to empty a fan-out and break the turn. When every candidate
+    # invents a verdict they are all levelled equally and the best of them
+    # still gets delivered.
+    # Subtract exactly what was added: a candidate with no context summary and
+    # no tool call only received call_score/100, so taking back the full
+    # call_score drove it thousands of points below its peers and inverted the
+    # ranking among invented verdicts on model quality -- the opposite of the
+    # "levelled equally" property this is supposed to have.
+    if invented_verdict:
+        score -= prior_applied + INVENTED_ELIGIBILITY_VERDICT_PENALTY
 
     logger.debug(f"Scored response as {score}")
     return score
@@ -426,6 +496,7 @@ def create_response_scorer(
     call_labels: Optional[Dict[Awaitable, str]] = None,
     repeat_offenders: Optional[Dict[str, int]] = None,
     score_log: Optional[Dict[Awaitable, float]] = None,
+    eligibility_verified: bool = False,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a scoring function for use with best_within_timelimit.
@@ -450,6 +521,8 @@ def create_response_scorer(
         score_log: Optional mutable dict; every scored call's final score is
             recorded here (keyed by the original awaitable) so the caller
             can report per-candidate scores in debug output.
+        eligibility_verified: Whether the medicaid_eligibility checker has
+            produced a determination for this chat; see score_llm_response.
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -488,6 +561,7 @@ def create_response_scorer(
             chat_history=chat_history,
             current_message=current_message,
             rejection_stats=rejection_stats,
+            eligibility_verified=eligibility_verified,
         )
         if (
             label

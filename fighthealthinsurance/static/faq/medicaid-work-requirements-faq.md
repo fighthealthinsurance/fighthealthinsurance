@@ -67,7 +67,7 @@ You have the right to appeal a denial or termination. This is often called a "fa
 
 #### Immediate Steps to Take:
 1.  **Update your contact information** with your state's Medicaid agency so you don't miss important notices.
-2.  **Review your eligibility status** and see if you qualify for an exemption.
+2.  **Review your eligibility status** and see if you qualify for an exemption. Not sure where you stand? Our [experimental eligibility check](/chat) walks through it with you — it's a rough estimate, not an official determination, so confirm anything it tells you with your state.
 3.  **Document your work activities**, school enrollment, or volunteer hours thoroughly.
 4.  **Respond quickly** to any mail or requests from the Medicaid office.
 5.  **Know your appeal rights** in case your coverage is unfairly terminated.
@@ -114,6 +114,9 @@ Regardless of work requirements:
 
 ### Where Can I Get Help? {#where-can-i-get-help}
 If you need assistance, start by calling your state Medicaid agency. You can also reach out to the following resources:
+
+#### Not sure whether you'll still qualify?
+Our free, **experimental** [Medicaid eligibility check](/chat) asks a few questions about your state, household, income, and situation and estimates whether you may qualify — under today's rules and once the work requirements apply. It is an estimate only, **not** an official eligibility determination: only your state Medicaid agency can decide for real.
 
 #### Legal Resources:
 - **State legal aid programs** and community health groups may be able to help.

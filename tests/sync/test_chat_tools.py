@@ -16,6 +16,7 @@ from fighthealthinsurance.chat.tools import (
     RXNORM_LOOKUP_REGEX,
     USPSTF_LOOKUP_REGEX,
     BaseTool,
+    count_tool_invocations,
     ClinicalTrialsTool,
     PubMedTool,
     MedicaidInfoTool,
@@ -25,6 +26,10 @@ from fighthealthinsurance.chat.tools import (
     USPSTFLookupTool,
 )
 from fighthealthinsurance.medicaid_api import (
+    BASE_ELIGIBILITY_YEAR,
+    DEFAULT_TARGET_YEAR,
+    YearVerdict,
+    current_eligibility_year,
     is_eligible,
     summarize_eligibility_inputs,
 )
@@ -50,6 +55,45 @@ class TestToolPatterns(TestCase):
             match = re.search(PUBMED_QUERY_REGEX, text, re.IGNORECASE)
             self.assertIsNotNone(match, f"Failed to match: {text}")
             self.assertEqual(match.group(1).strip(), expected_query)
+
+    def test_pubmed_query_pattern_ignores_prose(self):
+        """An offer to search is not a search.
+
+        The colon used to be optional, so "I can run a pubmed query for you"
+        fired the handler AND earned the fan-out's tool-call bonus -- letting
+        a candidate that offered to use a tool outscore one that used it.
+        """
+        prose = [
+            "I can run a pubmed query for you if that would help.",
+            "Want me to do a pubmed query?",
+            "A PubMed query might turn up supporting studies.",
+        ]
+        for text in prose:
+            with self.subTest(text=text):
+                self.assertIsNone(re.search(PUBMED_QUERY_REGEX, text, re.IGNORECASE))
+
+    def test_count_tool_invocations_counts_distinct_tools(self):
+        text = (
+            "Let me look at a couple of things.\n"
+            '**medicaid_eligibility {"state": "CA"}**\n'
+            "[*pubmed query: metformin*]"
+        )
+        self.assertEqual(count_tool_invocations(text), 2)
+
+    def test_count_tool_invocations_finds_an_anchored_call_after_prose(self):
+        # CREATE_OR_UPDATE_* are `^...$`-anchored, so a flag-less re.search
+        # only ever saw them at the very start of a reply.
+        text = 'Sure, here it is.\n**create_or_update_appeal**{"a": 1}\n'
+        self.assertEqual(count_tool_invocations(text), 1)
+
+    def test_count_tool_invocations_ignores_a_bare_mention(self):
+        self.assertEqual(
+            count_tool_invocations("I will use create_or_update_appeal shortly"), 0
+        )
+
+    def test_count_tool_invocations_handles_empty_input(self):
+        self.assertEqual(count_tool_invocations(""), 0)
+        self.assertEqual(count_tool_invocations(None), 0)
 
     def test_clinical_trials_query_pattern(self):
         """Test ClinicalTrials.gov query pattern matches various formats."""
@@ -433,22 +477,21 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_eligible(self):
         """Test eligibility info text generation for eligible user."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=True,
+            eligible_base=True,
+            eligible_target=True,
             medicare=False,
             alternatives=[],
             missing=[],
         )
 
         self.assertIn("eligible for medicaid", info.lower())
-        self.assertIn("2025", info)
-        self.assertIn("2026", info)
+        self.assertIn(f"current ({current_eligibility_year()})", info)
 
     def test_build_eligibility_info_with_missing(self):
         """Test eligibility info text when questions are missing."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["income", "household_size"],
@@ -459,8 +502,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_lists_questions_not_python_repr(self):
         """Missing questions render as a readable list, not a list repr."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["What state do you live in?", "How old are you?"],
@@ -472,8 +515,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_flags_experimental_when_asking(self):
         """The LLM is told to disclose the experimental status while asking."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["What state do you live in?"],
@@ -484,8 +527,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_flags_experimental_on_verdict(self):
         """The LLM is told to disclose the experimental status with verdicts."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=True,
+            eligible_base=True,
+            eligible_target=True,
             medicare=False,
             alternatives=[],
             missing=[],
@@ -496,8 +539,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_paces_questions(self):
         """The LLM is told to ask only a few questions at a time."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=["q1", "q2", "q3", "q4"],
@@ -508,8 +551,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_reports_settled_verdict_while_asking(self):
         """A determination already reached isn't withheld behind a question."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=False,
+            eligible_base=True,
+            eligible_target=False,
             medicare=True,
             alternatives=[],
             missing=["Do you have ALS?"],
@@ -521,8 +564,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_holds_alternatives_until_verdict(self):
         """Denial-flavored next steps don't surface mid-interview."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=False,
+            eligible_base=True,
+            eligible_target=False,
             medicare=False,
             alternatives=["If denied, you can appeal; gather documentation."],
             missing=["Do you have ALS?"],
@@ -531,10 +574,10 @@ class TestMedicaidEligibilityTool(TestCase):
         self.assertNotIn("If denied", info)
 
     def test_indeterminate_result_is_not_rendered_as_a_denial(self):
-        """"Couldn't score them" must not become "may not be eligible"."""
+        """ "Couldn't score them" must not become "may not be eligible"."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=["Contact your territory's Medicaid agency."],
             missing=[],
@@ -547,8 +590,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_indeterminate_result_still_reports_medicare(self):
         """Medicare is federal, so a territory resident still gets that answer."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=True,
             alternatives=[],
             missing=[],
@@ -559,8 +602,8 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_scored_ineligible_still_reads_as_a_verdict(self):
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=[],
@@ -572,7 +615,12 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_parsed_summary_echoes_recorded_values(self):
         """The LLM keeps its own context, so it must see what we recorded."""
         text = self.tool._build_parsed_summary(
-            {"recorded": {"state": "ca"}, "unreadable": [], "unrecognized": [], "declined": []}
+            {
+                "recorded": {"state": "ca"},
+                "unreadable": [],
+                "unrecognized": [],
+                "declined": [],
+            }
         )
 
         self.assertIn("state: ca", text)
@@ -580,7 +628,12 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_parsed_summary_flags_unrecognized_parameters(self):
         """A silently dropped key looks to the model just like acceptance."""
         text = self.tool._build_parsed_summary(
-            {"recorded": {}, "unreadable": [], "unrecognized": ["income"], "declined": []}
+            {
+                "recorded": {},
+                "unreadable": [],
+                "unrecognized": ["income"],
+                "declined": [],
+            }
         )
 
         self.assertIn("income", text)
@@ -588,7 +641,12 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_parsed_summary_tells_llm_not_to_reask_declined_fields(self):
         text = self.tool._build_parsed_summary(
-            {"recorded": {}, "unreadable": [], "unrecognized": [], "declined": ["assets_total"]}
+            {
+                "recorded": {},
+                "unreadable": [],
+                "unrecognized": [],
+                "declined": ["assets_total"],
+            }
         )
 
         self.assertIn("don't ask about those again", text)
@@ -596,8 +654,8 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_build_eligibility_info_lists_alternatives_not_python_repr(self):
         """Alternatives render as a readable list, not a list repr."""
         info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=["Consider CHIP for the kids."],
             missing=[],
@@ -605,6 +663,633 @@ class TestMedicaidEligibilityTool(TestCase):
 
         self.assertIn("- Consider CHIP for the kids.", info)
         self.assertNotIn("['Consider", info)
+
+
+class TestMedicaidTargetYear(TestCase):
+    """The user picks which year the second verdict covers."""
+
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+
+    def test_verdict_names_the_requested_year(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2028,
+        )
+
+        self.assertIn("2028", info)
+        self.assertNotIn("the 2026 rules", info)
+
+    def test_the_table_year_target_is_reported_once(self):
+        # Asking about the year we score against should not produce the same
+        # verdict twice under two labels.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=BASE_ELIGIBILITY_YEAR,
+        )
+
+        self.assertEqual(info.count("could be eligible for medicaid"), 1)
+
+    def test_a_pre_work_requirement_year_gets_no_work_requirement_caveat(self):
+        # Coaching someone to chase 80 hours a month for a rule that wasn't
+        # in force in the year they asked about is noise at best.
+        from fighthealthinsurance.medicaid_api import WORK_REQUIREMENT_FIRST_YEAR
+
+        earlier = WORK_REQUIREMENT_FIRST_YEAR - 1
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=earlier,
+            timeline=[YearVerdict(earlier, True, [])],
+        )
+
+        self.assertNotIn("work/community-engagement", info)
+
+    def test_a_future_year_says_current_limits_were_used(self):
+        # We do not model the later year's income limits, so the note has to
+        # say what actually happened: the same published table scored both
+        # years and the work requirement is the only difference.
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2029,
+        )
+
+        self.assertIn("aren't published yet", info)
+        self.assertIn("the work requirement, not the income test", info)
+
+    def test_every_timeline_year_is_rendered(self):
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 3,
+            timeline=[
+                YearVerdict(current, True, []),
+                YearVerdict(current + 1, False, []),
+                YearVerdict(current + 3, False, []),
+            ],
+        )
+
+        self.assertIn(f"current ({current}): they could be eligible", info)
+        self.assertIn(f"{current + 1}: they may not be eligible", info)
+        self.assertIn(f"{current + 3}: they may not be eligible", info)
+
+    def test_a_change_shown_in_the_timeline_always_says_what_caused_it(self):
+        # Asking about a pre-work-requirement year still renders the
+        # work-requirement year beside it. Keying the caveats off the year the
+        # user NAMED printed "this CHANGES in 2026" with nothing to say what
+        # changed -- a flip with no stated cause.
+        from fighthealthinsurance.medicaid_api import WORK_REQUIREMENT_FIRST_YEAR
+
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=WORK_REQUIREMENT_FIRST_YEAR - 1,
+            timeline=[
+                YearVerdict(WORK_REQUIREMENT_FIRST_YEAR - 1, True, []),
+                YearVerdict(WORK_REQUIREMENT_FIRST_YEAR, False, []),
+            ],
+        )
+
+        self.assertIn(f"this CHANGES in {WORK_REQUIREMENT_FIRST_YEAR}", info)
+        self.assertIn("work/community-engagement", info)
+
+    def test_a_year_we_cannot_score_yet_is_not_reported_as_ineligible(self):
+        # is_eligible returns False for BOTH "scored, falls short" and "can't
+        # score until you answer" -- an unanswered work-hours question sets
+        # the flag False on purpose. Rendering that as "may not be eligible"
+        # hands the user a denial nobody computed.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, True, []),
+                YearVerdict(
+                    current + 1, False, ["About how many qualifying hours a month?"]
+                ),
+            ],
+        )
+
+        self.assertIn(f"{current + 1}: NOT ESTABLISHED", info)
+        self.assertNotIn(f"{current + 1}: they may not be eligible", info)
+        self.assertIn("About how many qualifying hours a month?", info)
+
+    def test_an_unscored_year_does_not_trigger_a_change_callout(self):
+        # "this CHANGES in <year>" off the back of an unanswered question is
+        # the same uncomputed denial in a louder voice.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, True, []),
+                YearVerdict(
+                    current + 1, False, ["About how many qualifying hours a month?"]
+                ),
+            ],
+        )
+
+        self.assertNotIn("CHANGES in", info)
+
+    def test_every_branch_tells_them_to_confirm_with_the_state(self):
+        # Every answer is an estimate off simplified rules against limits that
+        # move. The branch most likely to be taken as final -- "we couldn't
+        # score you" -- is the one that used to end without any pointer at
+        # all.
+        from fighthealthinsurance.chat.tools.medicaid_tool import (
+            CONFIRM_WITH_STATE_INSTRUCTION,
+        )
+
+        branches = {
+            "mid-interview": dict(
+                eligible_base=False,
+                eligible_target=False,
+                missing=["What is your household size?"],
+                determination_made=True,
+            ),
+            "indeterminate": dict(
+                eligible_base=False,
+                eligible_target=False,
+                missing=[],
+                determination_made=False,
+            ),
+            "settled": dict(
+                eligible_base=True,
+                eligible_target=True,
+                missing=[],
+                determination_made=True,
+            ),
+        }
+        for name, kwargs in branches.items():
+            with self.subTest(branch=name):
+                info = self.tool._build_eligibility_info(
+                    medicare=False, alternatives=[], **kwargs
+                )
+                self.assertIn(CONFIRM_WITH_STATE_INSTRUCTION, info)
+
+    def test_a_negative_verdict_carries_its_own_caveat(self):
+        # The negative is the line someone acts on by NOT applying, so the
+        # reminder rides on that line rather than waiting for a caveat
+        # further down that the model may never reach.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[YearVerdict(current, False, [])],
+        )
+
+        line = next(
+            row for row in info.splitlines() if row.startswith(f"- current ({current})")
+        )
+        self.assertIn("NOT a denial", line)
+        self.assertIn("only their state can decide", line)
+
+    def test_an_income_denial_does_not_blame_the_work_requirement(self):
+        # Failing the income test is not the work requirement's doing.
+        # Attaching "(once the 80-hours requirement applies...)" to an income
+        # denial tells someone to go chase hours that would not have changed
+        # the answer.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[YearVerdict(current, False, [])],
+        )
+
+        self.assertNotIn("work/community-engagement", info)
+
+    def test_a_repeated_negative_does_not_repeat_the_whole_caveat(self):
+        # Two rows carrying the same long sentence dilutes it.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, False, []),
+                YearVerdict(current + 1, False, []),
+            ],
+        )
+
+        self.assertEqual(info.count("people do qualify when a checker"), 1)
+        self.assertIn("again, an estimate, not a denial", info)
+
+    def test_a_transition_year_shortfall_is_conditional_not_a_denial(self):
+        # The work requirement has reached the states that went early and
+        # nowhere else yet. "May not be eligible" would be a denial for a
+        # rule most states haven't adopted; a plain "could be" would hide
+        # what's coming. The row has to say both.
+        from fighthealthinsurance.medicaid_api import WORK_REQUIREMENT_UNIVERSAL_YEAR
+
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True)
+            ],
+        )
+
+        self.assertIn("could be eligible on income", info)
+        self.assertIn("under 80 qualifying hours", info)
+        self.assertIn("whether their state has already started", info)
+        self.assertIn(f"January 1, {WORK_REQUIREMENT_UNIVERSAL_YEAR}", info)
+        self.assertNotIn("they may not be eligible for medicaid", info)
+
+    def test_a_conditional_row_does_not_swallow_the_work_requirement_note(self):
+        # The shared explanation is attached once, to the first year the rule
+        # bites. A conditional row spells it out itself -- if it consumed the
+        # note on the way past, the year the rule actually bites was left
+        # with no explanation at all.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True),
+                YearVerdict(current + 1, False, []),
+            ],
+        )
+
+        self.assertIn(
+            f"{current + 1}: they may not be eligible for medicaid (once the federal",
+            info,
+        )
+
+    def test_a_conditional_year_does_not_trigger_a_change_callout(self):
+        # A flip announced off a rule that may not have reached them is the
+        # same uncomputed denial in a louder voice.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True),
+                YearVerdict(current + 1, False, []),
+            ],
+        )
+
+        self.assertNotIn("CHANGES in", info)
+
+    def test_a_finished_year_is_never_labelled_current(self):
+        # The FPL table's year stops being "today" once the calendar passes
+        # it. Labelling it "current" told people the rules they live under
+        # were the ones that had just been replaced.
+        current = current_eligibility_year()
+        if BASE_ELIGIBILITY_YEAR >= current:
+            self.skipTest("the published FPL table is still the current year")
+
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[
+                YearVerdict(BASE_ELIGIBILITY_YEAR, True, []),
+                YearVerdict(current, True, []),
+            ],
+        )
+
+        self.assertIn(f"current ({current})", info)
+        self.assertNotIn(f"current ({BASE_ELIGIBILITY_YEAR})", info)
+        self.assertIn(f"{BASE_ELIGIBILITY_YEAR}: they could be eligible", info)
+
+    def test_a_finished_base_year_is_dropped_when_no_timeline_is_given(self):
+        # Direct callers that pass no timeline used to get a row for the FPL
+        # table's year regardless of whether it had already ended.
+        current = current_eligibility_year()
+        if BASE_ELIGIBILITY_YEAR >= current:
+            self.skipTest("the published FPL table is still the current year")
+
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+        )
+
+        self.assertNotIn(f"{BASE_ELIGIBILITY_YEAR}: they", info)
+        self.assertIn(f"current ({current}): they may not be eligible", info)
+
+    def test_a_year_over_year_change_is_called_out(self):
+        # The reason for showing more than one year at all: don't leave the
+        # user to diff two sentences.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[YearVerdict(2025, True, []), YearVerdict(2026, False, [])],
+        )
+
+        self.assertIn("this CHANGES in 2026", info)
+        self.assertIn("probably would NOT from 2026 on", info)
+
+    def test_an_improvement_is_called_out_too(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[YearVerdict(2025, False, []), YearVerdict(2026, True, [])],
+        )
+
+        self.assertIn("IMPROVES in 2026", info)
+
+    def test_a_steady_timeline_has_no_change_callout(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[YearVerdict(2025, True, []), YearVerdict(2026, True, [])],
+        )
+
+        self.assertNotIn("CHANGES in", info)
+        self.assertNotIn("IMPROVES in", info)
+
+    def test_the_verdicts_stay_hedged(self):
+        # "Keeping the probably words going" -- none of these are
+        # determinations and the wording must not harden into one.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[YearVerdict(2025, True, []), YearVerdict(2026, False, [])],
+        )
+
+        self.assertIn("an approximation, not a determination", info)
+        self.assertIn("could be eligible", info)
+        self.assertIn("may not be eligible", info)
+        self.assertIn("probably", info)
+
+    def test_a_base_year_check_has_no_second_year_note(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=BASE_ELIGIBILITY_YEAR,
+        )
+
+        self.assertNotIn("aren't published yet", info)
+
+    def test_target_year_positive_is_reported_mid_interview(self):
+        # The base-year positive was already shared while questions were
+        # outstanding; the target-year one sat unsaid behind them, which is
+        # the half someone asking "will I still qualify in 2029?" wanted.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=["What is your household size?"],
+            target_year=2029,
+        )
+
+        self.assertIn("already look eligible in 2029", info)
+
+    def test_default_target_year_still_covers_the_work_requirement(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+        )
+
+        self.assertIn(str(DEFAULT_TARGET_YEAR), info)
+        self.assertIn("work/community-engagement", info)
+
+
+class TestMedicaidInfoStartsTheEligibilityPath(TestCase):
+    """A general Medicaid answer has to lead somewhere.
+
+    Someone who asks how Medicaid works in their state is usually trying to
+    find out whether they can get covered, so the info lookup hands the model
+    the next step instead of ending at a phone number.
+    """
+
+    def setUp(self):
+        self.handoff = MedicaidInfoTool._build_eligibility_handoff("California")
+
+    def test_handoff_names_the_eligibility_tool(self):
+        self.assertIn("medicaid_eligibility", self.handoff)
+
+    def test_handoff_carries_the_state_we_just_looked_up(self):
+        self.assertIn("California", self.handoff)
+
+    def test_handoff_calls_the_check_experimental(self):
+        self.assertIn("EXPERIMENTAL", self.handoff)
+
+    def test_handoff_forbids_questions_before_the_tool_call(self):
+        self.assertIn("never ask eligibility questions before", self.handoff)
+
+    def test_handoff_offers_rather_than_forces_the_check(self):
+        # Someone who asked what Medicaid is may just want that answered;
+        # the handoff has to read as an invitation, not a redirect.
+        self.assertIn("Offer it, don't push it", self.handoff)
+        self.assertIn("drop it if they decline", self.handoff)
+
+    def test_handoff_omits_the_state_line_when_none_was_given(self):
+        # The old handoff pasted the state into a literal JSON tool call, so
+        # a lookup with no "state" key emitted **medicaid_eligibility
+        # {"state": "the state"}** -- a made-up value the model then re-sent.
+        handoff = MedicaidInfoTool._build_eligibility_handoff(None)
+        self.assertNotIn("You already know their state", handoff)
+        self.assertNotIn("the state", handoff)
+
+    def test_handoff_does_not_restart_a_check_already_underway(self):
+        self.assertIn("already underway", self.handoff)
+
+    def test_lookup_result_carries_the_handoff(self):
+        # The guidance is only useful if it actually rides along with the
+        # info the model is answering from.
+        tool = MedicaidInfoTool(AsyncMock())
+        match = tool.detect('**medicaid_info {"state": "California"}**')
+        self.assertIsNotNone(match)
+
+        with patch(
+            "fighthealthinsurance.medicaid_api.get_medicaid_info",
+            return_value="Call 1-800-555-0100 to apply.",
+        ):
+            captured = {}
+
+            async def fake_call_llm(model_backends, message, *args, **kwargs):
+                captured["message"] = message
+                return ("ok", "")
+
+            tool.call_llm_callback = fake_call_llm
+            asyncio.run(
+                tool.execute(
+                    match,
+                    '**medicaid_info {"state": "California"}**',
+                    "",
+                    model_backends=["backend"],
+                    current_message_for_llm="How does Medi-Cal work?",
+                    history_for_llm=[],
+                )
+            )
+
+        self.assertIn("medicaid_eligibility", captured["message"])
+
+
+class TestEligibilityVerifiedFlag(TestCase):
+    """Running the checker is not the same as the checker reaching a verdict.
+
+    The flag exempts a reply from the invented-verdict penalty, so it must
+    only be set once there is a real determination to relay. Setting it on
+    every call handed out the exemption in exactly the cases the guard exists
+    for -- a mid-interview model jumping to "you don't qualify", or one
+    ignoring "we could NOT produce an estimate for this person".
+    """
+
+    def _run(self, verdict):
+        """Execute the tool with a stubbed checker, return (flag, kwargs)."""
+        computed = [False]
+        tool = MedicaidEligibilityTool(AsyncMock(), eligibility_computed=computed)
+        call = '**medicaid_eligibility {"state": "CA"}**'
+        match = tool.detect(call)
+        self.assertIsNotNone(match)
+
+        captured: dict = {}
+
+        async def fake_call_llm(model_backends, message, *args, **kwargs):
+            captured.update(kwargs)
+            return ("ok", "")
+
+        tool.call_llm_callback = fake_call_llm
+        with patch(
+            "fighthealthinsurance.medicaid_api.is_eligible", return_value=verdict
+        ):
+            asyncio.run(
+                tool.execute(
+                    match,
+                    call,
+                    "",
+                    model_backends=["backend"],
+                    current_message_for_llm="Am I eligible?",
+                    history_for_llm=[],
+                )
+            )
+        return computed[0], captured
+
+    def test_final_determination_earns_the_exemption(self):
+        flag, kwargs = self._run((True, True, False, [], [], True))
+        self.assertTrue(flag)
+        self.assertTrue(kwargs["eligibility_verified"])
+
+    def test_final_ineligible_determination_earns_the_exemption(self):
+        # A computed "no" is still a verdict the model may relay.
+        flag, kwargs = self._run(
+            (False, False, False, ["Try the marketplace"], [], True)
+        )
+        self.assertTrue(flag)
+        self.assertTrue(kwargs["eligibility_verified"])
+
+    def test_mid_interview_with_nothing_settled_does_not(self):
+        flag, kwargs = self._run(
+            (False, False, False, [], ["What is your income?"], True)
+        )
+        self.assertFalse(flag)
+        self.assertFalse(kwargs["eligibility_verified"])
+
+    def test_mid_interview_positive_does_earn_the_exemption(self):
+        # The checker reports an already-settled positive while questions are
+        # outstanding, and _build_eligibility_info tells the model to share
+        # it -- penalizing that would fight our own tool output.
+        flag, kwargs = self._run(
+            (True, False, False, [], ["What is your income?"], True)
+        )
+        self.assertTrue(flag)
+        self.assertTrue(kwargs["eligibility_verified"])
+
+    def test_medicare_only_positive_does_not_earn_the_exemption(self):
+        # A 67-year-old's age settles Medicare on the very first call while
+        # every Medicaid question is still outstanding. The exemption is
+        # program-blind, so latching it there let the rest of the session
+        # assert uncomputed MEDICAID verdicts for free.
+        flag, kwargs = self._run(
+            (False, False, True, [], ["What is your monthly income?"], True)
+        )
+        self.assertFalse(flag)
+        self.assertFalse(kwargs["eligibility_verified"])
+
+    def test_unscoreable_person_does_not_earn_the_exemption(self):
+        # determination_made=False: a territory, or a declined required
+        # answer. The info text explicitly says not to call them ineligible.
+        flag, kwargs = self._run(
+            (False, False, False, ["Contact your territory's agency"], [], False)
+        )
+        self.assertFalse(flag)
+        self.assertFalse(kwargs["eligibility_verified"])
 
 
 class TestDocFetcherPatterns(TestCase):
@@ -1037,9 +1722,16 @@ class TestMedicaidDeclinedAnswerRoundTrip(TestCase):
 
     def test_resending_the_unknown_marker_keeps_the_question_suppressed(self):
         first = dict(
-            state="ca", age=66, married=False, household_size=1,
-            monthly_income=900, children_in_household=0, pregnant=False,
-            receiving_ssdi=False, on_medicare=False, years_worked=40,
+            state="ca",
+            age=66,
+            married=False,
+            household_size=1,
+            monthly_income=900,
+            children_in_household=0,
+            pregnant=False,
+            receiving_ssdi=False,
+            on_medicare=False,
+            years_worked=40,
             assets_total="unknown",
         )
         # What the echo tells the model to send back, plus the declined marker
@@ -1061,8 +1753,8 @@ class TestMedicaidIndeterminateWithQuestions(TestCase):
         # An unscorable result that still has an outstanding question -- the
         # territory case, where Medicare may yet resolve.
         self.indeterminate_info = self.tool._build_eligibility_info(
-            eligible_2025=False,
-            eligible_2026=False,
+            eligible_base=False,
+            eligible_target=False,
             medicare=False,
             alternatives=["Contact your territory's Medicaid agency."],
             missing=["How old are you?"],
@@ -1079,8 +1771,8 @@ class TestMedicaidIndeterminateWithQuestions(TestCase):
 
     def test_a_scored_result_does_not_get_the_cannot_estimate_banner(self):
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=True,
+            eligible_base=True,
+            eligible_target=True,
             medicare=False,
             alternatives=["Visit your state Medicaid page."],
             missing=["How old are you?"],

@@ -7,10 +7,23 @@ look up Medicaid info, create/update appeals, etc.)
 """
 
 import re
+from typing import Optional
 
 # PubMed query tool - captures query terms
-# Matches: [pubmed_query: terms], **pubmed query: terms**, etc.
-PUBMED_QUERY_REGEX = r"[\[\*]{0,4}pubmed[ _]?query:?\s*([^*\[\]]+)"
+# Matches: [pubmed query: terms], **pubmed_query: terms**, pubmedquery:[terms]
+# Mirrors RXNORM_LOOKUP_REGEX: a leading `[`/`*` marker or a word boundary, a
+# MANDATORY colon, a non-greedy capture that stops at the closing wrapper /
+# newline / end-of-string, and an optional `[...]` around the terms (the
+# appeal-generation prompt documents that form).
+#
+# The colon used to be optional, which made prose like "I can run a pubmed
+# query for you if that would help" register as a tool call -- both to the
+# handler and to the fan-out's tool-call bonus, so a chatty non-answer could
+# outscore a candidate that actually called a tool.
+PUBMED_QUERY_REGEX = (
+    r"(?:[\[\*]{1,4}|\b)pubmed[ _]?query\s*:\s*\[?"
+    r"([^*\[\]\n]+?)\s*\]?(?:[\]\*]{1,4}|$|(?=\n))"
+)
 
 # Medicaid info lookup tool - captures JSON parameters
 # Matches: medicaid_info {JSON} or **medicaid_info {JSON}**
@@ -18,9 +31,7 @@ MEDICAID_INFO_REGEX = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
 
 # Medicaid eligibility tool - captures JSON parameters
 # Matches: medicaid_eligibility {JSON} or **medicaid_eligibility {JSON}**
-MEDICAID_ELIGIBILITY_REGEX = (
-    r".*?(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
-)
+MEDICAID_ELIGIBILITY_REGEX = r"(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
 
 # Create or update appeal tool - captures JSON with appeal data
 # Matches: create_or_update_appeal {JSON} with optional ** markers
@@ -33,6 +44,12 @@ CREATE_OR_UPDATE_APPEAL_REGEX = (
 CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
     r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
 )
+
+# Medicaid.gov page lookup - captures JSON parameters
+# Matches: medicaid_gov_lookup {JSON} or **medicaid_gov_lookup {JSON}**
+# Resolves a curated page, an allowlisted URL, or a free-text query to a
+# page on Medicaid.gov (see medicaid_gov_api).
+MEDICAID_GOV_LOOKUP_REGEX = r"(?:\*\*)?medicaid_gov_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
 
 # Document fetcher tool - captures JSON with URL
 # Matches: fetch_doc {JSON} or **fetch_doc {JSON}**
@@ -120,6 +137,7 @@ ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
     MEDICAID_INFO_REGEX,
     MEDICAID_ELIGIBILITY_REGEX,
+    MEDICAID_GOV_LOOKUP_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
@@ -134,6 +152,28 @@ ALL_TOOL_PATTERNS = [
 # Compiled once: contains_tool_call runs per alternate candidate, and relying
 # on re's bounded internal cache makes that cost implicit.
 _COMPILED_TOOL_PATTERNS = [re.compile(p, TOOL_DETECT_FLAGS) for p in ALL_TOOL_PATTERNS]
+
+
+def count_tool_invocations(text: Optional[str]) -> int:
+    """How many distinct tool patterns ``text`` actually invokes.
+
+    Used by the fan-out scorer for the per-tool-call bonus. Two properties
+    matter and neither is free:
+
+    * It must use TOOL_DETECT_FLAGS, like the handlers do. A flag-less
+      ``re.search`` over the same patterns silently misses every call that
+      isn't at the very start of the reply (CREATE_OR_UPDATE_* are
+      ``^...$``-anchored, which needs MULTILINE) and every case variant.
+    * It counts PATTERNS, not matches, so a reply repeating one tool call
+      five times can't out-bonus a reply that calls two different tools.
+
+    Unlike contains_tool_call this ignores bare token mentions
+    (ACTION_TOKEN_MENTION_RE): mentioning ``create_or_update_appeal`` in prose
+    is not a tool call and shouldn't earn the bonus.
+    """
+    if not text:
+        return 0
+    return sum(1 for p in _COMPILED_TOOL_PATTERNS if p.search(text))
 
 
 def contains_tool_call(text: str) -> bool:

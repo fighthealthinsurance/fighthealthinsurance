@@ -5,6 +5,7 @@ import asyncio
 from typing import Optional, Tuple, List
 
 from fighthealthinsurance.ml.ml_models import (
+    MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION,
     RemoteOpenLike,
     ModelDescription,
     RemoteModel,
@@ -393,6 +394,89 @@ class TestMedicaidDetection(TestCase):
             "What else do I need?", None, history_without_medicaid
         )
         self.assertFalse(result, "Should not detect Medicaid without keywords")
+
+
+class TestMedicaidPathPrompt(TestCase):
+    """The Medicaid tool prompt has to route general questions into the check.
+
+    Someone who asks "what is Medicaid?" or "what are the work requirements?"
+    is usually trying to find out whether they can get covered, so the prompt
+    tells the model to answer, offer the experimental check, and then call the
+    tool -- rather than ending at a phone number.
+    """
+
+    def _medicaid_system_prompt(self) -> str:
+        model = RemoteOpenLike(
+            api_base="http://test.com",
+            token="test_token",
+            model="test_model",
+            system_prompts_map={"test": ["test prompt"]},
+        )
+
+        captured: dict[str, str] = {}
+
+        async def capture(*args, **kwargs):
+            captured["system_prompt"] = kwargs["system_prompts"][0]
+            return ("An answer 🐼 context", [])
+
+        with patch.object(model, "_infer", side_effect=capture):
+            asyncio.run(
+                model.generate_chat_response(
+                    "What is Medicaid?",
+                    is_medicaid_related=True,
+                )
+            )
+
+        return captured["system_prompt"]
+
+    def test_prompt_describes_the_medicaid_path(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("THE MEDICAID PATH", prompt)
+
+    def test_prompt_offers_the_eligibility_check_after_general_info(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("medicaid_eligibility", prompt)
+        self.assertIn(MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION, prompt)
+
+    def test_prompt_frames_the_check_as_an_offer_not_a_redirect(self):
+        # Someone asking "what is Medicaid?" doesn't necessarily want an
+        # eligibility interview; the prompt has to answer them first and let
+        # the offer go if they aren't interested.
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("Offer it, don't push it", prompt)
+        self.assertIn("let it go and help them with what they actually asked", prompt)
+
+    def test_prompt_forbids_stating_an_uncomputed_verdict(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("NEVER state or guess an eligibility verdict yourself", prompt)
+
+    def test_prompt_documents_the_target_year_parameter(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("target_year", prompt)
+
+    def test_non_medicaid_chats_do_not_get_the_medicaid_path(self):
+        model = RemoteOpenLike(
+            api_base="http://test.com",
+            token="test_token",
+            model="test_model",
+            system_prompts_map={"test": ["test prompt"]},
+        )
+
+        captured: dict[str, str] = {}
+
+        async def capture(*args, **kwargs):
+            captured["system_prompt"] = kwargs["system_prompts"][0]
+            return ("An answer 🐼 context", [])
+
+        with patch.object(model, "_infer", side_effect=capture):
+            asyncio.run(
+                model.generate_chat_response(
+                    "Help me appeal my knee surgery denial",
+                    is_medicaid_related=False,
+                )
+            )
+
+        self.assertNotIn("THE MEDICAID PATH", captured["system_prompt"])
 
 
 class TestRemoteFullOpenLike(TestCase):

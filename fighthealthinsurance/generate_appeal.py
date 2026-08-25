@@ -1521,7 +1521,10 @@ class AppealGenerator(object):
         and broadcasting them across every backend would multiply cost
         without proportional quality gain.
         """
-        best = ml_router.best_internal_model()
+        # general_only=False: these hints steer APPEAL TEXT, so the
+        # appeal-text fine-tune is a legitimate (and often the best) choice
+        # here, unlike the instruction-following callers.
+        best = ml_router.best_internal_model(general_only=False)
         if best is None:
             return None
         for name, instances in ml_router.models_by_name.items():

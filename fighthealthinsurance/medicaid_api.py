@@ -1,9 +1,10 @@
 import difflib
 import json
 import re
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import pandas as pd
 from loguru import logger
@@ -476,7 +477,86 @@ _DECLINE_DEFAULTS: Dict[str, Any] = {
     # Left indeterminate instead, so it is asked or reported as undetermined.
     "veteran_or_spouse_of_veteran": False,
     "work_req_exempt_2026": False,
+    "work_req_exempt": False,
 }
+
+# ---------------------------------------------------------------------------
+# Which years we score
+# ---------------------------------------------------------------------------
+# Every estimate covers two years: the base year (the published FPL table we
+# actually have, scored under today's rules) and a target year the caller can
+# choose. The target defaults to the first year the federal work requirement
+# can bite, but a user asking "what about 2028?" gets that year instead, with
+# the work overlay applied.
+#
+# Income thresholds are NOT projected forward. We used to roll the FPL table
+# up ~3%/year for future targets, which was wrong twice over: it moved the
+# threshold while leaving the person's income fixed, so it biased everyone
+# toward "more eligible later" on a number we were guessing anyway (real
+# incomes rise too, and largely cancel it). And because the projection only
+# ran for a year the user NAMED, the same person and the same calendar year
+# came out differently depending on how they asked -- $1,810/mo in CA was
+# "may not be eligible" on the default 2026 path and "could be eligible" when
+# they typed "what about 2026?". The work requirement is the difference
+# between the two years that we can actually speak to.
+#
+# This is the year of the PUBLISHED FPL TABLE, not "now" -- once the calendar
+# moves past it we keep scoring against the same table (it's the newest one
+# published) but we stop calling it the current year. Use
+# ``current_eligibility_year`` for anything a user reads as "today".
+#
+# Moves with the dollar figures in ``fpl_annual_base``. Leaving it behind
+# while HHS publishes a newer table doesn't just mislabel the answer, it
+# scores people against limits that have been superseded -- and the limits
+# only ever go up, so a stale table denies people who now qualify.
+BASE_ELIGIBILITY_YEAR = 2026
+
+# States must implement the federal work/community-engagement requirement no
+# later than January 1, 2027; a few started earlier, which is why the overlay
+# is modelled from 2026 on rather than 2027.
+WORK_REQUIREMENT_FIRST_YEAR = 2026
+
+# ...but "a few started earlier" is not "everyone has started", and we don't
+# track which states went early. Between these two years the requirement is
+# real for some people and not yet in force for most, so a shortfall in that
+# window is reported as CONDITIONAL rather than as a denial: we say it may
+# already apply where they live and will apply everywhere from this year.
+#
+# Getting this wrong is asymmetric. Telling someone "you may not be eligible"
+# for a rule their state hasn't adopted can stop them applying at all, which
+# is the failure this whole product exists to undo. Telling someone they may
+# be eligible when the rule has already reached them costs them an
+# application the state will decide on anyway.
+WORK_REQUIREMENT_UNIVERSAL_YEAR = 2027
+
+DEFAULT_TARGET_YEAR = WORK_REQUIREMENT_FIRST_YEAR
+
+# Past this we would be projecting policy further out than anything we know
+# can support, so a target beyond it is clamped (and the clamp is reported
+# back through summarize_eligibility_inputs).
+MAX_TARGET_YEAR = BASE_ELIGIBILITY_YEAR + 10
+
+
+def current_eligibility_year() -> int:
+    """The year to present as "today" in a verdict.
+
+    Kept separate from ``BASE_ELIGIBILITY_YEAR``, which names the published
+    FPL table we score against. The two were the same thing until the
+    calendar moved past the table, at which point labelling every answer
+    "current (2025)" -- and printing a verdict row for a year that had
+    already ended -- was telling people about rules that were no longer the
+    ones they live under.
+
+    Floored at the table year (we can't score anything earlier) and capped at
+    ``MAX_TARGET_YEAR`` so a wildly wrong system clock can't push the whole
+    timeline past what we model.
+    """
+    return min(max(BASE_ELIGIBILITY_YEAR, date.today().year), MAX_TARGET_YEAR)
+
+
+# Below this a number isn't a year at all, it's whatever _parse_numeric found
+# in the sentence ("in 3 years", "for the next 5 years").
+_MIN_PLAUSIBLE_YEAR = 1900
 
 # Percent-of-FPL ceilings by category. Module scope because the stepwise
 # question block consults them to skip questions that cannot change the
@@ -531,6 +611,10 @@ _KNOWN_ELIGIBILITY_FIELDS = frozenset(
         "years_worked",
         "on_medicaid_past",
         "work_req_exempt_2026",
+        # Same answer under a year-neutral name, since the target year is now
+        # the caller's choice; both spellings are accepted.
+        "work_req_exempt",
+        "target_year",
         "qualifying_hours_weekly_last_12",
         "avg_monthly_qualifying_hours_last_3mo",
         "avg_weekly_qualifying_hours_last_3mo",
@@ -628,6 +712,142 @@ def _parse_numeric(value: Any) -> Optional[float]:
     return number
 
 
+def _parse_target_year(value: Any) -> Optional[int]:
+    """Parse a caller-supplied target year, or None when there isn't one.
+
+    Accepts what an LLM actually sends for "what about 2027?": an int, a
+    string, or a phrase with the year in it. Two-digit years ("26") are read
+    as this century, and anything outside the range we can model is clamped
+    rather than rejected -- a clamped year still produces a usable estimate,
+    where a rejection would drop the question the user asked.
+    """
+    number = _parse_numeric(value)
+    if number is None:
+        return None
+    year = int(number)
+    if 0 <= year < 100:
+        # A two-digit year, but only if it can BE one: "26" is 2026, while
+        # the 3 that _parse_numeric pulls out of "in 3 years" is not 2003.
+        # Reading it as one used to clamp to the base year, which quietly
+        # switched the work-requirement overlay off for a user who was
+        # asking about a year the overlay applies to.
+        year += 2000
+        if year < BASE_ELIGIBILITY_YEAR:
+            return None
+    elif year < _MIN_PLAUSIBLE_YEAR:
+        return None
+    if year < BASE_ELIGIBILITY_YEAR:
+        return BASE_ELIGIBILITY_YEAR
+    if year > MAX_TARGET_YEAR:
+        return MAX_TARGET_YEAR
+    return year
+
+
+def resolve_target_year(value: Any) -> int:
+    """The year the second half of an estimate is scored for.
+
+    Shared by is_eligible and the chat tool so the verdict and the label the
+    user sees can't disagree about which year was checked.
+    """
+    return _parse_target_year(value) or DEFAULT_TARGET_YEAR
+
+
+def timeline_years(value: Any = None) -> List[int]:
+    """The years an estimate should show a verdict for, ascending.
+
+    Always at least two, and always including the year the answer can CHANGE.
+    Showing only "today" and "the year you asked about" hid the transition:
+    someone asking about 2029 saw 2025 and 2029 and never learned that the
+    switch happens in 2026, when the work requirement starts to bite.
+
+    Income limits are identical across years (see BASE_ELIGIBILITY_YEAR), so
+    the work requirement is the only thing that can move a verdict -- which
+    makes ``WORK_REQUIREMENT_FIRST_YEAR`` the one year that earns a row
+    alongside today's rules and whatever the user asked about, for as long as
+    it is still ahead of us. Once it isn't, it's just today's rules and there
+    is nothing to flag.
+
+    Anchored on ``current_eligibility_year``, not the FPL table's year: a row
+    for a year that has already ended is noise at best, and labelled
+    "current" it is wrong.
+
+    Never a single year. Once the work-requirement year is behind us the set
+    above can collapse to just "now", and "will this still be true next year?"
+    is the question people are actually asking -- so next year gets a row and
+    answers it out loud instead of leaving it implied.
+    """
+    current = current_eligibility_year()
+    years = {current, resolve_target_year(value)}
+    for milestone in (WORK_REQUIREMENT_FIRST_YEAR, WORK_REQUIREMENT_UNIVERSAL_YEAR):
+        if milestone > current:
+            years.add(milestone)
+    if len(years) == 1:
+        years.add(min(current + 1, MAX_TARGET_YEAR))
+    return sorted(years)
+
+
+class YearVerdict(NamedTuple):
+    """One row of an eligibility timeline.
+
+    A NamedTuple so rows still unpack and compare like the plain tuples they
+    replaced, while the two things that are NOT verdicts stay named -- both
+    were silently lost when this was a ``(year, bool)`` pair, and both turned
+    into denials nobody computed.
+    """
+
+    year: int
+    probably_eligible: bool
+    # Non-empty means this year is UNSCORED, not negative.
+    still_needed: List[str]
+    # True means the positive above rests on a work requirement that isn't in
+    # force everywhere yet -- report it as conditional, not as a clean pass.
+    work_requirement_conditional: bool = False
+
+
+def eligibility_timeline(**kwargs: Any) -> List[YearVerdict]:
+    """A ``YearVerdict`` for each year in ``timeline_years``.
+
+    Runs the checker once per year so a year-over-year change is visible
+    rather than implied. ``is_eligible`` is pure and does no IO, so the
+    repeat calls are cheap.
+
+    The second element of ``is_eligible``'s result is the right per-year
+    verdict for EVERY year, including the base year: the work overlay is
+    skipped below WORK_REQUIREMENT_FIRST_YEAR, so it collapses to the
+    base-year verdict there.
+
+    The third element is what that year still needs, and dropping it was a
+    bug worth naming: ``is_eligible`` uses ``False`` for BOTH "we scored this
+    and they fall short" and "we can't score this until you answer" -- an
+    unanswered work-hours question sets the target-year flag False on
+    purpose, because the questions ride alongside it. A caller who keeps only
+    the boolean turns "we don't know yet" into "you may not be eligible",
+    which is a denial nobody computed. Years that still need answers carry
+    them here so the renderer can ask instead of concluding.
+    """
+    timeline: List[YearVerdict] = []
+    for year in timeline_years(kwargs.get("target_year")):
+        (
+            _,
+            probably_eligible,
+            _,
+            _,
+            missing,
+            determination_made,
+            work_req_conditional,
+        ) = _score_eligibility(**{**kwargs, "target_year": year})
+        still_needed = list(missing) if not determination_made or missing else []
+        timeline.append(
+            YearVerdict(
+                year=year,
+                probably_eligible=bool(probably_eligible),
+                still_needed=still_needed,
+                work_requirement_conditional=bool(work_req_conditional),
+            )
+        )
+    return timeline
+
+
 def _clean_token(s: str) -> str:
     """Lower, trim, collapse spaces, remove most punctuation except spaces."""
     s = s.strip().lower()
@@ -716,13 +936,33 @@ def _normalize_state(
     raise ValueError(f"Unknown state: {raw}")
 
 
-def is_eligible(
+def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
+    """Approximate Medicaid / Medicare eligibility. See ``_score_eligibility``.
+
+    Thin wrapper so the widely-used six-tuple stays the public shape. The
+    seventh value the scorer computes -- whether the target year's verdict
+    hangs on a work requirement that isn't in force everywhere yet -- is only
+    meaningful to ``eligibility_timeline``, which calls the scorer directly.
+    """
+    return _score_eligibility(**kwargs)[:6]
+
+
+def _score_eligibility(
     **kwargs,
-) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
+) -> Tuple[bool, bool, bool, List[str], List[str], bool, bool]:
     """
     Perform an approximate eligibility check for Medicaid / Medicare based on the provided parameters.
-    Returns a tuple of (2025 eligibility, 2026 eligibility, medicare,
-    alternatives, missing_info, determination_made).
+    Returns a tuple of (base-year eligibility, target-year eligibility,
+    medicare, alternatives, missing_info, determination_made,
+    work_requirement_conditional). Most callers want ``is_eligible``, which
+    drops the last value.
+
+    The base year is ``BASE_ELIGIBILITY_YEAR`` (the published FPL table we
+    score today's rules against). The target year is whatever the caller
+    passes as ``target_year`` -- a user asking "will I still qualify in
+    2028?" gets 2028 -- and defaults to ``DEFAULT_TARGET_YEAR``. Callers must
+    resolve the same year with ``resolve_target_year`` when labelling the
+    result, so the verdict and the label can't disagree.
 
     IMPORTANT: This uses simplified heuristics. Medicaid rules vary by state and change often.
     Treat results as a best guess only and confirm with state resources.
@@ -731,8 +971,11 @@ def is_eligible(
       - Per the CMS interim final rule (CMS-2454-IFC, June 2026), states must
         implement the requirement no later than JANUARY 1, 2027; a few have
         gone earlier, and states showing good-faith effort can get extensions.
-        The ``eligible_2026`` flag therefore models "eligibility once the work
-        requirement applies to them", not calendar-year 2026 specifically.
+        The target-year flag therefore models "eligibility once the work
+        requirement applies to them" for any target year from
+        ``WORK_REQUIREMENT_FIRST_YEAR`` on, not calendar-year 2026
+        specifically. A target year before that is scored without the
+        overlay.
       - The requirement is 80 qualifying hours PER MONTH, checked at
         application and renewal against a lookback of one to three months
         (states choose), which is why late-2026 activity can already matter.
@@ -761,8 +1004,11 @@ def is_eligible(
       - years_worked: int # years you (or spouse/ex-spouse) worked paying medicare taxes
       - on_medicaid_past: bool  # accepted for backwards compatibility; unused
 
-      # 2026 federal work requirement (ALWAYS ASSUMED TRUE):
+      - target_year: int           # year to score the second verdict for (default DEFAULT_TARGET_YEAR)
+
+      # federal work requirement (ALWAYS ASSUMED TRUE):
       - work_req_exempt_2026: Optional[bool]  # if caller knows the person is exempt from work rules
+      - work_req_exempt: Optional[bool]       # year-neutral spelling of the same answer
       - qualifying_hours_weekly_last_12: Optional[Sequence[float]]  # 12 numbers, one per week
       - avg_monthly_qualifying_hours_last_3mo: Optional[float]      # matches how the re-ask question is phrased
       - avg_weekly_qualifying_hours_last_3mo: Optional[float]       # fallback if weekly list not available
@@ -774,7 +1020,8 @@ def is_eligible(
       - Pregnant: <= 200% FPL (often higher).
       - ABD & LTC: asset limits approx $2k single / $3k married; LTC income cap ~ $3,000/mo;
         home equity must be below a default cap (use $750k if unknown). Medically-needy may help.
-      - 2026 work overlay: requires >=80 qualifying hours per month across a
+      - Work overlay (target years from WORK_REQUIREMENT_FIRST_YEAR on):
+        requires >=80 qualifying hours per month across a
         3-month lookback. Detailed weekly records are partitioned per month so
         each month is checked on its own; a single monthly average or a 3-month
         total has no per-month detail to check, so it is spread evenly and only
@@ -784,8 +1031,8 @@ def is_eligible(
         stalling the determination waiting on an answer that will never come.
 
     Returns:
-      (eligible_2025, eligible_2026, eligible_medicare, alternatives,
-       missing_info, determination_made)
+      (eligible_base_year, eligible_target_year, eligible_medicare,
+       alternatives, missing_info, determination_made)
 
     ``determination_made`` is False when we could not score the person at all
     (US territory, or a required answer the user declined) — distinct from a
@@ -814,29 +1061,35 @@ def is_eligible(
         except Exception:
             return None
 
-    # FPL table for 2025 (annual, 48 contiguous states + DC published guidelines:
-    # $15,650 for one person plus $5,500 per additional person). Alaska and
-    # Hawaii run higher; we keep the contiguous values as the approximation.
-    # We'll work monthly: divide by 12. For 2026 we model +3% inflation on thresholds.
-    def fpl_annual_2025(hh: int) -> float:
+    # The year the caller wants the second verdict for. Anything we can't
+    # read falls back to the default rather than failing the whole check;
+    # summarize_eligibility_inputs reports what we actually used.
+    target_year = resolve_target_year(kwargs.get("target_year"))
+
+    # FPL table (annual, 48 contiguous states + DC published guidelines:
+    # $15,960 for one person plus $5,680 per additional person -- the 2026 HHS
+    # poverty guidelines, which is what BASE_ELIGIBILITY_YEAR names). Alaska
+    # and Hawaii run higher; we keep the contiguous values as the
+    # approximation. We'll work monthly: divide by 12.
+    #
+    # The SAME published table scores every year -- see the note on
+    # BASE_ELIGIBILITY_YEAR for why future years are not projected forward.
+    # When HHS publishes the next year's guidelines, both numbers here and
+    # BASE_ELIGIBILITY_YEAR move together; they are one fact in two places.
+    def fpl_annual_base(hh: int) -> float:
         if hh <= 0:
             hh = 1
-        base = 15650.0
-        add = 5500.0
+        base = 15960.0
+        add = 5680.0
         return base + add * (hh - 1)
 
-    def pct_fpl(monthly_income: float, hh: int, year: int) -> float:
+    def pct_fpl(monthly_income: float, hh: int) -> float:
         annual = monthly_income * 12.0
-        fpl = fpl_annual_2025(hh)
-        if year == 2026:
-            fpl *= 1.03  # simple inflation bump
+        fpl = fpl_annual_base(hh)
         return (annual / fpl) * 100.0 if fpl > 0 else 9999.0
 
     # Policy knobs / defaults
-    LTC_INCOME_CAP_2025 = (
-        3000.0  # rough nursing home / HCBS cap (varies by state/waiver)
-    )
-    LTC_INCOME_CAP_2026 = LTC_INCOME_CAP_2025 * 1.03
+    LTC_INCOME_CAP = 3000.0  # rough nursing home / HCBS cap (varies by state/waiver)
     ABD_ASSET_LIMIT_SINGLE = 2000.0
     ABD_ASSET_LIMIT_MARRIED = 3000.0
     HOME_EQUITY_CAP_DEFAULT = 750000.0
@@ -922,8 +1175,13 @@ def is_eligible(
     # but no longer changes the result: past Medicaid enrollment does not by
     # itself confer Medicare eligibility.
 
-    # 2026 work requirement inputs
-    work_req_exempt_2026 = get_bool("work_req_exempt_2026")
+    # Work requirement inputs. Either spelling of the exemption answer is
+    # accepted; an explicit True from either one wins.
+    work_req_exempt = get_bool("work_req_exempt_2026")
+    if work_req_exempt is not True:
+        year_neutral_exempt = get_bool("work_req_exempt")
+        if year_neutral_exempt is not None:
+            work_req_exempt = bool(work_req_exempt) or year_neutral_exempt
     weekly_hours = get_seq_of_floats("qualifying_hours_weekly_last_12")
     avg_weekly_hours = get_float("avg_weekly_qualifying_hours_last_3mo")
     avg_monthly_hours = get_float("avg_monthly_qualifying_hours_last_3mo")
@@ -941,8 +1199,8 @@ def is_eligible(
     # ---- track outputs ----
     missing: List[str] = []
     alts: List[str] = []
-    eligible_2025 = False
-    eligible_2026 = False
+    eligible_base = False
+    eligible_target = False
     eligible_medicare = False
 
     def ask(field: str, question: str) -> bool:
@@ -959,9 +1217,17 @@ def is_eligible(
         asked_fields.append(field)
         return True
 
+    # Set when the target year's positive verdict rests on a work requirement
+    # that is in force in some states and not others (see
+    # WORK_REQUIREMENT_UNIVERSAL_YEAR). Not a denial and not a clean pass.
+    # Initialised here rather than beside the overlay: the early exits below
+    # (territory, declined required inputs) reach _result long before the
+    # overlay runs.
+    work_req_conditional = False
+
     def _result(
         determination_made: bool = False,
-    ) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
+    ) -> Tuple[bool, bool, bool, List[str], List[str], bool, bool]:
         """Single exit point: casts + dedupes so every return stays consistent.
 
         ``determination_made`` separates "we scored this person and the answer
@@ -971,12 +1237,13 @@ def is_eligible(
         confident "may not be eligible".
         """
         return (
-            bool(eligible_2025),
-            bool(eligible_2026),
+            bool(eligible_base),
+            bool(eligible_target),
             bool(eligible_medicare),
             list(dict.fromkeys(alts)),
             list(dict.fromkeys(missing)),
             determination_made,
+            bool(work_req_conditional),
         )
 
     def magi_expansion_covers(*, require_inputs: bool = False) -> bool:
@@ -997,7 +1264,7 @@ def is_eligible(
             if require_inputs:
                 return False
             raise AssertionError("scoring call needs income and household size")
-        pct = pct_fpl(monthly_income, household_size, 2025)
+        pct = pct_fpl(monthly_income, household_size)
         if state in _EXPANSION_STATES and pct <= THRESH_ADULT_MAGI:
             return True
         return state in _WAIVER_100FPL_STATES and pct <= 100.0
@@ -1215,9 +1482,13 @@ def is_eligible(
         return _result()
 
     # ---- with core info present, evaluate categories ----
-    pfpl_2025 = pct_fpl(monthly_income, household_size, 2025)
+    # One number for every year: the published FPL table is not projected
+    # forward (see BASE_ELIGIBILITY_YEAR). The income test therefore cannot
+    # differ between the base and target years -- the work overlay below is
+    # the only thing that separates the two verdicts.
+    pfpl_base = pct_fpl(monthly_income, household_size)
 
-    # Set by the LTC branch below: that branch computes its own 2026 verdict
+    # Set by the LTC branch below: that branch computes its own target-year verdict
     # (the LTC income cap differs by year), so the work overlay must not
     # recompute it -- but only when the branch actually ran.
     ltc_evaluated = False
@@ -1228,17 +1499,17 @@ def is_eligible(
     is_abd_disability = bool(receiving_ssdi)
     is_preg = bool(pregnant)
 
-    # Category decisions → 2025 base eligibility (pre-work overlay)
+    # Category decisions → base-year eligibility (pre-work overlay)
     if is_child:
-        eligible_2025 = pfpl_2025 <= THRESH_CHILD
-        if not eligible_2025:
+        eligible_base = pfpl_base <= THRESH_CHILD
+        if not eligible_base:
             alts.append(
                 "CHIP: Children may still qualify for CHIP at higher incomes than Medicaid."
             )
         # skip work overlay for children
-        work_req_exempt_2026 = True
+        work_req_exempt = True
     elif is_preg:
-        eligible_2025 = pfpl_2025 <= THRESH_PREG
+        eligible_base = pfpl_base <= THRESH_PREG
     elif (
         is_abd_age or is_abd_disability or on_medicare
     ) and applying_reason not in _LTC_REASONS:
@@ -1269,7 +1540,7 @@ def is_eligible(
                 # a wrong answer -- the same person who reported assets far
                 # OVER the ABD limit came back eligible via this pathway,
                 # while declining the question came back "we can't estimate".
-                eligible_2025 = True
+                eligible_base = True
             elif not ask("assets_total", _Q_ASSETS):
                 # Declined, and no asset-free pathway applies: an asset test
                 # we cannot run is not a failed asset test. Without this the
@@ -1281,14 +1552,14 @@ def is_eligible(
         else:
             asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
             assets_ok = assets_total <= asset_limit
-            income_ok_2025 = pfpl_2025 <= 100.0
             # NOTE: medically_needy is a spend-down PATHWAY, not an income
             # waiver -- treating it as one reported six-figure earners as
             # "probably eligible". It stays a suggestion below instead.
-            eligible_2025 = assets_ok and income_ok_2025
-            if not eligible_2025:
-                eligible_2025 = magi_expansion_covers()
-            if not eligible_2025:
+            income_ok_base = pfpl_base <= 100.0
+            eligible_base = assets_ok and income_ok_base
+            if not eligible_base:
+                eligible_base = magi_expansion_covers()
+            if not eligible_base:
                 abd_alternatives()
     elif applying_reason in _LTC_REASONS:
         ltc_evaluated = True
@@ -1314,11 +1585,10 @@ def is_eligible(
         home_ok = True
         if home_owner:
             home_ok = (home_equity or 0.0) <= HOME_EQUITY_CAP_DEFAULT
-        income_ok_2025 = monthly_income <= LTC_INCOME_CAP_2025
-        income_ok_2026 = monthly_income <= LTC_INCOME_CAP_2026
-        eligible_2025 = assets_ok and home_ok and income_ok_2025
-        eligible_2026 = assets_ok and home_ok and income_ok_2026
-        if not income_ok_2025:
+        income_ok_base = monthly_income <= LTC_INCOME_CAP
+        eligible_base = assets_ok and home_ok and income_ok_base
+        eligible_target = eligible_base
+        if not income_ok_base:
             alts.append(
                 "Ask about a Qualified Income Trust (Miller trust) if income is just over the LTC cap."
             )
@@ -1336,12 +1606,12 @@ def is_eligible(
             )
     elif is_adult_magi:
         if state in _EXPANSION_STATES:
-            eligible_2025 = pfpl_2025 <= THRESH_ADULT_MAGI
+            eligible_base = pfpl_base <= THRESH_ADULT_MAGI
         elif state in _WAIVER_100FPL_STATES:
             # No ACA expansion, but adults are covered up to 100% FPL under a
             # waiver (Wisconsin), so there is no coverage gap.
-            eligible_2025 = pfpl_2025 <= 100.0
-            if not eligible_2025:
+            eligible_base = pfpl_base <= 100.0
+            if not eligible_base:
                 # Above 100% FPL means marketplace subsidies are available.
                 alts.append(
                     "Above your state's 100% FPL waiver limit—consider ACA marketplace subsidies (available starting at 100% FPL)."
@@ -1351,8 +1621,8 @@ def is_eligible(
                         "If you’re a caretaker relative, check caretaker-relative Medicaid rules in your state."
                     )
         else:
-            eligible_2025 = False
-            if pfpl_2025 >= 100.0:
+            eligible_base = False
+            if pfpl_base >= 100.0:
                 alts.append(
                     "In non-expansion states, childless adults often aren’t eligible—consider ACA marketplace subsidies (available starting at 100% FPL)."
                 )
@@ -1365,7 +1635,10 @@ def is_eligible(
                     "If you’re a caretaker relative, check caretaker-relative Medicaid rules in your state."
                 )
 
-    # ---- 2026 eligibility = 2025 base eligibility + federal work overlay ----
+    # ---- target-year eligibility = base eligibility + federal work overlay ----
+    # The overlay only applies from WORK_REQUIREMENT_FIRST_YEAR on, so a user
+    # who asked about the current year gets their base verdict back rather
+    # than being quizzed about work hours that don't apply to them yet.
     # Exemptions (if caller knows): pregnancy, SSDI/disabled, Medicare, ESRD/ALS,
     # children, and 65+ (the requirement targets able-bodied adults 19-64) are
     # treated as exempt by default.
@@ -1378,24 +1651,27 @@ def is_eligible(
         or has_esrd_or_als
         or applying_reason in _LTC_REASONS
     )
-    exempt = (work_req_exempt_2026 is True) or presumed_exempt
+    exempt = (
+        (work_req_exempt is True)
+        or presumed_exempt
+        or target_year < WORK_REQUIREMENT_FIRST_YEAR
+    )
 
     if ltc_evaluated:
-        # The LTC branch computed eligible_2026 itself (the LTC income cap
-        # differs by year, so income can pass 2026 while failing 2025), and
         # LTC applicants are medically frail -- never subject them to the
-        # work overlay or the not-eligible-2025 clamp. Keyed on the branch
-        # actually running, NOT on applying_reason: a child or pregnant LTC
-        # applicant is scored by the child/pregnancy branch earlier in the
-        # chain, and keying on the reason skipped their exemption entirely,
-        # handing a 10-year-old a final "not eligible in 2026".
+        # work overlay or the not-eligible-in-the-base-year clamp. Keyed on
+        # the branch actually running, NOT on applying_reason:
+        # a child or pregnant LTC applicant is scored by the child/pregnancy
+        # branch earlier in the chain, and keying on the reason skipped their
+        # exemption entirely, handing a 10-year-old a final "not eligible".
         pass
-    elif not eligible_2025:
-        # If not eligible in 2025, they won't be in 2026 either (even before work overlay).
-        eligible_2026 = False
+    elif not eligible_base:
+        # The income test is year-independent, so failing it fails both years
+        # and the work overlay can't rescue the target year.
+        eligible_target = False
     else:
         if exempt:
-            eligible_2026 = True
+            eligible_target = True
         else:
             # We need a 3-month lookback assessment for 80 hours per month
             def compute_monthly_sums() -> Optional[List[float]]:
@@ -1442,18 +1718,19 @@ def is_eligible(
             if monthly_data is None:
                 asked_avg = ask(
                     "avg_monthly_qualifying_hours_last_3mo",
-                    "For 2026, about how many qualifying hours per month (work, school, volunteering, or caregiving) do you average?",
+                    f"For {target_year}, about how many qualifying hours per month (work, school, volunteering, or caregiving) do you average?",
                 )
                 asked_total = ask(
                     "total_qualifying_hours_last_3mo",
                     "If easier, share your total qualifying hours over the last 3 months.",
                 )
-                eligible_2026 = False  # unknown until we get this
+                eligible_target = False  # unknown until we get this
                 if not asked_avg and not asked_total:
                     # Both hour questions declined, so there is no way to
                     # apply the 80-hrs/month rule. Without this the "unknown"
                     # above shipped as a confident "may not be eligible under
-                    # the 2026 rules" to someone who just couldn't estimate.
+                    # the target year's rules" to someone who just couldn't
+                    # estimate.
                     indeterminate.append("qualifying work hours")
             else:
                 # Check monthly requirement
@@ -1465,10 +1742,23 @@ def is_eligible(
                     avg_monthly >= WORK_REQ_MONTHLY_HOURS
                     and months_meeting >= MIN_MONTHS_MEETING
                 )
-                eligible_2026 = bool(meets_rule)
-                if not eligible_2026:
+                if target_year >= WORK_REQUIREMENT_UNIVERSAL_YEAR:
+                    eligible_target = bool(meets_rule)
+                else:
+                    # Transition window. The requirement is in force in the
+                    # states that went early and nowhere else yet, and we
+                    # don't track which is which -- so a shortfall here is
+                    # NOT a denial. Say the income/category test passed and
+                    # let the renderer carry the "this may already apply
+                    # where you live" caveat.
+                    eligible_target = True
+                    work_req_conditional = not meets_rule
+                # Coaching keys off the hours, not the verdict: in the
+                # transition window the verdict stays positive, but someone
+                # under 80 hours still needs to hear what is coming.
+                if not meets_rule:
                     alts.append(
-                        "For 2026, try to reach ~80 hrs/month each month via job, school, or volunteering."
+                        f"For {target_year}, try to reach ~80 hrs/month each month via job, school, or volunteering."
                     )
                     alts.append(
                         "Keep good records (pay stubs, schedules, volunteer logs)—we know this is frustrating."
@@ -1488,7 +1778,7 @@ def is_eligible(
         alts.append(
             "Since there’s veteran status in the household, compare with VA health benefits."
         )
-    if not eligible_2025 or not eligible_2026:
+    if not eligible_base or not eligible_target:
         alts.extend(
             [
                 "Visit your state Medicaid page for exact rules and to apply.",
@@ -1499,7 +1789,7 @@ def is_eligible(
         )
 
     # If we found no path and also have no further questions, route to a professional.
-    no_path = not eligible_2025 and not eligible_2026
+    no_path = not eligible_base and not eligible_target
     if no_path and not missing:
         alts.append(
             "We can’t find a pathway with the current info—consider speaking with a benefits navigator or attorney."
@@ -1552,6 +1842,7 @@ _BOOL_FIELDS = frozenset(
         "esrd",
         "on_medicaid_past",
         "work_req_exempt_2026",
+        "work_req_exempt",
     }
 )
 _INT_FIELDS = frozenset(
@@ -1595,7 +1886,15 @@ def summarize_eligibility_inputs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
             continue
         if raw is None:
             continue
-        if name == "state":
+        if name == "target_year":
+            # Echo the year we will actually score (clamped/normalized), so
+            # the model doesn't keep believing in a year we can't model.
+            year = _parse_target_year(raw)
+            if year is None:
+                unreadable.append(name)
+            else:
+                recorded[name] = year
+        elif name == "state":
             try:
                 normalized: Any = _normalize_state(raw)
             except ValueError:

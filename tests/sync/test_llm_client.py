@@ -22,6 +22,7 @@ from fighthealthinsurance.chat.llm_client import (
     REPEAT_OFFENDER_DECAY,
     BAD_RESPONSE_PATTERNS,
     BAD_CONTEXT_PATTERNS,
+    INVENTED_ELIGIBILITY_VERDICT_PENALTY,
 )
 from tests.chat_fixtures import CANNED_MEDICAID_REPLY, FRESH_REPLY, LOOPED_REPLY
 
@@ -126,6 +127,155 @@ class TestBadPatterns(TestCase):
 
 class TestScoreLlmResponse(TestCase):
     """Test LLM response scoring."""
+
+    def test_tool_call_keeps_the_full_model_prior(self):
+        """A bare tool call is a finished reply, not a truncated one.
+
+        The model prior is normally divided by 100 when a candidate has no
+        panda context summary, on the theory that it's half-generated. A tool
+        call never has one -- the tool's follow-up pass writes it -- so that
+        division sank real tool calls under chatty candidates that skipped
+        the tool and invented an answer instead.
+        """
+        tool_call = ('**medicaid_eligibility {"state": "CA"}**', None)
+        prose_without_context = ("Here is a fairly long chatty answer.", None)
+
+        tool_score = score_llm_response(tool_call, 8000)
+        prose_score = score_llm_response(prose_without_context, 8000)
+
+        self.assertGreater(tool_score, prose_score)
+        self.assertGreater(tool_score, 8000)
+
+    def test_tool_call_outranks_an_answer_that_skipped_the_tool(self):
+        # The observed failure: a local model's invented eligibility verdict
+        # (with a context summary) beat the tool call that would have computed
+        # one, so the checker never ran.
+        tool_call = ('**medicaid_eligibility {"state": "CA", "age": 39}**', None)
+        invented_verdict = (
+            "Based on what you've told me you're likely eligible under today's rules.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(tool_call, 8000),
+            score_llm_response(invented_verdict, 8000),
+        )
+
+    def test_invented_eligibility_verdict_is_penalized(self):
+        # Only the medicaid_eligibility checker can produce a verdict. A model
+        # asserting one from the conversation alone is guessing about
+        # someone's health coverage.
+        invented = (
+            "Good news — based on your income you are eligible for Medicaid.",
+            "Medicaid eligibility for California",
+        )
+        neutral = (
+            "Medicaid income limits vary by state and household size.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertEqual(
+            score_llm_response(neutral, 8000) - score_llm_response(invented, 8000),
+            8000 + INVENTED_ELIGIBILITY_VERDICT_PENALTY,
+        )
+
+    def test_invented_verdict_loses_to_a_higher_prior_tool_call(self):
+        # The failure a fixed nudge could not stop: ONE quality-210 backend
+        # contributes a truncated-history call (210**2//5 = 8820) and a
+        # full-history one (210**2//4 = 11025). A 2000-point penalty left the
+        # full-history invented verdict beating the truncated call's real
+        # checker invocation, so the prior is forfeited instead.
+        tool_call = ('**medicaid_eligibility {"state": "CA"}**', None)
+        invented = (
+            "Based on your income you do not qualify for Medicaid in California.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(tool_call, 210**2 // 5),
+            score_llm_response(invented, 210**2 // 4),
+        )
+
+    def test_invented_verdict_forfeits_the_model_prior(self):
+        invented = (
+            "Based on your income you do not qualify for Medicaid.",
+            "Medicaid eligibility",
+        )
+
+        low_prior = score_llm_response(invented, 2000)
+        high_prior = score_llm_response(invented, 11000)
+
+        # A better backend buys an invented verdict nothing at all.
+        self.assertEqual(low_prior, high_prior)
+
+    def test_invented_verdict_without_context_is_not_double_penalized(self):
+        # A candidate with no context summary and no tool call only receives
+        # call_score/100, so taking back the full call_score drove it
+        # thousands of points below its peers and ranked invented verdicts by
+        # model quality -- the inverse of the intended levelling.
+        no_context = ("Based on your income you do not qualify for Medicaid.", None)
+
+        strong = score_llm_response(no_context, 11000)
+        weak = score_llm_response(no_context, 2000)
+
+        self.assertEqual(strong, weak)
+
+    def test_invented_verdict_is_not_hard_rejected(self):
+        # Deliberately not -inf: the detector is a regex over free text, and
+        # one false positive must not be able to empty a fan-out.
+        invented = (
+            "Based on your income you do not qualify for Medicaid.",
+            "Medicaid eligibility",
+        )
+
+        self.assertNotEqual(score_llm_response(invented, 8000), float("-inf"))
+
+    def test_verdict_is_not_penalized_once_the_checker_has_run(self):
+        # After the tool computes a determination, relaying it is the point.
+        verdict = (
+            "Good news — based on your income you are eligible for Medicaid.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(verdict, 8000, eligibility_verified=True),
+            score_llm_response(verdict, 8000),
+        )
+
+    def test_offering_the_check_is_not_a_verdict(self):
+        # The Medicaid path asks the model to say exactly this before the
+        # checker has run, so penalizing it would fight our own prompt.
+        offer = (
+            "You may be eligible for Medicaid — want me to run our "
+            "experimental eligibility check with you?",
+            "Medicaid question",
+        )
+
+        self.assertEqual(
+            score_llm_response(offer, 8000),
+            score_llm_response(offer, 8000, eligibility_verified=True),
+        )
+
+    def test_invented_verdict_loses_to_the_tool_call_that_would_compute_it(self):
+        tool_call = ('**medicaid_eligibility {"state": "CA", "age": 39}**', None)
+        invented = (
+            "Based on your income you do not qualify for Medicaid in California.",
+            "Medicaid eligibility for California",
+        )
+
+        self.assertGreater(
+            score_llm_response(tool_call, 8000),
+            score_llm_response(invented, 8000),
+        )
+
+    def test_missing_context_still_penalized_without_a_tool_call(self):
+        with_context = ("A helpful answer for the user.", "Context summary")
+        without_context = ("A helpful answer for the user.", None)
+
+        self.assertGreater(
+            score_llm_response(with_context, 8000),
+            score_llm_response(without_context, 8000),
+        )
 
     def test_none_result_returns_negative_inf(self):
         """None result should return -inf."""

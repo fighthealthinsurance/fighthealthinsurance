@@ -35,7 +35,10 @@ async def infer_with_fallback(
     against a specific list (e.g. external models) instead.
     """
     if models is None:
-        models = ml_router.internal_models_by_cost[:model_count]
+        # General-purpose only: every caller of this helper is asking a model
+        # to follow instructions (extract fields, classify, summarize), which
+        # the appeal-text fine-tunes answer with stray digits and blank lines.
+        models = ml_router.general_purpose_internal_models()[:model_count]
     for model in models:
         try:
             result = await asyncio.wait_for(

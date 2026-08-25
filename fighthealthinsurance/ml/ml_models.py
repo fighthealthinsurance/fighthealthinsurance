@@ -100,6 +100,7 @@ CleanerUtils.is_valid_url = classmethod(  # type: ignore[assignment,method-assig
 )
 
 from fighthealthinsurance.exec import *
+from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_ALIASES
 from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
     strip_boilerplate_service,
@@ -130,6 +131,34 @@ MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (age
 - State-specific details may vary
 
 For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
+
+
+# How we invite someone into the eligibility check. Four places have to say
+# the same thing -- the medicaid_info rules, the work-requirements rule, step
+# 2 of THE MEDICAID PATH, and the handoff MedicaidInfoTool appends to a
+# successful lookup -- so the wording lives here instead of being retyped
+# (and drifting) in each of them.
+#
+# It is an OFFER. Someone who asked "what is Medicaid?" wants an answer to
+# that question; being marched into an eligibility interview instead is worse
+# service, not better. The tool only starts once they show they want it.
+MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION = (
+    "close with ONE short sentence offering our EXPERIMENTAL Medicaid/Medicare "
+    "eligibility check — say plainly that it is experimental, only a rough "
+    "estimate, and not an official determination"
+)
+
+MEDICAID_ELIGIBILITY_OFFER_RULE = (
+    MEDICAID_ELIGIBILITY_OFFER_INSTRUCTION + ". Offer it, don't push it: make it "
+    "an invitation, and drop it if they decline or move on to something else. "
+    "If they take you up on it — or have already shown they want to know "
+    "whether they qualify (asking about income limits, whether they'd be "
+    "covered, or how the work requirements apply to them) — call "
+    "**medicaid_eligibility** with everything you already know and let the "
+    "tool tell you which questions to ask; never ask eligibility questions "
+    "before calling it. If a check is already underway in this conversation, "
+    "continue it instead of re-offering it."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -864,6 +893,20 @@ class RemoteModelLike(DenialBase):
     def quality(self) -> int:
         return 100
 
+    def supports_general_instructions(self) -> bool:
+        """Whether this backend can follow arbitrary instructions.
+
+        True for general-purpose models: they can hold a chat turn, emit a
+        tool call, extract an entity, or summarize. False for narrow
+        fine-tunes that only reliably produce the one artifact they were
+        trained on (the appeal/prior-auth text), which answer everything
+        else with filler or digit soup. Those stay eligible for generation
+        and are kept out of the conversational/extraction fan-outs, where a
+        garbage candidate costs a slot, a timeout, and occasionally the
+        race.
+        """
+        return True
+
     def get_max_context(self) -> int:
         """Return the maximum context length in tokens for this model."""
         if hasattr(self, "max_len"):
@@ -1210,11 +1253,14 @@ When possible even if the user has not explicitily provided the state if they're
 This means, for example, you get the phone number for medical (california medicaid) by calling this tool and looking at the response.
 
 Rules for medicaid questions:
-- If user mentions Medicaid/Medicare + state → ONLY respond with the tool call, no other text
+- If user mentions Medicaid/Medicare + state → ONLY respond with the tool call, no other text. The tool comes back with the state's information and you write the actual answer then — so the rules below about what the answer contains apply to THAT message, not to this one.
 - If user mentions Medicaid/Medicare but no state → Ask "Which state?" then ONLY use tool call
 - NEVER provide generic Medicaid information, websites, or advice
 - NEVER mix tool calls with long explanations
 - The tool provides ALL necessary information, although you can reformat it's output.
+- After you have delivered the state information, """
+            + MEDICAID_ELIGIBILITY_OFFER_RULE
+            + """
 
 CORRECT Examples:
 User: "medicaid info in california" → Response: **medicaid_info {"state": "California", "topic": "", "limit": 5}**
@@ -1229,9 +1275,25 @@ WRONG Examples:
             + MEDICAID_WORK_REQUIREMENTS_BLOCK
             + """
 
-RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use ONLY the text above.
+RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use the text above, then """
+            + MEDICAID_ELIGIBILITY_OFFER_RULE
+            + """ Nothing else.
 """
         )
+        medicaid_gov_tool = """**Medicaid.gov Lookup**: To read an official page from Medicaid.gov (or a trusted federal-poverty-level reference) and answer from it, use: **medicaid_gov_lookup {"page": "renew_info", "state": "Iowa"}**
+
+Pages you can ask for by name:
+- "renew_info" — the official renewal hub: how to keep coverage, what the state mails you, what to do if you were disenrolled. Pass "state" (any spelling, or a program name like Medi-Cal) for that state's renewal page.
+- "eligibility_levels" — the official Medicaid/CHIP/BHP income eligibility levels by state and category.
+- "fpl_chart" — federal-poverty-level dollar amounts by household size and percentage band.
+- "fpl_glossary" — plain-language explanation of what the federal poverty level is.
+
+You can also pass **medicaid_gov_lookup {"query": "renewal paperwork"}** to search Medicaid.gov, or {"url": "https://www.medicaid.gov/..."} for a specific Medicaid.gov page.
+
+Use this when someone needs the OFFICIAL wording — renewal deadlines, income tables, what a notice means — rather than answering from memory. It reads the real page, so cite the URL it returns. It cannot look up an individual's case: only their state agency can do that.
+
+Offer it proactively after you've given someone an eligibility estimate, or an answer about income limits, deadlines, or what a notice means. Everything we tell them is an estimate off simplified rules; the official page is the thing they can actually check it against, and their own state agency is the only one who decides. Give them the link, don't just describe it."""
+
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
 
         clinical_trials_tool = """**ClinicalTrials.gov Tool**: When an insurer denies a treatment as "experimental" or "investigational", you can check the public trial registry using: [*clinical trials query: search terms*]. The system returns clinicaltrialscontext:[...] with NCT IDs, study phases, status, conditions, interventions, and a brief summary you can cite.
@@ -1276,7 +1338,7 @@ Use this tool when the user asks about cost, affordability, copay assistance, "h
 
 THIS ELIGIBILITY CHECK IS AN EXPERIMENTAL FEATURE. Every time you start an eligibility check or deliver an estimate, tell the user in plain language that this is an experimental feature that can be wrong or out of date, that it is only a rough estimate and NOT an official eligibility determination, and that only their state Medicaid agency can determine eligibility for real. Do not let a whole eligibility conversation go by without this being said clearly.
 
-ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
+USE THIS TOOL WHENEVER SOMEONE WANTS TO KNOW WHETHER THEY CAN GET MEDICAID/MEDICARE — they asked outright, they said yes to your offer of the check, or they asked something only a check can answer ("would I qualify?", "what are the limits for someone like me?", "do the work requirements apply to me?"). Don't run it on someone who only wanted to know what Medicaid is and hasn't shown any interest in it, and NEVER state or guess an eligibility verdict yourself — the only eligibility answer you may give is the one this tool returns.
 
 When the user asks whether they qualify or are eligible for Medicaid or Medicare, use **medicaid_eligibility** — NOT medicaid_info, even when they also name their state. medicaid_info is only for looking up a state's contact info and resources, which is a good follow-up AFTER the eligibility check.
 
@@ -1294,7 +1356,7 @@ At each step add the user's new answers to the parameters you've already collect
 
 Rules for medicaid eligibility:
 
-Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under today's rules only, probably eligible under today's rules and with the 2026 work requirements, or can't find eligibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
+Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under today's rules only, probably eligible under today's rules and in the year being checked (by default 2026, with the work requirements), or can't find eligibility. The tool tells you which year it scored — use that year in your answer, never a different one. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
 
 Possible kwargs (all optional; function will ask for missing, step-by-step):
       - state: str
@@ -1316,8 +1378,10 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
       - esrd: bool
       - ssdi_length: int # how many MONTHS they have been receiving SSDI
       - years_worked: int # how many years you or your spouse worked and paid medicare taxes
-      # 2026 federal work / community engagement requirement (80 qualifying hours per month;
-      # hours from work, school, volunteering, or caregiving all count):
+      - target_year: int  # which year to check besides today's rules (defaults to 2026)
+      # federal work / community engagement requirement (80 qualifying hours per month;
+      # hours from work, school, volunteering, or caregiving all count -- it applies from
+      # 2026 on, so a target_year of 2025 is checked without it):
       - work_req_exempt_2026: bool                    # true if you know they're exempt (pregnant, disabled/medically frail, on medicare, etc.)
       - avg_monthly_qualifying_hours_last_3mo: float  # average qualifying hours per MONTH (the units the tool asks in)
       - avg_weekly_qualifying_hours_last_3mo: float   # or average per WEEK -- watch the units, never put a monthly number here
@@ -1329,6 +1393,7 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
 - Numbers: a plain number with no currency symbol, comma, or unit. ("about twelve hundred a month" -> `"monthly_income": 1200`.)
 - State: the state name or its 2-letter code. If they name their program (Medi-Cal, MassHealth, TennCare, Apple Health...) infer the state yourself.
 - Hours: mind the units — `avg_monthly_qualifying_hours_last_3mo` is per MONTH, `avg_weekly_qualifying_hours_last_3mo` is per WEEK.
+- Year: every check covers today's rules plus one other year. If the user names a year ("what about 2028?", "will I still qualify next year?", "when the work requirements start"), send it as a 4-digit `target_year` — convert relative phrases yourself, and re-send the same `target_year` on every following call so the estimate doesn't silently switch years mid-conversation. Leave it out when they haven't asked about a particular year. If they ask about several years, run the check once per year and say which is which.
 
 **When the user can't answer**, send the string `"unknown"` for that parameter (e.g. `"assets_total": "unknown"`). That tells us to stop asking it and either assume the conservative answer or explain what we can't determine. Never invent a value, and never silently drop the question — an unanswered question comes back every turn.
 
@@ -1354,6 +1419,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 
 {medicaid_eligibility_tool}
 {medicaid_resources_tool}
+{medicaid_gov_tool}
 {pubmed_tool}
 {uspstf_tool}
 {clinical_trials_tool}
@@ -1364,9 +1430,17 @@ We have a selection of tools to help you. You should try and use these tools whe
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
 This means if someone asks if their eligible for medical, medicaid, medicare, or similar you must use the tool.
 You can call these tools, but not the person chatting with you. So, for example, you can offer to lookup more info for them.
+
+***THE MEDICAID PATH***
+A lot of people asking about Medicaid in general ("what is Medicaid?", "how do I apply?", "what are the income limits?", "what are these work requirements?") are really wondering whether THEY can get covered — and some just want the general answer. So answer the question first, and leave the door open:
+1. Answer what they actually asked (using medicaid_info for anything state-specific, or the work requirements text above). This is the part they came for — answer it properly, don't cut it short to get to the check.
+2. Then {MEDICAID_ELIGIBILITY_OFFER_RULE}
+3. Once they show interest — "yes", "how do I know?", "would I qualify?", "what are the limits for me?", asking about their own income, household, or coverage — call **medicaid_eligibility** with everything you already know (at minimum the state, plus their target year if they named one). Do NOT ask them eligibility questions first; the tool tells you which questions to ask.
+4. Keep going: each answer they give goes back into the tool call along with everything collected so far, until the tool gives a determination. Then finish with the state contact info from **medicaid_info** and https://www.fighthealthinsurance.com/faq/medicaid/ .
+Plenty of people just want the answer to their question. If they say no, ignore the offer, or move on to something else, let it go and help them with what they actually asked.
 """
-            medicaid_names_reminder = """
-Remember that medicaid can go by many names, including but not limited to: DenaliCare, Medi-Cal, Health First Colorado, Husky Health, Diamond State Health Plan, Med-QUEST, Medical Assistance Program, HealthChoice Illinois, Hoosier Healthwise, Iowa Medicaid, Kansas Medical Assistance Program, MaineCare, MassHealth, MO HealthNet, NJ FamilyCare, Turquoise Care, New York State Medicaid, SoonerCare, Medical Assistance, Healthy Connections, TennCare, STAR+PLUS, Green Mountain Care, Cardinal Care, Apple Health, Forward Health, STAR, and Equality Care. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
+            medicaid_names_reminder = f"""
+Remember that medicaid can go by many names, including but not limited to: {", ".join(MEDICAID_PROGRAM_ALIASES)}. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
 """
         else:
             # Only include PubMed tool for non-Medicaid conversations
@@ -3842,6 +3916,16 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
     @property
     def external(self):
+        return False
+
+    def supports_general_instructions(self) -> bool:
+        """fhi-legacy is an appeal-text fine-tune, not a general model.
+
+        Asked to hold a chat turn it returns blank lines and stray digits
+        ("1.50, 777&#2,302,36,..."), so it was contributing a guaranteed-dead
+        candidate to every chat fan-out. It stays in the appeal and prior-auth
+        pools, which are the job it was actually trained for.
+        """
         return False
 
     @classmethod

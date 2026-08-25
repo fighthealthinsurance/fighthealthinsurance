@@ -61,6 +61,7 @@ from fighthealthinsurance.chat.tools import (
     DocFetcherTool,
     FinancialAssistanceTool,
     MedicaidEligibilityTool,
+    MedicaidGovLookupTool,
     MedicaidInfoTool,
     PaRequirementLookupTool,
     PriorAuthTool,
@@ -189,6 +190,15 @@ class ChatInterface:
         # which decays a striking backend's base score so a looping model
         # stops winning every fan-out this session. In-memory only.
         self._repeat_offenders: Dict[str, int] = {}
+        # Set once the medicaid_eligibility checker has actually produced a
+        # determination in this session. Shared with MedicaidEligibilityTool
+        # via a one-element list (same trick as _doc_fetch_count) because the
+        # tool is rebuilt per turn. Until it flips, the scorer treats a
+        # candidate that asserts an eligibility verdict as inventing one.
+        self._eligibility_computed: list[bool] = [False]
+        # Per-session cap for medicaid_gov_lookup, kept out here because the
+        # tool is rebuilt every turn (same shape as _doc_fetch_count).
+        self._medicaid_gov_lookup_count: list[int] = [0]
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -312,6 +322,7 @@ class ChatInterface:
         full_history: Optional[List[Dict[str, str]]] = None,
         user_message_for_scoring: Optional[str] = None,
         message_variants: Optional[List[MessageVariant]] = None,
+        eligibility_verified: bool = False,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -337,6 +348,9 @@ class ChatInterface:
                 calls are fanned out per variant and each variant's score_delta is
                 applied so the primary path wins unless it fails. When None (e.g.
                 recursive tool calls), the single current_message_for_llm is used.
+            eligibility_verified: True when this pass is writing up output the
+                medicaid_eligibility checker just produced. OR'd with the
+                session-level flag; see score_llm_response.
         """
         if depth > 3:
             return None, None
@@ -410,6 +424,7 @@ class ChatInterface:
             call_labels=call_labels,
             repeat_offenders=self._repeat_offenders,
             score_log=score_log,
+            eligibility_verified=eligibility_verified or self._eligibility_computed[0],
         )
 
         llm_pass_started = time.monotonic()
@@ -617,7 +632,9 @@ class ChatInterface:
 
         # Recursive tools: medicaid eligibility, medicaid info, pubmed, doc fetcher
         medicaid_elig_tool = MedicaidEligibilityTool(
-            self.send_status_message, self._call_llm_with_actions
+            self.send_status_message,
+            self._call_llm_with_actions,
+            eligibility_computed=self._eligibility_computed,
         )
         response_text, context, _ = await medicaid_elig_tool.handle(
             response_text, context, **tool_kwargs
@@ -627,6 +644,15 @@ class ChatInterface:
             self.send_status_message, self._call_llm_with_actions
         )
         response_text, context, _ = await medicaid_info_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        medicaid_gov_tool = MedicaidGovLookupTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+            lookup_count=self._medicaid_gov_lookup_count,
+        )
+        response_text, context, _ = await medicaid_gov_tool.handle(
             response_text, context, **tool_kwargs
         )
 

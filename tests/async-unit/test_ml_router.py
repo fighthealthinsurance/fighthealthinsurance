@@ -278,6 +278,138 @@ class TestMLRouterChatBackends(unittest.TestCase):
         self.assertEqual(models, [strong_pricier, weak_cheap])
 
 
+class TestMLRouterAppealOnlyBackends(unittest.TestCase):
+    """The appeal-text fine-tune stays out of the instruction-following pools.
+
+    fhi-legacy answers a chat turn with blank lines and stray digits, so every
+    fan-out that included it spent a slot and a timeout on a dead candidate --
+    and on at least one turn a hallucinated reply beat the real tool call.
+    """
+
+    def setUp(self):
+        self.router = MLRouter()
+        self.general = self._internal(quality=200, general=True)
+        self.appeal_only = self._internal(quality=101, general=False)
+        self.router.internal_models_by_cost = [self.appeal_only, self.general]
+        self.router.all_models_by_cost = [self.appeal_only, self.general]
+        self.router.models_by_name = {
+            "fhi-legacy": [self.appeal_only],
+            "fhi-2025": [self.general],
+        }
+
+    @staticmethod
+    def _internal(quality: int, general: bool) -> MagicMock:
+        model = MagicMock(spec=RemoteModelLike)
+        model.external = False
+        model.quality.return_value = quality
+        model.is_available.return_value = True
+        model.health_checked_live = True
+        model.supports_general_instructions.return_value = general
+        return model
+
+    def test_chat_excludes_the_appeal_only_backend(self):
+        models = self.router.get_chat_backends(use_external=False)
+        self.assertNotIn(self.appeal_only, models)
+        self.assertIn(self.general, models)
+
+    def test_chat_doubles_a_general_fhi_backend_not_the_appeal_only_one(self):
+        # The doubled chat slot is picked by sorted name order, so give the
+        # appeal-only backend the name that sorts FIRST -- otherwise the
+        # assertion passes whether or not the capability filter runs.
+        self.router.models_by_name = {
+            "fhi-aaa-appeal": [self.appeal_only],
+            "fhi-zzz-chat": [self.general],
+        }
+
+        models = self.router.get_chat_backends(use_external=False)
+
+        self.assertEqual(models.count(self.general), 3)
+        self.assertNotIn(self.appeal_only, models)
+
+    def test_chat_keeps_the_doubled_slot_when_every_fhi_backend_is_narrow(self):
+        # Fail open: a deployment whose only fhi backend is the appeal
+        # fine-tune should still get its doubled slot rather than silently
+        # dropping it.
+        self.router.internal_models_by_cost = [self.appeal_only]
+        self.router.all_models_by_cost = [self.appeal_only]
+        self.router.models_by_name = {"fhi-legacy": [self.appeal_only]}
+
+        models = self.router.get_chat_backends(use_external=False)
+
+        self.assertGreaterEqual(models.count(self.appeal_only), 2)
+
+    def test_best_internal_model_skips_the_appeal_only_backend(self):
+        # The appeal fine-tune is not the strongest here, but this also has
+        # to hold when it is -- quality alone would pick it for chat
+        # synthesis and document parsing.
+        self.appeal_only.quality.return_value = 999
+        self.assertIs(self.router.best_internal_model(), self.general)
+
+    def test_generation_can_still_ask_for_the_appeal_only_backend(self):
+        self.appeal_only.quality.return_value = 999
+        self.assertIs(
+            self.router.best_internal_model(general_only=False), self.appeal_only
+        )
+
+    def test_general_purpose_internal_models_excludes_the_appeal_only_backend(self):
+        pool = self.router.general_purpose_internal_models()
+        self.assertEqual(pool, [self.general])
+
+    def test_entity_extraction_excludes_the_appeal_only_backend(self):
+        self.assertNotIn(
+            self.appeal_only, self.router.entity_extract_backends(use_external=False)
+        )
+        self.assertNotIn(
+            self.appeal_only, self.router.entity_extract_backends(use_external=True)
+        )
+
+    def test_qa_excludes_the_appeal_only_backend(self):
+        self.assertNotIn(self.appeal_only, self.router.partial_qa_backends())
+        self.assertNotIn(
+            self.appeal_only, self.router.full_qa_backends(use_external=False)
+        )
+
+    def test_generation_still_uses_the_appeal_only_backend(self):
+        # It is the model actually fine-tuned for this, so appeals and prior
+        # auth keep it.
+        self.assertIn(self.appeal_only, self.router.get_prior_auth_backends())
+        self.assertIn(
+            self.appeal_only, self.router.generate_text_backends(use_external=False)
+        )
+
+    def test_fails_open_when_every_backend_is_appeal_only(self):
+        # Better a long-shot candidate than no chat at all.
+        self.router.internal_models_by_cost = [self.appeal_only]
+        self.router.models_by_name = {"fhi-legacy": [self.appeal_only]}
+
+        self.assertIn(self.appeal_only, self.router.get_chat_backends())
+
+
+class TestAppealOnlyModelCapability(unittest.TestCase):
+    """The capability flag itself, on the classes that set it."""
+
+    @staticmethod
+    def _bare(cls):
+        # The backends' __init__ wants live config; the capability flag is a
+        # property of the class, so an uninitialized instance is enough (and
+        # is a real instance, unlike passing None as self).
+        return object.__new__(cls)
+
+    def test_legacy_fhi_backend_is_not_general_purpose(self):
+        self.assertFalse(
+            self._bare(RemoteHealthInsurance).supports_general_instructions()
+        )
+
+    def test_models_are_general_purpose_by_default(self):
+        # RemoteModelLike is abstract, so a new backend that inherits the
+        # default without overriding it is what we actually want to check.
+        class _NewBackend(RemoteModelLike):
+            async def _infer(self, *args, **kwargs):  # pragma: no cover
+                return None
+
+        self.assertTrue(self._bare(_NewBackend).supports_general_instructions())
+
+
 class TestMLRouterBestExternalModels(unittest.TestCase):
     """Tests for MLRouter.best_external_models (quality + health selection)."""
 
