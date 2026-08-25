@@ -356,12 +356,10 @@ class MedicaidEligibilityTool(BaseTool):
         try:
             # Import here to avoid circular imports
             from fighthealthinsurance.medicaid_api import (
-                BASE_ELIGIBILITY_YEAR,
                 WORK_REQUIREMENT_FIRST_YEAR,
                 is_eligible,
                 resolve_target_year,
                 summarize_eligibility_inputs,
-                target_year_requested,
             )
 
             await self.send_status_message("Processing Medicaid eligibility data")
@@ -371,14 +369,6 @@ class MedicaidEligibilityTool(BaseTool):
             # claim a different year than the one that was scored.
             target_year = resolve_target_year(loaded.get("target_year"))
 
-            # The checker only projects income limits forward for a year the
-            # user actually named; on the default path both verdicts use the
-            # published table. Recomputed with the same helpers the checker
-            # uses so the caveat we print and the arithmetic it did agree.
-            thresholds_estimated = (
-                target_year_requested(loaded.get("target_year"))
-                and target_year > BASE_ELIGIBILITY_YEAR
-            )
             work_req_applies = target_year >= WORK_REQUIREMENT_FIRST_YEAR
 
             # What we actually understood from the payload. The LLM parses
@@ -436,7 +426,6 @@ class MedicaidEligibilityTool(BaseTool):
                 missing,
                 determination_made,
                 target_year=target_year,
-                thresholds_estimated=thresholds_estimated,
             )
             if parsed_summary:
                 info_text += "\n\n" + parsed_summary
@@ -592,7 +581,6 @@ class MedicaidEligibilityTool(BaseTool):
         missing: List[str],
         determination_made: bool = True,
         target_year: Optional[int] = None,
-        thresholds_estimated: bool = False,
     ) -> str:
         """
         Build the eligibility information text passed back to the LLM.
@@ -614,10 +602,6 @@ class MedicaidEligibilityTool(BaseTool):
                 ``resolve_target_year`` returned for this payload, or the
                 label would name a year we didn't score. Defaults to the
                 checker's own default year.
-            thresholds_estimated: True only when the checker projected income
-                limits forward because the USER asked about a future year. On
-                the default path it doesn't, so telling the user the limits
-                were estimated would be describing arithmetic we never did.
 
         Returns:
             Formatted information text
@@ -731,14 +715,17 @@ class MedicaidEligibilityTool(BaseTool):
                     f"medicaid under the {label} rules{note}."
                 )
 
-            if thresholds_estimated:
-                # The requested year's income limits are the published
-                # base-year guidelines rolled forward by an inflation guess,
-                # so a borderline verdict there is softer than it sounds.
+            if target_is_separate_year:
+                # We do NOT guess at future income limits: the same published
+                # table scores both years, so the only thing separating them
+                # is the work requirement. Say that plainly rather than
+                # implying we modelled the later year's limits.
                 parts.append(
                     f"Note: {target_year} income limits aren't published yet, "
-                    f"so we estimated them from the {BASE_ELIGIBILITY_YEAR} "
-                    "guidelines. Say so if the answer is close to the line."
+                    f"so this used the current ({BASE_ELIGIBILITY_YEAR}) "
+                    "limits for both years -- the difference between them is "
+                    "the work requirement, not the income test. Mention that "
+                    "if the answer is close to the line."
                 )
 
             if medicare:

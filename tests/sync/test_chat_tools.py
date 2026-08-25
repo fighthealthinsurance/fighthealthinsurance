@@ -683,7 +683,10 @@ class TestMedicaidTargetYear(TestCase):
         self.assertEqual(info.count("could be eligible for medicaid"), 1)
         self.assertNotIn("work/community-engagement", info)
 
-    def test_future_year_thresholds_are_flagged_as_estimates(self):
+    def test_a_future_year_says_current_limits_were_used(self):
+        # We do not model the later year's income limits, so the note has to
+        # say what actually happened: the same published table scored both
+        # years and the work requirement is the only difference.
         info = self.tool._build_eligibility_info(
             eligible_base=False,
             eligible_target=False,
@@ -691,22 +694,19 @@ class TestMedicaidTargetYear(TestCase):
             alternatives=[],
             missing=[],
             target_year=2029,
-            thresholds_estimated=True,
         )
 
         self.assertIn("aren't published yet", info)
+        self.assertIn("the work requirement, not the income test", info)
 
-    def test_default_year_is_not_described_as_an_estimated_threshold(self):
-        # The checker only projects income limits forward for a year the user
-        # named, so on the default path there is no estimate to disclaim --
-        # saying there was described arithmetic we never did.
+    def test_a_base_year_check_has_no_second_year_note(self):
         info = self.tool._build_eligibility_info(
             eligible_base=True,
-            eligible_target=False,
+            eligible_target=True,
             medicare=False,
             alternatives=[],
             missing=[],
-            target_year=DEFAULT_TARGET_YEAR,
+            target_year=BASE_ELIGIBILITY_YEAR,
         )
 
         self.assertNotIn("aren't published yet", info)
