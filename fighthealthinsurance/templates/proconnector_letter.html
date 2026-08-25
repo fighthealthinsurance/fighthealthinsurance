@@ -1,4 +1,4 @@
-{% load static %}<!DOCTYPE html>
+<!DOCTYPE html>{% load static %}
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -197,7 +197,7 @@
       Prints on US Letter with 1&Prime; margins. In the print dialog choose
       <strong>Letter</strong> paper and turn <strong>off</strong> &ldquo;Headers
       and footers&rdquo; so the browser doesn&rsquo;t stamp a URL and date on the
-      page. Saving as PDF names the file &ldquo;{{ title }}&rdquo;.
+      page. Saving as PDF names the file &ldquo;{{ title|default:"Letter" }}&rdquo;.
     </p>
   </div>
 
