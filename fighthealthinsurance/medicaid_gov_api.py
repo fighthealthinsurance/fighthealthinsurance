@@ -19,6 +19,7 @@ medicaid.gov" without scraping a search UI we are asked not to touch.
 from __future__ import annotations
 
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -67,10 +68,22 @@ _DISALLOWED_PREFIXES = (
 
 _SITEMAP_CACHE_KEY = "medicaid_gov_sitemap_urls_v1"
 _SITEMAP_CACHE_SECONDS = 60 * 60 * 24  # the sitemap's lastmod moves daily
-_SITEMAP_TIMEOUT_SECONDS = 20
+# Per-request timeout. Deliberately short: this runs while a person is
+# waiting on a chat reply, so a slow upstream should cost us the lookup, not
+# the turn.
+_SITEMAP_TIMEOUT_SECONDS = 5
+# Whole-walk budget. The per-request timeout alone bounds nothing useful --
+# _MAX_SITEMAP_PAGES + 1 requests that each take just under the timeout still
+# add up to a minute -- so the walk also stops once this much has elapsed and
+# uses whatever it collected.
+_SITEMAP_TOTAL_BUDGET_SECONDS = 15
 # The index paginates at 1,500 URLs a page; cap the walk so a sitemap that
 # grows unexpectedly can't turn one lookup into a crawl.
 _MAX_SITEMAP_PAGES = 10
+# Largest sitemap document we will parse. medicaid.gov's pages run well under
+# a megabyte; anything far larger is a mistake or a malicious response, and
+# handing it to the XML parser is how you turn a lookup into an OOM.
+_MAX_SITEMAP_BYTES = 8 * 1024 * 1024
 
 _SITEMAP_NS = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
@@ -197,7 +210,10 @@ def is_allowed_url(url: str) -> bool:
     if not url:
         return False
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
+    # https only. Every curated source is https, and these pages are the
+    # authority we quote to people about their coverage -- fetching one over
+    # cleartext would let anything on the path rewrite the answer.
+    if parsed.scheme != "https":
         return False
     host = (parsed.hostname or "").lower()
     if host not in ALLOWED_HOSTS:
@@ -248,17 +264,43 @@ def curated_source_menu() -> str:
     return "\n".join(lines)
 
 
+def _parse_sitemap_xml(content: bytes) -> ET.Element:
+    """Parse a sitemap document, refusing anything that isn't plain XML.
+
+    Two guards, both because this is remote content we don't control:
+
+    * A size cap, so an unexpectedly enormous (or hostile) response can't be
+      handed to the parser to expand in memory.
+    * No document type declaration. Sitemaps have no DTD, so a ``<!DOCTYPE``
+      or ``<!ENTITY`` here is either a mistake or an entity-expansion attempt.
+      Current expat refuses external entities and is no longer vulnerable to
+      the classic expansion attacks, but rejecting the declaration outright
+      costs nothing and doesn't depend on the parser version underneath us.
+    """
+    if len(content) > _MAX_SITEMAP_BYTES:
+        raise ValueError(f"sitemap document too large ({len(content)} bytes)")
+    head = content[:2048].lower()
+    if b"<!doctype" in head or b"<!entity" in head:
+        raise ValueError("sitemap document carries a doctype/entity declaration")
+    return ET.fromstring(content)
+
+
 def _fetch_sitemap_urls() -> List[str]:
-    """Every content URL in medicaid.gov's sitemap, cached for a day."""
+    """Every content URL in medicaid.gov's sitemap, cached for a day.
+
+    Blocking: does network IO with ``requests``. Callers on the event loop
+    must bridge (see ``MedicaidGovLookupTool._resolve_target``).
+    """
     cached = cache.get(_SITEMAP_CACHE_KEY)
     if cached is not None:
         return list(cached)
 
+    deadline = time.monotonic() + _SITEMAP_TOTAL_BUDGET_SECONDS
     urls: List[str] = []
     try:
         index = requests.get(SITEMAP_INDEX_URL, timeout=_SITEMAP_TIMEOUT_SECONDS)
         index.raise_for_status()
-        root = ET.fromstring(index.content)
+        root = _parse_sitemap_xml(index.content)
         pages = [
             loc.text.strip()
             for loc in root.findall(".//s:sitemap/s:loc", _SITEMAP_NS)
@@ -269,9 +311,19 @@ def _fetch_sitemap_urls() -> List[str]:
             pages = [SITEMAP_INDEX_URL]
 
         for page_url in pages[:_MAX_SITEMAP_PAGES]:
+            if time.monotonic() >= deadline:
+                # Out of time. Keep what we have rather than dropping the
+                # lookup: a partial index still answers most queries, and the
+                # person is waiting on a chat reply.
+                logger.warning(
+                    f"medicaid_gov: sitemap walk hit its "
+                    f"{_SITEMAP_TOTAL_BUDGET_SECONDS}s budget with "
+                    f"{len(urls)} URLs collected"
+                )
+                break
             page = requests.get(page_url, timeout=_SITEMAP_TIMEOUT_SECONDS)
             page.raise_for_status()
-            page_root = ET.fromstring(page.content)
+            page_root = _parse_sitemap_xml(page.content)
             for loc in page_root.findall(".//s:url/s:loc", _SITEMAP_NS):
                 if loc.text:
                     candidate = loc.text.strip()
@@ -377,6 +429,9 @@ def search_medicaid_gov(query: str, limit: int = 5) -> List[Tuple[str, float]]:
 
     Matches on URL slugs from the sitemap -- see the module docstring for why
     this stands in for the site's own (credentialed, robots-blocked) search.
+
+    Blocking on a cold cache (it walks the sitemap); bridge off the event
+    loop rather than awaiting it inline.
     Returns ``(url, score)`` pairs; an empty list means nothing matched or the
     sitemap was unreachable.
     """

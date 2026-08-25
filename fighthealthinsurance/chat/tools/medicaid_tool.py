@@ -635,6 +635,7 @@ class MedicaidEligibilityTool(BaseTool):
             BASE_ELIGIBILITY_YEAR,
             DEFAULT_TARGET_YEAR,
             WORK_REQUIREMENT_FIRST_YEAR,
+            current_eligibility_year,
         )
 
         if target_year is None:
@@ -650,17 +651,29 @@ class MedicaidEligibilityTool(BaseTool):
                 "requirement applies to them — states must implement it by "
                 "January 1, 2027, a few earlier)"
             )
-        base_label = f"current ({BASE_ELIGIBILITY_YEAR})"
+        # "current" means the calendar year, not the year of the FPL table we
+        # score against. Those drifted apart the moment the table's year
+        # ended, and calling a finished year "current" told people the rules
+        # they live under were the ones that had just been replaced.
+        current_year = current_eligibility_year()
+        base_label = f"current ({current_year})"
         # A user who asked about this year gets one verdict, not the same
         # verdict printed twice under two labels.
-        target_is_separate_year = target_year > BASE_ELIGIBILITY_YEAR
+        target_is_separate_year = target_year > current_year
 
         # Years to report on, ascending. Falls back to the base/target pair
         # when no timeline was supplied. Deduped so a base-year-only check
         # doesn't print the same verdict twice under two labels.
         rows = timeline or [
-            (BASE_ELIGIBILITY_YEAR, eligible_base),
-            (target_year, eligible_target),
+            row
+            for row in (
+                (BASE_ELIGIBILITY_YEAR, eligible_base),
+                (target_year, eligible_target),
+            )
+            # The base row is "the rules before the work requirement". Once
+            # that year is behind us nobody is living under it, so it only
+            # earns a row if the user asked about it by name.
+            if row[0] >= current_year or row[0] == target_year
         ]
         seen_years: set = set()
         deduped_rows = []
@@ -702,7 +715,7 @@ class MedicaidEligibilityTool(BaseTool):
             later_settled = [
                 year
                 for year, probably_eligible in rows
-                if year > BASE_ELIGIBILITY_YEAR and probably_eligible
+                if year > current_year and probably_eligible
             ]
             if later_settled:
                 # The later years clear too. Held back with the base-year
@@ -753,7 +766,7 @@ class MedicaidEligibilityTool(BaseTool):
             verdict_lines = []
             noted_work_req = False
             for year, probably_eligible in rows:
-                label = base_label if year == BASE_ELIGIBILITY_YEAR else str(year)
+                label = base_label if year == current_year else str(year)
                 note = ""
                 if year >= WORK_REQUIREMENT_FIRST_YEAR and not noted_work_req:
                     # Attach the explanation once, to the first year it bites.
@@ -780,7 +793,7 @@ class MedicaidEligibilityTool(BaseTool):
                 if was_eligible:
                     parts.append(
                         f"IMPORTANT -- this CHANGES in {later}: they probably "
-                        f"qualify under the {base_label if earlier == BASE_ELIGIBILITY_YEAR else earlier} "
+                        f"qualify under the {base_label if earlier == current_year else earlier} "
                         f"rules but probably would NOT from {later} on. Lead "
                         "with that, say plainly it's still only an estimate, "
                         "and cover what would keep them covered."
@@ -788,7 +801,7 @@ class MedicaidEligibilityTool(BaseTool):
                 else:
                     parts.append(
                         f"Note this IMPROVES in {later}: they probably would "
-                        f"not qualify under the {base_label if earlier == BASE_ELIGIBILITY_YEAR else earlier} "
+                        f"not qualify under the {base_label if earlier == current_year else earlier} "
                         f"rules but probably would from {later} on. Say so, "
                         "and keep it hedged -- it's an estimate."
                     )
@@ -799,8 +812,8 @@ class MedicaidEligibilityTool(BaseTool):
                 # is the work requirement. Say that plainly rather than
                 # implying we modelled the later year's limits.
                 parts.append(
-                    "Note: future income limits aren't published yet, so "
-                    f"every year above used the current ({BASE_ELIGIBILITY_YEAR}) "
+                    "Note: newer income limits aren't published yet, so "
+                    f"every year above used the {BASE_ELIGIBILITY_YEAR} published "
                     "limits -- what separates the years is the work "
                     "requirement, not the income test. Mention that if the "
                     "answer is close to the line."

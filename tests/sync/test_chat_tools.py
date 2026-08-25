@@ -28,6 +28,7 @@ from fighthealthinsurance.chat.tools import (
 from fighthealthinsurance.medicaid_api import (
     BASE_ELIGIBILITY_YEAR,
     DEFAULT_TARGET_YEAR,
+    current_eligibility_year,
     is_eligible,
     summarize_eligibility_inputs,
 )
@@ -483,8 +484,7 @@ class TestMedicaidEligibilityTool(TestCase):
         )
 
         self.assertIn("eligible for medicaid", info.lower())
-        self.assertIn("2025", info)
-        self.assertIn("2026", info)
+        self.assertIn(f"current ({current_eligibility_year()})", info)
 
     def test_build_eligibility_info_with_missing(self):
         """Test eligibility info text when questions are missing."""
@@ -668,9 +668,10 @@ class TestMedicaidTargetYear(TestCase):
         self.assertIn("2028", info)
         self.assertNotIn("the 2026 rules", info)
 
-    def test_current_year_target_is_reported_once(self):
-        # Asking about this year should not produce the same verdict twice
-        # under two labels, nor a work requirement that doesn't apply yet.
+    def test_a_pre_work_requirement_target_is_reported_once(self):
+        # Asking about a year before the work requirement should not produce
+        # the same verdict twice under two labels, nor a caveat about a
+        # requirement that didn't apply in that year.
         info = self.tool._build_eligibility_info(
             eligible_base=True,
             eligible_target=True,
@@ -700,19 +701,61 @@ class TestMedicaidTargetYear(TestCase):
         self.assertIn("the work requirement, not the income test", info)
 
     def test_every_timeline_year_is_rendered(self):
+        current = current_eligibility_year()
         info = self.tool._build_eligibility_info(
             eligible_base=True,
             eligible_target=False,
             medicare=False,
             alternatives=[],
             missing=[],
-            target_year=2029,
-            timeline=[(2025, True), (2026, False), (2029, False)],
+            target_year=current + 3,
+            timeline=[(current, True), (current + 1, False), (current + 3, False)],
         )
 
-        self.assertIn("current (2025): they could be eligible", info)
-        self.assertIn("2026: they may not be eligible", info)
-        self.assertIn("2029: they may not be eligible", info)
+        self.assertIn(f"current ({current}): they could be eligible", info)
+        self.assertIn(f"{current + 1}: they may not be eligible", info)
+        self.assertIn(f"{current + 3}: they may not be eligible", info)
+
+    def test_a_finished_year_is_never_labelled_current(self):
+        # The FPL table's year stops being "today" once the calendar passes
+        # it. Labelling it "current" told people the rules they live under
+        # were the ones that had just been replaced.
+        current = current_eligibility_year()
+        if BASE_ELIGIBILITY_YEAR >= current:
+            self.skipTest("the published FPL table is still the current year")
+
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[(BASE_ELIGIBILITY_YEAR, True), (current, True)],
+        )
+
+        self.assertIn(f"current ({current})", info)
+        self.assertNotIn(f"current ({BASE_ELIGIBILITY_YEAR})", info)
+        self.assertIn(f"{BASE_ELIGIBILITY_YEAR}: they could be eligible", info)
+
+    def test_a_finished_base_year_is_dropped_when_no_timeline_is_given(self):
+        # Direct callers that pass no timeline used to get a row for the FPL
+        # table's year regardless of whether it had already ended.
+        current = current_eligibility_year()
+        if BASE_ELIGIBILITY_YEAR >= current:
+            self.skipTest("the published FPL table is still the current year")
+
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+        )
+
+        self.assertNotIn(f"{BASE_ELIGIBILITY_YEAR}: they", info)
+        self.assertIn(f"current ({current}): they may not be eligible", info)
 
     def test_a_year_over_year_change_is_called_out(self):
         # The reason for showing more than one year at all: don't leave the

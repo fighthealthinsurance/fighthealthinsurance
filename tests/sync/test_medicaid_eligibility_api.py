@@ -14,7 +14,9 @@ from fighthealthinsurance.medicaid_api import (
     BASE_ELIGIBILITY_YEAR,
     DEFAULT_TARGET_YEAR,
     MAX_TARGET_YEAR,
+    WORK_REQUIREMENT_FIRST_YEAR,
     _normalize_applying_reason,
+    current_eligibility_year,
     get_medicaid_info,
     is_eligible,
     eligibility_timeline,
@@ -1214,34 +1216,62 @@ class TestTargetYear(SimpleTestCase):
                 self.assertFalse(eligible_base)
                 self.assertFalse(eligible_target)
 
+    def test_the_timeline_starts_at_the_current_year_not_the_fpl_table_year(self):
+        # The FPL table's year is the year we SCORE against; it stops being
+        # "today" the moment the calendar passes it. Anchoring the timeline
+        # there printed a verdict row for a year that had already ended.
+        current = current_eligibility_year()
+
+        self.assertGreaterEqual(current, BASE_ELIGIBILITY_YEAR)
+        self.assertEqual(min(timeline_years(None)), current)
+
     def test_the_timeline_always_includes_the_year_the_answer_can_change(self):
-        # Showing only "today" and "the year you asked about" hid the
-        # transition: someone asking about 2029 saw 2025 and 2029 and never
-        # learned the switch happens in 2026.
-        self.assertEqual(timeline_years(None), [BASE_ELIGIBILITY_YEAR, 2026])
-        self.assertEqual(timeline_years(2029), [BASE_ELIGIBILITY_YEAR, 2026, 2029])
+        # Showing only "today" and "the year you asked about" hides the
+        # transition: someone asking about a far year should still learn that
+        # the switch happens when the work requirement starts -- for as long
+        # as that year is still ahead of them.
+        current = current_eligibility_year()
+        far = current + 3
+
+        if WORK_REQUIREMENT_FIRST_YEAR > current:
+            self.assertEqual(
+                timeline_years(far), [current, WORK_REQUIREMENT_FIRST_YEAR, far]
+            )
+        else:
+            # The transition has arrived; there is no future change to flag.
+            self.assertEqual(timeline_years(far), [current, far])
 
     def test_the_timeline_is_never_a_single_year(self):
-        # A base-year-only request still has to show what happens next.
-        self.assertEqual(
-            timeline_years(BASE_ELIGIBILITY_YEAR), [BASE_ELIGIBILITY_YEAR, 2026]
-        )
+        # "Will this still be true next year?" is the question people are
+        # actually asking, so it always gets an answer -- even when today and
+        # the year they asked about are the same year.
+        current = current_eligibility_year()
+
+        years = timeline_years(current)
+
+        self.assertGreater(len(years), 1)
+        self.assertEqual(years[0], current)
 
     def test_the_timeline_renders_a_year_over_year_change(self):
-        # No qualifying hours: probably eligible today, probably not once the
-        # work requirement applies. That flip is the point of the timeline.
-        timeline = eligibility_timeline(**_answers(target_year=2029))
-
-        self.assertEqual(
-            timeline, [(BASE_ELIGIBILITY_YEAR, True), (2026, False), (2029, False)]
+        # No qualifying hours: probably eligible under the pre-work-requirement
+        # rules, probably not once the requirement applies. That flip is the
+        # point of the timeline.
+        timeline = eligibility_timeline(
+            **_answers(target_year=BASE_ELIGIBILITY_YEAR)
         )
+        verdicts = dict(timeline)
+
+        self.assertTrue(verdicts[BASE_ELIGIBILITY_YEAR])
+        self.assertFalse(verdicts[WORK_REQUIREMENT_FIRST_YEAR])
 
     def test_the_timeline_holds_steady_when_nothing_changes(self):
         timeline = eligibility_timeline(
             **_answers(avg_monthly_qualifying_hours_last_3mo=100)
         )
 
-        self.assertEqual(timeline, [(BASE_ELIGIBILITY_YEAR, True), (2026, True)])
+        self.assertGreater(len(timeline), 1)
+        self.assertTrue(all(probably_eligible for _, probably_eligible in timeline))
+        self.assertEqual(timeline[0][0], current_eligibility_year())
 
     def test_a_named_year_matches_the_default_path_for_that_year(self):
         # The regression that motivated dropping the projection: $1,810/mo in

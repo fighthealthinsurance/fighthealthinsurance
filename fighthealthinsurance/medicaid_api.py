@@ -1,6 +1,7 @@
 import difflib
 import json
 import re
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -498,6 +499,11 @@ _DECLINE_DEFAULTS: Dict[str, Any] = {
 # "may not be eligible" on the default 2026 path and "could be eligible" when
 # they typed "what about 2026?". The work requirement is the difference
 # between the two years that we can actually speak to.
+#
+# This is the year of the PUBLISHED FPL TABLE, not "now" -- once the calendar
+# moves past it we keep scoring against the same table (it's the newest one
+# published) but we stop calling it the current year. Use
+# ``current_eligibility_year`` for anything a user reads as "today".
 BASE_ELIGIBILITY_YEAR = 2025
 
 # States must implement the federal work/community-engagement requirement no
@@ -511,6 +517,24 @@ DEFAULT_TARGET_YEAR = WORK_REQUIREMENT_FIRST_YEAR
 # can support, so a target beyond it is clamped (and the clamp is reported
 # back through summarize_eligibility_inputs).
 MAX_TARGET_YEAR = BASE_ELIGIBILITY_YEAR + 10
+
+
+def current_eligibility_year() -> int:
+    """The year to present as "today" in a verdict.
+
+    Kept separate from ``BASE_ELIGIBILITY_YEAR``, which names the published
+    FPL table we score against. The two were the same thing until the
+    calendar moved past the table, at which point labelling every answer
+    "current (2025)" -- and printing a verdict row for a year that had
+    already ended -- was telling people about rules that were no longer the
+    ones they live under.
+
+    Floored at the table year (we can't score anything earlier) and capped at
+    ``MAX_TARGET_YEAR`` so a wildly wrong system clock can't push the whole
+    timeline past what we model.
+    """
+    return min(max(BASE_ELIGIBILITY_YEAR, date.today().year), MAX_TARGET_YEAR)
+
 
 # Below this a number isn't a year at all, it's whatever _parse_numeric found
 # in the sentence ("in 3 years", "for the next 5 years").
@@ -720,16 +744,27 @@ def timeline_years(value: Any = None) -> List[int]:
 
     Income limits are identical across years (see BASE_ELIGIBILITY_YEAR), so
     the work requirement is the only thing that can move a verdict -- which
-    makes ``WORK_REQUIREMENT_FIRST_YEAR`` the one year that always earns a
-    row alongside today's rules and whatever the user asked about.
+    makes ``WORK_REQUIREMENT_FIRST_YEAR`` the one year that earns a row
+    alongside today's rules and whatever the user asked about, for as long as
+    it is still ahead of us. Once it isn't, it's just today's rules and there
+    is nothing to flag.
+
+    Anchored on ``current_eligibility_year``, not the FPL table's year: a row
+    for a year that has already ended is noise at best, and labelled
+    "current" it is wrong.
+
+    Never a single year. Once the work-requirement year is behind us the set
+    above can collapse to just "now", and "will this still be true next year?"
+    is the question people are actually asking -- so next year gets a row and
+    answers it out loud instead of leaving it implied.
     """
-    return sorted(
-        {
-            BASE_ELIGIBILITY_YEAR,
-            WORK_REQUIREMENT_FIRST_YEAR,
-            resolve_target_year(value),
-        }
-    )
+    current = current_eligibility_year()
+    years = {current, resolve_target_year(value)}
+    if WORK_REQUIREMENT_FIRST_YEAR > current:
+        years.add(WORK_REQUIREMENT_FIRST_YEAR)
+    if len(years) == 1:
+        years.add(min(current + 1, MAX_TARGET_YEAR))
+    return sorted(years)
 
 
 def eligibility_timeline(**kwargs: Any) -> List[Tuple[int, bool]]:

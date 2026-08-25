@@ -9,6 +9,7 @@ from django.test import TestCase
 from fighthealthinsurance.chat.tools import MedicaidGovLookupTool
 from fighthealthinsurance.medicaid_gov_api import (
     CURATED_SOURCES,
+    _parse_sitemap_xml,
     is_allowed_url,
     resolve_curated_source,
     search_medicaid_gov,
@@ -81,6 +82,13 @@ class TestAllowlist(TestCase):
     def test_non_http_schemes_are_refused(self):
         self.assertFalse(is_allowed_url("file:///etc/passwd"))
         self.assertFalse(is_allowed_url(""))
+
+    def test_cleartext_http_is_refused(self):
+        # These pages are the authority we quote to people about their
+        # coverage; over cleartext anything on the path can rewrite the
+        # answer. Every curated source is https.
+        self.assertFalse(is_allowed_url("http://www.medicaid.gov/renew-info"))
+        self.assertTrue(is_allowed_url("https://www.medicaid.gov/renew-info"))
 
     def test_robots_disallowed_paths_are_refused(self):
         # medicaid.gov's robots.txt asks crawlers to stay out of these.
@@ -161,6 +169,74 @@ class TestSitemapSearch(TestCase):
         self.assertLessEqual(len(search_medicaid_gov("eligibility", limit=1)), 1)
 
 
+class TestSitemapParsing(TestCase):
+    """The sitemap is remote content we don't control, so parse it warily."""
+
+    def test_a_plain_sitemap_parses(self):
+        xml = (
+            b'<?xml version="1.0"?>'
+            b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            b"<url><loc>https://www.medicaid.gov/renew-info</loc></url>"
+            b"</urlset>"
+        )
+        self.assertIsNotNone(_parse_sitemap_xml(xml))
+
+    def test_a_doctype_declaration_is_refused(self):
+        # Sitemaps have no DTD, so one here is a mistake or an
+        # entity-expansion attempt.
+        xml = (
+            b'<?xml version="1.0"?>'
+            b'<!DOCTYPE urlset [<!ENTITY lol "lol">]>'
+            b"<urlset><url><loc>&lol;</loc></url></urlset>"
+        )
+        with self.assertRaises(ValueError):
+            _parse_sitemap_xml(xml)
+
+    def test_an_oversized_document_is_refused(self):
+        from fighthealthinsurance.medicaid_gov_api import _MAX_SITEMAP_BYTES
+
+        with self.assertRaises(ValueError):
+            _parse_sitemap_xml(b"<urlset/>" + b" " * (_MAX_SITEMAP_BYTES + 1))
+
+
+class TestSitemapWalkBudget(TestCase):
+    """A slow upstream should cost us the lookup, not the whole chat turn."""
+
+    INDEX = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>https://www.medicaid.gov/sitemap-1.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+
+    def setUp(self):
+        cache.clear()
+
+    def test_the_walk_stops_once_the_budget_is_spent(self):
+        from fighthealthinsurance import medicaid_gov_api
+
+        responses = []
+
+        class _Response:
+            def __init__(self, content):
+                self.content = content
+
+            def raise_for_status(self):
+                return None
+
+        def fake_get(url, **kwargs):
+            responses.append(url)
+            return _Response(self.INDEX)
+
+        with patch.object(medicaid_gov_api, "_SITEMAP_TOTAL_BUDGET_SECONDS", 0):
+            with patch.object(medicaid_gov_api.requests, "get", side_effect=fake_get):
+                urls = medicaid_gov_api._fetch_sitemap_urls()
+
+        # The index is fetched; the per-page walk never starts.
+        self.assertEqual(responses, [medicaid_gov_api.SITEMAP_INDEX_URL])
+        self.assertEqual(urls, [])
+
+
 def _run_tool(params_json, *, lookup_count=None, fetch_text="Official page text."):
     """Execute one medicaid_gov_lookup call, returning the LLM-facing message."""
     tool = MedicaidGovLookupTool(AsyncMock(), lookup_count=lookup_count)
@@ -232,6 +308,33 @@ class TestMedicaidGovLookupTool(TestCase):
         captured, _ = _run_tool('{"page": "renew_info"}', lookup_count=count)
 
         self.assertNotIn("url", captured)
+
+    def test_a_capped_session_does_no_network_work_at_all(self):
+        # Resolving a {"query": ...} call walks the sitemap over the network.
+        # A session that has spent its allowance must not pay for a lookup it
+        # cannot use.
+        from fighthealthinsurance.chat.tools.medicaid_gov_tool import (
+            MAX_LOOKUPS_PER_SESSION,
+        )
+
+        with patch(
+            "fighthealthinsurance.medicaid_gov_api._fetch_sitemap_urls",
+            return_value=[],
+        ) as sitemap:
+            _run_tool(
+                '{"query": "eligibility policy"}',
+                lookup_count=[MAX_LOOKUPS_PER_SESSION],
+            )
+
+        sitemap.assert_not_called()
+
+    def test_a_failed_resolution_does_not_spend_the_budget(self):
+        # A bad page name is a recoverable mistake -- the model gets the menu
+        # back and can try again.
+        count = [0]
+        _run_tool('{"page": "does_not_exist"}', lookup_count=count)
+
+        self.assertEqual(count, [0])
 
     def test_malformed_json_is_ignored(self):
         tool = MedicaidGovLookupTool(AsyncMock())

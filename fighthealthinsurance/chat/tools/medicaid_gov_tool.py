@@ -14,6 +14,7 @@ import json
 import re
 from typing import Any, Awaitable, Callable, List, Optional, Tuple
 
+from asgiref.sync import sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
@@ -68,6 +69,10 @@ class MedicaidGovLookupTool(BaseTool):
         """Pick the page to fetch.
 
         Returns ``(url, other_candidate_urls, how_we_got_there)``.
+
+        BLOCKING: the ``query`` path walks medicaid.gov's sitemap over the
+        network on a cold cache. ``execute`` bridges this off the event loop;
+        don't call it inline from async code.
         """
         from fighthealthinsurance.medicaid_gov_api import (
             is_allowed_url,
@@ -133,7 +138,22 @@ class MedicaidGovLookupTool(BaseTool):
             logger.warning("medicaid_gov_lookup called with non-object JSON")
             return cleaned_response, context
 
-        url, other_urls, how = self._resolve_target(params)
+        # Budget first: resolving a {"query": ...} call walks the sitemap over
+        # the network, and a session that has spent its allowance shouldn't
+        # pay for a lookup it can't use.
+        if self._lookup_count[0] >= MAX_LOOKUPS_PER_SESSION:
+            logger.warning("medicaid_gov_lookup session cap reached")
+            await self.send_status_message(
+                "Medicaid.gov lookup limit reached for this conversation."
+            )
+            return cleaned_response, context
+
+        # plain sync_to_async, not database_sync_to_async: _resolve_target
+        # does network IO (the sitemap walk) and touches no ORM, so the
+        # per-call DB connection cleanup would be pure churn. Bridged rather
+        # than awaited inline because a cold-cache walk is seconds of blocking
+        # requests, which would freeze every OTHER chat on this worker.
+        url, other_urls, how = await sync_to_async(self._resolve_target)(params)
         if not url:
             # Tell the model what it *could* have asked for rather than
             # failing silently -- a bad page name is a recoverable mistake.
@@ -143,12 +163,6 @@ class MedicaidGovLookupTool(BaseTool):
                 'You can also pass {"query": "..."} to search Medicaid.gov.\n'
             )
 
-        if self._lookup_count[0] >= MAX_LOOKUPS_PER_SESSION:
-            logger.warning("medicaid_gov_lookup session cap reached")
-            await self.send_status_message(
-                "Medicaid.gov lookup limit reached for this conversation."
-            )
-            return cleaned_response, context
         self._lookup_count[0] += 1
 
         safe_url = _sanitize_url_for_display(url)
