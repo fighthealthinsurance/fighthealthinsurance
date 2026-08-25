@@ -320,8 +320,10 @@ def _letter_title_part(value: Optional[str]) -> str:
     long practice name can't produce an unwieldy name.
     """
     text = _UNSAFE_TITLE_CHARS.sub(" ", (value or "").strip())
-    text = re.sub(r"\s+", " ", text).strip(" .-")
-    return text[:LETTER_TITLE_PART_MAX_LEN].strip()
+    text = re.sub(r"\s+", " ", text)
+    # Strip after the cap too: truncation can otherwise reintroduce a trailing
+    # "." (invalid at the end of a Windows file name) or a dangling "-".
+    return text[:LETTER_TITLE_PART_MAX_LEN].strip(" .-")
 
 
 def build_letter_document_title(pro: InterestedProfessional) -> str:
@@ -334,13 +336,15 @@ def build_letter_document_title(pro: InterestedProfessional) -> str:
     letter body carries no date either). Falls back to the bare prefix when we
     know neither a name nor an organization.
     """
-    parts = [LETTER_TITLE_PREFIX]
+    parts: list[str] = []
     for value in (pro.name, pro.business_name):
         cleaned = _letter_title_part(value)
-        # Skip a business name that just repeats the person's name.
+        # Skip a business name that just repeats the person's name. Only prior
+        # name parts count as duplicates -- an organization actually named
+        # "Letter" must not be swallowed by the prefix.
         if cleaned and cleaned.lower() not in {p.lower() for p in parts}:
             parts.append(cleaned)
-    return " - ".join(parts)
+    return " - ".join([LETTER_TITLE_PREFIX, *parts])
 
 
 def build_search_links(pro: InterestedProfessional) -> dict[str, Optional[str]]:

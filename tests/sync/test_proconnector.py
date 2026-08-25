@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.template.defaultfilters import date as date_filter
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -1635,6 +1636,18 @@ class LetterDocumentTitleTest(TestCase):
         self.assertIn("Letter - Dr. Jane Smith - ", title)
         self.assertLessEqual(len(title.split(" - ")[-1]), 60)
 
+    def test_truncation_cannot_leave_a_trailing_dot(self):
+        # A part capped right after a "." would otherwise end the file name
+        # with a dot, which Windows rejects.
+        pro = _make_pro(name="", business_name="A" * 59 + ". Inc")
+        self.assertEqual(build_letter_document_title(pro), "Letter - " + "A" * 59)
+
+    def test_organization_named_letter_is_kept(self):
+        # Deduplication is against the name parts only; the "Letter" prefix
+        # must not swallow an organization actually named Letter.
+        pro = _make_pro(name="", business_name="Letter")
+        self.assertEqual(build_letter_document_title(pro), "Letter - Letter")
+
 
 class LetterViewTest(TestCase):
     def setUp(self):
@@ -1780,9 +1793,12 @@ class LetterViewTest(TestCase):
         # Printed in batches and mailed later, so the letter carries no date.
         _login(self.client, is_staff=True)
         response = self.client.get(self.url)
-        today = timezone.now().date()
-        self.assertNotContains(response, today.strftime("%B %-d, %Y"))
-        self.assertNotContains(response, str(today.year))
+        # The dateline the template used to render (Django's "F j, Y" format);
+        # asserting on the formatted date rather than the bare year keeps the
+        # test from tripping on an unrelated occurrence of the digits.
+        rendered_today = date_filter(timezone.now().date(), "F j, Y")
+        self.assertNotContains(response, rendered_today)
+        self.assertNotContains(response, 'class="date"')
 
     def test_missing_record_redirects_to_process(self):
         _login(self.client, is_staff=True)
