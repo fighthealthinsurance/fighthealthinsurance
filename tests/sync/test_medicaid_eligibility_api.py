@@ -17,8 +17,10 @@ from fighthealthinsurance.medicaid_api import (
     _normalize_applying_reason,
     get_medicaid_info,
     is_eligible,
+    eligibility_timeline,
     resolve_target_year,
     summarize_eligibility_inputs,
+    timeline_years,
 )
 
 
@@ -1211,6 +1213,35 @@ class TestTargetYear(SimpleTestCase):
                 )
                 self.assertFalse(eligible_base)
                 self.assertFalse(eligible_target)
+
+    def test_the_timeline_always_includes_the_year_the_answer_can_change(self):
+        # Showing only "today" and "the year you asked about" hid the
+        # transition: someone asking about 2029 saw 2025 and 2029 and never
+        # learned the switch happens in 2026.
+        self.assertEqual(timeline_years(None), [BASE_ELIGIBILITY_YEAR, 2026])
+        self.assertEqual(timeline_years(2029), [BASE_ELIGIBILITY_YEAR, 2026, 2029])
+
+    def test_the_timeline_is_never_a_single_year(self):
+        # A base-year-only request still has to show what happens next.
+        self.assertEqual(
+            timeline_years(BASE_ELIGIBILITY_YEAR), [BASE_ELIGIBILITY_YEAR, 2026]
+        )
+
+    def test_the_timeline_renders_a_year_over_year_change(self):
+        # No qualifying hours: probably eligible today, probably not once the
+        # work requirement applies. That flip is the point of the timeline.
+        timeline = eligibility_timeline(**_answers(target_year=2029))
+
+        self.assertEqual(
+            timeline, [(BASE_ELIGIBILITY_YEAR, True), (2026, False), (2029, False)]
+        )
+
+    def test_the_timeline_holds_steady_when_nothing_changes(self):
+        timeline = eligibility_timeline(
+            **_answers(avg_monthly_qualifying_hours_last_3mo=100)
+        )
+
+        self.assertEqual(timeline, [(BASE_ELIGIBILITY_YEAR, True), (2026, True)])
 
     def test_a_named_year_matches_the_default_path_for_that_year(self):
         # The regression that motivated dropping the projection: $1,810/mo in

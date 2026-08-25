@@ -699,6 +699,82 @@ class TestMedicaidTargetYear(TestCase):
         self.assertIn("aren't published yet", info)
         self.assertIn("the work requirement, not the income test", info)
 
+    def test_every_timeline_year_is_rendered(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2029,
+            timeline=[(2025, True), (2026, False), (2029, False)],
+        )
+
+        self.assertIn("current (2025): they could be eligible", info)
+        self.assertIn("2026: they may not be eligible", info)
+        self.assertIn("2029: they may not be eligible", info)
+
+    def test_a_year_over_year_change_is_called_out(self):
+        # The reason for showing more than one year at all: don't leave the
+        # user to diff two sentences.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[(2025, True), (2026, False)],
+        )
+
+        self.assertIn("this CHANGES in 2026", info)
+        self.assertIn("probably would NOT from 2026 on", info)
+
+    def test_an_improvement_is_called_out_too(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[(2025, False), (2026, True)],
+        )
+
+        self.assertIn("IMPROVES in 2026", info)
+
+    def test_a_steady_timeline_has_no_change_callout(self):
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[(2025, True), (2026, True)],
+        )
+
+        self.assertNotIn("CHANGES in", info)
+        self.assertNotIn("IMPROVES in", info)
+
+    def test_the_verdicts_stay_hedged(self):
+        # "Keeping the probably words going" -- none of these are
+        # determinations and the wording must not harden into one.
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=2026,
+            timeline=[(2025, True), (2026, False)],
+        )
+
+        self.assertIn("an approximation, not a determination", info)
+        self.assertIn("could be eligible", info)
+        self.assertIn("may not be eligible", info)
+        self.assertIn("probably", info)
+
     def test_a_base_year_check_has_no_second_year_note(self):
         info = self.tool._build_eligibility_info(
             eligible_base=True,

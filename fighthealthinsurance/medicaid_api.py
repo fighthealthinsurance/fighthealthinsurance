@@ -710,6 +710,47 @@ def resolve_target_year(value: Any) -> int:
     return _parse_target_year(value) or DEFAULT_TARGET_YEAR
 
 
+def timeline_years(value: Any = None) -> List[int]:
+    """The years an estimate should show a verdict for, ascending.
+
+    Always at least two, and always including the year the answer can CHANGE.
+    Showing only "today" and "the year you asked about" hid the transition:
+    someone asking about 2029 saw 2025 and 2029 and never learned that the
+    switch happens in 2026, when the work requirement starts to bite.
+
+    Income limits are identical across years (see BASE_ELIGIBILITY_YEAR), so
+    the work requirement is the only thing that can move a verdict -- which
+    makes ``WORK_REQUIREMENT_FIRST_YEAR`` the one year that always earns a
+    row alongside today's rules and whatever the user asked about.
+    """
+    return sorted(
+        {
+            BASE_ELIGIBILITY_YEAR,
+            WORK_REQUIREMENT_FIRST_YEAR,
+            resolve_target_year(value),
+        }
+    )
+
+
+def eligibility_timeline(**kwargs: Any) -> List[Tuple[int, bool]]:
+    """``(year, probably_eligible)`` for each year in ``timeline_years``.
+
+    Runs the checker once per year so a year-over-year change is visible
+    rather than implied. ``is_eligible`` is pure and does no IO, so the
+    repeat calls are cheap.
+
+    The second element of ``is_eligible``'s result is the right per-year
+    verdict for EVERY year, including the base year: the work overlay is
+    skipped below WORK_REQUIREMENT_FIRST_YEAR, so it collapses to the
+    base-year verdict there.
+    """
+    timeline: List[Tuple[int, bool]] = []
+    for year in timeline_years(kwargs.get("target_year")):
+        _, probably_eligible, *_ = is_eligible(**{**kwargs, "target_year": year})
+        timeline.append((year, bool(probably_eligible)))
+    return timeline
+
+
 def _clean_token(s: str) -> str:
     """Lower, trim, collapse spaces, remove most punctuation except spaces."""
     s = s.strip().lower()

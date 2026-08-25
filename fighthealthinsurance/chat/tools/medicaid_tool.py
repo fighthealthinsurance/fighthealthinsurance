@@ -357,6 +357,7 @@ class MedicaidEligibilityTool(BaseTool):
             # Import here to avoid circular imports
             from fighthealthinsurance.medicaid_api import (
                 WORK_REQUIREMENT_FIRST_YEAR,
+                eligibility_timeline,
                 is_eligible,
                 resolve_target_year,
                 summarize_eligibility_inputs,
@@ -418,6 +419,12 @@ class MedicaidEligibilityTool(BaseTool):
             if checker_produced_verdict and self.eligibility_computed is not None:
                 self.eligibility_computed[0] = True
 
+            # Verdicts for every year worth showing, so a year-over-year
+            # change is rendered rather than left for the user to infer from
+            # two sentences. Skipped when the checker couldn't score this
+            # person at all -- there is nothing to plot.
+            timeline = eligibility_timeline(**loaded) if determination_made else None
+
             info_text = self._build_eligibility_info(
                 eligible_base,
                 eligible_target,
@@ -426,6 +433,7 @@ class MedicaidEligibilityTool(BaseTool):
                 missing,
                 determination_made,
                 target_year=target_year,
+                timeline=timeline,
             )
             if parsed_summary:
                 info_text += "\n\n" + parsed_summary
@@ -434,6 +442,11 @@ class MedicaidEligibilityTool(BaseTool):
             # overlay actually applies to. Offering it for a base-year check
             # told the user to chase 80 hours a month for a rule that isn't
             # in force in the year they asked about.
+            years_covered = (
+                ", ".join(str(year) for year, _ in timeline)
+                if timeline
+                else str(target_year)
+            )
             work_req_advice = (
                 (
                     f"If the {target_year} work "
@@ -458,11 +471,16 @@ class MedicaidEligibilityTool(BaseTool):
                 "wrong or out of date -- and they must contact the state to "
                 "know for sure (you can use the "
                 "medicaid_info tool call to get state-specific contact info "
-                f"to provide to the user). {work_req_advice}This check "
-                f"covered {target_year}; if the user asks about a different "
-                'year, call the tool again with "target_year" set to it '
-                "(along with everything else you already have). Remember to "
-                "use the panda emoji and context."
+                f"to provide to the user). {work_req_advice}Give the user "
+                "EVERY year listed above, not just one -- whether the answer "
+                "holds steady or changes is the most useful thing in this "
+                "check, and if it changes, lead with that. Keep the hedged "
+                'wording ("probably", "could be", "may not be"): none of '
+                f"these are determinations. This check covered {years_covered}"
+                "; if the user asks about a year that isn't listed, call the "
+                'tool again with "target_year" set to it (along with '
+                "everything else you already have). Remember to use the panda "
+                "emoji and context."
             )
 
             await self.send_status_message("Formatting response...")
@@ -581,6 +599,7 @@ class MedicaidEligibilityTool(BaseTool):
         missing: List[str],
         determination_made: bool = True,
         target_year: Optional[int] = None,
+        timeline: Optional[List[Tuple[int, bool]]] = None,
     ) -> str:
         """
         Build the eligibility information text passed back to the LLM.
@@ -602,6 +621,10 @@ class MedicaidEligibilityTool(BaseTool):
                 ``resolve_target_year`` returned for this payload, or the
                 label would name a year we didn't score. Defaults to the
                 checker's own default year.
+            timeline: ``(year, probably_eligible)`` rows from
+                ``eligibility_timeline``, ascending. Always rendered in full
+                so a year-over-year change is visible instead of implied.
+                Falls back to the base/target pair when not supplied.
 
         Returns:
             Formatted information text
@@ -632,6 +655,22 @@ class MedicaidEligibilityTool(BaseTool):
         # verdict printed twice under two labels.
         target_is_separate_year = target_year > BASE_ELIGIBILITY_YEAR
 
+        # Years to report on, ascending. Falls back to the base/target pair
+        # when no timeline was supplied. Deduped so a base-year-only check
+        # doesn't print the same verdict twice under two labels.
+        rows = timeline or [
+            (BASE_ELIGIBILITY_YEAR, eligible_base),
+            (target_year, eligible_target),
+        ]
+        seen_years: set = set()
+        deduped_rows = []
+        for row in rows:
+            if row[0] in seen_years:
+                continue
+            seen_years.add(row[0])
+            deduped_rows.append(row)
+        rows = deduped_rows
+
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
             "Medicaid using our EXPERIMENTAL eligibility checker. Be very "
@@ -660,13 +699,19 @@ class MedicaidEligibilityTool(BaseTool):
                     "share that, while noting the questions above are still "
                     "needed to be sure."
                 )
-            if target_is_separate_year and eligible_target:
-                # The target year clears too. Held back with the base-year
+            later_settled = [
+                year
+                for year, probably_eligible in rows
+                if year > BASE_ELIGIBILITY_YEAR and probably_eligible
+            ]
+            if later_settled:
+                # The later years clear too. Held back with the base-year
                 # positive above, this was the good half of the answer for
                 # someone who asked "will I still qualify in 2028?" and it
                 # sat unsaid behind whatever question was still outstanding.
+                years_text = ", ".join(str(y) for y in later_settled)
                 parts.append(
-                    f"They also already look eligible in {target_year}"
+                    f"They also already look eligible in {years_text}"
                     f"{work_req_note} -- same caveat, the questions above are "
                     "still needed to be sure."
                 )
@@ -705,15 +750,48 @@ class MedicaidEligibilityTool(BaseTool):
                 alternative_lines = "\n".join(f"- {a}" for a in alternatives)
                 parts.append("Next steps to share:\n" + alternative_lines)
         else:
-            verdicts = [(base_label, eligible_base, "")]
-            if target_is_separate_year:
-                verdicts.append((str(target_year), eligible_target, work_req_note))
-            for label, is_eligible_for_year, note in verdicts:
-                verdict = "could be" if is_eligible_for_year else "may not be"
-                parts.append(
-                    f"Our data so far suggests they {verdict} eligible for "
-                    f"medicaid under the {label} rules{note}."
+            verdict_lines = []
+            noted_work_req = False
+            for year, probably_eligible in rows:
+                label = base_label if year == BASE_ELIGIBILITY_YEAR else str(year)
+                note = ""
+                if year >= WORK_REQUIREMENT_FIRST_YEAR and not noted_work_req:
+                    # Attach the explanation once, to the first year it bites.
+                    note = work_req_note
+                    noted_work_req = True
+                verdict = "could be" if probably_eligible else "may not be"
+                verdict_lines.append(
+                    f"- {label}: they {verdict} eligible for medicaid{note}"
                 )
+            parts.append(
+                "Our data so far suggests, year by year (every one of these "
+                "is an approximation, not a determination):\n"
+                + "\n".join(verdict_lines)
+            )
+
+            # The whole reason for showing more than one year: say out loud
+            # when the answer moves, rather than leaving the user to diff two
+            # sentences. Someone who probably qualifies today and probably
+            # won't once the work requirement applies needs to hear that as
+            # the headline, not as a footnote.
+            for (earlier, was_eligible), (later, now_eligible) in zip(rows, rows[1:]):
+                if was_eligible == now_eligible:
+                    continue
+                if was_eligible:
+                    parts.append(
+                        f"IMPORTANT -- this CHANGES in {later}: they probably "
+                        f"qualify under the {base_label if earlier == BASE_ELIGIBILITY_YEAR else earlier} "
+                        f"rules but probably would NOT from {later} on. Lead "
+                        "with that, say plainly it's still only an estimate, "
+                        "and cover what would keep them covered."
+                    )
+                else:
+                    parts.append(
+                        f"Note this IMPROVES in {later}: they probably would "
+                        f"not qualify under the {base_label if earlier == BASE_ELIGIBILITY_YEAR else earlier} "
+                        f"rules but probably would from {later} on. Say so, "
+                        "and keep it hedged -- it's an estimate."
+                    )
 
             if target_is_separate_year:
                 # We do NOT guess at future income limits: the same published
@@ -721,11 +799,11 @@ class MedicaidEligibilityTool(BaseTool):
                 # is the work requirement. Say that plainly rather than
                 # implying we modelled the later year's limits.
                 parts.append(
-                    f"Note: {target_year} income limits aren't published yet, "
-                    f"so this used the current ({BASE_ELIGIBILITY_YEAR}) "
-                    "limits for both years -- the difference between them is "
-                    "the work requirement, not the income test. Mention that "
-                    "if the answer is close to the line."
+                    "Note: future income limits aren't published yet, so "
+                    f"every year above used the current ({BASE_ELIGIBILITY_YEAR}) "
+                    "limits -- what separates the years is the work "
+                    "requirement, not the income test. Mention that if the "
+                    "answer is close to the line."
                 )
 
             if medicare:
