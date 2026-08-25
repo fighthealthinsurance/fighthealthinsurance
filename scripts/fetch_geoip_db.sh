@@ -102,7 +102,11 @@ pinned_sha() {
 download_to() {
   local target="$1"
   echo "Downloading GeoIP city database from ${DB_URL}"
-  curl -fsSL --retry 3 --retry-delay 5 -o "${target}" "${DB_URL}"
+  # Finite deadlines so a host that accepts the connection and then stalls
+  # still reaches the soft-fail path (the file is ~21MB; 300s is generous)
+  # instead of hanging run_local.sh's wait or a Docker RUN layer forever.
+  curl -fsSL --connect-timeout 10 --max-time 300 --retry 3 --retry-delay 5 \
+    -o "${target}" "${DB_URL}"
 }
 
 # Normalize to lowercase: pinned_sha and the env override both accept
