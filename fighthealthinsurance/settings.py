@@ -489,6 +489,15 @@ class Base(Configuration):
     # form, so every test that files a denial would start one.
     SPECULATIVE_APPEALS_PRECOMPUTE = True
 
+    # Run the recurring background model-health sweep (see
+    # ml.health_status). Off in the Test* configs: the sweep re-arms itself on
+    # a timer thread for the life of the process and writes to the DB on every
+    # pass (the cross-pod alert throttle row), so its writes land in the middle
+    # of unrelated tests and can lock the table against TransactionTestCase's
+    # teardown flush. Tests that care call get_snapshot() directly, which still
+    # sweeps synchronously.
+    ML_HEALTH_BACKGROUND_SWEEP = True
+
     # Per-WebSocket-connection ThreadSensitiveContext (see
     # websockets.PerConnectionThreadSensitiveMixin): without it every
     # thread_sensitive=True bridge in the process shares asgiref's single
@@ -817,6 +826,8 @@ class Test(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # No recurring background health sweep in tests (see Base).
+    ML_HEALTH_BACKGROUND_SWEEP = False
     # Keep thread-sensitive bridge routing on the test thread (see Base).
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
@@ -847,6 +858,8 @@ class TestSync(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # No recurring background health sweep in tests (see Base).
+    ML_HEALTH_BACKGROUND_SWEEP = False
     # Keep thread-sensitive bridge routing on the test thread (see Base).
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
@@ -884,6 +897,8 @@ class TestActor(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # No recurring background health sweep in tests (see Base).
+    ML_HEALTH_BACKGROUND_SWEEP = False
     # Keep thread-sensitive bridge routing on the test thread (see Base).
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
 

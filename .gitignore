@@ -183,3 +183,6 @@ default/
 .claude/worktrees/
 # Vendored Claude Code skills (tooling, not product code)
 .claude/skills/
+
+# GeoIP city database fetched by scripts/fetch_geoip_db.sh (see README "GeoIP")
+geoip_data

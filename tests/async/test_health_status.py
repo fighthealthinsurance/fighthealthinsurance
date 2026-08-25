@@ -2,7 +2,7 @@ import datetime
 import time
 from unittest import mock
 from django.core import mail
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -356,3 +356,50 @@ class TestHealthStatus(TestCase):
             m for m in mail.outbox if "internal models are dead" in m.subject.lower()
         ]
         assert len(alerts) == 1
+
+
+class TestBackgroundSweepGate(TestCase):
+    """``ML_HEALTH_BACKGROUND_SWEEP`` gates the self-re-arming timer chain.
+
+    The sweep writes the cross-pod alert-throttle row on every pass, so left
+    running under the test configs it lands DB writes in the middle of
+    unrelated tests and can lock the table against the teardown flush.
+    """
+
+    def _make_status(self):
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        return _HealthStatus()
+
+    @override_settings(ML_HEALTH_BACKGROUND_SWEEP=False)
+    def test_ensure_started_is_noop_when_disabled(self):
+        status = self._make_status()
+        with mock.patch(
+            "fighthealthinsurance.ml.health_status.threading.Thread"
+        ) as thread:
+            status.ensure_started()
+        thread.assert_not_called()
+        assert status._sweep_started is False
+
+    @override_settings(ML_HEALTH_BACKGROUND_SWEEP=False)
+    def test_schedule_refresh_arms_no_timer_when_disabled(self):
+        """A direct ``_refresh`` (what the alert tests drive) must not leave a
+        timer behind that fires during some later test."""
+        status = self._make_status()
+        with mock.patch(
+            "fighthealthinsurance.ml.health_status.threading.Timer"
+        ) as timer:
+            status._schedule_refresh()
+        timer.assert_not_called()
+        assert status._timer is None
+
+    @override_settings(ML_HEALTH_BACKGROUND_SWEEP=True)
+    def test_ensure_started_starts_the_sweep_exactly_once_when_enabled(self):
+        status = self._make_status()
+        with mock.patch(
+            "fighthealthinsurance.ml.health_status.threading.Thread"
+        ) as thread:
+            status.ensure_started()
+            status.ensure_started()  # idempotent
+        thread.assert_called_once()
+        thread.return_value.start.assert_called_once()

@@ -32,6 +32,22 @@ RUN export PATH=/root/.local/bin:$PATH && \
     uv pip install --system -r /opt/fighthealthinsurance/requirements.txt && \
     uv pip install --system -r /opt/fighthealthinsurance/deploy-requirements.txt
 RUN mkdir -p /external_data
+# GeoIP city database (chat US-state hint + ASN tracking). Fetched and
+# sha256-verified at build time from the digest pinned in the repo, so the
+# bytes geoip2fast later unpickles are the ones we reviewed -- no runtime
+# download, no writable path, root-owned and world-readable like the rest of
+# the application code. A build with no pinned digest, an unreachable
+# upstream, or a republished LATEST asset that no longer matches the pin
+# still succeeds and simply ships without the database (unverified bytes are
+# never installed); the app soft-fails and warns at startup, naming the path
+# below. Add --require here to make shipping without it fail the build
+# instead. Web-image only:
+# both callers (websockets.py, rest_views.py) run in the web process, so the
+# ray image does not need the database.
+COPY scripts/fetch_geoip_db.sh scripts/geoip2fast-city-asn-ipv6.sha256 /opt/fighthealthinsurance/scripts/
+RUN /opt/fighthealthinsurance/scripts/fetch_geoip_db.sh \
+    --dest /opt/geoip/geoip2fast-city-asn-ipv6.dat.gz
+ENV FHI_GEOIP_CITY_DB=/opt/geoip/geoip2fast-city-asn-ipv6.dat.gz
 # We copy static early ish since it could also be cached nicely
 # Remember to update the combined ray docker file for these copies
 ADD --chown=www-data:www-data static /opt/fighthealthinsurance/static

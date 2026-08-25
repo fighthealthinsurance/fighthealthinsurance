@@ -179,3 +179,5 @@ a.tr
 !./latest_logs
 # Exclude test coverage reports
 reports/
+# GeoIP city database; the image fetches its own verified copy at build time
+geoip_data
