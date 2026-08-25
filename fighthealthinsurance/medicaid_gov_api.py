@@ -134,6 +134,21 @@ CURATED_SOURCES: Dict[str, CuratedSource] = {
             "eligibility levels by state and category."
         ),
     ),
+    "community_engagement": CuratedSource(
+        key="community_engagement",
+        url=(
+            f"{MEDICAID_GOV}/resources-for-states/working-families-tax-cut"
+            "-legislation/community-engagement"
+        ),
+        description=(
+            "CMS's official community-engagement (work requirement) hub -- the "
+            "authority for when the 80-hours-a-month rule starts: January 1, "
+            "2027 nationwide, earlier only if a state opts in. CMS publishes "
+            "no list of which states opted in early, so this page states the "
+            "rule and the person's own state agency is the only place to "
+            "learn whether it has reached them yet."
+        ),
+    ),
     "fpl_chart": CuratedSource(
         key="fpl_chart",
         url="https://www.coveredca.com/pdfs/FPL-chart.pdf",
@@ -181,6 +196,17 @@ _CURATED_ALIASES: Dict[str, Tuple[str, ...]] = {
         "how much can i make",
         "income threshold",
         "qualify income",
+    ),
+    "community_engagement": (
+        "work requirement",
+        "work requirements",
+        "community engagement",
+        "80 hours",
+        "qualifying hours",
+        "volunteering",
+        "do i have to work",
+        "have to work",
+        "work rules",
     ),
     "fpl_chart": (
         "fpl chart",

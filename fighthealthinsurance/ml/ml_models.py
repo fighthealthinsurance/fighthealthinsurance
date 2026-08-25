@@ -1285,6 +1285,7 @@ RULE: Do NOT add any conversational text, questions, or additional explanations 
 Pages you can ask for by name:
 - "renew_info" — the official renewal hub: how to keep coverage, what the state mails you, what to do if you were disenrolled. Pass "state" (any spelling, or a program name like Medi-Cal) for that state's renewal page.
 - "eligibility_levels" — the official Medicaid/CHIP/BHP income eligibility levels by state and category.
+- "community_engagement" — CMS's official work-requirement hub. Use it whenever someone asks about work requirements, 80 qualifying hours, or whether the rule applies to them yet. It gives the rule (nationwide from January 1, 2027; earlier only where a state opted in) — CMS publishes no list of which states opted in early, so never guess one: say the rule and send them to their state agency.
 - "fpl_chart" — federal-poverty-level dollar amounts by household size and percentage band.
 - "fpl_glossary" — plain-language explanation of what the federal poverty level is.
 

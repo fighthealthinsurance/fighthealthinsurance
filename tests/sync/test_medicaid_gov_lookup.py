@@ -111,6 +111,29 @@ class TestCuratedSuggestions(TestCase):
                 keys = [s.key for s in suggest_curated_sources(query)]
                 self.assertIn("renew_info", keys)
 
+    def test_work_requirement_phrasings_reach_the_community_engagement_hub(self):
+        # "Does the work requirement apply to me yet?" is a question CMS
+        # answers with a rule, not a state list -- there is no published list
+        # of which states opted in early, so this page plus the person's own
+        # state agency is the whole of the available answer.
+        for query in (
+            "do i have to work to keep medicaid",
+            "what are the 80 hours rules",
+            "medicaid work requirements",
+            "how do qualifying hours work",
+        ):
+            with self.subTest(query=query):
+                suggestions = suggest_curated_sources(query)
+                self.assertTrue(suggestions)
+                self.assertEqual(suggestions[0].key, "community_engagement")
+
+    def test_the_community_engagement_hub_is_an_allowed_medicaid_gov_page(self):
+        url = resolve_curated_source("community_engagement")
+
+        self.assertIsNotNone(url)
+        self.assertTrue(is_allowed_url(url))
+        self.assertIn("community-engagement", url)
+
     def test_income_phrasings_reach_the_eligibility_table(self):
         keys = [s.key for s in suggest_curated_sources("what income limits apply")]
         self.assertIn("eligibility_levels", keys)

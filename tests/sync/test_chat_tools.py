@@ -965,6 +965,26 @@ class TestMedicaidTargetYear(TestCase):
             info,
         )
 
+    def test_a_conditional_year_points_at_the_official_work_requirement_page(self):
+        # We cannot tell whether the rule has reached a given state -- CMS
+        # publishes no list of early adopters -- so the answer has to hand
+        # over the authority for the rule and the place that can answer it.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True)
+            ],
+        )
+
+        self.assertIn("community_engagement", info)
+        self.assertIn("no list of which states started early", info)
+
     def test_a_conditional_year_does_not_trigger_a_change_callout(self):
         # A flip announced off a rule that may not have reached them is the
         # same uncomputed denial in a louder voice.

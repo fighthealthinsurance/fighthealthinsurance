@@ -856,7 +856,13 @@ class MedicaidEligibilityTool(BaseTool):
                         "whether their state has already started the work "
                         f"requirement. It applies in every state from January 1, "
                         f"{WORK_REQUIREMENT_UNIVERSAL_YEAR}. Tell them to check "
-                        "with their state, and do NOT say they're ineligible."
+                        "with their state, and do NOT say they're ineligible. "
+                        "CMS publishes no list of which states started early, "
+                        "so their own state agency is the only place this can "
+                        "be answered -- offer medicaid_gov_lookup "
+                        '{"page": "community_engagement"} for the official '
+                        "rule and point them at their state to find out "
+                        "whether it has reached them yet."
                     )
                     continue
                 if row.probably_eligible:
