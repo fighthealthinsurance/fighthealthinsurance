@@ -49,10 +49,13 @@ from fighthealthinsurance.ml.model_identity import (
 )
 from fighthealthinsurance.proconnector import (
     PROCONNECTOR_INTRO_SUBJECT,
+    address_max_length,
+    address_problem,
     build_intro_letter_blocks,
     build_letter_document_title,
     build_search_links,
     claim_email_for_send,
+    clean_address,
     cofactor_cc_problem,
     default_intro_cc_recipients,
     generate_intro_email,
@@ -68,6 +71,7 @@ from fighthealthinsurance.proconnector import (
     non_spam_interested_professionals,
     queue_proconnector_intro_email,
     quick_intro_block_reason,
+    save_address,
     subject_wording_problem,
     remaining_interested_professionals_count,
     send_proconnector_intro_email,
@@ -1123,6 +1127,13 @@ class ProConnectorProcessView(View):
     the next unprocessed record. Staff can also send a TEST-marked copy of the
     draft to a test address first; that emails nobody else, records nothing on
     the record, and stays on the same record. Nothing is sent automatically.
+
+    The professional's mailing address is editable here too: signups rarely
+    include one, so staff look it up (the page offers an address search link)
+    and save it on the record, which is what the printable intro letter
+    addresses itself from. Saving an address stays on the current record; every
+    other action persists a pending address edit on its way past, so the lookup
+    is never lost to whichever button is pressed next.
     """
 
     template_name = "proconnector.html"
@@ -1136,6 +1147,7 @@ class ProConnectorProcessView(View):
         subject: Optional[str] = None,
         skip_reason: str = "",
         test_email: Optional[str] = None,
+        address: Optional[str] = None,
         error: Optional[str] = None,
         notice: Optional[str] = None,
         status: int = 200,
@@ -1147,6 +1159,11 @@ class ProConnectorProcessView(View):
         ``test_email`` similarly falls back to whatever was posted (preserving
         the field across validation errors), then to the staff member's own
         address so the "send test" button works without retyping it.
+        ``address`` defaults to what is on the record: every POST persists a
+        valid address edit before dispatching (see :meth:`post`), so error
+        re-renders show the saved value without each call site passing it --
+        only a *rejected* address is passed back explicitly, so staff can fix
+        the text they typed rather than the text they replaced.
         """
         if draft is None:
             draft = generate_intro_email(pro)
@@ -1154,6 +1171,8 @@ class ProConnectorProcessView(View):
             test_email = (request.POST.get("test_email") or "").strip() or (
                 getattr(request.user, "email", "") or ""
             )
+        if address is None:
+            address = pro.address or ""
         links = build_search_links(pro)
         context = {
             "title": "Pro Connector",
@@ -1173,6 +1192,11 @@ class ProConnectorProcessView(View):
             "google_address_search_url": links["google_address"],
             "skip_reason": skip_reason,
             "test_email": test_email,
+            # The mailing address is editable here (and only here) so staff can
+            # record what the address lookup turns up; the printable letter
+            # reads it straight off the record.
+            "address": address,
+            "address_max_length": address_max_length(),
             "error": error,
             "notice": notice,
             "remaining_count": remaining_interested_professionals_count(),
@@ -1210,6 +1234,30 @@ class ProConnectorProcessView(View):
             # overwrite; just advance. claim_email_for_send re-checks all three
             # atomically, so this is UX, not the safety net.
             return redirect("proconnector_process")
+
+        # Persist an edited mailing address before dispatching, whichever button
+        # was pressed: send/queue/skip advance to the next record, so an address
+        # staff looked up and typed would otherwise be silently discarded by the
+        # very actions they reach for next. Only the address is written here --
+        # nothing about this claims or processes the record.
+        address_response = self._save_submitted_address(request, pro)
+        if address_response is not None:
+            return address_response
+
+        if action == "save_address":
+            # Stay on this record: the point of saving an address is to then
+            # print the letter for the professional in front of you.
+            return self._render_record(
+                request,
+                pro,
+                **self._posted_edits(request),
+                notice=(
+                    "Mailing address saved; the printable letter will use it."
+                    if pro.address
+                    else "Mailing address cleared; the letter will print blank "
+                    "guide lines to write one on."
+                ),
+            )
 
         if action == "skip":
             skip_reason = (request.POST.get("skip_reason") or "").strip()
@@ -1278,6 +1326,54 @@ class ProConnectorProcessView(View):
 
         # Unknown / missing action -- re-render the current record.
         return self._render_record(request, pro, error="Unknown action.", status=400)
+
+    @staticmethod
+    def _posted_edits(request) -> Dict[str, Any]:
+        """The staff member's typed intro fields, for an edit-preserving re-render.
+
+        The body is passed through unstripped, and as ``None`` when the field is
+        absent from the POST entirely, so :meth:`_render_record` pays for a
+        fresh AI draft only when there was genuinely nothing typed to preserve.
+        """
+        return {
+            "draft": request.POST.get("email_body"),
+            "subject": (request.POST.get("subject") or "").strip()
+            or PROCONNECTOR_INTRO_SUBJECT,
+            "skip_reason": (request.POST.get("skip_reason") or "").strip(),
+        }
+
+    def _save_submitted_address(
+        self, request, pro: InterestedProfessional
+    ) -> Optional[HttpResponse]:
+        """Store the posted mailing address on ``pro``, or return an error page.
+
+        Returns ``None`` when there is nothing to do or the address was saved,
+        and an error ``HttpResponse`` (this record re-rendered, every edit
+        preserved, including the rejected address itself) when the address will
+        not fit the column. ``pro.address`` is updated in memory too, so the
+        same request's address lookup link, "known information" table, and
+        letter card all reflect what was just saved.
+        """
+        posted = request.POST.get("address")
+        if posted is None:
+            # No address field in the POST at all (an older tab, a scripted
+            # submit). Leave whatever is on the record alone.
+            return None
+        address = clean_address(posted)
+        problem = address_problem(address)
+        if problem is not None:
+            return self._render_record(
+                request,
+                pro,
+                **self._posted_edits(request),
+                address=posted,
+                error=problem,
+                status=400,
+            )
+        if address != (pro.address or ""):
+            save_address(pro, address)
+            pro.address = address
+        return None
 
     @staticmethod
     def _intro_form_problem(body: str, subject: str) -> Optional[str]:
