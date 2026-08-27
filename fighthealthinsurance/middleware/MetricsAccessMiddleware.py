@@ -108,14 +108,18 @@ class MetricsAccessMiddleware:
             + tuple(getattr(settings, "METRICS_ALLOWED_FORWARDED_CIDRS", None) or ())
         )
         self._metrics_path_cache: Optional[str] = None
-        if iscoroutinefunction(self.get_response):
+        # Fixed at construction time; evaluating iscoroutinefunction on every
+        # request added avoidable per-request work to the hottest path (this
+        # middleware runs first, on every request).
+        self._async_mode = iscoroutinefunction(self.get_response)
+        if self._async_mode:
             markcoroutinefunction(self)
 
     def __call__(self, request: HttpRequest):
         # Under ASGI the caller awaits us, so the block has to happen inside
         # the coroutine -- returning a plain response here would not be
         # awaitable.
-        if iscoroutinefunction(self.get_response):
+        if self._async_mode:
             return self.__acall__(request)
         if self._should_block(request):
             return HttpResponseNotFound()
@@ -128,15 +132,19 @@ class MetricsAccessMiddleware:
         return cast(HttpResponse, response)
 
     def _metrics_path(self) -> str:
+        # Cached already rstripped: the comparison in _should_block runs on
+        # every request, so it should cost one string compare, not a rstrip
+        # of an invariant value each time.
         if self._metrics_path_cache is None:
             try:
-                self._metrics_path_cache = reverse("prometheus-django-metrics")
+                resolved = reverse("prometheus-django-metrics")
             except NoReverseMatch:
-                self._metrics_path_cache = self._DEFAULT_METRICS_PATH
+                resolved = self._DEFAULT_METRICS_PATH
+            self._metrics_path_cache = resolved.rstrip("/")
         return self._metrics_path_cache
 
     def _should_block(self, request: HttpRequest) -> bool:
-        if request.path.rstrip("/") != self._metrics_path().rstrip("/"):
+        if request.path.rstrip("/") != self._metrics_path():
             return False
         return not self._is_allowed(request)
 
@@ -174,6 +182,14 @@ class MetricsAccessMiddleware:
         client cannot choose it. X-Forwarded-For is the fallback, and there only
         the LAST entry is the one the ingress added -- earlier entries may have
         been sent by the client.
+
+        CAVEAT: both properties hold only under ingress-nginx's default
+        header-replacing configuration with the ingress as the outermost
+        proxy. With ``use-forwarded-headers: true`` (common behind a cloud
+        LB) or any additional trusted proxy hop in front of the ingress,
+        these headers become client-influenced and this allowlist must not
+        be the only barrier -- re-check this exception before making either
+        of those changes.
         """
         candidate = str(request.META.get("HTTP_X_REAL_IP", "")).strip()
         if not candidate:

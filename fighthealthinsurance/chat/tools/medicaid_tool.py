@@ -129,13 +129,40 @@ class MedicaidInfoTool(BaseTool):
             await self.send_status_message("Processing Medicaid info lookup data...")
 
             # Import here to avoid circular imports
-            from fighthealthinsurance.medicaid_api import get_medicaid_info
+            from fighthealthinsurance.medicaid_api import (
+                MedicaidDataUnavailableError,
+                get_medicaid_info,
+            )
 
             # get_medicaid_info does blocking pandas/IO work (no ORM, so
             # plain sync_to_async is right; database_sync_to_async is
             # reserved for ORM-touching callables). Running it inline blocked
             # the event loop -- freezing every OTHER chat on this worker.
-            medicaid_info = await sync_to_async(get_medicaid_info)(medicaid_info_data)
+            try:
+                medicaid_info = await sync_to_async(get_medicaid_info)(
+                    medicaid_info_data
+                )
+            except MedicaidDataUnavailableError as unavailable:
+                # The state WAS understood -- what's missing is OUR data (a
+                # territory with no resources row, or the CSV is broken).
+                # Falling through to the None path below re-asked "Which
+                # state are you in?" forever against a user who had already
+                # answered, with no way to ever succeed.
+                logger.warning(f"Medicaid info unavailable: {unavailable}")
+                await self.send_status_message(
+                    f"No Medicaid contact data available for {unavailable.state}."
+                )
+                # Like the None branch below, this propagates as the
+                # assistant's reply, so it must read as something we'd say
+                # to the user.
+                return (
+                    f"I wasn't able to pull up the official Medicaid contact "
+                    f"information for {unavailable.state}. Your best bet is "
+                    f'to search for "{unavailable.state} Medicaid" to find '
+                    f"the official agency site, or dial 211 for local help "
+                    f"with applying.",
+                    context,
+                )
             logger.debug(
                 f"Got Medicaid info response: {medicaid_info[:200] if medicaid_info else 'None'}..."
             )
@@ -728,6 +755,16 @@ class MedicaidEligibilityTool(BaseTool):
         # Any year past the published table's was scored with that table's
         # limits, and we owe the user that fact.
         scored_beyond_the_table = any(row.year > BASE_ELIGIBILITY_YEAR for row in rows)
+        # One shared wording, like work_req_note above: every branch that
+        # reports a year-labeled verdict owes the same caveat, and two copies
+        # would drift.
+        beyond_the_table_note = (
+            "Note: newer income limits aren't published yet, so "
+            f"every year above used the {BASE_ELIGIBILITY_YEAR} published "
+            "limits -- what separates the years is the work "
+            "requirement, not the income test. Mention that if the "
+            "answer is close to the line."
+        )
 
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
@@ -803,6 +840,37 @@ class MedicaidEligibilityTool(BaseTool):
                 "situation isn't something our checker can estimate and point "
                 "them at the next step below."
             )
+            # Sub-checks that DID complete with a firm positive are real
+            # answers -- e.g. only the work-hours answer or the
+            # Medicare-side years-worked answer was declined, while the
+            # current-rules check finished with a yes. Hiding those behind
+            # the blanket "no estimate" withheld a computed verdict from
+            # someone the checker did score (mirrors the "we were able to
+            # check Medicare" report below). Only positives: a False here
+            # means "not established", not "no".
+            #
+            # Same labels and same positives-only rule as the missing-answers
+            # branch above: `timeline` is None whenever determination_made is
+            # False, so `rows` here is the base/target fallback pair.
+            established = ([base_label] if eligible_base else []) + [
+                str(row.year)
+                for row in rows
+                if row.year > current_year and row.probably_eligible
+            ]
+            if established:
+                parts.append(
+                    "We WERE able to check the "
+                    + ", ".join(established)
+                    + " Medicaid rules though, and based on what we have "
+                    "they already look eligible under those — you can share "
+                    "that result."
+                )
+                if scored_beyond_the_table:
+                    # A caller-named future year lands here today (rows is
+                    # the base/target pair whenever determination_made is
+                    # False), so a positive above can be labeled with a year
+                    # whose income limits are not published yet.
+                    parts.append(beyond_the_table_note)
             if medicare:
                 parts.append(
                     "We were able to check Medicare, and our data suggests "
@@ -946,13 +1014,7 @@ class MedicaidEligibilityTool(BaseTool):
                 # table scores both years, so the only thing separating them
                 # is the work requirement. Say that plainly rather than
                 # implying we modelled the later year's limits.
-                parts.append(
-                    "Note: newer income limits aren't published yet, so "
-                    f"every year above used the {BASE_ELIGIBILITY_YEAR} published "
-                    "limits -- what separates the years is the work "
-                    "requirement, not the income test. Mention that if the "
-                    "answer is close to the line."
-                )
+                parts.append(beyond_the_table_note)
 
             if medicare:
                 parts.append("Our data suggests they may be eligible for medicare.")

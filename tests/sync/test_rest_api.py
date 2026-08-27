@@ -48,6 +48,25 @@ else:
     User = get_user_model()
 
 
+def assert_letter_like(content: str) -> None:
+    """Assert generated appeal text is shaped like an appeal letter.
+
+    These end-to-end tests run against live model backends, and models
+    legitimately vary the opening: some start straight at the salutation,
+    others emit a letterhead (sender/date/recipient block, "Re:" line)
+    first — a shape the cleaning pipeline explicitly supports. So accept a
+    letter that either opens with a salutation or carries a letterhead /
+    salutation / "Re:" line near the top, instead of pinning the exact
+    first word of live LLM output.
+    """
+    stripped = content.lstrip()
+    head_lines = [line.strip().lstrip("*_# ") for line in stripped.splitlines()[:15]]
+    assert stripped.startswith("Dear") or any(
+        line.startswith(("Dear", "Re:", "Appeals Department"))
+        for line in head_lines
+    ), f"Appeal should open like a letter (salutation or letterhead): {stripped[:200]!r}"
+
+
 class DenialLongEmployerName(APITestCase):
     """Test denial with long employer name."""
 
@@ -316,7 +335,7 @@ class DenialEndToEnd(APITestCase):
         )
         # It's a streaming response with one per new line
         appeal = json.loads(responses[0])
-        assert appeal["content"].lstrip().startswith("Dear")
+        assert_letter_like(appeal["content"])
         # Now lets go ahead and provide follow up
         denial = await Denial.objects.aget(denial_id=denial_id)
         followup_url = reverse("followups-list")
@@ -451,9 +470,7 @@ class DenialEndToEnd(APITestCase):
         assert (
             len(appeal_contents) >= 1
         ), f"Should have received at least one appeal in {responses}"
-        assert (
-            appeal_contents[0].lstrip().startswith("Dear")
-        ), "Appeal should start with 'Dear'"
+        assert_letter_like(appeal_contents[0])
 
 
 class StreamingAppealsRestFallbackTest(APITestCase):

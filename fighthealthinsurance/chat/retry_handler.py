@@ -75,52 +75,69 @@ def create_simple_retry_scorer(
             _extract_document_names_from_history(chat_history) if chat_history else []
         )
     ]
+    # Invariant across the whole scoring pass (current_message is fixed at
+    # scorer creation), so evaluate the regex once instead of twice per
+    # candidate -- and keep the raw-message semantics in ONE place: the
+    # anti-repeat retry note itself contains "send it again", so any future
+    # call site handed a wrapped message would silently disarm the ladder.
+    repeat_requested = user_requested_repeat(current_message)
 
     def score_fn(
         result: Optional[Tuple[Optional[str], Optional[str]]],
         original_task: Awaitable,
     ) -> float:
-        score: float = call_scores.get(original_task, 0)
-
         if result is None:
             return float("-inf")
 
         response_text, context_part = result
 
-        if not response_text and not context_part:
+        # retry_llm_with_fallback can only deliver the winner's response
+        # text (it re-validates its length after selection and never
+        # consults the runner-up), so a candidate without usable text must
+        # lose to ANY deliverable answer regardless of its backend's base
+        # score. Adding the base score first let a high-quality backend's
+        # ("", context) tuple -- e.g. a reply that was only a panda context
+        # summary -- outrank a real fallback answer and collapse the whole
+        # retry to (None, None).
+        if not response_text or len(response_text.strip()) <= MIN_RESPONSE_LENGTH:
             return float("-inf")
 
-        # Bonus for having a response
-        if response_text and len(response_text) > MIN_RESPONSE_LENGTH:
-            score += 100
-            # Safety check
-            if detect_false_promises(response_text):
-                score -= 200
+        # Every candidate from here on has a deliverable response (the guard
+        # above), so the old flat "has a response" bonus was a constant
+        # offset and is gone.
+        score: float = call_scores.get(original_task, 0)
 
-            # Bonus for referencing an uploaded document by name
-            response_lower = response_text.lower()
-            for doc_name in doc_names_lower:
-                if doc_name in response_lower:
-                    score += 150
-                    break
+        # Safety check
+        if detect_false_promises(response_text):
+            score -= 200
 
-            # Always penalize asking for patient name — it's known client-side
-            if ASKS_FOR_PATIENT_NAME.search(response_text):
-                score -= 200
+        # Bonus for referencing an uploaded document by name
+        response_lower = response_text.lower()
+        for doc_name in doc_names_lower:
+            if doc_name in response_lower:
+                score += 150
+                break
 
-            # Penalize responses that repeat previous messages
-            if chat_history or current_message:
-                score += compute_repetition_penalty(
-                    response_text, chat_history or [], current_message
-                )
+        # Always penalize asking for patient name — it's known client-side
+        if ASKS_FOR_PATIENT_NAME.search(response_text):
+            score -= 200
 
-            # A retry candidate that still (nearly) repeats a recent reply
-            # loses to ANY non-repeating candidate, but stays deliverable
-            # as the absolute last resort (finite penalty, not -inf).
-            if not user_requested_repeat(current_message) and find_repeated_reply(
-                response_text, chat_history, current_message
-            ):
-                score += REPEAT_LAST_RESORT_PENALTY
+        # Penalize responses that repeat previous messages -- unless the
+        # user explicitly asked for a repeat, where the compliant candidate
+        # must not lose to one that ignores the request (mirrors the
+        # exemption on the last-resort penalty below).
+        if (chat_history or current_message) and not repeat_requested:
+            score += compute_repetition_penalty(
+                response_text, chat_history or [], current_message
+            )
+
+        # A retry candidate that still (nearly) repeats a recent reply loses
+        # to ANY non-repeating candidate, but stays deliverable as the
+        # absolute last resort (finite penalty, not -inf).
+        if not repeat_requested and find_repeated_reply(
+            response_text, chat_history, current_message
+        ):
+            score += REPEAT_LAST_RESORT_PENALTY
 
         # Small bonus for context
         if context_part and len(context_part) > MIN_RESPONSE_LENGTH:

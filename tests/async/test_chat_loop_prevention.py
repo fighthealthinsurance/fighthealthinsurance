@@ -11,7 +11,6 @@ state hint, and the LLM-input debug frame.
 import typing
 from unittest.mock import AsyncMock, patch
 
-from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from prometheus_client import REGISTRY
 from rest_framework.test import APITestCase
@@ -54,7 +53,7 @@ def _metric(name, labels=None):
 
 
 async def _make_chat(username, npi, chat_history=None):
-    user = await sync_to_async(User.objects.create_user)(
+    user = await User.objects.acreate_user(
         username=username, password="testpass", email=f"{username}@example.com"
     )
     professional = await ProfessionalUser.objects.acreate(
@@ -126,6 +125,72 @@ class ChatRepeatRejectionTest(APITestCase):
         fresh = await OngoingChat.objects.aget(id=chat.id)
         assistant_msgs = [m for m in fresh.chat_history if m.get("role") == "assistant"]
         assert assistant_msgs[-1]["content"] == FRESH_REPLY
+
+    async def test_metric_recorded_when_the_turn_delivers_nothing(self):
+        """The loudest loop is the one that never produces a reply.
+
+        Every candidate rejected as a repeat AND the retry delivering nothing
+        returns early, before tool processing -- so the once-per-turn metric
+        used to be skipped in exactly the case it exists to alert on,
+        reporting "loops never happen" while a backend looped itself dry.
+        """
+        user, chat = await _make_chat(
+            "loopbreak_nodeliver", "9999930010", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        # Primary pass loops (hard-rejected); the anti-repeat retry then comes
+        # back empty, so no candidate is deliverable and the turn returns
+        # early -- the shape the metric used to miss.
+        model = RecordingChatModel(looped_reply=LOOPED_REPLY, fresh_reply="")
+
+        rejected_before = _metric(
+            "fhi_chat_repeated_responses_total", {"action": "rejected_candidates"}
+        )
+
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        delivered = [f["content"] for f in recorder.content_frames()]
+        assert LOOPED_REPLY not in delivered, f"delivered the looped reply: {delivered}"
+        assert (
+            _metric(
+                "fhi_chat_repeated_responses_total",
+                {"action": "rejected_candidates"},
+            )
+            == rejected_before + 1
+        )
+
+    async def test_metric_recorded_when_tool_processing_raises(self):
+        """A raising tool handler unwinds past the in-method exits.
+
+        The turn still rejected repeats, so the loop metric must survive the
+        exception -- handle_chat_message's finally is the backstop.
+        """
+        user, chat = await _make_chat(
+            "loopbreak_toolraise", "9999930011", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        model = RecordingChatModel()
+
+        rejected_before = _metric(
+            "fhi_chat_repeated_responses_total", {"action": "rejected_candidates"}
+        )
+
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET, patch(
+            "fighthealthinsurance.chat_interface.AppealTool.handle",
+            side_effect=RuntimeError("tool blew up"),
+        ):
+            await interface.handle_chat_message("CA")
+
+        assert (
+            _metric(
+                "fhi_chat_repeated_responses_total",
+                {"action": "rejected_candidates"},
+            )
+            == rejected_before + 1
+        )
 
     async def test_terse_reply_gets_bridge_note(self):
         """A short answer right after an assistant question carries the
@@ -382,7 +447,7 @@ class ChatDebugFrameTest(APITestCase):
         assert result["runner_up_model"] == "second-model"
         assert result["picked_score"] > result["runner_up_score"]
         assert result["closely_tied"] is True
-        assert result["alternate_offered"] is True
+        assert result["alternate_candidate"] is True
         assert result["candidate_count"] == 2
         assert result["rejected_repeats"] == 0
         assert result["retry_used"] is False

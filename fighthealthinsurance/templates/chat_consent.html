@@ -39,19 +39,10 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
             <form method="post" id="user_consent_form">
               {% csrf_token %}
               
-              <!-- Hidden fields to preserve microsite parameters -->
-              {% if default_procedure %}
-              <input type="hidden" name="default_procedure" value="{{ default_procedure }}">
-              {% endif %}
-              {% if default_condition %}
-              <input type="hidden" name="default_condition" value="{{ default_condition }}">
-              {% endif %}
-              {% if microsite_slug %}
-              <input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
-              {% endif %}
-              {% if microsite_title %}
-              <input type="hidden" name="microsite_title" value="{{ microsite_title }}">
-              {% endif %}
+              <!-- Funnel params (CHAT_FUNNEL_PARAMS) preserved as hidden fields -->
+              {% for name, value in funnel_params %}
+              <input type="hidden" name="{{ name }}" value="{{ value }}">
+              {% endfor %}
               {% if denial_text %}
               <textarea name="denial_text" class="d-none">{{ denial_text }}</textarea>
               {% endif %}

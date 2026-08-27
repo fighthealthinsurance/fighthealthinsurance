@@ -60,6 +60,45 @@ class TestMedicaidEligibilityLandingPage(TestCase):
         self.assertIn("80 hours per month", self.content)
 
 
+class TestMedicaidEligibilityFunnelIntoChat(TestCase):
+    """The CTA's microsite_slug must survive the whole path into chat."""
+
+    def test_slug_is_a_valid_attribution_slug(self):
+        # The websocket consumer and denial form validate microsite_slug
+        # before persisting it; the landing slug is attribution-only (no
+        # Microsite entry), so it needs the explicit allowlist -- otherwise
+        # the whole funnel's attribution was nulled with a warning per frame.
+        from fighthealthinsurance.microsites import is_valid_attribution_slug
+
+        self.assertTrue(is_valid_attribution_slug("medicaid-eligibility"))
+        self.assertFalse(is_valid_attribution_slug("not-a-real-slug"))
+
+    def test_non_string_slugs_are_rejected_not_raised_on(self):
+        """The websocket hands this through from raw client JSON.
+
+        The membership test raises TypeError on an unhashable value, which
+        answered a frame carrying {"microsite_slug": {}} with an internal
+        error instead of ignoring the slug like any other invalid one.
+        """
+        from fighthealthinsurance.microsites import is_valid_attribution_slug
+
+        for value in ({"x": 1}, ["medicaid-eligibility"], 12, True, None):
+            with self.subTest(value=value):
+                self.assertFalse(is_valid_attribution_slug(value))
+
+    def test_consent_redirect_preserves_funnel_params(self):
+        # First-time visitors (no consent yet) are redirected to the consent
+        # form; a bare redirect dropped the query string, so the consent
+        # form's hidden fields were empty and the post-consent chat lost the
+        # eligibility kickoff.
+        response = Client().get(
+            reverse("chat"), {"microsite_slug": "medicaid-eligibility"}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("chat_consent"), response["Location"])
+        self.assertIn("microsite_slug=medicaid-eligibility", response["Location"])
+
+
 class TestMedicaidEligibilityPageStaging(TestCase):
     """The staging flag controls both routing and discoverability."""
 

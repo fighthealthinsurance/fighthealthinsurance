@@ -13,18 +13,10 @@
         {% if initial_message %}
         <textarea name="initial_message" style="display:none;">{{ initial_message }}</textarea>
         {% endif %}
-        {% if default_procedure %}
-        <input type="hidden" name="default_procedure" value="{{ default_procedure }}">
-        {% endif %}
-        {% if default_condition %}
-        <input type="hidden" name="default_condition" value="{{ default_condition }}">
-        {% endif %}
-        {% if microsite_slug %}
-        <input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
-        {% endif %}
-        {% if microsite_title %}
-        <input type="hidden" name="microsite_title" value="{{ microsite_title }}">
-        {% endif %}
+        {# Funnel params (CHAT_FUNNEL_PARAMS) preserved as hidden fields #}
+        {% for name, value in funnel_params %}
+        <input type="hidden" name="{{ name }}" value="{{ value }}">
+        {% endfor %}
     </form>
     <script>
         // Auto-submit the form

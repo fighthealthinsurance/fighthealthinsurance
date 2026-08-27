@@ -5,7 +5,9 @@ is unambiguously inferable; NULLs stay NULL (the dashboard's "(unknown)"
 bucket) and ambiguous/unrecognized strings are left untouched and reported.
 """
 
+import os
 from io import StringIO
+from unittest.mock import patch
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -20,6 +22,18 @@ from fighthealthinsurance.models import (
 
 class BackfillModelMetadataTest(TestCase):
     def setUp(self):
+        # The Azure backend catalogs honor the AZURE_*_MODELS deployment
+        # overrides, and tox passes the developer's shell through
+        # (passenv = *), so e.g. AZURE_ANTHROPIC_MODELS=claude-opus-4-8
+        # would shrink the azure-anthropic catalog and break the ambiguity
+        # expectations below. Pin the overrides empty so the catalogs use
+        # DEFAULT_MODELS regardless of the local environment.
+        env_patch = patch.dict(
+            os.environ,
+            {"AZURE_ANTHROPIC_MODELS": "", "AZURE_OPENAI_MODELS": ""},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         self.denial = Denial.objects.create(
             hashed_email="hash",
             denial_text="denied",

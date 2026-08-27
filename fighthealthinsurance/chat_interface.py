@@ -18,11 +18,11 @@ from fighthealthinsurance import settings
 from fighthealthinsurance.chat.chat_persistence import (
     apersist_chat_turn,
     apersist_microsite_context,
-    is_internal_history_message,
     visible_history,
 )
 from fighthealthinsurance.chat.context_manager import (
-    MISSING_CONTEXT_PREFIX,
+    MOST_RECENT_SUMMARY_WRAPPER_LABEL,
+    PREVIOUS_SUMMARY_WRAPPER_LABEL,
     background_generate_summary,
     bound_summary_context,
     make_placeholder,
@@ -37,6 +37,7 @@ from fighthealthinsurance.chat.llm_client import (
     find_repeated_reply,
     scores_closely_tied,
     user_requested_repeat,
+    user_requested_transformation,
 )
 from fighthealthinsurance.chat.message_preprocessor import (
     MessageVariant,
@@ -91,7 +92,7 @@ from fighthealthinsurance.models import (
     PolicyDocument,
     PriorAuthRequest,
 )
-from fighthealthinsurance.microsites import get_microsite
+from fighthealthinsurance.microsites import ATTRIBUTION_ONLY_SLUGS, get_microsite
 from fighthealthinsurance.prompt_templates import (
     DELETE_DATA_INSTRUCTION,
     get_intro_template,
@@ -185,6 +186,11 @@ class ChatInterface:
         # offered to the client as a side-by-side alternate when presentable
         # AND closely tied with the winner (see scores_closely_tied).
         self._candidate_alternate: Optional[str] = None
+        # Whether any pass of the turn in flight (the primary pass or a
+        # recursive tool pass) hard-rejected a repeated candidate. Reset by
+        # _call_llm_with_actions at depth 0, ORed into at every depth, and
+        # recorded as ONE loop-alerting metric hit per turn.
+        self._turn_saw_repeats: bool = False
         # Per-session strike counts for backends whose candidates were
         # hard-rejected as repeats (label -> count). Shared with the scorer,
         # which decays a striking backend's base score so a looping model
@@ -309,6 +315,20 @@ class ChatInterface:
             )
         return "; ".join(parts) if parts else None
 
+    def _record_turn_repeat_metric(self, depth: int) -> None:
+        """Record the once-per-turn loop-alerting metric for this turn.
+
+        Called at every depth-0 exit of _call_llm_with_actions, including the
+        no-response one: a turn where every candidate was rejected as a
+        repeat AND the retry delivered nothing is the loudest possible loop,
+        and skipping it there reported "loops never happen" in exactly that
+        case. Clears the accumulator so the two exits can't double-count.
+        """
+        if depth != 0 or not self._turn_saw_repeats:
+            return
+        self._turn_saw_repeats = False
+        record_chat_repeat("rejected_candidates")
+
     async def _call_llm_with_actions(
         self,
         model_backends: List[RemoteModelLike],
@@ -354,6 +374,14 @@ class ChatInterface:
         """
         if depth > 3:
             return None, None
+        if depth == 0:
+            # Turn-scoped accumulator (same pattern as _candidate_alternate:
+            # one turn in flight per instance). Recursive tool passes run
+            # this method with their own local rejection_stats, so counting
+            # per depth inflated the loop-alerting metric, and gating on
+            # depth==0 alone made it blind to repeats rejected only inside
+            # a tool's follow-up pass.
+            self._turn_saw_repeats = False
         chat = self.chat
         history = history_for_llm
 
@@ -366,13 +394,17 @@ class ChatInterface:
             else current_message_for_llm
         )
 
-        # Did the user explicitly ask for a repeat? Derived from the RAW
-        # message (scoring_message) BEFORE prompt wrapping -- the wrapped
+        # Did the user explicitly ask for a repeat -- or for a transformation
+        # (proofread / reformat), whose faithful output also legitimately
+        # resembles a recent message? Derived from the RAW message
+        # (scoring_message) BEFORE prompt wrapping -- the wrapped
         # current_message_for_llm contains system-injected text that itself
         # says "repeat", so testing it there would always match. Forwarded to
         # the backends so their per-backend self-heal loop doesn't fight the
         # user's request (the scorers make the same check independently).
-        allow_repeat = user_requested_repeat(scoring_message)
+        allow_repeat = user_requested_repeat(
+            scoring_message
+        ) or user_requested_transformation(scoring_message)
 
         # Build LLM calls using the extracted module. When message variants are
         # supplied (top-level user turn), fan out per variant and apply each
@@ -472,8 +504,10 @@ class ChatInterface:
         # "loops never happen" exactly when a backend started looping.
         saw_repeats = bool(rejection_stats.get("repeated_rejected"))
         if saw_repeats:
-            # Counted once per turn (the stat itself is per candidate).
-            record_chat_repeat("rejected_candidates")
+            # Counted once per turn (the stat itself is per candidate):
+            # accumulate here at every depth, recorded by depth 0 at the
+            # end of the turn -- see the accumulator's comment above.
+            self._turn_saw_repeats = True
             logger.info(
                 f"Chat {chat.id}: primary pass rejected "
                 f"{rejection_stats['repeated_rejected']} repeated "
@@ -516,6 +550,10 @@ class ChatInterface:
 
         if not response_text:
             logger.debug("Got empty response from LLM")
+            # This exit is the WORST case for the loop metric -- every
+            # candidate rejected as a repeat and the retry delivering
+            # nothing -- so it must not be the one path that skips it.
+            self._record_turn_repeat_metric(depth)
             return None, None
 
         # Capture a presentable runner-up as a side-by-side alternate answer
@@ -582,7 +620,13 @@ class ChatInterface:
                         "runner_up_model": runner_up_model,
                         "runner_up_score": runner_up_score,
                         "closely_tied": closely_tied,
-                        "alternate_offered": bool(self._candidate_alternate),
+                        # "candidate", not "offered": this frame is sent
+                        # before tool processing and the delivery-time
+                        # presentability check, either of which can still
+                        # drop the alternate -- claiming "offered" here sent
+                        # debugging down the wrong path when no alternate
+                        # reached the client.
+                        "alternate_candidate": bool(self._candidate_alternate),
                         "candidate_count": len(calls),
                         "scored_candidates": scored_candidates,
                         "rejected_repeats": rejection_stats.get("repeated_rejected", 0),
@@ -724,6 +768,10 @@ class ChatInterface:
         if depth == 0 and response_text != response_before_tools:
             self._candidate_alternate = None
 
+        # One count per turn, covering the primary pass AND every recursive
+        # tool pass (each ORs into the accumulator above).
+        self._record_turn_repeat_metric(depth)
+
         logger.debug(f"Return with context length {len(context) if context else 0}.")
         return response_text, context
 
@@ -819,7 +867,15 @@ class ChatInterface:
         is_new_chat = not bool(chat.chat_history)
 
         # Load microsite context on first interaction (before linking may return early)
-        if is_new_chat and chat.microsite_slug:
+        # Attribution-only slugs (e.g. the medicaid-eligibility funnel) are
+        # persisted for attribution but by design have no Microsite entry to
+        # load context from -- warning on them made every legitimate funnel
+        # visitor look like an invalid/attacker-supplied slug in the logs.
+        if (
+            is_new_chat
+            and chat.microsite_slug
+            and chat.microsite_slug not in ATTRIBUTION_ONLY_SLUGS
+        ):
             try:
                 microsite = get_microsite(chat.microsite_slug)
                 if microsite:
@@ -990,7 +1046,7 @@ class ChatInterface:
             # Transactional merge against the fresh row (see apersist_chat_turn).
             # The link note is context for the LLM, not something the user
             # typed: flag it internal so replays don't render it as a user
-            # bubble (see _is_internal_history_message).
+            # bubble (see chat_persistence.is_internal_history_message).
             self.chat = chat = await apersist_chat_turn(
                 chat,
                 new_messages=[
@@ -1028,9 +1084,13 @@ class ChatInterface:
             if len(chat.summary_for_next_call) > 1:
                 prev_summary = chat.summary_for_next_call[-2]
                 if prev_summary and str(prev_summary).strip():
+                    # Built from context_manager's exported labels: its
+                    # strip_previous_summary_blocks recognizes these exact
+                    # strings as block boundaries, so a wording tweak here
+                    # would silently break the strip.
                     current_llm_context = (
-                        f"Previous context summary:\n{prev_summary}\n\n"
-                        f"Most recent context summary:\n{current_llm_context}"
+                        f"{PREVIOUS_SUMMARY_WRAPPER_LABEL}\n{prev_summary}\n\n"
+                        f"{MOST_RECENT_SUMMARY_WRAPPER_LABEL}\n{current_llm_context}"
                     )
             # Bound the accreted context: summaries nest labels over long
             # chats ("Earlier conversation summary: ... Additional context:
@@ -1357,6 +1417,13 @@ class ChatInterface:
             logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
         finally:
             heartbeat_task.cancel()
+            # Backstop for the once-per-turn loop metric. The depth-0 exits
+            # inside _call_llm_with_actions record it themselves, but a tool
+            # handler raising -- or the turn budget above firing -- unwinds
+            # past them, losing the metric for a turn that DID reject
+            # repeats. The helper clears its own flag, so this no-ops
+            # whenever the turn already recorded.
+            self._record_turn_repeat_metric(0)
 
         if final_response_text:
             if should_store_summary(chat.summary_for_next_call, final_context_part):
@@ -1493,15 +1560,6 @@ class ChatInterface:
                 message_chars=len(user_message or ""),
             )
             await self.send_error_message(err_msg)
-
-    # Legacy prefixes of internal (LLM-context-only) user-role messages that
-    # predate the explicit "internal" flag; matched so old chats don't replay
-    # them either.
-    @classmethod
-    def _is_internal_history_message(cls, message: Dict[str, Any]) -> bool:
-        """Messages stored purely as LLM context (e.g. the appeal-linking
-        notes recorded with role=user) must not replay as user bubbles."""
-        return is_internal_history_message(message)
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client, minus internal

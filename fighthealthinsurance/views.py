@@ -1878,9 +1878,9 @@ class InitialProcessView(generic.FormView):
             "microsite_slug"
         ) or self.request.GET.get("microsite_slug", "")
         if microsite_slug:
-            from fighthealthinsurance.microsites import get_microsite
+            from fighthealthinsurance.microsites import is_valid_attribution_slug
 
-            if get_microsite(microsite_slug):
+            if is_valid_attribution_slug(microsite_slug):
                 cleaned_data["microsite_slug"] = microsite_slug
             else:
                 logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
@@ -2487,6 +2487,47 @@ class CompletePaymentView(View):
             return None, ("An internal error occurred", 500)
 
 
+# Funnel params forwarded from microsites / landing CTAs that must survive the
+# consent round-trip back to /chat. Every hop uses this list: the consent
+# redirect, ChatUserConsentView's success URL, and the hidden fields that
+# chat_consent.html / chat_redirect.html render by looping over the
+# ``funnel_params`` pairs -- so a param added here is forwarded everywhere.
+CHAT_FUNNEL_PARAMS = (
+    "default_procedure",
+    "default_condition",
+    "medicare",
+    "microsite_slug",
+    "microsite_title",
+)
+
+
+def _funnel_params_from(*sources) -> list:
+    """(name, value) pairs for the funnel params present in the QueryDicts.
+
+    Earlier sources win: ``_funnel_params_from(request.GET, request.POST)``
+    reads GET first and falls back to POST, so the pre-consent redirect (GET
+    CTA links) and the consent form round-trip (hidden POST fields) forward
+    the same set -- these used to be several hand-maintained loops that
+    drifted.
+    """
+    params = []
+    for param in CHAT_FUNNEL_PARAMS:
+        for source in sources:
+            value = source.get(param)
+            if value:
+                params.append((param, value))
+                break
+    return params
+
+
+def _with_funnel_params(url: str, request) -> str:
+    """Append the funnel params present on the request (GET, then POST)."""
+    params = _funnel_params_from(request.GET, request.POST)
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    return url
+
+
 @ensure_csrf_cookie
 def chat_interface_view(request):
     """
@@ -2504,20 +2545,21 @@ def chat_interface_view(request):
     # If the user hasn't completed the consent process, redirect to the consent form
     if not consent_completed:
         logger.debug("Chat interface: redirecting to consent form (not yet completed)")
-        return redirect("chat_consent")
+        # Forward the funnel params: ChatUserConsentView re-emits them as
+        # hidden fields and get_success_url carries them back to /chat --
+        # but only when they arrive on ITS query string. A bare redirect
+        # dropped them, so first-time visitors from a microsite or the
+        # medicaid-eligibility landing CTA (exactly the users who have not
+        # consented yet) lost their default_procedure/microsite_slug kickoff.
+        return redirect(_with_funnel_params(reverse("chat_consent"), request))
 
-    # Check for default_procedure and default_condition from microsite URL params
-    # Check both GET and POST since consent form could send either way
-    default_procedure = request.GET.get("default_procedure") or request.POST.get(
-        "default_procedure", ""
-    )
-    default_condition = request.GET.get("default_condition") or request.POST.get(
-        "default_condition", ""
-    )
-    medicare = request.GET.get("medicare") or request.POST.get("medicare", "")
-    microsite_slug = request.GET.get("microsite_slug") or request.POST.get(
-        "microsite_slug", ""
-    )
+    # Funnel params from the microsite / landing CTA (GET) or the consent
+    # form round-trip (hidden POST fields).
+    funnel = dict(_funnel_params_from(request.GET, request.POST))
+    default_procedure = funnel.get("default_procedure", "")
+    default_condition = funnel.get("default_condition", "")
+    medicare = funnel.get("medicare", "")
+    microsite_slug = funnel.get("microsite_slug", "")
 
     # Check for denial text from POST (from chat consent form) or session (from explain denial page)
     # Check POST first to avoid popping session unnecessarily
@@ -2570,39 +2612,16 @@ class ChatUserConsentView(FormView):
     )
 
     def get_success_url(self):
-        """Preserve query parameters when redirecting to chat."""
-        # Get the base success URL
-        url = self.success_url
-
-        # Preserve microsite-related query parameters
-        query_params = []
-        for param in [
-            "default_procedure",
-            "default_condition",
-            "microsite_slug",
-            "microsite_title",
-        ]:
-            value = self.request.GET.get(param) or self.request.POST.get(param)
-            if value:
-                from urllib.parse import urlencode
-
-                query_params.append((param, value))
-
-        if query_params:
-            from urllib.parse import urlencode
-
-            url = f"{url}?{urlencode(query_params)}"
-
-        return url
+        """Preserve the funnel query parameters when redirecting to chat."""
+        return _with_funnel_params(self.success_url, self.request)
 
     def get_context_data(self, **kwargs):
         """Pass query parameters to template so they can be preserved in hidden fields."""
         context = super().get_context_data(**kwargs)
-        # Add microsite params to context so they can be included as hidden fields
-        context["default_procedure"] = self.request.GET.get("default_procedure", "")
-        context["default_condition"] = self.request.GET.get("default_condition", "")
-        context["microsite_slug"] = self.request.GET.get("microsite_slug", "")
-        context["microsite_title"] = self.request.GET.get("microsite_title", "")
+        # Funnel params rendered as hidden fields (the template loops over
+        # the pairs, so a param added to CHAT_FUNNEL_PARAMS is forwarded
+        # without touching the template).
+        context["funnel_params"] = _funnel_params_from(self.request.GET)
         # Check if coming from explain denial
         context["explain_denial"] = self.request.GET.get("explain_denial", "") == "true"
         # Get denial text from session if available (from explain denial page)
@@ -2628,11 +2647,8 @@ class ChatUserConsentView(FormView):
             # Render an auto-submit form to POST data to chat
             context = {
                 "denial_text": denial_text,
-                "default_procedure": self.request.POST.get("default_procedure", ""),
-                "default_condition": self.request.POST.get("default_condition", ""),
-                "microsite_slug": self.request.POST.get("microsite_slug", ""),
-                "microsite_title": self.request.POST.get("microsite_title", ""),
                 "chat_url": reverse("chat"),
+                "funnel_params": _funnel_params_from(self.request.POST),
             }
             return render(self.request, "chat_redirect.html", context)
 

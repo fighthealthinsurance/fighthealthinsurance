@@ -593,6 +593,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           chatId = null;
         }
 
+        // The /medicaid-eligibility landing CTA promises an eligibility
+        // check. Like the explain-denial flow above, the click is an
+        // explicit request to start this flow, so start a fresh chat:
+        // replaying a stored chat instead silently skipped the kickoff
+        // branch below for anyone who had chatted before, dropping them in
+        // their old conversation with no eligibility check.
+        if (micrositeSlug === "medicaid-eligibility" && !hasSentInitialMessage.current) {
+          console.log("Starting new chat for the medicaid-eligibility check");
+          localStorage.removeItem("fhi_chat_id");
+          chatId = null;
+          // Keep React state in step so a message or file upload sent before
+          // the first server frame can't carry the abandoned chat's id.
+          setState((prev) => ({ ...prev, chatId: null }));
+          // One-shot trigger: the slug otherwise stays in the URL for the
+          // whole session (consent round-trip re-appends it), so without
+          // this every reload wiped fhi_chat_id again and orphaned the
+          // in-progress interview. The chat row's attribution is already
+          // persisted server-side at creation, so the URL param is no
+          // longer needed once the kickoff has fired.
+          const url = new URL(window.location.href);
+          url.searchParams.delete("microsite_slug");
+          window.history.replaceState(null, "", url.toString());
+        }
+
         if (chatId) {
           console.log("Replaying chat history for chat ID:", chatId);
           ws.send(

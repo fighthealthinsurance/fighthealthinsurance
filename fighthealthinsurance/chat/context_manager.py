@@ -31,11 +31,17 @@ EARLIER_SUMMARY_LABEL = "Earlier conversation summary: "
 ADDITIONAL_CONTEXT_SEPARATOR = "\n\nAdditional context: "
 
 # Wrapper labels chat_interface adds when it hands two stored summaries to the
-# LLM. They must be recognized here so a stale summary block wrapped in them is
-# still stripped (and so a label left dangling by a strip is cleaned up).
+# LLM (exported so chat_interface builds its wrapper from the SAME strings this
+# module strips -- a wording tweak on one side silently broke the strip). They
+# must be recognized here so a stale summary block wrapped in them is still
+# stripped (and so a label left dangling by a strip is cleaned up), and they
+# BOUND a stale block: content after them is newer than the block and must
+# survive.
+PREVIOUS_SUMMARY_WRAPPER_LABEL = "Previous context summary:"
+MOST_RECENT_SUMMARY_WRAPPER_LABEL = "Most recent context summary:"
 _SUMMARY_WRAPPER_LABELS = (
-    "Previous context summary:",
-    "Most recent context summary:",
+    PREVIOUS_SUMMARY_WRAPPER_LABEL,
+    MOST_RECENT_SUMMARY_WRAPPER_LABEL,
 )
 
 
@@ -59,10 +65,26 @@ def strip_previous_summary_blocks(existing_summary: Optional[str]) -> Optional[s
     if index < 0:
         return existing_summary
     head = existing_summary[:index]
-    # Everything from the label onward is the stale summary, except any
-    # "Additional context:" tail it carried (which may itself nest more).
-    rest = existing_summary[index:].split(ADDITIONAL_CONTEXT_SEPARATOR, 1)
-    tail = strip_previous_summary_blocks(rest[1]) if len(rest) > 1 else None
+    # Everything from the label onward is the stale summary, up to whichever
+    # comes first of its "Additional context:" tail (which may itself nest
+    # more) or the next wrapper label. The wrapper labels introduce content
+    # NEWER than the stale block -- chat_interface's "Most recent context
+    # summary:" section carries the latest per-turn context -- so treating
+    # the whole remainder as stale whenever the block had no
+    # Additional-context tail silently discarded the newest summary.
+    block = existing_summary[index:]
+    cut: Optional[Tuple[int, int]] = None  # (boundary_pos, resume_pos)
+    sep_index = block.find(ADDITIONAL_CONTEXT_SEPARATOR)
+    if sep_index >= 0:
+        cut = (sep_index, sep_index + len(ADDITIONAL_CONTEXT_SEPARATOR))
+    for label in _SUMMARY_WRAPPER_LABELS:
+        label_index = block.find(label, len(EARLIER_SUMMARY_LABEL))
+        if label_index >= 0 and (cut is None or label_index < cut[0]):
+            # Resume after the label itself: the dangling-label cleanup
+            # below only handles labels at the END of a part, and the label
+            # describes the pairing we are dismantling anyway.
+            cut = (label_index, label_index + len(label))
+    tail = strip_previous_summary_blocks(block[cut[1] :]) if cut else None
     parts = []
     for part in (head, tail):
         if not part:

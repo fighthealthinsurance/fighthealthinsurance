@@ -84,7 +84,7 @@ from fighthealthinsurance.websockets import (
 
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int, is_valid_denial_id
-from fighthealthinsurance.chat.chat_persistence import visible_history
+from fighthealthinsurance.chat.chat_persistence import iter_visible_history
 
 appeal_assembly_helper = AppealAssemblyHelper()
 pubmed_tools = PubMedTools()
@@ -133,8 +133,10 @@ class ChatViewSet(viewsets.ViewSet):
             if chat.chat_history and len(chat.chat_history) > 0:
                 # Skip LLM-context-only notes: they are stored with role=user
                 # but were never typed, so they made appeal-linked chats show
-                # a preview of internal system text.
-                for message in visible_history(chat.chat_history):
+                # a preview of internal system text. Lazy iterator: we only
+                # need the first visible user message, not a filtered copy of
+                # each chat's whole history.
+                for message in iter_visible_history(chat.chat_history):
                     if message.get("role") == "user":
                         content = message.get("content", "")
                         first_message_preview = content[:100] + (
@@ -198,7 +200,7 @@ class ChatViewSet(viewsets.ViewSet):
         # Try to find the first user message (internal LLM-context notes are
         # stored with role=user but were never typed, so they must not become
         # the chat's title).
-        for message in visible_history(chat.chat_history):
+        for message in iter_visible_history(chat.chat_history):
             if message.get("role") == "user":
                 content = message.get("content", "")
                 # Extract first line or first few words

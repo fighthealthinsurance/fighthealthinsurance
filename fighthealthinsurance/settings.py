@@ -68,6 +68,11 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return (os.getenv(name) or default).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_list(name: str) -> list:
+    """Parse a comma-separated env var into a list of stripped entries."""
+    return [item.strip() for item in (os.getenv(name) or "").split(",") if item.strip()]
+
+
 # This pod's own IP, from the downward API (k8s/deploy.yaml). Needed in
 # ALLOWED_HOSTS so the Prometheus PodMonitor -- which scrapes pods by IP, making
 # the pod IP the Host header -- isn't rejected as a DisallowedHost. Empty
@@ -191,11 +196,9 @@ class Base(Configuration):
     # Demo-request notifications always go to support42@; additional recipients
     # can be configured via the DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS env var
     # (comma-separated).
-    DEMO_REQUEST_NOTIFICATION_EMAILS = ["support42@fighthealthinsurance.com"] + [
-        e.strip()
-        for e in os.getenv("DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS", "").split(",")
-        if e.strip()
-    ]
+    DEMO_REQUEST_NOTIFICATION_EMAILS = [
+        "support42@fighthealthinsurance.com"
+    ] + _env_list("DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS")
 
     # Professional-signup notifications — the web /pro_version interest form and
     # the Fight Paperwork (FPW) REST professional sign-up endpoint — default to
@@ -205,13 +208,7 @@ class Base(Configuration):
     PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS = [
         "support42@fighthealthinsurance.com",
         "professional@fighthealthinsurance.com",
-    ] + [
-        e.strip()
-        for e in os.getenv("PROFESSIONAL_SIGNUP_EXTRA_NOTIFICATION_EMAILS", "").split(
-            ","
-        )
-        if e.strip()
-    ]
+    ] + _env_list("PROFESSIONAL_SIGNUP_EXTRA_NOTIFICATION_EMAILS")
 
     # Session cookie configs
     SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
@@ -582,21 +579,13 @@ class Base(Configuration):
     # defaults are what "inside the cluster" means; override with a comma
     # separated METRICS_ALLOWED_CIDRS on clusters with public pod CIDRs.
     # Unset (the normal case) leaves the middleware on its own defaults.
-    METRICS_ALLOWED_CIDRS = [
-        cidr.strip()
-        for cidr in os.getenv("METRICS_ALLOWED_CIDRS", "").split(",")
-        if cidr.strip()
-    ]
+    METRICS_ALLOWED_CIDRS = _env_list("METRICS_ALLOWED_CIDRS")
 
     # External monitors allowed to fetch /metrics *through* the ingress, on top
     # of UptimeRobot's published probe addresses (which the middleware always
     # honors -- see fighthealthinsurance/uptimerobot_ips.py). Matched against
     # the client address the ingress observed, not the peer address.
-    METRICS_ALLOWED_FORWARDED_CIDRS = [
-        cidr.strip()
-        for cidr in os.getenv("METRICS_ALLOWED_FORWARDED_CIDRS", "").split(",")
-        if cidr.strip()
-    ]
+    METRICS_ALLOWED_FORWARDED_CIDRS = _env_list("METRICS_ALLOWED_FORWARDED_CIDRS")
 
     # STRIPE SETTINGS
     STRIPE_LIVE_MODE = False
