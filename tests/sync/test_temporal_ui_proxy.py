@@ -60,7 +60,9 @@ class TemporalUIProxyStaffTest(TestCase):
             reverse("temporal_ui", kwargs={"path": "workflows"}) + "?namespace=default"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(b"".join(response.streaming_content), b"<html>ui</html>")
+        self.assertEqual(
+            b"".join(response.streaming_content), b"<html>ui</html><!-- tail -->"
+        )
         self.assertEqual(response["Content-Type"], "text/html; charset=utf-8")
         self.assertEqual(response["Cache-Control"], "no-cache")
         # Hop-by-hop / length headers are not copied through a re-streamed body.
