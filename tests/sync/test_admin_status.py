@@ -158,6 +158,94 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertEqual(q["failures_recent"], 1)  # E
 
 
+_TEMPORAL_CLIENT = "fighthealthinsurance.temporal_client.get_temporal_client"
+
+
+class _FakeCount:
+    def __init__(self, count):
+        self.count = count
+
+
+class _FakeStatus:
+    name = "COMPLETED"
+
+
+class _FakeWorkflow:
+    id = "send-fax-test-1234"
+    status = _FakeStatus()
+    start_time = timezone.now() - datetime.timedelta(seconds=42)
+    close_time = timezone.now()
+
+
+class _FakeTemporalClient:
+    """Stands in for a temporalio Client: two completed runs, one listed."""
+
+    async def count_workflows(self, query):
+        return _FakeCount(2 if "Completed" in query else 0)
+
+    def list_workflows(self, query, page_size=10):
+        async def gen():
+            yield _FakeWorkflow()
+
+        return gen()
+
+
+async def _fake_get_client():
+    return _FakeTemporalClient()
+
+
+async def _broken_get_client():
+    raise RuntimeError("temporal-frontend unreachable")
+
+
+class AdminStatusTemporalTest(TestCase):
+    """The Temporal section must reflect the flag, degrade on errors, and
+    never raise."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _get(self):
+        with mock.patch(_MODELS, return_value=[]), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            return self.client.get(reverse("admin_status"))
+
+    @override_settings(TEMPORAL_ENABLED=False)
+    @mock.patch(_TEMPORAL_CLIENT)
+    def test_disabled_makes_no_connection(self, mock_client):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "DISABLED")
+        self.assertFalse(response.context["temporal"]["enabled"])
+        mock_client.assert_not_called()
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_broken_get_client)
+    def test_unreachable_frontend_is_an_error_row(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        t = response.context["temporal"]
+        self.assertFalse(t["ok"])
+        self.assertIn("unreachable", t["error"])
+        self.assertContains(response, "ERROR")
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_fake_get_client)
+    def test_healthy_client_renders_counts_and_recent_runs(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        t = response.context["temporal"]
+        self.assertTrue(t["ok"])
+        self.assertEqual(t["counts"]["Completed"], 2)
+        self.assertEqual(t["counts"]["Failed"], 0)
+        self.assertEqual(len(t["recent"]), 1)
+        self.assertEqual(t["recent"][0]["duration_s"], 42)
+        self.assertContains(response, "CONNECTED")
+        self.assertContains(response, "send-fax-test-1234")
+
+
 class AdminStatusStorageTest(TestCase):
     """_storage_status must degrade to an error row, never raise."""
 

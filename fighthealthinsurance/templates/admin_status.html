@@ -192,6 +192,66 @@
     {% endif %}
   </div>
 
+  {# ---------------- Temporal ---------------- #}
+  <div class="status-section">
+    <h2>⏱️ Temporal (fax workflows)</h2>
+    {% if not temporal.enabled %}
+      <p class="summary-line"><span class="badge">DISABLED</span> <span class="pill">TEMPORAL_ENABLED is off; faxes use the Ray path</span></p>
+    {% elif temporal.error %}
+      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ temporal.error }}</span></p>
+    {% else %}
+      <p class="summary-line">
+        <span class="badge ok">CONNECTED</span>
+        {% if temporal.host %}<span class="pill">{{ temporal.host }}</span>{% endif %}
+        {% if temporal.namespace %}<span class="pill">ns: {{ temporal.namespace }}</span>{% endif %}
+        {% if temporal.task_queue %}<span class="pill">queue: {{ temporal.task_queue }}</span>{% endif %}
+      </p>
+      <div class="stat-grid">
+        <div class="stat-card {% if temporal.counts.Running %}alert{% endif %}">
+          <div class="value">{{ temporal.counts.Running|default:0 }}</div>
+          <div class="label">Running now</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ temporal.counts.Completed|default:0 }}</div>
+          <div class="label">Completed (last 7 days)</div>
+        </div>
+        <div class="stat-card {% if temporal.counts.Failed %}alert{% endif %}">
+          <div class="value">{{ temporal.counts.Failed|default:0 }}</div>
+          <div class="label">Failed (last 7 days)</div>
+        </div>
+        <div class="stat-card {% if temporal.counts.TimedOut or temporal.counts.Terminated %}alert{% endif %}">
+          <div class="value">{{ temporal.counts.TimedOut|default:0 }} / {{ temporal.counts.Terminated|default:0 }}</div>
+          <div class="label">Timed out / terminated (last 7 days)</div>
+        </div>
+      </div>
+      <table class="status">
+        <thead>
+          <tr><th>Workflow</th><th>Status</th><th>Started</th><th>Duration</th></tr>
+        </thead>
+        <tbody>
+        {% for wf in temporal.recent %}
+          <tr>
+            <td><code>{{ wf.id }}</code></td>
+            <td>
+              {% if wf.status == "COMPLETED" %}<span class="badge ok">{{ wf.status }}</span>
+              {% elif wf.status == "RUNNING" %}<span class="badge">{{ wf.status }}</span>
+              {% else %}<span class="badge bad">{{ wf.status }}</span>{% endif %}
+            </td>
+            <td>{{ wf.started|date:"Y-m-d H:i" }}</td>
+            <td>{% if wf.duration_s is not None %}{{ wf.duration_s }}s{% else %}&mdash;{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4">No SendFaxWorkflow runs recorded yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="summary-line">
+        <span class="pill">Full event histories: the Temporal Web UI is cluster-internal by design.</span>
+        <code>kubectl -n totallylegitco port-forward svc/temporal-web 8080:8080</code> then <code>http://localhost:8080</code>
+      </p>
+    {% endif %}
+  </div>
+
   {# ---------------- Storage ---------------- #}
   <div class="status-section">
     <h2>💾 External Storage</h2>
