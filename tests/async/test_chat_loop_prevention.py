@@ -161,6 +161,37 @@ class ChatRepeatRejectionTest(APITestCase):
             == rejected_before + 1
         )
 
+    async def test_metric_recorded_when_tool_processing_raises(self):
+        """A raising tool handler unwinds past the in-method exits.
+
+        The turn still rejected repeats, so the loop metric must survive the
+        exception -- handle_chat_message's finally is the backstop.
+        """
+        user, chat = await _make_chat(
+            "loopbreak_toolraise", "9999930011", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        model = RecordingChatModel()
+
+        rejected_before = _metric(
+            "fhi_chat_repeated_responses_total", {"action": "rejected_candidates"}
+        )
+
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET, patch(
+            "fighthealthinsurance.chat_interface.AppealTool.handle",
+            side_effect=RuntimeError("tool blew up"),
+        ):
+            await interface.handle_chat_message("CA")
+
+        assert (
+            _metric(
+                "fhi_chat_repeated_responses_total",
+                {"action": "rejected_candidates"},
+            )
+            == rejected_before + 1
+        )
+
     async def test_terse_reply_gets_bridge_note(self):
         """A short answer right after an assistant question carries the
         system bridge note into the model call."""

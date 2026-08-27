@@ -1417,6 +1417,13 @@ class ChatInterface:
             logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
         finally:
             heartbeat_task.cancel()
+            # Backstop for the once-per-turn loop metric. The depth-0 exits
+            # inside _call_llm_with_actions record it themselves, but a tool
+            # handler raising -- or the turn budget above firing -- unwinds
+            # past them, losing the metric for a turn that DID reject
+            # repeats. The helper clears its own flag, so this no-ops
+            # whenever the turn already recorded.
+            self._record_turn_repeat_metric(0)
 
         if final_response_text:
             if should_store_summary(chat.summary_for_next_call, final_context_part):

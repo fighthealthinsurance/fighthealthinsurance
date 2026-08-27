@@ -1464,7 +1464,13 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             if not is_valid_attribution_slug(microsite_slug):
                 # An empty string is just "no slug", not an attacker probe.
                 if microsite_slug:
-                    logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+                    # Bounded and repr'd like the chat_id above: this is raw
+                    # client input, so an arbitrarily long value (or one
+                    # carrying newlines) must not reach the log verbatim.
+                    logger.warning(
+                        f"Invalid microsite_slug received: "
+                        f"{str(microsite_slug)[:64]!r}"
+                    )
                 microsite_slug = None
 
         logger.debug(
