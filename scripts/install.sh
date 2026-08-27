@@ -11,8 +11,7 @@ python min_version.py
 # shellcheck disable=SC1091
 python -m venv .venv &&
   . .venv/bin/activate &&
-  retry pip install -r requirements.txt &&
-  retry pip install -r requirements-dev.txt
+  retry pip install -r requirements.txt -r requirements-dev.txt
 
 package_command=''
 if command -v apt-get; then
