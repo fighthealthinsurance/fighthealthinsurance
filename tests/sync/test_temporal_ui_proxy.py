@@ -45,7 +45,11 @@ class TemporalUIProxyStaffTest(TestCase):
     @mock.patch(_UPSTREAM_CALL)
     def test_forwards_get_under_public_path_and_streams_body(self, upstream):
         upstream.return_value = _FakeUpstream(
-            headers={"Cache-Control": "no-cache", "Content-Length": "999", "Connection": "keep-alive"}
+            headers={
+                "Cache-Control": "no-cache",
+                "Content-Length": "999",
+                "Connection": "keep-alive",
+            }
         )
         response = self.client.get(
             reverse("temporal_ui", kwargs={"path": "workflows"}) + "?namespace=default"
@@ -59,8 +63,13 @@ class TemporalUIProxyStaffTest(TestCase):
         self.assertNotIn("Content-Length", response)
         method, url = upstream.call_args.args
         self.assertEqual(method, "GET")
-        self.assertEqual(url, "http://temporal-web.test:8080/timbit/temporal/workflows?namespace=default")
-        self.assertEqual(upstream.call_args.kwargs["headers"]["Accept-Encoding"], "identity")
+        self.assertEqual(
+            url,
+            "http://temporal-web.test:8080/timbit/temporal/workflows?namespace=default",
+        )
+        self.assertEqual(
+            upstream.call_args.kwargs["headers"]["Accept-Encoding"], "identity"
+        )
         self.assertFalse(upstream.call_args.kwargs["allow_redirects"])
 
     @mock.patch(_UPSTREAM_CALL)
@@ -72,7 +81,9 @@ class TemporalUIProxyStaffTest(TestCase):
 
     @mock.patch(_UPSTREAM_CALL)
     def test_only_get_and_head_pass_through(self, upstream):
-        response = self.client.post(reverse("temporal_ui", kwargs={"path": "api/v1/workflows"}))
+        response = self.client.post(
+            reverse("temporal_ui", kwargs={"path": "api/v1/workflows"})
+        )
         self.assertEqual(response.status_code, 405)
         upstream.assert_not_called()
 
@@ -93,7 +104,9 @@ class TemporalUIProxyStaffTest(TestCase):
         upstream.return_value = _FakeUpstream(
             status=302,
             body=b"",
-            headers={"Location": "http://temporal-web.test:8080/timbit/temporal/namespaces/default"},
+            headers={
+                "Location": "http://temporal-web.test:8080/timbit/temporal/namespaces/default"
+            },
         )
         response = self.client.get(reverse("temporal_ui", kwargs={"path": ""}))
         self.assertEqual(response.status_code, 302)

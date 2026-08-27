@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from django.db import transaction
 from django.db.models import Count, QuerySet
 from django.db.models.functions import Lower
-from django.http import HttpResponse, StreamingHttpResponse
+from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View, generic
@@ -1716,21 +1716,25 @@ class TemporalUIProxyView(View):
     # content-length, content-encoding) is dropped since we re-stream.
     PASS_HEADERS = ("Cache-Control", "ETag", "Last-Modified", "Content-Disposition")
 
-    def get(self, request, path: str = "") -> HttpResponse:
+    def get(self, request, path: str = "") -> HttpResponseBase:
         return self._proxy(request, path)
 
-    def head(self, request, path: str = "") -> HttpResponse:
+    def head(self, request, path: str = "") -> HttpResponseBase:
         return self._proxy(request, path)
 
-    def _proxy(self, request, path: str) -> HttpResponse:
+    def _proxy(self, request, path: str) -> HttpResponseBase:
         from django.conf import settings
 
-        if request.path.rstrip("/") == self.PUBLIC_PATH and not request.path.endswith("/"):
+        if request.path.rstrip("/") == self.PUBLIC_PATH and not request.path.endswith(
+            "/"
+        ):
             return redirect(self.PUBLIC_PATH + "/")
         if ".." in path.split("/") or path.startswith("/"):
             return HttpResponse("bad path", status=400, content_type="text/plain")
 
-        upstream = getattr(settings, "TEMPORAL_UI_UPSTREAM", "http://temporal-web:8080").rstrip("/")
+        upstream = getattr(
+            settings, "TEMPORAL_UI_UPSTREAM", "http://temporal-web:8080"
+        ).rstrip("/")
         url = f"{upstream}{self.PUBLIC_PATH}/{path}"
         if request.META.get("QUERY_STRING"):
             url = f"{url}?{request.META['QUERY_STRING']}"
@@ -1743,20 +1747,27 @@ class TemporalUIProxyView(View):
 
         try:
             upstream_resp = _temporal_ui_request(
-                request.method, url, headers=headers, stream=True,
-                timeout=(3, 30), allow_redirects=False,
+                request.method,
+                url,
+                headers=headers,
+                stream=True,
+                timeout=(3, 30),
+                allow_redirects=False,
             )
         except requests.RequestException as e:
             logger.warning(f"Temporal UI upstream unreachable: {e}")
             return HttpResponse(
                 "Temporal UI is not reachable from the web pod right now.",
-                status=502, content_type="text/plain",
+                status=502,
+                content_type="text/plain",
             )
 
         response = StreamingHttpResponse(
             upstream_resp.iter_content(chunk_size=64 * 1024),
             status=upstream_resp.status_code,
-            content_type=upstream_resp.headers.get("Content-Type", "application/octet-stream"),
+            content_type=upstream_resp.headers.get(
+                "Content-Type", "application/octet-stream"
+            ),
         )
         for name in self.PASS_HEADERS:
             if name in upstream_resp.headers:
@@ -1764,5 +1775,7 @@ class TemporalUIProxyView(View):
         location = upstream_resp.headers.get("Location")
         if location:
             # Keep redirects on our side of the proxy.
-            response["Location"] = location[len(upstream):] if location.startswith(upstream) else location
+            response["Location"] = (
+                location[len(upstream) :] if location.startswith(upstream) else location
+            )
         return response
