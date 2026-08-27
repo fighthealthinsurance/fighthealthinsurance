@@ -85,6 +85,12 @@
         </a>
       </li>
       <li>
+        <a href="{% url 'temporal_ui' path='' %}">
+          <strong>Temporal Web UI (view-only)</strong>
+          <div class="link-description">Fax workflow runs and full event histories, proxied behind this login; write actions are disabled</div>
+        </a>
+      </li>
+      <li>
         <a href="{% url 'admin_model_query' %}">
           <strong>Query a Model Backend</strong>
           <div class="link-description">Send an ad-hoc prompt to one specific ML backend (no router fan-out or fallback) and capture the raw response</div>

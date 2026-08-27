@@ -177,6 +177,21 @@ kubectl -n totallylegitco exec -i deploy/temporal-admintools -- \
   temporal operator cluster health --address temporal-frontend:7233
 ```
 
+## Web UI
+
+The Temporal Web UI (`temporal-web`, a ClusterIP Service) has no auth of its
+own and gets no ingress. Staff reach it at **`/timbit/temporal/`** on the app,
+which is a read-only reverse proxy in Django (`TemporalUIProxyView` in
+`staff_views.py`) behind the usual `staff_member_required` login. Two chart
+env vars in `values.yaml` make that work: `TEMPORAL_UI_PUBLIC_PATH` so the
+UI's assets and API calls use the proxied prefix, and
+`TEMPORAL_DISABLE_WRITE_ACTIONS` so the UI offers no terminate/signal/reset
+buttons (the proxy also forwards only GET/HEAD). Changing either is a
+`helm upgrade` (above). Direct access for debugging still works with
+`kubectl -n totallylegitco port-forward svc/temporal-web 8080:8080`, but note
+the UI then expects to be served under the public path, i.e.
+`http://localhost:8080/timbit/temporal/`.
+
 ## Rollback
 
 Set `TEMPORAL_ENABLED=false` (or scale the worker to 0). Fax dispatch falls

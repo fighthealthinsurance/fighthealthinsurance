@@ -64,6 +64,13 @@ server:
 # Temporal Web UI (browse/inspect workflows). Expose via the existing ingress.
 web:
   enabled: true
+  # Served through the staff-only Django reverse proxy at /timbit/temporal/
+  # (see README "Web UI"); the UI never gets its own ingress.
+  additionalEnv:
+    - name: TEMPORAL_UI_PUBLIC_PATH
+      value: /timbit/temporal
+    - name: TEMPORAL_DISABLE_WRITE_ACTIONS
+      value: "true"
 
 # Monitoring: chart >= 1.0 no longer bundles Prometheus/Grafana; wire
 # Temporal's metrics into the existing Prometheus later if wanted.
