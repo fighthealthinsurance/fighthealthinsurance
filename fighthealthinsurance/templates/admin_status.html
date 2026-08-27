@@ -196,7 +196,7 @@
   <div class="status-section">
     <h2>⏱️ Temporal (fax workflows)</h2>
     {% if not temporal.enabled %}
-      <p class="summary-line"><span class="badge">DISABLED</span> <span class="pill">TEMPORAL_ENABLED is off; faxes use the Ray path</span></p>
+      <p class="summary-line"><span class="badge unknown">DISABLED</span> <span class="pill">TEMPORAL_ENABLED is off; faxes use the Ray path</span></p>
     {% elif temporal.error %}
       <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ temporal.error }}</span></p>
     {% else %}
@@ -234,7 +234,7 @@
             <td><code>{{ wf.id }}</code></td>
             <td>
               {% if wf.status == "COMPLETED" %}<span class="badge ok">{{ wf.status }}</span>
-              {% elif wf.status == "RUNNING" %}<span class="badge">{{ wf.status }}</span>
+              {% elif wf.status == "RUNNING" %}<span class="badge warn">{{ wf.status }}</span>
               {% else %}<span class="badge bad">{{ wf.status }}</span>{% endif %}
             </td>
             <td>{{ wf.started|date:"Y-m-d H:i" }}</td>

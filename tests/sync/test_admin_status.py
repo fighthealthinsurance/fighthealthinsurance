@@ -178,9 +178,15 @@ class _FakeWorkflow:
 
 
 class _FakeTemporalClient:
-    """Stands in for a temporalio Client: two completed runs, one listed."""
+    """Stands in for a temporalio Client: two completed runs, one listed.
+
+    Records every visibility query so tests can check their shape.
+    """
+
+    queries: list = []
 
     async def count_workflows(self, query):
+        self.queries.append(query)
         return _FakeCount(2 if "Completed" in query else 0)
 
     def list_workflows(self, query, page_size=10):
@@ -242,6 +248,11 @@ class AdminStatusTemporalTest(TestCase):
         self.assertEqual(t["counts"]["Failed"], 0)
         self.assertEqual(len(t["recent"]), 1)
         self.assertEqual(t["recent"][0]["duration_s"], 42)
+        # Running is a live count (no time window); terminal states are 7-day scoped.
+        running = [q for q in _FakeTemporalClient.queries if "Running" in q]
+        completed = [q for q in _FakeTemporalClient.queries if "Completed" in q]
+        self.assertTrue(running and all("StartTime" not in q for q in running))
+        self.assertTrue(completed and all("StartTime" in q for q in completed))
         self.assertContains(response, "CONNECTED")
         self.assertContains(response, "send-fax-test-1234")
 

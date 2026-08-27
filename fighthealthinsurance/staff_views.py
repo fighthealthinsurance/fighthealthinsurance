@@ -312,8 +312,15 @@ class AdminStatusView(generic.TemplateView):
                 client = await get_temporal_client()
                 counts: Dict[str, int] = {}
                 for status in statuses:
+                    # Running is a live state, so count every open run; the
+                    # terminal states are bounded to the last seven days.
+                    scope = (
+                        "WorkflowType='SendFaxWorkflow'"
+                        if status == "Running"
+                        else base
+                    )
                     result = await client.count_workflows(
-                        f"{base} AND ExecutionStatus='{status}'"
+                        f"{scope} AND ExecutionStatus='{status}'"
                     )
                     counts[status] = int(result.count)
                 recent: List[Dict[str, Any]] = []
