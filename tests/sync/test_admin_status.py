@@ -158,6 +158,114 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertEqual(q["failures_recent"], 1)  # E
 
 
+_TEMPORAL_CLIENT = "fighthealthinsurance.temporal_client.get_temporal_client"
+
+
+class _FakeCount:
+    def __init__(self, count):
+        self.count = count
+
+
+class _FakeStatus:
+    name = "COMPLETED"
+
+
+class _FakeWorkflow:
+    id = "send-fax-test-1234"
+    status = _FakeStatus()
+    start_time = timezone.now() - datetime.timedelta(seconds=42)
+    close_time = timezone.now()
+
+
+class _FakeTemporalClient:
+    """Stands in for a temporalio Client: two completed runs, one listed.
+
+    Records every visibility query so tests can check their shape.
+    """
+
+    def __init__(self):
+        self.queries: list = []
+
+    async def count_workflows(self, query):
+        self.queries.append(query)
+        return _FakeCount(2 if "Completed" in query else 0)
+
+    def list_workflows(self, query, page_size=10):
+        async def gen():
+            yield _FakeWorkflow()
+
+        return gen()
+
+
+_FAKE_CLIENTS: list = []  # every fake handed to the view, newest last
+
+
+async def _fake_get_client():
+    client = _FakeTemporalClient()
+    _FAKE_CLIENTS.append(client)
+    return client
+
+
+async def _broken_get_client():
+    raise RuntimeError("temporal-frontend unreachable")
+
+
+class AdminStatusTemporalTest(TestCase):
+    """The Temporal section must reflect the flag, degrade on errors, and
+    never raise."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        _FAKE_CLIENTS.clear()
+
+    def _get(self):
+        with mock.patch(_MODELS, return_value=[]), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            return self.client.get(reverse("admin_status"))
+
+    @override_settings(TEMPORAL_ENABLED=False)
+    @mock.patch(_TEMPORAL_CLIENT)
+    def test_disabled_makes_no_connection(self, mock_client):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "DISABLED")
+        self.assertFalse(response.context["temporal"]["enabled"])
+        mock_client.assert_not_called()
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_broken_get_client)
+    def test_unreachable_frontend_is_an_error_row(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        t = response.context["temporal"]
+        self.assertFalse(t["ok"])
+        self.assertIn("unreachable", t["error"])
+        self.assertContains(response, "ERROR")
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_fake_get_client)
+    def test_healthy_client_renders_counts_and_recent_runs(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        t = response.context["temporal"]
+        self.assertTrue(t["ok"])
+        self.assertEqual(t["counts"]["Completed"], 2)
+        self.assertEqual(t["counts"]["Failed"], 0)
+        self.assertEqual(len(t["recent"]), 1)
+        self.assertEqual(t["recent"][0]["duration_s"], 42)
+        # Running is a live count (no time window); terminal states are 7-day scoped.
+        self.assertEqual(len(_FAKE_CLIENTS), 1)
+        queries = _FAKE_CLIENTS[0].queries
+        running = [q for q in queries if "Running" in q]
+        completed = [q for q in queries if "Completed" in q]
+        self.assertTrue(running and all("StartTime" not in q for q in running))
+        self.assertTrue(completed and all("StartTime" in q for q in completed))
+        self.assertContains(response, "CONNECTED")
+        self.assertContains(response, "send-fax-test-1234")
+
+
 class AdminStatusStorageTest(TestCase):
     """_storage_status must degrade to an error row, never raise."""
 

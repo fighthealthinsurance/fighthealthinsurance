@@ -150,6 +150,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["actors"] = self._actor_status()
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
+        ctx["temporal"] = self._temporal_status()
         ctx["storage"] = self._storage_status()
         return ctx
 
@@ -262,6 +263,97 @@ class AdminStatusView(generic.TemplateView):
             ).count()
         except Exception as e:
             logger.opt(exception=True).error("Error computing fax queue status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _temporal_status() -> Dict[str, Any]:
+        """Temporal fax orchestration: connectivity, recent SendFaxWorkflow runs.
+
+        Answers "is Temporal up and is it doing the fax work?" from the same
+        client the app dispatches through (``temporal_client``), so what this
+        shows is what the web pods actually see. The Temporal Web UI is
+        deliberately not exposed outside the cluster; this section carries the
+        numbers on-call needs and points at the port-forward for the rest.
+
+        Bounded: one connection plus a handful of visibility queries under a
+        single timeout, so a wedged frontend degrades to an error row.
+        """
+        from django.conf import settings
+
+        enabled = bool(getattr(settings, "TEMPORAL_ENABLED", False))
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "enabled": enabled,
+            "host": getattr(settings, "TEMPORAL_HOST", None),
+            "namespace": getattr(settings, "TEMPORAL_NAMESPACE", None),
+            "task_queue": getattr(settings, "TEMPORAL_TASK_QUEUE", None),
+            "counts": {},
+            "recent": [],
+        }
+        if not enabled:
+            return out
+        try:
+            import asyncio
+
+            from asgiref.sync import async_to_sync
+
+            from fighthealthinsurance.temporal_client import get_temporal_client
+
+            since = (timezone.now() - datetime.timedelta(days=7)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            base = f"WorkflowType='SendFaxWorkflow' AND StartTime > '{since}'"
+            statuses = ("Running", "Completed", "Failed", "TimedOut", "Terminated")
+
+            async def gather() -> Dict[str, Any]:
+                client = await get_temporal_client()
+                counts: Dict[str, int] = {}
+                for status in statuses:
+                    # Running is a live state, so count every open run; the
+                    # terminal states are bounded to the last seven days.
+                    scope = (
+                        "WorkflowType='SendFaxWorkflow'"
+                        if status == "Running"
+                        else base
+                    )
+                    result = await client.count_workflows(
+                        f"{scope} AND ExecutionStatus='{status}'"
+                    )
+                    counts[status] = int(result.count)
+                recent: List[Dict[str, Any]] = []
+                async for wf in client.list_workflows(
+                    "WorkflowType='SendFaxWorkflow' ORDER BY StartTime DESC",
+                    page_size=10,
+                ):
+                    duration = None
+                    if wf.start_time and wf.close_time:
+                        duration = round(
+                            (wf.close_time - wf.start_time).total_seconds()
+                        )
+                    recent.append(
+                        {
+                            "id": wf.id,
+                            "status": wf.status.name if wf.status else "UNKNOWN",
+                            "started": wf.start_time,
+                            "closed": wf.close_time,
+                            "duration_s": duration,
+                        }
+                    )
+                    if len(recent) >= 10:
+                        break
+                return {"counts": counts, "recent": recent}
+
+            async def bounded() -> Dict[str, Any]:
+                return await asyncio.wait_for(gather(), timeout=8.0)
+
+            data = async_to_sync(bounded)()
+            out["counts"] = data["counts"]
+            out["recent"] = data["recent"]
+        except Exception as e:
+            logger.opt(exception=True).warning("Temporal status check failed")
             out["ok"] = False
             out["error"] = str(e)
         return out
