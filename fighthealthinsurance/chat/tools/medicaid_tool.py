@@ -831,25 +831,26 @@ class MedicaidEligibilityTool(BaseTool):
                 "them at the next step below."
             )
             # Sub-checks that DID complete with a firm positive are real
-            # answers -- e.g. only the 2026 work-hours answer or the
+            # answers -- e.g. only the work-hours answer or the
             # Medicare-side years-worked answer was declined, while the
-            # 2025-rules check finished with a yes. Hiding those behind the
-            # blanket "no estimate" withheld a computed verdict from someone
-            # the checker did score (mirrors the "we were able to check
-            # Medicare" report below). Only positives: a False here means
-            # "not established", not "no".
-            established = [
-                label
-                for label, is_eligible_for_year in (
-                    ("current (2025)", eligible_2025),
-                    ("2026", eligible_2026),
-                )
-                if is_eligible_for_year
+            # current-rules check finished with a yes. Hiding those behind
+            # the blanket "no estimate" withheld a computed verdict from
+            # someone the checker did score (mirrors the "we were able to
+            # check Medicare" report below). Only positives: a False here
+            # means "not established", not "no".
+            #
+            # Same labels and same positives-only rule as the missing-answers
+            # branch above: `timeline` is None whenever determination_made is
+            # False, so `rows` here is the base/target fallback pair.
+            established = ([base_label] if eligible_base else []) + [
+                str(row.year)
+                for row in rows
+                if row.year > current_year and row.probably_eligible
             ]
             if established:
                 parts.append(
                     "We WERE able to check the "
-                    + " and ".join(established)
+                    + ", ".join(established)
                     + " Medicaid rules though, and based on what we have "
                     "they already look eligible under those — you can share "
                     "that result."

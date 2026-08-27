@@ -472,8 +472,19 @@ def get_microsite(slug: str) -> Optional[Microsite]:
 ATTRIBUTION_ONLY_SLUGS = frozenset({"medicaid-eligibility"})
 
 
-def is_valid_attribution_slug(slug: str) -> bool:
-    """Whether ``slug`` may be recorded as a chat's microsite_slug."""
+def is_valid_attribution_slug(slug: Any) -> bool:
+    """Whether ``slug`` may be recorded as a chat's microsite_slug.
+
+    Takes ``Any`` rather than ``str`` on purpose: the websocket entry point
+    hands this straight through from client JSON, where the value can be any
+    JSON type. The membership test below raises TypeError on an unhashable
+    one ({"microsite_slug": {}}), which took the whole frame down with an
+    internal error instead of ignoring the slug like any other invalid value.
+    Rejecting non-strings here keeps every caller safe rather than making
+    each remember the guard.
+    """
+    if not isinstance(slug, str):
+        return False
     return slug in ATTRIBUTION_ONLY_SLUGS or get_microsite(slug) is not None
 
 

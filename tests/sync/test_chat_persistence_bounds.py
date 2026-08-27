@@ -53,6 +53,28 @@ class MergeNewMessagesInternalFlagTest(TestCase):
             )
         )
 
+    def test_malformed_ids_are_not_internal(self):
+        """Each kind's id must match its REAL format.
+
+        A shared hex-or-hyphen run matched ids we never generate, and without
+        an end guard it matched a PREFIX of a longer one -- either way hiding
+        a user-authored message from replay, REST previews and titles.
+        """
+        for note in (
+            # Appeal pks are ints, never hex.
+            "Linked this chat to Appeal #deadbeef -- details",
+            # Partial id: `#12` must not match through the trailing `f`.
+            "Linked this chat to Appeal #12f -- details",
+            "This chat is already linked to Appeal #12-3 -- details",
+            # Prior auth pks are full UUIDs, not a truncated one.
+            "Linked this chat to Prior Auth Request #f3a91c2e-1d5b, details",
+            "Linked this chat to Prior Auth Request #12345, details",
+        ):
+            with self.subTest(note=note):
+                self.assertFalse(
+                    is_internal_history_message({"role": "user", "content": note})
+                )
+
     def test_tail_dedup_still_applies(self):
         history = [{"role": "user", "content": "CA", "timestamp": "t"}]
         merged = merge_new_messages(history, [{"role": "user", "content": "CA"}])

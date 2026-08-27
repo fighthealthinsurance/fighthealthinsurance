@@ -183,6 +183,12 @@ class TestUserRequestedRepeatPrecision(TestCase):
         "My state denied my Medicaid again, what can I do?",
         "I need to repeat the MRI but insurance denied it",
         "Please tell them again that this is urgent",
+        # The polite prefix ("can you repeat ...") used to accept ANY object,
+        # so the one shape this predicate exists to exclude slipped through
+        # whenever the user was merely polite about it.
+        "Can you repeat the MRI?",
+        "Do I need to repeat the colonoscopy?",
+        "could you repeat the bloodwork if the first one was inconclusive",
     )
 
     EXPLICIT_REQUESTS = (
@@ -198,6 +204,16 @@ class TestUserRequestedRepeatPrecision(TestCase):
         "state that again",
         "tell me that again",
         "show me that one more time",
+        # A bare polite ask, with the request ending there.
+        "could you repeat?",
+        # Named prior content, not just a pronoun: these are ordinary ways to
+        # ask for our last answer back, and returning False on them let the
+        # anti-repeat scorer steer the model away from the user's request.
+        "send your last reply again",
+        "show me the previous answer again",
+        "state the answer once more",
+        "repeat your answer",
+        "repeat the previous response",
     )
 
     def test_clinical_mentions_do_not_disable_the_ladder(self):
@@ -225,6 +241,9 @@ class TestTransformRequestExemption(TestCase):
         "reformat my appeal so I can send it",
         "check the spelling in the letter below",
         "copy-edit the following",
+        # Iterating on our own previous reply.
+        "Now reformat it into three paragraphs",
+        "now rephrase it a bit more formally",
     )
 
     NON_TRANSFORM_MESSAGES = (
@@ -233,6 +252,12 @@ class TestTransformRequestExemption(TestCase):
         "How do I improve my chances of approval?",
         "I want to check whether I might be eligible for Medicaid",
         "Can you help me appeal this denial?",
+        # Questions ABOUT rewriting are not requests to rewrite. The bare
+        # verbs used to match these and stand the whole ladder down on an
+        # ordinary advice turn.
+        "Should I reformat my appeal?",
+        "Will my insurer rephrase the denial?",
+        "Do they reformat denials before sending them?",
     )
 
     def test_transform_requests_are_recognized(self):

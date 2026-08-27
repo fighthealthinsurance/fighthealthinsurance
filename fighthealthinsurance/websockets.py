@@ -1452,11 +1452,19 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
 
         # Validate microsite_slug if provided (attribution-only funnel slugs
         # like medicaid-eligibility are valid too -- see microsites.py).
-        if microsite_slug:
+        # `is not None`, not truthiness: this comes straight from client JSON
+        # and can be ANY JSON type, so anything that isn't a valid slug is
+        # dropped here rather than carried into persistence.
+        # is_valid_attribution_slug rejects non-strings instead of raising on
+        # its set-membership test -- an unhashable value ({"microsite_slug":
+        # {}}) used to answer the frame with an internal error.
+        if microsite_slug is not None:
             from fighthealthinsurance.microsites import is_valid_attribution_slug
 
             if not is_valid_attribution_slug(microsite_slug):
-                logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+                # An empty string is just "no slug", not an attacker probe.
+                if microsite_slug:
+                    logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
                 microsite_slug = None
 
         logger.debug(

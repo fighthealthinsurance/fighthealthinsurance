@@ -617,14 +617,15 @@ class TestMedicaidEligibilityTool(TestCase):
     def test_indeterminate_result_still_reports_firm_positive_verdicts(self):
         """A sub-check that DID finish with a yes is a real answer.
 
-        Declining only the 2026 work-hours question (or the Medicare-side
+        Declining only the work-hours question (or the Medicare-side
         years-worked question) makes determination_made False, but the
-        2025-rules check may have completed with a firm positive -- hiding
-        it behind the blanket "no estimate" withheld a computed verdict.
+        current-rules check may have completed with a firm positive --
+        hiding it behind the blanket "no estimate" withheld a computed
+        verdict.
         """
         info = self.tool._build_eligibility_info(
-            eligible_2025=True,
-            eligible_2026=False,
+            eligible_base=True,
+            eligible_target=False,
             medicare=False,
             alternatives=["We could not check qualifying work hours."],
             missing=[],
@@ -632,7 +633,33 @@ class TestMedicaidEligibilityTool(TestCase):
         )
 
         self.assertIn("could NOT produce a Medicaid estimate", info)
-        self.assertIn("current (2025)", info)
+        self.assertIn(f"current ({current_eligibility_year()})", info)
+        self.assertIn("already look eligible", info)
+        self.assertNotIn("may not be eligible", info)
+
+    def test_indeterminate_result_reports_later_years_that_settled(self):
+        """The later-year positives in a supplied timeline are reported too.
+
+        Same rule as the missing-answers branch: only positives, since a year
+        we could not score comes back False and drops out on that alone.
+        """
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=False,
+            eligible_target=True,
+            medicare=False,
+            alternatives=["We could not check qualifying work hours."],
+            missing=[],
+            determination_made=False,
+            target_year=current + 1,
+            timeline=[
+                YearVerdict(current, False, []),
+                YearVerdict(current + 1, True, []),
+            ],
+        )
+
+        self.assertIn("could NOT produce a Medicaid estimate", info)
+        self.assertIn(f"{current + 1}", info)
         self.assertIn("already look eligible", info)
         self.assertNotIn("may not be eligible", info)
 

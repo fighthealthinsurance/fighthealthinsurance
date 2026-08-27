@@ -315,6 +315,20 @@ class ChatInterface:
             )
         return "; ".join(parts) if parts else None
 
+    def _record_turn_repeat_metric(self, depth: int) -> None:
+        """Record the once-per-turn loop-alerting metric for this turn.
+
+        Called at every depth-0 exit of _call_llm_with_actions, including the
+        no-response one: a turn where every candidate was rejected as a
+        repeat AND the retry delivered nothing is the loudest possible loop,
+        and skipping it there reported "loops never happen" in exactly that
+        case. Clears the accumulator so the two exits can't double-count.
+        """
+        if depth != 0 or not self._turn_saw_repeats:
+            return
+        self._turn_saw_repeats = False
+        record_chat_repeat("rejected_candidates")
+
     async def _call_llm_with_actions(
         self,
         model_backends: List[RemoteModelLike],
@@ -536,6 +550,10 @@ class ChatInterface:
 
         if not response_text:
             logger.debug("Got empty response from LLM")
+            # This exit is the WORST case for the loop metric -- every
+            # candidate rejected as a repeat and the retry delivering
+            # nothing -- so it must not be the one path that skips it.
+            self._record_turn_repeat_metric(depth)
             return None, None
 
         # Capture a presentable runner-up as a side-by-side alternate answer
@@ -752,8 +770,7 @@ class ChatInterface:
 
         # One count per turn, covering the primary pass AND every recursive
         # tool pass (each ORs into the accumulator above).
-        if depth == 0 and self._turn_saw_repeats:
-            record_chat_repeat("rejected_candidates")
+        self._record_turn_repeat_metric(depth)
 
         logger.debug(f"Return with context length {len(context) if context else 0}.")
         return response_text, context

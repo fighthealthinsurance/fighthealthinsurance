@@ -84,25 +84,43 @@ CANNED_REPLY_SIGNATURES = (
 # the topic of the conversation. Erring toward not-matching is the safe
 # direction: it keeps loop protection on.
 _REPEAT_VERB = r"(?:repeat|say|send|resend|re-send|show|write|state|tell)"
+# Nouns that can only mean text WE already produced. Procedure, document and
+# product nouns ("the MRI", "the fax", "the prescription") are deliberately
+# absent: those are the topic of the conversation or a thing to do, not our
+# text, and treating them as repeat targets switches the ladder off on
+# ordinary clinical turns.
+_PRIOR_CONTENT_NOUN = (
+    r"(?:question|answer|response|reply|message|summary|list|steps?"
+    r"|options?|info(?:rmation)?|instructions?)"
+)
+# The object of a repeat request: a pronoun standing in for what we just
+# said, or a named piece of prior content ("your last reply", "the previous
+# answer"). Shared by every branch below so the ones that ask for a target
+# cannot drift apart on what counts as one.
+_PRIOR_CONTENT_OBJ = (
+    rf"(?:that|it|this|those|above|the\s+above"
+    rf"|(?:the\s+)?(?:last|previous|prior)(?:\s+{_PRIOR_CONTENT_NOUN})?"
+    rf"|(?:your|my|the)\s+(?:last\s+|previous\s+|prior\s+)?{_PRIOR_CONTENT_NOUN})"
+)
 USER_REQUESTED_REPEAT_RE = re.compile(
     r"(?:"
     # "repeat that", "repeat your last reply", "repeat the above". A bare
     # "repeat the <anything>" is NOT enough -- "I need to repeat the MRI"
-    # is procedure talk -- so "the" must introduce a reference to something
-    # we previously said.
-    r"\brepeat\s+(?:that|it|this|those|your|last|previous|above"
-    r"|the\s+(?:above|last|previous|question|answer|response|reply"
-    r"|message|summary|list|steps?|options?|info(?:rmation)?|instructions?))\b"
-    # "say that again", "send it again", "show me that one more time". The
-    # object must be a reference to prior content (that/it/this): with any
-    # words allowed between verb and "again", ordinary denial vocabulary
-    # matched ("My STATE denied my Medicaid AGAIN", "TELL them AGAIN") and
-    # switched the whole ladder off on exactly the turns most likely to be
-    # mid-loop.
-    rf"|\b{_REPEAT_VERB}\s+(?:me\s+)?(?:that|it|this)\b"
+    # is procedure talk -- so the object must reference something we said.
+    rf"\brepeat\s+{_PRIOR_CONTENT_OBJ}\b"
+    # "say that again", "send your last reply again", "state the answer once
+    # more". The object must reference prior content: with any words allowed
+    # between verb and "again", ordinary denial vocabulary matched ("My STATE
+    # denied my Medicaid AGAIN", "TELL them AGAIN") and switched the whole
+    # ladder off on exactly the turns most likely to be mid-loop.
+    rf"|\b{_REPEAT_VERB}\s+(?:me\s+)?{_PRIOR_CONTENT_OBJ}\b"
     r"[^.?!\n]{0,20}?\b(?:again|one more time|once more)\b"
-    # "can you repeat", "could you please repeat"
-    r"|\b(?:can|could|would|will|please|plz)\s+(?:you\s+)?(?:please\s+)?repeat\b"
+    # "can you repeat that", "could you please repeat the answer" -- and a
+    # bare "can you repeat?" only when the request ENDS there. The polite
+    # prefix used to accept any object at all, so "Can you repeat the MRI?"
+    # matched: the one shape this whole predicate exists to exclude.
+    rf"|\b(?:can|could|would|will|please|plz)\s+(?:you\s+)?(?:please\s+)?repeat"
+    rf"(?:\s+{_PRIOR_CONTENT_OBJ}\b|\s*[.?!]*\s*$)"
     # "resend it", "re-send that" -- but NOT "resend the fax to my doctor",
     # which asks us to send a document, not to say something again.
     r"|\bre-?send\s+(?:that|it|this)\b"
@@ -125,8 +143,21 @@ USER_REQUESTED_REPEAT_RE = re.compile(
 # allow_repeated_reply. Without that every correct candidate got -inf and
 # the anti-repeat retry actively steered models AWAY from the right answer.
 # Scoped narrowly per NOTE 2's err-toward-not-matching principle.
+
+# A transformation request is addressed to US: an imperative, or a polite
+# ask. Without this frame the bare verbs below matched questions ABOUT
+# rewriting -- "Should I reformat my appeal?", "Will my insurer rephrase the
+# denial?" -- and switched the whole ladder off on ordinary advice turns.
+_TRANSFORM_REQUEST_FRAME = (
+    # Opens the message or a new sentence/clause (imperative), ...
+    r"(?:^\s*|[.?!\n]\s*"
+    # ... or follows a request marker ("please reformat", "now rephrase"), ...
+    r"|\b(?:please|plz|now|then|also|and)\s+(?:please\s+)?"
+    # ... or "can you"/"could you please".
+    r"|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?)"
+)
 TRANSFORM_REQUEST_RE = re.compile(
-    r"(?:"
+    _TRANSFORM_REQUEST_FRAME + r"(?:"
     # Verbs that are only ever about editing text.
     r"\b(?:proofread|copy-?edit|re-?word|rephrase|reformat)\b"
     # Generic verbs, only when aimed at language mechanics.

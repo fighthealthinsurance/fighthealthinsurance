@@ -32,9 +32,18 @@ from loguru import logger
 # PriorAuthRequest pks are UUIDs, and `#\d+` silently missed every legacy
 # prior-auth note whose UUID starts with a hex letter -- rendering the
 # internal note as a user bubble and letting previews/titles pick it up.
+# Each kind gets its OWN id shape rather than a shared `#[0-9a-fA-F-]+`: a
+# loose hex-or-hyphen run also matched things we never generate ("Appeal
+# #deadbeef") and, without an end guard, matched a PREFIX of a longer id
+# ("Appeal #12f" via `#12`) -- both of which hide a user-authored message
+# from replay, REST previews and titles.
 _LEGACY_INTERNAL_NOTE_RE = re.compile(
     r"^(?:Linked this chat to|This chat is already linked to)\s+"
-    r"(?:Appeal|Prior Auth Request)\s+#[0-9a-fA-F-]+",
+    r"(?:Appeal\s+#[0-9]+"
+    r"|Prior Auth Request\s+#[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}"
+    r"-[0-9a-fA-F]{12})"
+    # Nothing id-shaped may follow, or a partial match of a longer id counts.
+    r"(?![\w-])",
 )
 
 
