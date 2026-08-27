@@ -129,6 +129,9 @@ class Base(Configuration):
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
+    # In-cluster address of the Temporal Web UI, reached only through the
+    # staff-only reverse proxy at /timbit/temporal/ (never exposed directly).
+    TEMPORAL_UI_UPSTREAM = os.getenv("TEMPORAL_UI_UPSTREAM", "http://temporal-web:8080")
     # TLS for a self-hosted / Cloud cluster. When TEMPORAL_TLS is true and both
     # the cert and key paths are set the client uses mTLS; otherwise it uses
     # server-side TLS.

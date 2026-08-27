@@ -13,6 +13,7 @@ from django.utils import timezone
 from django.views import View, generic
 
 import ray
+import requests
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
@@ -1686,4 +1687,82 @@ class ProConnectorExtractCSVView(View):
         response["Content-Disposition"] = (
             'attachment; filename="interested_professionals.csv"'
         )
+        return response
+
+
+def _temporal_ui_request(method: str, url: str, **kwargs: Any) -> requests.Response:
+    """Single seam for the proxy's upstream call (patched in tests)."""
+    return requests.request(method, url, **kwargs)
+
+
+class TemporalUIProxyView(View):
+    """Staff-only, read-only reverse proxy for the Temporal Web UI.
+
+    The Temporal UI is a ClusterIP service with no auth of its own, so it is
+    never exposed directly. This view serves it under ``/timbit/temporal/``
+    behind the same staff login as the rest of the dashboard, forwarding only
+    GET/HEAD to a fixed in-cluster upstream (``settings.TEMPORAL_UI_UPSTREAM``).
+
+    The UI runs with ``TEMPORAL_UI_PUBLIC_PATH=/timbit/temporal`` so its assets
+    and API calls come back through this view, and with
+    ``TEMPORAL_DISABLE_WRITE_ACTIONS`` so nothing state-changing is offered.
+    GET-only means that, even with no CSRF check on the proxied paths, no
+    workflow action can pass through here.
+    """
+
+    http_method_names = ["get", "head"]
+    PUBLIC_PATH = "/timbit/temporal"
+    # Response headers worth passing back; everything else (hop-by-hop,
+    # content-length, content-encoding) is dropped since we re-stream.
+    PASS_HEADERS = ("Cache-Control", "ETag", "Last-Modified", "Content-Disposition")
+
+    def get(self, request, path: str = "") -> HttpResponse:
+        return self._proxy(request, path)
+
+    def head(self, request, path: str = "") -> HttpResponse:
+        return self._proxy(request, path)
+
+    def _proxy(self, request, path: str) -> HttpResponse:
+        from django.conf import settings
+
+        if request.path.rstrip("/") == self.PUBLIC_PATH and not request.path.endswith("/"):
+            return redirect(self.PUBLIC_PATH + "/")
+        if ".." in path.split("/") or path.startswith("/"):
+            return HttpResponse("bad path", status=400, content_type="text/plain")
+
+        upstream = getattr(settings, "TEMPORAL_UI_UPSTREAM", "http://temporal-web:8080").rstrip("/")
+        url = f"{upstream}{self.PUBLIC_PATH}/{path}"
+        if request.META.get("QUERY_STRING"):
+            url = f"{url}?{request.META['QUERY_STRING']}"
+
+        headers = {"Accept-Encoding": "identity"}
+        for name in ("Accept", "Accept-Language", "If-None-Match", "If-Modified-Since"):
+            value = request.headers.get(name)
+            if value:
+                headers[name] = value
+
+        try:
+            upstream_resp = _temporal_ui_request(
+                request.method, url, headers=headers, stream=True,
+                timeout=(3, 30), allow_redirects=False,
+            )
+        except requests.RequestException as e:
+            logger.warning(f"Temporal UI upstream unreachable: {e}")
+            return HttpResponse(
+                "Temporal UI is not reachable from the web pod right now.",
+                status=502, content_type="text/plain",
+            )
+
+        response = StreamingHttpResponse(
+            upstream_resp.iter_content(chunk_size=64 * 1024),
+            status=upstream_resp.status_code,
+            content_type=upstream_resp.headers.get("Content-Type", "application/octet-stream"),
+        )
+        for name in self.PASS_HEADERS:
+            if name in upstream_resp.headers:
+                response[name] = upstream_resp.headers[name]
+        location = upstream_resp.headers.get("Location")
+        if location:
+            # Keep redirects on our side of the proxy.
+            response["Location"] = location[len(upstream):] if location.startswith(upstream) else location
         return response

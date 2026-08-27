@@ -78,6 +78,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="admin_status",
     ),
     path(
+        "timbit/temporal",
+        staff_member_required(staff_views.TemporalUIProxyView.as_view()),
+        name="temporal_ui_root",
+    ),
+    re_path(
+        r"^timbit/temporal/(?P<path>.*)$",
+        staff_member_required(staff_views.TemporalUIProxyView.as_view()),
+        name="temporal_ui",
+    ),
+    path(
         "timbit/help/model_query",
         staff_member_required(staff_views.AdminModelQueryView.as_view()),
         name="admin_model_query",
