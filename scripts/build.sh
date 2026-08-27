@@ -132,6 +132,13 @@ envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 # Deploy a staging env
 envsubst < k8s/deploy.yaml | kubectl apply -f -
 
+# The Temporal fax worker (k8s/temporal/worker.yaml) runs the same app image as
+# the web pods and has to roll with every prod deploy. It was applied by hand at
+# Temporal go-live and nothing here re-applied it, so by 2026-08-26 it was two
+# versions behind prod (v0.22.4a-dev vs v0.23.1a-dev). Same ${FHI_BASE}/${FHI_VERSION}
+# substitution as the manifests above.
+envsubst < k8s/temporal/worker.yaml | kubectl apply -f -
+
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
 # the internet -- see docs/metrics-endpoint-access.md). The apply is skipped
 # only where the Prometheus operator's CRD is absent; every other failure (bad
