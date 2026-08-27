@@ -755,6 +755,16 @@ class MedicaidEligibilityTool(BaseTool):
         # Any year past the published table's was scored with that table's
         # limits, and we owe the user that fact.
         scored_beyond_the_table = any(row.year > BASE_ELIGIBILITY_YEAR for row in rows)
+        # One shared wording, like work_req_note above: every branch that
+        # reports a year-labeled verdict owes the same caveat, and two copies
+        # would drift.
+        beyond_the_table_note = (
+            "Note: newer income limits aren't published yet, so "
+            f"every year above used the {BASE_ELIGIBILITY_YEAR} published "
+            "limits -- what separates the years is the work "
+            "requirement, not the income test. Mention that if the "
+            "answer is close to the line."
+        )
 
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
@@ -855,6 +865,12 @@ class MedicaidEligibilityTool(BaseTool):
                     "they already look eligible under those — you can share "
                     "that result."
                 )
+                if scored_beyond_the_table:
+                    # A caller-named future year lands here today (rows is
+                    # the base/target pair whenever determination_made is
+                    # False), so a positive above can be labeled with a year
+                    # whose income limits are not published yet.
+                    parts.append(beyond_the_table_note)
             if medicare:
                 parts.append(
                     "We were able to check Medicare, and our data suggests "
@@ -998,13 +1014,7 @@ class MedicaidEligibilityTool(BaseTool):
                 # table scores both years, so the only thing separating them
                 # is the work requirement. Say that plainly rather than
                 # implying we modelled the later year's limits.
-                parts.append(
-                    "Note: newer income limits aren't published yet, so "
-                    f"every year above used the {BASE_ELIGIBILITY_YEAR} published "
-                    "limits -- what separates the years is the work "
-                    "requirement, not the income test. Mention that if the "
-                    "answer is close to the line."
-                )
+                parts.append(beyond_the_table_note)
 
             if medicare:
                 parts.append("Our data suggests they may be eligible for medicare.")

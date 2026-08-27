@@ -662,6 +662,25 @@ class TestMedicaidEligibilityTool(TestCase):
         self.assertIn(f"{current + 1}", info)
         self.assertIn("already look eligible", info)
         self.assertNotIn("may not be eligible", info)
+        # A year past the published table earns the same caveat the full
+        # verdict gives it: the positive above was scored with the published
+        # year's income limits, not that year's.
+        self.assertIn("newer income limits aren't published yet", info)
+
+    def test_indeterminate_positive_for_the_published_year_needs_no_caveat(self):
+        """The caveat is for years scored past the published table only."""
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=False,
+            medicare=False,
+            alternatives=["We could not check qualifying work hours."],
+            missing=[],
+            determination_made=False,
+            target_year=BASE_ELIGIBILITY_YEAR,
+        )
+
+        self.assertIn("already look eligible", info)
+        self.assertNotIn("newer income limits aren't published yet", info)
 
     def test_scored_ineligible_still_reads_as_a_verdict(self):
         """A completed check that came back negative is a firm answer."""
