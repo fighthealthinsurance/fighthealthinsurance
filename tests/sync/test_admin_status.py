@@ -183,7 +183,8 @@ class _FakeTemporalClient:
     Records every visibility query so tests can check their shape.
     """
 
-    queries: list = []
+    def __init__(self):
+        self.queries: list = []
 
     async def count_workflows(self, query):
         self.queries.append(query)
@@ -196,8 +197,13 @@ class _FakeTemporalClient:
         return gen()
 
 
+_FAKE_CLIENTS: list = []  # every fake handed to the view, newest last
+
+
 async def _fake_get_client():
-    return _FakeTemporalClient()
+    client = _FakeTemporalClient()
+    _FAKE_CLIENTS.append(client)
+    return client
 
 
 async def _broken_get_client():
@@ -211,6 +217,7 @@ class AdminStatusTemporalTest(TestCase):
     def setUp(self):
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
         self.client.login(username="staff", password="pw123")
+        _FAKE_CLIENTS.clear()
 
     def _get(self):
         with mock.patch(_MODELS, return_value=[]), mock.patch(
@@ -249,8 +256,10 @@ class AdminStatusTemporalTest(TestCase):
         self.assertEqual(len(t["recent"]), 1)
         self.assertEqual(t["recent"][0]["duration_s"], 42)
         # Running is a live count (no time window); terminal states are 7-day scoped.
-        running = [q for q in _FakeTemporalClient.queries if "Running" in q]
-        completed = [q for q in _FakeTemporalClient.queries if "Completed" in q]
+        self.assertEqual(len(_FAKE_CLIENTS), 1)
+        queries = _FAKE_CLIENTS[0].queries
+        running = [q for q in queries if "Running" in q]
+        completed = [q for q in queries if "Completed" in q]
         self.assertTrue(running and all("StartTime" not in q for q in running))
         self.assertTrue(completed and all("StartTime" in q for q in completed))
         self.assertContains(response, "CONNECTED")
