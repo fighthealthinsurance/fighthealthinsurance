@@ -1762,8 +1762,18 @@ class TemporalUIProxyView(View):
                 content_type="text/plain",
             )
 
+        def stream():
+            # Close the upstream response even if the client stops reading
+            # partway: Django closes this generator on response close, which
+            # runs the finally, so a pooled requests connection is never
+            # left behind.
+            try:
+                yield from upstream_resp.iter_content(chunk_size=64 * 1024)
+            finally:
+                upstream_resp.close()
+
         response = StreamingHttpResponse(
-            upstream_resp.iter_content(chunk_size=64 * 1024),
+            stream(),
             status=upstream_resp.status_code,
             content_type=upstream_resp.headers.get(
                 "Content-Type", "application/octet-stream"

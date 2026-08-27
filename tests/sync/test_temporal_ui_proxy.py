@@ -19,9 +19,14 @@ class _FakeUpstream:
         self.status_code = status
         self._body = body
         self.headers = {"Content-Type": "text/html; charset=utf-8", **(headers or {})}
+        self.closed = False
 
     def iter_content(self, chunk_size=None):
         yield self._body
+        yield b"<!-- tail -->"
+
+    def close(self):
+        self.closed = True
 
 
 class TemporalUIProxyAccessTest(TestCase):
@@ -98,6 +103,25 @@ class TemporalUIProxyStaffTest(TestCase):
         response = self.client.get(reverse("temporal_ui", kwargs={"path": ""}))
         self.assertEqual(response.status_code, 502)
         self.assertIn(b"not reachable", response.content)
+
+    @mock.patch(_UPSTREAM_CALL)
+    def test_upstream_is_closed_when_the_client_stops_reading(self, upstream):
+        fake = _FakeUpstream()
+        upstream.return_value = fake
+        response = self.client.get(reverse("temporal_ui", kwargs={"path": ""}))
+        chunks = iter(response.streaming_content)
+        next(chunks)  # read one chunk of two, then walk away
+        self.assertFalse(fake.closed)
+        response.close()  # what Django does when the connection ends
+        self.assertTrue(fake.closed)
+
+    @mock.patch(_UPSTREAM_CALL)
+    def test_upstream_is_closed_after_full_read(self, upstream):
+        fake = _FakeUpstream()
+        upstream.return_value = fake
+        response = self.client.get(reverse("temporal_ui", kwargs={"path": ""}))
+        b"".join(response.streaming_content)
+        self.assertTrue(fake.closed)
 
     @mock.patch(_UPSTREAM_CALL)
     def test_upstream_redirect_is_rewritten_to_our_side(self, upstream):
