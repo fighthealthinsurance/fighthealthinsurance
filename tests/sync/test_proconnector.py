@@ -2,8 +2,8 @@
 
 Covers migration/field defaults, access control, next-record selection, AI
 draft generation with safe fallback, the send / send-failure / skip flows,
-staff editing of the mailing address the printable letter is addressed from,
-and graceful handling of missing name / organization.
+staff editing of the mailing address the printable letter is sent to, and
+graceful handling of missing name / organization.
 """
 
 import datetime
@@ -42,6 +42,7 @@ from fighthealthinsurance.proconnector import (
     partner_framing_problem,
     queue_proconnector_intro_email,
     quick_intro_block_reason,
+    save_address,
     send_proconnector_test_email,
 )
 
@@ -1465,6 +1466,83 @@ class AddressPersistedByOtherActionsTest(_ProcessViewTestCase):
         mock_send.assert_not_called()
         pro.refresh_from_db()
         self.assertEqual(pro.address, "123 Main St")
+
+
+class SaveAddressHelperTest(TestCase):
+    """The address write is conditional on the record still being unprocessed.
+
+    Two staff sessions are handed the same next record, so the session that
+    goes on to lose the send claim must not still overwrite the address of a
+    record the winner has already introduced.
+    """
+
+    def test_writes_to_an_unprocessed_record(self):
+        pro = _make_pro(address="")
+        self.assertEqual(save_address(pro, "123 Main St"), 1)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_does_not_write_to_an_already_sent_record(self):
+        pro = _make_pro(address="123 Main St", proconnector_attempted=True)
+        self.assertEqual(save_address(pro, "456 Other Ave"), 0)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_does_not_write_to_a_skipped_record(self):
+        pro = _make_pro(address="123 Main St", proconnector_skipped=True)
+        self.assertEqual(save_address(pro, "456 Other Ave"), 0)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_does_not_write_to_an_unsubscribed_record(self):
+        pro = _make_pro(address="123 Main St", unsubscribed=True)
+        self.assertEqual(save_address(pro, "456 Other Ave"), 0)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_deleted_record_reports_no_rows_written(self):
+        pro = _make_pro(address="")
+        InterestedProfessional.objects.filter(pk=pro.pk).delete()
+        self.assertEqual(save_address(pro, "123 Main St"), 0)
+
+
+class AddressWriteLostToConcurrentProcessingTest(_ProcessViewTestCase):
+    @patch("fighthealthinsurance.staff_views.save_address", return_value=0)
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_lost_write_advances_instead_of_reporting_a_save(
+        self, _mock_gen, _mock_save
+    ):
+        # The record was processed (or deleted) between the eligibility guard
+        # and the UPDATE: telling staff the address was saved would be a lie.
+        pro = _make_pro(address="")
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="A draft body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("proconnector_process"))
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    @patch("fighthealthinsurance.staff_views.save_address", return_value=0)
+    def test_lost_write_stops_the_send_before_it_claims(self, _mock_save, mock_send):
+        # Losing the address write means the record is no longer this session's
+        # to process, so the send must not go out either.
+        pro = _make_pro(address="")
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="Body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
 
 
 # ---------------------------------------------------------------------------

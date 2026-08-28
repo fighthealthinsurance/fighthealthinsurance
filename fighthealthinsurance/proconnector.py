@@ -437,11 +437,24 @@ def save_address(pro: InterestedProfessional, address: str) -> int:
     it to duplicate signups would silently overwrite what those professionals
     submitted, for no workflow gain.
 
+    Conditional on the record still being unprocessed, for the same reason the
+    send path claims atomically (:func:`claim_email_for_send`): two staff
+    sessions are handed the *same* next record, so a pk-only UPDATE lets the
+    session that goes on to lose the claim -- and is redirected away without
+    sending -- still overwrite the address of a record the winner has already
+    introduced. Returns ``0`` when the record was processed, unsubscribed, or
+    deleted in that window; the caller must not report that as a save.
+
     Written with an UPDATE rather than ``pro.save()`` so a staff address
     correction can never carry other stale fields from a long-open tab back
     into the row.
     """
-    return InterestedProfessional.objects.filter(pk=pro.pk).update(address=address)
+    return InterestedProfessional.objects.filter(
+        pk=pro.pk,
+        proconnector_attempted=False,
+        proconnector_skipped=False,
+        unsubscribed=False,
+    ).update(address=address)
 
 
 def describe_known_info(pro: InterestedProfessional) -> str:

@@ -1130,8 +1130,8 @@ class ProConnectorProcessView(View):
 
     The professional's mailing address is editable here too: signups rarely
     include one, so staff look it up (the page offers an address search link)
-    and save it on the record, which is what the printable intro letter
-    addresses itself from. Saving an address stays on the current record; every
+    and save it on the record, which is the recipient address the printable
+    intro letter prints. Saving an address stays on the current record; every
     other action persists a pending address edit on its way past, so the lookup
     is never lost to whichever button is pressed next.
     """
@@ -1348,11 +1348,14 @@ class ProConnectorProcessView(View):
         """Store the posted mailing address on ``pro``, or return an error page.
 
         Returns ``None`` when there is nothing to do or the address was saved,
-        and an error ``HttpResponse`` (this record re-rendered, every edit
+        an error ``HttpResponse`` (this record re-rendered, every edit
         preserved, including the rejected address itself) when the address will
-        not fit the column. ``pro.address`` is updated in memory too, so the
-        same request's address lookup link, "known information" table, and
-        letter card all reflect what was just saved.
+        not fit the column, and a redirect to the next record when the write is
+        lost -- the record was processed, unsubscribed, or deleted between the
+        eligibility guard in :meth:`post` and the UPDATE. ``pro.address`` is
+        updated in memory on a successful write, so the same request's address
+        lookup link, "known information" table, and letter card all reflect
+        what was just saved.
         """
         posted = request.POST.get("address")
         if posted is None:
@@ -1371,7 +1374,12 @@ class ProConnectorProcessView(View):
                 status=400,
             )
         if address != (pro.address or ""):
-            save_address(pro, address)
+            if save_address(pro, address) == 0:
+                # Another session processed (or deleted) the record in the
+                # window since the guard above. Advance rather than claim a
+                # save that did not happen -- whichever action was pressed
+                # would lose its own claim moments later anyway.
+                return redirect("proconnector_process")
             pro.address = address
         return None
 

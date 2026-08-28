@@ -173,7 +173,7 @@
         <tr><th>Most common denial / stated needs</th><td>{% if pro.most_common_denial %}{{ pro.most_common_denial }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
         <tr><th>Notes / comments</th><td>{% if pro.comments %}{{ pro.comments }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
         <tr><th>Phone number</th><td>{% if pro.phone_number %}{{ pro.phone_number }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
-        <tr><th>Address</th><td>{% if pro.address %}{{ pro.address|linebreaksbr }}{% else %}<span class="muted">(none)</span>{% endif %}<a class="edit-link" href="#address">edit</a></td></tr>
+        <tr><th>Address</th><td>{% if pro.address %}{{ pro.address|linebreaksbr }}{% else %}<span class="muted">(none)</span>{% endif %} <a class="edit-link" href="#address">edit</a></td></tr>
         <tr><th>Paid</th><td>{{ pro.paid|yesno:"Yes,No" }}</td></tr>
         <tr><th>Clicked for paid</th><td>{{ pro.clicked_for_paid|yesno:"Yes,No" }}</td></tr>
         <tr><th>Signup / created date</th><td>{{ pro.signup_date }}</td></tr>
