@@ -321,6 +321,8 @@ class MarkdownTwinView(View):
     http_method_names = ["get", "head"]
 
     def get(self, request: HttpRequest, path: str) -> HttpResponse:
+        if not path:  # "/.md": the root's twin is /index.md only
+            raise Http404("No markdown twin for this page")
         source = source_path_for("/" + path + ".md")
         try:
             match = resolve(source)

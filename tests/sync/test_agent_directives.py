@@ -34,38 +34,52 @@ class TestPathHelpers(TestCase):
         self.assertFalse(agent_docs.twin_eligible(None))
 
 
+_SAMPLE_HTML = """
+<html><head><title>Sample :: FHI</title>
+<meta name="description" content="A short description.">
+<script>var x = 1;</script></head>
+<body><nav><a href="/">Nav link</a></nav>
+<main id="main-content">
+  <h1>Heading</h1>
+  <p>Some <strong>bold</strong> text and a <a href="/about-us">relative link</a>.</p>
+  <ul><li>One</li><li>Two <em>italic</em></li></ul>
+  <form><input name="x"><button>Send</button></form>
+  <img src="/x.png" alt="pic">
+  <table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>
+</main>
+<footer>Footer stuff</footer></body></html>
+"""
+_SAMPLE_URL = "https://www.fighthealthinsurance.com/sample"
+
+
 class TestHtmlToMarkdown(TestCase):
-    def test_converts_main_content_and_absolutizes_links(self):
-        html = """
-        <html><head><title>Sample :: FHI</title>
-        <meta name="description" content="A short description.">
-        <script>var x = 1;</script></head>
-        <body><nav><a href="/">Nav link</a></nav>
-        <main id="main-content">
-          <h1>Heading</h1>
-          <p>Some <strong>bold</strong> text and a <a href="/about">relative link</a>.</p>
-          <ul><li>One</li><li>Two <em>italic</em></li></ul>
-          <form><input name="x"><button>Send</button></form>
-          <img src="/x.png" alt="pic">
-          <table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>
-        </main>
-        <footer>Footer stuff</footer></body></html>
-        """
-        md = agent_docs.html_to_markdown(
-            html, "https://www.fighthealthinsurance.com/sample"
-        )
-        self.assertIn("# Heading", md)
-        self.assertIn("> A short description.", md)
-        self.assertIn("- URL: https://www.fighthealthinsurance.com/sample", md)
+    def setUp(self):
+        self.md = agent_docs.html_to_markdown(_SAMPLE_HTML, _SAMPLE_URL)
+
+    def test_header_carries_description_and_url(self):
+        self.assertIn("> A short description.", self.md)
+        self.assertIn(f"- URL: {_SAMPLE_URL}", self.md)
+
+    def test_headings_and_inline_formatting(self):
+        self.assertIn("# Heading", self.md)
+        self.assertIn("Some **bold** text", self.md)
+        self.assertIn("Two *italic*", self.md)
+
+    def test_relative_links_become_absolute(self):
         self.assertIn(
-            "Some **bold** text and a [relative link](https://www.fighthealthinsurance.com/about).",
-            md,
+            "[relative link](https://www.fighthealthinsurance.com/about-us)", self.md
         )
-        self.assertIn("- One\n- Two *italic*", md)
-        self.assertIn("| A | B |", md)
-        self.assertIn("| 1 | 2 |", md)
+
+    def test_lists(self):
+        self.assertIn("- One\n- Two *italic*", self.md)
+
+    def test_tables(self):
+        self.assertIn("| A | B |", self.md)
+        self.assertIn("| 1 | 2 |", self.md)
+
+    def test_chrome_scripts_forms_and_images_are_dropped(self):
         for absent in ("Nav link", "Footer stuff", "Send", "var x", "<", "pic"):
-            self.assertNotIn(absent, md)
+            self.assertNotIn(absent, self.md)
 
     def test_uses_title_when_page_has_no_h1(self):
         html = "<html><head><title>Only Title</title></head><body><main><p>Body.</p></main></body></html>"
@@ -158,6 +172,7 @@ class TestAgentEndpoints(TestCase):
 
     def test_ineligible_pages_have_no_twin(self):
         for path in [
+            "/.md",
             "/pro_version.md",
             "/scan.md",
             "/timbit/help.md",
