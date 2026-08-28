@@ -61,6 +61,7 @@ from fighthealthinsurance.chat.tools import (
     ClinicalTrialsTool,
     DocFetcherTool,
     FinancialAssistanceTool,
+    GenerateAppealLetterTool,
     MedicaidEligibilityTool,
     MedicaidGovLookupTool,
     MedicaidInfoTool,
@@ -69,6 +70,11 @@ from fighthealthinsurance.chat.tools import (
     PubMedTool,
     RxNormLookupTool,
     USPSTFLookupTool,
+)
+from fighthealthinsurance.chat.appeal_letter_generator import (
+    denial_has_letter_context,
+    draft_letter_for_chat,
+    looks_like_letter_request,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
@@ -661,9 +667,21 @@ class ChatInterface:
             user_message_for_scoring=scoring_message,
         )
 
-        # Non-recursive tools: appeal, prior auth
+        # Non-recursive tools: appeal, appeal letter, prior auth
         appeal_tool = AppealTool(self.send_status_message, self.send_error_message)
         response_text, context, _ = await appeal_tool.handle(
+            response_text, context, chat=chat
+        )
+
+        # After AppealTool on purpose: when a reply carries both calls, the
+        # field updates from create_or_update_appeal land first and the
+        # generated letter (which reads them) wins the appeal_text.
+        generate_letter_tool = GenerateAppealLetterTool(
+            self.send_status_message,
+            self.send_error_message,
+            use_external=self.use_external_models,
+        )
+        response_text, context, _ = await generate_letter_tool.handle(
             response_text, context, chat=chat
         )
 
@@ -1535,6 +1553,47 @@ class ChatInterface:
                 logger.opt(exception=True).error(
                     f"Could not persist user message for failed turn in chat {chat.id}"
                 )
+
+            # Letter-draft rescue: when the failed turn was asking us to
+            # draft the appeal letter and the chat is linked to an appeal
+            # with real denial context, route the request to the dedicated
+            # appeal-generation pipeline instead of erroring out. It fails
+            # differently from chat (no repeat-rejection scoring, its own
+            # backend ladder), its specialized static templates need no
+            # model at all, and a precomputed ProposedAppeal reserve is
+            # served straight from the DB -- so "every chat model failed"
+            # does not mean the letter is out of reach.
+            fallback_reply: Optional[str] = None
+            letter_request = looks_like_letter_request(user_message)
+            if letter_request:
+                fallback_reply = await self._attempt_letter_fallback_reply()
+            if fallback_reply:
+                try:
+                    self.chat = chat = await apersist_chat_turn(
+                        chat,
+                        new_messages=[{"role": "assistant", "content": fallback_reply}],
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Could not persist letter-fallback reply for chat "
+                        f"{chat.id}; delivering it unpersisted"
+                    )
+                logger.warning(
+                    f"Chat {chat.id}: all chat models failed for a letter-draft "
+                    f"request but the appeal-generator fallback delivered "
+                    f"(use_external_models={self.use_external_models}, "
+                    f"turn_timed_out={turn_timed_out})"
+                )
+                record_chat_turn("letter_fallback")
+                capture_reliability_event(
+                    "chat_turn_letter_fallback_rescue",
+                    chat_id=str(chat.id),
+                    use_external_models=self.use_external_models,
+                    turn_timed_out=turn_timed_out,
+                )
+                await self.send_message_to_client(fallback_reply)
+                return
+
             # Provide more helpful error message based on context
             err_msg = (
                 "Sorry, all available models (including backup models) are currently "
@@ -1547,9 +1606,17 @@ class ChatInterface:
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
+            if letter_request:
+                appeal_link = await self._linked_appeal_link()
+                if appeal_link:
+                    err_msg += (
+                        f" You can also generate your appeal letter directly "
+                        f"from {appeal_link}."
+                    )
             logger.error(
                 f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
-                f"after trying all models. use_external_models={self.use_external_models}"
+                f"after trying all models. use_external_models={self.use_external_models} "
+                f"letter_request={letter_request}"
             )
             if not turn_timed_out:
                 record_chat_turn("failed")
@@ -1558,8 +1625,92 @@ class ChatInterface:
                 chat_id=str(chat.id),
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
+                letter_fallback_attempted=letter_request,
             )
             await self.send_error_message(err_msg)
+
+    async def _linked_appeal_for_letter_fallback(self):
+        """The chat's linked appeal (with denial preloaded) if its denial
+        carries enough context to draft a letter from, else None."""
+        appeal = (
+            await Appeal.objects.select_related("for_denial")
+            .filter(chat=self.chat)
+            .afirst()
+        )
+        if not appeal or not appeal.for_denial:
+            return None
+        if not denial_has_letter_context(appeal.for_denial):
+            return None
+        return appeal
+
+    async def _linked_appeal_link(self) -> Optional[str]:
+        """Markdown link to the chat's letter-capable linked appeal, or None.
+        Used to point the user at the appeal page when even the letter
+        fallback couldn't deliver."""
+        try:
+            appeal = await self._linked_appeal_for_letter_fallback()
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Could not look up linked appeal for chat {self.chat.id}"
+            )
+            return None
+        if not appeal:
+            return None
+        return f"[Appeal #{appeal.id}](/appeals/{appeal.id})"
+
+    async def _attempt_letter_fallback_reply(self) -> Optional[str]:
+        """Draft the requested appeal letter after a total chat-model failure.
+
+        Serves an existing ProposedAppeal first (a DB read is the one step
+        guaranteed to work while models are down), then runs a bounded
+        appeal-pipeline generation. Requires a chat-linked appeal whose
+        denial has substance -- with no context, generation would only hand
+        the user a letter of blanks. Never raises: the caller still owes the
+        user an error frame when this returns None.
+        """
+        chat = self.chat
+        try:
+            appeal = await self._linked_appeal_for_letter_fallback()
+            if not appeal:
+                logger.info(
+                    f"Chat {chat.id}: no letter-capable linked appeal; "
+                    f"skipping letter fallback"
+                )
+                return None
+            await self.send_status_message(
+                "Our chat models are having trouble right now -- drafting "
+                "your appeal letter through the appeal generator instead..."
+            )
+            # The turn's own heartbeat was cancelled when generation failed;
+            # the fallback can run for another minute, so keep frames moving
+            # on the socket for the user (and any idle-reaping proxy).
+            heartbeat_task = asyncio.create_task(self._turn_heartbeat())
+            try:
+                letter = await draft_letter_for_chat(
+                    appeal=appeal,
+                    denial=appeal.for_denial,
+                    use_external=self.use_external_models,
+                    prefer_existing=True,
+                    deadline_seconds=_env_float(
+                        "FHI_CHAT_LETTER_FALLBACK_DEADLINE", 60.0
+                    ),
+                )
+            finally:
+                heartbeat_task.cancel()
+            if not letter:
+                return None
+            return (
+                f"Our chat models are having trouble right now, so I drafted "
+                f"your appeal letter with our dedicated appeal generator "
+                f"instead. It's saved to [Appeal #{appeal.id}]"
+                f"(/appeals/{appeal.id}). Here's the draft -- please review "
+                f"the details before sending:\n\n---\n\n{letter}"
+            )
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Letter fallback failed for chat {chat.id}: {e}"
+            )
+            return None
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client, minus internal

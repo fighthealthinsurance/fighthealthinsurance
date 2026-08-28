@@ -51,6 +51,16 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
     r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
 )
 
+# Generate appeal letter tool - captures JSON with denial/appeal fields.
+# Matches: generate_appeal_letter {JSON} with optional ** markers.
+# Routes letter drafting to the dedicated appeal-generation pipeline instead
+# of having the chat model write the whole letter inline (the longest, most
+# failure-prone chat generation); same anchored line format as
+# CREATE_OR_UPDATE_APPEAL_REGEX.
+GENERATE_APPEAL_LETTER_REGEX = (
+    r"^\s*\*{0,4}generate_appeal_letter\*{0,4}\s*(\{.*\})\s*$"
+)
+
 # Medicaid.gov page lookup - captures JSON parameters
 # Matches: medicaid_gov_lookup {JSON} or **medicaid_gov_lookup {JSON}**
 # Resolves a curated page, an allowlisted URL, or a free-text query to a
@@ -133,7 +143,8 @@ TOOL_DETECT_FLAGS = re.DOTALL | re.MULTILINE | re.IGNORECASE
 # Matches the bare name too -- the handlers tolerate 0-4 asterisks, so
 # requiring `**name**` adjacency missed the unadorned form.
 ACTION_TOKEN_MENTION_RE = re.compile(
-    r"\*{0,4}\b(?:create_or_update_appeal|create_or_update_prior_auth)\b\*{0,4}",
+    r"\*{0,4}\b(?:create_or_update_appeal|create_or_update_prior_auth"
+    r"|generate_appeal_letter)\b\*{0,4}",
     re.IGNORECASE,
 )
 
@@ -146,6 +157,7 @@ ALL_TOOL_PATTERNS = [
     MEDICAID_GOV_LOOKUP_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
+    GENERATE_APPEAL_LETTER_REGEX,
     FETCH_DOC_REGEX,
     USPSTF_LOOKUP_REGEX,
     LOOKUP_PA_REQUIREMENT_REGEX,

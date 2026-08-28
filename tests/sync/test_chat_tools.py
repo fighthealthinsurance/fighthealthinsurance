@@ -1862,3 +1862,116 @@ class TestMedicaidIndeterminateWithQuestions(TestCase):
             determination_made=True,
         )
         self.assertNotIn("canNOT produce a Medicaid estimate", info)
+
+
+class TestGenerateAppealLetterPattern(TestCase):
+    """Detection and screening behavior for the generate_appeal_letter tool."""
+
+    def test_detects_anchored_call_with_markers(self):
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+
+        tool = GenerateAppealLetterTool(AsyncMock())
+        text = '**generate_appeal_letter**{"procedure": "MRI", "diagnosis": "back pain"}'
+        match = tool.detect(text)
+        self.assertIsNotNone(match)
+        self.assertEqual(
+            match.group(1), '{"procedure": "MRI", "diagnosis": "back pain"}'
+        )
+
+    def test_detects_call_after_prose_line(self):
+        """The pattern is ^...$-anchored; MULTILINE detect flags must find a
+        call that follows a sentence of prose."""
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+
+        tool = GenerateAppealLetterTool(AsyncMock())
+        text = 'On it -- drafting now.\ngenerate_appeal_letter {"procedure": "MRI"}\n'
+        self.assertIsNotNone(tool.detect(text))
+
+    def test_counts_as_tool_invocation(self):
+        text = 'Sure.\n**generate_appeal_letter**{"procedure": "MRI"}\n'
+        self.assertEqual(count_tool_invocations(text), 1)
+
+    def test_bare_mention_is_not_an_invocation_but_blocks_alternates(self):
+        from fighthealthinsurance.chat.tools import contains_tool_call
+
+        prose = "I can use generate_appeal_letter to draft this for you."
+        self.assertEqual(count_tool_invocations(prose), 0)
+        # Action-token mention: an alternate answer carrying it must be
+        # screened out (only the winning reply runs state-mutating flows).
+        self.assertTrue(contains_tool_call(prose))
+
+
+class TestLetterRequestDetector(TestCase):
+    """looks_like_letter_request gates the total-failure letter fallback."""
+
+    def test_matches_draft_requests(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            looks_like_letter_request,
+        )
+
+        for message in [
+            "Please go ahead and draft a letter.",
+            "Can you write the appeal for me?",
+            "Generate an appeal letter to my insurer",
+            "please redo the letter with the new diagnosis",
+        ]:
+            with self.subTest(message=message):
+                self.assertTrue(looks_like_letter_request(message))
+
+    def test_ignores_non_draft_messages(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            looks_like_letter_request,
+        )
+
+        for message in [
+            "Why was my MRI claim denied?",
+            "I got a letter from my insurer yesterday",
+            "What is an appeal?",
+            "",
+            None,
+        ]:
+            with self.subTest(message=message):
+                self.assertFalse(looks_like_letter_request(message))
+
+
+class TestSubstituteDenialFields(TestCase):
+    """Placeholder substitution for chat-served letters."""
+
+    class _Denial:
+        insurance_company = "Acme Health"
+        claim_id = "CLM-123"
+        diagnosis = None
+        procedure = "UNKNOWN"
+
+    def test_substitutes_known_fields_and_keeps_unknown_placeholders(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            substitute_denial_fields,
+        )
+
+        letter = (
+            "Dear {insurance_company}, re claim {claim_id} for {procedure} "
+            "({diagnosis})."
+        )
+        result = substitute_denial_fields(letter, self._Denial())
+        self.assertIn("Acme Health", result)
+        self.assertIn("CLM-123", result)
+        # None and the extractor's UNKNOWN marker keep the fill-in blank.
+        self.assertIn("{procedure}", result)
+        self.assertIn("{diagnosis}", result)
+
+    def test_denial_context_gate(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            denial_has_letter_context,
+        )
+
+        class Empty:
+            denial_text = "   "
+            procedure = ""
+            diagnosis = None
+
+        class HasProcedure(Empty):
+            procedure = "MRI"
+
+        self.assertFalse(denial_has_letter_context(None))
+        self.assertFalse(denial_has_letter_context(Empty()))
+        self.assertTrue(denial_has_letter_context(HasProcedure()))

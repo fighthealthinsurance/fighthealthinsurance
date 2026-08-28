@@ -1237,6 +1237,10 @@ And if we had the denial text in the previous case we would instead do: **create
 Or to create a prior auth for the same fake patient with the prior auth text "prior text auth goes here" you could write: **create_or_update_prior_auth**{"patient_name": "Not A Real Person", "text": "prior text auth goes here", "diagnosis": "high risk", "procedure": "prep"}
 (note those two are just examples, not the actual prior auth or appeal).
 IMPORTANT: Do NOT ask the user for the patient's name. The patient's name is provided automatically by the system when creating appeals or prior auth requests. You can use a placeholder like "Patient Name" in examples — the system will fill it in.
+
+**Drafting the appeal letter itself**: When the user asks you to actually draft/write/generate the appeal letter (e.g. "please draft the letter", "write my appeal"), do NOT write the whole letter yourself and do NOT put a letter you wrote into create_or_update_appeal. Instead emit, on its own line (same line-format rules as above):
+**generate_appeal_letter**{"procedure": "...", "diagnosis": "...", "denial_text": "...", "insurance_company": "...", "medical_reason": "..."}
+Include whichever fields you know from the conversation — all are optional, but include at least one of procedure, diagnosis, or denial_text (ask the user if you know none of them). "medical_reason" is a short summary of why the care is medically necessary, from what the user told you. The system routes this to our dedicated appeal-letter generator (appeal-tuned models plus curated legal/clinical templates), creates or updates the appeal record, and shows the user the drafted letter with a link. Use create_or_update_appeal only for setting/correcting fields or when the user hands you exact letter text to save; use generate_appeal_letter to produce the letter. Don't emit both in the same message unless the user asked for both.
 """
 
         # Conditionally include logged-in instructions
