@@ -29,6 +29,10 @@ class PriorAuthTool(BaseTool):
 
     pattern = CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
     detect_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
+    # ^...$-anchored pattern: the on-error strip needs MULTILINE too, or a
+    # call after a line of prose leaks raw tool syntax when execute raises
+    # (see AppealTool).
+    detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Prior Auth"
 
     # Field name mappings for normalization
