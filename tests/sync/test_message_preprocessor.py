@@ -28,7 +28,9 @@ from fighthealthinsurance.chat.message_preprocessor import (
     DIRECT_CHAT_SOFT_LIMIT_CHARS,
     LONG_DOC_REFERENCE_DELTA,
     MessageVariant,
+    build_long_paste_marker,
     has_suspicious_unicode,
+    is_stored_message_marker,
     prepare_user_message_variants,
     safe_display_truncate,
     strip_control_chars,
@@ -229,6 +231,47 @@ class UnicodeHelperTest(SimpleTestCase):
     def test_strip_control_chars_keeps_tabs_and_newlines(self):
         self.assertEqual(strip_control_chars("a\tb\nc"), "a\tb\nc")
         self.assertEqual(strip_control_chars("a" + ZERO_WIDTH_SPACE + "b"), "ab")
+
+
+class StoredMessageMarkerTest(SimpleTestCase):
+    """is_stored_message_marker recognizes exactly the system-written markers
+    that replace stored content in chat history -- and nothing else."""
+
+    def test_built_long_paste_marker_is_recognized(self):
+        marker = build_long_paste_marker(18949, "pasted_message_1787951051.txt")
+        self.assertTrue(is_stored_message_marker(marker))
+
+    def test_variant_display_text_is_recognized(self):
+        big = "Denied as not medically necessary. " * 600
+        variants = prepare_user_message_variants(big, is_document=False)
+        ref = next(v for v in variants if v.kind == "long_message_document_reference")
+        self.assertTrue(is_stored_message_marker(ref.display_text))
+
+    def test_document_upload_marker_is_recognized(self):
+        # Mirrors the marker built in chat_interface.handle_chat_message.
+        marker = (
+            "I've uploaded a document: denial_letter.pdf (12,345 characters). "
+            "The document is being analyzed and its contents are available "
+            "for reference."
+        )
+        self.assertTrue(is_stored_message_marker(marker))
+
+    def test_marker_with_surrounding_whitespace_is_recognized(self):
+        marker = build_long_paste_marker(9000, "pasted_message_1.txt")
+        self.assertTrue(is_stored_message_marker(f"  {marker}\n"))
+
+    def test_normal_user_text_is_not_a_marker(self):
+        for text in (
+            "Why was my physical therapy claim denied?",
+            "You pasted a long message the other day, what was in it?",
+            "",
+            None,
+        ):
+            self.assertFalse(is_stored_message_marker(text))
+
+    def test_text_merely_containing_the_marker_is_not_a_marker(self):
+        marker = build_long_paste_marker(9000, "pasted_message_1.txt")
+        self.assertFalse(is_stored_message_marker(f"The system said: {marker} Weird!"))
 
 
 class VariantScoringTest(SimpleTestCase):

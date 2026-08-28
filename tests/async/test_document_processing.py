@@ -19,6 +19,7 @@ from fighthealthinsurance.chat.document_processor import (
     DEFAULT_CHUNK_SIZE,
     chunk_document,
     process_uploaded_document,
+    start_document_summarization,
 )
 from fighthealthinsurance.chat.document_search import (
     _extract_search_terms,
@@ -286,3 +287,130 @@ class TestProcessUploadedDocument(APITestCase):
                 full_text="Some text",
             )
             mock_fire.assert_called_once()
+
+    async def test_defer_summarization_skips_the_fire(self):
+        chat = await OngoingChat.objects.acreate()
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ) as mock_fire:
+            doc = await process_uploaded_document(
+                chat=chat,
+                document_name="test.pdf",
+                full_text="Some text",
+                defer_summarization=True,
+            )
+            mock_fire.assert_not_called()
+
+            # The caller kicks it off later; a PENDING doc fires.
+            fired = await start_document_summarization(doc)
+            assert fired
+            mock_fire.assert_called_once()
+
+    async def test_start_summarization_skips_docs_already_processed(self):
+        chat = await OngoingChat.objects.acreate()
+        for status in (
+            ChatDocument.Status.PROCESSING,
+            ChatDocument.Status.COMPLETED,
+        ):
+            doc = await ChatDocument.objects.acreate(
+                chat=chat,
+                document_name=f"{status}.pdf",
+                full_text="Text",
+                char_count=4,
+                processing_status=status,
+            )
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ) as mock_fire:
+                fired = await start_document_summarization(doc)
+                assert not fired
+                mock_fire.assert_not_called()
+
+    async def test_identical_resubmission_reuses_existing_document(self):
+        chat = await OngoingChat.objects.acreate()
+        full_text = "The same long pasted denial letter, resubmitted after a failure."
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            first = await process_uploaded_document(
+                chat=chat,
+                document_name="pasted_message_100.txt",
+                full_text=full_text,
+            )
+            second = await process_uploaded_document(
+                chat=chat,
+                document_name="pasted_message_200.txt",
+                full_text=full_text,
+            )
+
+        assert second.id == first.id
+        # The original name wins so history references a real document.
+        assert second.document_name == "pasted_message_100.txt"
+        count = await ChatDocument.objects.filter(chat=chat).acount()
+        assert count == 1
+
+    async def test_different_content_is_not_deduped(self):
+        chat = await OngoingChat.objects.acreate()
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            first = await process_uploaded_document(
+                chat=chat,
+                document_name="a.txt",
+                full_text="first document text",
+            )
+            second = await process_uploaded_document(
+                chat=chat,
+                document_name="b.txt",
+                full_text="second, different text",
+            )
+
+        assert second.id != first.id
+        count = await ChatDocument.objects.filter(chat=chat).acount()
+        assert count == 2
+
+    async def test_same_content_in_a_different_chat_is_not_deduped(self):
+        chat_a = await OngoingChat.objects.acreate()
+        chat_b = await OngoingChat.objects.acreate()
+        full_text = "shared text pasted into two unrelated chats"
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            doc_a = await process_uploaded_document(
+                chat=chat_a, document_name="a.txt", full_text=full_text
+            )
+            doc_b = await process_uploaded_document(
+                chat=chat_b, document_name="b.txt", full_text=full_text
+            )
+
+        assert doc_a.id != doc_b.id
+
+    async def test_resubmission_of_failed_document_refires_summarization(self):
+        chat = await OngoingChat.objects.acreate()
+        full_text = "content whose first summarization attempt failed"
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ) as mock_fire:
+            first = await process_uploaded_document(
+                chat=chat, document_name="a.txt", full_text=full_text
+            )
+            first.processing_status = ChatDocument.Status.FAILED
+            await first.asave(update_fields=["processing_status"])
+
+            second = await process_uploaded_document(
+                chat=chat, document_name="b.txt", full_text=full_text
+            )
+            assert second.id == first.id
+            # Once for the initial store, once for the FAILED retry.
+            assert mock_fire.call_count == 2

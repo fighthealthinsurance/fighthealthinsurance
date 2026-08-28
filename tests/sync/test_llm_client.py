@@ -24,6 +24,7 @@ from fighthealthinsurance.chat.llm_client import (
     BAD_CONTEXT_PATTERNS,
     INVENTED_ELIGIBILITY_VERDICT_PENALTY,
 )
+from fighthealthinsurance.chat.message_preprocessor import build_long_paste_marker
 from tests.chat_fixtures import CANNED_MEDICAID_REPLY, FRESH_REPLY, LOOPED_REPLY
 
 
@@ -588,6 +589,54 @@ class TestFindRepeatedReply(TestCase):
                 "Now reformat it into three paragraphs",
             )
         )
+
+
+class TestStoredMarkerEchoExemption(TestCase):
+    """A long-paste/upload turn replaces the user message with a
+    system-written marker; a reply acknowledging the stored content by name
+    legitimately reuses that wording, so the echoes-the-user rung must stand
+    down for markers -- otherwise every candidate on such a turn could be
+    hard-rejected, failing the whole turn."""
+
+    MARKER = build_long_paste_marker(18949, "pasted_message_1787951051.txt")
+
+    def test_reply_echoing_the_marker_is_not_hard_rejected(self):
+        # Verbatim echo -- the strongest possible match, which the
+        # echoes-the-user rung would otherwise reject outright.
+        self.assertIsNone(find_repeated_reply(self.MARKER, [], self.MARKER))
+
+    def test_reply_echoing_real_user_text_is_still_rejected(self):
+        msg = "Help me figure out how to navigate the new medicaid requirements."
+        self.assertEqual(find_repeated_reply(msg, [], msg), "echoes_user_message")
+
+    def test_assistant_repeat_still_rejected_on_marker_turns(self):
+        history = [
+            {"role": "user", "content": "Help me with this denial."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        self.assertEqual(
+            find_repeated_reply(LOOPED_REPLY, history, self.MARKER),
+            "repeats_recent_assistant_reply",
+        )
+
+    def test_no_soft_penalty_for_marker_similarity(self):
+        self.assertEqual(
+            compute_repetition_penalty(self.MARKER, [], current_message=self.MARKER),
+            0.0,
+        )
+
+    def test_marker_echo_not_scored_negative_infinity(self):
+        reply = (
+            f"{self.MARKER} I'm reading through it now — tell me what you'd "
+            f"like me to do with it."
+        )
+        score = score_llm_response(
+            (reply, "Context: long pasted denial letter stored."),
+            100,
+            chat_history=[],
+            current_message=self.MARKER,
+        )
+        self.assertGreater(score, 0)
 
 
 class TestTransformRequestSoftPenalty(TestCase):

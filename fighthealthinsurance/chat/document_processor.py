@@ -259,30 +259,85 @@ async def summarize_chunks(
             logger.debug(f"Could not persist failed status: {save_err}")
 
 
+def summarization_needed(doc: ChatDocument) -> bool:
+    """Whether ``doc`` still needs (re)summarization kicked off.
+
+    PENDING covers both a fresh document and one orphaned before its
+    deferred kickoff ran (e.g. the WebSocket turn was cancelled mid-flight);
+    FAILED documents get another try. PROCESSING/COMPLETED are left alone.
+    """
+    return doc.processing_status in (
+        ChatDocument.Status.PENDING,
+        ChatDocument.Status.FAILED,
+    )
+
+
+async def start_document_summarization(
+    doc: ChatDocument,
+    denial_context: Optional[str] = None,
+) -> bool:
+    """Fire background summarization for ``doc`` if it still needs it.
+
+    Safe to call repeatedly -- see :func:`summarization_needed`. Returns True
+    when a background task was actually fired.
+    """
+    if not summarization_needed(doc):
+        return False
+    await fire_and_forget_in_new_threadpool(
+        summarize_chunks(doc.id, denial_context=denial_context)
+    )
+    return True
+
+
 async def process_uploaded_document(
     chat,
     document_name: str,
     full_text: str,
     denial_context: Optional[str] = None,
+    defer_summarization: bool = False,
 ) -> ChatDocument:
-    """Create a ChatDocument and fire background summarization.
+    """Store ``full_text`` as a ChatDocument and (by default) fire background
+    summarization. Returns the ChatDocument so the caller can reference it.
 
-    Returns the ChatDocument so the caller can reference it.
+    Identical content re-submitted to the same chat (the user re-pasting a
+    long message after a failed turn, or re-uploading the same file) reuses
+    the existing document -- its original ``document_name`` wins -- instead of
+    creating a duplicate row and a second summarization storm.
+
+    With ``defer_summarization=True`` no summarization is fired here; the
+    caller must call :func:`start_document_summarization` afterwards. The
+    chat turn uses this so the batch summarization work doesn't compete with
+    the interactive LLM calls for the same backends.
     """
-    doc = await ChatDocument.objects.acreate(
-        chat=chat,
-        document_name=document_name or "uploaded_document",
-        full_text=full_text,
-        char_count=len(full_text),
-        processing_status=ChatDocument.Status.PENDING,
-    )
+    doc: Optional[ChatDocument] = None
+    async for existing in (
+        ChatDocument.objects.filter(chat=chat, char_count=len(full_text))
+        .order_by("-created_at")
+        .aiterator()
+    ):
+        if existing.full_text == full_text:
+            doc = existing
+            logger.info(
+                f"Reusing ChatDocument {doc.id} ({doc.document_name}) for chat "
+                f"{chat.id}: identical content re-submitted "
+                f"(status={doc.processing_status})"
+            )
+            break
 
-    logger.info(
-        f"Created ChatDocument {doc.id} for chat {chat.id} " f"({len(full_text)} chars)"
-    )
+    if doc is None:
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name=document_name or "uploaded_document",
+            full_text=full_text,
+            char_count=len(full_text),
+            processing_status=ChatDocument.Status.PENDING,
+        )
+        logger.info(
+            f"Created ChatDocument {doc.id} for chat {chat.id} "
+            f"({len(full_text)} chars)"
+        )
 
-    await fire_and_forget_in_new_threadpool(
-        summarize_chunks(doc.id, denial_context=denial_context)
-    )
+    if not defer_summarization:
+        await start_document_summarization(doc, denial_context=denial_context)
 
     return doc
