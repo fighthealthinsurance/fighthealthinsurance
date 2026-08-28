@@ -379,20 +379,48 @@ class MarkdownTwinView(View):
         return response
 
 
+_FRONT_MATTER_LINE = re.compile(r'^([A-Za-z_]+):\s*"?(.*?)"?\s*$')
+
+
+def _blog_posts_from_sources() -> list[dict[str, Any]]:
+    """Post list read straight from the blog/*.md front matter, newest first.
+    blog_posts.json (what the site itself uses) is generated from these files
+    and is not checked in, so it is absent on a fresh checkout and in CI."""
+    blog_dir = _static_path("blog")
+    if blog_dir is None or not Path(blog_dir).is_dir():
+        return []
+    posts: list[dict[str, Any]] = []
+    for md in sorted(Path(blog_dir).glob("*.md")):
+        try:
+            text = md.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not text.startswith("---"):
+            continue
+        end = text.find("\n---", 3)
+        if end < 0:
+            continue
+        meta: dict[str, Any] = {}
+        for line in text[3:end].splitlines():
+            m = _FRONT_MATTER_LINE.match(line.strip())
+            if m and m.group(1) in ("title", "slug", "date", "description", "excerpt"):
+                meta[m.group(1)] = m.group(2)
+        meta.setdefault("slug", md.stem)
+        posts.append(meta)
+    posts.sort(key=lambda p: str(p.get("date", "")), reverse=True)
+    return posts
+
+
 def _blog_posts() -> list[dict[str, Any]]:
     raw = _read_static_text("blog_posts.json")
-    if not raw:
-        return []
-    try:
-        posts = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Could not parse blog_posts.json: {e}")
-        return []
-    return (
-        [p for p in posts if isinstance(p, dict) and p.get("slug")]
-        if isinstance(posts, list)
-        else []
-    )
+    if raw:
+        try:
+            posts = json.loads(raw)
+            if isinstance(posts, list):
+                return [p for p in posts if isinstance(p, dict) and p.get("slug")]
+        except json.JSONDecodeError as e:
+            logger.warning(f"Could not parse blog_posts.json: {e}")
+    return _blog_posts_from_sources()
 
 
 def _twin_link(url_name: str, **kwargs: Any) -> str:

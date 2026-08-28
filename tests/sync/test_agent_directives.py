@@ -1,6 +1,8 @@
 """Tests for the agent-readable site: llms.txt, robots.txt, markdown twins
 (<page>.md) and the <head> directives that advertise them."""
 
+from unittest import mock
+
 from django.core.cache import cache
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -84,6 +86,19 @@ class TestHtmlToMarkdown(TestCase):
         self.assertTrue(md.startswith("# Only Title\n"))
 
 
+class TestBlogPostList(TestCase):
+    def test_falls_back_to_markdown_sources_when_index_is_not_generated(self):
+        # blog_posts.json is generated (gitignored); the .md sources are not.
+        with mock.patch.object(agent_docs, "_read_static_text", return_value=None):
+            posts = agent_docs._blog_posts()
+        self.assertTrue(posts)
+        first = posts[0]
+        self.assertTrue(first.get("slug"))
+        self.assertTrue(first.get("title"))
+        dates = [p.get("date", "") for p in posts]
+        self.assertEqual(dates, sorted(dates, reverse=True))
+
+
 class TestAgentEndpoints(TestCase):
     """The public pages are whole-response cached (StaticIshView), so clear
     the cache on both sides: no stale page from an earlier test, and none
@@ -152,9 +167,7 @@ class TestAgentEndpoints(TestCase):
 
     def test_markdown_twin_of_blog_post_is_the_source(self):
         posts = agent_docs._blog_posts()
-        self.assertTrue(
-            posts, "blog_posts.json should be findable without collectstatic"
-        )
+        self.assertTrue(posts, "blog sources should be found without collectstatic")
         slug = posts[0]["slug"]
         twin = agent_docs.twin_path_for(reverse("blog-post", kwargs={"slug": slug}))
         self.assertTrue(twin.endswith("/index.md"))
