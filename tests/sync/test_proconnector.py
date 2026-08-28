@@ -1,7 +1,8 @@
 """Tests for the pro-connector (Cofactor AI) staff workflow.
 
 Covers migration/field defaults, access control, next-record selection, AI
-draft generation with safe fallback, the send / send-failure / skip flows, and
+draft generation with safe fallback, the send / send-failure / skip flows,
+staff editing of the mailing address the printable letter is sent to, and
 graceful handling of missing name / organization.
 """
 
@@ -23,11 +24,14 @@ from fighthealthinsurance.proconnector import (
     BASE_INTRO_LETTER_SIGNATURE,
     _claims_cofactor_relationship,
     _is_safe_intro_draft,
+    address_max_length,
+    address_problem,
     build_address_search_link,
     build_base_intro_email,
     build_intro_letter_blocks,
     build_letter_document_title,
     build_search_links,
+    clean_address,
     cofactor_cc_problem,
     default_intro_cc_recipients,
     describe_known_info,
@@ -38,6 +42,7 @@ from fighthealthinsurance.proconnector import (
     partner_framing_problem,
     queue_proconnector_intro_email,
     quick_intro_block_reason,
+    save_address,
     send_proconnector_test_email,
 )
 
@@ -1110,6 +1115,434 @@ class SkipFlowTest(_ProcessViewTestCase):
         response = self._post("skip", interested_professional_id=999999)
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
+
+# ---------------------------------------------------------------------------
+# Mailing address editing (feeds the printable letter)
+# ---------------------------------------------------------------------------
+class AddressCleaningTest(TestCase):
+    """Normalization applied to a staff-typed address before it is stored."""
+
+    def test_crlf_from_a_browser_textarea_becomes_plain_newlines(self):
+        self.assertEqual(
+            clean_address("123 Main St\r\nSuite 400\r\nSpringfield, IL"),
+            "123 Main St\nSuite 400\nSpringfield, IL",
+        )
+
+    def test_each_line_is_stripped_but_the_line_structure_is_kept(self):
+        self.assertEqual(
+            clean_address("  123 Main St  \n   Springfield, IL  "),
+            "123 Main St\nSpringfield, IL",
+        )
+
+    def test_whitespace_only_address_becomes_empty(self):
+        # A blank-looking address must be *absent*, matching how the letter and
+        # the address lookup already treat one.
+        self.assertEqual(clean_address("   \n\n  "), "")
+
+    def test_none_becomes_empty(self):
+        self.assertEqual(clean_address(None), "")
+
+
+class AddressValidationTest(TestCase):
+    def test_ordinary_address_has_no_problem(self):
+        self.assertIsNone(address_problem("123 Main St\nSpringfield, IL 62701"))
+
+    def test_empty_address_is_allowed(self):
+        # Empty means "none on file" -- the letter prints blank guide lines.
+        self.assertIsNone(address_problem(""))
+
+    def test_address_longer_than_the_column_is_rejected(self):
+        max_length = address_max_length()
+        assert max_length is not None
+        problem = address_problem("x" * (max_length + 1))
+        self.assertIsNotNone(problem)
+        self.assertIn(str(max_length), problem or "")
+
+    def test_address_exactly_at_the_column_length_is_allowed(self):
+        max_length = address_max_length()
+        assert max_length is not None
+        self.assertIsNone(address_problem("x" * max_length))
+
+    def test_cap_comes_from_the_model_column(self):
+        self.assertEqual(
+            address_max_length(),
+            InterestedProfessional._meta.get_field("address").max_length,
+        )
+
+
+@patch(
+    "fighthealthinsurance.staff_views.generate_intro_email",
+    return_value="A draft body with compensation disclosure.",
+)
+class AddressEditingPageTest(_ProcessViewTestCase):
+    def test_page_offers_an_editable_address_field(self, _mock_gen):
+        _make_pro(address="123 Main St, Springfield IL")
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="address"')
+        self.assertContains(response, 'value="save_address"')
+        self.assertContains(response, "123 Main St, Springfield IL")
+
+    def test_address_field_is_empty_when_none_is_on_file(self, _mock_gen):
+        _make_pro(address="")
+        response = self.client.get(self.url)
+        self.assertContains(response, '<textarea id="address"')
+
+    def test_save_address_is_the_default_button_ahead_of_send(self, _mock_gen):
+        # Implicit submission (Enter in a text field) fires the form's first
+        # submit button, so saving an address must come before the irreversible
+        # send/queue buttons.
+        _make_pro()
+        body = self.client.get(self.url).content.decode()
+        self.assertLess(body.index('value="save_address"'), body.index('value="send"'))
+
+
+class AddressSaveFlowTest(_ProcessViewTestCase):
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_save_address_stores_it_and_stays_on_the_record(self, _mock_gen):
+        pro = _make_pro(address="")
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St\r\nSpringfield, IL 62701",
+            email_body="A draft body with compensation disclosure.",
+        )
+        # Stays put (no redirect) so staff can print the letter next.
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Mailing address saved")
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St\nSpringfield, IL 62701")
+
+    @patch("fighthealthinsurance.staff_views.generate_intro_email")
+    def test_saving_an_address_preserves_the_edited_draft(self, mock_gen):
+        # Re-drafting here would throw away the staff member's edits (and pay
+        # for an inference call) just because they saved an address.
+        pro = _make_pro()
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="My hand-edited body with compensation disclosure.",
+            subject="My subject",
+            skip_reason="maybe later",
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_gen.assert_not_called()
+        self.assertContains(response, "My hand-edited body")
+        self.assertContains(response, "My subject")
+        self.assertContains(response, "maybe later")
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_save_address_sends_nothing_and_leaves_the_record_in_the_queue(
+        self, _mock_gen
+    ):
+        pro = _make_pro(address="")
+        self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="A draft body with compensation disclosure.",
+        )
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertFalse(pro.proconnector_skipped)
+        self.assertIsNone(pro.proconnector_sent_at)
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(get_next_interested_professional().pk, pro.pk)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_saving_a_blank_address_clears_the_one_on_file(self, _mock_gen):
+        pro = _make_pro(address="123 Main St")
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="   ",
+            email_body="A draft body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Mailing address cleared")
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "")
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_overlong_address_is_rejected_and_nothing_is_stored(self, _mock_gen):
+        max_length = address_max_length()
+        assert max_length is not None
+        pro = _make_pro(address="123 Main St")
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="x" * (max_length + 1),
+            email_body="A draft body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Address is too long", status_code=400)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_a_rejected_address_is_handed_back_for_editing(self, _mock_gen):
+        # Showing the stored address instead would make staff retype the whole
+        # thing rather than trim what they pasted.
+        max_length = address_max_length()
+        assert max_length is not None
+        pro = _make_pro(address="")
+        typed = "Suite 400 " + "x" * max_length
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address=typed,
+            email_body="A draft body with compensation disclosure.",
+        )
+        self.assertContains(response, "Suite 400", status_code=400)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_address_edit_is_scoped_to_the_shown_record(self, _mock_gen):
+        # Duplicate signups share processing state, but not their own submitted
+        # contact details: correcting one must not overwrite the other's.
+        pro = _make_pro(email="jane@janeclinic.com", address="")
+        duplicate = _make_pro(email="jane@janeclinic.com", address="99 Old Rd")
+        self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="A draft body with compensation disclosure.",
+        )
+        pro.refresh_from_db()
+        duplicate.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+        self.assertEqual(duplicate.address, "99 Old Rd")
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_saved_address_updates_the_address_lookup_link(self, _mock_gen):
+        # With an address on file the lookup verifies *that* address, so the
+        # re-render must not still be searching for one.
+        pro = _make_pro(name="Dr. Jane Smith", business_name="", address="")
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="A draft body with compensation disclosure.",
+        )
+        self.assertContains(response, "search?q=123%20Main%20St")
+
+    def test_saved_address_is_what_the_printable_letter_prints(self):
+        pro = _make_pro(address="")
+        self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St\r\nSpringfield, IL 62701",
+            email_body="A draft body with compensation disclosure.",
+        )
+        letter = self.client.get(reverse("proconnector_letter", args=[pro.id]))
+        self.assertContains(letter, "123 Main St")
+        self.assertContains(letter, "Springfield, IL 62701")
+        self.assertNotContains(letter, 'class="address-blank"')
+
+
+class AddressPersistedByOtherActionsTest(_ProcessViewTestCase):
+    """A typed address survives whichever button staff actually press.
+
+    Send / queue / skip advance to the next record, so an address only held in
+    the form would be lost with no way back to it.
+    """
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_saves_a_pending_address_edit(self, _mock_send):
+        pro = _make_pro(address="")
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="Body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 302)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+        self.assertTrue(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.queue_proconnector_intro_email")
+    def test_queue_saves_a_pending_address_edit(self, _mock_queue):
+        pro = _make_pro(address="")
+        self._post(
+            "queue",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="Body with compensation disclosure.",
+        )
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_skip_saves_a_pending_address_edit(self):
+        pro = _make_pro(address="")
+        self._post(
+            "skip",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            skip_reason="Not a fit",
+        )
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+        self.assertTrue(pro.proconnector_skipped)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_address_survives_a_rejected_send(self, mock_send):
+        # The send bounces on the wording rules; the address the staff member
+        # looked up must still be on the record (and on the re-rendered page).
+        pro = _make_pro(address="")
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="",
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+        self.assertContains(response, "123 Main St", status_code=400)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+        self.assertFalse(pro.proconnector_attempted)
+
+    def test_send_test_saves_a_pending_address_edit(self):
+        pro = _make_pro(address="")
+        response = self._post(
+            "send_test",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="Body with compensation disclosure.",
+            test_email="staff@fighthealthinsurance.com",
+        )
+        self.assertEqual(response.status_code, 200)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_a_post_without_an_address_field_leaves_the_record_alone(self, _mock_send):
+        # An older tab (or a scripted submit) that carries no address field must
+        # not be read as "clear the address".
+        pro = _make_pro(address="123 Main St")
+        self._post(
+            "send",
+            interested_professional_id=pro.id,
+            email_body="Body with compensation disclosure.",
+        )
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_already_processed_record_is_not_address_edited(self, mock_send):
+        # A stale tab posting against a record another session already sent
+        # must not write to it -- it is no longer this queue's to touch.
+        pro = _make_pro(address="123 Main St", proconnector_attempted=True)
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="456 New Ave",
+            email_body="Body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+
+class SaveAddressHelperTest(TestCase):
+    """The address write is conditional on the record still being unprocessed.
+
+    Two staff sessions are handed the same next record, so the session that
+    goes on to lose the send claim must not still overwrite the address of a
+    record the winner has already introduced.
+    """
+
+    def test_writes_to_an_unprocessed_record(self):
+        pro = _make_pro(address="")
+        self.assertEqual(save_address(pro, "123 Main St"), 1)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_does_not_write_to_an_already_sent_record(self):
+        pro = _make_pro(address="123 Main St", proconnector_attempted=True)
+        self.assertEqual(save_address(pro, "456 Other Ave"), 0)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_does_not_write_to_a_skipped_record(self):
+        pro = _make_pro(address="123 Main St", proconnector_skipped=True)
+        self.assertEqual(save_address(pro, "456 Other Ave"), 0)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_does_not_write_to_an_unsubscribed_record(self):
+        pro = _make_pro(address="123 Main St", unsubscribed=True)
+        self.assertEqual(save_address(pro, "456 Other Ave"), 0)
+        pro.refresh_from_db()
+        self.assertEqual(pro.address, "123 Main St")
+
+    def test_deleted_record_reports_no_rows_written(self):
+        pro = _make_pro(address="")
+        InterestedProfessional.objects.filter(pk=pro.pk).delete()
+        self.assertEqual(save_address(pro, "123 Main St"), 0)
+
+
+class AddressWriteLostToConcurrentProcessingTest(_ProcessViewTestCase):
+    @patch("fighthealthinsurance.staff_views.save_address", return_value=0)
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_lost_write_advances_instead_of_reporting_a_save(
+        self, _mock_gen, _mock_save
+    ):
+        # The record was processed (or deleted) between the eligibility guard
+        # and the UPDATE: telling staff the address was saved would be a lie.
+        pro = _make_pro(address="")
+        response = self._post(
+            "save_address",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="A draft body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("proconnector_process"))
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    @patch("fighthealthinsurance.staff_views.save_address", return_value=0)
+    def test_lost_write_stops_the_send_before_it_claims(self, _mock_save, mock_send):
+        # Losing the address write means the record is no longer this session's
+        # to process, so the send must not go out either.
+        pro = _make_pro(address="")
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            address="123 Main St",
+            email_body="Body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
 
 
 # ---------------------------------------------------------------------------

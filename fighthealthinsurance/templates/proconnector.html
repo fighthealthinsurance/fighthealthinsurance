@@ -71,6 +71,9 @@
       font-size: 14px;
     }
     textarea { min-height: 360px; white-space: pre-wrap; }
+    /* The address is a handful of lines, not a letter -- size it to the job so
+       the print button below it stays on screen. */
+    textarea.address { min-height: 5.5em; }
     .disclosure {
       background: #fff8e1;
       border: 1px solid #ffe0a3;
@@ -94,6 +97,9 @@
     button.queue:hover { background-color: #0069d9; }
     button.skip { background-color: #6c757d; color: white; }
     button.skip:hover { background-color: #5a6268; }
+    button.save-address { background-color: #6f42c1; color: white; margin-top: 10px; }
+    button.save-address:hover { background-color: #59339d; }
+    a.edit-link { font-size: 0.85em; margin-left: 8px; color: #007bff; }
     .send-window {
       background: #e7f3ff;
       border: 1px solid #b6d8ff;
@@ -167,7 +173,7 @@
         <tr><th>Most common denial / stated needs</th><td>{% if pro.most_common_denial %}{{ pro.most_common_denial }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
         <tr><th>Notes / comments</th><td>{% if pro.comments %}{{ pro.comments }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
         <tr><th>Phone number</th><td>{% if pro.phone_number %}{{ pro.phone_number }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
-        <tr><th>Address</th><td>{% if pro.address %}{{ pro.address }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Address</th><td>{% if pro.address %}{{ pro.address|linebreaksbr }}{% else %}<span class="muted">(none)</span>{% endif %} <a class="edit-link" href="#address">edit</a></td></tr>
         <tr><th>Paid</th><td>{{ pro.paid|yesno:"Yes,No" }}</td></tr>
         <tr><th>Clicked for paid</th><td>{{ pro.clicked_for_paid|yesno:"Yes,No" }}</td></tr>
         <tr><th>Signup / created date</th><td>{{ pro.signup_date }}</td></tr>
@@ -184,31 +190,52 @@
       {% endif %}
     </div>
 
-    <div class="card">
-      <h2>Physical letter (optional)</h2>
-      <p>
-        For professionals worth reaching by mail as well as email, print a
-        physical introduction letter to send by post. It shares the email's
-        call to action &mdash; reach out to <strong>{{ contact_email }}</strong>
-        to schedule a demo or learn more. Use the <em>Google address</em> link
-        above to find or verify a mailing address.
-      </p>
-      <a class="print-letter" href="{% url 'proconnector_letter' pro.id %}" target="_blank" rel="noopener noreferrer">🖨 Open printable letter &#8599;</a>
-    </div>
+    <!-- One form spans the letter card and the email card so a single submit
+         carries every edit -- including the mailing address, which staff type
+         next to the address lookup that found it. The letter card comes first
+         deliberately: its "Save address" is then the form's default button, so
+         pressing Enter in a text field saves the address rather than firing off
+         an irreversible introduction. -->
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="interested_professional_id" value="{{ pro.id }}">
 
-    <div class="card">
-      <h2>Introduction email</h2>
-      <div class="disclosure">
-        This draft was generated to help. Review and edit it before sending.
-        The email includes a plain-language disclosure that FHI may receive
-        compensation under our sourcing agreement if the recipient chooses to
-        work with Cofactor AI &mdash; please keep that disclosure in the email.
-        Cofactor AI is described as a sourcing agreement, not a partnership.
+      <div class="card">
+        <h2>Physical letter (optional)</h2>
+        <p>
+          For professionals worth reaching by mail as well as email, print a
+          physical introduction letter to send by post. It shares the email's
+          call to action &mdash; reach out to <strong>{{ contact_email }}</strong>
+          to schedule a demo or learn more. Use the <em>Google address</em> link
+          above to find or verify a mailing address, then save it here so the
+          letter prints already addressed.
+        </p>
+
+        <label for="address">Mailing address (editable)</label>
+        <textarea id="address" name="address" class="address" maxlength="{{ address_max_length }}" placeholder="123 Main St&#10;Suite 400&#10;Springfield, IL 62701">{{ address }}</textarea>
+        <p class="hint">
+          Saved on this record and used to address the printable letter; line
+          breaks are kept as typed. Leave it blank to print blank guide lines to
+          write an address on instead. Saving stays on this record &mdash; and
+          sending, queueing, or skipping saves a pending edit too, so a lookup
+          is never lost.
+        </p>
+        <button type="submit" class="save-address" name="action" value="save_address">Save address</button>
+
+        <p>
+          <a class="print-letter" href="{% url 'proconnector_letter' pro.id %}" target="_blank" rel="noopener noreferrer">🖨 Open printable letter &#8599;</a>
+        </p>
       </div>
 
-      <form method="post">
-        {% csrf_token %}
-        <input type="hidden" name="interested_professional_id" value="{{ pro.id }}">
+      <div class="card">
+        <h2>Introduction email</h2>
+        <div class="disclosure">
+          This draft was generated to help. Review and edit it before sending.
+          The email includes a plain-language disclosure that FHI may receive
+          compensation under our sourcing agreement if the recipient chooses to
+          work with Cofactor AI &mdash; please keep that disclosure in the email.
+          Cofactor AI is described as a sourcing agreement, not a partnership.
+        </div>
 
         <label>To</label>
         <input type="text" class="readonly" value="{{ pro.email }}" readonly>
@@ -259,8 +286,8 @@
             it stays in the queue.
           </p>
         </div>
-      </form>
-    </div>
+      </div>
+    </form>
   {% else %}
     <div class="card">
       <p>🎉 All caught up &mdash; there are no interested professionals left to process.</p>

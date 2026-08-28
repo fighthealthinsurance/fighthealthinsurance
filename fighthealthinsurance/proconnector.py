@@ -388,6 +388,75 @@ def build_address_search_link(pro: InterestedProfessional) -> Optional[str]:
     return f"https://www.google.com/search?q={urllib.parse.quote(terms)}"
 
 
+def address_max_length() -> Optional[int]:
+    """Storable length of the mailing address, straight from the column.
+
+    Read from the model rather than restated as a constant so the form cap,
+    the validation message, and the database always agree.
+    """
+    return InterestedProfessional._meta.get_field("address").max_length
+
+
+def clean_address(value: Optional[str]) -> str:
+    """Normalize a staff-entered mailing address for storage.
+
+    Addresses are typed into a multi-line box, so line endings are normalized
+    to ``\\n`` (browsers submit CRLF) and each line is stripped -- keeping the
+    line structure a printed letter needs while leaving no stray carriage
+    returns to leak into the CSV export. Surrounding whitespace goes entirely,
+    because a whitespace-only address is an absent one everywhere else in this
+    workflow (see :func:`build_address_search_link` and the letter view).
+    """
+    text = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.strip() for line in text.split("\n")).strip()
+
+
+def address_problem(address: str) -> Optional[str]:
+    """First problem with a staff-entered mailing address, or ``None``.
+
+    Only length is checked: addresses are free-form (care-of lines, suites,
+    international formats), so the sole rule is that the value fits the column
+    -- longer input would otherwise be truncated on write by some database
+    backends and silently mail a half-address. An empty address is valid; it
+    means "none on file" and prints the letter's blank guide lines.
+    """
+    max_length = address_max_length()
+    if max_length is not None and len(address) > max_length:
+        return f"Address is too long (max {max_length} characters)."
+    return None
+
+
+def save_address(pro: InterestedProfessional, address: str) -> int:
+    """Store a staff-corrected mailing address on ``pro``; returns rows updated.
+
+    Scoped to this one record, unlike the send/skip helpers that resolve every
+    signup sharing an email. Those are email-scoped because *processing state*
+    must resolve duplicates so an address can never resurface in the queue; a
+    mailing address is not processing state but per-signup data, and the record
+    edited here is exactly the one the printable letter is rendered for. Writing
+    it to duplicate signups would silently overwrite what those professionals
+    submitted, for no workflow gain.
+
+    Conditional on the record still being unprocessed, for the same reason the
+    send path claims atomically (:func:`claim_email_for_send`): two staff
+    sessions are handed the *same* next record, so a pk-only UPDATE lets the
+    session that goes on to lose the claim -- and is redirected away without
+    sending -- still overwrite the address of a record the winner has already
+    introduced. Returns ``0`` when the record was processed, unsubscribed, or
+    deleted in that window; the caller must not report that as a save.
+
+    Written with an UPDATE rather than ``pro.save()`` so a staff address
+    correction can never carry other stale fields from a long-open tab back
+    into the row.
+    """
+    return InterestedProfessional.objects.filter(
+        pk=pro.pk,
+        proconnector_attempted=False,
+        proconnector_skipped=False,
+        unsubscribed=False,
+    ).update(address=address)
+
+
 def describe_known_info(pro: InterestedProfessional) -> str:
     """Plain-text summary of the known fields for the AI prompt.
 
