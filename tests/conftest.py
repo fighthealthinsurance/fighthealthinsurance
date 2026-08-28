@@ -121,8 +121,89 @@ def _stub_denied_items_analysis_dispatch():
         yield
 
 
+def _rollback_leaked_transactions() -> None:
+    """Roll back any transaction left open on the calling thread's connections.
+
+    Runs inside the thread that owns the connections -- a sqlite connection may
+    only be rolled back from its own thread.
+    """
+    from django.db import connections
+
+    for conn in connections.all(initialized_only=True):
+        try:
+            raw = conn.connection
+            # in_transaction is sqlite's; other backends just fall through.
+            if raw is None or not raw.in_transaction:
+                continue
+            # Reset Django's own transaction bookkeeping first: a block that
+            # never unwound leaves in_atomic_block set, and rollback() refuses
+            # to run inside one. needs_rollback is deliberately left alone --
+            # rollback() clears it itself once it succeeds, so a rollback that
+            # raises leaves the connection honestly marked as still dirty.
+            conn.in_atomic_block = False
+            conn.savepoint_ids = []
+            conn.atomic_blocks = []
+            conn.rollback()
+            conn.set_autocommit(True)
+        except Exception:
+            # Best effort: a connection we can't reset is no worse than the
+            # one we started with.
+            pass
+
+
 @pytest.fixture(autouse=True)
-def _drain_fire_and_forget_threads():
+def _settle_thread_sensitive_db_work():
+    """Drain asgiref's shared thread-sensitive executor at the end of each test.
+
+    In a plain ``async def`` test (nothing wraps it in ``async_to_sync``), the
+    native async ORM and ``database_sync_to_async`` both run their sync body on
+    asgiref's process-wide ``SyncToAsync.single_thread_executor``. Two things
+    leak out of a test that way:
+
+    * a call whose awaiting task was abandoned when the test's event loop closed
+      keeps running there afterwards, so its queries can still be in flight
+      during the next test, and
+    * that thread's connection can be left mid-transaction -- an ``atomic``
+      whose COMMIT failed against a lock the main thread held, say. Django never
+      closes an in-memory sqlite connection (closing would destroy the
+      database), so ``close_old_connections`` doesn't drop the broken one the
+      way it would in production, and nothing else clears it.
+
+    Either one holds a sqlite table lock, and shared-cache sqlite answers a
+    conflicting lock with an immediate "database table is locked" rather than
+    honouring the busy timeout. The next ``transaction=True`` test then dies in
+    its teardown flush ("Database ... couldn't be flushed") and the rows that
+    flush failed to delete leak into every test after it.
+
+    The executor is a single-worker FIFO queue, so waiting on one task of our
+    own is exactly a barrier: every call queued ahead of it has finished by the
+    time it runs. The task then rolls back whatever was left open.
+
+    ``_drain_fire_and_forget_threads`` requests this fixture so that the two run
+    in the right order: teardown is the reverse of setup, so those threads are
+    joined first and the DB work they queued onto this same executor is drained
+    here. Pytest orders same-scope autouse fixtures with no dependency between
+    them arbitrarily, so the request is what makes that hold -- not the order
+    they appear in this file.
+    """
+    yield
+    try:
+        from asgiref.sync import SyncToAsync
+    except Exception:
+        return
+    executor = getattr(SyncToAsync, "single_thread_executor", None)
+    if executor is None:
+        return
+    try:
+        executor.submit(_rollback_leaked_transactions).result(timeout=10.0)
+    except Exception:
+        # Draining is best effort: if the queued work is itself blocked on a
+        # lock this test still holds, timing out leaves us no worse off.
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _drain_fire_and_forget_threads(_settle_thread_sensitive_db_work):
     """Drain fire-and-forget background threads at the end of each test.
 
     ``fire_and_forget_in_new_threadpool`` runs coroutines -- often sqlite writes,
@@ -133,6 +214,11 @@ def _drain_fire_and_forget_threads():
     threads at teardown (which runs before the next class's setUpClass) keeps
     that work inside the test that started it. The per-thread timeout is a safety
     cap; leaked threads normally finish in milliseconds.
+
+    Requests ``_settle_thread_sensitive_db_work`` only for the ordering: these
+    threads queue their DB work onto that same executor, so they must be joined
+    before it is drained, and requesting the fixture is what puts this teardown
+    ahead of that one.
     """
     yield
     try:
