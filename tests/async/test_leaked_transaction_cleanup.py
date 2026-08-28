@@ -33,6 +33,7 @@ def _abandon_an_open_transaction() -> int:
 
 
 def _in_transaction() -> bool:
+    """Whether the calling thread's connection is mid-transaction."""
     from django.db import connection
 
     return bool(connection.connection and connection.connection.in_transaction)
@@ -41,14 +42,16 @@ def _in_transaction() -> bool:
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 async def test_abandoned_transaction_is_rolled_back_on_the_executor_thread():
-    # Every sync_to_async call below lands on the same thread-sensitive
-    # executor, so they all see the one connection under test.
-    pk = await sync_to_async(_abandon_an_open_transaction)()
-    assert await sync_to_async(_in_transaction)() is True
+    """The cleanup ends an abandoned transaction and undoes its write."""
+    # thread_sensitive is spelled out because the test depends on it: it is what
+    # puts every call below on the one thread-sensitive executor, so they all
+    # see the same connection.
+    pk = await sync_to_async(_abandon_an_open_transaction, thread_sensitive=True)()
+    assert await sync_to_async(_in_transaction, thread_sensitive=True)() is True
 
-    await sync_to_async(_rollback_leaked_transactions)()
+    await sync_to_async(_rollback_leaked_transactions, thread_sensitive=True)()
 
-    assert await sync_to_async(_in_transaction)() is False
+    assert await sync_to_async(_in_transaction, thread_sensitive=True)() is False
     # The abandoned write went with it, so the table lock is gone and the next
     # test's teardown flush can run.
     assert not await ChooserTask.objects.filter(pk=pk).aexists()

@@ -137,11 +137,12 @@ def _rollback_leaked_transactions() -> None:
                 continue
             # Reset Django's own transaction bookkeeping first: a block that
             # never unwound leaves in_atomic_block set, and rollback() refuses
-            # to run inside one.
+            # to run inside one. needs_rollback is deliberately left alone --
+            # rollback() clears it itself once it succeeds, so a rollback that
+            # raises leaves the connection honestly marked as still dirty.
             conn.in_atomic_block = False
             conn.savepoint_ids = []
             conn.atomic_blocks = []
-            conn.needs_rollback = False
             conn.rollback()
             conn.set_autocommit(True)
         except Exception:
@@ -178,9 +179,12 @@ def _settle_thread_sensitive_db_work():
     own is exactly a barrier: every call queued ahead of it has finished by the
     time it runs. The task then rolls back whatever was left open.
 
-    Defined ahead of ``_drain_fire_and_forget_threads`` deliberately: teardown
-    runs in reverse order, so those threads are joined first and the DB work
-    they queued onto this same executor is drained here.
+    ``_drain_fire_and_forget_threads`` requests this fixture so that the two run
+    in the right order: teardown is the reverse of setup, so those threads are
+    joined first and the DB work they queued onto this same executor is drained
+    here. Pytest orders same-scope autouse fixtures with no dependency between
+    them arbitrarily, so the request is what makes that hold -- not the order
+    they appear in this file.
     """
     yield
     try:
@@ -199,7 +203,7 @@ def _settle_thread_sensitive_db_work():
 
 
 @pytest.fixture(autouse=True)
-def _drain_fire_and_forget_threads():
+def _drain_fire_and_forget_threads(_settle_thread_sensitive_db_work):
     """Drain fire-and-forget background threads at the end of each test.
 
     ``fire_and_forget_in_new_threadpool`` runs coroutines -- often sqlite writes,
@@ -210,6 +214,11 @@ def _drain_fire_and_forget_threads():
     threads at teardown (which runs before the next class's setUpClass) keeps
     that work inside the test that started it. The per-thread timeout is a safety
     cap; leaked threads normally finish in milliseconds.
+
+    Requests ``_settle_thread_sensitive_db_work`` only for the ordering: these
+    threads queue their DB work onto that same executor, so they must be joined
+    before it is drained, and requesting the fixture is what puts this teardown
+    ahead of that one.
     """
     yield
     try:
