@@ -43,7 +43,9 @@ ML_CALL_SECONDS = Histogram(
 
 CHAT_TURNS_TOTAL = Counter(
     "fhi_chat_turns_total",
-    "Chat turns by outcome (ok, failed, timeout).",
+    "Chat turns by outcome (ok, failed, timeout, letter_fallback -- a "
+    "failed/timed-out turn rescued by the appeal-generator letter fallback; "
+    "a timed-out rescue counts under both timeout and letter_fallback).",
     labelnames=("outcome",),
 )
 
@@ -101,7 +103,8 @@ def record_ml_failure(model: object, reason: str) -> None:
 
 
 def record_chat_turn(outcome: str) -> None:
-    """Record a chat turn outcome (ok / failed / timeout). Never raises."""
+    """Record a chat turn outcome (ok / failed / timeout / letter_fallback).
+    Never raises."""
     try:
         CHAT_TURNS_TOTAL.labels(outcome=outcome).inc()
     except Exception:  # pragma: no cover

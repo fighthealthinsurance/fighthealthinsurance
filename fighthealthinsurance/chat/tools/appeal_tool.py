@@ -30,6 +30,11 @@ class AppealTool(BaseTool):
 
     pattern = CREATE_OR_UPDATE_APPEAL_REGEX
     detect_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
+    # The pattern is ^...$-anchored, so every scan needs MULTILINE -- the
+    # base default (no MULTILINE) made the on-error strip in
+    # BaseTool.handle miss a call that follows a line of prose, leaking raw
+    # tool syntax (and its JSON payload) into the chat when execute raised.
+    detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Appeal"
 
     def __init__(
