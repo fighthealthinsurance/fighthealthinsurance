@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any, Optional
 
+from django.contrib.staticfiles import finders
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import Http404, HttpRequest, HttpResponse
 from django.urls import Resolver404, resolve, reverse
@@ -303,14 +305,30 @@ def html_to_markdown(html: str, page_url: str, origin: str = CANONICAL_ORIGIN) -
 # ---------------------------------------------------------------------------
 
 
-def _read_static_text(name: str) -> Optional[str]:
+def _static_path(name: str) -> Optional[str]:
+    """Locate a static file: the collected STATIC_ROOT in production, else the
+    app's own static dir via the finders (dev and CI never run collectstatic)."""
     try:
-        with staticfiles_storage.open(name, "r") as f:
-            contents = f.read()
-        if not isinstance(contents, str):
-            contents = contents.decode("utf-8")
-        return str(contents)
-    except Exception as e:  # missing file, bad encoding: fall back to HTML
+        if staticfiles_storage.exists(name):
+            return str(staticfiles_storage.path(name))
+    except Exception as e:  # storage without a local path, etc.
+        logger.debug(f"staticfiles_storage could not resolve {name}: {e}")
+    found = finders.find(name)
+    if isinstance(found, str):
+        return found
+    if isinstance(found, (list, tuple)) and found:
+        return str(found[0])
+    return None
+
+
+def _read_static_text(name: str) -> Optional[str]:
+    path = _static_path(name)
+    if path is None:
+        logger.warning(f"Static file {name} not found")
+        return None
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
         logger.warning(f"Could not read static file {name}: {e}")
         return None
 

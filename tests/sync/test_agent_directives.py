@@ -1,9 +1,6 @@
 """Tests for the agent-readable site: llms.txt, robots.txt, markdown twins
 (<page>.md) and the <head> directives that advertise them."""
 
-import json
-
-from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.cache import cache
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -154,11 +151,11 @@ class TestAgentEndpoints(TestCase):
             self.assertEqual(response["Content-Type"], "text/markdown; charset=utf-8")
 
     def test_markdown_twin_of_blog_post_is_the_source(self):
-        with staticfiles_storage.open("blog_posts.json", "r") as f:
-            contents = f.read()
-        if not isinstance(contents, str):
-            contents = contents.decode("utf-8")
-        slug = json.loads(contents)[0]["slug"]
+        posts = agent_docs._blog_posts()
+        self.assertTrue(
+            posts, "blog_posts.json should be findable without collectstatic"
+        )
+        slug = posts[0]["slug"]
         twin = agent_docs.twin_path_for(reverse("blog-post", kwargs={"slug": slug}))
         self.assertTrue(twin.endswith("/index.md"))
         response = self.client.get(twin)
