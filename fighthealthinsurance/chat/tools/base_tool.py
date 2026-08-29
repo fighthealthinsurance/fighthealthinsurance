@@ -5,6 +5,7 @@ Tool handlers process specific "tool calls" that the LLM includes in responses.
 Each tool can detect its pattern in text, execute the tool action, and format results.
 """
 
+import json
 import re
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable, List, Optional, Set, Tuple
@@ -47,6 +48,34 @@ def is_safe_tool_field(key: str, allowed: Set[str]) -> bool:
     if not key or key.startswith("_") or key.endswith("_id"):
         return False
     return key in allowed
+
+
+def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, str]:
+    """Parse the JSON payload of an anchored ``**tool**{...}`` call precisely.
+
+    The anchored patterns (create_or_update_appeal / _prior_auth /
+    generate_appeal_letter) capture ``(\\{.*\\})`` under DOTALL, so when two
+    tool calls share a reply the greedy group runs from the first call's
+    ``{`` through the LAST ``}`` in the text -- ``json.loads`` on the group
+    then fails and BOTH calls get stripped. Instead, decode from the
+    captured group's start with ``raw_decode``, which stops at the end of
+    the first complete JSON value (same approach as FinancialAssistanceTool
+    / the PA-requirement lookup). Returns ``(payload, call_span)`` where
+    ``call_span`` is the exact ``**tool**{...}`` substring of ``text`` to
+    replace -- handlers must replace it rather than ``match.group(0)``,
+    whose over-capture would swallow the text between the calls.
+
+    Raises ``json.JSONDecodeError`` for an undecodable or non-object
+    payload. NOTE for callers: the payload can carry medical/claim details,
+    so error paths must not log it or echo it back -- log sizes only.
+    """
+    start = match.start(1)
+    payload, end = json.JSONDecoder().raw_decode(text[start:])
+    if not isinstance(payload, dict):
+        raise json.JSONDecodeError(
+            "tool payload must be a JSON object", text[start : start + end], 0
+        )
+    return payload, text[match.start() : start + end]
 
 
 class BaseTool(ABC):
