@@ -18,6 +18,7 @@ from rest_framework.test import APITestCase
 
 from fighthealthinsurance.chat.document_processor import (
     DEFAULT_CHUNK_SIZE,
+    DEFERRED_SUMMARY_WATCHDOG_SECONDS,
     _deferred_summarization_watchdog,
     chunk_document,
     process_uploaded_document,
@@ -398,6 +399,67 @@ class TestProcessUploadedDocument(APITestCase):
             mock_summarize.assert_not_awaited()
             await doc.arefresh_from_db()
             assert doc.processing_status == status
+
+    async def test_watchdog_rescues_resubmitted_failed_document(self):
+        # A FAILED doc the user resubmitted arms a watchdog claiming FAILED,
+        # so the retry still happens even if the resubmitting turn dies.
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="failed_retry.txt",
+            full_text="content whose first analysis failed",
+            char_count=35,
+            processing_status=ChatDocument.Status.FAILED,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await _deferred_summarization_watchdog(
+                doc.id,
+                None,
+                delay=0.01,
+                claim_statuses=[ChatDocument.Status.FAILED],
+            )
+
+        mock_summarize.assert_awaited_once_with(doc.id, denial_context=None)
+        await doc.arefresh_from_db()
+        assert doc.processing_status == ChatDocument.Status.PROCESSING
+
+    async def test_deferred_resubmission_arms_watchdog_for_failed_status(self):
+        chat = await OngoingChat.objects.acreate()
+        full_text = "identical content resubmitted after a failed analysis"
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            first = await process_uploaded_document(
+                chat=chat, document_name="a.txt", full_text=full_text
+            )
+            first.processing_status = ChatDocument.Status.FAILED
+            await first.asave(update_fields=["processing_status"])
+
+            with patch(
+                "fighthealthinsurance.chat.document_processor._deferred_summarization_watchdog"
+            ) as mock_watchdog:
+                second = await process_uploaded_document(
+                    chat=chat,
+                    document_name="b.txt",
+                    full_text=full_text,
+                    defer_summarization=True,
+                )
+
+        assert second.id == first.id
+        # The watchdog is armed to claim from the status observed at arming
+        # time, so it can rescue this FAILED doc (not just PENDING ones).
+        mock_watchdog.assert_called_once_with(
+            first.id,
+            None,
+            DEFERRED_SUMMARY_WATCHDOG_SECONDS,
+            claim_statuses=[ChatDocument.Status.FAILED],
+        )
 
     async def test_watchdog_handles_deleted_document(self):
         with patch(
