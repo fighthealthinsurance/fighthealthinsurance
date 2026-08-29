@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "methodology_version": "test.v1",
+  "period": "2026-07",
+  "generated_at": "2026-07-03T09:00:00Z",
+  "window": {"start": "2025-07-01", "end": "2026-06-30"},
+  "weights": {"time_burden": 0.45, "denial_rate": 0.20, "complaint_rate": 0.15, "overturn_rate": 0.05, "enforcement_rate": 0.15},
+  "thresholds": {"min_member_months": 10000, "min_claims": 500},
+  "time_burden_assumptions": {
+    "hours_per_appeal": 6.0,
+    "hours_per_unappealed_wrong_denial": 2.0,
+    "unappealed_wrongness_discount": 0.5,
+    "citations": {
+      "hours_per_appeal": "AMA 2024 Prior Authorization Physician Survey. https://www.ama-assn.org/example",
+      "appeal_and_overturn_rates": "KFF Claims Denials and Appeals in ACA Marketplace Plans. https://www.kff.org/example"
+    }
+  },
+  "sources": [
+    {
+      "source_id": "cms_tc_puf",
+      "name": "CMS Transparency in Coverage PUF",
+      "url": "https://data.healthcare.gov/datafile/py2025/transparency_in_coverage_PUF.xlsx",
+      "vintage": "PY2025 PUF (claims from CY2023)",
+      "retrieved_at": "2026-07-03T08:00:00Z",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source_id": "ny_dfs",
+      "name": "New York DFS external appeals",
+      "url": "",
+      "vintage": "2025-07-01..2026-06-30",
+      "retrieved_at": "2026-07-03T08:00:00Z",
+      "status": "unavailable",
+      "detail": "no export configured"
+    }
+  ],
+  "states": {
+    "TX": {
+      "state": "TX",
+      "state_name": "Texas",
+      "status": "ok",
+      "issuers": [
+        {
+          "rank": 1,
+          "issuer": "Evil Health Insurance",
+          "issuer_slug": "evil-health-insurance",
+          "group_affiliation": "Evil Group",
+          "composite_score": 87.5,
+          "weight_coverage": 1.0,
+          "member_months": 1200000,
+          "metrics": {
+            "time_burden": {
+              "value": 250000,
+              "numerator": 250000,
+              "denominator": 1.0,
+              "normalized": 1.0,
+              "unit": "estimated_patient_and_provider_hours_per_year",
+              "source_ids": ["cms_tc_puf"],
+              "detail": {
+                "estimated_hours_per_year": 250000,
+                "won_appeal_hours": 10000,
+                "unappealed_denial_hours": 240000,
+                "appeals_overturned": 1667,
+                "appeals_decided": 3000,
+                "overturn_rate": 0.5556,
+                "denials": 124000,
+                "estimated_unappealed_improper_denials": 120000
+              }
+            },
+            "denial_rate": {
+              "value": 0.31,
+              "numerator": 124000,
+              "denominator": 400000,
+              "normalized": 0.91,
+              "unit": "in_network_claims_denied_per_claim_received",
+              "source_ids": ["cms_tc_puf"]
+            },
+            "complaint_rate": {
+              "value": 3.21,
+              "numerator": 45,
+              "denominator": 1400000,
+              "normalized": 0.55,
+              "unit": "confirmed_complaints_per_100k_member_months",
+              "source_ids": ["tx_tdi", "cms_mlr"]
+            }
+          },
+          "metrics_available": ["time_burden", "complaint_rate", "denial_rate"],
+          "weights_used": {"time_burden": 0.6, "denial_rate": 0.27, "complaint_rate": 0.13}
+        },
+        {
+          "rank": 2,
+          "issuer": "Nice Health Plan",
+          "issuer_slug": "nice-health-plan",
+          "group_affiliation": "",
+          "composite_score": 22.1,
+          "weight_coverage": 1.0,
+          "member_months": 800000,
+          "metrics": {
+            "denial_rate": {
+              "value": 0.11,
+              "numerator": 22000,
+              "denominator": 200000,
+              "normalized": 0.05,
+              "unit": "in_network_claims_denied_per_claim_received",
+              "source_ids": ["cms_tc_puf"]
+            }
+          },
+          "metrics_available": ["denial_rate"],
+          "weights_used": {"denial_rate": 1.0}
+        }
+      ],
+      "excluded_issuers": [
+        {"issuer": "Tiny Mutual Plan", "issuer_slug": "tiny-mutual-plan", "reasons": ["complaint_rate:below_min_member_months"], "member_months": 4100}
+      ]
+    },
+    "CA": {
+      "state": "CA",
+      "state_name": "California",
+      "status": "ok",
+      "issuers": [
+        {
+          "rank": 1,
+          "issuer": "Evil Health Insurance",
+          "issuer_slug": "evil-health-insurance",
+          "group_affiliation": "Evil Group",
+          "composite_score": 61.0,
+          "weight_coverage": 1.0,
+          "member_months": 900000,
+          "metrics": {
+            "enforcement_rate": {
+              "value": 4.44,
+              "numerator": 4,
+              "denominator": 900000,
+              "normalized": 1.0,
+              "unit": "enforcement_actions_per_1m_member_months",
+              "source_ids": ["ca_dmhc_enforcement", "cms_mlr"],
+              "detail": {"penalty_dollars": 250000.0}
+            }
+          },
+          "metrics_available": ["enforcement_rate"],
+          "weights_used": {"enforcement_rate": 1.0}
+        },
+        {
+          "rank": 2,
+          "issuer": "Sunshine Care",
+          "issuer_slug": "sunshine-care",
+          "group_affiliation": "",
+          "composite_score": 12.0,
+          "weight_coverage": 1.0,
+          "member_months": 2000000,
+          "metrics": {
+            "enforcement_rate": {
+              "value": 0.5,
+              "numerator": 1,
+              "denominator": 2000000,
+              "normalized": 0.0,
+              "unit": "enforcement_actions_per_1m_member_months",
+              "source_ids": ["ca_dmhc_enforcement", "cms_mlr"],
+              "detail": {"penalty_dollars": 10000.0}
+            }
+          },
+          "metrics_available": ["enforcement_rate"],
+          "weights_used": {"enforcement_rate": 1.0}
+        }
+      ],
+      "excluded_issuers": []
+    },
+    "WY": {
+      "state": "WY",
+      "state_name": "Wyoming",
+      "status": "insufficient_data",
+      "reason": "no_behavior_data",
+      "issuers": [],
+      "excluded_issuers": []
+    }
+  }
+}
