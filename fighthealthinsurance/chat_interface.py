@@ -1163,12 +1163,14 @@ class ChatInterface:
                 f"as {doc_name} for reference"
             )
             denial_context = await self._denial_context_for_chat(chat)
-            # Summarization is deferred to this turn's finally block (there is
-            # no early return between here and the LLM pass): fanning out the
-            # chunk summaries now would compete with the user's own turn for
-            # the same backends -- on internal-only deployments that
+            # Summarization is deferred to this turn's finally block: fanning
+            # out the chunk summaries now would compete with the user's own
+            # turn for the same backends -- on internal-only deployments that
             # self-inflicted contention helped time out exactly the turns that
-            # deliver a long paste.
+            # deliver a long paste. If this turn dies before that finally runs
+            # (a raise in the setup below, the consumer cancelled on
+            # disconnect), the watchdog process_uploaded_document arms at
+            # storage time rescues the still-PENDING document.
             stored_content_doc = await process_uploaded_document(
                 chat=chat,
                 document_name=doc_name,
@@ -1491,10 +1493,12 @@ class ChatInterface:
             heartbeat_task.cancel()
             # Deferred long-paste summarization: started only now, after the
             # interactive LLM pass, so the chunk-summary fan-out doesn't
-            # compete with the user's own turn for the same backends. Nothing
-            # here yields, so this still runs when the consumer coroutine is
-            # being cancelled (disconnect mid-turn) -- the document must not
-            # be stranded unanalyzed.
+            # compete with the user's own turn for the same backends. This is
+            # the best-effort fast path -- the atomic claim inside means at
+            # most one dispatcher wins, and the watchdog armed at storage
+            # time rescues the document if this block never runs or is
+            # cancelled mid-await (its DB claim can yield), so the document
+            # cannot be stranded unanalyzed either way.
             if stored_content_doc is not None:
                 try:
                     await start_document_summarization(

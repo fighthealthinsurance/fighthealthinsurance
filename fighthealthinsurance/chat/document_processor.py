@@ -262,14 +262,30 @@ async def summarize_chunks(
 def summarization_needed(doc: ChatDocument) -> bool:
     """Whether ``doc`` still needs (re)summarization kicked off.
 
-    PENDING covers both a fresh document and one orphaned before its
-    deferred kickoff ran (e.g. the WebSocket turn was cancelled mid-flight);
-    FAILED documents get another try. PROCESSING/COMPLETED are left alone.
+    PENDING covers both a fresh document and one whose deferred kickoff never
+    ran (rescued by the watchdog below); FAILED documents get another try on
+    resubmission. PROCESSING/COMPLETED are left alone.
     """
     return doc.processing_status in (
         ChatDocument.Status.PENDING,
         ChatDocument.Status.FAILED,
     )
+
+
+async def _claim_document_for_processing(
+    doc_id: int,
+    from_statuses: List[str],
+) -> bool:
+    """Atomically claim ``doc_id`` for summarization (-> PROCESSING).
+
+    A conditional UPDATE, so of any number of concurrent callers (the turn's
+    deferred kickoff, the storage watchdog, a resubmission) exactly one wins
+    and dispatches a worker; the in-memory status checks alone raced.
+    """
+    updated = await ChatDocument.objects.filter(
+        id=doc_id, processing_status__in=from_statuses
+    ).aupdate(processing_status=ChatDocument.Status.PROCESSING)
+    return bool(updated)
 
 
 async def start_document_summarization(
@@ -278,15 +294,66 @@ async def start_document_summarization(
 ) -> bool:
     """Fire background summarization for ``doc`` if it still needs it.
 
-    Safe to call repeatedly -- see :func:`summarization_needed`. Returns True
-    when a background task was actually fired.
+    Safe to call repeatedly and concurrently: after the cheap in-memory
+    pre-filter, the document is claimed with an atomic conditional UPDATE, so
+    only one caller dispatches a worker per PENDING/FAILED state. Returns
+    True when this call dispatched the background task. If dispatch itself
+    fails, the claim is released back to FAILED so a later attempt can retry.
     """
     if not summarization_needed(doc):
         return False
-    await fire_and_forget_in_new_threadpool(
-        summarize_chunks(doc.id, denial_context=denial_context)
-    )
+    if not await _claim_document_for_processing(
+        doc.id,
+        [ChatDocument.Status.PENDING, ChatDocument.Status.FAILED],
+    ):
+        return False
+    doc.processing_status = ChatDocument.Status.PROCESSING
+    try:
+        await fire_and_forget_in_new_threadpool(
+            summarize_chunks(doc.id, denial_context=denial_context)
+        )
+    except Exception:
+        doc.processing_status = ChatDocument.Status.FAILED
+        await ChatDocument.objects.filter(
+            id=doc.id, processing_status=ChatDocument.Status.PROCESSING
+        ).aupdate(processing_status=ChatDocument.Status.FAILED)
+        raise
     return True
+
+
+# How long the watchdog waits before rescuing a still-PENDING deferred
+# document. Longer than the chat turn budget (FHI_CHAT_TURN_BUDGET, 150s
+# default) so the turn's own kickoff always gets to go first.
+DEFERRED_SUMMARY_WATCHDOG_SECONDS = 240.0
+
+
+async def _deferred_summarization_watchdog(
+    doc_id: int,
+    denial_context: Optional[str],
+    delay: float,
+) -> None:
+    """Backstop for deferred summarization: rescue a stranded PENDING doc.
+
+    The turn that stored the document is supposed to kick summarization off
+    after its LLM pass, but anything between storage and that kickoff -- a
+    raise in history prep, the WebSocket consumer being cancelled on
+    disconnect -- skips it. This runs in its own fire-and-forget thread, so
+    it survives the consumer coroutine, waits out the turn, and claims the
+    document only if it is STILL PENDING (a FAILED first attempt is not
+    retried here -- that stays a resubmission-time decision).
+    """
+    await asyncio.sleep(delay)
+    try:
+        doc = await ChatDocument.objects.aget(id=doc_id)
+    except ChatDocument.DoesNotExist:
+        return
+    if not await _claim_document_for_processing(doc_id, [ChatDocument.Status.PENDING]):
+        return
+    logger.warning(
+        f"ChatDocument {doc_id} was still PENDING {delay:.0f}s after deferred "
+        f"storage (its turn never started summarization); watchdog starting it"
+    )
+    await summarize_chunks(doc_id, denial_context=denial_context)
 
 
 async def process_uploaded_document(
@@ -304,10 +371,14 @@ async def process_uploaded_document(
     the existing document -- its original ``document_name`` wins -- instead of
     creating a duplicate row and a second summarization storm.
 
-    With ``defer_summarization=True`` no summarization is fired here; the
-    caller must call :func:`start_document_summarization` afterwards. The
-    chat turn uses this so the batch summarization work doesn't compete with
-    the interactive LLM calls for the same backends.
+    With ``defer_summarization=True`` no summarization worker is dispatched
+    here; the caller must call :func:`start_document_summarization` after its
+    own LLM pass. The chat turn uses this so the batch summarization work
+    doesn't compete with the interactive LLM calls for the same backends. A
+    watchdog thread is still armed at storage time so the document cannot be
+    stranded PENDING if the caller dies (disconnect, setup error) before its
+    deferred kickoff runs -- the atomic claim keeps the two from ever both
+    dispatching.
     """
     doc: Optional[ChatDocument] = None
     async for existing in (
@@ -339,5 +410,13 @@ async def process_uploaded_document(
 
     if not defer_summarization:
         await start_document_summarization(doc, denial_context=denial_context)
+    elif summarization_needed(doc):
+        await fire_and_forget_in_new_threadpool(
+            _deferred_summarization_watchdog(
+                doc.id,
+                denial_context,
+                DEFERRED_SUMMARY_WATCHDOG_SECONDS,
+            )
+        )
 
     return doc

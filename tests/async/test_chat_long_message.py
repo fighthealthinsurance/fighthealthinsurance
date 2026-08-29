@@ -213,8 +213,11 @@ class LongPasteAllModelsFailTest(APITestCase):
         big = "Coverage denied: intensive outpatient program not authorized. " * 400
         mock_model = FailingMockModel()
         with _patched_backends(mock_model):
+            # Real document storage (the acknowledgment must only ever claim
+            # "stored" when content truly is); only the summarization fan-out
+            # is mocked so no background ML work runs.
             with patch(
-                "fighthealthinsurance.chat_interface.process_uploaded_document",
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
                 new_callable=AsyncMock,
             ):
                 user, chat = await _make_professional_chat("longpaste3", "9999900004")
@@ -236,8 +239,16 @@ class LongPasteAllModelsFailTest(APITestCase):
                 self.assertNotIn("error", response)
                 self.assertIn("content", response)
                 ack = response["content"]
-                self.assertIn("pasted_message_", ack)
                 self.assertIn("paste it again", ack)
+
+                # The content really was stored, and the acknowledgment names
+                # the document that actually exists.
+                docs = [
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                ]
+                self.assertEqual(len(docs), 1)
+                self.assertEqual(docs[0].full_text, big)
+                self.assertIn(docs[0].document_name, ack)
 
                 # History shows a coherent, alternating exchange: the compact
                 # marker followed by the acknowledgment.
@@ -246,6 +257,57 @@ class LongPasteAllModelsFailTest(APITestCase):
                 self.assertEqual(roles, ["user", "assistant"])
                 self.assertIn("stored for reference", chat.chat_history[0]["content"])
                 self.assertEqual(chat.chat_history[1]["content"], ack)
+
+    async def test_setup_failure_after_storage_still_arms_summarization(self):
+        # A raise between storage and the LLM pass (here: history prep) exits
+        # the turn before the deferred kickoff in its finally block. The
+        # document must survive as PENDING with the storage-time watchdog
+        # armed to rescue it -- not be stranded unanalyzed.
+        big = "Denial letter contents pasted just before a setup crash. " * 400
+        mock_model = RecordingMockModel()
+        with _patched_backends(mock_model):
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ) as mock_fire:
+                with patch(
+                    "fighthealthinsurance.chat_interface.prepare_history_for_llm",
+                    side_effect=RuntimeError("boom after storage"),
+                ):
+                    user, chat = await _make_professional_chat(
+                        "longpaste5", "9999900007"
+                    )
+                    communicator = WebsocketCommunicator(
+                        OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                    )
+                    communicator.scope["user"] = user
+                    connected, _ = await communicator.connect()
+                    try:
+                        await communicator.send_json_to(
+                            {"chat_id": str(chat.id), "content": big}
+                        )
+                        response = await _drain_to_content(communicator)
+                    finally:
+                        await communicator.disconnect()
+
+                # The turn itself failed (consumer-level error frame)...
+                self.assertIn("error", response)
+
+                # ...but the document was stored, is still PENDING, and the
+                # watchdog was armed at storage time to start summarization.
+                docs = [
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                ]
+                self.assertEqual(len(docs), 1)
+                self.assertEqual(
+                    docs[0].processing_status, ChatDocument.Status.PENDING
+                )
+                fired_names = [
+                    call.args[0].__name__ for call in mock_fire.call_args_list
+                ]
+                self.assertIn("_deferred_summarization_watchdog", fired_names)
+                # No summarization worker was dispatched mid-crash.
+                self.assertNotIn("summarize_chunks", fired_names)
 
     async def test_total_model_failure_on_short_message_still_errors(self):
         # The acknowledgment fallback is only for turns whose content was
