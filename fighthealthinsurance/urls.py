@@ -40,7 +40,7 @@ def trigger_error(request: HttpRequest) -> HttpResponseBase:
 
 urlpatterns: List[Union[URLPattern, URLResolver]] = [
     # Internal-ish-views
-    path("ziggy/rest/", include("fighthealthinsurance.rest_urls")),
+    path("ziggy/rest/", include("api.urls")),
     path("timbit/sentry-debug/", trigger_error),
     # Add webhook handler
     path(
