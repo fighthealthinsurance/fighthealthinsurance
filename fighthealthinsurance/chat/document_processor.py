@@ -331,27 +331,36 @@ async def _deferred_summarization_watchdog(
     doc_id: int,
     denial_context: Optional[str],
     delay: float,
+    claim_statuses: Optional[List[str]] = None,
 ) -> None:
-    """Backstop for deferred summarization: rescue a stranded PENDING doc.
+    """Backstop for deferred summarization: rescue a stranded document.
 
     The turn that stored the document is supposed to kick summarization off
     after its LLM pass, but anything between storage and that kickoff -- a
     raise in history prep, the WebSocket consumer being cancelled on
     disconnect -- skips it. This runs in its own fire-and-forget thread, so
     it survives the consumer coroutine, waits out the turn, and claims the
-    document only if it is STILL PENDING (a FAILED first attempt is not
-    retried here -- that stays a resubmission-time decision).
+    document only if it still sits in ``claim_statuses`` -- the status it had
+    when the watchdog was armed (default PENDING). A fresh document whose
+    fast path already ran therefore is not re-touched, while a FAILED
+    document the user explicitly resubmitted still gets its retry even if
+    the resubmitting turn dies. (For that resubmitted-FAILED case, a turn
+    whose own retry ran and failed again may get one extra watchdog retry --
+    bounded to one per resubmission and accepted.)
     """
+    if claim_statuses is None:
+        claim_statuses = [ChatDocument.Status.PENDING]
     await asyncio.sleep(delay)
     try:
         doc = await ChatDocument.objects.aget(id=doc_id)
     except ChatDocument.DoesNotExist:
         return
-    if not await _claim_document_for_processing(doc_id, [ChatDocument.Status.PENDING]):
+    if not await _claim_document_for_processing(doc_id, claim_statuses):
         return
     logger.warning(
-        f"ChatDocument {doc_id} was still PENDING {delay:.0f}s after deferred "
-        f"storage (its turn never started summarization); watchdog starting it"
+        f"ChatDocument {doc_id} was still {'/'.join(claim_statuses)} "
+        f"{delay:.0f}s after deferred storage (its turn never started "
+        f"summarization); watchdog starting it"
     )
     await summarize_chunks(doc_id, denial_context=denial_context)
 
@@ -411,11 +420,19 @@ async def process_uploaded_document(
     if not defer_summarization:
         await start_document_summarization(doc, denial_context=denial_context)
     elif summarization_needed(doc):
+        # The watchdog may only claim from the status observed NOW: a fresh
+        # PENDING doc must not be re-touched once its fast path has run,
+        # while a resubmitted FAILED doc must still get its retry if this
+        # turn dies. A re-paste while an earlier watchdog is still parked
+        # arms a second one; that is deliberate -- the atomic claim lets at
+        # most one dispatch, so extras are harmless no-ops, and deduping the
+        # threads themselves would need persisted watchdog state.
         await fire_and_forget_in_new_threadpool(
             _deferred_summarization_watchdog(
                 doc.id,
                 denial_context,
                 DEFERRED_SUMMARY_WATCHDOG_SECONDS,
+                claim_statuses=[doc.processing_status],
             )
         )
 
