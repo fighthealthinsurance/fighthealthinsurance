@@ -1686,7 +1686,7 @@ class ChatInterface:
             # on the socket for the user (and any idle-reaping proxy).
             heartbeat_task = asyncio.create_task(self._turn_heartbeat())
             try:
-                letter = await draft_letter_for_chat(
+                drafted = await draft_letter_for_chat(
                     appeal=appeal,
                     denial=appeal.for_denial,
                     use_external=self.use_external_models,
@@ -1697,14 +1697,21 @@ class ChatInterface:
                 )
             finally:
                 heartbeat_task.cancel()
-            if not letter:
+            if not drafted:
                 return None
+            # Only claim the letter is on the appeal when the save succeeded.
+            saved_note = (
+                f"It's saved to [Appeal #{appeal.id}](/appeals/{appeal.id})."
+                if drafted.saved_to_appeal
+                else f"I couldn't attach it to [Appeal #{appeal.id}]"
+                f"(/appeals/{appeal.id}) just now, so please copy it from "
+                f"this chat."
+            )
             return (
                 f"Our chat models are having trouble right now, so I drafted "
                 f"your appeal letter with our dedicated appeal generator "
-                f"instead. It's saved to [Appeal #{appeal.id}]"
-                f"(/appeals/{appeal.id}). Here's the draft -- please review "
-                f"the details before sending:\n\n---\n\n{letter}"
+                f"instead. {saved_note} Here's the draft -- please review "
+                f"the details before sending:\n\n---\n\n{drafted.text}"
             )
         except Exception as e:
             logger.opt(exception=True).warning(

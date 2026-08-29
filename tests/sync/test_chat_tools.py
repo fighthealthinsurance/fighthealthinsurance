@@ -1975,3 +1975,57 @@ class TestSubstituteDenialFields(TestCase):
         self.assertFalse(denial_has_letter_context(None))
         self.assertFalse(denial_has_letter_context(Empty()))
         self.assertTrue(denial_has_letter_context(HasProcedure()))
+
+
+class TestParseAnchoredJsonPayload(TestCase):
+    """Precise payload extraction for the anchored **tool**{...} calls."""
+
+    def _match(self, text):
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+
+        match = GenerateAppealLetterTool(AsyncMock()).detect(text)
+        self.assertIsNotNone(match)
+        return match
+
+    def test_payload_stops_at_own_call_despite_later_braces(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            "Some prose in between.\n"
+            '**create_or_update_prior_auth**{"treatment": "PT"}'
+        )
+        payload, span = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(payload, {"procedure": "MRI"})
+        # The span covers only this call, so replacing it leaves the later
+        # tool call (and the prose) for its own handler.
+        self.assertEqual(span, '**generate_appeal_letter**{"procedure": "MRI"}')
+
+    def test_pretty_printed_multiline_payload_parses(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = '**generate_appeal_letter**{\n  "procedure": "MRI",\n  "diagnosis": "back pain"\n}'
+        payload, span = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(
+            payload, {"procedure": "MRI", "diagnosis": "back pain"}
+        )
+        self.assertEqual(span, text)
+
+    def test_invalid_payload_raises_json_error(self):
+        import json as json_mod
+
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        # A match whose captured region does not start a valid JSON object:
+        # the greedy pattern accepts it (there is a later } at end of line),
+        # but raw_decode must reject it so the handler's error path runs.
+        text = '**generate_appeal_letter**{invalid json}'
+        payload_match = self._match(text)
+        with self.assertRaises(json_mod.JSONDecodeError):
+            parse_anchored_json_payload(text, payload_match)

@@ -13,7 +13,12 @@ from loguru import logger
 
 from fighthealthinsurance.utils import aget_related
 
-from .base_tool import BaseTool, is_safe_tool_field, settable_model_fields
+from .base_tool import (
+    BaseTool,
+    is_safe_tool_field,
+    parse_anchored_json_payload,
+    settable_model_fields,
+)
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
 
 
@@ -84,10 +89,13 @@ class PriorAuthTool(BaseTool):
             await self.send_error_message("Cannot create prior auth: no chat context")
             return response_text, context
 
-        json_data = match.group(1).strip()
-
         try:
-            prior_auth_data = json.loads(json_data)
+            # Precise payload + span (see parse_anchored_json_payload): replace
+            # call_span, not the greedy match.group(0), so a second tool call
+            # in the same reply survives for its own handler.
+            prior_auth_data, call_span = parse_anchored_json_payload(
+                response_text, match
+            )
             await self.send_status_message(
                 "Processing prior authorization update/create data..."
             )
@@ -99,7 +107,7 @@ class PriorAuthTool(BaseTool):
                 await prior_auth.asave()
 
                 cleaned_response = response_text.replace(
-                    match.group(0),
+                    call_span,
                     f"I've created/updated [Prior Auth Request #{prior_auth.id}]"
                     f"({self.domain}/prior-auths/view/{prior_auth.id}) for you.",
                 )
@@ -110,7 +118,7 @@ class PriorAuthTool(BaseTool):
                 return cleaned_response, context
             else:
                 cleaned_response = response_text.replace(
-                    match.group(0),
+                    call_span,
                     "I couldn't create or update the prior authorization request.",
                 )
                 await self.send_status_message(
@@ -118,9 +126,12 @@ class PriorAuthTool(BaseTool):
                 )
                 return cleaned_response, context
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            # No payload content in the log: prior-auth JSON carries
+            # medical/claim details (PHI) -- sizes only.
             logger.warning(
-                f"Invalid JSON data in create_or_update_prior_auth token: {json_data}"
+                f"Invalid JSON in create_or_update_prior_auth token "
+                f"({len(match.group(1))} chars): {e.msg} at pos {e.pos}"
             )
             await self.send_status_message(
                 "Error processing prior auth data: Invalid JSON format."

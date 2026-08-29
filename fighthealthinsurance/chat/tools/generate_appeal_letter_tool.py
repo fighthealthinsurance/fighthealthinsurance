@@ -21,8 +21,10 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
     denial_has_letter_context,
     draft_letter_for_chat,
 )
+from fighthealthinsurance.denial_context import merge_qa
 
 from .appeal_tool import AppealTool
+from .base_tool import parse_anchored_json_payload
 from .patterns import GENERATE_APPEAL_LETTER_REGEX
 
 # Payload keys that are letter-generation context rather than Appeal/Denial
@@ -87,15 +89,21 @@ class GenerateAppealLetterTool(AppealTool):
             await self.send_error_message("Cannot draft a letter: no chat context")
             return response_text, context
 
-        json_data = match.group(1).strip()
         try:
-            appeal_data = json.loads(json_data)
+            # Precise payload + span (see parse_anchored_json_payload): replace
+            # call_span, not the greedy match.group(0), so a second tool call
+            # in the same reply survives for its own handler.
+            appeal_data, call_span = parse_anchored_json_payload(response_text, match)
         except json.JSONDecodeError as e:
+            # No payload content in the log or the error frame: the letter
+            # JSON carries medical/claim details (PHI) -- sizes only.
             logger.warning(
-                f"Invalid JSON data {e} in generate_appeal_letter token: {json_data}"
+                f"Invalid JSON in generate_appeal_letter token "
+                f"({len(match.group(1))} chars): {e.msg} at pos {e.pos}"
             )
             await self.send_error_message(
-                f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
+                "Error processing appeal data: the letter request was not "
+                "valid JSON. Please try again."
             )
             raise
 
@@ -104,18 +112,18 @@ class GenerateAppealLetterTool(AppealTool):
             # Peel off the letter-context keys BEFORE the field update so the
             # allowlist doesn't warn on them; they reach the models through
             # denial.qa_context below.
-            extra_context = []
+            extra_context = {}
             for key in _CONTEXT_ONLY_KEYS:
                 value = appeal_data.pop(key, None)
                 if value:
-                    extra_context.append(str(value).strip())
+                    extra_context[key] = str(value).strip()
 
             appeal, denial = await self._get_or_create_appeal(chat, appeal_data)
             if not appeal or not denial:
                 await self.send_status_message("Failed to create or update appeal.")
                 return (
                     response_text.replace(
-                        match.group(0),
+                        call_span,
                         "I couldn't set up the appeal record to draft a letter into.",
                     ),
                     context,
@@ -123,12 +131,10 @@ class GenerateAppealLetterTool(AppealTool):
 
             await self._update_appeal_fields(appeal, denial, appeal_data)
             if extra_context:
-                addition = "Context from the chat: " + " ".join(extra_context)
-                denial.qa_context = (
-                    f"{denial.qa_context}\n{addition}"
-                    if denial.qa_context
-                    else addition
-                )
+                # qa_context is a JSON dict grown via merge_qa ("merge, never
+                # overwrite" -- see denial_context); a plain-text append here
+                # would corrupt it to the {"misc": ...} fallback shape.
+                merge_qa(denial, extra_context, source="generate_appeal_letter")
             await appeal.asave()
             await denial.asave()
 
@@ -137,7 +143,7 @@ class GenerateAppealLetterTool(AppealTool):
                 # a letter of blanks.
                 return (
                     response_text.replace(
-                        match.group(0),
+                        call_span,
                         "Before I draft the letter I need at least one of: "
                         "the procedure or service that was denied, the "
                         "diagnosis, or the denial letter text (you can paste "
@@ -150,20 +156,29 @@ class GenerateAppealLetterTool(AppealTool):
                 "Drafting your appeal letter with our appeal-generation "
                 "pipeline -- this can take a minute..."
             )
-            letter = await draft_letter_for_chat(
+            drafted = await draft_letter_for_chat(
                 appeal=appeal,
                 denial=denial,
                 use_external=self.use_external,
             )
 
-            if letter:
+            if drafted and drafted.saved_to_appeal:
                 await self.send_status_message(
                     f"Appeal letter drafted and saved to Appeal #{appeal.id}."
                 )
                 replacement = (
                     f"I've drafted an appeal letter and saved it to "
                     f"{self._appeal_link(appeal)}. Here's the draft -- tell me "
-                    f"what you'd like to change:\n\n---\n\n{letter}"
+                    f"what you'd like to change:\n\n---\n\n{drafted.text}"
+                )
+            elif drafted:
+                # The letter exists but the appeal save failed: deliver it
+                # without claiming it was saved anywhere.
+                await self.send_status_message("Appeal letter drafted.")
+                replacement = (
+                    f"I've drafted an appeal letter, but couldn't attach it to "
+                    f"{self._appeal_link(appeal)} just now -- please copy it "
+                    f"from this chat. Here's the draft:\n\n---\n\n{drafted.text}"
                 )
             else:
                 await self.send_status_message("Letter generation did not succeed.")
@@ -174,7 +189,7 @@ class GenerateAppealLetterTool(AppealTool):
                     f"{self._appeal_link(appeal)}, where you can also generate "
                     f"the letter, or ask me to try again in a few minutes."
                 )
-            return response_text.replace(match.group(0), replacement), context
+            return response_text.replace(call_span, replacement), context
 
         except Exception as e:
             logger.opt(exception=True).warning(f"Error drafting appeal letter: {e}")

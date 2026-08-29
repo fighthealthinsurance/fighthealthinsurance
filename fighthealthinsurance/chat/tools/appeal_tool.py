@@ -13,7 +13,12 @@ from loguru import logger
 
 from fighthealthinsurance.utils import aget_related
 
-from .base_tool import BaseTool, is_safe_tool_field, settable_model_fields
+from .base_tool import (
+    BaseTool,
+    is_safe_tool_field,
+    parse_anchored_json_payload,
+    settable_model_fields,
+)
 from .patterns import CREATE_OR_UPDATE_APPEAL_REGEX
 
 
@@ -80,10 +85,12 @@ class AppealTool(BaseTool):
             await self.send_error_message("Cannot create appeal: no chat context")
             return response_text, context
 
-        json_data = match.group(1).strip()
-
         try:
-            appeal_data = json.loads(json_data)
+            # Precise payload + span: the greedy anchored pattern can
+            # over-capture into a later tool call on another line (see
+            # parse_anchored_json_payload); replacing call_span rather than
+            # match.group(0) keeps that later call intact for its own handler.
+            appeal_data, call_span = parse_anchored_json_payload(response_text, match)
             await self.send_status_message("Processing update appeal data...")
 
             appeal, denial = await self._get_or_create_appeal(chat, appeal_data)
@@ -94,7 +101,7 @@ class AppealTool(BaseTool):
                 await denial.asave()
 
                 cleaned_response = response_text.replace(
-                    match.group(0),
+                    call_span,
                     f"I've created/updated [Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id}) for you.",
                 )
                 await self.send_status_message(
@@ -103,18 +110,22 @@ class AppealTool(BaseTool):
                 return cleaned_response, context
             else:
                 cleaned_response = response_text.replace(
-                    match.group(0),
+                    call_span,
                     "I couldn't create or update the appeal.",
                 )
                 await self.send_status_message("Failed to create or update appeal.")
                 return cleaned_response, context
 
         except json.JSONDecodeError as e:
+            # No payload content in the log or the error frame: the appeal
+            # JSON carries medical/claim details (PHI) -- sizes only.
             logger.warning(
-                f"Invalid JSON data {e} in create_or_update_appeal token: {json_data}"
+                f"Invalid JSON in create_or_update_appeal token "
+                f"({len(match.group(1))} chars): {e.msg} at pos {e.pos}"
             )
             await self.send_error_message(
-                f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
+                "Error processing appeal data: the appeal details were not "
+                "valid JSON. Please try again."
             )
             raise
 
