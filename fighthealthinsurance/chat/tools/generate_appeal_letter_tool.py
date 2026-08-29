@@ -47,6 +47,10 @@ class GenerateAppealLetterTool(AppealTool):
 
     pattern = GENERATE_APPEAL_LETTER_REGEX
     detect_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
+    # Inherited from AppealTool with the same value; declared explicitly so
+    # the ^...$-anchored pattern and the MULTILINE requirement (for the
+    # on-error tool-syntax strip in BaseTool.handle) stay side by side.
+    detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Generate Appeal Letter"
 
     def __init__(
