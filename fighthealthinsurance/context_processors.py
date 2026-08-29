@@ -95,3 +95,21 @@ def site_banner_context(request):
     except Exception:
         logger.opt(exception=True).debug("Could not load site banners")
         return {"site_banners": []}
+
+
+def agent_docs_context(request):
+    """
+    Add the markdown twin URL for agent-readable pages (llms.txt v2).
+
+    This provides:
+    - markdown_twin_url: path of this page's markdown twin (e.g. /about.md),
+      only for public content pages that have one. base.html turns it into
+      <link rel="alternate" type="text/markdown">.
+    """
+    from fighthealthinsurance import agent_docs
+
+    resolver_match = getattr(request, "resolver_match", None)
+    url_name = getattr(resolver_match, "url_name", None)
+    if not agent_docs.twin_eligible(url_name):
+        return {}
+    return {"markdown_twin_url": agent_docs.twin_path_for(request.path)}

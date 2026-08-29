@@ -383,6 +383,7 @@ class Base(Configuration):
                 "context_processors": [
                     "django.template.context_processors.debug",
                     "django.template.context_processors.request",
+                    "fighthealthinsurance.context_processors.agent_docs_context",
                     "django.contrib.auth.context_processors.auth",
                     "django.contrib.messages.context_processors.messages",
                     "fighthealthinsurance.context_processors.form_persistence_context",

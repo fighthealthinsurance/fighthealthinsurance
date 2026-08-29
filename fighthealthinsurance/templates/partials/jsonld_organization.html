@@ -1,0 +1,53 @@
+{% comment %}
+schema.org Organization + WebSite, on every page: lets AI search and entity
+graphs tie the name to this domain and its official profiles. Static on
+purpose (no request-dependent values), so it is safe inside cached pages.
+{% endcomment %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://www.fighthealthinsurance.com/#organization",
+      "name": "Fight Health Insurance",
+      "url": "https://www.fighthealthinsurance.com/",
+      "logo": "https://www.fighthealthinsurance.com/static/images/better-logo-optimized.png",
+      "description": "A free tool that helps patients appeal health insurance denials: photograph the denial letter and it drafts an appeal, explains the denial, and points to next steps and state regulators. Fight Paperwork is the professional version for clinics and providers.",
+      "founder": [
+        {
+          "@type": "Person",
+          "name": "Holden Karau",
+          "url": "https://www.linkedin.com/in/holdenkarau",
+          "sameAs": ["https://bsky.app/profile/holdenkarau.com", "https://x.com/holdenkarau"]
+        },
+        {
+          "@type": "Person",
+          "@id": "https://nyghtowl.com/#melanie",
+          "name": "Melanie Warrick",
+          "alternateName": "M Warrick",
+          "url": "https://nyghtowl.com/",
+          "sameAs": ["https://www.linkedin.com/in/melaniewarrick", "https://github.com/nyghtowl"]
+        }
+      ],
+      "sameAs": [
+        "https://github.com/orgs/fighthealthinsurance/repositories",
+        "https://www.linkedin.com/company/fight-health-insurance",
+        "https://www.youtube.com/@fighthealthinsuranceyt",
+        "https://fighthealthinsurance.substack.com/",
+        "https://www.instagram.com/fighthealthinsurance/",
+        "https://www.tiktok.com/@fighthealthinsurancett",
+        "https://www.reddit.com/r/fightpaperwork/"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://www.fighthealthinsurance.com/#website",
+      "url": "https://www.fighthealthinsurance.com/",
+      "name": "Fight Health Insurance",
+      "publisher": {"@id": "https://www.fighthealthinsurance.com/#organization"},
+      "inLanguage": "en"
+    }
+  ]
+}
+</script>

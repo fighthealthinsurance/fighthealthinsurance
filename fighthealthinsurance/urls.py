@@ -30,7 +30,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
-from fighthealthinsurance import fax_views, staff_views, views
+from fighthealthinsurance import agent_docs, fax_views, staff_views, views
 from fighthealthinsurance.sitemap import sitemap_view
 
 
@@ -443,6 +443,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path(
         "favicon.ico",
         RedirectView.as_view(url=staticfiles_storage.url("images/favicon.ico")),
+    ),
+    # Agent-readable site (llms.txt v2): the index, robots.txt at the root
+    # where crawlers look, and a markdown twin of every eligible public page
+    # at <page>.md. See agent_docs.py for what "eligible" means.
+    path("llms.txt", agent_docs.llms_txt_view, name="llms_txt"),
+    path("robots.txt", agent_docs.robots_txt_view, name="robots_txt"),
+    re_path(
+        r"^(?!static/)(?P<path>[A-Za-z0-9_/-]*)\.md$",
+        agent_docs.MarkdownTwinView.as_view(),
+        name="markdown_twin",
     ),
 ]
 
