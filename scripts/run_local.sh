@@ -58,8 +58,7 @@ if [ -f "requirements.txt" ] && [ -f "requirements-dev.txt" ]; then
 
   if [ "$NEEDS_INSTALL" = true ]; then
     echo "Installing/updating dependencies..."
-    pip install -r requirements.txt
-    pip install -r requirements-dev.txt
+    pip install -r requirements.txt -r requirements-dev.txt
     echo "$CURRENT_REQ_CHECKSUM" > "$REQ_CHECKSUM_FILE"
   fi
 fi
@@ -71,7 +70,7 @@ check_python_environment() {
 	if [ ${python_dep_check} != 0 ]; then
 		set +x
 		printf 'Python dependencies may be missing or Python version is too old. Please install dependencies via:\n' >/dev/stderr
-		printf 'pip install -r requirements.txt\n' >/dev/stderr
+		printf 'pip install -r requirements.txt -r requirements-dev.txt\n' >/dev/stderr
 		printf 'You need at least Python 3.10\n' >/dev/stderr
 		exit 1
 	fi
