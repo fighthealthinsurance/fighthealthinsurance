@@ -14,11 +14,12 @@ from rest_framework.test import APITestCase
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.chat.appeal_letter_generator import (
+    DraftedLetter,
     draft_letter_for_chat,
     find_reserve_letter,
     generate_letter_for_denial,
 )
-from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+from fighthealthinsurance.chat.tools import AppealTool, GenerateAppealLetterTool
 from fighthealthinsurance.chat_interface import ChatInterface
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.models import (
@@ -90,7 +91,7 @@ class ChatLetterFallbackTest(APITestCase):
     async def test_letter_request_rescued_by_letter_fallback(self):
         with patch(
             "fighthealthinsurance.chat_interface.draft_letter_for_chat",
-            new=AsyncMock(return_value=GENERATED_LETTER),
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
         ) as mock_draft:
             chat, appeal, _, recorder = await self._run_failing_turn(
                 "letterfall1", "9999920001", "Please go ahead and draft a letter."
@@ -110,7 +111,7 @@ class ChatLetterFallbackTest(APITestCase):
     async def test_letter_fallback_reply_is_persisted(self):
         with patch(
             "fighthealthinsurance.chat_interface.draft_letter_for_chat",
-            new=AsyncMock(return_value=GENERATED_LETTER),
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
         ):
             chat, _, _, _ = await self._run_failing_turn(
                 "letterfall2", "9999920002", "Please go ahead and draft a letter."
@@ -152,7 +153,7 @@ class ChatLetterFallbackTest(APITestCase):
     async def test_no_fallback_without_linked_appeal(self):
         with patch(
             "fighthealthinsurance.chat_interface.draft_letter_for_chat",
-            new=AsyncMock(return_value=GENERATED_LETTER),
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
         ) as mock_draft:
             chat, _, _, recorder = await self._run_failing_turn(
                 "letterfall4",
@@ -171,7 +172,7 @@ class ChatLetterFallbackTest(APITestCase):
     async def test_non_letter_request_skips_fallback_and_errors(self):
         with patch(
             "fighthealthinsurance.chat_interface.draft_letter_for_chat",
-            new=AsyncMock(return_value=GENERATED_LETTER),
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
         ) as mock_draft:
             chat, _, _, recorder = await self._run_failing_turn(
                 "letterfall5", "9999920005", "Why was my MRI claim denied?"
@@ -215,7 +216,7 @@ class GenerateAppealLetterToolTest(APITestCase):
         with patch(
             "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
             "draft_letter_for_chat",
-            new=AsyncMock(return_value=GENERATED_LETTER),
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
         ) as mock_draft:
             response, context, handled = await tool.handle(
                 response_text, "", chat=chat
@@ -242,7 +243,7 @@ class GenerateAppealLetterToolTest(APITestCase):
         with patch(
             "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
             "draft_letter_for_chat",
-            new=AsyncMock(return_value=GENERATED_LETTER),
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
         ) as mock_draft:
             response, _, handled = await tool.handle(
                 "**generate_appeal_letter**{}", "", chat=chat
@@ -389,10 +390,10 @@ class DraftLetterForChatTest(APITestCase):
             "generate_letter_for_denial",
             new=AsyncMock(return_value=generated),
         ):
-            letter = await draft_letter_for_chat(
+            drafted = await draft_letter_for_chat(
                 appeal=appeal, denial=denial, use_external=False
             )
-        self.assertEqual(letter, GENERATED_LETTER)
+        self.assertEqual(drafted, DraftedLetter(GENERATED_LETTER, True))
         fresh_appeal = await Appeal.objects.aget(id=appeal.id)
         self.assertEqual(fresh_appeal.appeal_text, GENERATED_LETTER)
         row = await ProposedAppeal.objects.aget(for_denial=denial)
@@ -406,10 +407,89 @@ class DraftLetterForChatTest(APITestCase):
         await ProposedAppeal.objects.acreate(
             appeal_text=RESERVE_LETTER, for_denial=denial
         )
-        letter = await draft_letter_for_chat(
+        drafted = await draft_letter_for_chat(
             appeal=appeal, denial=denial, use_external=False, prefer_existing=True
         )
-        self.assertEqual(letter, RESERVE_LETTER)
+        self.assertEqual(drafted.text, RESERVE_LETTER)
         self.assertEqual(
             await ProposedAppeal.objects.filter(for_denial=denial).acount(), 1
         )
+
+    async def test_failed_appeal_save_reported_not_hidden(self):
+        """A letter whose appeal save failed is still delivered, but flagged
+        so callers don't claim it was saved to the appeal."""
+        user, chat = await _make_professional_chat("draftpersist3", "9999940003")
+        appeal, denial = await _link_letter_appeal(chat, user)
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER, for_denial=denial
+        )
+        with patch.object(
+            Appeal, "asave", new=AsyncMock(side_effect=RuntimeError("db down"))
+        ):
+            drafted = await draft_letter_for_chat(
+                appeal=appeal, denial=denial, use_external=False, prefer_existing=True
+            )
+        self.assertEqual(drafted, DraftedLetter(RESERVE_LETTER, False))
+
+
+class PairedToolCallsTest(APITestCase):
+    """Two anchored tool calls in one reply must not swallow each other.
+
+    The greedy anchored patterns run under DOTALL, so before precise payload
+    extraction (parse_anchored_json_payload) the first handler's capture ran
+    through the second call's closing brace -- json failed and BOTH calls
+    were stripped. Handlers run in chat_interface order: AppealTool first,
+    then GenerateAppealLetterTool.
+    """
+
+    async def _run_both_tools(self, chat, response_text):
+        appeal_tool = AppealTool(AsyncMock(), AsyncMock())
+        response_text, context, _ = await appeal_tool.handle(
+            response_text, "", chat=chat
+        )
+        letter_tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock())
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft:
+            response_text, context, _ = await letter_tool.handle(
+                response_text, context, chat=chat
+            )
+        return response_text, mock_draft
+
+    async def test_appeal_then_letter_calls_both_run(self):
+        _, chat = await _make_professional_chat("paired1", "9999950001")
+        response = (
+            "Setting up your appeal first.\n"
+            '**create_or_update_appeal**{"procedure": "MRI", '
+            '"diagnosis": "chronic back pain"}\n'
+            "Now drafting the letter.\n"
+            '**generate_appeal_letter**{"insurance_company": "Acme Health"}'
+        )
+        result, mock_draft = await self._run_both_tools(chat, response)
+        mock_draft.assert_awaited_once()
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("generate_appeal_letter", result)
+        # The prose between the calls survives both replacements.
+        self.assertIn("Now drafting the letter.", result)
+        self.assertIn(GENERATED_LETTER, result)
+        appeal = await Appeal.objects.select_related("for_denial").aget(chat=chat)
+        self.assertEqual(appeal.for_denial.procedure, "MRI")
+        self.assertEqual(appeal.for_denial.insurance_company, "Acme Health")
+
+    async def test_letter_then_appeal_calls_both_run(self):
+        _, chat = await _make_professional_chat("paired2", "9999950002")
+        response = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            "Also recording the diagnosis.\n"
+            '**create_or_update_appeal**{"diagnosis": "chronic back pain"}'
+        )
+        result, mock_draft = await self._run_both_tools(chat, response)
+        mock_draft.assert_awaited_once()
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("generate_appeal_letter", result)
+        self.assertIn("Also recording the diagnosis.", result)
+        appeal = await Appeal.objects.select_related("for_denial").aget(chat=chat)
+        self.assertEqual(appeal.for_denial.procedure, "MRI")
+        self.assertEqual(appeal.for_denial.diagnosis, "chronic back pain")

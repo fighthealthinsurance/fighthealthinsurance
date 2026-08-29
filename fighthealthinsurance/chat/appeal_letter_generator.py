@@ -23,7 +23,7 @@ dedicated appeal pipeline -- instead. Two callers:
 import re
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, NamedTuple, Optional
 
 from channels.db import database_sync_to_async
 from loguru import logger
@@ -54,6 +54,18 @@ _SUBSTITUTABLE_FIELDS = ("insurance_company", "claim_id", "diagnosis", "procedur
 # UNKNOWN is the extractor's explicit "couldn't tell" marker; substituting it
 # into a letter would be worse than leaving the fill-in-the-blank placeholder.
 _UNSET_FIELD_VALUES = (None, "", "UNKNOWN")
+
+
+class DraftedLetter(NamedTuple):
+    """A produced appeal letter plus whether it reached the Appeal row.
+
+    ``saved_to_appeal`` lets callers word their reply honestly: a letter
+    whose ``appeal.asave()`` failed is still delivered, but must not be
+    presented as "saved to Appeal #N".
+    """
+
+    text: str
+    saved_to_appeal: bool
 
 
 def looks_like_letter_request(text: Optional[str]) -> bool:
@@ -260,7 +272,7 @@ async def draft_letter_for_chat(
     use_external: bool,
     prefer_existing: bool = False,
     deadline_seconds: Optional[float] = None,
-) -> Optional[str]:
+) -> Optional[DraftedLetter]:
     """Produce an appeal letter for a chat-linked appeal and persist it.
 
     ``prefer_existing=True`` serves an already-generated ProposedAppeal
@@ -271,7 +283,9 @@ async def draft_letter_for_chat(
 
     On success the letter is saved to ``appeal.appeal_text`` and, for a
     newly generated letter, recorded as a ProposedAppeal row for the same
-    provenance the wizard flow gets. Returns the letter text, or None.
+    provenance the wizard flow gets. Returns a ``DraftedLetter`` (text plus
+    whether the appeal save succeeded), or None when no letter could be
+    produced.
     """
     from fighthealthinsurance.models import ProposedAppeal
 
@@ -312,12 +326,14 @@ async def draft_letter_for_chat(
                 f"{getattr(denial, 'denial_id', None)}"
             )
 
+    saved_to_appeal = False
     try:
         appeal.appeal_text = letter
         await appeal.asave()
+        saved_to_appeal = True
     except Exception:
         logger.opt(exception=True).warning(
             f"chat letter: could not save letter to appeal "
             f"{getattr(appeal, 'id', None)}; delivering it unpersisted"
         )
-    return letter
+    return DraftedLetter(text=letter, saved_to_appeal=saved_to_appeal)
