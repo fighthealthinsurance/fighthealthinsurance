@@ -88,8 +88,14 @@ def load_fax(hashed_email: str, fax_uuid: Union[str, UUID]) -> Optional["FaxesTo
         return None
 
 
-def _release_send_claim(fax: "FaxesToSend") -> None:
-    """Undo a vendor-send claim after a failed send so it can be retried."""
+def release_send_claim(fax: "FaxesToSend") -> None:
+    """Undo a vendor-send claim after a failed send so it can be retried.
+
+    Also called as its own Temporal activity after a failed workflow send: a
+    worker killed mid-send (OOM, eviction) dies with the claim still True and
+    no in-process ``except`` left alive to release it, which blocked every
+    later resend until a human cleared the flag (observed 2026-08-30).
+    """
     from fighthealthinsurance.models import FaxesToSend
 
     try:
@@ -166,11 +172,25 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     # without re-transmitting. A plain in-memory read of the flag was a TOCTOU
     # race -- the multi-minute vendor call sits between check and write, so two
     # senders both saw False and both faxed the insurer.
+    # Assemble the document BEFORE taking the claim. Assembly (PubMed PDF
+    # fetches + pandoc) is the memory-hungry phase -- it OOM-killed the worker
+    # on 2026-08-30 -- and a death here used to strand the claim without a fax
+    # ever reaching the vendor. Assembling first means a crash in this phase
+    # leaves the claim untouched and a retry can proceed. Worst case two
+    # concurrent senders both assemble (wasted work); the claim below still
+    # guarantees only one transmits.
+    # get_temporary_document_path leaves cleanup to the caller (delete=False),
+    # so remove the temp file on both success and failure paths.
+    document_path = fax.get_temporary_document_path()
     claimed = FaxesToSend.objects.filter(pk=fax.pk, vendor_send_completed=False).update(
         vendor_send_completed=True
     )
     if not claimed:
         logger.info(f"Fax uuid={fax.uuid} already claimed/sent; not re-sending")
+        try:
+            os.unlink(document_path)
+        except OSError:
+            pass
         return True
     fax.vendor_send_completed = True
     denial = fax.denial_id
@@ -180,9 +200,6 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     if fax.name is not None and len(fax.name) > 2:
         extra += f"This fax is sent on behalf of {fax.name}."
     logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
-    # get_temporary_document_path leaves cleanup to the caller (delete=False),
-    # so remove the temp file on both success and failure paths.
-    document_path = fax.get_temporary_document_path()
     try:
         result = asyncio.run(
             flexible_fax_magic.send_fax(
@@ -198,7 +215,7 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
         # legitimate retry (the Temporal retry policy, or a Ray re-send) can send
         # again instead of short-circuiting on a marker for a fax that never
         # went out.
-        _release_send_claim(fax)
+        release_send_claim(fax)
         raise
     finally:
         try:
@@ -208,7 +225,7 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     if not result:
         # Vendor reported failure without raising -- release the claim too so the
         # failed send can be retried.
-        _release_send_claim(fax)
+        release_send_claim(fax)
     return result
 
 

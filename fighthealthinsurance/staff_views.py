@@ -156,6 +156,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
         ctx["temporal"] = self._temporal_status()
+        ctx["fax_outcomes"] = self._fax_outcome_status()
         ctx["storage"] = self._storage_status()
         return ctx
 
@@ -271,6 +272,43 @@ class AdminStatusView(generic.TemplateView):
             out["ok"] = False
             out["error"] = str(e)
         return out
+
+    @staticmethod
+    def _fax_outcome_status() -> Dict[str, Any]:
+        """Fax delivery outcomes (last 7 days) from the database.
+
+        The Temporal panel above shows workflow *status*, where "Completed"
+        only means the workflow finished -- a failed send still completes after
+        notifying the user (its Result is false). This panel answers the
+        question staff actually have: did the faxes get delivered? A row that
+        failed with ``vendor_send_completed`` still True cannot be re-sent by
+        the normal paths until the claim is released, so it is called out.
+        """
+        from fighthealthinsurance.models import FaxesToSend
+
+        try:
+            since = timezone.now() - datetime.timedelta(days=7)
+            recent = FaxesToSend.objects.filter(date__gte=since, sent=True)
+            failed_qs = recent.filter(fax_success=False).order_by("-date")
+            failed = [
+                {
+                    "uuid": str(f.uuid),
+                    "date": f.date,
+                    "claim_stuck": f.vendor_send_completed,
+                }
+                for f in failed_qs[:10]
+            ]
+            return {
+                "sent": recent.count(),
+                "delivered": recent.filter(fax_success=True).count(),
+                "failed": failed_qs.count(),
+                "stuck_claims": failed_qs.filter(vendor_send_completed=True).count(),
+                "recent_failures": failed,
+                "error": None,
+            }
+        except Exception as e:
+            logger.opt(exception=True).warning("Fax outcome status failed")
+            return {"error": str(e)}
 
     @staticmethod
     def _temporal_status() -> Dict[str, Any]:
