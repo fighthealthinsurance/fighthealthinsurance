@@ -46,12 +46,20 @@ else
 fi
 
 ./manage.py makemigrations --check || (./manage.py makemigrations && ./manage.py migrate)
-./manage.py validate_templates &
-./manage.py collectstatic --no-input "${COLLECTSTATIC_IGNORES[@]}" &
-wait
 
-pushd ./static/js
+# Build the JS bundles in the SOURCE tree before collectstatic, so the fresh
+# dist/ gets collected. Building inside the collected static/js used to work
+# only because collectstatic copied package.json and the .ts sources there;
+# since collectstatic_ignores.sh stopped publishing those (no node_modules in
+# the image), a fresh checkout has nothing to build in static/js. Same layout
+# as scripts/ci_npm_build.sh and scripts/build_static.sh.
+JS_PATH=fighthealthinsurance/static/js
+pushd "${JS_PATH}"
 npm i
 npm run build
 popd
+
+./manage.py validate_templates &
+./manage.py collectstatic --no-input "${COLLECTSTATIC_IGNORES[@]}" &
+wait
 
