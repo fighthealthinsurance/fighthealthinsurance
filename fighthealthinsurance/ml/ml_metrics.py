@@ -156,6 +156,10 @@ class ExecutorQueueCollector(Collector):
                 "interactive": fhi_exec.executor,
                 "background": fhi_exec.background_executor,
                 "pubmed": fhi_exec.pubmed_executor,
+                # Sampled because this pool exists to CAP concurrency: a
+                # standing queue here is the signal that chat letter drains
+                # are waiting on each other (see exec.letter_executor).
+                "letter": fhi_exec.letter_executor,
             }
             queued = GaugeMetricFamily(
                 "fhi_executor_queued_tasks",

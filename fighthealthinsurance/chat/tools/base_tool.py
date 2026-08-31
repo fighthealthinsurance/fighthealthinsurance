@@ -97,21 +97,34 @@ def remove_anchored_call(text: str, match: re.Match[str]) -> str:
     return text[:start] + text[end:]
 
 
-def strip_anchored_calls(tool: "BaseTool", response_text: str) -> str:
+def strip_anchored_calls(
+    tool: "BaseTool", response_text: str, notice: Optional[str] = None
+) -> str:
     """Span-bounded removal of every remaining call of ``tool`` in the text.
 
     The anchored tools' error/straggler cleanup: bounded loop of
     ``remove_anchored_call`` so nothing between calls is lost. Falls back to
     the original text when stripping would leave nothing (matching the
     ``BaseTool.handle`` error-path semantics).
+
+    ``notice`` is appended ONCE when anything was actually stripped. Pass it
+    whenever the dropped calls carried work that was never done: the
+    stripped reply is what the user reads AND what is persisted to
+    chat_history, so with no notice the model sees its call as accepted and
+    never retries it. The error path passes None -- a status message has
+    already gone out there.
     """
     text = response_text
+    removed = 0
     for _ in range(8):
         match = tool.detect(text)
         if not match:
             break
         text = remove_anchored_call(text, match)
+        removed += 1
     text = text.strip()
+    if removed and notice:
+        text = f"{text}\n\n{notice}" if text else notice
     return text or response_text
 
 
@@ -251,6 +264,21 @@ class BaseTool(ABC):
         ).strip()
         return stripped or response_text
 
+    def dropped_calls_notice(self) -> str:
+        """Sentence appended when calls past ``max_calls_per_reply`` are
+        dropped from a SUCCESSFUL reply.
+
+        Those calls carried updates that were never applied, and the reply
+        (minus them) is what both the user reads and the model sees in the
+        history, so saying nothing would leave the user thinking the change
+        landed and the model with no reason to retry.
+        """
+        return (
+            f"(Note: I could only apply the first {self.max_calls_per_reply} "
+            f"updates in one go, so anything after that hasn't been saved -- "
+            f"tell me what else to change and I'll take care of it.)"
+        )
+
     async def handle(
         self, response_text: str, context: str, **kwargs
     ) -> Tuple[str, str, bool]:
@@ -281,16 +309,19 @@ class BaseTool(ABC):
                 )
                 handled = True
             if handled and self.max_calls_per_reply > 1 and self.detect(response_text):
-                # Calls past the per-reply cap are stripped rather than left
-                # to render as raw tool syntax (with their JSON payloads).
-                # Only for multi-call tools: they override
-                # strip_calls_on_error with span-bounded removal, and
-                # single-call tools keep their historical behavior.
+                # Calls past the per-reply cap are stripped (with a notice
+                # saying they were not applied) rather than left to render
+                # as raw tool syntax with their JSON payloads. Gated on
+                # max_calls_per_reply > 1, i.e. the anchored JSON tools:
+                # span-bounded removal assumes their `**tool**{...}` shape,
+                # and single-call tools keep their historical behavior.
                 logger.info(
                     f"{self.name}: more than {self.max_calls_per_reply} calls "
                     f"in one reply; stripping the rest"
                 )
-                response_text = self.strip_calls_on_error(response_text)
+                response_text = strip_anchored_calls(
+                    self, response_text, notice=self.dropped_calls_notice()
+                )
             return response_text, context, handled
 
         except Exception as e:
