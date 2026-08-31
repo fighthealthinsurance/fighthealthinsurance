@@ -58,14 +58,17 @@ class FailingMockModel(MockChatModel):
 
 class VaryingMockModel(MockChatModel):
     """Mock model that answers something different every call, so multi-turn
-    tests don't trip the repeated-reply rejection ladder."""
+    tests don't trip the repeated-reply rejection ladder. Records every
+    message it was asked to generate against."""
 
     def __init__(self):
         super().__init__()
         self.calls = 0
+        self.received_messages: list[str] = []
 
     async def generate_chat_response(self, message, **kwargs):
         self.calls += 1
+        self.received_messages.append(message)
         return (
             f"Reply number {self.calls} with fresh guidance about the denial.",
             f"Summary: turn {self.calls}.",
@@ -385,6 +388,69 @@ class LongPasteDedupTest(APITestCase):
                 self.assertEqual(len(user_msgs), 2)
                 for msg in user_msgs:
                     self.assertIn(docs[0].document_name, msg)
+
+
+class LongPasteNameAdoptionDoesNotCorruptContentTest(APITestCase):
+    """Adopting a deduped document's name must not rewrite the user's own
+    words. document_name is client-supplied and the truncated variant's text
+    IS the raw paste, so a name that occurs in the pasted content (here the
+    word "denied") must never be substituted inside the message we send to
+    the model."""
+
+    async def test_repaste_with_content_word_as_document_name(self):
+        big = "The claim was denied because it was denied again. " * 500
+        self.assertGreater(len(big), DIRECT_CHAT_SOFT_LIMIT_CHARS)
+
+        mock_model = VaryingMockModel()
+        with _patched_backends(mock_model):
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ):
+                user, chat = await _make_professional_chat("longpaste6", "9999900008")
+                communicator = WebsocketCommunicator(
+                    OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                )
+                communicator.scope["user"] = user
+                connected, _ = await communicator.connect()
+                self.assertTrue(connected)
+                try:
+                    # First paste stores the document under its own name.
+                    await communicator.send_json_to(
+                        {
+                            "chat_id": str(chat.id),
+                            "content": big,
+                            "document_name": "first_doc.txt",
+                        }
+                    )
+                    await _drain_to_content(communicator)
+
+                    # Re-paste of the SAME content, this time naming it with a
+                    # word that appears throughout that content. It dedupes
+                    # onto "first_doc.txt", triggering name adoption.
+                    await communicator.send_json_to(
+                        {
+                            "chat_id": str(chat.id),
+                            "content": big,
+                            "document_name": "denied",
+                        }
+                    )
+                    await _drain_to_content(communicator)
+                finally:
+                    await communicator.disconnect()
+
+                docs = [
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                ]
+                self.assertEqual(len(docs), 1)
+                self.assertEqual(docs[0].document_name, "first_doc.txt")
+
+                # The user's words survived intact: no message sent to the
+                # model contains the substitution "first_doc.txt" where the
+                # user wrote "denied".
+                self.assertTrue(mock_model.received_messages)
+                for msg in mock_model.received_messages:
+                    self.assertNotIn("was first_doc.txt because", msg)
 
 
 class NormalMessagePrimaryPathTest(APITestCase):

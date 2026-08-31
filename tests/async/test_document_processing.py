@@ -20,6 +20,7 @@ from fighthealthinsurance.chat.document_processor import (
     DEFAULT_CHUNK_SIZE,
     DEFERRED_SUMMARY_WATCHDOG_SECONDS,
     STUCK_PROCESSING_RESCUE_SECONDS,
+    _claim_document_for_processing,
     _deferred_summarization_watchdog,
     chunk_document,
     process_uploaded_document,
@@ -508,6 +509,57 @@ class TestProcessUploadedDocument(APITestCase):
                 )
         # The fresh doc dispatched its own worker; no rescue is needed.
         mock_watchdog.assert_not_called()
+
+    async def test_stuck_processing_claim_is_exclusive(self):
+        # A PROCESSING -> PROCESSING conditional UPDATE changes nothing but
+        # still matches, so the database would report a successful claim to
+        # every caller: N resubmissions onto one stuck row would each start a
+        # full summarization fan-out. Exactly one caller may win.
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck_exclusive.txt",
+            full_text="text whose worker died",
+            char_count=22,
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        results = await asyncio.gather(
+            _claim_document_for_processing(doc.id, [ChatDocument.Status.PROCESSING]),
+            _claim_document_for_processing(doc.id, [ChatDocument.Status.PROCESSING]),
+            _claim_document_for_processing(doc.id, [ChatDocument.Status.PROCESSING]),
+        )
+        assert sorted(results) == [False, False, True]
+        await doc.arefresh_from_db()
+        assert doc.processing_status == ChatDocument.Status.PROCESSING
+
+    async def test_concurrent_stuck_rescues_dispatch_one_worker(self):
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck_race.txt",
+            full_text="text whose worker died",
+            char_count=22,
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await asyncio.gather(
+                *(
+                    _deferred_summarization_watchdog(
+                        doc.id,
+                        None,
+                        delay=0.01,
+                        claim_statuses=[ChatDocument.Status.PROCESSING],
+                    )
+                    for _ in range(3)
+                )
+            )
+
+        assert mock_summarize.await_count == 1
 
     async def test_watchdog_can_rescue_stuck_processing_when_told_to(self):
         chat = await OngoingChat.objects.acreate()

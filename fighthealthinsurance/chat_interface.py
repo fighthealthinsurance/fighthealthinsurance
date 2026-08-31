@@ -1193,19 +1193,18 @@ class ChatInterface:
                 sanitize_document_name(raw_name) if isinstance(raw_name, str) else ""
             )
             if actual_name and actual_name != doc_name:
-                message_variants = [
-                    replace(
-                        v,
-                        text_for_llm=v.text_for_llm.replace(doc_name, actual_name),
-                        display_text=(
-                            v.display_text.replace(doc_name, actual_name)
-                            if v.display_text
-                            else v.display_text
-                        ),
-                        metadata={**v.metadata, "document_name": actual_name},
-                    )
-                    for v in message_variants
-                ]
+                # Rebuild the variants around the real name rather than
+                # string-replacing the old one through them: the truncated
+                # variant's text IS the user's raw paste, and document_name
+                # is client-supplied, so a name that happens to occur in
+                # their content (say "the") would have been rewritten inside
+                # the message we send to the model. user_message is still the
+                # raw paste here -- it becomes the marker below.
+                message_variants = prepare_user_message_variants(
+                    user_message,
+                    is_document=is_document,
+                    document_name=actual_name,
+                )
                 long_paste_variant = next(
                     v for v in message_variants if v.metadata.get("store_full_text")
                 )
