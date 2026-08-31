@@ -2526,7 +2526,12 @@ class ChatInterface:
                     f"(use_external_models={self.use_external_models}, "
                     f"turn_timed_out={turn_timed_out})"
                 )
-                record_chat_turn("letter_fallback")
+                # Keep the turn-outcome labels a partition: a timed-out turn
+                # was already counted as "timeout" above. Rescues (including
+                # timed-out ones) remain visible via the reliability event
+                # below.
+                if not turn_timed_out:
+                    record_chat_turn("letter_fallback")
                 capture_reliability_event(
                     "chat_turn_letter_fallback_rescue",
                     chat_id=str(chat.id),
