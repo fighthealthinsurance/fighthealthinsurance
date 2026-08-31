@@ -281,9 +281,30 @@ async def _claim_document_for_processing(
     A conditional UPDATE, so of any number of concurrent callers (the turn's
     deferred kickoff, the storage watchdog, a resubmission) exactly one wins
     and dispatches a worker; the in-memory status checks alone raced.
+
+    Claiming FROM ``PROCESSING`` (the dead-worker rescue) needs one extra
+    step to keep that guarantee: PROCESSING -> PROCESSING changes nothing but
+    still MATCHES, so the database reports a successful claim to every caller
+    at once -- several armed rescues would each dispatch a fan-out on the
+    same document. Such callers first demote the row out of PROCESSING, which
+    only one of them can match, and the winner then takes the ordinary claim.
+    Dying between the two leaves the row FAILED, which a resubmission retries
+    -- strictly better than the stuck PROCESSING it replaced.
     """
+    statuses = list(from_statuses)
+    if ChatDocument.Status.PROCESSING in statuses:
+        statuses = [s for s in statuses if s != ChatDocument.Status.PROCESSING]
+        demoted = await ChatDocument.objects.filter(
+            id=doc_id, processing_status=ChatDocument.Status.PROCESSING
+        ).aupdate(processing_status=ChatDocument.Status.FAILED)
+        if demoted and ChatDocument.Status.FAILED not in statuses:
+            statuses.append(ChatDocument.Status.FAILED)
+        if not statuses:
+            # Nothing else was requested and the demote lost the race: some
+            # other caller is rescuing this row.
+            return False
     updated = await ChatDocument.objects.filter(
-        id=doc_id, processing_status__in=from_statuses
+        id=doc_id, processing_status__in=statuses
     ).aupdate(processing_status=ChatDocument.Status.PROCESSING)
     return bool(updated)
 
@@ -376,10 +397,10 @@ async def _deferred_summarization_watchdog(
     if claim_statuses is None:
         claim_statuses = [ChatDocument.Status.PENDING]
     await asyncio.sleep(delay)
-    try:
-        doc = await ChatDocument.objects.aget(id=doc_id)
-    except ChatDocument.DoesNotExist:
-        return
+    # Straight to the claim: it is filtered by id, so a document deleted
+    # while this was parked matches nothing and simply loses the claim --
+    # no separate existence check (which would also drag the whole
+    # full_text back out of the database just to throw it away).
     if not await _claim_document_for_processing(doc_id, claim_statuses):
         return
     logger.warning(
