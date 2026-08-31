@@ -572,6 +572,8 @@ class MultiCallAndErrorStripTest(APITestCase):
         mock_draft.assert_awaited_once()
         self.assertNotIn("generate_appeal_letter", result)
         self.assertEqual(result.count(GENERATED_LETTER), 1)
+        # The dropped duplicate is acknowledged rather than vanishing.
+        self.assertIn("drafted one letter", result)
 
     async def test_calls_past_the_cap_are_stripped_not_leaked(self):
         """A reply with more calls than max_calls_per_reply executes the
@@ -594,6 +596,10 @@ class MultiCallAndErrorStripTest(APITestCase):
         self.assertEqual(appeal.for_denial.diagnosis, "chronic back pain")
         self.assertEqual(appeal.for_denial.insurance_company, "Acme Health")
         self.assertIsNone(appeal.for_denial.employer_name)
+        # The drop is stated, not silent: this text is what the user reads
+        # AND what the model sees as history, so an unannounced drop would
+        # leave both believing the update landed.
+        self.assertIn("hasn't been saved", result)
 
     async def test_appeal_tool_error_leaves_letter_call_intact(self):
         """When AppealTool's execute blows up, the on-error strip must not

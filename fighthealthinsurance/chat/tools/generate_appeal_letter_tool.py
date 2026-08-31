@@ -95,10 +95,20 @@ class GenerateAppealLetterTool(AppealTool):
         A reply should carry at most one generate_appeal_letter call; any
         further ones would each run another full generation, so they are
         removed (span-bounded) rather than executed or left to render raw.
+        The notice keeps the drop visible to the user and to the model,
+        which reads this text back as history.
         """
         updated = response_text.replace(call_span, replacement, 1)
         if self.detect(updated):
-            updated = strip_anchored_calls(self, updated)
+            updated = strip_anchored_calls(
+                self,
+                updated,
+                notice=(
+                    "(Note: I drafted one letter for this message. If you "
+                    "wanted another version -- a different procedure or a "
+                    "different angle -- just ask and I'll write it.)"
+                ),
+            )
         return updated
 
     async def execute(
