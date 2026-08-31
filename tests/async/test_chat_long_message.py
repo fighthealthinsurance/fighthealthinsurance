@@ -285,6 +285,7 @@ class LongPasteAllModelsFailTest(APITestCase):
                     )
                     communicator.scope["user"] = user
                     connected, _ = await communicator.connect()
+                    self.assertTrue(connected)
                     try:
                         await communicator.send_json_to(
                             {"chat_id": str(chat.id), "content": big}
@@ -302,9 +303,7 @@ class LongPasteAllModelsFailTest(APITestCase):
                     d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
                 ]
                 self.assertEqual(len(docs), 1)
-                self.assertEqual(
-                    docs[0].processing_status, ChatDocument.Status.PENDING
-                )
+                self.assertEqual(docs[0].processing_status, ChatDocument.Status.PENDING)
                 fired_names = [
                     call.args[0].__name__ for call in mock_fire.call_args_list
                 ]
@@ -323,6 +322,7 @@ class LongPasteAllModelsFailTest(APITestCase):
             )
             communicator.scope["user"] = user
             connected, _ = await communicator.connect()
+            self.assertTrue(connected)
             try:
                 await communicator.send_json_to(
                     {"chat_id": str(chat.id), "content": "Why was my claim denied?"}
@@ -360,6 +360,7 @@ class LongPasteDedupTest(APITestCase):
                 )
                 communicator.scope["user"] = user
                 connected, _ = await communicator.connect()
+                self.assertTrue(connected)
                 try:
                     for _ in range(2):
                         await communicator.send_json_to(
@@ -372,8 +373,7 @@ class LongPasteDedupTest(APITestCase):
                 # One stored document, summarization kicked off (deferred to
                 # after the turn, but still kicked).
                 docs = [
-                    d
-                    async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
                 ]
                 self.assertEqual(len(docs), 1)
                 self.assertTrue(mock_fire.called)
@@ -381,9 +381,7 @@ class LongPasteDedupTest(APITestCase):
                 # Every marker in history references the document that exists.
                 await chat.arefresh_from_db()
                 user_msgs = [
-                    m["content"]
-                    for m in chat.chat_history
-                    if m.get("role") == "user"
+                    m["content"] for m in chat.chat_history if m.get("role") == "user"
                 ]
                 self.assertEqual(len(user_msgs), 2)
                 for msg in user_msgs:
