@@ -274,13 +274,19 @@ class StoredMessageMarkerTest(SimpleTestCase):
         marker = build_long_paste_marker(9000, "pasted_message_1.txt")
         self.assertFalse(is_stored_message_marker(f"The system said: {marker} Weird!"))
 
-    def test_sanitize_document_name_collapses_newlines(self):
+    def test_sanitize_document_name_collapses_newline_runs(self):
         self.assertEqual(
             sanitize_document_name("denial\nletter\r\n final.pdf"),
             "denial letter final.pdf",
         )
+
+    def test_sanitize_document_name_trims_surrounding_whitespace(self):
         self.assertEqual(sanitize_document_name("  plain.txt  "), "plain.txt")
+
+    def test_sanitize_document_name_of_none_is_empty(self):
         self.assertEqual(sanitize_document_name(None), "")
+
+    def test_sanitize_document_name_of_whitespace_only_is_empty(self):
         self.assertEqual(sanitize_document_name("\n \t"), "")
 
     def test_marker_with_sanitized_client_name_is_recognized(self):
@@ -290,13 +296,19 @@ class StoredMessageMarkerTest(SimpleTestCase):
         marker = build_long_paste_marker(12000, name)
         self.assertTrue(is_stored_message_marker(marker))
 
-    def test_long_paste_variants_sanitize_provided_document_name(self):
+    def _long_paste_reference_variant(self, document_name):
         big = "Denied as not medically necessary. " * 600
         variants = prepare_user_message_variants(
-            big, is_document=False, document_name="weird\nname.txt"
+            big, is_document=False, document_name=document_name
         )
-        ref = next(v for v in variants if v.kind == "long_message_document_reference")
+        return next(v for v in variants if v.kind == "long_message_document_reference")
+
+    def test_long_paste_variants_sanitize_provided_document_name(self):
+        ref = self._long_paste_reference_variant("weird\nname.txt")
         self.assertEqual(ref.metadata.get("document_name"), "weird name.txt")
+
+    def test_long_paste_marker_stays_recognizable_after_sanitization(self):
+        ref = self._long_paste_reference_variant("weird\nname.txt")
         self.assertTrue(is_stored_message_marker(ref.display_text))
 
 
