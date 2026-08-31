@@ -66,6 +66,7 @@ class Command(BaseCommand):
                 activities=[
                     fax_activities.precheck_fax,
                     fax_activities.send_fax_via_vendor,
+                    fax_activities.release_send_claim,
                     fax_activities.finalize_fax,
                 ],
                 activity_executor=activity_executor,
