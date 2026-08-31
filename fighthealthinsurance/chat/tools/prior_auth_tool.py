@@ -70,7 +70,14 @@ class PriorAuthTool(BaseTool):
 
     def strip_calls_on_error(self, response_text: str) -> str:
         """Span-bounded on-error strip (see AppealTool.strip_calls_on_error)."""
-        return strip_anchored_calls(self, response_text)
+        return strip_anchored_calls(
+            self,
+            response_text,
+            empty_fallback=(
+                "Sorry -- I hit a problem saving that prior authorization. "
+                "Could you tell me again what you'd like recorded?"
+            ),
+        )
 
     async def execute(
         self,

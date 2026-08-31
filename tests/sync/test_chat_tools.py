@@ -2051,3 +2051,74 @@ class TestClaimIdSubstitutionGuard(TestCase):
         self.assertIn("To Acme Health", result)
         self.assertIn("{claim_id}", result)
         self.assertIn("MRI", result)
+
+
+class TestAnchoredCallRemoval(TestCase):
+    """Span-bounded removal must leave no raw tool syntax behind.
+
+    The reply these produce is what the user reads AND what is persisted to
+    chat_history, so a leftover call means its JSON payload -- which can
+    carry medical detail -- is shown and stored.
+    """
+
+    def _tool(self):
+        from fighthealthinsurance.chat.tools import AppealTool
+
+        return AppealTool(AsyncMock(), AsyncMock())
+
+    def test_strips_more_calls_than_the_old_fixed_cap(self):
+        from fighthealthinsurance.chat.tools.base_tool import strip_anchored_calls
+
+        tool = self._tool()
+        text = "Here you go.\n" + "\n".join(
+            '**create_or_update_appeal**{"procedure": "MRI %d"}' % i
+            for i in range(12)
+        )
+        result = strip_anchored_calls(tool, text)
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("MRI", result)
+        self.assertIn("Here you go.", result)
+
+    def test_malformed_multiline_payload_leaves_no_json_tail(self):
+        from fighthealthinsurance.chat.tools.base_tool import strip_anchored_calls
+
+        tool = self._tool()
+        text = (
+            "Saving that now.\n"
+            "**create_or_update_appeal**{\n"
+            '  "procedure": "MRI",\n'
+            '  "diagnosis": "chronic back pain",\n'
+            "  oops not valid json\n"
+            "}\n"
+            "Anything else?"
+        )
+        result = strip_anchored_calls(tool, text)
+        self.assertNotIn("create_or_update_appeal", result)
+        # None of the payload survives -- not the keys, not the values.
+        self.assertNotIn("chronic back pain", result)
+        self.assertNotIn("procedure", result)
+        self.assertIn("Saving that now.", result)
+        self.assertIn("Anything else?", result)
+
+    def test_malformed_call_does_not_swallow_the_next_call(self):
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            "**create_or_update_appeal**{\n  broken\n}\n"
+            '**create_or_update_appeal**{"procedure": "MRI"}'
+        )
+        result = remove_anchored_call(text, tool.detect(text), tool)
+        self.assertNotIn("broken", result)
+        # The following call survives for its own handler pass.
+        self.assertIn('**create_or_update_appeal**{"procedure": "MRI"}', result)
+
+    def test_tool_call_only_reply_never_returns_raw_payload(self):
+        """A reply that is nothing but a failed call must not fall back to
+        the original text -- that would show the user the raw JSON."""
+        tool = self._tool()
+        text = '**create_or_update_appeal**{"procedure": "MRI", "diagnosis": "back pain"}'
+        result = tool.strip_calls_on_error(text)
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("back pain", result)
+        self.assertIn("problem saving", result)

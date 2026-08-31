@@ -49,8 +49,20 @@ class AppealTool(BaseTool):
 
     def strip_calls_on_error(self, response_text: str) -> str:
         """Span-bounded on-error strip: the greedy DOTALL pattern would also
-        delete the text (and any other pending tool call) between two calls."""
-        return strip_anchored_calls(self, response_text)
+        delete the text (and any other pending tool call) between two calls.
+
+        ``empty_fallback`` covers a reply that was nothing BUT the failed
+        call: returning the original text there (the base behavior) would
+        hand the user the raw token and its payload.
+        """
+        return strip_anchored_calls(
+            self,
+            response_text,
+            empty_fallback=(
+                "Sorry -- I hit a problem saving those appeal details. "
+                "Could you tell me again what you'd like recorded?"
+            ),
+        )
 
     def __init__(
         self,
