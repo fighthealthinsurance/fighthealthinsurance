@@ -102,18 +102,23 @@ class TestVendorSendAtomicClaim:
         with patch.object(
             fax, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
         ):
-            assert fax_send_core.send_fax_via_vendor(fax) is True
+            assert fax_send_core.send_fax_via_vendor(fax) == fax_send_core.SEND_OK
         fax.refresh_from_db()
         assert fax.vendor_send_completed is True
 
         # A racing sender that still holds a stale (False) in-memory marker must
-        # lose the atomic claim and NOT call the vendor a second time.
+        # lose the atomic claim and NOT call the vendor a second time. It gets
+        # SEND_NOT_OWNER (the delivery isn't finalized yet) so it neither
+        # finalizes nor releases the claim it does not hold.
         racer = FaxesToSend.objects.get(pk=fax.pk)
         racer.vendor_send_completed = False
         with patch.object(
             racer, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
         ):
-            assert fax_send_core.send_fax_via_vendor(racer) is True
+            assert (
+                fax_send_core.send_fax_via_vendor(racer)
+                == fax_send_core.SEND_NOT_OWNER
+            )
         assert mock_send.call_count == 1
 
     @patch("fighthealthinsurance.fax_send_core.flexible_fax_magic.send_fax")
@@ -123,7 +128,7 @@ class TestVendorSendAtomicClaim:
         with patch.object(
             fax, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
         ):
-            assert fax_send_core.send_fax_via_vendor(fax) is False
+            assert fax_send_core.send_fax_via_vendor(fax) == fax_send_core.SEND_FAILED
         fax.refresh_from_db()
         # Claim released so a genuine retry can send.
         assert fax.vendor_send_completed is False

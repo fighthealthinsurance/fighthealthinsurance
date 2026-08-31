@@ -9,6 +9,7 @@ from django.db.models import Count, QuerySet
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
+from django.db.models import Q
 from django.utils import timezone
 from django.views import View, generic
 
@@ -288,7 +289,12 @@ class AdminStatusView(generic.TemplateView):
 
         try:
             since = timezone.now() - datetime.timedelta(days=7)
-            recent = FaxesToSend.objects.filter(date__gte=since, sent=True)
+            # Filter on the last send attempt, not creation time: a fax created
+            # weeks ago that failed today must show here (PR #959 review).
+            recent = FaxesToSend.objects.filter(
+                Q(attempting_to_send_as_of__gte=since) | Q(date__gte=since),
+                sent=True,
+            )
             failed_qs = recent.filter(fax_success=False).order_by("-date")
             failed = [
                 {

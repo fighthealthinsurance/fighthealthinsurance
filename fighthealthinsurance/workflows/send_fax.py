@@ -45,16 +45,16 @@ DELAYED_SEND_WAIT = timedelta(hours=1)
 # worker dies mid-send (OOM-killed at its memory limit on 2026-08-30), the
 # heartbeats stop and the attempt fails in ~2 minutes instead of sitting
 # silent until the 30-minute start-to-close.
+#
+# NO automatic re-send on any failure, heartbeat timeouts included: lost
+# heartbeats prove the server stopped hearing from the worker, not that the
+# send thread died (a network partition leaves it dialing), so a second
+# attempt could double-fax (PR #959 review). Automatic retry needs a vendor
+# idempotency key first. The vendor layer (HylaFax/Sonic) already re-dials
+# internally; humans re-send explicitly via SendFaxHelper.resend().
 SEND_HEARTBEAT_TIMEOUT = timedelta(seconds=120)
 
-# A HEARTBEAT-timed-out attempt means the worker process is gone, so no vendor
-# call can still be running -- the one failure where an automatic second
-# attempt cannot double-fax. Anything else gets no automatic retry: the vendor
-# layer (HylaFax/Sonic) already re-dials internally, and re-sending on a
-# vendor-reported failure would burn paid submissions into the same problem.
-MAX_SEND_ATTEMPTS = 2
-
-# After a START_TO_CLOSE timeout the abandoned send thread may still be alive
+# After a timeout of either kind the abandoned send thread may still be alive
 # inside a living worker (Temporal cannot cancel it). Wait out the vendor
 # layer's own internal timeouts before releasing the claim, so an explicit
 # resend cannot overlap a zombie transmission.
@@ -124,45 +124,42 @@ class SendFaxWorkflow:
         # attempt may still be transmitting, so blind retries could double-fax.
         # The one exception is a HEARTBEAT timeout (worker process died, thread
         # provably gone): release the leaked claim and try once more.
-        success = False
+        send_status = "failed"
         send_hung = False
-        for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
-            try:
-                success = await workflow.execute_activity(
-                    fax_activities.send_fax_via_vendor,
-                    args=[fax_input.hashed_email, fax_input.fax_uuid],
-                    # The vendor layer has its own long internal timeouts (up
-                    # to ~1300s per backend, across multiple backends), so the
-                    # start_to_close window stays wide; the heartbeat timeout
-                    # is what catches a dead worker quickly.
-                    start_to_close_timeout=timedelta(minutes=30),
-                    heartbeat_timeout=SEND_HEARTBEAT_TIMEOUT,
-                    retry_policy=RetryPolicy(maximum_attempts=1),
-                )
-                break
-            except ActivityError as e:
-                # Let cancellation cancel the workflow; otherwise classify.
-                if is_cancelled_exception(e):
-                    raise
-                timeout_type = _timeout_type(e)
-                if (
-                    timeout_type == TimeoutType.HEARTBEAT
-                    and attempt < MAX_SEND_ATTEMPTS
-                ):
-                    workflow.logger.warning(
-                        "Vendor fax send worker died mid-attempt; releasing claim and retrying"
-                    )
-                    await workflow.execute_activity(
-                        fax_activities.release_send_claim,
-                        args=[fax_input.hashed_email, fax_input.fax_uuid],
-                        start_to_close_timeout=timedelta(seconds=60),
-                        retry_policy=DURABLE_RETRY,
-                    )
-                    continue
-                send_hung = timeout_type == TimeoutType.START_TO_CLOSE
-                workflow.logger.warning("Vendor fax send failed after retries")
-                success = False
-                break
+        try:
+            send_status = await workflow.execute_activity(
+                fax_activities.send_fax_via_vendor,
+                args=[fax_input.hashed_email, fax_input.fax_uuid],
+                # The vendor layer has its own long internal timeouts (up
+                # to ~1300s per backend, across multiple backends), so the
+                # start_to_close window stays wide; the heartbeat timeout
+                # is what catches a dead worker quickly. maximum_attempts=1
+                # and no workflow-level retry: see the constants comment.
+                start_to_close_timeout=timedelta(minutes=30),
+                heartbeat_timeout=SEND_HEARTBEAT_TIMEOUT,
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except ActivityError as e:
+            # Let cancellation cancel the workflow; otherwise classify.
+            if is_cancelled_exception(e):
+                raise
+            send_hung = _timeout_type(e) in (
+                TimeoutType.START_TO_CLOSE,
+                TimeoutType.HEARTBEAT,
+            )
+            workflow.logger.warning("Vendor fax send failed")
+            send_status = "failed"
+
+        if workflow.patched("send-status-not-owner") and send_status == "not_owner":
+            # Another sender holds the vendor-send claim: its flow finalizes
+            # and notifies. Finalizing here would record an outcome for a send
+            # this workflow did not make (PR #959 review).
+            workflow.logger.info("Vendor send claim held elsewhere; not finalizing")
+            return False
+
+        # Old histories recorded booleans from the send activity; new ones
+        # record status strings. Both resolve here.
+        success = send_status == "sent" or send_status is True
 
         # Finalize first so the user hears about a failure promptly; claim
         # cleanup below can afford to wait.
@@ -177,9 +174,9 @@ class SendFaxWorkflow:
             # A failed send must never leave the claim stuck (that blocked all
             # resends until a human cleared it, 2026-08-30). In-process release
             # covers vendor-reported failures; this durable release covers the
-            # paths where the process died holding the claim. After a
-            # START_TO_CLOSE timeout the send thread may still be alive, so
-            # wait out the vendor layer's internal timeouts first.
+            # paths where the process died holding the claim. After a timeout
+            # of either kind the send thread may still be alive, so wait out
+            # the vendor layer's internal timeouts first.
             if send_hung:
                 await workflow.sleep(ZOMBIE_DRAIN)
             await workflow.execute_activity(

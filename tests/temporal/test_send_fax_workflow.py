@@ -34,7 +34,7 @@ class _Recorder:
     def __init__(
         self,
         precheck_status: str = STATUS_OK,
-        send_result: bool = True,
+        send_result: str = "sent",
         send_raises: bool = False,
         finalize_fail_times: int = 0,
         precheck_fail_times: int = 0,
@@ -58,7 +58,7 @@ class _Recorder:
             return rec.precheck_status
 
         @activity.defn(name="send_fax_via_vendor")
-        async def send_fax_via_vendor(hashed_email: str, fax_uuid: str) -> bool:
+        async def send_fax_via_vendor(hashed_email: str, fax_uuid: str) -> str:
             rec.calls.append(("send", hashed_email, fax_uuid))
             if rec.send_raises:
                 raise ApplicationError("simulated vendor failure")
@@ -103,7 +103,7 @@ async def _run(env: WorkflowEnvironment, rec: _Recorder, *, delay_send: bool = F
 
 @pytest.mark.asyncio
 async def test_ok_path_sends_and_finalizes():
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=True)
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="sent")
     async with await WorkflowEnvironment.start_local() as env:
         result = await _run(env, rec)
     assert result is True
@@ -113,7 +113,7 @@ async def test_ok_path_sends_and_finalizes():
 
 @pytest.mark.asyncio
 async def test_send_failure_is_finalized_then_claim_released():
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=False)
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="failed")
     async with await WorkflowEnvironment.start_local() as env:
         result = await _run(env, rec)
     assert result is False
@@ -121,6 +121,17 @@ async def test_send_failure_is_finalized_then_claim_released():
     # after, so a failed send can always be explicitly re-sent.
     assert [c[0] for c in rec.calls] == ["precheck", "send", "finalize", "release"]
     assert rec.calls[2] == ("finalize", False, False)
+
+
+@pytest.mark.asyncio
+async def test_not_owner_send_finalizes_nothing():
+    """When another sender holds the vendor-send claim, this workflow must not
+    finalize the fax or release the claim -- the owner's flow does both."""
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="not_owner")
+    async with await WorkflowEnvironment.start_local() as env:
+        result = await _run(env, rec)
+    assert result is False
+    assert [c[0] for c in rec.calls] == ["precheck", "send"]
 
 
 def test_timeout_type_classification():
@@ -182,7 +193,7 @@ async def test_not_found_stops_without_send_or_finalize():
 @pytest.mark.asyncio
 async def test_delay_send_waits_then_sends():
     """The 1h delay timer is auto-skipped by the time-skipping environment."""
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=True)
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="sent")
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run(env, rec, delay_send=True)
     assert result is True
