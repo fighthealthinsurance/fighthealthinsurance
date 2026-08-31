@@ -33,6 +33,7 @@ from fighthealthinsurance.chat.message_preprocessor import (
     is_stored_message_marker,
     prepare_user_message_variants,
     safe_display_truncate,
+    sanitize_document_name,
     strip_control_chars,
 )
 
@@ -272,6 +273,31 @@ class StoredMessageMarkerTest(SimpleTestCase):
     def test_text_merely_containing_the_marker_is_not_a_marker(self):
         marker = build_long_paste_marker(9000, "pasted_message_1.txt")
         self.assertFalse(is_stored_message_marker(f"The system said: {marker} Weird!"))
+
+    def test_sanitize_document_name_collapses_newlines(self):
+        self.assertEqual(
+            sanitize_document_name("denial\nletter\r\n final.pdf"),
+            "denial letter final.pdf",
+        )
+        self.assertEqual(sanitize_document_name("  plain.txt  "), "plain.txt")
+        self.assertEqual(sanitize_document_name(None), "")
+        self.assertEqual(sanitize_document_name("\n \t"), "")
+
+    def test_marker_with_sanitized_client_name_is_recognized(self):
+        # A client filename with a newline would break the single-line marker
+        # patterns; after sanitization the marker round-trips.
+        name = sanitize_document_name("my\ndenial.pdf")
+        marker = build_long_paste_marker(12000, name)
+        self.assertTrue(is_stored_message_marker(marker))
+
+    def test_long_paste_variants_sanitize_provided_document_name(self):
+        big = "Denied as not medically necessary. " * 600
+        variants = prepare_user_message_variants(
+            big, is_document=False, document_name="weird\nname.txt"
+        )
+        ref = next(v for v in variants if v.kind == "long_message_document_reference")
+        self.assertEqual(ref.metadata.get("document_name"), "weird name.txt")
+        self.assertTrue(is_stored_message_marker(ref.display_text))
 
 
 class VariantScoringTest(SimpleTestCase):

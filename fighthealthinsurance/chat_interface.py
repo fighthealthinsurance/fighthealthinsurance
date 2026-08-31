@@ -43,6 +43,7 @@ from fighthealthinsurance.chat.message_preprocessor import (
     MessageVariant,
     build_long_paste_marker,
     prepare_user_message_variants,
+    sanitize_document_name,
 )
 from fighthealthinsurance.chat.document_processor import (
     process_uploaded_document,
@@ -856,7 +857,10 @@ class ChatInterface:
 
         # Handle document uploads: store separately and replace with marker in chat
         if is_document and user_message:
-            doc_name = document_name or "uploaded_document"
+            # Client-supplied name: sanitize so a newline inside a filename
+            # can't break the single-line marker (or its recognition by
+            # is_stored_message_marker) built around it below.
+            doc_name = sanitize_document_name(document_name) or "uploaded_document"
             char_count = len(user_message)
             logger.info(
                 f"Document uploaded in chat {chat.id}: {doc_name} ({char_count} chars)"
@@ -874,10 +878,11 @@ class ChatInterface:
                 denial_context=denial_context,
             )
             # Re-uploading identical content dedupes to the earlier document:
-            # adopt its name so the marker references a document that exists.
-            actual_name = getattr(uploaded_doc, "document_name", None)
-            if isinstance(actual_name, str) and actual_name:
-                doc_name = actual_name
+            # adopt its name (sanitized -- legacy rows may predate the name
+            # sanitization) so the marker references a document that exists.
+            raw_name = getattr(uploaded_doc, "document_name", None)
+            if isinstance(raw_name, str):
+                doc_name = sanitize_document_name(raw_name) or doc_name
 
             user_message = (
                 f"I've uploaded a document: {doc_name} ({char_count:,} characters). "
@@ -1180,10 +1185,14 @@ class ChatInterface:
             )
             stored_content_denial_context = denial_context
             # Re-pasting identical content (say, after a failed turn) dedupes
-            # to the earlier document: adopt its name in the marker and every
+            # to the earlier document: adopt its name (sanitized -- legacy
+            # rows may predate the name sanitization) in the marker and every
             # variant so we reference a document that actually exists.
-            actual_name = getattr(stored_content_doc, "document_name", None)
-            if isinstance(actual_name, str) and actual_name and actual_name != doc_name:
+            raw_name = getattr(stored_content_doc, "document_name", None)
+            actual_name = (
+                sanitize_document_name(raw_name) if isinstance(raw_name, str) else ""
+            )
+            if actual_name and actual_name != doc_name:
                 message_variants = [
                     replace(
                         v,

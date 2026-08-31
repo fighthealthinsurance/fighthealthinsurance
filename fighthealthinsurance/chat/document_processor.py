@@ -288,20 +288,11 @@ async def _claim_document_for_processing(
     return bool(updated)
 
 
-async def start_document_summarization(
+async def _claim_and_dispatch_summarization(
     doc: ChatDocument,
-    denial_context: Optional[str] = None,
+    denial_context: Optional[str],
 ) -> bool:
-    """Fire background summarization for ``doc`` if it still needs it.
-
-    Safe to call repeatedly and concurrently: after the cheap in-memory
-    pre-filter, the document is claimed with an atomic conditional UPDATE, so
-    only one caller dispatches a worker per PENDING/FAILED state. Returns
-    True when this call dispatched the background task. If dispatch itself
-    fails, the claim is released back to FAILED so a later attempt can retry.
-    """
-    if not summarization_needed(doc):
-        return False
+    """Claim ``doc`` and dispatch its worker; release the claim on failure."""
     if not await _claim_document_for_processing(
         doc.id,
         [ChatDocument.Status.PENDING, ChatDocument.Status.FAILED],
@@ -321,10 +312,44 @@ async def start_document_summarization(
     return True
 
 
+async def start_document_summarization(
+    doc: ChatDocument,
+    denial_context: Optional[str] = None,
+) -> bool:
+    """Fire background summarization for ``doc`` if it still needs it.
+
+    Safe to call repeatedly and concurrently: after the cheap in-memory
+    pre-filter, the document is claimed with an atomic conditional UPDATE, so
+    only one caller dispatches a worker per PENDING/FAILED state. Returns
+    True when this call dispatched the background task. If dispatch itself
+    fails, the claim is released back to FAILED so a later attempt can retry.
+
+    Shielded against caller cancellation: the turn's finally-block kickoff
+    can be cancelled mid-await (consumer disconnect), and without the shield
+    the claim's UPDATE could commit in its worker thread while the awaiting
+    coroutine died between claim and dispatch -- stranding the row PROCESSING
+    with no worker and nothing left that may claim it. The shielded task runs
+    to completion detached; a cancelled caller still sees its CancelledError.
+    """
+    if not summarization_needed(doc):
+        return False
+    return await asyncio.shield(_claim_and_dispatch_summarization(doc, denial_context))
+
+
 # How long the watchdog waits before rescuing a still-PENDING deferred
 # document. Longer than the chat turn budget (FHI_CHAT_TURN_BUDGET, 150s
 # default) so the turn's own kickoff always gets to go first.
 DEFERRED_SUMMARY_WATCHDOG_SECONDS = 240.0
+
+# Rescue delay for a resubmission that hit a row already marked PROCESSING.
+# A healthy worker reaches a terminal status well within this; one that died
+# without persisting one (pod restart, OOM) leaves the row PROCESSING
+# forever, and dedupe would otherwise pin every future resubmission to that
+# dead row with nothing allowed to claim it. Deliberately generous so a
+# genuinely long-running job on a huge document is very unlikely to still be
+# mid-flight when the rescue claims it (a double-run wastes work but both
+# writers converge on the same summaries).
+STUCK_PROCESSING_RESCUE_SECONDS = 600.0
 
 
 async def _deferred_summarization_watchdog(
@@ -359,8 +384,8 @@ async def _deferred_summarization_watchdog(
         return
     logger.warning(
         f"ChatDocument {doc_id} was still {'/'.join(claim_statuses)} "
-        f"{delay:.0f}s after deferred storage (its turn never started "
-        f"summarization); watchdog starting it"
+        f"{delay:.0f}s after (re)submission -- no live worker got it to a "
+        f"terminal status; watchdog starting summarization"
     )
     await summarize_chunks(doc_id, denial_context=denial_context)
 
@@ -390,6 +415,7 @@ async def process_uploaded_document(
     dispatching.
     """
     doc: Optional[ChatDocument] = None
+    reused = False
     async for existing in (
         ChatDocument.objects.filter(chat=chat, char_count=len(full_text))
         .order_by("-created_at")
@@ -397,6 +423,7 @@ async def process_uploaded_document(
     ):
         if existing.full_text == full_text:
             doc = existing
+            reused = True
             logger.info(
                 f"Reusing ChatDocument {doc.id} ({doc.document_name}) for chat "
                 f"{chat.id}: identical content re-submitted "
@@ -417,8 +444,11 @@ async def process_uploaded_document(
             f"({len(full_text)} chars)"
         )
 
+    dispatched_here = False
     if not defer_summarization:
-        await start_document_summarization(doc, denial_context=denial_context)
+        dispatched_here = await start_document_summarization(
+            doc, denial_context=denial_context
+        )
     elif summarization_needed(doc):
         # The watchdog may only claim from the status observed NOW: a fresh
         # PENDING doc must not be re-touched once its fast path has run,
@@ -433,6 +463,25 @@ async def process_uploaded_document(
                 denial_context,
                 DEFERRED_SUMMARY_WATCHDOG_SECONDS,
                 claim_statuses=[doc.processing_status],
+            )
+        )
+
+    if (
+        reused
+        and not dispatched_here
+        and doc.processing_status == ChatDocument.Status.PROCESSING
+    ):
+        # The resubmission hit a row that claims a worker is in flight. If it
+        # truly is, it reaches a terminal status and this rescue's claim
+        # misses; if the worker died without persisting one, nothing else may
+        # ever claim the row and dedupe would pin every future resubmission
+        # to it -- so rescue it after a generous delay.
+        await fire_and_forget_in_new_threadpool(
+            _deferred_summarization_watchdog(
+                doc.id,
+                denial_context,
+                STUCK_PROCESSING_RESCUE_SECONDS,
+                claim_statuses=[ChatDocument.Status.PROCESSING],
             )
         )
 

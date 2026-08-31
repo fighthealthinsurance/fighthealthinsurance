@@ -19,17 +19,12 @@ from rest_framework.test import APITestCase
 from fighthealthinsurance.chat.document_processor import (
     DEFAULT_CHUNK_SIZE,
     DEFERRED_SUMMARY_WATCHDOG_SECONDS,
+    STUCK_PROCESSING_RESCUE_SECONDS,
     _deferred_summarization_watchdog,
     chunk_document,
     process_uploaded_document,
     start_document_summarization,
 )
-
-
-def _fired_coroutine_names(mock_fire) -> list[str]:
-    """Names of the coroutines handed to the mocked fire-and-forget helper."""
-    names = [call.args[0].__name__ for call in mock_fire.call_args_list]
-    return names
 from fighthealthinsurance.chat.document_search import (
     _extract_search_terms,
     _score_chunk,
@@ -41,6 +36,11 @@ if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+def _fired_coroutine_names(mock_fire) -> list[str]:
+    """Names of the coroutines handed to the mocked fire-and-forget helper."""
+    return [call.args[0].__name__ for call in mock_fire.call_args_list]
 
 
 class TestChunkDocument(TestCase):
@@ -460,6 +460,77 @@ class TestProcessUploadedDocument(APITestCase):
             DEFERRED_SUMMARY_WATCHDOG_SECONDS,
             claim_statuses=[ChatDocument.Status.FAILED],
         )
+
+    async def test_resubmission_onto_processing_row_arms_stuck_rescue(self):
+        # A worker can die without persisting a terminal status (pod restart,
+        # OOM), leaving the row PROCESSING forever. Dedupe pins every future
+        # resubmission to that row, so the resubmission must arm a rescue
+        # watchdog that may claim PROCESSING after a generous delay.
+        chat = await OngoingChat.objects.acreate()
+        full_text = "content whose worker died mid-run without a terminal status"
+        await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck.txt",
+            full_text=full_text,
+            char_count=len(full_text),
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "fighthealthinsurance.chat.document_processor._deferred_summarization_watchdog"
+            ) as mock_watchdog:
+                doc = await process_uploaded_document(
+                    chat=chat, document_name="retry.txt", full_text=full_text
+                )
+
+        mock_watchdog.assert_called_once_with(
+            doc.id,
+            None,
+            STUCK_PROCESSING_RESCUE_SECONDS,
+            claim_statuses=[ChatDocument.Status.PROCESSING],
+        )
+
+    async def test_fresh_document_does_not_arm_stuck_rescue(self):
+        chat = await OngoingChat.objects.acreate()
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "fighthealthinsurance.chat.document_processor._deferred_summarization_watchdog"
+            ) as mock_watchdog:
+                await process_uploaded_document(
+                    chat=chat, document_name="fresh.txt", full_text="brand new"
+                )
+        # The fresh doc dispatched its own worker; no rescue is needed.
+        mock_watchdog.assert_not_called()
+
+    async def test_watchdog_can_rescue_stuck_processing_when_told_to(self):
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck2.txt",
+            full_text="text from a dead worker",
+            char_count=23,
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await _deferred_summarization_watchdog(
+                doc.id,
+                None,
+                delay=0.01,
+                claim_statuses=[ChatDocument.Status.PROCESSING],
+            )
+
+        mock_summarize.assert_awaited_once_with(doc.id, denial_context=None)
 
     async def test_watchdog_handles_deleted_document(self):
         with patch(
