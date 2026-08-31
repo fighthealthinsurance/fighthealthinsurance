@@ -18,6 +18,7 @@ from .base_tool import (
     is_safe_tool_field,
     parse_anchored_json_payload,
     settable_model_fields,
+    strip_anchored_calls,
 )
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
 
@@ -39,6 +40,9 @@ class PriorAuthTool(BaseTool):
     # (see AppealTool).
     detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Prior Auth"
+    # See AppealTool: exact-span replacement means each call in a reply
+    # needs its own pass.
+    max_calls_per_reply: int = 3
 
     # Field name mappings for normalization
     FIELD_MAPPINGS = {
@@ -63,6 +67,10 @@ class PriorAuthTool(BaseTool):
         super().__init__(send_status_message)
         self.send_error_message = send_error_message or send_status_message
         self.domain = domain
+
+    def strip_calls_on_error(self, response_text: str) -> str:
+        """Span-bounded on-error strip (see AppealTool.strip_calls_on_error)."""
+        return strip_anchored_calls(self, response_text)
 
     async def execute(
         self,
@@ -106,10 +114,13 @@ class PriorAuthTool(BaseTool):
                 await self._update_prior_auth_fields(prior_auth, prior_auth_data)
                 await prior_auth.asave()
 
+                # count=1: byte-identical duplicate calls each get their own
+                # pass via max_calls_per_reply.
                 cleaned_response = response_text.replace(
                     call_span,
                     f"I've created/updated [Prior Auth Request #{prior_auth.id}]"
                     f"({self.domain}/prior-auths/view/{prior_auth.id}) for you.",
+                    1,
                 )
                 await self.send_status_message(
                     f"Prior Auth Request #{prior_auth.id} has been created/updated "
@@ -120,6 +131,7 @@ class PriorAuthTool(BaseTool):
                 cleaned_response = response_text.replace(
                     call_span,
                     "I couldn't create or update the prior authorization request.",
+                    1,
                 )
                 await self.send_status_message(
                     "Failed to create or update prior authorization request."

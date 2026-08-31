@@ -24,7 +24,7 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
 from fighthealthinsurance.denial_context import merge_qa
 
 from .appeal_tool import AppealTool
-from .base_tool import parse_anchored_json_payload
+from .base_tool import parse_anchored_json_payload, strip_anchored_calls
 from .patterns import GENERATE_APPEAL_LETTER_REGEX
 
 # Payload keys that are letter-generation context rather than Appeal/Denial
@@ -54,6 +54,11 @@ class GenerateAppealLetterTool(AppealTool):
     # on-error tool-syntax strip in BaseTool.handle) stay side by side.
     detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Generate Appeal Letter"
+    # ONE letter per turn, unlike AppealTool's 3: each execution runs a full
+    # (deadline-bounded) generation, so a duplicate call would double the
+    # model spend and blow the turn budget. Straggler calls past the first
+    # are stripped instead (see _replace_call).
+    max_calls_per_reply: int = 1
 
     def __init__(
         self,
@@ -61,6 +66,7 @@ class GenerateAppealLetterTool(AppealTool):
         send_error_message: Optional[Callable[[str], Awaitable[None]]] = None,
         domain: str = "",
         use_external: bool = True,
+        deadline_seconds: Optional[float] = None,
     ):
         """
         Args:
@@ -69,12 +75,31 @@ class GenerateAppealLetterTool(AppealTool):
             domain: The domain URL for generating appeal links
             use_external: This chat session's external-model consent,
                 forwarded to the letter pipeline's backup call list
+            deadline_seconds: Cap for the letter generation, typically the
+                turn budget's remaining time (see
+                ChatInterface._remaining_letter_deadline). None applies the
+                pipeline's env default.
         """
         super().__init__(send_status_message, send_error_message, domain)
         self.use_external = use_external
+        self.deadline_seconds = deadline_seconds
 
     def _appeal_link(self, appeal: Any) -> str:
         return f"[Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id})"
+
+    def _replace_call(
+        self, response_text: str, call_span: str, replacement: str
+    ) -> str:
+        """Replace this call's exact span, then strip straggler calls.
+
+        A reply should carry at most one generate_appeal_letter call; any
+        further ones would each run another full generation, so they are
+        removed (span-bounded) rather than executed or left to render raw.
+        """
+        updated = response_text.replace(call_span, replacement, 1)
+        if self.detect(updated):
+            updated = strip_anchored_calls(self, updated)
+        return updated
 
     async def execute(
         self,
@@ -122,7 +147,8 @@ class GenerateAppealLetterTool(AppealTool):
             if not appeal or not denial:
                 await self.send_status_message("Failed to create or update appeal.")
                 return (
-                    response_text.replace(
+                    self._replace_call(
+                        response_text,
                         call_span,
                         "I couldn't set up the appeal record to draft a letter into.",
                     ),
@@ -142,7 +168,8 @@ class GenerateAppealLetterTool(AppealTool):
                 # Nothing to write a letter ABOUT yet; asking beats generating
                 # a letter of blanks.
                 return (
-                    response_text.replace(
+                    self._replace_call(
+                        response_text,
                         call_span,
                         "Before I draft the letter I need at least one of: "
                         "the procedure or service that was denied, the "
@@ -160,6 +187,7 @@ class GenerateAppealLetterTool(AppealTool):
                 appeal=appeal,
                 denial=denial,
                 use_external=self.use_external,
+                deadline_seconds=self.deadline_seconds,
             )
 
             if drafted and drafted.saved_to_appeal:
@@ -170,6 +198,17 @@ class GenerateAppealLetterTool(AppealTool):
                     f"I've drafted an appeal letter and saved it to "
                     f"{self._appeal_link(appeal)}. Here's the draft -- tell me "
                     f"what you'd like to change:\n\n---\n\n{drafted.text}"
+                )
+            elif drafted and drafted.preserved_existing:
+                # A reserve draft was served but the appeal already carries a
+                # letter (possibly user-edited); it was deliberately left
+                # untouched -- say so instead of claiming a save.
+                await self.send_status_message("Appeal letter drafted.")
+                replacement = (
+                    f"{self._appeal_link(appeal)} already has a saved letter, "
+                    f"so I've left that one untouched. Here's a draft you can "
+                    f"compare with it or copy from this chat:"
+                    f"\n\n---\n\n{drafted.text}"
                 )
             elif drafted:
                 # The letter exists but the appeal save failed: deliver it
@@ -189,7 +228,7 @@ class GenerateAppealLetterTool(AppealTool):
                     f"{self._appeal_link(appeal)}, where you can also generate "
                     f"the letter, or ask me to try again in a few minutes."
                 )
-            return response_text.replace(call_span, replacement), context
+            return self._replace_call(response_text, call_span, replacement), context
 
         except Exception as e:
             logger.opt(exception=True).warning(f"Error drafting appeal letter: {e}")

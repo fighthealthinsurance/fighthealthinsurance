@@ -57,15 +57,19 @@ _UNSET_FIELD_VALUES = (None, "", "UNKNOWN")
 
 
 class DraftedLetter(NamedTuple):
-    """A produced appeal letter plus whether it reached the Appeal row.
+    """A produced appeal letter plus how it relates to the Appeal row.
 
     ``saved_to_appeal`` lets callers word their reply honestly: a letter
-    whose ``appeal.asave()`` failed is still delivered, but must not be
-    presented as "saved to Appeal #N".
+    that is not on the appeal is still delivered, but must not be presented
+    as "saved to Appeal #N". ``preserved_existing`` distinguishes WHY it
+    wasn't saved -- the appeal already carried a real (possibly
+    user-edited) letter that a reserve draft must not clobber -- from a
+    plain save failure, so callers can word the two differently.
     """
 
     text: str
     saved_to_appeal: bool
+    preserved_existing: bool = False
 
 
 def looks_like_letter_request(text: Optional[str]) -> bool:
@@ -102,6 +106,11 @@ def substitute_denial_fields(letter: str, denial: Any) -> str:
         value = getattr(denial, field, None)
         if value in _UNSET_FIELD_VALUES:
             continue
+        # Mirror sub_in_appeals' guard: extractors sometimes stuff the
+        # insurance company name into claim_id, and substituting that would
+        # assert a wrong claim id in a letter the user may send as-is.
+        if field == "claim_id" and value == getattr(denial, "insurance_company", None):
+            continue
         result = result.replace("{" + field + "}", str(value))
     return result
 
@@ -115,13 +124,19 @@ async def find_reserve_letter(denial: Any) -> Optional[str]:
     only read -- reserve promotion bookkeeping belongs to the appeal wizard
     flow (AppealsBackendHelper), not chat.
     """
+    from fighthealthinsurance.common_view_logic import deliverable_candidates
     from fighthealthinsurance.models import ProposedAppeal
 
+    # deliverable_candidates pushes the cheap runt filter into SQL (raw
+    # length upper-bounds meaningful length), so a pile of junk drafts --
+    # exactly what a degraded-model period produces -- can't fill the
+    # bounded window and evict the one deliverable reserve.
+    # is_real_appeal below stays the authority on what is served.
     rows = [
         row
-        async for row in ProposedAppeal.objects.filter(for_denial=denial)
-        .exclude(appeal_text__isnull=True)
-        .order_by("speculative", "-created_at")[:10]
+        async for row in deliverable_candidates(
+            ProposedAppeal.objects.filter(for_denial=denial)
+        ).order_by("speculative", "-created_at")[:10]
     ]
     for speculative_group in (False, True):
         candidates = [
@@ -283,9 +298,11 @@ async def draft_letter_for_chat(
 
     On success the letter is saved to ``appeal.appeal_text`` and, for a
     newly generated letter, recorded as a ProposedAppeal row for the same
-    provenance the wizard flow gets. Returns a ``DraftedLetter`` (text plus
-    whether the appeal save succeeded), or None when no letter could be
-    produced.
+    provenance the wizard flow gets -- EXCEPT that a reserve draft never
+    overwrites an appeal that already carries a real letter (the user may
+    have edited it on the appeal page; only an explicitly generated fresh
+    draft may replace it). Returns a ``DraftedLetter`` (text plus how it
+    relates to the appeal row), or None when no letter could be produced.
     """
     from fighthealthinsurance.models import ProposedAppeal
 
@@ -325,6 +342,19 @@ async def draft_letter_for_chat(
                 f"chat letter: could not record ProposedAppeal for denial "
                 f"{getattr(denial, 'denial_id', None)}"
             )
+
+    # A reserve (not freshly generated) letter must not clobber a real
+    # letter already on the appeal -- the user may have edited that one on
+    # the appeal page, and no prior version is kept. Deliver the reserve in
+    # chat instead and let the caller word it honestly.
+    if generated_item is None and is_real_appeal(appeal.appeal_text):
+        logger.info(
+            f"chat letter: appeal {getattr(appeal, 'id', None)} already has "
+            f"a real letter; serving the reserve without overwriting it"
+        )
+        return DraftedLetter(
+            text=letter, saved_to_appeal=False, preserved_existing=True
+        )
 
     saved_to_appeal = False
     try:

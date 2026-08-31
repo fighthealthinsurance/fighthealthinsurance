@@ -2029,3 +2029,25 @@ class TestParseAnchoredJsonPayload(TestCase):
         payload_match = self._match(text)
         with self.assertRaises(json_mod.JSONDecodeError):
             parse_anchored_json_payload(text, payload_match)
+
+
+class TestClaimIdSubstitutionGuard(TestCase):
+    """Mirror of sub_in_appeals' claim_id != insurance_company guard."""
+
+    def test_claim_id_matching_insurance_company_keeps_placeholder(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            substitute_denial_fields,
+        )
+
+        class D:
+            insurance_company = "Acme Health"
+            claim_id = "Acme Health"  # known extractor failure mode
+            diagnosis = None
+            procedure = "MRI"
+
+        result = substitute_denial_fields(
+            "To {insurance_company} re claim {claim_id} for {procedure}.", D()
+        )
+        self.assertIn("To Acme Health", result)
+        self.assertIn("{claim_id}", result)
+        self.assertIn("MRI", result)

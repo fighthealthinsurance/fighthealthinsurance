@@ -78,6 +78,43 @@ def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, 
     return payload, text[match.start() : start + end]
 
 
+def remove_anchored_call(text: str, match: re.Match[str]) -> str:
+    """Remove ONE anchored ``**tool**{...}`` call from ``text`` precisely.
+
+    Uses the raw_decode span when the payload parses; for an undecodable
+    payload the removal is bounded at the first line end inside the greedy
+    capture (the documented call format is one-line JSON), so unlike a
+    ``re.sub`` over the greedy DOTALL pattern it can never swallow prose or
+    a later tool call that happens to end in ``}``.
+    """
+    start = match.start()
+    try:
+        _, span = parse_anchored_json_payload(text, match)
+        end = start + len(span)
+    except json.JSONDecodeError:
+        newline = text.find("\n", match.start(1))
+        end = newline if newline != -1 else len(text)
+    return text[:start] + text[end:]
+
+
+def strip_anchored_calls(tool: "BaseTool", response_text: str) -> str:
+    """Span-bounded removal of every remaining call of ``tool`` in the text.
+
+    The anchored tools' error/straggler cleanup: bounded loop of
+    ``remove_anchored_call`` so nothing between calls is lost. Falls back to
+    the original text when stripping would leave nothing (matching the
+    ``BaseTool.handle`` error-path semantics).
+    """
+    text = response_text
+    for _ in range(8):
+        match = tool.detect(text)
+        if not match:
+            break
+        text = remove_anchored_call(text, match)
+    text = text.strip()
+    return text or response_text
+
+
 class BaseTool(ABC):
     """
     Abstract base class for chat tool handlers.
@@ -98,6 +135,15 @@ class BaseTool(ABC):
 
     # Human-readable name for status messages
     name: str = "Tool"
+
+    # How many calls of THIS tool ``handle`` may execute in one reply. Most
+    # tools keep 1 -- their handlers either process every match internally
+    # via detect_all (medicaid, financial assistance) or run a recursive
+    # LLM pass that supersedes the reply. The anchored JSON tools raise it:
+    # since their execute() replaces only the exact call span, a second
+    # call in the same reply would otherwise survive unexecuted and render
+    # as raw tool syntax.
+    max_calls_per_reply: int = 1
 
     def __init__(
         self,
@@ -191,11 +237,29 @@ class BaseTool(ABC):
         """
         pass
 
+    def strip_calls_on_error(self, response_text: str) -> str:
+        """Remove this tool's raw syntax after execute() failed.
+
+        Default: regex-sub every match of the pattern. The anchored JSON
+        tools override this with span-bounded removal (strip_anchored_calls)
+        because a greedy DOTALL sub over their pattern would also delete
+        the text BETWEEN two calls -- including a different pending tool
+        call. Falls back to the original text when stripping leaves nothing.
+        """
+        stripped = re.sub(
+            self.pattern, "", response_text, flags=self.detect_all_flags
+        ).strip()
+        return stripped or response_text
+
     async def handle(
         self, response_text: str, context: str, **kwargs
     ) -> Tuple[str, str, bool]:
         """
         Detect and handle this tool if present in the response.
+
+        Executes up to ``max_calls_per_reply`` calls of this tool (each pass
+        re-detects against the updated text, so an execute() that replaces
+        its call span lets the next call be found).
 
         Args:
             response_text: The LLM response text
@@ -205,16 +269,18 @@ class BaseTool(ABC):
         Returns:
             Tuple of (updated_response_text, updated_context, was_handled)
         """
+        handled = False
         try:
-            match = self.detect(response_text)
-            if not match:
-                return response_text, context, False
-
-            logger.debug(f"{self.name} tool detected in response")
-            updated_response, updated_context = await self.execute(
-                match, response_text, context, **kwargs
-            )
-            return updated_response, updated_context, True
+            for _ in range(max(1, self.max_calls_per_reply)):
+                match = self.detect(response_text)
+                if not match:
+                    break
+                logger.debug(f"{self.name} tool detected in response")
+                response_text, context = await self.execute(
+                    match, response_text, context, **kwargs
+                )
+                handled = True
+            return response_text, context, handled
 
         except Exception as e:
             logger.opt(exception=True).warning(f"Error executing {self.name} tool: {e}")
@@ -229,11 +295,7 @@ class BaseTool(ABC):
             # {...}` in the chat because a tool blew up mid-execution.
             cleaned_response = response_text
             try:
-                stripped = re.sub(
-                    self.pattern, "", response_text, flags=self.detect_all_flags
-                ).strip()
-                if stripped:
-                    cleaned_response = stripped
+                cleaned_response = self.strip_calls_on_error(response_text)
             except Exception:
                 logger.debug(f"{self.name}: could not strip tool syntax on error")
             return cleaned_response, context, True
