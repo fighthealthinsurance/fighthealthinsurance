@@ -280,6 +280,17 @@ class BaseTool(ABC):
                     match, response_text, context, **kwargs
                 )
                 handled = True
+            if handled and self.max_calls_per_reply > 1 and self.detect(response_text):
+                # Calls past the per-reply cap are stripped rather than left
+                # to render as raw tool syntax (with their JSON payloads).
+                # Only for multi-call tools: they override
+                # strip_calls_on_error with span-bounded removal, and
+                # single-call tools keep their historical behavior.
+                logger.info(
+                    f"{self.name}: more than {self.max_calls_per_reply} calls "
+                    f"in one reply; stripping the rest"
+                )
+                response_text = self.strip_calls_on_error(response_text)
             return response_text, context, handled
 
         except Exception as e:

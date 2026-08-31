@@ -573,6 +573,28 @@ class MultiCallAndErrorStripTest(APITestCase):
         self.assertNotIn("generate_appeal_letter", result)
         self.assertEqual(result.count(GENERATED_LETTER), 1)
 
+    async def test_calls_past_the_cap_are_stripped_not_leaked(self):
+        """A reply with more calls than max_calls_per_reply executes the
+        first three and strips the rest -- raw tool syntax never renders."""
+        _, chat = await _make_professional_chat("multicall4", "9999960004")
+        response = (
+            '**create_or_update_appeal**{"procedure": "MRI"}\n'
+            '**create_or_update_appeal**{"diagnosis": "chronic back pain"}\n'
+            '**create_or_update_appeal**{"insurance_company": "Acme Health"}\n'
+            '**create_or_update_appeal**{"employer_name": "Overflow Corp"}'
+        )
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        result, _, handled = await tool.handle(response, "", chat=chat)
+        self.assertTrue(handled)
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("Overflow Corp", result)
+        appeal = await Appeal.objects.select_related("for_denial").aget(chat=chat)
+        # First three applied; the over-cap call was stripped, not executed.
+        self.assertEqual(appeal.for_denial.procedure, "MRI")
+        self.assertEqual(appeal.for_denial.diagnosis, "chronic back pain")
+        self.assertEqual(appeal.for_denial.insurance_company, "Acme Health")
+        self.assertIsNone(appeal.for_denial.employer_name)
+
     async def test_appeal_tool_error_leaves_letter_call_intact(self):
         """When AppealTool's execute blows up, the on-error strip must not
         swallow the prose or the pending generate_appeal_letter call (the
@@ -610,12 +632,16 @@ class LetterDeadlineClampTest(APITestCase):
         self.assertIsNone(self._interface()._remaining_letter_deadline())
 
     def test_clamped_to_remaining_budget(self):
+        import os
         import time as time_mod
 
         interface = self._interface()
         interface._turn_deadline = time_mod.monotonic() + 40.0
-        deadline = interface._remaining_letter_deadline()
-        # ~40s left minus the 15s margin, well under the 75s env default.
+        # Pin the env default so an FHI_CHAT_LETTER_DEADLINE set in the
+        # environment can't change what the clamp is compared against.
+        with patch.dict(os.environ, {"FHI_CHAT_LETTER_DEADLINE": "75"}):
+            deadline = interface._remaining_letter_deadline()
+        # ~40s left minus the 15s margin, well under the 75s default.
         self.assertLess(deadline, 30.0)
         self.assertGreater(deadline, 20.0)
 
@@ -627,8 +653,10 @@ class LetterDeadlineClampTest(APITestCase):
         self.assertEqual(interface._remaining_letter_deadline(), 10.0)
 
     def test_capped_at_env_default_when_budget_is_ample(self):
+        import os
         import time as time_mod
 
         interface = self._interface()
         interface._turn_deadline = time_mod.monotonic() + 10_000.0
-        self.assertEqual(interface._remaining_letter_deadline(), 75.0)
+        with patch.dict(os.environ, {"FHI_CHAT_LETTER_DEADLINE": "75"}):
+            self.assertEqual(interface._remaining_letter_deadline(), 75.0)

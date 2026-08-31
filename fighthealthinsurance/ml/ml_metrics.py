@@ -44,8 +44,11 @@ ML_CALL_SECONDS = Histogram(
 CHAT_TURNS_TOTAL = Counter(
     "fhi_chat_turns_total",
     "Chat turns by outcome (ok, failed, timeout, letter_fallback -- a "
-    "failed/timed-out turn rescued by the appeal-generator letter fallback; "
-    "a timed-out rescue counts under both timeout and letter_fallback).",
+    "failed turn rescued by the appeal-generator letter fallback). The "
+    "labels partition turns: a timed-out turn counts only as timeout even "
+    "when the fallback then rescued it (rescues, timed-out ones included, "
+    "are reported via the chat_turn_letter_fallback_rescue reliability "
+    "event).",
     labelnames=("outcome",),
 )
 

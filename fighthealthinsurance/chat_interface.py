@@ -1611,7 +1611,12 @@ class ChatInterface:
                     f"(use_external_models={self.use_external_models}, "
                     f"turn_timed_out={turn_timed_out})"
                 )
-                record_chat_turn("letter_fallback")
+                # Keep the turn-outcome labels a partition: a timed-out turn
+                # was already counted as "timeout" above. Rescues (including
+                # timed-out ones) remain visible via the reliability event
+                # below.
+                if not turn_timed_out:
+                    record_chat_turn("letter_fallback")
                 capture_reliability_event(
                     "chat_turn_letter_fallback_rescue",
                     chat_id=str(chat.id),
@@ -1639,10 +1644,14 @@ class ChatInterface:
                     f"from [Appeal #{letter_appeal.id}]"
                     f"(/appeals/{letter_appeal.id})."
                 )
+            # Sizes only -- the user's message is PHI and must not be
+            # written to the logs (same rule as the debug_llm logging above).
             logger.error(
-                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
-                f"after trying all models. use_external_models={self.use_external_models} "
-                f"letter_request={letter_request}"
+                f"Failed to generate a response in chat {chat.id} after "
+                f"trying all models "
+                f"(message_chars={len(user_message or '')}, "
+                f"use_external_models={self.use_external_models}, "
+                f"letter_request={letter_request})"
             )
             if not turn_timed_out:
                 record_chat_turn("failed")

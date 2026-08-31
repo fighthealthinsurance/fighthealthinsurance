@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, List, NamedTuple, Optional
 from channels.db import database_sync_to_async
 from loguru import logger
 
-from fighthealthinsurance.exec import bridge_executor
+from fighthealthinsurance.exec import bridge_executor, letter_executor
 from fighthealthinsurance.ml.ml_models import _env_float
 from fighthealthinsurance.utils import is_real_appeal
 
@@ -240,13 +240,15 @@ async def generate_letter_for_denial(
                     best = item
             return best
 
-        # thread_sensitive=False + bridge_executor: a minutes-long drain must
-        # not serialize behind (or starve) other bridged hops -- same shape
-        # as SpeculativeAppealsHelper._generate_drafts.
+        # thread_sensitive=False so concurrent drains don't serialize on one
+        # shared thread; letter_executor (not bridge_executor) so a burst of
+        # long drains -- a degraded-model period fires many fallbacks at
+        # once -- is capped by its small pool instead of crowding out the
+        # bridge pool's short hops.
         item: Optional[GeneratedAppeal] = await database_sync_to_async(
             _drain,
             thread_sensitive=False,
-            executor=bridge_executor,
+            executor=letter_executor,
         )()
 
         # make_appeals flushed what it knew before handing back its lazy
@@ -359,7 +361,11 @@ async def draft_letter_for_chat(
     saved_to_appeal = False
     try:
         appeal.appeal_text = letter
-        await appeal.asave()
+        # Field-limited: `appeal` was read before drafting started, which can
+        # run for the whole deadline -- a full save would write every column
+        # from that stale snapshot over any concurrent update. mod_date is
+        # auto_now and must be listed to keep updating under update_fields.
+        await appeal.asave(update_fields=["appeal_text", "mod_date"])
         saved_to_appeal = True
     except Exception:
         logger.opt(exception=True).warning(
