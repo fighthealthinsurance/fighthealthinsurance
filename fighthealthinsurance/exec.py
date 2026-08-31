@@ -72,3 +72,16 @@ health_news_executor = ThreadPoolExecutor(
     max_workers=_pool_size("FHI_HEALTH_NEWS_EXECUTOR_WORKERS", 3),
     thread_name_prefix="fhi-health-news",
 )
+
+# Chat-driven appeal-letter drains (chat/appeal_letter_generator): each one
+# can hold a thread for up to its generation deadline (~75s), and a
+# degraded-model period -- exactly when the letter fallback fires -- can
+# start many at once. A small dedicated pool caps that concurrency so the
+# drains can't crowd the shared bridge_executor's short hops (websocket
+# consumers' DB bridges included). Same deadlock posture as bridge_executor:
+# these tasks block ON model futures, and nothing a model call depends on
+# runs here.
+letter_executor = ThreadPoolExecutor(
+    max_workers=_pool_size("FHI_LETTER_EXECUTOR_WORKERS", 4),
+    thread_name_prefix="fhi-letter",
+)
