@@ -208,6 +208,16 @@ async def generate_letter_for_denial(
         # (a full letter, a specialized static template) showed up.
         min_letter_chars = int(_env_float("FHI_CHAT_LETTER_MIN_CHARS", 350.0))
 
+        # Absolute, and computed HERE rather than inside _drain: the drain
+        # may wait for a letter_executor thread first, and a deadline
+        # started on the far side of that wait would ignore the queue time
+        # -- defeating the caller's clamp to the remaining turn budget, and
+        # letting a task that was queued (and by then abandoned) hold its
+        # thread for the FULL window while others wait behind it. Against an
+        # absolute mark, a drain that reaches a thread past its deadline
+        # exits immediately instead.
+        drain_deadline = started + deadline_seconds
+
         def _drain() -> Optional[GeneratedAppeal]:
             """Blocking: run the models and pull the first usable letter.
 
@@ -230,7 +240,7 @@ async def generate_letter_for_denial(
                 # generation can be told apart from the wizard's live run
                 # and the background precompute when debugging a denial.
                 run_kind="chat",
-                deadline=time.monotonic() + deadline_seconds,
+                deadline=drain_deadline,
             ):
                 if not is_real_appeal(item.text):
                     continue
