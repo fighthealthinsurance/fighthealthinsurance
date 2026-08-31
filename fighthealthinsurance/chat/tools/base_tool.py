@@ -78,34 +78,59 @@ def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, 
     return payload, text[match.start() : start + end]
 
 
-def remove_anchored_call(text: str, match: re.Match[str]) -> str:
+def remove_anchored_call(
+    text: str, match: re.Match[str], tool: Optional["BaseTool"] = None
+) -> str:
     """Remove ONE anchored ``**tool**{...}`` call from ``text`` precisely.
 
-    Uses the raw_decode span when the payload parses; for an undecodable
-    payload the removal is bounded at the first line end inside the greedy
-    capture (the documented call format is one-line JSON), so unlike a
-    ``re.sub`` over the greedy DOTALL pattern it can never swallow prose or
-    a later tool call that happens to end in ``}``.
+    Uses the raw_decode span when the payload parses. When it does NOT
+    parse, the removal runs to the last ``}`` of the broken body -- bounded
+    by where the next call of ``tool`` starts, so it still can't swallow a
+    later tool call the way a ``re.sub`` over the greedy DOTALL pattern
+    would. Cutting at the first newline instead (as this used to) left the
+    rest of a pretty-printed malformed payload behind, putting its
+    contents -- possibly medical detail -- in the reply and in chat
+    history. Without ``tool`` the bound is the end of the text.
     """
     start = match.start()
     try:
         _, span = parse_anchored_json_payload(text, match)
-        end = start + len(span)
+        return text[:start] + text[start + len(span) :]
     except json.JSONDecodeError:
-        newline = text.find("\n", match.start(1))
-        end = newline if newline != -1 else len(text)
+        pass
+
+    body_start = match.start(1)
+    # Never reach past the next call of this tool: it gets its own removal.
+    limit = len(text)
+    if tool is not None:
+        following = tool.detect(text[body_start + 1 :])
+        if following:
+            limit = body_start + 1 + following.start()
+    close = text.rfind("}", body_start, limit)
+    if close != -1:
+        end = close + 1
+    else:
+        # No closing brace at all (a truncated payload): fall back to the
+        # line bound, which at least takes the token and what follows it.
+        newline = text.find("\n", body_start)
+        end = min(newline if newline != -1 else limit, limit)
     return text[:start] + text[end:]
 
 
 def strip_anchored_calls(
-    tool: "BaseTool", response_text: str, notice: Optional[str] = None
+    tool: "BaseTool",
+    response_text: str,
+    notice: Optional[str] = None,
+    empty_fallback: Optional[str] = None,
 ) -> str:
-    """Span-bounded removal of every remaining call of ``tool`` in the text.
+    """Span-bounded removal of EVERY remaining call of ``tool`` in the text.
 
-    The anchored tools' error/straggler cleanup: bounded loop of
-    ``remove_anchored_call`` so nothing between calls is lost. Falls back to
-    the original text when stripping would leave nothing (matching the
-    ``BaseTool.handle`` error-path semantics).
+    The anchored tools' error/straggler cleanup: a loop of
+    ``remove_anchored_call`` so nothing between calls is lost. It runs until
+    no call is left rather than for a fixed number of rounds -- a fixed cap
+    returned the calls past it as raw syntax, payload included. Each removal
+    strictly shortens the text, so the loop terminates; the progress check
+    is defensive only.
 
     ``notice`` is appended ONCE when anything was actually stripped. Pass it
     whenever the dropped calls carried work that was never done: the
@@ -113,19 +138,33 @@ def strip_anchored_calls(
     chat_history, so with no notice the model sees its call as accepted and
     never retries it. The error path passes None -- a status message has
     already gone out there.
+
+    ``empty_fallback`` is returned when the reply was NOTHING but tool calls
+    and stripping leaves it empty. Without one the original text is returned
+    (the historical behavior), which in that case hands the user the raw
+    call and its payload -- so the anchored tools pass a sentence instead.
     """
     text = response_text
     removed = 0
-    for _ in range(8):
+    while True:
         match = tool.detect(text)
         if not match:
             break
-        text = remove_anchored_call(text, match)
+        shortened = remove_anchored_call(text, match, tool)
+        if len(shortened) >= len(text):
+            logger.warning(
+                f"{tool.name}: tool-call removal made no progress; "
+                f"stopping with {len(text)} chars left"
+            )
+            break
+        text = shortened
         removed += 1
     text = text.strip()
     if removed and notice:
         text = f"{text}\n\n{notice}" if text else notice
-    return text or response_text
+    if text:
+        return text
+    return empty_fallback if empty_fallback is not None else response_text
 
 
 class BaseTool(ABC):
