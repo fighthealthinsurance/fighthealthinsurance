@@ -18,6 +18,7 @@ from .base_tool import (
     is_safe_tool_field,
     parse_anchored_json_payload,
     settable_model_fields,
+    strip_anchored_calls,
 )
 from .patterns import CREATE_OR_UPDATE_APPEAL_REGEX
 
@@ -41,6 +42,15 @@ class AppealTool(BaseTool):
     # tool syntax (and its JSON payload) into the chat when execute raised.
     detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Appeal"
+    # Models legitimately emit several update calls in one reply; since
+    # execute() replaces only the exact call span, each remaining call must
+    # get its own pass or it renders as raw tool syntax.
+    max_calls_per_reply: int = 3
+
+    def strip_calls_on_error(self, response_text: str) -> str:
+        """Span-bounded on-error strip: the greedy DOTALL pattern would also
+        delete the text (and any other pending tool call) between two calls."""
+        return strip_anchored_calls(self, response_text)
 
     def __init__(
         self,
@@ -100,9 +110,13 @@ class AppealTool(BaseTool):
                 await appeal.asave()
                 await denial.asave()
 
+                # count=1: byte-identical duplicate calls each get their own
+                # pass via max_calls_per_reply instead of one replacement
+                # landing at every occurrence.
                 cleaned_response = response_text.replace(
                     call_span,
                     f"I've created/updated [Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id}) for you.",
+                    1,
                 )
                 await self.send_status_message(
                     f"Appeal #{appeal.id} has been created/updated successfully."
@@ -112,6 +126,7 @@ class AppealTool(BaseTool):
                 cleaned_response = response_text.replace(
                     call_span,
                     "I couldn't create or update the appeal.",
+                    1,
                 )
                 await self.send_status_message("Failed to create or update appeal.")
                 return cleaned_response, context
