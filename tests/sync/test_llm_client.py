@@ -600,10 +600,19 @@ class TestStoredMarkerEchoExemption(TestCase):
 
     MARKER = build_long_paste_marker(18949, "pasted_message_1787951051.txt")
 
-    def test_reply_echoing_the_marker_is_not_hard_rejected(self):
-        # Verbatim echo -- the strongest possible match, which the
-        # echoes-the-user rung would otherwise reject outright.
-        self.assertIsNone(find_repeated_reply(self.MARKER, [], self.MARKER))
+    def test_reply_reusing_marker_wording_is_not_hard_rejected(self):
+        # Near-verbatim reuse with actual content on top: legitimate
+        # acknowledgment, must survive the echoes-the-user rung.
+        reply = f"{self.MARKER} I'm reading it now."
+        self.assertIsNone(find_repeated_reply(reply, [], self.MARKER))
+
+    def test_bare_marker_echo_is_still_rejected(self):
+        # A reply that IS the marker adds nothing -- rejecting it lets the
+        # stored-content acknowledgment fallback deliver something useful.
+        self.assertEqual(
+            find_repeated_reply(self.MARKER, [], self.MARKER),
+            "echoes_user_message",
+        )
 
     def test_reply_echoing_real_user_text_is_still_rejected(self):
         msg = "Help me figure out how to navigate the new medicaid requirements."

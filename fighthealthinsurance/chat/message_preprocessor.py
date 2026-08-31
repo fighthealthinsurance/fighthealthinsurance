@@ -87,6 +87,21 @@ _TRAILING_JOINERS = frozenset({chr(0x200D), chr(0x200C)})
 _KEPT_WHITESPACE = "\t\n\r"
 
 
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def sanitize_document_name(name: Optional[str]) -> str:
+    """Collapse whitespace runs (newlines included) in a document name.
+
+    Upload names arrive from the client. The stored-content markers built
+    around a name are single-line by design, and ``is_stored_message_marker``
+    matches them as single lines -- a newline smuggled into a filename would
+    silently break that recognition and with it the marker-echo exemption.
+    Returns "" for None/blank input so callers can apply their own fallback.
+    """
+    return _WHITESPACE_RUN_RE.sub(" ", name or "").strip()
+
+
 def build_long_paste_marker(char_count: int, doc_name: str) -> str:
     """The compact text stored in chat history in place of a long paste.
 
@@ -252,7 +267,10 @@ def _build_long_variants(
     caller (in document storage); these variants stay compact -- a preferred
     head+tail reference and a truncated last resort.
     """
-    doc_name = document_name or f"pasted_message_{int(time.time())}.txt"
+    doc_name = (
+        sanitize_document_name(document_name)
+        or f"pasted_message_{int(time.time())}.txt"
+    )
     head = safe_display_truncate(safe, DISPLAY_PREVIEW_CHARS)
     tail = _safe_tail(safe, TAIL_PREVIEW_CHARS)
     marker = build_long_paste_marker(char_count, doc_name)
