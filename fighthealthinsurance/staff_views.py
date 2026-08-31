@@ -5,7 +5,7 @@ from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.db import transaction
-from django.db.models import Count, QuerySet
+from django.db.models import Count, F, QuerySet
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
@@ -295,7 +295,12 @@ class AdminStatusView(generic.TemplateView):
                 Q(attempting_to_send_as_of__gte=since) | Q(date__gte=since),
                 sent=True,
             )
-            failed_qs = recent.filter(fax_success=False).order_by("-date")
+            # Order by attempt recency too, or an old-created fax admitted by
+            # the attempt filter gets displaced from the 10-row slice below by
+            # newer-created rows whose failures are actually older.
+            failed_qs = recent.filter(fax_success=False).order_by(
+                F("attempting_to_send_as_of").desc(nulls_last=True), "-date"
+            )
             failed = [
                 {
                     "uuid": str(f.uuid),

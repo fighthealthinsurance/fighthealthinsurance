@@ -158,6 +158,51 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertEqual(q["failures_recent"], 1)  # E
 
 
+class FaxOutcomeStatusOrderingTest(TestCase):
+    """The failure list must surface the most recent send *attempts*, not the
+    most recently *created* faxes (PR #959 review)."""
+
+    def _make_fax(self, date=None, **kwargs):
+        defaults = dict(
+            hashed_email="h", paid=True, email="a@b.com", appeal_text="x", name="Test"
+        )
+        defaults.update(kwargs)
+        fax = FaxesToSend.objects.create(**defaults)
+        if date is not None:
+            # date is auto_now_add, so backdate via update() to bypass it.
+            FaxesToSend.objects.filter(pk=fax.pk).update(date=date)
+        return fax
+
+    def test_old_fax_with_recent_attempt_not_displaced_from_failures(self):
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        now = timezone.now()
+        # An old fax whose send was attempted (and failed) just now: admitted
+        # by the attempt-date filter, and must survive the 10-row slice.
+        old_but_fresh_failure = self._make_fax(
+            sent=True,
+            fax_success=False,
+            attempting_to_send_as_of=now,
+            date=now - datetime.timedelta(days=30),
+        )
+        # Eleven newer-created failures with older (or no) attempt timestamps.
+        for i in range(11):
+            self._make_fax(
+                sent=True,
+                fax_success=False,
+                attempting_to_send_as_of=now - datetime.timedelta(hours=i + 1),
+            )
+
+        outcomes = AdminStatusView._fax_outcome_status()
+        assert outcomes["error"] is None
+        assert outcomes["failed"] == 12
+        listed = [f["uuid"] for f in outcomes["recent_failures"]]
+        assert len(listed) == 10
+        # Ordered by attempt recency, the just-attempted old fax is first;
+        # ordering by creation date would have dropped it entirely.
+        assert listed[0] == str(old_but_fresh_failure.uuid)
+
+
 _TEMPORAL_CLIENT = "fighthealthinsurance.temporal_client.get_temporal_client"
 
 
