@@ -43,8 +43,14 @@ class Command(BaseCommand):
     async def _run(self, options: dict) -> None:
         from temporalio.worker import Worker
 
-        from fighthealthinsurance.activities import fax as fax_activities
+        from fighthealthinsurance.activities import (
+            appeal_journey as journey_activities,
+            fax as fax_activities,
+        )
         from fighthealthinsurance.temporal_client import get_temporal_client
+        from fighthealthinsurance.workflows.generate_appeal import (
+            GenerateAppealWorkflow,
+        )
         from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 
         task_queue = options.get("task_queue") or settings.TEMPORAL_TASK_QUEUE
@@ -62,12 +68,14 @@ class Command(BaseCommand):
             worker = Worker(
                 client,
                 task_queue=task_queue,
-                workflows=[SendFaxWorkflow],
+                workflows=[SendFaxWorkflow, GenerateAppealWorkflow],
                 activities=[
                     fax_activities.precheck_fax,
                     fax_activities.send_fax_via_vendor,
                     fax_activities.release_send_claim,
                     fax_activities.finalize_fax,
+                    journey_activities.precheck_appeal_journey,
+                    journey_activities.generate_and_store_appeals,
                 ],
                 activity_executor=activity_executor,
             )

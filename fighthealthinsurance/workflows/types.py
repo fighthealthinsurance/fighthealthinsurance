@@ -23,3 +23,17 @@ class SendFaxInput:
     hashed_email: str
     fax_uuid: str
     delay_send: bool = False
+
+
+@dataclass
+class GenerateAppealInput:
+    """Input for ``GenerateAppealWorkflow``.
+
+    Attributes:
+        hashed_email: Hashed email used (with ``denial_uuid``) to look the
+            denial up.
+        denial_uuid: The ``Denial`` uuid, as a string.
+    """
+
+    hashed_email: str
+    denial_uuid: str

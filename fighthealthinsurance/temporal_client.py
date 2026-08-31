@@ -175,6 +175,56 @@ def dispatch_fax_send_blocking(hashed_email: str, fax_uuid: str) -> Optional[boo
         return None
 
 
+async def start_generate_appeal_workflow(hashed_email: str, denial_uuid: str) -> str:
+    """Start ``GenerateAppealWorkflow`` for a denial. Returns the workflow id.
+
+    The deterministic id means at most one journey is in flight per denial; a
+    duplicate dispatch while one is open raises ``WorkflowAlreadyStartedError``
+    (handled in :func:`dispatch_appeal_generation`), and a re-dispatch after it
+    closed starts a fresh run, which the precheck ends immediately when the
+    drafts are already stored.
+    """
+    from fighthealthinsurance.workflows.types import GenerateAppealInput
+
+    client = await get_temporal_client()
+    handle = await client.start_workflow(
+        "GenerateAppealWorkflow",
+        GenerateAppealInput(hashed_email=hashed_email, denial_uuid=str(denial_uuid)),
+        id=f"generate-appeal-{denial_uuid}",
+        task_queue=settings.TEMPORAL_TASK_QUEUE,
+    )
+    logger.info(f"Started GenerateAppealWorkflow {handle.id} for denial {denial_uuid}")
+    return str(handle.id)
+
+
+def dispatch_appeal_generation(hashed_email: str, denial_uuid: str) -> bool:
+    """Dispatch a durable appeal-generation journey when enabled.
+
+    Returns True if the journey was handed to Temporal (or one is already in
+    flight for this denial), False when Temporal or the journey flag is off or
+    the start failed. There is no fallback path: this is a new queued flow, so
+    a False simply means nothing was queued.
+    """
+    if not getattr(settings, "TEMPORAL_ENABLED", False):
+        return False
+    if not getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False):
+        return False
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    try:
+        async_to_sync(start_generate_appeal_workflow)(hashed_email, str(denial_uuid))
+        return True
+    except WorkflowAlreadyStartedError:
+        # A journey for this denial is already open; the dispatch is satisfied.
+        logger.info(f"GenerateAppealWorkflow already running for denial {denial_uuid}")
+        return True
+    except Exception:
+        logger.opt(exception=True).error(
+            f"Failed to start GenerateAppealWorkflow for denial {denial_uuid}"
+        )
+        return False
+
+
 def dispatch_fax_send(
     hashed_email: str,
     fax_uuid: str,

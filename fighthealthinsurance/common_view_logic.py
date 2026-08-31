@@ -2897,7 +2897,10 @@ class AppealsBackendHelper:
         denial_id = parameters["denial_id"]
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
-        hashed_email = Denial.get_hashed_email(email)
+        # The durable appeal journey (appeal_journey_core) re-loads denials
+        # from opaque ids and never has the raw email, so it passes the stored
+        # hashed_email directly; interactive callers keep sending email.
+        hashed_email = parameters.get("hashed_email") or Denial.get_hashed_email(email)
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
         # Set by the JS client when this socket replaces one that dropped (see

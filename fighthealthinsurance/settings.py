@@ -131,6 +131,12 @@ class Base(Configuration):
     # SendFaxWorkflow instead. The worker process is run with
     # `python manage.py run_temporal_worker`.
     TEMPORAL_ENABLED = os.getenv("TEMPORAL_ENABLED", "false").lower() == "true"
+    # The queued appeal-generation journey (GenerateAppealWorkflow) is gated
+    # separately so fax sending can run on Temporal while this stays dark. It
+    # only takes effect when TEMPORAL_ENABLED is also true.
+    TEMPORAL_APPEAL_JOURNEY_ENABLED = (
+        os.getenv("TEMPORAL_APPEAL_JOURNEY_ENABLED", "false").lower() == "true"
+    )
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
