@@ -211,6 +211,11 @@ class ChatInterface:
         # Per-session cap for medicaid_gov_lookup, kept out here because the
         # tool is rebuilt every turn (same shape as _doc_fetch_count).
         self._medicaid_gov_lookup_count: list[int] = [0]
+        # monotonic deadline of the turn in flight (set by handle_chat_message
+        # just before its wait_for). Lets the letter tool clamp its generation
+        # deadline to the time actually left in the turn -- see
+        # _remaining_letter_deadline. None outside a budgeted turn.
+        self._turn_deadline: Optional[float] = None
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -680,6 +685,7 @@ class ChatInterface:
             self.send_status_message,
             self.send_error_message,
             use_external=self.use_external_models,
+            deadline_seconds=self._remaining_letter_deadline(),
         )
         response_text, context, _ = await generate_letter_tool.handle(
             response_text, context, chat=chat
@@ -1376,6 +1382,10 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
+        # Recorded so the letter tool can clamp its generation deadline to
+        # what is actually left of this budget (see
+        # _remaining_letter_deadline).
+        self._turn_deadline = time.monotonic() + turn_budget
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -1564,9 +1574,26 @@ class ChatInterface:
             # served straight from the DB -- so "every chat model failed"
             # does not mean the letter is out of reach.
             fallback_reply: Optional[str] = None
+            letter_appeal = None
             letter_request = looks_like_letter_request(user_message)
             if letter_request:
-                fallback_reply = await self._attempt_letter_fallback_reply()
+                # One lookup for both the fallback attempt and the
+                # appeal-page link in the error message below.
+                try:
+                    letter_appeal = await self._linked_appeal_for_letter_fallback()
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Could not look up linked appeal for chat {chat.id}"
+                    )
+                if letter_appeal:
+                    fallback_reply = await self._attempt_letter_fallback_reply(
+                        letter_appeal
+                    )
+                else:
+                    logger.info(
+                        f"Chat {chat.id}: no letter-capable linked appeal; "
+                        f"skipping letter fallback"
+                    )
             if fallback_reply:
                 try:
                     self.chat = chat = await apersist_chat_turn(
@@ -1606,13 +1633,12 @@ class ChatInterface:
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
-            if letter_request:
-                appeal_link = await self._linked_appeal_link()
-                if appeal_link:
-                    err_msg += (
-                        f" You can also generate your appeal letter directly "
-                        f"from {appeal_link}."
-                    )
+            if letter_appeal:
+                err_msg += (
+                    f" You can also generate your appeal letter directly "
+                    f"from [Appeal #{letter_appeal.id}]"
+                    f"(/appeals/{letter_appeal.id})."
+                )
             logger.error(
                 f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
                 f"after trying all models. use_external_models={self.use_external_models} "
@@ -1643,40 +1669,36 @@ class ChatInterface:
             return None
         return appeal
 
-    async def _linked_appeal_link(self) -> Optional[str]:
-        """Markdown link to the chat's letter-capable linked appeal, or None.
-        Used to point the user at the appeal page when even the letter
-        fallback couldn't deliver."""
-        try:
-            appeal = await self._linked_appeal_for_letter_fallback()
-        except Exception:
-            logger.opt(exception=True).debug(
-                f"Could not look up linked appeal for chat {self.chat.id}"
-            )
-            return None
-        if not appeal:
-            return None
-        return f"[Appeal #{appeal.id}](/appeals/{appeal.id})"
+    def _remaining_letter_deadline(self) -> Optional[float]:
+        """Letter-generation deadline clamped to the turn budget's remainder.
 
-    async def _attempt_letter_fallback_reply(self) -> Optional[str]:
+        Without the clamp, a letter drafted near the budget's end was
+        cancelled at the wait_for timeout -- the bridge thread kept burning
+        model quota on a drain nobody would read, the finished letter was
+        discarded unsaved, and the total-failure fallback then re-generated
+        it from scratch. The margin leaves room to persist and deliver the
+        reply; the floor keeps a near-exhausted turn's attempt cheap (the
+        pipeline degrades to its static templates almost immediately).
+        Returns None outside a budgeted turn (e.g. direct tool tests),
+        letting the pipeline's env default apply.
+        """
+        if self._turn_deadline is None:
+            return None
+        remaining = self._turn_deadline - time.monotonic() - 15.0
+        default = _env_float("FHI_CHAT_LETTER_DEADLINE", 75.0)
+        return max(10.0, min(default, remaining))
+
+    async def _attempt_letter_fallback_reply(self, appeal) -> Optional[str]:
         """Draft the requested appeal letter after a total chat-model failure.
 
-        Serves an existing ProposedAppeal first (a DB read is the one step
-        guaranteed to work while models are down), then runs a bounded
-        appeal-pipeline generation. Requires a chat-linked appeal whose
-        denial has substance -- with no context, generation would only hand
-        the user a letter of blanks. Never raises: the caller still owes the
-        user an error frame when this returns None.
+        ``appeal`` is the letter-capable linked appeal the caller already
+        looked up. Serves an existing ProposedAppeal first (a DB read is the
+        one step guaranteed to work while models are down), then runs a
+        bounded appeal-pipeline generation. Never raises: the caller still
+        owes the user an error frame when this returns None.
         """
         chat = self.chat
         try:
-            appeal = await self._linked_appeal_for_letter_fallback()
-            if not appeal:
-                logger.info(
-                    f"Chat {chat.id}: no letter-capable linked appeal; "
-                    f"skipping letter fallback"
-                )
-                return None
             await self.send_status_message(
                 "Our chat models are having trouble right now -- drafting "
                 "your appeal letter through the appeal generator instead..."
@@ -1699,14 +1721,22 @@ class ChatInterface:
                 heartbeat_task.cancel()
             if not drafted:
                 return None
-            # Only claim the letter is on the appeal when the save succeeded.
-            saved_note = (
-                f"It's saved to [Appeal #{appeal.id}](/appeals/{appeal.id})."
-                if drafted.saved_to_appeal
-                else f"I couldn't attach it to [Appeal #{appeal.id}]"
-                f"(/appeals/{appeal.id}) just now, so please copy it from "
-                f"this chat."
-            )
+            # Word the appeal-row relationship honestly: saved, deliberately
+            # left alone (it already had a real letter), or failed to save.
+            appeal_link = f"[Appeal #{appeal.id}](/appeals/{appeal.id})"
+            if drafted.saved_to_appeal:
+                saved_note = f"It's saved to {appeal_link}."
+            elif drafted.preserved_existing:
+                saved_note = (
+                    f"{appeal_link} already has a saved letter, so I've left "
+                    f"that one untouched -- copy this draft from the chat if "
+                    f"you prefer it."
+                )
+            else:
+                saved_note = (
+                    f"I couldn't attach it to {appeal_link} just now, so "
+                    f"please copy it from this chat."
+                )
             return (
                 f"Our chat models are having trouble right now, so I drafted "
                 f"your appeal letter with our dedicated appeal generator "

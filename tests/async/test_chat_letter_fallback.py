@@ -366,6 +366,22 @@ class FindReserveLetterTest(APITestCase):
         # The live row wins even though the speculative one is longer.
         self.assertEqual(found, RESERVE_LETTER)
 
+    async def test_junk_rows_cannot_evict_reserve_from_the_window(self):
+        """A pile of runt live drafts (a degraded-model period) must not fill
+        the bounded lookup window and hide the one deliverable reserve --
+        the runt filter runs in SQL before the slice."""
+        denial = await Denial.objects.acreate(
+            denial_text="denied", hashed_email=Denial.get_hashed_email("e@f.com")
+        )
+        for _ in range(12):
+            await ProposedAppeal.objects.acreate(
+                appeal_text="junk", for_denial=denial, speculative=False
+            )
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER, for_denial=denial, speculative=True
+        )
+        self.assertEqual(await find_reserve_letter(denial), RESERVE_LETTER)
+
     async def test_returns_none_when_no_deliverable_rows(self):
         denial = await Denial.objects.acreate(
             denial_text="denied", hashed_email=Denial.get_hashed_email("c@d.com")
@@ -414,6 +430,27 @@ class DraftLetterForChatTest(APITestCase):
         self.assertEqual(
             await ProposedAppeal.objects.filter(for_denial=denial).acount(), 1
         )
+
+    async def test_reserve_does_not_overwrite_existing_letter(self):
+        """A reserve draft must never clobber a real (possibly user-edited)
+        letter already on the appeal; it is delivered without saving."""
+        user, chat = await _make_professional_chat("draftpersist4", "9999940004")
+        appeal, denial = await _link_letter_appeal(chat, user)
+        edited = (
+            "My carefully hand-edited appeal letter about the MRI denial, "
+            "which must not be replaced by a stale precomputed draft."
+        )
+        appeal.appeal_text = edited
+        await appeal.asave()
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER, for_denial=denial
+        )
+        drafted = await draft_letter_for_chat(
+            appeal=appeal, denial=denial, use_external=False, prefer_existing=True
+        )
+        self.assertEqual(drafted, DraftedLetter(RESERVE_LETTER, False, True))
+        fresh = await Appeal.objects.aget(id=appeal.id)
+        self.assertEqual(fresh.appeal_text, edited)
 
     async def test_failed_appeal_save_reported_not_hidden(self):
         """A letter whose appeal save failed is still delivered, but flagged
@@ -493,3 +530,105 @@ class PairedToolCallsTest(APITestCase):
         appeal = await Appeal.objects.select_related("for_denial").aget(chat=chat)
         self.assertEqual(appeal.for_denial.procedure, "MRI")
         self.assertEqual(appeal.for_denial.diagnosis, "chronic back pain")
+
+
+class MultiCallAndErrorStripTest(APITestCase):
+    """Same-tool duplicates execute per call; error strips stay span-bounded."""
+
+    async def test_two_appeal_calls_both_apply(self):
+        """Each call of the same anchored tool gets its own pass -- neither
+        renders as raw syntax nor silently loses its field updates."""
+        _, chat = await _make_professional_chat("multicall1", "9999960001")
+        response = (
+            '**create_or_update_appeal**{"procedure": "MRI"}\n'
+            "Also recording:\n"
+            '**create_or_update_appeal**{"diagnosis": "chronic back pain"}'
+        )
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        result, _, handled = await tool.handle(response, "", chat=chat)
+        self.assertTrue(handled)
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertIn("Also recording:", result)
+        appeal = await Appeal.objects.select_related("for_denial").aget(chat=chat)
+        self.assertEqual(appeal.for_denial.procedure, "MRI")
+        self.assertEqual(appeal.for_denial.diagnosis, "chronic back pain")
+
+    async def test_duplicate_letter_calls_draft_once_and_strip_stragglers(self):
+        """One letter per turn: the second call is stripped, not re-drafted."""
+        _, chat = await _make_professional_chat("multicall2", "9999960002")
+        response = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            "And again for luck:\n"
+            '**generate_appeal_letter**{"procedure": "MRI scan"}'
+        )
+        tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock())
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft:
+            result, _, handled = await tool.handle(response, "", chat=chat)
+        self.assertTrue(handled)
+        mock_draft.assert_awaited_once()
+        self.assertNotIn("generate_appeal_letter", result)
+        self.assertEqual(result.count(GENERATED_LETTER), 1)
+
+    async def test_appeal_tool_error_leaves_letter_call_intact(self):
+        """When AppealTool's execute blows up, the on-error strip must not
+        swallow the prose or the pending generate_appeal_letter call (the
+        old greedy re.sub deleted everything between the two calls)."""
+        _, chat = await _make_professional_chat("multicall3", "9999960003")
+        response = (
+            '**create_or_update_appeal**{"procedure": "MRI"}\n'
+            "Now drafting the letter.\n"
+            '**generate_appeal_letter**{"procedure": "MRI"}'
+        )
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        with patch.object(
+            AppealTool,
+            "_get_or_create_appeal",
+            new=AsyncMock(side_effect=RuntimeError("db down")),
+        ):
+            result, _, handled = await tool.handle(response, "", chat=chat)
+        self.assertTrue(handled)
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertIn("Now drafting the letter.", result)
+        self.assertIn("generate_appeal_letter", result)
+
+
+class LetterDeadlineClampTest(APITestCase):
+    """The letter tool's deadline is clamped to the turn budget's remainder."""
+
+    def _interface(self):
+        from unittest.mock import MagicMock
+
+        return ChatInterface(
+            send_json_message_func=AsyncMock(), chat=MagicMock(), user=None
+        )
+
+    def test_none_outside_a_budgeted_turn(self):
+        self.assertIsNone(self._interface()._remaining_letter_deadline())
+
+    def test_clamped_to_remaining_budget(self):
+        import time as time_mod
+
+        interface = self._interface()
+        interface._turn_deadline = time_mod.monotonic() + 40.0
+        deadline = interface._remaining_letter_deadline()
+        # ~40s left minus the 15s margin, well under the 75s env default.
+        self.assertLess(deadline, 30.0)
+        self.assertGreater(deadline, 20.0)
+
+    def test_floored_when_budget_nearly_exhausted(self):
+        import time as time_mod
+
+        interface = self._interface()
+        interface._turn_deadline = time_mod.monotonic() + 1.0
+        self.assertEqual(interface._remaining_letter_deadline(), 10.0)
+
+    def test_capped_at_env_default_when_budget_is_ample(self):
+        import time as time_mod
+
+        interface = self._interface()
+        interface._turn_deadline = time_mod.monotonic() + 10_000.0
+        self.assertEqual(interface._remaining_letter_deadline(), 75.0)
