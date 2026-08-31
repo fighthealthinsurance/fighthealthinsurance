@@ -227,8 +227,6 @@ router falls back through them in cost order.
 
 - **Perplexity** — sign up at https://www.perplexity.ai/settings/api, then
   `export PERPLEXITY_API="..."`. Used for the Sonar citation backends.
-- **Groq** — sign up at https://console.groq.com/keys, then
-  `export GROQ_API_KEY="..."`.
 - **DeepInfra** — sign up at https://deepinfra.com/dash/api_keys, then
   `export DEEPINFRA_API="..."`.
 
