@@ -9,7 +9,7 @@ Note on external models: chooser tasks are built ONLY from synthetic,
 model-generated scenarios (no patient data), so candidate generation opts
 into external backends (``use_external=True``). The chooser exists precisely
 to compare backends against each other — leaving external providers
-(Anthropic, Azure, Groq, ...) out of it meant they never appeared in the
+(Anthropic, Azure, DeepInfra, ...) out of it meant they never appeared in the
 selection UI or the model-usage dashboard, which is what happened when these
 calls relied on the router's internal-only default.
 """
@@ -316,7 +316,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
         return
 
     # Generate candidates using different models. Synthetic context only, so
-    # external backends (Anthropic/Azure/Groq/...) participate — the chooser
+    # external backends (Anthropic/Azure/DeepInfra/...) participate — the chooser
     # is how they get compared and how they show up in usage reporting.
     models = _select_candidate_models(
         ml_router.generate_text_backends(use_external=True), CHOOSER_NUM_CANDIDATES

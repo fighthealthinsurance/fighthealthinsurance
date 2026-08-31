@@ -67,7 +67,7 @@ The app needs an ML backend to generate appeals. Options:
    ```
    Note: Requires a GPU (3090 or equivalent).
 
-3. **Hosted generative models (Azure, Anthropic, Groq, …)**: Set the relevant
+3. **Hosted generative models (Azure, Anthropic, …)**: Set the relevant
    API keys (see below). These external models are used when `use_external=True`
    (e.g. premium/chooser workflows).
 
@@ -85,7 +85,6 @@ recorded for usage tracking in both the regular appeal workflow and the chooser
 | Azure OpenAI (GPT) | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | `azure-openai/` |
 | Azure AI Foundry (Claude) | `AZURE_ANTHROPIC_API_KEY`, `AZURE_ANTHROPIC_ENDPOINT` | `azure-anthropic/` |
 | Anthropic (direct) | `ANTHROPIC_API_KEY` | `anthropic/` |
-| Groq | `GROQ_API_KEY` | `groq/` |
 | DeepInfra | `DEEPINFRA_API` | (model id) |
 | Perplexity (citations) | `PERPLEXITY_API` | `sonar` |
 

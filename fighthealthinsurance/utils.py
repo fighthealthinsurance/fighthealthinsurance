@@ -239,7 +239,7 @@ class RateLimiter:
     call mark_exhausted) is harmless - the exhaustion time just gets set twice.
 
     Example:
-        limiter = RateLimiter(name="groq-llama-70b")
+        limiter = RateLimiter(name="anthropic-claude-sonnet")
         if limiter.can_request():
             try:
                 # make API call

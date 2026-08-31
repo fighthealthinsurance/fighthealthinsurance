@@ -15,11 +15,10 @@ and in CI.
 | `OCTOAI_TOKEN`                       | OctoAI           | One ML backend required | Cloud ML inference for appeal generation |
 | `HEALTH_BACKEND_HOST` / `_PORT`      | Local LLM        | One ML backend required | Self-hosted ML inference |
 | `PERPLEXITY_API`                     | Perplexity       | Optional         | Sonar models for citation discovery |
-| `GROQ_API_KEY`                       | Groq             | Optional         | Fallback chat / inference |
 | `DEEPINFRA_API`                      | DeepInfra        | Optional         | Additional inference backend |
 | `LOG_ANALYTICS_WORKSPACE_ID` / `_KEY` | Azure Log Analytics | Optional      | Ship app logs to a Microsoft Log Analytics workspace |
 
-You need **at least one** ML backend (OctoAI, a local LLM, Perplexity, Groq, or
+You need **at least one** ML backend (OctoAI, a local LLM, Perplexity, or
 DeepInfra) for appeal generation to work. Everything else degrades gracefully.
 
 ---
