@@ -2745,6 +2745,18 @@ class DenialCreatorHelper:
         if health_history_anonymized is not None:
             denial.health_history_anonymized = health_history_anonymized
         denial.save()
+        # Durable intake journey (dark until TEMPORAL_INTAKE_JOURNEY_ENABLED):
+        # the journey observes the funnel from the first substantive step; it
+        # must never be able to break the user-facing flow, so the dispatcher
+        # swallows every failure. Opt-in for the nudge = store_raw_email,
+        # observable here as a retained raw_email.
+        from fighthealthinsurance.temporal_client import dispatch_intake_started
+
+        dispatch_intake_started(
+            denial.hashed_email,
+            str(denial.uuid),
+            bool((denial.raw_email or "").strip()),
+        )
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
@@ -2992,6 +3004,16 @@ class AppealsBackendHelper:
             "primary_professional__user",
         )
         denial = await denial_query.aget()
+
+        # The user asked for generation: complete the durable intake journey
+        # (dark until enabled; fire-and-forget; skipped for the journey's own
+        # background child run, which would be signalling its own parent).
+        if not background:
+            from fighthealthinsurance.temporal_client import (
+                asignal_intake_fire_and_forget,
+            )
+
+            await asignal_intake_fire_and_forget(str(denial.uuid), "form_completed")
 
         # Initial keepalive newline so clients know we're alive.
         yield "\n"

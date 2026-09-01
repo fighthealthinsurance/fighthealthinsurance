@@ -158,6 +158,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["fax_queue"] = self._fax_queue_status()
         ctx["temporal"] = self._temporal_status()
         ctx["fax_outcomes"] = self._fax_outcome_status()
+        ctx["intake_funnel"] = self._intake_funnel_status()
         ctx["storage"] = self._storage_status()
         return ctx
 
@@ -319,6 +320,36 @@ class AdminStatusView(generic.TemplateView):
             }
         except Exception as e:
             logger.opt(exception=True).warning("Fax outcome status failed")
+            return {"error": str(e)}
+
+    @staticmethod
+    def _intake_funnel_status() -> Dict[str, Any]:
+        """Intake funnel (last 7 days), derived from the database: stage
+        tallies only, no case content. Where do people stop between starting
+        a denial submission and holding drafts?"""
+        from fighthealthinsurance.models import Denial, ProposedAppeal
+
+        try:
+            since = timezone.now().date() - datetime.timedelta(days=7)
+            denials = Denial.objects.filter(date__gte=since)
+            started = denials.count()
+            attempted = denials.filter(gen_attempts__gt=0).count()
+            with_drafts = (
+                denials.filter(
+                    proposedappeal__speculative=False,
+                )
+                .distinct()
+                .count()
+            )
+            chosen = denials.filter(proposedappeal__chosen=True).distinct().count()
+            return {
+                "started": started,
+                "attempted_generation": attempted,
+                "with_drafts": with_drafts,
+                "chose_appeal": chosen,
+                "error": None,
+            }
+        except Exception as e:  # pragma: no cover - defensive dashboard path
             return {"error": str(e)}
 
     @staticmethod

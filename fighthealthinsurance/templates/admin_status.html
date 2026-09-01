@@ -252,6 +252,34 @@
     {% endif %}
   </div>
 
+  {# ---------------- Intake funnel ---------------- #}
+  <div class="status-section">
+    <h2>&#128203; Intake funnel (last 7 days)</h2>
+    {% if intake_funnel.error %}
+      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ intake_funnel.error }}</span></p>
+    {% else %}
+      <p class="summary-line"><span class="pill">Stage tallies only; where do people stop between starting a submission and holding drafts?</span></p>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.started|default:0 }}</div>
+          <div class="label">Started a denial</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.attempted_generation|default:0 }}</div>
+          <div class="label">Reached generation</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.with_drafts|default:0 }}</div>
+          <div class="label">Have drafts</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.chose_appeal|default:0 }}</div>
+          <div class="label">Chose an appeal</div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
   {# ---------------- Fax delivery outcomes ---------------- #}
   <div class="status-section">
     <h2>📠 Fax delivery (last 7 days)</h2>

@@ -26,6 +26,26 @@ class SendFaxInput:
 
 
 @dataclass
+class IntakeJourneyInput:
+    """Input for ``IntakeJourneyWorkflow``.
+
+    Identification happens at the first substantive step (email + denial
+    text create the Denial row), so the journey keys on the denial itself.
+
+    Attributes:
+        hashed_email: Hashed email used (with ``denial_uuid``) to look the
+            denial up.
+        denial_uuid: The ``Denial`` uuid, as a string.
+        contact_opt_in: Whether the user opted into stored contact
+            (``store_raw_email``); gates the single abandonment nudge.
+    """
+
+    hashed_email: str
+    denial_uuid: str
+    contact_opt_in: bool = False
+
+
+@dataclass
 class GenerateAppealInput:
     """Input for ``GenerateAppealWorkflow``.
 

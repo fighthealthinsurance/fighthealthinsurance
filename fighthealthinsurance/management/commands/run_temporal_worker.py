@@ -46,10 +46,14 @@ class Command(BaseCommand):
         from fighthealthinsurance.activities import (
             appeal_journey as journey_activities,
             fax as fax_activities,
+            intake_journey as intake_activities,
         )
         from fighthealthinsurance.temporal_client import get_temporal_client
         from fighthealthinsurance.workflows.generate_appeal import (
             GenerateAppealWorkflow,
+        )
+        from fighthealthinsurance.workflows.intake_journey import (
+            IntakeJourneyWorkflow,
         )
         from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 
@@ -97,14 +101,22 @@ class Command(BaseCommand):
                 # Its activities are asyncio activities, so it needs no
                 # thread executor and its concurrency is bounded separately.
                 appeal_queue = settings.TEMPORAL_APPEAL_TASK_QUEUE
+                appeal_workflows: List[type] = [GenerateAppealWorkflow]
+                appeal_activity_fns = [
+                    journey_activities.precheck_appeal_journey,
+                    journey_activities.generate_and_store_appeals,
+                ]
+                if getattr(settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False):
+                    appeal_workflows.append(IntakeJourneyWorkflow)
+                    appeal_activity_fns += [
+                        intake_activities.send_abandonment_nudge,
+                        intake_activities.close_incomplete_journey,
+                    ]
                 appeal_worker = Worker(
                     client,
                     task_queue=appeal_queue,
-                    workflows=[GenerateAppealWorkflow],
-                    activities=[
-                        journey_activities.precheck_appeal_journey,
-                        journey_activities.generate_and_store_appeals,
-                    ],
+                    workflows=appeal_workflows,
+                    activities=appeal_activity_fns,
                     max_concurrent_activities=4,
                 )
                 runs.append(appeal_worker.run())

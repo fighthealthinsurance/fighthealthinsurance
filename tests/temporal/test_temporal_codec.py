@@ -58,8 +58,18 @@ def test_payload_dataclasses_carry_only_opaque_identifiers():
     design conversation, not a quiet addition."""
     from fighthealthinsurance.workflows import types as wf_types
 
-    allowed = {"hashed_email", "fax_uuid", "denial_uuid", "delay_send"}
-    for klass in (wf_types.SendFaxInput, wf_types.GenerateAppealInput):
+    allowed = {
+        "hashed_email",
+        "fax_uuid",
+        "denial_uuid",
+        "delay_send",
+        "contact_opt_in",
+    }
+    for klass in (
+        wf_types.SendFaxInput,
+        wf_types.GenerateAppealInput,
+        wf_types.IntakeJourneyInput,
+    ):
         fields = {f.name for f in dataclasses.fields(klass)}
         assert fields <= allowed, (
             f"{klass.__name__} gained fields {fields - allowed}: Temporal "
