@@ -47,10 +47,30 @@ async def get_temporal_client() -> Any:
         else:
             tls = True
 
+    # With TEMPORAL_PAYLOAD_KEY set, every payload is encrypted client-side
+    # before it reaches the Temporal server (see temporal_codec.py): history
+    # holds ciphertext only, and destroying the key crypto-shreds whatever
+    # namespace retention has not yet expired. The worker connects through
+    # this same function, so one setting covers both sides.
+    connect_kwargs: dict = {}
+    payload_key = getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
+    if payload_key:
+        import dataclasses as _dc
+
+        import temporalio.converter
+
+        from fighthealthinsurance.temporal_codec import EncryptionCodec
+
+        connect_kwargs["data_converter"] = _dc.replace(
+            temporalio.converter.default(),
+            payload_codec=EncryptionCodec(payload_key),
+        )
+
     return await Client.connect(
         settings.TEMPORAL_HOST,
         namespace=settings.TEMPORAL_NAMESPACE,
         tls=tls,
+        **connect_kwargs,
     )
 
 
