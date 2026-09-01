@@ -47,7 +47,12 @@ def precheck_appeal_journey(denial) -> str:
 
     if not (denial.denial_text or "").strip():
         return STATUS_NO_DENIAL_TEXT
-    existing = ProposedAppeal.objects.filter(for_denial=denial).count()
+    # speculative=True rows are the background precompute held in reserve;
+    # the interactive flow doesn't count them as delivered appeals and
+    # neither does the journey (PR #963 review).
+    existing = ProposedAppeal.objects.filter(
+        for_denial=denial, speculative=False
+    ).count()
     if existing >= TARGET_APPEALS:
         # A retry after a crash, or a duplicate dispatch: the drafts are
         # already there, so the journey is idempotently done.
@@ -56,21 +61,33 @@ def precheck_appeal_journey(denial) -> str:
 
 
 def generate_and_store_appeals(denial) -> int:
-    """Generate appeal drafts and persist them; returns how many were stored.
+    """Drive the shared generator until enough drafts exist; returns how many
+    new drafts got persisted.
 
-    Consumes the same async generator the interactive flow streams from, with
-    a bounded budget, and dedupes against drafts already stored for this
-    denial so an activity retry cannot double-store.
+    ``AppealsBackendHelper.generate_appeals`` persists every generated draft
+    itself (``save_appeal``) before yielding its frame, so this function only
+    CONSUMES the stream within a bounded budget and reports the persisted
+    delta -- it must never create rows from the streamed output, or every
+    draft would be stored twice (PR #963 review). The yielded texts are used
+    solely to stop consuming early once enough new drafts have appeared.
     """
     from fighthealthinsurance.common_view_logic import AppealsBackendHelper
     from fighthealthinsurance.models import ProposedAppeal
 
+    def _stored_count() -> int:
+        # Non-speculative only: reserve precompute rows don't count as
+        # delivered drafts anywhere else either.
+        return ProposedAppeal.objects.filter(
+            for_denial=denial, speculative=False
+        ).count()
+
     existing_texts = set(
-        ProposedAppeal.objects.filter(for_denial=denial).values_list(
+        ProposedAppeal.objects.filter(for_denial=denial, speculative=False).values_list(
             "appeal_text", flat=True
         )
     )
-    needed = TARGET_APPEALS - len(existing_texts)
+    before = _stored_count()
+    needed = TARGET_APPEALS - before
     if needed <= 0:
         return 0
 
@@ -81,8 +98,8 @@ def generate_and_store_appeals(denial) -> int:
         "semi_sekret": denial.semi_sekret,
     }
 
-    async def _collect() -> list:
-        collected: list = []
+    async def _consume() -> None:
+        new_texts: set = set()
         # generate_appeals is an async generator (declared AsyncIterator), so
         # aclose() exists at runtime; the cast lets mypy see it.
         agen = cast(
@@ -92,26 +109,25 @@ def generate_and_store_appeals(denial) -> int:
             async with asyncio.timeout(GENERATION_BUDGET_SECONDS):
                 async for chunk in agen:
                     text = _appeal_text_from_chunk(chunk)
+                    # The generator re-serves existing drafts first; only
+                    # genuinely new texts count toward the early stop.
                     if text and text not in existing_texts:
-                        collected.append(text)
-                        existing_texts.add(text)
-                    if len(collected) >= needed:
+                        new_texts.add(text)
+                    if len(new_texts) >= needed:
                         break
         except TimeoutError:
             logger.info(
                 f"Appeal journey: generation budget reached with "
-                f"{len(collected)} new draft(s) for denial {denial.uuid}"
+                f"{len(new_texts)} new draft(s) seen for denial {denial.uuid}"
             )
         finally:
             await agen.aclose()
-        return collected
 
-    stored = 0
-    for text in asyncio.run(_collect()):
-        ProposedAppeal.objects.create(for_denial=denial, appeal_text=text)
-        stored += 1
+    asyncio.run(_consume())
+    stored = max(0, _stored_count() - before)
     logger.info(
-        f"Appeal journey: stored {stored} draft(s) for denial uuid={denial.uuid}"
+        f"Appeal journey: {stored} new draft(s) persisted for denial "
+        f"uuid={denial.uuid}"
     )
     return stored
 
