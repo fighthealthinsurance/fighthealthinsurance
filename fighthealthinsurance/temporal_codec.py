@@ -2,18 +2,16 @@
 readable identifiers.
 
 Workflow inputs are already claim-check style -- opaque ``(hashed_email,
-uuid)`` pairs, never case content -- but a hashed email is still
-pseudonymous personal data under GDPR, and it sits in Temporal's own
-database until namespace retention (720h, see ``k8s/temporal/README.md``)
-expires it. With ``TEMPORAL_PAYLOAD_KEY`` set, every payload (inputs,
+uuid)`` pairs, never case content -- but a hashed email is still a
+user-linked identifier, and it sits in Temporal's own database until
+namespace retention (720h, see ``k8s/temporal/README.md``) expires it. With ``TEMPORAL_PAYLOAD_KEY`` set, every payload (inputs,
 results, and the values inside errors) is Fernet-encrypted by the client
 before it reaches the Temporal server, so:
 
 - the Temporal database and UI hold ciphertext only;
 - retention expiry remains the storage bound (no long-term storage);
-- rotating away or destroying the key crypto-shreds every history at once,
-  which satisfies erasure obligations for anything retention has not yet
-  removed.
+- rotating away or destroying the key renders every history unreadable at
+  once, an immediate backstop for anything retention has not yet removed.
 
 Decoding passes unencrypted payloads through untouched, so histories
 written before the key was configured keep replaying during rollout.

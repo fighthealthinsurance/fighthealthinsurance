@@ -1,6 +1,6 @@
 """Tests for Temporal payload encryption and the no-PHI payload contract.
 
-The GDPR posture has two layers: workflow inputs carry only opaque
+The data-protection posture has two layers: workflow inputs carry only opaque
 identifiers (enforced here as a contract test so nobody adds case content
 to a payload dataclass later), and with TEMPORAL_PAYLOAD_KEY set every
 payload is Fernet-encrypted client-side so Temporal's database and UI hold

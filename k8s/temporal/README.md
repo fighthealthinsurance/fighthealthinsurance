@@ -218,7 +218,7 @@ required.
 > history. Any future workflow that must carry PHI should add an encryption
 > `PayloadCodec` (see the Temporal data-handling reference) before doing so.
 
-## Data protection (GDPR)
+## Protecting user data in workflow history
 
 Workflow payloads are claim-check style by contract: opaque
 `(hashed_email, uuid)` identifiers only, never case content (enforced by
@@ -226,12 +226,13 @@ Workflow payloads are claim-check style by contract: opaque
 
 - **Retention is the storage bound.** The namespace is created with
   `--retention 720h`, so closed-workflow histories are deleted by the
-  server after 30 days. Do not raise this without a data-protection
-  conversation.
+  server after 30 days. History is a debugging window, not a data store
+  (the durable data lives in Django); raise it deliberately, not by
+  default.
 - **Payload encryption.** Set `TEMPORAL_PAYLOAD_KEY` (a Fernet key) in the
   app/worker environment and every payload is encrypted client-side
   (`fighthealthinsurance/temporal_codec.py`): the Temporal database and UI
-  hold ciphertext only. Destroying or rotating the key crypto-shreds all
-  histories at once, which covers erasure requests for anything retention
-  has not yet expired. Decoding passes pre-key plaintext histories
+  hold ciphertext only. Destroying or rotating the key renders all
+  existing histories unreadable at once, an immediate backstop if any
+  history ever needs to be expunged ahead of retention. Decoding passes pre-key plaintext histories
   through, so the key can be introduced without draining workflows.
