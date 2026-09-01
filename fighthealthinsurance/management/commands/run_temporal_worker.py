@@ -60,8 +60,8 @@ class Command(BaseCommand):
 
         from typing import Any as _Any, Callable, List
 
-        workflows: List[type] = [SendFaxWorkflow]
-        activities: List[Callable[..., _Any]] = [
+        fax_workflows: List[type] = [SendFaxWorkflow]
+        fax_activity_fns: List[Callable[..., _Any]] = [
             fax_activities.precheck_fax,
             fax_activities.send_fax_via_vendor,
             fax_activities.release_send_claim,
@@ -72,12 +72,6 @@ class Command(BaseCommand):
         # direct Temporal start (or a task queued before the flag flipped)
         # would still run on a "dark" worker (PR #963 review).
         journey_enabled = getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False)
-        if journey_enabled:
-            workflows.append(GenerateAppealWorkflow)
-            activities += [
-                journey_activities.precheck_appeal_journey,
-                journey_activities.generate_and_store_appeals,
-            ]
 
         client = await get_temporal_client()
         self.stdout.write(
@@ -87,15 +81,37 @@ class Command(BaseCommand):
         )
 
         with ThreadPoolExecutor(max_workers=max_workers) as activity_executor:
-            worker = Worker(
+            fax_worker = Worker(
                 client,
                 task_queue=task_queue,
-                workflows=workflows,
-                activities=activities,
+                workflows=fax_workflows,
+                activities=fax_activity_fns,
                 activity_executor=activity_executor,
             )
+            runs = [fax_worker.run()]
+            queues = [task_queue]
+            if journey_enabled:
+                # The journey runs on its OWN task queue and worker: several
+                # slow appeal generations must never occupy the fax worker's
+                # activity slots (separate failure domain; PR #963 review).
+                # Its activities are asyncio activities, so it needs no
+                # thread executor and its concurrency is bounded separately.
+                appeal_queue = settings.TEMPORAL_APPEAL_TASK_QUEUE
+                appeal_worker = Worker(
+                    client,
+                    task_queue=appeal_queue,
+                    workflows=[GenerateAppealWorkflow],
+                    activities=[
+                        journey_activities.precheck_appeal_journey,
+                        journey_activities.generate_and_store_appeals,
+                    ],
+                    max_concurrent_activities=4,
+                )
+                runs.append(appeal_worker.run())
+                queues.append(appeal_queue)
             self.stdout.write(
-                f"Starting Temporal worker on task queue '{task_queue}' "
-                f"({max_workers} activity threads). Ctrl-C to stop."
+                f"Starting Temporal worker(s) on task queue(s) "
+                f"{', '.join(repr(q) for q in queues)} "
+                f"({max_workers} fax activity threads). Ctrl-C to stop."
             )
-            await worker.run()
+            await asyncio.gather(*runs)

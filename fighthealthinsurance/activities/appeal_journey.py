@@ -1,50 +1,78 @@
 """Temporal activities for the queued appeal-generation journey.
 
-Thin synchronous wrappers around :mod:`fighthealthinsurance.appeal_journey_core`,
-following the fax activities' conventions: ``close_old_connections`` at entry,
-opaque identifiers only, sanitized exceptions, and heartbeats around the slow
-generation call (via the shared helper in :mod:`.fax`) so a dead worker is
-detected in seconds rather than at the start-to-close timeout.
+Asyncio activities (unlike the fax activities' sync-thread pattern): the
+work is natively async, so Temporal owns the whole execution -- cancellation
+and timeouts deliver ``asyncio.CancelledError`` into the coroutine, the
+generator is closed cooperatively, and no unowned daemon thread can outlive
+its attempt and race a retry (PR #963 review). Heartbeats come from an owned
+coroutine that dies with the attempt.
+
+Conventions shared with the fax activities: opaque identifiers only, and
+sanitized exceptions so no case content enters workflow history.
 """
 
-from django.db import close_old_connections
+import asyncio
 
 from loguru import logger
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from fighthealthinsurance import appeal_journey_core
-from fighthealthinsurance.activities.fax import _call_with_heartbeats
+from fighthealthinsurance.appeal_journey_core import (
+    STATUS_NOT_FOUND,
+    JourneyIncomplete,
+    agenerate_and_store_appeals,
+    aload_denial,
+    aprecheck_appeal_journey,
+)
+
+HEARTBEAT_INTERVAL_S = 10.0
+
+
+async def _heartbeats():
+    """Liveness-only heartbeat loop; cancelled when its attempt ends."""
+    while True:
+        try:
+            activity.heartbeat()
+        except RuntimeError:
+            # Not inside an activity (direct call in tests): nothing to beat.
+            return
+        await asyncio.sleep(HEARTBEAT_INTERVAL_S)
 
 
 @activity.defn
-def precheck_appeal_journey(hashed_email: str, denial_uuid: str) -> str:
-    close_old_connections()
-    denial = appeal_journey_core.load_denial(hashed_email, denial_uuid)
+async def precheck_appeal_journey(hashed_email: str, denial_uuid: str) -> str:
+    denial = await aload_denial(hashed_email, denial_uuid)
     if denial is None:
-        return appeal_journey_core.STATUS_NOT_FOUND
-    return appeal_journey_core.precheck_appeal_journey(denial)
+        return STATUS_NOT_FOUND
+    return await aprecheck_appeal_journey(denial)
 
 
 @activity.defn
-def generate_and_store_appeals(hashed_email: str, denial_uuid: str) -> int:
+async def generate_and_store_appeals(hashed_email: str, denial_uuid: str) -> int:
     """Generate + persist drafts; returns the number stored this attempt."""
-    close_old_connections()
-    denial = appeal_journey_core.load_denial(hashed_email, denial_uuid)
-    if denial is None:
-        return 0
+    beat = asyncio.create_task(_heartbeats())
     try:
-        return int(
-            _call_with_heartbeats(
-                appeal_journey_core.generate_and_store_appeals, denial
+        denial = await aload_denial(hashed_email, denial_uuid)
+        if denial is None:
+            return 0
+        try:
+            return int(await agenerate_and_store_appeals(denial))
+        except JourneyIncomplete as e:
+            # Counts and uuid only -- safe for history, and retryable by
+            # design: the durable postcondition was not met.
+            raise ApplicationError(str(e)) from None
+        except asyncio.CancelledError:
+            # Cancellation/timeout: the core's finally already closed the
+            # generator; let Temporal see the cancellation itself.
+            raise
+        except Exception:
+            # Keep detail in worker logs; history gets only the opaque uuid.
+            logger.opt(exception=True).error(
+                f"Appeal generation failed for denial {denial_uuid}"
             )
-        )
-    except Exception:
-        # Keep detail in worker logs; history gets only the opaque uuid.
-        logger.opt(exception=True).error(
-            f"Appeal generation failed for denial {denial_uuid}"
-        )
-        raise ApplicationError(
-            f"appeal generation failed for denial {denial_uuid}"
-        ) from None
+            raise ApplicationError(
+                f"appeal generation failed for denial {denial_uuid}"
+            ) from None
+    finally:
+        beat.cancel()

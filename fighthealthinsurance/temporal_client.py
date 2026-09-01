@@ -223,7 +223,7 @@ async def start_generate_appeal_workflow(hashed_email: str, denial_uuid: str) ->
         "GenerateAppealWorkflow",
         GenerateAppealInput(hashed_email=hashed_email, denial_uuid=str(denial_uuid)),
         id=f"generate-appeal-{denial_uuid}",
-        task_queue=settings.TEMPORAL_TASK_QUEUE,
+        task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
     )
     logger.info(f"Started GenerateAppealWorkflow {handle.id} for denial {denial_uuid}")
     return str(handle.id)
