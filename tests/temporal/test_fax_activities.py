@@ -40,19 +40,26 @@ def test_precheck_fax_delegates_to_core(mock_load, mock_precheck):
 
 
 @patch("fighthealthinsurance.fax_send_core.load_fax", return_value=None)
-def test_send_fax_via_vendor_not_found_returns_false(mock_load):
+def test_send_fax_via_vendor_not_found_returns_failed(mock_load):
     env = ActivityEnvironment()
     result = env.run(fax_activities.send_fax_via_vendor, "h", "u")
-    assert result is False
+    assert result == "failed"
 
 
 @patch("fighthealthinsurance.fax_send_core.load_fax")
 def test_send_fax_via_vendor_skips_when_already_completed(mock_load):
-    """Idempotency guard: an already-handed-off fax is not re-sent on retry."""
-    mock_load.return_value = Mock(vendor_send_completed=True, uuid="u")
+    """Idempotency guard: an already-handed-off fax is not re-sent on retry.
+    Delivered -> sent (idempotent confirm); still in flight -> not_owner, so
+    the caller neither finalizes nor releases a claim it does not hold."""
+    mock_load.return_value = Mock(
+        vendor_send_completed=True, uuid="u", sent=True, fax_success=True
+    )
     env = ActivityEnvironment()
-    result = env.run(fax_activities.send_fax_via_vendor, "h", "u")
-    assert result is True
+    assert env.run(fax_activities.send_fax_via_vendor, "h", "u") == "sent"
+    mock_load.return_value = Mock(
+        vendor_send_completed=True, uuid="u", sent=False, fax_success=False
+    )
+    assert env.run(fax_activities.send_fax_via_vendor, "h", "u") == "not_owner"
 
 
 @patch("fighthealthinsurance.fax_send_core.send_fax_via_vendor")
@@ -87,3 +94,62 @@ def test_finalize_fax_delegates_to_core(mock_load, mock_finalize):
     result = env.run(fax_activities.finalize_fax, "h", "u", True, False)
     mock_finalize.assert_called_once_with(fake_fax, True, False)
     assert result is True
+
+
+@patch("fighthealthinsurance.fax_send_core.send_fax_via_vendor")
+@patch("fighthealthinsurance.fax_send_core.load_fax")
+def test_send_fax_via_vendor_heartbeats_while_sending(mock_load, mock_send):
+    """The activity heartbeats while the blocking vendor call runs, so a dead
+    worker is detected by heartbeat timeout instead of start-to-close."""
+    import time
+
+    from fighthealthinsurance.activities import fax as fax_module
+
+    mock_load.return_value = Mock(vendor_send_completed=False, uuid="u")
+
+    def slow_send(fax):
+        time.sleep(0.15)
+        return "sent"
+
+    mock_send.side_effect = slow_send
+    beats: list = []
+    env = ActivityEnvironment()
+    env.on_heartbeat = lambda *args: beats.append(args)
+    with patch.object(fax_module, "HEARTBEAT_INTERVAL_S", 0.02):
+        result = env.run(fax_activities.send_fax_via_vendor, "h", "u")
+    assert result == "sent"
+    assert len(beats) >= 2
+
+
+@patch("fighthealthinsurance.fax_send_core.load_fax", return_value=None)
+def test_release_send_claim_not_found_returns_false(mock_load):
+    env = ActivityEnvironment()
+    assert env.run(fax_activities.release_send_claim, "h", "u") is False
+
+
+@patch("fighthealthinsurance.fax_send_core.release_send_claim")
+@patch("fighthealthinsurance.fax_send_core.load_fax")
+def test_release_send_claim_delegates_to_core(mock_load, mock_release):
+    fake_fax = object()
+    mock_load.return_value = fake_fax
+    env = ActivityEnvironment()
+    assert env.run(fax_activities.release_send_claim, "h", "u") is True
+    mock_release.assert_called_once_with(fake_fax)
+
+
+def test_claim_is_taken_only_after_document_assembly():
+    """Document assembly is the memory-hungry phase (it OOM-killed the worker
+    2026-08-30); a crash there must not leave the vendor-send claim stuck."""
+    from unittest.mock import MagicMock
+
+    from fighthealthinsurance import fax_send_core
+
+    fax = Mock()
+    fax.vendor_send_completed = False
+    fax.destination = "000"
+    fax.uuid = "u"
+    fax.get_temporary_document_path.side_effect = RuntimeError("simulated OOM")
+    with patch("fighthealthinsurance.models.FaxesToSend", MagicMock()) as mock_model:
+        with pytest.raises(RuntimeError):
+            fax_send_core.send_fax_via_vendor(fax)
+        mock_model.objects.filter.assert_not_called()

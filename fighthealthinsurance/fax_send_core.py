@@ -88,8 +88,14 @@ def load_fax(hashed_email: str, fax_uuid: Union[str, UUID]) -> Optional["FaxesTo
         return None
 
 
-def _release_send_claim(fax: "FaxesToSend") -> None:
-    """Undo a vendor-send claim after a failed send so it can be retried."""
+def release_send_claim(fax: "FaxesToSend") -> None:
+    """Undo a vendor-send claim after a failed send so it can be retried.
+
+    Also called as its own Temporal activity after a failed workflow send: a
+    worker killed mid-send (OOM, eviction) dies with the claim still True and
+    no in-process ``except`` left alive to release it, which blocked every
+    later resend until a human cleared the flag (observed 2026-08-30).
+    """
     from fighthealthinsurance.models import FaxesToSend
 
     try:
@@ -128,8 +134,17 @@ def precheck_fax(fax: "FaxesToSend") -> str:
     return STATUS_OK
 
 
-def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
-    """Send the fax document through the fax vendor. Returns success.
+# send_fax_via_vendor outcomes. NOT_OWNER means another sender holds the
+# vendor-send claim: the caller must not finalize the fax or release the claim
+# (the owner's flow does both) -- reporting it as success recorded phantom
+# deliveries when the owner later failed (PR #959 review).
+SEND_OK = "sent"
+SEND_FAILED = "failed"
+SEND_NOT_OWNER = "not_owner"
+
+
+def send_fax_via_vendor(fax: "FaxesToSend") -> str:
+    """Send the fax document through the vendor; returns SEND_OK / SEND_FAILED / SEND_NOT_OWNER.
 
     Concurrency-safe via an atomic claim: a single conditional UPDATE flips
     ``vendor_send_completed`` False->True, and only the caller that wins the flip
@@ -152,13 +167,13 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
         # is the authoritative guard against a concurrent sender; this in-memory
         # check just avoids a needless DB round-trip on a sequential retry.
         logger.info(f"Fax uuid={fax.uuid} already handed to vendor; not re-sending")
-        return True
+        return SEND_OK if (fax.sent and fax.fax_success) else SEND_NOT_OWNER
     destination = fax.destination
     if destination is None:
         # precheck_fax already screens this out; guard here too so a direct
         # caller can't crash the vendor send on a missing fax number.
         logger.warning(f"Fax uuid={fax.uuid} has no destination at send time")
-        return False
+        return SEND_FAILED
     # Atomically claim the right to send. The conditional UPDATE flips
     # vendor_send_completed False->True for exactly one caller; any concurrent
     # sender (a Ray delayed sweep racing the Temporal timer, or a Ray fallback
@@ -166,12 +181,34 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     # without re-transmitting. A plain in-memory read of the flag was a TOCTOU
     # race -- the multi-minute vendor call sits between check and write, so two
     # senders both saw False and both faxed the insurer.
-    claimed = FaxesToSend.objects.filter(pk=fax.pk, vendor_send_completed=False).update(
-        vendor_send_completed=True
-    )
+    # Assemble the document BEFORE taking the claim. Assembly (PubMed PDF
+    # fetches + pandoc) is the memory-hungry phase -- it OOM-killed the worker
+    # on 2026-08-30 -- and a death here used to strand the claim without a fax
+    # ever reaching the vendor. Assembling first means a crash in this phase
+    # leaves the claim untouched and a retry can proceed. Worst case two
+    # concurrent senders both assemble (wasted work); the claim below still
+    # guarantees only one transmits.
+    # get_temporary_document_path leaves cleanup to the caller (delete=False),
+    # so remove the temp file on both success and failure paths.
+    document_path = fax.get_temporary_document_path()
+    try:
+        claimed = FaxesToSend.objects.filter(
+            pk=fax.pk, vendor_send_completed=False
+        ).update(vendor_send_completed=True)
+    except Exception:
+        # The document must not outlive a failed claim attempt (PR #959 review).
+        try:
+            os.unlink(document_path)
+        except OSError:
+            pass
+        raise
     if not claimed:
         logger.info(f"Fax uuid={fax.uuid} already claimed/sent; not re-sending")
-        return True
+        try:
+            os.unlink(document_path)
+        except OSError:
+            pass
+        return SEND_OK if (fax.sent and fax.fax_success) else SEND_NOT_OWNER
     fax.vendor_send_completed = True
     denial = fax.denial_id
     extra = ""
@@ -180,9 +217,6 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     if fax.name is not None and len(fax.name) > 2:
         extra += f"This fax is sent on behalf of {fax.name}."
     logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
-    # get_temporary_document_path leaves cleanup to the caller (delete=False),
-    # so remove the temp file on both success and failure paths.
-    document_path = fax.get_temporary_document_path()
     try:
         result = asyncio.run(
             flexible_fax_magic.send_fax(
@@ -198,7 +232,7 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
         # legitimate retry (the Temporal retry policy, or a Ray re-send) can send
         # again instead of short-circuiting on a marker for a fax that never
         # went out.
-        _release_send_claim(fax)
+        release_send_claim(fax)
         raise
     finally:
         try:
@@ -208,8 +242,8 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     if not result:
         # Vendor reported failure without raising -- release the claim too so the
         # failed send can be retried.
-        _release_send_claim(fax)
-    return result
+        release_send_claim(fax)
+    return SEND_OK if result else SEND_FAILED
 
 
 def finalize_fax(
@@ -307,11 +341,15 @@ def do_send_fax_object(fax: "FaxesToSend") -> bool:
     if status in (STATUS_ALREADY_SENT, STATUS_NOT_FOUND):
         return False
     try:
-        success = send_fax_via_vendor(fax)
+        send_status = send_fax_via_vendor(fax)
     except Exception:
-        # The Temporal workflow retries the send activity via its retry policy;
-        # the Ray path records a failed send and notifies, as it did before.
         logger.opt(exception=True).error(f"Error sending fax uuid={fax.uuid}")
-        success = False
+        send_status = SEND_FAILED
+    if send_status == SEND_NOT_OWNER:
+        # Another sender owns the claim; its flow will finalize and notify.
+        # Finalizing here would record an outcome for a send we did not make.
+        logger.info(f"Fax uuid={fax.uuid}: claim held elsewhere; not finalizing")
+        return False
+    success = send_status == SEND_OK
     finalize_fax(fax, success, missing_destination=False)
     return success
