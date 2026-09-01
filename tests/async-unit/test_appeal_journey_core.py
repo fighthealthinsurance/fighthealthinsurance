@@ -118,3 +118,28 @@ class TestLoadDenial(TestCase):
         """An invalid uuid must return None (terminal not_found), not raise a
         ValidationError into the precheck's unlimited retry."""
         assert appeal_journey_core.load_denial("h", "not-a-uuid") is None
+
+
+class TestNearDuplicateSuppression(TestCase):
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_near_duplicate_draft_does_not_add_a_row(self, mock_gen):
+        """A regenerated draft that is the same letter with trivial wording
+        drift reuses the existing row; since no durable progress was made,
+        the journey correctly reports itself incomplete."""
+        denial = _make_denial(9105)
+        base_text = (
+            "Dear Reviewer, I am appealing the denial of my MRI. My physician "
+            "documented six months of conservative treatment without "
+            "improvement, and the imaging is medically necessary to plan care."
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=base_text,
+            text_fingerprint=ProposedAppeal.fingerprint(base_text),
+        )
+        near_dup = base_text.replace("six months", "6 months")
+        mock_gen.make_appeals.return_value = iter(_drafts([near_dup]))
+
+        with pytest.raises(appeal_journey_core.JourneyIncomplete):
+            appeal_journey_core.generate_and_store_appeals(denial)
+        assert ProposedAppeal.objects.filter(for_denial=denial).count() == 1
