@@ -19,10 +19,17 @@ class Command(BaseCommand):
         parser.add_argument("denial_uuid", help="The Denial uuid to generate for.")
 
     def handle(self, *args: Any, **options: Any) -> None:
+        import uuid as uuid_mod
+
         from fighthealthinsurance.models import Denial
         from fighthealthinsurance.temporal_client import dispatch_appeal_generation
 
-        denial_uuid = options["denial_uuid"]
+        # Canonicalize before dispatch: a malformed uuid must fail HERE, not
+        # become a workflow retrying a ValidationError forever.
+        try:
+            denial_uuid = str(uuid_mod.UUID(options["denial_uuid"]))
+        except ValueError:
+            raise CommandError(f"Not a valid uuid: {options['denial_uuid']!r}")
         try:
             denial = Denial.objects.get(uuid=denial_uuid)
         except Denial.DoesNotExist:

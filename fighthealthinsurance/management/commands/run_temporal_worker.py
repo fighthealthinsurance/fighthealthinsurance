@@ -58,25 +58,40 @@ class Command(BaseCommand):
             settings, "TEMPORAL_MAX_ACTIVITY_WORKERS", 20
         )
 
+        from typing import Any as _Any, Callable, List
+
+        workflows: List[type] = [SendFaxWorkflow]
+        activities: List[Callable[..., _Any]] = [
+            fax_activities.precheck_fax,
+            fax_activities.send_fax_via_vendor,
+            fax_activities.release_send_claim,
+            fax_activities.finalize_fax,
+        ]
+        # Register the appeal journey only when its flag is on, so the flag
+        # is a real execution kill switch: with unconditional registration a
+        # direct Temporal start (or a task queued before the flag flipped)
+        # would still run on a "dark" worker (PR #963 review).
+        journey_enabled = getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False)
+        if journey_enabled:
+            workflows.append(GenerateAppealWorkflow)
+            activities += [
+                journey_activities.precheck_appeal_journey,
+                journey_activities.generate_and_store_appeals,
+            ]
+
         client = await get_temporal_client()
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
-            f"(namespace={settings.TEMPORAL_NAMESPACE})"
+            f"(namespace={settings.TEMPORAL_NAMESPACE}); appeal journey "
+            f"{'ENABLED' if journey_enabled else 'disabled'}"
         )
 
         with ThreadPoolExecutor(max_workers=max_workers) as activity_executor:
             worker = Worker(
                 client,
                 task_queue=task_queue,
-                workflows=[SendFaxWorkflow, GenerateAppealWorkflow],
-                activities=[
-                    fax_activities.precheck_fax,
-                    fax_activities.send_fax_via_vendor,
-                    fax_activities.release_send_claim,
-                    fax_activities.finalize_fax,
-                    journey_activities.precheck_appeal_journey,
-                    journey_activities.generate_and_store_appeals,
-                ],
+                workflows=workflows,
+                activities=activities,
                 activity_executor=activity_executor,
             )
             self.stdout.write(

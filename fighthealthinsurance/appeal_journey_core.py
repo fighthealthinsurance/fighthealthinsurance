@@ -17,6 +17,8 @@ import asyncio
 import json
 from typing import AsyncGenerator, Optional, cast
 
+from asgiref.sync import async_to_sync
+
 from loguru import logger
 
 STATUS_OK = "ok"
@@ -32,12 +34,20 @@ GENERATION_BUDGET_SECONDS = 240
 
 
 def load_denial(hashed_email: str, denial_uuid: str):
+    from django.core.exceptions import ValidationError
+
     from fighthealthinsurance.models import Denial
 
     try:
         return Denial.objects.filter(hashed_email=hashed_email, uuid=denial_uuid).get()
     except Denial.DoesNotExist:
         logger.warning(f"Appeal journey: no denial for uuid={denial_uuid}")
+        return None
+    except (ValidationError, ValueError):
+        # A malformed uuid fails field validation BEFORE DoesNotExist applies;
+        # left unhandled it escapes into the precheck's unlimited retry and
+        # poisons the workflow (PR #963 review). Same terminal answer.
+        logger.warning(f"Appeal journey: invalid denial uuid {denial_uuid!r}")
         return None
 
 
@@ -60,36 +70,35 @@ def precheck_appeal_journey(denial) -> str:
     return STATUS_OK
 
 
+class JourneyIncomplete(Exception):
+    """Raised when a run ends with fewer durable drafts than the target.
+
+    Surfacing this (instead of returning a partial count) is what makes the
+    activity's retry policy meaningful: a swallowed budget timeout, a failed
+    save inside the generator, or an empty stream must look like a retryable
+    failure, not success (PR #963 review).
+    """
+
+
 def generate_and_store_appeals(denial) -> int:
     """Drive the shared generator until enough drafts exist; returns how many
     new drafts got persisted.
 
     ``AppealsBackendHelper.generate_appeals`` persists every generated draft
     itself (``save_appeal``) before yielding its frame, so this function only
-    CONSUMES the stream within a bounded budget and reports the persisted
-    delta -- it must never create rows from the streamed output, or every
-    draft would be stored twice (PR #963 review). The yielded texts are used
-    solely to stop consuming early once enough new drafts have appeared.
+    CONSUMES the stream within a bounded budget -- it must never create rows
+    from the streamed output, or every draft would be stored twice.
+
+    Progress is measured in durable row IDENTITIES, never yielded text: the
+    generator re-serves existing drafts transformed by ``sub_in_appeals`` (so
+    their text differs from what is stored) and can yield content whose save
+    FAILED -- both fooled a text-based count into stopping early with nothing
+    persisted (PR #963 review). The postcondition is enforced against the
+    database; falling short raises :class:`JourneyIncomplete` so the activity
+    retries instead of reporting a hollow success.
     """
     from fighthealthinsurance.common_view_logic import AppealsBackendHelper
     from fighthealthinsurance.models import ProposedAppeal
-
-    def _stored_count() -> int:
-        # Non-speculative only: reserve precompute rows don't count as
-        # delivered drafts anywhere else either.
-        return ProposedAppeal.objects.filter(
-            for_denial=denial, speculative=False
-        ).count()
-
-    existing_texts = set(
-        ProposedAppeal.objects.filter(for_denial=denial, speculative=False).values_list(
-            "appeal_text", flat=True
-        )
-    )
-    before = _stored_count()
-    needed = TARGET_APPEALS - before
-    if needed <= 0:
-        return 0
 
     parameters = {
         "denial_id": denial.denial_id,
@@ -98,8 +107,26 @@ def generate_and_store_appeals(denial) -> int:
         "semi_sekret": denial.semi_sekret,
     }
 
-    async def _consume() -> None:
-        new_texts: set = set()
+    async def _stored_ids() -> set:
+        # Non-speculative only: reserve precompute rows don't count as
+        # delivered drafts anywhere else either. Native async ORM (no
+        # bridge) per repo convention.
+        return {
+            pk
+            async for pk in ProposedAppeal.objects.filter(
+                for_denial=denial, speculative=False
+            ).values_list("id", flat=True)
+        }
+
+    async def _run() -> tuple:
+        # Every DB read lives inside this one async context: the generator's
+        # internal connection cleanup can close sync-thread connections, so a
+        # sync-side query after consumption is not safe to rely on.
+        baseline = await _stored_ids()
+        if len(baseline) >= TARGET_APPEALS:
+            return baseline, baseline
+
+        frames = 0
         # generate_appeals is an async generator (declared AsyncIterator), so
         # aclose() exists at runtime; the cast lets mypy see it.
         agen = cast(
@@ -108,27 +135,37 @@ def generate_and_store_appeals(denial) -> int:
         try:
             async with asyncio.timeout(GENERATION_BUDGET_SECONDS):
                 async for chunk in agen:
-                    text = _appeal_text_from_chunk(chunk)
-                    # The generator re-serves existing drafts first; only
-                    # genuinely new texts count toward the early stop.
-                    if text and text not in existing_texts:
-                        new_texts.add(text)
-                    if len(new_texts) >= needed:
+                    if _appeal_text_from_chunk(chunk) is None:
+                        continue
+                    # Early stop on DURABLE progress: appeal frames are few,
+                    # so a count query per frame is cheap, and only rows that
+                    # actually persisted can end the consumption early.
+                    frames += 1
+                    if len(await _stored_ids()) >= TARGET_APPEALS:
                         break
         except TimeoutError:
             logger.info(
-                f"Appeal journey: generation budget reached with "
-                f"{len(new_texts)} new draft(s) seen for denial {denial.uuid}"
+                f"Appeal journey: generation budget reached after {frames} "
+                f"appeal frame(s) for denial {denial.uuid}"
             )
         finally:
             await agen.aclose()
+        return baseline, await _stored_ids()
 
-    asyncio.run(_consume())
-    stored = max(0, _stored_count() - before)
+    # async_to_sync (not asyncio.run): asgiref keeps the sync-thread context,
+    # so the generator's thread_sensitive ORM bridges execute on THIS thread
+    # and its Django connection, matching how the interactive stack drives it.
+    baseline, after = async_to_sync(_run)()
+    stored = len(after - baseline)
     logger.info(
         f"Appeal journey: {stored} new draft(s) persisted for denial "
         f"uuid={denial.uuid}"
     )
+    if len(after) < TARGET_APPEALS:
+        raise JourneyIncomplete(
+            f"{len(after)} of {TARGET_APPEALS} drafts durable for denial "
+            f"{denial.uuid} (stored {stored} this attempt)"
+        )
     return stored
 
 
