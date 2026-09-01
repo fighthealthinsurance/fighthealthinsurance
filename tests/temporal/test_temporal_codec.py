@@ -10,7 +10,7 @@ ciphertext until namespace retention (720h) expires it.
 import dataclasses
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from temporalio.api.common.v1 import Payload
 
@@ -48,7 +48,7 @@ async def test_wrong_key_fails_loudly_not_silently():
     codec = EncryptionCodec(_KEY)
     (encoded,) = await codec.encode([_payload(b"x")])
     other = EncryptionCodec(Fernet.generate_key().decode())
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidToken):
         await other.decode([encoded])
 
 
