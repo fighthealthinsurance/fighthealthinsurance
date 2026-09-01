@@ -77,13 +77,17 @@ truth established in tier 1.
   resume query endpoint, and the abandonment timer skeleton with nudges
   stubbed off until the product decisions land.
 
-## Open product decisions (blockers for tier 3, not for tiers 1/2)
+## Product decisions (DECIDED 2026-09-01, Melanie)
 
-1. Nudges: do we contact people who abandon mid-form at all? Channel?
-2. Abandonment windows: nudge after N hours; close the journey at M days.
-3. Session linking: when an anonymous session later identifies (email
-   entered), the workflow gains the hashed email by signal — confirm we
-   are comfortable associating pre-identification steps with the
-   identified journey.
-4. Whether staff should see open intake journeys in the admin dashboard
-   (funnel visibility) in v1 or later.
+1. Nudges: YES — email only, single-shot, and only for users whose raw
+   email is still stored (the existing contact opt-in; the
+   clear_expired_emails sweep already enforces its retention). Clear
+   provenance in the message.
+2. Windows: nudge at 24 hours; close the journey at 30 days. Closing a
+   never-completed journey is where incomplete-form retention hygiene
+   hooks in (cleanup stub in v1; actual deletion policy is a follow-up).
+3. Session linking: forward-only (steps in the same session join the
+   identity revealed later that session; never backward across
+   sessions/devices). Mostly moot today since email arrives at step one.
+4. Staff funnel: minimal count-per-stage panel ships in v1, derived from
+   the database (no case content, stage tallies only).
