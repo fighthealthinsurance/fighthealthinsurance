@@ -2,7 +2,7 @@
 their registry names.
 
 Regression tests for the two bugs that kept external models (Anthropic
-Claude, Azure, Groq, ...) out of the model-selection UI and the ML usage
+Claude, Azure, DeepInfra, ...) out of the model-selection UI and the ML usage
 dashboard:
 
 1. Candidate generation called the router with its internal-only default
@@ -135,12 +135,12 @@ class TestSelectCandidateModels:
     def test_all_external_when_no_internal(self):
         externals = [
             self._fake("anthropic/claude-opus-4-8", True),
-            self._fake("groq/llama-3.3-70b-versatile", True),
+            self._fake("deepinfra/google/gemma-3-27b-it", True),
         ]
         selected = _select_candidate_models(externals, 4)
         assert {m.name for m in selected} == {
             "anthropic/claude-opus-4-8",
-            "groq/llama-3.3-70b-versatile",
+            "deepinfra/google/gemma-3-27b-it",
         }
 
     def test_respects_limit(self):

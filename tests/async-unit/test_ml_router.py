@@ -7,7 +7,6 @@ from typing import Optional
 from fighthealthinsurance.ml.ml_router import MLRouter
 from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
-    RemoteGroq,
     RemoteHealthInsurance,
     RemoteModelLike,
     RemotePerplexity,
@@ -463,23 +462,6 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
         result = self.router.best_external_models(limit=2)
 
         self.assertEqual(result, [cheaper, pricier])
-
-    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
-    def test_keeps_single_groq(self):
-        """At most one Groq backend survives, and it is the cheaper
-        (quality-tier) one since selection runs on the cost-ordered list."""
-        RemoteGroq._rate_limiters.clear()
-        versatile = RemoteGroq(model="llama-3.3-70b-versatile")  # cost 4
-        instant = RemoteGroq(model="llama-3.1-8b-instant")  # cost 6
-        other = make_external_mock(quality=99)
-        # Cost-ordered: cheaper Groq first, then the pricier Groq.
-        self.router.external_models_by_cost = [versatile, instant, other]
-
-        result = self.router.best_external_models(limit=3)
-
-        groqs = [m for m in result if isinstance(m, RemoteGroq)]
-        self.assertEqual(len(groqs), 1)
-        self.assertIs(groqs[0], versatile)
 
     def test_skips_sweep_for_live_checked_models(self):
         """Live-checked models (paid providers) are gated by is_available only;

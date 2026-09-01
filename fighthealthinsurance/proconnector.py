@@ -578,9 +578,9 @@ async def agenerate_intro_email(pro: InterestedProfessional) -> str:
     """
     base = build_base_intro_email(pro)
     try:
-        # best_external_models filters by availability/health and keeps a single
-        # Groq entry; the raw cost-ordered list would serially wait out (30s
-        # each) backends the health sweep already knows are down.
+        # best_external_models filters by availability/health; the raw
+        # cost-ordered list would serially wait out (30s each) backends the
+        # health sweep already knows are down.
         models = ml_router.best_external_models(limit=4)
     except Exception as e:
         logger.opt(exception=True).warning(

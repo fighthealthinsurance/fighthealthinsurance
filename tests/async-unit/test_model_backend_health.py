@@ -36,7 +36,6 @@ def _clear_provider_env(monkeypatch):
     """Remove every provider env var so enumeration starts from a clean slate."""
     for var in (
         "ANTHROPIC_API_KEY",
-        "GROQ_API_KEY",
         "DEEPINFRA_API",
         "PERPLEXITY_API",
         "AZURE_OPENAI_API_KEY",
