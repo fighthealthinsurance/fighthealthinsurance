@@ -17,6 +17,7 @@ On Ubuntu/Debian:
 ```bash
 sudo apt-get install tesseract-ocr texlive libpango1.0-dev libgdk-pixbuf2.0-dev
 ```
+For DNF- or RPM-based instructions, as well as WSL tips, see the bottom of this README.
 
 ### Option A: Using Conda/Micromamba (Recommended)
 
@@ -66,6 +67,18 @@ The app needs an ML backend to generate appeals. Options:
    export HEALTH_BACKEND_HOST=localhost
    ```
    Note: Requires a GPU (3090 or equivalent).
+
+   These values can be used to invoke a local model platform such as Ollama or Lemonade, e.g.:
+   ```bash
+   export HEALTH_BACKEND_PORT=13305
+   export HEALTH_BACKEND_HOST=local.lemonade.url
+   ```
+
+   If using a model that isn't healthinsurance-llm, also set:
+   ```bash
+   export HEALTH_BACKEND_MODEL=full_model_name
+   # A full model name might look like: gemma-4-12b-it-GGUF-UD-Q5_K_XL
+   ```
 
 3. **Hosted generative models (Azure, Anthropic, Groq, …)**: Set the relevant
    API keys (see below). These external models are used when `use_external=True`
@@ -131,6 +144,21 @@ default), every configured model is enabled.
 # (local models still load):
 export ENABLED_REMOTE_MODELS="azure-anthropic/claude-opus-4-8,azure-openai/gpt-5"
 ```
+
+**Testing remote model features with local models:** Since the Azure GPT option utilizes the standard
+OpenAI API format, those configuration settings can be repurposed to point to locally-hosted models
+but using the FHI app's remote model commands.  This allows for additional testing without token costs.
+
+```bash
+export AZURE_OPENAI_ENDPOINT=http://local_ip:local_port/v1
+export AZURE_OPENAI_API_KEY="your-local-key-or-dummy-value"
+export AZURE_OPENAI_MODELS="full_local_model_name"
+```
+
+Note: the "Allow external AI models (e.g., OpenAI, Google)" must be checked on the webpage when testing,
+else the application will only make calls with the models in the HEALTH_BACKEND variables.  Additionally,
+API calls utilizing the OpenAI standard require a value to be set for API_KEY, regardless of whether
+you actually have one set on your local server.
 
 ### GeoIP (chat state guessing + ASN tracking)
 
@@ -213,6 +241,16 @@ and logged as a greppable summary block.
 `web-actor-launch` job (the `POLLING_ACTORS=1` container in
 `k8s/deploy.yaml`), right after the polling actors launch — i.e. once the
 migrations job has done its work and the app image is live.
+
+Due to how the hook is invoked, some checks may not occur until you load the webpage in your browser, or until they are ran manually (see below).
+
+Note: adjusting this value can make logs slightly less noisy if you don't have a 
+local method for sending emails set up:
+```bash
+# Consolidated failure alert email to support42@: unset = on in production,
+# off under DEBUG/tests; 1 forces on anywhere, 0 forces off everywhere.
+export FHI_MODEL_HEALTH_ALERT_EMAIL=0
+```
 
 **Leader election / duplicate-run prevention:** `--deploy-hook` first claims a
 row in the shared database (`ModelHealthAlertState.try_claim`, a single
@@ -379,3 +417,68 @@ mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users
 4. Ensure type checking passes (`mypy`)
 5. Ensure code is formatted (`black`)
 6. Submit a pull request
+
+## Instructions for DNF- or RPM-based Distros
+
+Limited testing has occurred with Fedora, leading to the recommendations below.  These instructions may not be as reliable as the Ubuntu/Debian instructions above.  Only observed *differences* have been noted here; otherwise follow the standard instruction set above.
+
+### DNF/RPM Prerequisites
+
+- Python 3.12 (attempting to use 3.13 at this time will lead to more issues)
+- These instructions include tips for Windows Subsystem for Linux (WSL).  If you're developing directly on a Linux OS, you can ignore these items.
+
+```bash
+sudo dnf install -y python3.12 python3.12-devel python3-pip tesseract tesseract-langpack-eng texlive-scheme-basic pango-devel gdk-pixbuf2-devel gcc gcc-c++ libffi-devel openssl-devel git nodejs npm mkcert
+```
+The install package list is longer for DNF/RPM systems.  This is because many of the setup scripts were developed with Debian/Ubuntu in mind.  Therefore, some automated package installs within the application do not work when executed on other distros.
+
+### Launching VS Code through WSL
+
+1. Run ```code .```
+2. Alternatively, open VS Code in Windows like normal > Install the official WSL extension > Ctrl + Shift + P > WSL: Connect to WSL
+3. If you only have one WSL Distro installed, no further action is needed.  The lower left hand corner of your VS Code UI will show a remote connection to WSL.
+4. Configs may not carry over from your standard VS Code installation.
+5. Clone the FHI repo directly into the WSL file structure.  Do not clone it into the Windows file structure (i.e., /mnt/C/…) or you will encounter numerous problems with running the app’s bash scripts.  Execution is also much faster within the WSL file structure.
+
+### Python venv
+
+In limited testing, venv behaved more reliably than micromamba.  Navigate to your repo clone's root and run:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip setuptools wheel 
+pip install -r requirements.txt -r requirements-dev.txt 
+```
+Optionally, precompute pip’s md5 hash to speed up subsequent install checks:
+```bash
+md5sum requirements.txt requirements-dev.txt | sort | md5sum | cut -d ' ' -f 1 > .requirements_checksum
+```
+
+### Copy DB Info to local SQLite
+
+```bash
+python manage.py migrate
+```
+
+- GeoIP may initially fail.  See main README.md for full instructions
+- Abridged Instructions:
+  - Download City + ASN + IPV4 + IPV6 version from here: https://github.com/rabuchaim/geoip2fast 
+  - `export FHI_GEOIP_CITY_DB=/path/to/geoip2fast-city-asn-ipv6.dat.gz`
+
+- Creating your cert/key pair at this stage will prevent a scripting error later:
+```bash
+mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1
+mkcert -install
+```
+
+### You can now launch the local instance
+
+- Run: `./scripts/run_local.sh`
+- The local FHI webpage will then be live in your browser at https://localhost:8000
+
+### Testing Notes for DNF/RPM-based systems
+
+- The full test suite can be ran through Django's interface: `python manage.py run_test`
+- Testing with **tox** has not been fully verified, but can be attempted by running `pip install tox` and executing the `tox` command.
+- Due to zombie processes, python-dotenv behavior, and pycache, it is usually best to start a new terminal tab on each subsequent run.  Keep in mind that any values you've changed via `export` (instead of via the .env file) will be lost when the terminal is relaunched.
