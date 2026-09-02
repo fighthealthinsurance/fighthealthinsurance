@@ -131,6 +131,12 @@ class Base(Configuration):
     # SendFaxWorkflow instead. The worker process is run with
     # `python manage.py run_temporal_worker`.
     TEMPORAL_ENABLED = os.getenv("TEMPORAL_ENABLED", "false").lower() == "true"
+    # The queued appeal-generation journey (GenerateAppealWorkflow) is gated
+    # separately so fax sending can run on Temporal while this stays dark. It
+    # only takes effect when TEMPORAL_ENABLED is also true.
+    TEMPORAL_APPEAL_JOURNEY_ENABLED = (
+        os.getenv("TEMPORAL_APPEAL_JOURNEY_ENABLED", "false").lower() == "true"
+    )
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
@@ -140,6 +146,14 @@ class Base(Configuration):
     # TLS for a self-hosted / Cloud cluster. When TEMPORAL_TLS is true and both
     # the cert and key paths are set the client uses mTLS; otherwise it uses
     # server-side TLS.
+    # Fernet key(s) for client-side encryption of every Temporal payload
+    # (see temporal_codec.py). Unset = plaintext payloads (ids-only by
+    # design). Comma-separated for rotation: the FIRST key encrypts, all
+    # keys decrypt -- prepend a new key and retire the old one only after
+    # retention has expired everything it encrypted. Generate with:
+    # python -c "from cryptography.fernet import Fernet;
+    # print(Fernet.generate_key().decode())".
+    TEMPORAL_PAYLOAD_KEY = os.getenv("TEMPORAL_PAYLOAD_KEY", "")
     TEMPORAL_TLS = os.getenv("TEMPORAL_TLS", "false").lower() == "true"
     TEMPORAL_CLIENT_CERT_PATH = os.getenv("TEMPORAL_CLIENT_CERT_PATH", "")
     TEMPORAL_CLIENT_KEY_PATH = os.getenv("TEMPORAL_CLIENT_KEY_PATH", "")

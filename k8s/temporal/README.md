@@ -217,3 +217,22 @@ required.
 > hashed email + fax uuid + booleans — **no PHI** is written to Temporal
 > history. Any future workflow that must carry PHI should add an encryption
 > `PayloadCodec` (see the Temporal data-handling reference) before doing so.
+
+## Protecting user data in workflow history
+
+Workflow payloads are claim-check style by contract: opaque
+`(hashed_email, uuid)` identifiers only, never case content (enforced by
+`tests/temporal/test_temporal_codec.py`). Two further layers:
+
+- **Retention is the storage bound.** The namespace is created with
+  `--retention 720h`, so closed-workflow histories are deleted by the
+  server after 30 days. History is a debugging window, not a data store
+  (the durable data lives in Django); raise it deliberately, not by
+  default.
+- **Payload encryption.** Set `TEMPORAL_PAYLOAD_KEY` (a Fernet key) in the
+  app/worker environment and every payload is encrypted client-side
+  (`fighthealthinsurance/temporal_codec.py`): the Temporal database and UI
+  hold ciphertext only. Destroying or rotating the key renders all
+  existing histories unreadable at once, an immediate backstop if any
+  history ever needs to be expunged ahead of retention. Decoding passes pre-key plaintext histories
+  through, so the key can be introduced without draining workflows.

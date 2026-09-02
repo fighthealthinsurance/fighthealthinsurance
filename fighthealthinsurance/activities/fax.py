@@ -53,10 +53,20 @@ def _call_with_heartbeats(fn, *args):
     box: dict = {}
 
     def _target():
+        # This inner thread has its own thread-local Django connections; the
+        # close_old_connections() at activity entry ran on the EXECUTOR
+        # thread and does nothing for this one. Sweep at entry and close in
+        # finally so repeated attempts can't accumulate idle server
+        # connections (PR #963 review).
+        from django.db import close_old_connections, connections
+
+        close_old_connections()
         try:
             box["result"] = fn(*args)
         except BaseException as e:  # noqa: BLE001 - re-raised on the activity thread
             box["error"] = e
+        finally:
+            connections.close_all()
 
     t = threading.Thread(target=_target, daemon=True)
     t.start()

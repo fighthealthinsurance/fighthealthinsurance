@@ -47,10 +47,42 @@ async def get_temporal_client() -> Any:
         else:
             tls = True
 
+    # With TEMPORAL_PAYLOAD_KEY set, every payload is encrypted client-side
+    # before it reaches the Temporal server (see temporal_codec.py): history
+    # holds ciphertext only, and destroying the key crypto-shreds whatever
+    # namespace retention has not yet expired. The worker connects through
+    # this same function, so one setting covers both sides.
+    connect_kwargs: dict = {}
+    payload_key = getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
+    if payload_key:
+        connect_kwargs["data_converter"] = _encrypting_data_converter(payload_key)
+
     return await Client.connect(
         settings.TEMPORAL_HOST,
         namespace=settings.TEMPORAL_NAMESPACE,
         tls=tls,
+        **connect_kwargs,
+    )
+
+
+def _encrypting_data_converter(payload_key: str):
+    """Payload codec + ENCODED failure attributes. The codec alone is not
+    enough: Temporal's default failure converter leaves exception messages
+    and stack traces as plaintext protobuf fields, so an activity error
+    could leak text into history around the encryption (external review).
+    With encoded attributes, message/stack move into the payload the codec
+    encrypts."""
+    import dataclasses as _dc
+
+    import temporalio.converter
+    from temporalio.converter import DefaultFailureConverterWithEncodedAttributes
+
+    from fighthealthinsurance.temporal_codec import EncryptionCodec
+
+    return _dc.replace(
+        temporalio.converter.default(),
+        payload_codec=EncryptionCodec(payload_key),
+        failure_converter_class=DefaultFailureConverterWithEncodedAttributes,
     )
 
 
@@ -173,6 +205,56 @@ def dispatch_fax_send_blocking(hashed_email: str, fax_uuid: str) -> Optional[boo
             "Failed to execute SendFaxWorkflow; falling back to Ray"
         )
         return None
+
+
+async def start_generate_appeal_workflow(hashed_email: str, denial_uuid: str) -> str:
+    """Start ``GenerateAppealWorkflow`` for a denial. Returns the workflow id.
+
+    The deterministic id means at most one journey is in flight per denial; a
+    duplicate dispatch while one is open raises ``WorkflowAlreadyStartedError``
+    (handled in :func:`dispatch_appeal_generation`), and a re-dispatch after it
+    closed starts a fresh run, which the precheck ends immediately when the
+    drafts are already stored.
+    """
+    from fighthealthinsurance.workflows.types import GenerateAppealInput
+
+    client = await get_temporal_client()
+    handle = await client.start_workflow(
+        "GenerateAppealWorkflow",
+        GenerateAppealInput(hashed_email=hashed_email, denial_uuid=str(denial_uuid)),
+        id=f"generate-appeal-{denial_uuid}",
+        task_queue=settings.TEMPORAL_TASK_QUEUE,
+    )
+    logger.info(f"Started GenerateAppealWorkflow {handle.id} for denial {denial_uuid}")
+    return str(handle.id)
+
+
+def dispatch_appeal_generation(hashed_email: str, denial_uuid: str) -> bool:
+    """Dispatch a durable appeal-generation journey when enabled.
+
+    Returns True if the journey was handed to Temporal (or one is already in
+    flight for this denial), False when Temporal or the journey flag is off or
+    the start failed. There is no fallback path: this is a new queued flow, so
+    a False simply means nothing was queued.
+    """
+    if not getattr(settings, "TEMPORAL_ENABLED", False):
+        return False
+    if not getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False):
+        return False
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    try:
+        async_to_sync(start_generate_appeal_workflow)(hashed_email, str(denial_uuid))
+        return True
+    except WorkflowAlreadyStartedError:
+        # A journey for this denial is already open; the dispatch is satisfied.
+        logger.info(f"GenerateAppealWorkflow already running for denial {denial_uuid}")
+        return True
+    except Exception:
+        logger.opt(exception=True).error(
+            f"Failed to start GenerateAppealWorkflow for denial {denial_uuid}"
+        )
+        return False
 
 
 def dispatch_fax_send(
