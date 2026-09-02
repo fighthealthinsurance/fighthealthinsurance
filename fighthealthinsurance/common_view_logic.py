@@ -3005,16 +3005,6 @@ class AppealsBackendHelper:
         )
         denial = await denial_query.aget()
 
-        # The user asked for generation: complete the durable intake journey
-        # (dark until enabled; fire-and-forget; skipped for the journey's own
-        # background child run, which would be signalling its own parent).
-        if not background:
-            from fighthealthinsurance.temporal_client import (
-                asignal_intake_fire_and_forget,
-            )
-
-            await asignal_intake_fire_and_forget(str(denial.uuid), "form_completed")
-
         # Initial keepalive newline so clients know we're alive.
         yield "\n"
 
@@ -4783,6 +4773,19 @@ class AppealsBackendHelper:
                 f"first_model={first_model}, winning_stage={winning_stage}, "
                 f"models_tried=[{models_tried}]{reserve_note}"
             )
+
+        # Interactive generation finished: NOW complete the intake journey
+        # (fire-and-forget; dark until enabled; skipped for the journey's own
+        # background child). Signalling at the END, not the start, means the
+        # child generation the workflow launches sees the delivered drafts
+        # and no-ops -- a backstop, never a concurrent second generator
+        # (external review: the start-time signal raced this very run).
+        if not background:
+            from fighthealthinsurance.temporal_client import (
+                asignal_intake_fire_and_forget,
+            )
+
+            await asignal_intake_fire_and_forget(str(denial.uuid), "form_completed")
 
         # Explicit end-of-stream so the client knows exactly what was sent.
         # Carries the correlation id + generating-phase instrumentation so a

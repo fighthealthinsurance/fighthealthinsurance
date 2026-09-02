@@ -38,6 +38,12 @@ BOOKKEEPING_RETRY = RetryPolicy(
     maximum_attempts=5, maximum_interval=timedelta(minutes=5)
 )
 
+# The fax rule applied to email: SMTP can accept a message and the
+# acknowledgment still be lost, so retrying an ambiguous send can deliver
+# up to five nudges to one person. One attempt; a failed nudge just means
+# no nudge (external review).
+NUDGE_RETRY = RetryPolicy(maximum_attempts=1)
+
 STEP_STARTED = "started"
 STEP_COMPLETED = "completed"
 
@@ -77,12 +83,16 @@ class IntakeJourneyWorkflow:
         except asyncio.TimeoutError:
             pass
         if not self._completed and self._contact_opt_in:
-            await workflow.execute_activity(
-                intake_activities.send_abandonment_nudge,
-                args=[journey.hashed_email, journey.denial_uuid],
-                start_to_close_timeout=timedelta(minutes=2),
-                retry_policy=BOOKKEEPING_RETRY,
-            )
+            try:
+                await workflow.execute_activity(
+                    intake_activities.send_abandonment_nudge,
+                    args=[journey.hashed_email, journey.denial_uuid],
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=NUDGE_RETRY,
+                )
+            except Exception:
+                # A failed or ambiguous nudge never fails the journey.
+                workflow.logger.warning("abandonment nudge failed; not retried")
         if not self._completed:
             try:
                 await workflow.wait_condition(

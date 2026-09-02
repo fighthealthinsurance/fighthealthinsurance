@@ -75,7 +75,9 @@ class Command(BaseCommand):
         # is a real execution kill switch: with unconditional registration a
         # direct Temporal start (or a task queued before the flag flipped)
         # would still run on a "dark" worker (PR #963 review).
-        journey_enabled = getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False)
+        journey_enabled = getattr(settings, "TEMPORAL_ENABLED", False) and getattr(
+            settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False
+        )
 
         client = await get_temporal_client()
         self.stdout.write(

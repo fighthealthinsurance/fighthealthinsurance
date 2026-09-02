@@ -308,6 +308,8 @@ async def start_intake_journey(
     """
     from fighthealthinsurance.workflows.types import IntakeJourneyInput
 
+    from temporalio.common import WorkflowIDReusePolicy
+
     client = await get_temporal_client()
     handle = await client.start_workflow(
         "IntakeJourneyWorkflow",
@@ -318,14 +320,24 @@ async def start_intake_journey(
         ),
         id=f"intake-{denial_uuid}",
         task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+        # One intake journey per denial EVER: re-running the form update
+        # after a completed journey must not start a fresh run (and a fresh
+        # 24h nudge timer) for a finished case.
+        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
     )
     logger.info(f"Started IntakeJourneyWorkflow {handle.id}")
     return str(handle.id)
 
 
 def _intake_enabled() -> bool:
-    return getattr(settings, "TEMPORAL_ENABLED", False) and getattr(
-        settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False
+    # Effective flags are strictly nested: global && appeal && intake. The
+    # intake workflow starts GenerateAppealWorkflow as a child and both are
+    # registered by the appeal-enabled worker, so intake without the appeal
+    # flag would enqueue onto a queue no worker serves (external review).
+    return (
+        getattr(settings, "TEMPORAL_ENABLED", False)
+        and getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False)
+        and getattr(settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False)
     )
 
 
