@@ -3908,8 +3908,10 @@ class ModelCallAttempt(models.Model):
         max_length=64, blank=True, default="", db_index=True
     )
     # "live" for a user-facing generation, "speculative" for the background
-    # precompute. Without this the two interleave on the same denial and a
-    # failed live run can't be read apart from the precompute's attempts.
+    # precompute, "chat" for a letter drafted from the chat interface (the
+    # generate_appeal_letter tool / total-failure fallback). Without this the
+    # runs interleave on the same denial and a failed live run can't be read
+    # apart from the other flows' attempts.
     run_kind = models.CharField(
         max_length=32, blank=True, default="live", db_index=True
     )
