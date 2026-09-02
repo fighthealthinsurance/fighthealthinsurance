@@ -6,17 +6,21 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('fighthealthinsurance', '0200_merge_20260730_2318'),
+        ("fighthealthinsurance", "0200_merge_20260730_2318"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='proposedappeal',
-            name='text_fingerprint',
+            model_name="proposedappeal",
+            name="text_fingerprint",
             field=models.CharField(blank=True, db_index=True, max_length=64, null=True),
         ),
         migrations.AddConstraint(
-            model_name='proposedappeal',
-            constraint=models.UniqueConstraint(condition=models.Q(('text_fingerprint__isnull', False)), fields=('for_denial', 'text_fingerprint'), name='uniq_proposedappeal_fingerprint_per_denial'),
+            model_name="proposedappeal",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("text_fingerprint__isnull", False)),
+                fields=("for_denial", "text_fingerprint"),
+                name="uniq_proposedappeal_fingerprint_per_denial",
+            ),
         ),
     ]

@@ -26,6 +26,8 @@ from asgiref.sync import async_to_sync
 
 from loguru import logger
 
+from fighthealthinsurance.utils import is_real_appeal
+
 STATUS_OK = "ok"
 STATUS_NOT_FOUND = "not_found"
 STATUS_NO_DENIAL_TEXT = "no_denial_text"
@@ -78,12 +80,21 @@ async def aprecheck_appeal_journey(denial) -> str:
 
     if not (denial.denial_text or "").strip():
         return STATUS_NO_DENIAL_TEXT
+    # A chosen row means the user already picked their appeal: the journey
+    # is complete regardless of draft counts (mark_proposal_chosen CREATES
+    # an extra chosen=True copy, so counting it as a draft both inflates
+    # and short-circuits the target -- PR review).
+    if await ProposedAppeal.objects.filter(for_denial=denial, chosen=True).aexists():
+        return STATUS_ALREADY_HAS_APPEALS
     # speculative=True rows are the background precompute held in reserve;
     # the interactive flow doesn't count them as delivered appeals and
     # neither does the journey (PR #963 review).
-    existing = await ProposedAppeal.objects.filter(
-        for_denial=denial, speculative=False
-    ).acount()
+    existing = 0
+    async for text in ProposedAppeal.objects.filter(
+        for_denial=denial, speculative=False, chosen=False
+    ).values_list("appeal_text", flat=True):
+        if is_real_appeal(text):
+            existing += 1
     if existing >= TARGET_APPEALS:
         # A retry after a crash, or a duplicate dispatch: the drafts are
         # already there, so the journey is idempotently done.
@@ -121,14 +132,16 @@ async def agenerate_and_store_appeals(denial) -> int:
     from fighthealthinsurance.models import ProposedAppeal
 
     async def _stored_ids() -> set:
-        # Non-speculative only: reserve precompute rows don't count as
-        # delivered drafts anywhere else either. Native async ORM (no
-        # bridge) per repo convention.
+        # Deliverable candidates only: non-speculative (reserves are not
+        # delivered drafts), un-chosen (a chosen row is a COPY the pick
+        # flow creates, not a candidate), and real letters (legacy empty/
+        # runt rows must not satisfy the target). Native async ORM.
         return {
             pk
-            async for pk in ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=False
-            ).values_list("id", flat=True)
+            async for pk, text in ProposedAppeal.objects.filter(
+                for_denial=denial, speculative=False, chosen=False
+            ).values_list("id", "appeal_text")
+            if is_real_appeal(text)
         }
 
     baseline = await _stored_ids()

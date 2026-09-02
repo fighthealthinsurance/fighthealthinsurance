@@ -44,7 +44,6 @@ def _make_denial(denial_id, gen_attempts=3):
     )
 
 
-
 class _JourneyTestBase(TransactionTestCase):
     """Shared setup: stub the generator's fire-and-forget context warmers
     (RAG, ML citations, payer policy). Left real, their background tasks
@@ -183,26 +182,30 @@ class TestLoadDenial(TransactionTestCase):
         assert appeal_journey_core.load_denial("h", "not-a-uuid") is None
 
 
-class TestNearDuplicateSuppression(_JourneyTestBase):
+class TestCandidateCounting(_JourneyTestBase):
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
-    def test_near_duplicate_draft_does_not_add_a_row(self, mock_gen):
-        """A regenerated draft that is the same letter with trivial wording
-        drift reuses the existing row; since no durable progress was made,
-        the journey correctly reports itself incomplete."""
-        denial = _make_denial(9105)
-        base_text = (
-            "Dear Reviewer, I am appealing the denial of my MRI. My physician "
-            "documented six months of conservative treatment without "
-            "improvement, and the imaging is medically necessary to plan care."
-        )
+    def test_chosen_row_means_journey_complete(self, mock_gen):
+        """A chosen row is the user's pick, not a draft: precheck must be
+        terminal even with fewer than three candidate rows."""
+        denial = _make_denial(9106)
         ProposedAppeal.objects.create(
             for_denial=denial,
-            appeal_text=base_text,
-            text_fingerprint=ProposedAppeal.fingerprint(base_text),
+            appeal_text="The letter the user picked and finished with.",
+            chosen=True,
         )
-        near_dup = base_text.replace("six months", "6 months")
-        mock_gen.make_appeals.return_value = iter(_drafts([near_dup]))
+        assert (
+            appeal_journey_core.precheck_appeal_journey(denial)
+            == appeal_journey_core.STATUS_ALREADY_HAS_APPEALS
+        )
 
-        with pytest.raises(appeal_journey_core.JourneyIncomplete):
-            appeal_journey_core.generate_and_store_appeals(denial)
-        assert ProposedAppeal.objects.filter(for_denial=denial).count() == 1
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_runt_rows_do_not_satisfy_the_target(self, mock_gen):
+        """Legacy empty/runt rows are not deliverable drafts; three of them
+        must not convince precheck the journey is done."""
+        denial = _make_denial(9107)
+        for i in range(3):
+            ProposedAppeal.objects.create(for_denial=denial, appeal_text=f"x{i}")
+        assert (
+            appeal_journey_core.precheck_appeal_journey(denial)
+            == appeal_journey_core.STATUS_OK
+        )

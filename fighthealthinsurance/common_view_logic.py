@@ -37,12 +37,6 @@ from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.db import IntegrityError, close_old_connections
 
-from fighthealthinsurance.ml.response_similarity import response_similarity
-
-# A regenerated draft at or above this similarity to an existing stored
-# draft reuses that row instead of creating another (same convention as
-# the chat anti-repeat threshold).
-NEAR_DUPLICATE_APPEAL_THRESHOLD = 0.9
 
 from django.db.models import F, Q, QuerySet
 from django.db.models.functions import Length
@@ -4073,30 +4067,6 @@ class AppealsBackendHelper:
             save_failed = False
             try:
                 fingerprint = ProposedAppeal.fingerprint(appeal_text)
-                # Near-duplicate suppression: a regenerated draft that is the
-                # same letter with trivial wording drift must reuse the
-                # existing row, not add another (the unique fingerprint
-                # constraint below only catches EXACT normalized matches).
-                # Drafts per denial are few, and response_similarity's cheap
-                # gates make the scan milliseconds.
-                near_dup_id = None
-                async for pk, txt in ProposedAppeal.objects.filter(
-                    for_denial=denial, speculative=False
-                ).values_list("id", "appeal_text"):
-                    if (
-                        response_similarity(appeal_text, txt or "")
-                        >= NEAR_DUPLICATE_APPEAL_THRESHOLD
-                    ):
-                        near_dup_id = pk
-                        break
-                if near_dup_id is not None:
-                    logger.debug(
-                        f"Skipping save: draft is a near-duplicate of row "
-                        f"{near_dup_id}"
-                    )
-                    if appeal_text:
-                        served_texts.add(str(appeal_text).strip())
-                    return {"id": str(near_dup_id), "content": appeal_text}
                 pa = ProposedAppeal(
                     appeal_text=appeal_text,
                     for_denial=denial,
