@@ -65,3 +65,29 @@ def test_payload_dataclasses_carry_only_opaque_identifiers():
             f"{klass.__name__} gained fields {fields - allowed}: Temporal "
             "payloads may only carry opaque identifiers (see temporal_codec.py)"
         )
+
+
+@pytest.mark.asyncio
+async def test_key_rotation_old_ciphertext_still_decodes():
+    """Comma-separated keys: first encrypts, all decrypt."""
+    old = Fernet.generate_key().decode()
+    new = Fernet.generate_key().decode()
+    encoded_old = (await EncryptionCodec(old).encode([_payload(b"x")]))[0]
+    rotated = EncryptionCodec(f"{new},{old}")
+    (decoded,) = await rotated.decode([encoded_old])
+    assert decoded == _payload(b"x")
+    # and new writes are NOT readable by the old key alone
+    encoded_new = (await rotated.encode([_payload(b"y")]))[0]
+    with pytest.raises(InvalidToken):
+        await EncryptionCodec(old).decode([encoded_new])
+
+
+def test_data_converter_encodes_failure_attributes():
+    """The failure converter must move exception text into encodable
+    payloads; the default leaves message/stack as plaintext protobuf."""
+    from temporalio.converter import DefaultFailureConverterWithEncodedAttributes
+
+    from fighthealthinsurance.temporal_client import _encrypting_data_converter
+
+    conv = _encrypting_data_converter(Fernet.generate_key().decode())
+    assert conv.failure_converter_class is DefaultFailureConverterWithEncodedAttributes

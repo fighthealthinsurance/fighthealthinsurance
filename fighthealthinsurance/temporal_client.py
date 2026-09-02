@@ -55,22 +55,34 @@ async def get_temporal_client() -> Any:
     connect_kwargs: dict = {}
     payload_key = getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
     if payload_key:
-        import dataclasses as _dc
-
-        import temporalio.converter
-
-        from fighthealthinsurance.temporal_codec import EncryptionCodec
-
-        connect_kwargs["data_converter"] = _dc.replace(
-            temporalio.converter.default(),
-            payload_codec=EncryptionCodec(payload_key),
-        )
+        connect_kwargs["data_converter"] = _encrypting_data_converter(payload_key)
 
     return await Client.connect(
         settings.TEMPORAL_HOST,
         namespace=settings.TEMPORAL_NAMESPACE,
         tls=tls,
         **connect_kwargs,
+    )
+
+
+def _encrypting_data_converter(payload_key: str):
+    """Payload codec + ENCODED failure attributes. The codec alone is not
+    enough: Temporal's default failure converter leaves exception messages
+    and stack traces as plaintext protobuf fields, so an activity error
+    could leak text into history around the encryption (external review).
+    With encoded attributes, message/stack move into the payload the codec
+    encrypts."""
+    import dataclasses as _dc
+
+    import temporalio.converter
+    from temporalio.converter import DefaultFailureConverterWithEncodedAttributes
+
+    from fighthealthinsurance.temporal_codec import EncryptionCodec
+
+    return _dc.replace(
+        temporalio.converter.default(),
+        payload_codec=EncryptionCodec(payload_key),
+        failure_converter_class=DefaultFailureConverterWithEncodedAttributes,
     )
 
 

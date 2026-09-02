@@ -146,11 +146,13 @@ class Base(Configuration):
     # TLS for a self-hosted / Cloud cluster. When TEMPORAL_TLS is true and both
     # the cert and key paths are set the client uses mTLS; otherwise it uses
     # server-side TLS.
-    # Fernet key for client-side encryption of every Temporal payload (see
-    # temporal_codec.py). Unset = plaintext payloads (ids-only by design).
-    # Generate with: python -c "from cryptography.fernet import Fernet;
-    # print(Fernet.generate_key().decode())". Destroying/rotating the key
-    # crypto-shreds all existing workflow histories at once.
+    # Fernet key(s) for client-side encryption of every Temporal payload
+    # (see temporal_codec.py). Unset = plaintext payloads (ids-only by
+    # design). Comma-separated for rotation: the FIRST key encrypts, all
+    # keys decrypt -- prepend a new key and retire the old one only after
+    # retention has expired everything it encrypted. Generate with:
+    # python -c "from cryptography.fernet import Fernet;
+    # print(Fernet.generate_key().decode())".
     TEMPORAL_PAYLOAD_KEY = os.getenv("TEMPORAL_PAYLOAD_KEY", "")
     TEMPORAL_TLS = os.getenv("TEMPORAL_TLS", "false").lower() == "true"
     TEMPORAL_CLIENT_CERT_PATH = os.getenv("TEMPORAL_CLIENT_CERT_PATH", "")

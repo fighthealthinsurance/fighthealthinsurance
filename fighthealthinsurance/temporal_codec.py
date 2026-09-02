@@ -19,7 +19,7 @@ written before the key was configured keep replaying during rollout.
 
 from typing import Iterable, List
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, MultiFernet
 
 from temporalio.api.common.v1 import Payload
 from temporalio.converter import PayloadCodec
@@ -28,8 +28,13 @@ ENCODING = b"binary/encrypted-fernet"
 
 
 class EncryptionCodec(PayloadCodec):
+    """``key`` may be a comma-separated list: the FIRST key encrypts, every
+    key decrypts -- so rotation is "prepend the new key, keep the old one
+    until retention has expired everything it encrypted"."""
+
     def __init__(self, key: str) -> None:
-        self._fernet = Fernet(key)
+        keys = [k.strip() for k in key.split(",") if k.strip()]
+        self._fernet = MultiFernet([Fernet(k) for k in keys])
 
     async def encode(self, payloads: Iterable[Payload]) -> List[Payload]:
         return [
