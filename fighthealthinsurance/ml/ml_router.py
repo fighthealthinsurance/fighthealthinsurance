@@ -167,22 +167,6 @@ class MLRouter(object):
         names = {n.strip() for n in raw.split(",") if n.strip()}
         return names or None
 
-    @staticmethod
-    def _keep_single_groq(models: Sequence[RemoteModelLike]) -> list[RemoteModelLike]:
-        """
-        Return the models list but with at most one Groq backend to avoid double fanout.
-        Goal is to reduce load on Groq due to usage limits.
-        """
-        seen_groq = False
-        filtered: list[RemoteModelLike] = []
-        for m in models:
-            if isinstance(m, RemoteGroq):
-                if seen_groq:
-                    continue
-                seen_groq = True
-            filtered.append(m)
-        return filtered
-
     def best_external_models(self, limit: int = 3) -> list[RemoteModelLike]:
         """Return up to ``limit`` external models, best-quality first, limited to
         those currently available.
@@ -193,15 +177,13 @@ class MLRouter(object):
         signals only — never a live network probe on the request path (see
         :meth:`_external_selectable`): the model's in-memory ``is_available()``
         plus, for backends without a live signal, the last cached
-        ``health_status`` sweep. At most one Groq backend is kept (matching the
-        rest of the router) to avoid double fan-out.
+        ``health_status`` sweep.
 
         Replaces the previous "cheapest N external" slices so that, instead of
         fanning out across every external backend, we route to the strongest
         few that are up.
         """
         available = [m for m in self.external_models_by_cost if self._selectable(m)]
-        available = self._keep_single_groq(available)
         best = sorted(available, key=lambda m: -m.quality())
         return best[:limit]
 
@@ -310,25 +292,7 @@ class MLRouter(object):
             f"available: {[type(m).__name__ for m in self.all_models_by_cost]}"
         )
 
-        if forced_model == "groq":
-            groq_models = [
-                m for m in self.all_models_by_cost if isinstance(m, RemoteGroq)
-            ]
-            if groq_models:
-                if not use_external:
-                    logger.warning(
-                        f"FORCE_MODEL=groq ignored {task_description} because use_external=False"
-                    )
-                    return None
-                logger.info(
-                    f"✓ Forcing {len(groq_models)} groq models {task_description}: {[getattr(m, 'model', type(m).__name__) for m in groq_models]}"
-                )
-                return self._keep_single_groq(groq_models)
-            else:
-                logger.warning(
-                    f"No groq models found! Available model types: {[type(m).__name__ for m in self.all_models_by_cost]}"
-                )
-        elif forced_model in self.models_by_name:
+        if forced_model in self.models_by_name:
             # Force a specific model by name
             forced_models = self.models_by_name[forced_model]
             if forced_models:
@@ -441,26 +405,7 @@ class MLRouter(object):
         if forced_model:
             logger.info(f"FORCE_MODEL={forced_model} for text generation")
 
-            if forced_model == "groq":
-                if not use_external:
-                    logger.warning(
-                        "FORCE_MODEL=groq ignored for text generation because use_external=False"
-                    )
-                    return []
-                # Find groq model names
-                groq_names = []
-                for name, instances in self.models_by_name.items():
-                    if any(isinstance(m, RemoteGroq) for m in instances):
-                        groq_names.append(name)
-                if groq_names:
-                    # Return only first groq model name to avoid double-fanout
-                    logger.info(f"✓ Forcing groq model name: {groq_names[0]}")
-                    return [groq_names[0]]
-                else:
-                    logger.warning("No groq models found!")
-                    return []
-
-            elif forced_model in self.models_by_name:
+            if forced_model in self.models_by_name:
                 # Check if allowed based on use_external
                 instances = self.models_by_name[forced_model]
                 if not use_external:

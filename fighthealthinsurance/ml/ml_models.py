@@ -1887,7 +1887,7 @@ class RemoteOpenLike(RemoteModel):
 
     # If True, aiohttp.ClientResponseError is re-raised from _infer so that
     # subclasses can react to specific status codes (e.g. 429 backoff in
-    # RemoteGroq / RemoteAnthropic). Default is False to preserve the
+    # RemoteAnthropic). Default is False to preserve the
     # historical contract that _infer returns None on transport errors and
     # callers that don't catch exceptions keep working.
     _propagate_http_errors: ClassVar[bool] = False
@@ -2817,7 +2817,7 @@ class RemoteOpenLike(RemoteModel):
         except aiohttp.ClientResponseError as e:
             # Subclasses that opt in (via _propagate_http_errors) handle
             # status-specific HTTP errors themselves (e.g. 429 backoff in
-            # RemoteGroq / RemoteAnthropic). The probe path
+            # RemoteAnthropic). The probe path
             # (raise_http_errors=True) also wants the raw status surfaced so it
             # can report *why* a backend is unreachable. Otherwise preserve the
             # original contract of returning None on transport errors.
@@ -3170,7 +3170,7 @@ class RemoteOpenLike(RemoteModel):
                 messages = ensure_message_alternation(messages)
 
                 # Strip unsupported fields like 'timestamp' from messages
-                # Some APIs (e.g., Groq) don't support extra fields beyond role/content
+                # Some APIs don't support extra fields beyond role/content
                 cleaned_messages = [
                     {"role": msg.get("role"), "content": msg.get("content")}
                     for msg in messages
@@ -3342,7 +3342,7 @@ class RemoteOpenLike(RemoteModel):
         except aiohttp.ClientResponseError as e:
             # Already logged with a body preview above; keep this at debug to
             # avoid double-logging. Re-raise so _infer (and opted-in subclasses
-            # like RemoteGroq) can apply status-specific handling.
+            # like RemoteAnthropic) can apply status-specific handling.
             logger.debug(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
@@ -4234,7 +4234,7 @@ class DeepInfra(RemoteFullOpenLike):
 
 class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     """``RemoteFullOpenLike`` with shared per-model rate limiting and 429
-    back-off, used by the external paid backends (Groq, Anthropic, Azure).
+    back-off, used by the external paid backends (Anthropic, Azure).
 
     Concrete subclasses declare their own ``_rate_limiters`` dict and
     ``_rate_limiter_lock`` (so providers keep separate rate-limit state) and set
@@ -4438,187 +4438,6 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             raise_http_errors=raise_http_errors,
             timeout=timeout,
         )
-
-
-class RemoteGroq(RateLimitedRemoteOpenLike):
-    """
-    Groq API backend for ultra-fast LLM inference.
-
-    Note: Groq (https://groq.com) is a hardware/cloud company specializing in
-    LPU (Language Processing Unit) chips for fast inference. Not to be confused
-    with Grok, the xAI chatbot.
-
-    Features:
-    - Per-model backoff when rate limited (429 responses)
-    - Load balancing across available Groq models (Versatile quality tier; Instant speed tier)
-    - Automatic fallback to Instant tier when quality models are rate limited
-    - Graceful 429 handling with Retry-After support
-
-    All models support 128K input context.
-
-    Models are organized into tiers:
-    - Quality tier (cost=4): llama-3.3-70b-versatile - randomized when multiple quality models are available
-    - Speed tier (cost=6): llama-3.1-8b-instant - fallback when quality exhausted
-
-    Environment variables:
-    - GROQ_API_KEY: API key for Groq (required)
-    """
-
-    # Model specifications - all models support 128K input context
-    MODEL_SPECS: ClassVar[dict[str, dict[str, str]]] = {
-        "llama-3.3-70b-versatile": {
-            "tier": "quality",
-            "description": "Llama 3.3 70B - high quality, versatile",
-        },
-        "llama-3.1-8b-instant": {
-            "tier": "speed",
-            "description": "Llama 3.1 8B - fastest response, fallback tier",
-        },
-    }
-
-    # Per-provider rate-limit state (separate from other providers); the
-    # limiter logic and 429 back-off live in RateLimitedRemoteOpenLike.
-    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
-    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
-    PROVIDER_LABEL: ClassVar[str] = "Groq"
-
-    def __init__(self, model: str, dual_mode: bool = False):
-        """
-        Initialize a Groq model backend.
-
-        Args:
-            model: The Groq model identifier (e.g., 'llama-3.3-70b-versatile')
-            dual_mode: Whether to run primary and backup concurrently
-        """
-        api_base = "https://api.groq.com/openai/v1"
-        token = os.getenv("GROQ_API_KEY")
-        if token is None or len(token) < 1:
-            raise EnvironmentError(
-                "No API key found for Groq. Please set the GROQ_API_KEY environment variable "
-                "in your environment or .env file."
-            )
-
-        # All Groq models support 128K input context
-        super().__init__(
-            api_base, token, model=model, dual_mode=dual_mode, max_len=128000
-        )
-
-        # Initialize rate limiter for this model (shared across instances)
-        self._ensure_rate_limiter(model)
-
-        model_spec = self.MODEL_SPECS.get(model, {})
-        logger.debug(
-            f"RemoteGroq initialized: model={model}, "
-            f"tier={model_spec.get('tier', 'unknown')}"
-        )
-
-    @property
-    def supports_system(self):
-        return True
-
-    @property
-    def external(self):
-        return True
-
-    def get_tier(self) -> str:
-        """Get the tier (quality/speed) for this model."""
-        return self.MODEL_SPECS.get(self.model, {}).get("tier", "unknown")
-
-    @classmethod
-    def select_available_model(cls) -> Optional[str]:
-        """
-        Select an available model based on rate limits.
-
-        Strategy:
-        1. Among quality tier models with available rate limit, randomize selection
-        2. If all quality models exhausted, fall back to speed tier
-        3. If no models available, return None
-
-        Returns:
-            Model name to use, or None if all models are rate limited
-        """
-        if not os.getenv("GROQ_API_KEY"):
-            logger.debug("RemoteGroq.select_available_model: GROQ_API_KEY not set")
-            return None
-        available_quality = []
-        available_speed = []
-
-        for model_name, spec in cls.MODEL_SPECS.items():
-            # Check rate limit
-            cls._ensure_rate_limiter(model_name)
-            if not cls._rate_limiters[model_name].can_request():
-                logger.debug(f"Groq model {model_name} skipped: rate limited")
-                continue
-
-            # Categorize by tier
-            if spec["tier"] == "quality":
-                available_quality.append(model_name)
-            else:
-                available_speed.append(model_name)
-
-        # Prefer quality tier with random selection for load balancing
-        if available_quality:
-            selected = random.choice(available_quality)
-            logger.debug(
-                f"Groq model selection: {selected} (quality tier, "
-                f"{len(available_quality)} available)"
-            )
-            return selected
-
-        # Fall back to speed tier
-        if available_speed:
-            selected = available_speed[0]  # Usually just llama-3.1-8b-instant
-            logger.info(
-                f"Groq model selection: {selected} (speed tier fallback, "
-                f"quality tier exhausted)"
-            )
-            return selected
-
-        logger.warning("Groq model selection: No models available (all rate limited)")
-        return None
-
-    @classmethod
-    def config_status(cls) -> Tuple[str, Optional[str]]:
-        return cls._classify_env_keys("GROQ_API_KEY")
-
-    @classmethod
-    def model_catalog(cls) -> List[ModelDescription]:
-        """Groq models with cost tiers, independent of configuration.
-
-        Quality tier models (Versatile) have lower cost to be preferred
-        over DeepInfra. Speed tier (Instant) has higher cost to only be
-        used as fallback. Only Groq-hosted models are listed here.
-        """
-        return [
-            # Quality tier - cost=4 (between AlphaRemoteInternal=3 and DeepInfra>=8)
-            ModelDescription(
-                cost=4,
-                name="groq/llama-3.3-70b-versatile",
-                internal_name="llama-3.3-70b-versatile",
-            ),
-            # Speed tier - higher cost, only used when quality tier exhausted
-            ModelDescription(
-                cost=6,
-                name="groq/llama-3.1-8b-instant",
-                internal_name="llama-3.1-8b-instant",
-            ),
-        ]
-
-    @classmethod
-    def models(cls) -> List[ModelDescription]:
-        """Return available Groq models (empty when GROQ_API_KEY is not set)."""
-        if not os.getenv("GROQ_API_KEY"):
-            logger.debug("RemoteGroq.models: GROQ_API_KEY not set, skipping")
-            return []
-        return cls.model_catalog()
-
-    def model_is_ok(self) -> bool:
-        """
-        Check if the model is available (API key set and not rate limited).
-        """
-        if not os.getenv("GROQ_API_KEY"):
-            return False
-        return self.rate_limiter.can_request()
 
 
 class RemoteAnthropic(RateLimitedRemoteOpenLike):

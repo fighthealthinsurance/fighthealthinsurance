@@ -252,6 +252,48 @@
     {% endif %}
   </div>
 
+  {# ---------------- Fax delivery outcomes ---------------- #}
+  <div class="status-section">
+    <h2>📠 Fax delivery (last 7 days)</h2>
+    {% if fax_outcomes.error %}
+      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ fax_outcomes.error }}</span></p>
+    {% else %}
+      <p class="summary-line"><span class="pill">A "Completed" workflow above only means it finished; this is whether faxes were delivered.</span></p>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="value">{{ fax_outcomes.sent|default:0 }}</div>
+          <div class="label">Sent</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ fax_outcomes.delivered|default:0 }}</div>
+          <div class="label">Delivered</div>
+        </div>
+        <div class="stat-card {% if fax_outcomes.failed %}alert{% endif %}">
+          <div class="value">{{ fax_outcomes.failed|default:0 }}</div>
+          <div class="label">Failed</div>
+        </div>
+        <div class="stat-card {% if fax_outcomes.stuck_claims %}alert{% endif %}">
+          <div class="value">{{ fax_outcomes.stuck_claims|default:0 }}</div>
+          <div class="label">Failed with claim stuck (cannot auto-resend)</div>
+        </div>
+      </div>
+      {% if fax_outcomes.recent_failures %}
+      <table class="status">
+        <thead><tr><th>Fax</th><th>When</th><th>Claim</th></tr></thead>
+        <tbody>
+        {% for f in fax_outcomes.recent_failures %}
+          <tr>
+            <td><code>{{ f.uuid }}</code></td>
+            <td>{{ f.date|date:"Y-m-d H:i" }}</td>
+            <td>{% if f.claim_stuck %}<span class="badge bad">STUCK</span>{% else %}<span class="badge ok">released</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    {% endif %}
+  </div>
+
   {# ---------------- Storage ---------------- #}
   <div class="status-section">
     <h2>💾 External Storage</h2>

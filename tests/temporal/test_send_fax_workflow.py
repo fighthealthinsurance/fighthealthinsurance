@@ -34,7 +34,7 @@ class _Recorder:
     def __init__(
         self,
         precheck_status: str = STATUS_OK,
-        send_result: bool = True,
+        send_result: str = "sent",
         send_raises: bool = False,
         finalize_fail_times: int = 0,
         precheck_fail_times: int = 0,
@@ -58,11 +58,16 @@ class _Recorder:
             return rec.precheck_status
 
         @activity.defn(name="send_fax_via_vendor")
-        async def send_fax_via_vendor(hashed_email: str, fax_uuid: str) -> bool:
+        async def send_fax_via_vendor(hashed_email: str, fax_uuid: str) -> str:
             rec.calls.append(("send", hashed_email, fax_uuid))
             if rec.send_raises:
                 raise ApplicationError("simulated vendor failure")
             return rec.send_result
+
+        @activity.defn(name="release_send_claim")
+        async def release_send_claim(hashed_email: str, fax_uuid: str) -> bool:
+            rec.calls.append(("release", hashed_email, fax_uuid))
+            return True
 
         @activity.defn(name="finalize_fax")
         async def finalize_fax(
@@ -77,7 +82,7 @@ class _Recorder:
                 raise ApplicationError("simulated transient finalize failure")
             return True
 
-        return [precheck_fax, send_fax_via_vendor, finalize_fax]
+        return [precheck_fax, send_fax_via_vendor, release_send_claim, finalize_fax]
 
 
 async def _run(env: WorkflowEnvironment, rec: _Recorder, *, delay_send: bool = False):
@@ -98,7 +103,7 @@ async def _run(env: WorkflowEnvironment, rec: _Recorder, *, delay_send: bool = F
 
 @pytest.mark.asyncio
 async def test_ok_path_sends_and_finalizes():
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=True)
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="sent")
     async with await WorkflowEnvironment.start_local() as env:
         result = await _run(env, rec)
     assert result is True
@@ -107,12 +112,45 @@ async def test_ok_path_sends_and_finalizes():
 
 
 @pytest.mark.asyncio
-async def test_send_failure_is_finalized_as_failure():
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=False)
+async def test_send_failure_is_finalized_then_claim_released():
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="failed")
     async with await WorkflowEnvironment.start_local() as env:
         result = await _run(env, rec)
     assert result is False
-    assert rec.calls[-1] == ("finalize", False, False)
+    # User notification (finalize) comes first; the durable claim release runs
+    # after, so a failed send can always be explicitly re-sent.
+    assert [c[0] for c in rec.calls] == ["precheck", "send", "finalize", "release"]
+    assert rec.calls[2] == ("finalize", False, False)
+
+
+@pytest.mark.asyncio
+async def test_not_owner_send_finalizes_nothing():
+    """When another sender holds the vendor-send claim, this workflow must not
+    finalize the fax or release the claim -- the owner's flow does both."""
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="not_owner")
+    async with await WorkflowEnvironment.start_local() as env:
+        result = await _run(env, rec)
+    assert result is False
+    assert [c[0] for c in rec.calls] == ["precheck", "send"]
+
+
+def test_timeout_type_classification():
+    from unittest.mock import Mock as _Mock
+
+    from temporalio.exceptions import TimeoutError as TemporalTimeoutError, TimeoutType
+
+    from fighthealthinsurance.workflows.send_fax import _timeout_type
+
+    hb = TemporalTimeoutError(
+        "t", type=TimeoutType.HEARTBEAT, last_heartbeat_details=[]
+    )
+    assert _timeout_type(_Mock(cause=hb)) == TimeoutType.HEARTBEAT
+    stc = TemporalTimeoutError(
+        "t", type=TimeoutType.START_TO_CLOSE, last_heartbeat_details=[]
+    )
+    assert _timeout_type(_Mock(cause=stc)) == TimeoutType.START_TO_CLOSE
+    assert _timeout_type(_Mock(cause=RuntimeError("x"))) is None
+    assert _timeout_type(RuntimeError("no cause attr")) is None
 
 
 @pytest.mark.asyncio
@@ -155,7 +193,7 @@ async def test_not_found_stops_without_send_or_finalize():
 @pytest.mark.asyncio
 async def test_delay_send_waits_then_sends():
     """The 1h delay timer is auto-skipped by the time-skipping environment."""
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=True)
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="sent")
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run(env, rec, delay_send=True)
     assert result is True
@@ -166,18 +204,21 @@ async def test_delay_send_waits_then_sends():
 async def test_send_raising_is_finalized_as_failure_without_concurrent_retry():
     """A raising send is NOT retried, then recorded as a failed send.
 
-    The vendor activity is a synchronous, non-heartbeating thread Temporal
-    cannot cancel, so retrying it after a start_to_close timeout would run a
-    second attempt *concurrently* with the still-running first one and double-fax.
-    It therefore runs at most once (maximum_attempts=1); a failure is finalized
-    as a failed send so the user is still notified.
+    The vendor activity is a thread Temporal cannot cancel, so retrying after
+    a timeout could run a second attempt *concurrently* with the still-running
+    first one and double-fax. It runs at most once per attempt
+    (maximum_attempts=1), and the workflow only re-attempts on a HEARTBEAT
+    timeout (worker process dead, thread provably gone). A vendor error gets
+    no retry; it is finalized as a failed send (user notified) and the claim
+    is then released so an explicit resend can transmit.
     """
     rec = _Recorder(precheck_status=STATUS_OK, send_raises=True)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run(env, rec)
     assert result is False
     assert rec.calls.count(("send", "h", "u")) == 1
-    assert rec.calls[-1] == ("finalize", False, False)
+    assert [c[0] for c in rec.calls] == ["precheck", "send", "finalize", "release"]
+    assert rec.calls[2] == ("finalize", False, False)
 
 
 @pytest.mark.asyncio
