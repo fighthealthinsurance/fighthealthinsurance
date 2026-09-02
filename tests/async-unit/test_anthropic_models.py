@@ -16,9 +16,6 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import aiohttp
 
-# Set up environment before importing RemoteAnthropic
-os.environ.setdefault("ANTHROPIC_API_KEY", "test-api-key")
-
 from fighthealthinsurance.ml.ml_models import RemoteAnthropic, RemoteFullOpenLike
 from fighthealthinsurance.utils import RateLimiter
 
@@ -352,16 +349,15 @@ class TestRemoteAnthropicModelIsOk(unittest.TestCase):
 
         self.assertFalse(model.model_is_ok())
 
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
     def test_model_is_ok_false_without_api_key(self):
         """Test model_is_ok returns False without API key."""
-        os.environ["ANTHROPIC_API_KEY"] = "test-key"
         model = RemoteAnthropic(model="claude-sonnet-4-6")
 
+        # patch.dict restores the pre-test environment on exit, so deleting
+        # inside the patched scope leaks nothing to later tests.
         del os.environ["ANTHROPIC_API_KEY"]
-        try:
-            self.assertFalse(model.model_is_ok())
-        finally:
-            os.environ["ANTHROPIC_API_KEY"] = "test-api-key"
+        self.assertFalse(model.model_is_ok())
 
 
 class TestRemoteAnthropicIntegration(unittest.TestCase):

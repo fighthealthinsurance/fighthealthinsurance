@@ -1,7 +1,46 @@
 """Shared fixtures for async-unit tests of the ML backend transport layer."""
 
+import os
+
 import aiohttp
 import pytest
+
+# Unit tests must compose the same MLRouter everywhere. The ML backend
+# classes read provider credentials and backend hosts from the environment,
+# so on a machine where any of these are set a unit-suite MLRouter() picks
+# up live backends -- routing tests then assert against a different model
+# pool than CI sees, and a selected live backend means a unit test making
+# real network calls to a provider. Scrub them before any test module
+# imports app code (this runs at collection start, ahead of both the lazy
+# router singleton and routers built in setUp). Keep the list in sync with
+# the os.getenv / *_ENV usage in fighthealthinsurance/ml/ml_models.py;
+# test_ml_router.py::TestRouterHermeticity fails if a new one slips in.
+_AMBIENT_BACKEND_ENV_VARS = (
+    "ALPHA_HEALTH_BACKEND_HOST",
+    "ALPHA_HEALTH_BACKEND_PORT",
+    "ALPHA_HEALTH_BACKUP_BACKEND_HOST",
+    "ALPHA_HEALTH_BACKUP_BACKEND_PORT",
+    "ANTHROPIC_API_KEY",
+    "AZURE_ANTHROPIC_API_KEY",
+    "AZURE_ANTHROPIC_ENDPOINT",
+    "AZURE_ANTHROPIC_MODELS",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_MODELS",
+    "DEEPINFRA_API",
+    "HEALTH_BACKEND_HOST",
+    "HEALTH_BACKEND_PORT",
+    "HEALTH_BACKUP_BACKEND_HOST",
+    "HEALTH_BACKUP_BACKEND_MODEL",
+    "HEALTH_BACKUP_BACKEND_PORT",
+    "NEW_HEALTH_BACKEND_HOST",
+    "NEW_HEALTH_BACKEND_PORT",
+    "PERPLEXITY_API",
+    "SECONDARY_NEW_HEALTH_BACKEND_HOST",
+    "SECONDARY_NEW_HEALTH_BACKEND_PORT",
+)
+for _name in _AMBIENT_BACKEND_ENV_VARS:
+    os.environ.pop(_name, None)
 from loguru import logger
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
