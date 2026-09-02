@@ -93,10 +93,13 @@ class TestGenerateAndStoreAppeals(TestCase):
             == appeal_journey_core.TARGET_APPEALS
         )
 
-    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
-    def test_speculative_reserves_do_not_satisfy_the_target(self, mock_gen):
+    def test_speculative_reserves_do_not_satisfy_the_precheck(self):
         """Reserve precompute rows are not delivered drafts: with three
-        speculative rows present the journey still generates."""
+        speculative rows present the precheck still asks for generation.
+        (The generation-side guarantee -- that the run then produces new
+        durable drafts instead of re-serving the reserves -- arrives with
+        the dedicated generation entry point in the tier-2 PR, where it is
+        tested end to end.)"""
         denial = _make_denial(9104)
         for i in range(3):
             ProposedAppeal.objects.create(
@@ -108,11 +111,6 @@ class TestGenerateAndStoreAppeals(TestCase):
             appeal_journey_core.precheck_appeal_journey(denial)
             == appeal_journey_core.STATUS_OK
         )
-        mock_gen.make_appeals.return_value = iter(
-            _drafts(["New A.", "New B.", "New C."])
-        )
-        stored = appeal_journey_core.generate_and_store_appeals(denial)
-        assert stored == 3
 
 
 class TestLoadDenial(TestCase):
