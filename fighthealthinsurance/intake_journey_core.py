@@ -35,10 +35,14 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     base = getattr(
         settings, "FHI_PUBLIC_BASE_URL", "https://www.fighthealthinsurance.com"
     )
-    resume_url = f"{base}/?resume={denial_uuid}"
+    # Plain homepage link: no resume handler exists yet, so a ?resume=
+    # parameter would be an inert promise -- and a denial uuid does not
+    # belong in a URL (mail clients log and preview them). A real resume
+    # link needs a signed, expiring token and its own route (external
+    # review); that lands with the resume feature itself.
     await _asend_mail(
         NUDGE_SUBJECT,
-        NUDGE_BODY.format(url=resume_url),
+        NUDGE_BODY.format(url=base),
         denial.raw_email,
     )
     logger.info(f"Intake nudge sent for denial {denial_uuid}")

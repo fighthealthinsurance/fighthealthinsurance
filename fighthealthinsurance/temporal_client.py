@@ -320,9 +320,13 @@ async def start_intake_journey(
         ),
         id=f"intake-{denial_uuid}",
         task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
-        # One intake journey per denial EVER: re-running the form update
-        # after a completed journey must not start a fresh run (and a fresh
-        # 24h nudge timer) for a finished case.
+        # One intake journey per denial: re-running the form update after a
+        # completed journey must not start a fresh run (and a fresh 24h
+        # nudge timer) for a finished case. NOTE this guarantee is bounded
+        # by namespace history retention (720h) -- after the old run's
+        # history expires, the id becomes startable again. The durable
+        # backstop is the precheck: existing drafts end a journey at its
+        # first step, so a post-retention duplicate no-ops (external review).
         id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
     )
     logger.info(f"Started IntakeJourneyWorkflow {handle.id}")
