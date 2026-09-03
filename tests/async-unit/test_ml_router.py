@@ -31,6 +31,44 @@ def make_external_mock(
     return model
 
 
+class TestRouterHermeticity(unittest.TestCase):
+    """The unit suite's router must not see ambient backends.
+
+    conftest.py scrubs the provider credential / backend host environment
+    variables so a unit-suite ``MLRouter()`` composes identically on every
+    machine. If this fails, a backend was registered from the surrounding
+    environment: some env var read in ml_models.py is missing from
+    ``_AMBIENT_BACKEND_ENV_VARS`` in tests/async-unit/conftest.py. Left
+    unfixed, routing tests assert against a machine-dependent model pool
+    and a selected live backend turns unit tests into real provider calls.
+    """
+
+    def test_fresh_router_loads_no_models_from_the_environment(self):
+        router = MLRouter()
+        # Check every pool the router builds: context-only models live in
+        # their own list (not all_models_by_cost), so asserting one pool
+        # could pass while an environment-backed context-only model stayed
+        # registered (PR review).
+        leaked = {
+            "all_models_by_cost": [str(m) for m in router.all_models_by_cost],
+            "context_only_models_by_cost": [
+                str(m) for m in router.context_only_models_by_cost
+            ],
+            "models_by_name": sorted(router.models_by_name),
+        }
+        self.assertEqual(
+            leaked,
+            {
+                "all_models_by_cost": [],
+                "context_only_models_by_cost": [],
+                "models_by_name": [],
+            },
+            "MLRouter picked up backends from the environment inside the "
+            "unit suite; extend _AMBIENT_BACKEND_ENV_VARS in "
+            "tests/async-unit/conftest.py to cover the env var(s) involved.",
+        )
+
+
 class TestMLRouterGenerateTextBackendNames(unittest.TestCase):
     """Tests for MLRouter.generate_text_backend_names method."""
 
@@ -655,6 +693,12 @@ class TestMLRouterSummarize(unittest.TestCase):
 
     def setUp(self):
         self.router = MLRouter()
+        # Start every test from an explicitly empty model pool: each test
+        # installs exactly the mocks it asserts on, so selection can never
+        # fall through to a model the test didn't declare.
+        self.router.models_by_name = {}
+        self.router.internal_models_by_cost = []
+        self.router.external_models_by_cost = []
 
     async def async_test_use_external_false_never_selects_gemma(self):
         gemma = AsyncMock(spec=RemoteModelLike)
@@ -776,6 +820,10 @@ class TestMLRouterSummarizeChatHistory(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.router = MLRouter()
+        # Explicitly empty pool; see TestMLRouterSummarize.setUp.
+        self.router.models_by_name = {}
+        self.router.internal_models_by_cost = []
+        self.router.external_models_by_cost = []
 
     async def async_test_summarize_chat_history_short_history(self):
         """Test that short history returns None without summarization."""

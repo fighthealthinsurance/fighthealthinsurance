@@ -195,6 +195,18 @@ collectstatic build. What to know:
 - Prefer fixtures and factories over manual object setup. Reuse existing test helpers and fixtures before creating new ones.
 - Test edge cases and error paths, not just the happy path.
 - Mocking: mock external services and ML backends, but avoid mocking the code under test.
+- **Tests must be hermetic to credentials and live backends.** Never read real
+  API keys, endpoints, or backend hosts from the surrounding environment, and
+  never hardcode one into a test. A test needing a credential uses
+  `patch.dict(os.environ, ...)` scoped to that test — never a module-level
+  `os.environ[...]` write or `setdefault`, which leaks into every later test
+  in the process (xdist workers included). The async-unit conftest scrubs the
+  ML provider env vars at collection start and
+  `test_ml_router.py::TestRouterHermeticity` fails if a backend registers from
+  the environment anyway; when adding a new env-configured backend to
+  `ml_models.py`, add its env vars to `_AMBIENT_BACKEND_ENV_VARS` there. A
+  unit test that makes a real network call to a provider is a bug, even when
+  it passes.
 
 ### DRY (Don't Repeat Yourself)
 - Before writing new utility functions, helpers, or constants, check if similar functionality already exists in the codebase.
