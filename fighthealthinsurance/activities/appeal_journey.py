@@ -111,5 +111,11 @@ async def generate_and_store_appeals(hashed_email: str, denial_uuid: str) -> int
             raise ApplicationError(
                 f"appeal generation failed for denial {denial_uuid}"
             ) from None
+    except _NON_RETRYABLE_ERRORS as e:
+        # The denial LOOKUP runs before the inner classifier, so a schema
+        # failure there needs the same non-retryable treatment -- otherwise
+        # this activity retries exactly the class of error the classifier
+        # exists to stop (PR review).
+        raise _non_retryable(e, denial_uuid) from None
     finally:
         beat.cancel()

@@ -146,3 +146,18 @@ async def test_generate_operational_error_stays_retryable(mock_load, mock_genera
     with pytest.raises(ApplicationError) as exc_info:
         await env.run(journey_activities.generate_and_store_appeals, "h", "u")
     assert not exc_info.value.non_retryable
+
+
+@pytest.mark.asyncio
+@patch(f"{_MOD}.aload_denial", new_callable=AsyncMock)
+async def test_generate_denial_lookup_schema_error_is_non_retryable(mock_load):
+    """The denial LOOKUP runs before the inner classifier; a schema failure
+    there must get the same non-retryable classification (PR review)."""
+    from django.db.utils import ProgrammingError
+
+    mock_load.side_effect = ProgrammingError('relation "nope" does not exist')
+    env = ActivityEnvironment()
+    with pytest.raises(ApplicationError) as exc_info:
+        await env.run(journey_activities.generate_and_store_appeals, "h", "u")
+    assert exc_info.value.non_retryable
+    assert "nope" not in str(exc_info.value)

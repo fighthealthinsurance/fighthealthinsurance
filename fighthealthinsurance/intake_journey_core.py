@@ -12,11 +12,13 @@ from loguru import logger
 from fighthealthinsurance.appeal_journey_core import aload_denial
 
 NUDGE_SUBJECT = "Your appeal on Fight Health Insurance is waiting"
+# Copy makes no resume promise: the link is the plain homepage until a real
+# resume route (signed, expiring token) exists -- see send_abandonment_nudge.
 NUDGE_BODY = (
     "You started putting together an appeal on Fight Health Insurance and "
-    "didn't get to finish. Your progress is saved -- pick up where you left "
-    "off whenever you're ready:\n\n{url}\n\nIf you'd rather not continue, "
-    "you can ignore this email; we won't send another reminder."
+    "didn't get to finish. If you'd like to keep going, you can return "
+    "any time:\n\n{url}\n\nIf you'd rather not continue, you can ignore "
+    "this email; we won't send another reminder."
 )
 
 
