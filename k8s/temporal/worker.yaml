@@ -21,9 +21,13 @@ spec:
         app: fight-health-insurance-prod
         group: fight-health-insurance-prod-temporal-worker
     spec:
-      # Above the worker's 90s graceful_shutdown_timeout so a SIGTERM'd pod
-      # can finish an in-flight vendor send before the kubelet kills it.
-      terminationGracePeriodSeconds: 120
+      # Above the worker's 30-minute graceful_shutdown_timeout so a
+      # SIGTERM'd pod can finish an in-flight vendor send (bounded by the
+      # activity's 30m start_to_close) before the kubelet kills it. Idle
+      # pods shut down immediately -- this only delays a rollout while a
+      # fax is genuinely mid-send, which is exactly when killing the pod
+      # would risk a double-send.
+      terminationGracePeriodSeconds: 1860
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco

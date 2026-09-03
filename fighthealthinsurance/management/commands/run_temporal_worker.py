@@ -123,11 +123,18 @@ class Command(BaseCommand):
                     workflows=fax_workflows,
                     activities=fax_activity_fns,
                     activity_executor=activity_executor,
-                    # Kubernetes sends SIGTERM at pod shutdown; give running
-                    # fax activities time to finish instead of orphaning a
-                    # vendor call mid-send. terminationGracePeriodSeconds in
-                    # the manifest must exceed this (external review).
-                    graceful_shutdown_timeout=timedelta(seconds=90),
+                    # Kubernetes sends SIGTERM at pod shutdown; a running
+                    # send_fax_via_vendor attempt may legitimately spend up
+                    # to its 30-minute start_to_close in vendor backends
+                    # (~1300s each), and killing it mid-send risks the
+                    # vendor delivering a fax whose result we lost -- the
+                    # exact double-send the fax rule forbids. Drain covers
+                    # the full activity bound; when nothing is running,
+                    # shutdown is immediate, so rollouts only wait when a
+                    # fax is actually in flight (review).
+                    # terminationGracePeriodSeconds in the manifest must
+                    # exceed this.
+                    graceful_shutdown_timeout=timedelta(minutes=30),
                 )
                 runs.append(fax_worker.run())
                 queues.append(task_queue)
