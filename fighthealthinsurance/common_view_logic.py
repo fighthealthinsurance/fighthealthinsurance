@@ -35,7 +35,9 @@ from django.conf import settings
 from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
-from django.db import close_old_connections
+from django.db import IntegrityError, close_old_connections
+
+
 from django.db.models import F, Q, QuerySet
 from django.db.models.functions import Length
 from django.forms import Form
@@ -2885,6 +2887,24 @@ class AppealsBackendHelper:
     SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS = 90.0
 
     @classmethod
+    def generate_appeals_for_denial(cls, denial, background: bool = True):
+        """Internal entry point: the caller already holds a loaded, authorized
+        ``Denial``. Builds the parameters itself (including the private
+        identity key), so internal dispatchers never construct the public
+        parameter dict by hand -- and the public path never learns to accept
+        a caller-supplied hash. ``background=True`` also keeps these runs
+        from consuming the user's interactive ``gen_attempts`` budget."""
+        return cls.generate_appeals(
+            {
+                "denial_id": denial.denial_id,
+                "email": None,
+                "semi_sekret": denial.semi_sekret,
+                "_internal_hashed_email": denial.hashed_email,
+                "_background": background,
+            }
+        )
+
+    @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
         """
         Asynchronously generates and streams appeal texts for a given denial, including both previously saved and newly generated appeals.
@@ -2897,10 +2917,16 @@ class AppealsBackendHelper:
         denial_id = parameters["denial_id"]
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
-        # The durable appeal journey (appeal_journey_core) re-loads denials
-        # from opaque ids and never has the raw email, so it passes the stored
-        # hashed_email directly; interactive callers keep sending email.
-        hashed_email = parameters.get("hashed_email") or Denial.get_hashed_email(email)
+        # Public contract: the hash is DERIVED from the caller's raw email,
+        # never accepted from outside. Internal callers that already hold an
+        # authorized Denial go through generate_appeals_for_denial below,
+        # which sets the private key -- so a future endpoint passing
+        # user-controlled values through this dict cannot substitute a hash
+        # for knowing the email (PR #963 review).
+        hashed_email = parameters.get(
+            "_internal_hashed_email"
+        ) or Denial.get_hashed_email(email)
+        background = bool(parameters.get("_background"))
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
         # Set by the JS client when this socket replaces one that dropped (see
@@ -3516,7 +3542,11 @@ class AppealsBackendHelper:
         # (pubmed_context, candidate_ml_citation_context, ...) and clobber
         # whatever those background tasks persisted, defeating the warm-cache
         # barrier downstream.
-        dirty_fields = {"gen_attempts"}
+        # Background journey runs do not consume the user's interactive
+        # attempt budget: gen_attempts drives the skip-research-after-3
+        # behavior users see, and silent background retries were eating it
+        # (PR #963 review).
+        dirty_fields = set() if background else {"gen_attempts"}
         if medical_context:
             merge_qa(
                 denial,
@@ -3534,8 +3564,10 @@ class AppealsBackendHelper:
             )
             denial.professional_to_finish = professional_to_finish
             dirty_fields.add("professional_to_finish")
-        denial.gen_attempts = (denial.gen_attempts or 0) + 1
-        await denial.asave(update_fields=sorted(dirty_fields))
+        if not background:
+            denial.gen_attempts = (denial.gen_attempts or 0) + 1
+        if dirty_fields:
+            await denial.asave(update_fields=sorted(dirty_fields))
 
         # Get pubmed, ml citations, and RAG context
         pubmed_context: Optional[str] = None
@@ -3551,7 +3583,8 @@ class AppealsBackendHelper:
         logger.debug("Looking up the pubmed context")
 
         # If we're getting "late" into our number of retries skip additional ctx.
-        if denial.gen_attempts < 3:
+        # (gen_attempts can be None on a background run, which never bumps it.)
+        if (denial.gen_attempts or 0) < 3:
             # Yield status: gathering context
             yield json.dumps(
                 {
@@ -4033,15 +4066,28 @@ class AppealsBackendHelper:
             id = "unknown"
             save_failed = False
             try:
+                fingerprint = ProposedAppeal.fingerprint(appeal_text)
                 pa = ProposedAppeal(
                     appeal_text=appeal_text,
                     for_denial=denial,
                     model_name=model_name,
                     synthesized=item.synthesized,
                     context_level=item.context_level,
+                    text_fingerprint=fingerprint,
                 )
                 try:
                     await pa.asave()
+                except IntegrityError:
+                    # Another writer (a racing journey activity, a retry, or
+                    # a concurrent interactive run) already stored this exact
+                    # draft: the unique (denial, fingerprint) constraint is
+                    # the idempotency boundary. Reuse the durable row.
+                    existing = await ProposedAppeal.objects.filter(
+                        for_denial=denial, text_fingerprint=fingerprint
+                    ).afirst()
+                    if existing is None:
+                        raise
+                    pa = existing
                 except Exception:
                     # Most save failures here are a stale/idle-killed
                     # connection on this consumer's thread; refresh

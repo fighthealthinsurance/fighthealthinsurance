@@ -140,6 +140,11 @@ class Base(Configuration):
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
+    # Appeal generation runs on its own task queue so several slow
+    # generations can never occupy the fax worker's activity slots
+    # (separate failure domain; PR #963 review). Point a dedicated
+    # worker deployment at it for full resource isolation.
+    TEMPORAL_APPEAL_TASK_QUEUE = os.getenv("TEMPORAL_APPEAL_TASK_QUEUE", "fhi-appeals")
     # In-cluster address of the Temporal Web UI, reached only through the
     # staff-only reverse proxy at /timbit/temporal/ (never exposed directly).
     TEMPORAL_UI_UPSTREAM = os.getenv("TEMPORAL_UI_UPSTREAM", "http://temporal-web:8080")

@@ -2613,6 +2613,32 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # until promoted as a fallback when the live run underdelivers.
     speculative = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, null=True, db_index=True)
+    # sha256 of the whitespace-normalized, lowercased appeal text. With the
+    # partial unique constraint below it makes duplicate-prevention a DATABASE
+    # property: two writers racing (interactive vs journey, or a timed-out
+    # activity racing its retry) physically cannot store the same draft twice.
+    # Null for legacy rows and for rows whose save path predates the field.
+    text_fingerprint = models.CharField(
+        max_length=64, null=True, blank=True, db_index=True
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["for_denial", "text_fingerprint"],
+                condition=models.Q(text_fingerprint__isnull=False),
+                name="uniq_proposedappeal_fingerprint_per_denial",
+            ),
+        ]
+
+    @staticmethod
+    def fingerprint(text: typing.Optional[str]) -> typing.Optional[str]:
+        """Normalized content fingerprint: case- and whitespace-insensitive,
+        so trivial regeneration variants collide instead of duplicating."""
+        if not text or not text.strip():
+            return None
+        normalized = " ".join(str(text).lower().split())
+        return hashlib.sha256(normalized.encode()).hexdigest()
 
     def __str__(self):
         if self.appeal_text is not None:
