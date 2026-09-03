@@ -209,3 +209,107 @@ class TestCandidateCounting(_JourneyTestBase):
             appeal_journey_core.precheck_appeal_journey(denial)
             == appeal_journey_core.STATUS_OK
         )
+
+
+class TestFingerprintCompleteness(_JourneyTestBase):
+    """The distinct-fingerprint counting rules from the external review:
+    duplicate rows are one draft, and every write path fingerprints."""
+
+    def test_unchosen_rows_fingerprint_themselves_on_save(self):
+        denial = _make_denial(9108)
+        row = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="Dear Reviewer, a real draft with enough words to count.",
+        )
+        assert row.text_fingerprint == ProposedAppeal.fingerprint(row.appeal_text)
+
+    def test_chosen_rows_carry_no_fingerprint(self):
+        """A chosen row is a COPY of the picked draft; a fingerprint there
+        would collide with the original draft's row."""
+        denial = _make_denial(9109)
+        row = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="The letter the user picked.",
+            chosen=True,
+        )
+        assert row.text_fingerprint is None
+
+    def test_legacy_duplicate_rows_do_not_satisfy_the_precheck(self):
+        """Three NULL-fingerprint copies of one letter (the pre-constraint
+        double-store shape; bulk_create bypasses save() exactly like the old
+        writers bypassed fingerprinting) are not three drafts."""
+        denial = _make_denial(9110)
+        letter = (
+            "Dear Reviewer, this appeal contests the denial because my "
+            "physician documented medical necessity across repeated visits."
+        )
+        ProposedAppeal.objects.bulk_create(
+            ProposedAppeal(for_denial=denial, appeal_text=letter) for _ in range(3)
+        )
+        assert (
+            appeal_journey_core.precheck_appeal_journey(denial)
+            == appeal_journey_core.STATUS_OK
+        )
+
+    def test_three_distinct_drafts_satisfy_the_precheck(self):
+        denial = _make_denial(9111)
+        for i in ("first", "second", "third"):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=(
+                    f"Dear Reviewer, the {i} distinct appeal citing the plan's "
+                    "own coverage policy and my documented treatment history."
+                ),
+            )
+        assert (
+            appeal_journey_core.precheck_appeal_journey(denial)
+            == appeal_journey_core.STATUS_ALREADY_HAS_APPEALS
+        )
+
+    def test_duplicate_content_cannot_be_stored_twice(self):
+        """With save() fingerprinting every un-chosen row, the partial unique
+        constraint now binds ALL writers, not just save_appeal."""
+        import pytest as _pytest
+        from django.db import IntegrityError
+
+        denial = _make_denial(9112)
+        text = "Dear Reviewer, the same letter twice must be one row."
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=text)
+        with _pytest.raises(IntegrityError):
+            ProposedAppeal.objects.create(
+                for_denial=denial, appeal_text="  dear   reviewer, THE same "
+                "letter twice must be one row."
+            )
+
+    def test_backfill_fingerprints_skips_duplicates_and_fills_the_rest(self):
+        """The 0202 data migration: legacy NULL rows get fingerprints; a
+        duplicate of an already-claimed fingerprint stays NULL (the
+        known-legacy-duplicate marker the counting rules exclude)."""
+        import importlib
+
+        backfill = importlib.import_module(
+            "fighthealthinsurance.migrations.0202_backfill_proposedappeal_fingerprints"
+        ).backfill_fingerprints
+        from django.apps import apps
+
+        denial = _make_denial(9113)
+        letter = "Dear Reviewer, one letter stored twice in the legacy era."
+        other = "Dear Reviewer, a different letter from the same era."
+        ProposedAppeal.objects.bulk_create(
+            [
+                ProposedAppeal(for_denial=denial, appeal_text=letter),
+                ProposedAppeal(for_denial=denial, appeal_text=letter),
+                ProposedAppeal(for_denial=denial, appeal_text=other),
+            ]
+        )
+        backfill(apps, None)
+        fps = list(
+            ProposedAppeal.objects.filter(for_denial=denial).values_list(
+                "text_fingerprint", flat=True
+            )
+        )
+        assert fps.count(None) == 1  # the duplicate copy stays NULL
+        assert {f for f in fps if f is not None} == {
+            ProposedAppeal.fingerprint(letter),
+            ProposedAppeal.fingerprint(other),
+        }

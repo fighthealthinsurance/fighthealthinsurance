@@ -2640,6 +2640,20 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         normalized = " ".join(str(text).lower().split())
         return hashlib.sha256(normalized.encode()).hexdigest()
 
+    def save(self, *args, **kwargs):
+        # Every un-chosen row carries a content fingerprint, no matter which
+        # code path wrote it (live save_appeal, speculative precompute,
+        # admin, tests) -- otherwise the unique constraint above only
+        # protects the paths that remembered to set it (external review).
+        # Chosen rows are deliberate COPIES of the draft the user picked
+        # (mark_proposal_chosen), so a fingerprint there would collide with
+        # the original draft's row; they stay NULL by design. Filled only
+        # when unset: a later text edit on an existing row keeps its
+        # original fingerprint rather than silently re-keying the row.
+        if not self.chosen and self.text_fingerprint is None:
+            self.text_fingerprint = ProposedAppeal.fingerprint(self.appeal_text)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         if self.appeal_text is not None:
             return f"{self.appeal_text[0:100]}"
