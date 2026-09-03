@@ -21,6 +21,9 @@ spec:
         app: fight-health-insurance-prod
         group: fight-health-insurance-prod-temporal-worker
     spec:
+      # Above the worker's 90s graceful_shutdown_timeout so a SIGTERM'd pod
+      # can finish an in-flight vendor send before the kubelet kills it.
+      terminationGracePeriodSeconds: 120
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
@@ -36,6 +39,11 @@ spec:
               value: "ray"
             - name: TEMPORAL_WORKER
               value: "1"
+            # This Deployment hosts ONLY the fax queue; appeal work runs in
+            # its own Deployment (appeal-worker.yaml) so appeal pressure or a
+            # crash-loop cannot take fax sending down (external review).
+            - name: TEMPORAL_WORKER_QUEUES
+              value: "fax"
             - name: TEMPORAL_ENABLED
               value: "true"
             # In-cluster Temporal frontend (Helm release "temporal" in this ns).

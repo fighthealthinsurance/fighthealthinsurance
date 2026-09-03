@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Appeal-journey worker, SEPARATE from fhi-fax-worker: appeal generation's
+  # memory/CPU pressure or a crash-loop must never remove fax pollers
+  # (external review). Safe to apply dark -- with the journey flags off the
+  # process logs that it is idling and hosts nothing (the kill switch), so
+  # it costs one small idle pod until enablement.
+  name: fhi-appeal-worker
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-prod
+    group: fight-health-insurance-prod-temporal-appeal-worker
+spec:
+  # One replica while volume is low. Raise to 2 before relying on the
+  # journey in production so a deploy or node failure doesn't remove every
+  # appeal poller at once.
+  replicas: 1
+  selector:
+    matchLabels:
+      group: fight-health-insurance-prod-temporal-appeal-worker
+  template:
+    metadata:
+      labels:
+        app: fight-health-insurance-prod
+        group: fight-health-insurance-prod-temporal-appeal-worker
+    spec:
+      # Above the worker's 300s graceful_shutdown_timeout, which itself
+      # covers the 240s generation budget plus cooperative-cancel drain: a
+      # SIGTERM'd pod finishes or cleanly cancels its attempt instead of
+      # orphaning it into a costly retry.
+      terminationGracePeriodSeconds: 360
+      containers:
+        - image: ${FHI_BASE}:${FHI_VERSION}
+          name: totallylegitco
+          # start-server.sh runs `manage.py run_temporal_worker` when
+          # TEMPORAL_WORKER is set; TEMPORAL_WORKER_QUEUES picks the role.
+          # No fax SSH identity or key mount here: appeal activities touch
+          # only the database and model backends.
+          env:
+            - name: TEMPORAL_WORKER
+              value: "1"
+            - name: TEMPORAL_WORKER_QUEUES
+              value: "appeal"
+            - name: TEMPORAL_ENABLED
+              value: "true"
+            # TEMPORAL_APPEAL_JOURNEY_ENABLED / TEMPORAL_INTAKE_JOURNEY_ENABLED
+            # intentionally NOT set here: they come from the app secrets and
+            # default OFF, so applying this manifest does not enable anything.
+            - name: TEMPORAL_HOST
+              value: "temporal-frontend:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: PDBHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: fhi-db-config
+                  key: PDBHOST
+          envFrom:
+            - secretRef:
+                name: fight-health-insurance-secret
+            - secretRef:
+                name: fight-health-insurance-primary-secret
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
