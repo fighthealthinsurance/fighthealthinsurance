@@ -45,9 +45,24 @@ class TestRouterHermeticity(unittest.TestCase):
 
     def test_fresh_router_loads_no_models_from_the_environment(self):
         router = MLRouter()
+        # Check every pool the router builds: context-only models live in
+        # their own list (not all_models_by_cost), so asserting one pool
+        # could pass while an environment-backed context-only model stayed
+        # registered (PR review).
+        leaked = {
+            "all_models_by_cost": [str(m) for m in router.all_models_by_cost],
+            "context_only_models_by_cost": [
+                str(m) for m in router.context_only_models_by_cost
+            ],
+            "models_by_name": sorted(router.models_by_name),
+        }
         self.assertEqual(
-            [str(m) for m in router.all_models_by_cost],
-            [],
+            leaked,
+            {
+                "all_models_by_cost": [],
+                "context_only_models_by_cost": [],
+                "models_by_name": [],
+            },
             "MLRouter picked up backends from the environment inside the "
             "unit suite; extend _AMBIENT_BACKEND_ENV_VARS in "
             "tests/async-unit/conftest.py to cover the env var(s) involved.",
