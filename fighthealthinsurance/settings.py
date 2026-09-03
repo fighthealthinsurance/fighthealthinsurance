@@ -137,6 +137,13 @@ class Base(Configuration):
     TEMPORAL_APPEAL_JOURNEY_ENABLED = (
         os.getenv("TEMPORAL_APPEAL_JOURNEY_ENABLED", "false").lower() == "true"
     )
+    # The intake journey (IntakeJourneyWorkflow, from the first screen) is
+    # gated on top of the appeal journey flag: it composes
+    # GenerateAppealWorkflow as a child, so enabling intake without the
+    # journey would strand completions.
+    TEMPORAL_INTAKE_JOURNEY_ENABLED = (
+        os.getenv("TEMPORAL_INTAKE_JOURNEY_ENABLED", "false").lower() == "true"
+    )
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")

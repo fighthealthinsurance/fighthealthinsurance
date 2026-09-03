@@ -2745,6 +2745,18 @@ class DenialCreatorHelper:
         if health_history_anonymized is not None:
             denial.health_history_anonymized = health_history_anonymized
         denial.save()
+        # Durable intake journey (dark until TEMPORAL_INTAKE_JOURNEY_ENABLED):
+        # the journey observes the funnel from the first substantive step; it
+        # must never be able to break the user-facing flow, so the dispatcher
+        # swallows every failure. Opt-in for the nudge = store_raw_email,
+        # observable here as a retained raw_email.
+        from fighthealthinsurance.temporal_client import dispatch_intake_started
+
+        dispatch_intake_started(
+            denial.hashed_email,
+            str(denial.uuid),
+            bool((denial.raw_email or "").strip()),
+        )
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
@@ -4761,6 +4773,19 @@ class AppealsBackendHelper:
                 f"first_model={first_model}, winning_stage={winning_stage}, "
                 f"models_tried=[{models_tried}]{reserve_note}"
             )
+
+        # Interactive generation finished: NOW complete the intake journey
+        # (fire-and-forget; dark until enabled; skipped for the journey's own
+        # background child). Signalling at the END, not the start, means the
+        # child generation the workflow launches sees the delivered drafts
+        # and no-ops -- a backstop, never a concurrent second generator
+        # (external review: the start-time signal raced this very run).
+        if not background:
+            from fighthealthinsurance.temporal_client import (
+                asignal_intake_fire_and_forget,
+            )
+
+            await asignal_intake_fire_and_forget(str(denial.uuid), "form_completed")
 
         # Explicit end-of-stream so the client knows exactly what was sent.
         # Carries the correlation id + generating-phase instrumentation so a

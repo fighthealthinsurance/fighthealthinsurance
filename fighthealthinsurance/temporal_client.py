@@ -295,3 +295,107 @@ def dispatch_fax_send(
             "Failed to start SendFaxWorkflow; falling back to Ray"
         )
         return False
+
+
+async def start_intake_journey(
+    hashed_email: str, denial_uuid: str, contact_opt_in: bool
+) -> str:
+    """Start (or attach to) the intake journey for a denial.
+
+    Deterministic id: one journey per denial; a duplicate start while one is
+    open raises WorkflowAlreadyStartedError, which the dispatcher treats as
+    satisfied.
+    """
+    from fighthealthinsurance.workflows.types import IntakeJourneyInput
+
+    from temporalio.common import WorkflowIDReusePolicy
+
+    client = await get_temporal_client()
+    handle = await client.start_workflow(
+        "IntakeJourneyWorkflow",
+        IntakeJourneyInput(
+            hashed_email=hashed_email,
+            denial_uuid=str(denial_uuid),
+            contact_opt_in=contact_opt_in,
+        ),
+        id=f"intake-{denial_uuid}",
+        task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+        # One intake journey per denial EVER: re-running the form update
+        # after a completed journey must not start a fresh run (and a fresh
+        # 24h nudge timer) for a finished case.
+        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+    )
+    logger.info(f"Started IntakeJourneyWorkflow {handle.id}")
+    return str(handle.id)
+
+
+def _intake_enabled() -> bool:
+    # Effective flags are strictly nested: global && appeal && intake. The
+    # intake workflow starts GenerateAppealWorkflow as a child and both are
+    # registered by the appeal-enabled worker, so intake without the appeal
+    # flag would enqueue onto a queue no worker serves (external review).
+    return (
+        getattr(settings, "TEMPORAL_ENABLED", False)
+        and getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False)
+        and getattr(settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False)
+    )
+
+
+def dispatch_intake_started(
+    hashed_email: str, denial_uuid: str, contact_opt_in: bool
+) -> bool:
+    """Fire-and-forget: the user reached the first substantive step."""
+    if not _intake_enabled():
+        return False
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    try:
+        async_to_sync(start_intake_journey)(hashed_email, denial_uuid, contact_opt_in)
+        return True
+    except WorkflowAlreadyStartedError:
+        return True
+    except Exception:
+        logger.opt(exception=True).error("Failed to start intake journey")
+        return False
+
+
+def signal_intake(denial_uuid: str, signal: str, *args) -> bool:
+    """Fire-and-forget signal to an intake journey (step_reached,
+    contact_opt_in, form_completed). Never raises: the journey observes the
+    funnel and must not be able to break the user-facing flow."""
+    if not _intake_enabled():
+        return False
+
+    async def _send() -> None:
+        client = await get_temporal_client()
+        handle = client.get_workflow_handle(f"intake-{denial_uuid}")
+        await handle.signal(signal, *args)
+
+    try:
+        async_to_sync(_send)()
+        return True
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"Intake signal {signal} not delivered for denial {denial_uuid}"
+        )
+        return False
+
+
+async def asignal_intake_fire_and_forget(denial_uuid: str, signal: str) -> None:
+    """Async fire-and-forget intake signal for callers already on a loop
+    (e.g. generate_appeals). Spawns a task and swallows every failure --
+    the journey observes; it never gates the user-facing flow."""
+    if not _intake_enabled():
+        return
+    import asyncio as _asyncio
+
+    async def _send() -> None:
+        try:
+            client = await get_temporal_client()
+            await client.get_workflow_handle(f"intake-{denial_uuid}").signal(signal)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Intake signal {signal} not delivered for denial {denial_uuid}"
+            )
+
+    _asyncio.create_task(_send())
