@@ -43,6 +43,14 @@ async def test_plaintext_history_passes_through():
     assert decoded == legacy
 
 
+def test_key_of_only_separators_is_a_clear_config_error():
+    """A set-but-unusable TEMPORAL_PAYLOAD_KEY (only commas/whitespace) must
+    fail at construction with a message naming the setting, not surface as
+    MultiFernet's bare ValueError."""
+    with pytest.raises(ValueError, match="TEMPORAL_PAYLOAD_KEY"):
+        EncryptionCodec(",,,")
+
+
 @pytest.mark.asyncio
 async def test_wrong_key_fails_loudly_not_silently():
     codec = EncryptionCodec(_KEY)
