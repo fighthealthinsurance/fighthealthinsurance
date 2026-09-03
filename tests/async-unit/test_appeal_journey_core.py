@@ -313,3 +313,47 @@ class TestFingerprintCompleteness(_JourneyTestBase):
             ProposedAppeal.fingerprint(letter),
             ProposedAppeal.fingerprint(other),
         }
+
+    def test_editing_an_unchosen_row_rekeys_its_fingerprint(self):
+        """A stale fingerprint would let the edited content be stored again
+        as a 'different' draft and block re-storing the original (review)."""
+        denial = _make_denial(9114)
+        row = ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="Dear Reviewer, the first version."
+        )
+        row.appeal_text = "Dear Reviewer, the edited version."
+        row.save()
+        row.refresh_from_db()
+        assert row.text_fingerprint == ProposedAppeal.fingerprint(
+            "Dear Reviewer, the edited version."
+        )
+
+    def test_partial_save_persists_the_rekey(self):
+        denial = _make_denial(9115)
+        row = ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="Dear Reviewer, before the edit."
+        )
+        row.appeal_text = "Dear Reviewer, after the edit."
+        row.save(update_fields=["appeal_text"])
+        row.refresh_from_db()
+        assert row.text_fingerprint == ProposedAppeal.fingerprint(
+            "Dear Reviewer, after the edit."
+        )
+
+    def test_legacy_null_row_survives_unrelated_saves(self):
+        """The backfill leaves duplicate rows NULL; a later save of some
+        other field must not recompute the fingerprint and trip the
+        constraint against the row's fingerprinted twin."""
+        denial = _make_denial(9116)
+        letter = "Dear Reviewer, the twice-stored legacy letter."
+        keeper = ProposedAppeal.objects.create(for_denial=denial, appeal_text=letter)
+        (dup,) = ProposedAppeal.objects.bulk_create(
+            [ProposedAppeal(for_denial=denial, appeal_text=letter)]
+        )
+        dup.refresh_from_db()
+        assert dup.text_fingerprint is None
+        dup.model_name = "fhi-internal"
+        dup.save()
+        dup.refresh_from_db()
+        assert dup.text_fingerprint is None
+        assert keeper.pk != dup.pk

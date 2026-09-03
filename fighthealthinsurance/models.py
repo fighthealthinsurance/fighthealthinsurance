@@ -2641,17 +2641,32 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         return hashlib.sha256(normalized.encode()).hexdigest()
 
     def save(self, *args, **kwargs):
-        # Every un-chosen row carries a content fingerprint, no matter which
-        # code path wrote it (live save_appeal, speculative precompute,
-        # admin, tests) -- otherwise the unique constraint above only
-        # protects the paths that remembered to set it (external review).
-        # Chosen rows are deliberate COPIES of the draft the user picked
-        # (mark_proposal_chosen), so a fingerprint there would collide with
-        # the original draft's row; they stay NULL by design. Filled only
-        # when unset: a later text edit on an existing row keeps its
-        # original fingerprint rather than silently re-keying the row.
-        if not self.chosen and self.text_fingerprint is None:
-            self.text_fingerprint = ProposedAppeal.fingerprint(self.appeal_text)
+        # Every un-chosen row carries a content fingerprint that MATCHES its
+        # current text, no matter which code path wrote it (live save_appeal,
+        # speculative precompute, admin, tests) -- otherwise the unique
+        # constraint above only protects the paths that remembered to set it,
+        # and an edited row would keep a stale key (external review). The
+        # cases:
+        # - chosen rows: deliberate COPIES of the picked draft
+        #   (mark_proposal_chosen); a fingerprint would collide with the
+        #   original draft's row, so it is cleared.
+        # - existing un-chosen rows already NULL: the backfill migration's
+        #   known-legacy-duplicate marker; recomputing would trip the
+        #   constraint on an unrelated field save, so NULL stays.
+        # - everything else: recomputed from the current text.
+        if self.chosen:
+            desired = None
+        elif self.text_fingerprint is None and not self._state.adding:
+            desired = None
+        else:
+            desired = ProposedAppeal.fingerprint(self.appeal_text)
+        if desired != self.text_fingerprint:
+            self.text_fingerprint = desired
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                # A partial save that changed appeal_text must persist the
+                # re-key too, not just set it in memory.
+                kwargs["update_fields"] = set(update_fields) | {"text_fingerprint"}
         super().save(*args, **kwargs)
 
     def __str__(self):
