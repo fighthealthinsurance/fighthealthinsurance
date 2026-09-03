@@ -1783,3 +1783,16 @@ def medicaid_eligibility_page_enabled() -> bool:
     either hide a live page from crawlers or advertise a 404 to them.
     """
     return bool(getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False))
+
+
+def strip_internal_keys(parameters: dict) -> dict:
+    """Return a copy of ``parameters`` without underscore-prefixed keys.
+
+    Underscore-prefixed keys (``_internal_hashed_email``, and any added
+    later) are the private channel for internal callers that already hold
+    an authorized object and build the parameter dict themselves. Public
+    entry points must pass decoded request payloads through this before
+    handing them to ``AppealsBackendHelper.generate_appeals``, so a request
+    body can never smuggle internal flags into the generator.
+    """
+    return {k: v for k, v in parameters.items() if not k.startswith("_")}

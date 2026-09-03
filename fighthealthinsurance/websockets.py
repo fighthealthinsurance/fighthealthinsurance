@@ -37,6 +37,7 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.utils import strip_internal_keys
 from fighthealthinsurance.models import (
     ChatLeads,
     ChatType,
@@ -695,8 +696,12 @@ class StreamingAppealsBackend(
             await self.close()
             return
         logger.debug(f"appeals ws: starting generation for denial {denial_id}")
+        # Request payloads never reach the generator with internal-only
+        # (underscore-prefixed) keys; those belong to internal dispatchers.
         aitr: AsyncIterator[str] = (
-            common_view_logic.AppealsBackendHelper.generate_appeals(data)
+            common_view_logic.AppealsBackendHelper.generate_appeals(
+                strip_internal_keys(data)
+            )
         )
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
         appeal_count = 0

@@ -34,6 +34,14 @@ class EncryptionCodec(PayloadCodec):
 
     def __init__(self, key: str) -> None:
         keys = [k.strip() for k in key.split(",") if k.strip()]
+        if not keys:
+            # A set-but-unusable key (e.g. only commas/whitespace) would
+            # otherwise surface as MultiFernet's bare ValueError long after
+            # the config mistake was made.
+            raise ValueError(
+                "TEMPORAL_PAYLOAD_KEY is set but contains no usable key "
+                "after splitting on commas; provide at least one Fernet key"
+            )
         self._fernet = MultiFernet([Fernet(k) for k in keys])
 
     async def encode(self, payloads: Iterable[Payload]) -> List[Payload]:

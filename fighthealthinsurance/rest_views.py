@@ -68,6 +68,7 @@ from fighthealthinsurance.models import (
     SecondaryAppealProfessionalRelation,
 )
 from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.utils import strip_internal_keys
 from fighthealthinsurance.rest_mixins import (
     CreateMixin,
     DeleteMixin,
@@ -794,7 +795,11 @@ def streaming_appeals_rest_fallback(request: Request):
         # make_appeals task + keepalive loops) to non-deterministic asyncgen
         # GC finalization -- on the transport chosen by users whose WebSocket
         # already failed.
-        aitr = common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        # Request payloads never reach the generator with internal-only
+        # (underscore-prefixed) keys; those belong to internal dispatchers.
+        aitr = common_view_logic.AppealsBackendHelper.generate_appeals(
+            strip_internal_keys(data)
+        )
         try:
             # Flush a leading newline before awaiting generate_appeals
             # so anti-buffering headers and intermediary heuristics
