@@ -127,11 +127,17 @@ def verify_fingerprints(ProposedAppeal: Any) -> dict:
 
     NULL checks alone cannot prove the invariant during a rollout: a pod
     still on pre-fingerprint code can EDIT text under a fingerprint that
-    no longer matches it (external review). Such rows are re-keyed with the
-    same observed-text-guarded conditional update ``fill_row`` uses; a
-    re-key that would collide with a twin is left as-is and counted as
-    ``mismatch_duplicate`` (it is a duplicate now). Returns counters; a
-    non-zero ``rekeyed`` is proof an old writer touched the table.
+    no longer matches it (external review). A stale fingerprint is NEVER
+    left in place: the row is re-keyed to its current text, or -- when that
+    key already belongs to another row (the row is a duplicate now) or the
+    text has become blank -- the stale fingerprint is cleared to NULL, the
+    known-duplicate/unusable marker journey counting excludes. Leaving
+    fp(Y) on a row that now holds text X would count X twice as distinct
+    drafts (review). Every repair is counted as ``rekeyed`` (strict mode
+    fails on any, forcing the post-rollout Job to retry); collisions are
+    additionally counted as ``mismatch_duplicate``. Every write is guarded
+    by the observed text AND fingerprint, so a concurrent edit is skipped,
+    never overwritten.
     """
     counts = {REKEYED: 0, MISMATCH_DUPLICATE: 0, "checked": 0}
     qs = (
@@ -142,27 +148,36 @@ def verify_fingerprints(ProposedAppeal: Any) -> dict:
     for row in qs.iterator(chunk_size=500):
         counts["checked"] += 1
         expected = fingerprint_text(row.appeal_text)
-        if expected is None or expected == row.text_fingerprint:
+        if expected == row.text_fingerprint:
             continue
-        if (
+        new_value = expected
+        if expected is not None and (
             ProposedAppeal.objects.filter(
                 for_denial_id=row.for_denial_id, text_fingerprint=expected
             )
             .exclude(pk=row.pk)
             .exists()
         ):
+            new_value = None
             counts[MISMATCH_DUPLICATE] += 1
-            continue
+        guard = dict(
+            pk=row.pk,
+            appeal_text=row.appeal_text,
+            text_fingerprint=row.text_fingerprint,
+        )
         try:
             with transaction.atomic():
-                updated = ProposedAppeal.objects.filter(
-                    pk=row.pk,
-                    appeal_text=row.appeal_text,
-                    text_fingerprint=row.text_fingerprint,
-                ).update(text_fingerprint=expected)
+                updated = ProposedAppeal.objects.filter(**guard).update(
+                    text_fingerprint=new_value
+                )
         except IntegrityError:
+            # Lost the race for the key: the row is a duplicate now, so the
+            # repair is to clear it.
             counts[MISMATCH_DUPLICATE] += 1
-            continue
+            with transaction.atomic():
+                updated = ProposedAppeal.objects.filter(**guard).update(
+                    text_fingerprint=None
+                )
         if updated:
             counts[REKEYED] += 1
     logger.info(f"appeal fingerprint verify: {counts}")

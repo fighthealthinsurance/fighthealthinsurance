@@ -619,7 +619,14 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         assert row.text_fingerprint != stale_fp
         assert row.text_fingerprint == ProposedAppeal.fingerprint(row.appeal_text)
 
-    def test_verify_leaves_a_mismatch_that_would_collide_as_duplicate(self):
+    def test_verify_clears_a_mismatch_that_would_collide_to_null(self):
+        """An old-pod edit that turns a row into a twin of another row: the
+        stale fingerprint must not be LEFT in place (it would count the twin's
+        content twice). It is cleared to NULL -- the known-duplicate marker --
+        and counted as a repair, so strict mode retries (review)."""
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
         from fighthealthinsurance import appeal_fingerprints
 
         denial = _make_denial(9126)
@@ -628,13 +635,30 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         other = ProposedAppeal.objects.create(
             for_denial=denial, appeal_text="Dear Reviewer, a different letter."
         )
-        stale_fp = other.text_fingerprint
         # Old-style edit that makes `other` a twin of the keeper.
         ProposedAppeal.objects.filter(pk=other.pk).update(appeal_text=keeper_text)
-        counts = appeal_fingerprints.verify_fingerprints(ProposedAppeal)
+        # Strict mode: fill passes are quiet, verify repairs one row -> fail.
+        with pytest.raises(CommandError):
+            call_command("backfill_appeal_fingerprints", "--strict")
         other.refresh_from_db()
-        assert counts[appeal_fingerprints.MISMATCH_DUPLICATE] == 1
-        assert other.text_fingerprint == stale_fp  # untouched, not collided
+        assert other.text_fingerprint is None
+        # Retry (what the Job's backoff does): now quiescent.
+        call_command("backfill_appeal_fingerprints", "--strict")
+        counts = appeal_fingerprints.verify_fingerprints(ProposedAppeal)
+        assert counts[appeal_fingerprints.REKEYED] == 0
+
+    def test_verify_clears_the_fingerprint_of_text_edited_to_blank(self):
+        from fighthealthinsurance import appeal_fingerprints
+
+        denial = _make_denial(9127)
+        row = ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="Dear Reviewer, soon to be blanked."
+        )
+        ProposedAppeal.objects.filter(pk=row.pk).update(appeal_text="   ")
+        counts = appeal_fingerprints.verify_fingerprints(ProposedAppeal)
+        row.refresh_from_db()
+        assert counts[appeal_fingerprints.REKEYED] == 1
+        assert row.text_fingerprint is None
 
     def test_strict_backfill_fails_when_verify_had_to_rekey(self):
         from unittest.mock import patch as _patch
