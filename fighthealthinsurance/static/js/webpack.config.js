@@ -1,7 +1,20 @@
 const path = require('path');
 const glob = require('glob');
 const TerserPlugin = require('terser-webpack-plugin');
+const CopyPlugin = require('copy-webpack-plugin');
 const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+
+// Runtime worker assets that pdf.js and tesseract.js load by URL at runtime
+// (they cannot be bundled). They used to be served straight out of
+// /static/js/node_modules/, which stopped being published (collectstatic
+// ignore + nginx deny, PR #936) -- so they are copied into dist/workers/,
+// which ships with the bundles. Nothing at runtime may reference a
+// node_modules URL; tests/async-unit/test_worker_assets.py pins that.
+const workerAssets = [
+  { from: 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs', to: 'workers/pdf.worker.min.mjs' },
+  { from: 'node_modules/tesseract.js/dist/worker.min.js', to: 'workers/tesseract.js/worker.min.js' },
+  { from: 'node_modules/tesseract.js-core/*.{js,wasm}', to: 'workers/tesseract.js-core/[name][ext]' },
+];
 
 // Check if bundle analysis is requested
 const shouldAnalyze = process.env.ANALYZE === 'true';
@@ -130,13 +143,16 @@ module.exports = async (env, argv) => {
   },
   // Generate source maps in both development and production (OSS project, helpful for debugging)
   devtool: 'source-map',
-  // Plugins - conditionally add bundle analyzer
-  plugins: shouldAnalyze ? [
-    new BundleAnalyzerPlugin({
-      analyzerMode: 'static',
-      reportFilename: 'bundle-report.html',
-      openAnalyzer: true,
-    }),
-  ] : [],
+  // Plugins - the worker asset copy always; the bundle analyzer on request
+  plugins: [
+    new CopyPlugin({ patterns: workerAssets }),
+    ...(shouldAnalyze ? [
+      new BundleAnalyzerPlugin({
+        analyzerMode: 'static',
+        reportFilename: 'bundle-report.html',
+        openAnalyzer: true,
+      }),
+    ] : []),
+  ],
 };
 }

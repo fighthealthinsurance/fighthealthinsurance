@@ -33,21 +33,23 @@ function clearFormData(): void {
   const keysToRemove: string[] = [];
   for (let i = 0; i < window.localStorage.length; i++) {
     const key = window.localStorage.key(i);
-    if (key && (key.startsWith("store_") || key === "email" || key === "denial_text")) {
+    if (
+      key &&
+      (key.startsWith("store_") || key === "email" || key === "denial_text")
+    ) {
       keysToRemove.push(key);
     }
   }
-  keysToRemove.forEach(key => window.localStorage.removeItem(key));
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
 }
 
 // Get item with TTL check
 function getLocalStorageItemWithTTL(key: string): string | null {
-
   // If someones disabled persistence remove items if found.
   const stored = window.localStorage.getItem(key);
   if (!isPersistenceEnabled()) {
-      window.localStorage.removeItem(key);
-      return null;
+    window.localStorage.removeItem(key);
+    return null;
   }
   if (!stored) {
     return null;
@@ -122,11 +124,15 @@ const storeTextareaLocal = async function (event: Event) {
   setLocalStorageItemWithTTL(name, value);
 };
 
-const node_module_path = "/static/js/node_modules/";
+// Runtime worker assets (pdf.js, tesseract.js) are copied into dist/workers/
+// by the webpack build (see webpack.config.js). They must never be loaded
+// from the third-party package tree under static/js: it is no longer
+// collected and nginx denies it outright, which is what broke PDF loading
+// and OCR in production. tests/async-unit/test_worker_assets.py pins this.
+const workers_path = "/static/js/dist/workers/";
 
 // pdf.js
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  node_module_path + "pdfjs-dist/build/pdf.worker.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = workers_path + "pdf.worker.min.mjs";
 
 /**
  * Get CSRF token from cookies for Django requests.
@@ -152,7 +158,7 @@ export {
   storeLocal,
   storeTextareaLocal,
   pdfjsLib,
-  node_module_path,
+  workers_path,
   getLocalStorageItemOrDefault,
   getLocalStorageItemOrDefaultEQ,
   getLocalStorageItemWithTTL,
