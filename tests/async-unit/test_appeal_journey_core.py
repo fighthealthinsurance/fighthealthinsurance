@@ -405,3 +405,33 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         rows = list(ProposedAppeal.objects.filter(for_denial=denial))
         assert len(rows) == 1
         assert rows[0].speculative is False
+
+    def test_legacy_null_row_edited_to_unique_text_rekeys(self):
+        """A legacy duplicate edited to genuinely new content must rejoin
+        the constraint and journey counting -- NULL is the marker for
+        known duplicates, not a permanent exemption (review)."""
+        denial = _make_denial(9119)
+        letter = "Dear Reviewer, the legacy letter stored twice back then."
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=letter)
+        (dup,) = ProposedAppeal.objects.bulk_create(
+            [ProposedAppeal(for_denial=denial, appeal_text=letter)]
+        )
+        dup = ProposedAppeal.objects.get(pk=dup.pk)
+        assert dup.text_fingerprint is None
+        dup.appeal_text = "Dear Reviewer, entirely new content after an edit."
+        dup.save(update_fields=["appeal_text"])
+        dup.refresh_from_db()
+        assert dup.text_fingerprint == ProposedAppeal.fingerprint(dup.appeal_text)
+
+    def test_legacy_null_row_full_save_with_unchanged_text_stays_null(self):
+        denial = _make_denial(9120)
+        letter = "Dear Reviewer, one more twice-stored legacy letter."
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=letter)
+        (dup,) = ProposedAppeal.objects.bulk_create(
+            [ProposedAppeal(for_denial=denial, appeal_text=letter)]
+        )
+        dup = ProposedAppeal.objects.get(pk=dup.pk)
+        dup.model_name = "fhi-internal"
+        dup.save()  # full save, text unchanged: must not recompute/collide
+        dup.refresh_from_db()
+        assert dup.text_fingerprint is None

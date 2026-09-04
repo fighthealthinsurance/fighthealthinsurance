@@ -70,10 +70,16 @@ def run_backfill(ProposedAppeal) -> dict:
             continue
         try:
             with transaction.atomic():
-                ProposedAppeal.objects.filter(
+                updated = ProposedAppeal.objects.filter(
                     pk=row.pk, text_fingerprint__isnull=True
                 ).update(text_fingerprint=fp)
-            filled += 1
+            if updated:
+                filled += 1
+            else:
+                # Another writer filled (or re-keyed) this row between our
+                # scan and the conditional update: nothing was written here,
+                # so it must not count as a fill (review).
+                lost_race += 1
         except IntegrityError:
             # A concurrent writer took this fingerprint between our check
             # and the update; this row is therefore a duplicate now.
