@@ -1,4 +1,4 @@
-import { pdfjsLib, node_module_path } from "./shared";
+import { pdfjsLib, workers_path } from "./shared";
 import {
   PDFDocumentProxy,
   TextContent,
@@ -64,7 +64,9 @@ async function runDualOCRWithGrace(
     if (isUsableOCRState(tesseractState)) {
       const qwenResult = await Promise.race([
         trackedQwen
-          .catch((reason): SettledState<string> => ({ status: "rejected", reason }))
+          .catch(
+            (reason): SettledState<string> => ({ status: "rejected", reason }),
+          )
           .then((state) => ({ timedOut: false as const, state })),
         sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
       ]);
@@ -83,12 +85,17 @@ async function runDualOCRWithGrace(
     if (isUsableOCRState(qwenState)) {
       const tesseractResult = await Promise.race([
         trackedTesseract
-          .catch((reason): SettledState<string> => ({ status: "rejected", reason }))
+          .catch(
+            (reason): SettledState<string> => ({ status: "rejected", reason }),
+          )
           .then((state) => ({ timedOut: false as const, state })),
         sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
       ]);
 
-      if (!tesseractResult.timedOut && isUsableOCRState(tesseractResult.state)) {
+      if (
+        !tesseractResult.timedOut &&
+        isUsableOCRState(tesseractResult.state)
+      ) {
         tesseractState = tesseractResult.state;
       }
     } else {
@@ -100,11 +107,17 @@ async function runDualOCRWithGrace(
   }
 
   if (tesseractState?.status === "rejected") {
-    console.warn("[TesseractOCR] Primary OCR path failed", tesseractState.reason);
+    console.warn(
+      "[TesseractOCR] Primary OCR path failed",
+      tesseractState.reason,
+    );
   }
 
   if (qwenState?.status === "rejected") {
-    console.warn("[QwenOCR] Parallel OCR path failed; using Tesseract result", qwenState.reason);
+    console.warn(
+      "[QwenOCR] Parallel OCR path failed; using Tesseract result",
+      qwenState.reason,
+    );
   }
 
   if (qwenState === null) {
@@ -113,7 +126,8 @@ async function runDualOCRWithGrace(
     );
   }
 
-  const tesseractText = tesseractState?.status === "fulfilled" ? tesseractState.value : "";
+  const tesseractText =
+    tesseractState?.status === "fulfilled" ? tesseractState.value : "";
   const qwenText = qwenState?.status === "fulfilled" ? qwenState.value : "";
 
   if (!tesseractText && !qwenText) {
@@ -130,8 +144,8 @@ async function runDualOCRWithGrace(
 async function getTesseractWorkerRaw(): Promise<Tesseract.Worker> {
   console.log("Loading tesseract worker.");
   const worker = await Tesseract.createWorker("eng", 1, {
-    corePath: node_module_path + "/tesseract.js-core",
-    workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
+    corePath: workers_path + "tesseract.js-core",
+    workerPath: workers_path + "tesseract.js/worker.min.js",
     logger: function (m) {
       console.log(m);
     },
@@ -147,7 +161,9 @@ const memoizeOne = require("async-memoize-one");
 const getTesseractWorker = memoizeOne(getTesseractWorkerRaw);
 
 function isPDF(file: File): boolean {
-  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  return (
+    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+  );
 }
 
 async function getFileAsArrayBuffer(file: File): Promise<Uint8Array> {
@@ -194,21 +210,29 @@ function mergeOCRTexts({ tesseractText, qwenText }: OCRResults): string {
 }
 
 function isAdvancedOCREnabled(): boolean {
-  const checkbox = document.getElementById("advanced_ocr_enabled") as HTMLInputElement | null;
+  const checkbox = document.getElementById(
+    "advanced_ocr_enabled",
+  ) as HTMLInputElement | null;
   // Default to true when the checkbox is absent (non-scrub pages).
   return checkbox ? checkbox.checked : true;
 }
 
-async function recognizeImageText(file: Blob | File | string): Promise<OCRResults> {
+async function recognizeImageText(
+  file: Blob | File | string,
+): Promise<OCRResults> {
   const worker = await getTesseractWorker();
   const tesseractPromise = worker
     .recognize(file)
     .then((result: Tesseract.RecognizeResult) => result.data.text);
-  const qwenPromise = isAdvancedOCREnabled() ? recognizeWithQwenWebGPU(file) : Promise.resolve("");
+  const qwenPromise = isAdvancedOCREnabled()
+    ? recognizeWithQwenWebGPU(file)
+    : Promise.resolve("");
   const result = await runDualOCRWithGrace(tesseractPromise, qwenPromise);
 
   if (result.usedFallback) {
-    console.warn("[TesseractOCR] Falling back to Qwen OCR text because Tesseract output was unavailable");
+    console.warn(
+      "[TesseractOCR] Falling back to Qwen OCR text because Tesseract output was unavailable",
+    );
   }
 
   return {
@@ -282,7 +306,10 @@ export const recognize = async function (
   }
 };
 
-async function getPDFPageText(pdf: PDFDocumentProxy, pageNo: number): Promise<string> {
+async function getPDFPageText(
+  pdf: PDFDocumentProxy,
+  pageNo: number,
+): Promise<string> {
   const page = await pdf.getPage(pageNo);
   const tokenizedText: TextContent = await page.getTextContent();
   const items: TextItem[] = [];
