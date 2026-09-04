@@ -5,6 +5,7 @@ generation workflow is replaced by a recording stub registered under the
 same name.
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -112,58 +113,130 @@ async def test_query_reports_progress_and_late_completion_generates():
     assert rec.calls == []
 
 
+# --- post-collision reconciliation ---------------------------------------
+
+
 @workflow.defn(name="GenerateAppealWorkflow")
 class _BlockingGenerateAppeal:
-    """Stands in for a standalone generation that is still RUNNING when the
-    intake journey tries to start its child under the same workflow id."""
+    """A generation run that holds generate-appeal-{uuid} until released;
+    ``release(n)`` closes it returning n drafts."""
 
     def __init__(self) -> None:
-        self._release = False
+        self._result: int = -1
 
     @workflow.signal
-    def release(self) -> None:
-        self._release = True
+    def release(self, count: int) -> None:
+        self._result = count
 
     @workflow.run
     async def run(self, journey: GenerateAppealInput) -> int:
-        await workflow.wait_condition(lambda: self._release)
-        return 0
+        await workflow.wait_condition(lambda: self._result >= 0)
+        return self._result
+
+
+class _ReconcileRecorder(_Recorder):
+    """Recorder plus the postcondition activity, answering from a script."""
+
+    def __init__(self, postcondition_answers):
+        super().__init__()
+        self.answers = list(postcondition_answers)
+
+    def activities(self):
+        rec = self
+        base = super().activities()
+
+        @activity.defn(name="check_generation_postcondition")
+        async def check_generation_postcondition(
+            hashed_email: str, denial_uuid: str
+        ) -> bool:
+            rec.calls.append(("postcondition", denial_uuid))
+            return rec.answers.pop(0) if len(rec.answers) > 1 else rec.answers[0]
+
+        return base + [check_generation_postcondition]
+
+
+async def _start_colliding(env, rec):
+    """A standalone generation already holds the child id; then intake."""
+    task_queue = str(uuid.uuid4())
+    worker = Worker(
+        env.client,
+        task_queue=task_queue,
+        workflows=[IntakeJourneyWorkflow, _BlockingGenerateAppeal],
+        activities=rec.activities(),
+    )
+    standalone = await env.client.start_workflow(
+        _BlockingGenerateAppeal.run,
+        GenerateAppealInput(hashed_email="h", denial_uuid="u"),
+        id="generate-appeal-u",
+        task_queue=task_queue,
+    )
+    handle = await env.client.start_workflow(
+        IntakeJourneyWorkflow.run,
+        IntakeJourneyInput(hashed_email="h", denial_uuid="u", contact_opt_in=True),
+        id=str(uuid.uuid4()),
+        task_queue=task_queue,
+    )
+    return worker, standalone, handle
 
 
 @pytest.mark.asyncio
-async def test_running_standalone_generation_does_not_fail_the_journey():
-    """A management/manual generation workflow already holds
-    generate-appeal-{uuid}. The child start collides; the journey must
-    treat generation-in-progress as success, not die on the collision
-    (external review)."""
-    rec = _Recorder()
-    task_queue = str(uuid.uuid4())
+async def test_collision_with_satisfied_postcondition_completes():
+    """The standalone run delivered: the postcondition says so and intake
+    completes without ever starting its own child."""
+    rec = _ReconcileRecorder([True])
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        worker = Worker(
-            env.client,
-            task_queue=task_queue,
-            workflows=[IntakeJourneyWorkflow, _BlockingGenerateAppeal],
-            activities=rec.activities(),
-        )
-        standalone = await env.client.start_workflow(
-            _BlockingGenerateAppeal.run,
-            GenerateAppealInput(hashed_email="h", denial_uuid="u"),
-            id="generate-appeal-u",
-            task_queue=task_queue,
-        )
-        handle = await env.client.start_workflow(
-            IntakeJourneyWorkflow.run,
-            IntakeJourneyInput(hashed_email="h", denial_uuid="u", contact_opt_in=True),
-            id=str(uuid.uuid4()),
-            task_queue=task_queue,
-        )
+        worker, standalone, handle = await _start_colliding(env, rec)
         async with worker:
             await handle.signal(IntakeJourneyWorkflow.form_completed)
-            # This completing AT ALL is the proof: were there no collision,
-            # the registered "GenerateAppealWorkflow" here is the blocking
-            # stub, so a successfully-started child would block forever and
-            # the journey could never return. (No cleanup of the standalone:
-            # the time-skipping server ages it out with the environment.)
             result = await handle.result()
     assert result == "completed"
-    assert standalone is not None
+    assert ("postcondition", "u") in rec.calls
+
+
+@pytest.mark.asyncio
+async def test_collision_then_standalone_dies_short_intake_retakes():
+    """The standalone closes with zero drafts; the postcondition stays
+    unmet; intake retakes ownership (its own child now starts) and
+    completes -- instead of having closed 'completed' on the collision."""
+    rec = _ReconcileRecorder([False])
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        worker, standalone, handle = await _start_colliding(env, rec)
+        async with worker:
+            await handle.signal(IntakeJourneyWorkflow.form_completed)
+            # Let intake collide and enter reconciliation, then the
+            # standalone dies short of the target.
+            await asyncio.sleep(1)
+            await standalone.signal(_BlockingGenerateAppeal.release, 0)
+            await standalone.result()
+            # Intake's next attempt (after its backoff timer, which only
+            # advances when we skip time) starts its OWN child under the
+            # freed id -- the blocking stub again; release it with a full
+            # result.
+            from datetime import timedelta as _td
+
+            standalone_run = (await standalone.describe()).run_id
+            child = env.client.get_workflow_handle("generate-appeal-u")
+            for _ in range(20):
+                await env.sleep(_td(minutes=11))
+                await asyncio.sleep(0.2)
+                if (await child.describe()).run_id != standalone_run:
+                    break
+            await child.signal(_BlockingGenerateAppeal.release, 3)
+            result = await handle.result()
+    assert result == "completed"
+    assert rec.calls.count(("postcondition", "u")) >= 1
+
+
+@pytest.mark.asyncio
+async def test_collision_never_resolved_defers_after_the_window():
+    """Postcondition never met and the standalone never closes: the journey
+    gives up after the reconciliation window as 'deferred', never
+    'completed'."""
+    rec = _ReconcileRecorder([False])
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        worker, standalone, handle = await _start_colliding(env, rec)
+        async with worker:
+            await handle.signal(IntakeJourneyWorkflow.form_completed)
+            result = await handle.result()
+    assert result == "deferred"
+    assert rec.calls.count(("postcondition", "u")) > 1

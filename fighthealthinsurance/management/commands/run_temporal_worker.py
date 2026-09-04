@@ -199,6 +199,7 @@ class Command(BaseCommand):
                     appeal_activity_fns += [
                         intake_activities.send_abandonment_nudge,
                         intake_activities.close_incomplete_journey,
+                        intake_activities.check_generation_postcondition,
                     ]
                 appeal_worker = Worker(
                     client,

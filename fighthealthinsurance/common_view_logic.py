@@ -51,6 +51,7 @@ import uszipcode
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 
+from fighthealthinsurance import generation_lease
 from fighthealthinsurance.appeal_fingerprints import fingerprint_text
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -3006,6 +3007,22 @@ class AppealsBackendHelper:
             "primary_professional__user",
         )
         denial = await denial_query.aget()
+        if not background:
+            # A live human outranks any background generator: STEAL the
+            # denial's generation lease so a journey attempt in flight sees
+            # the epoch move and stops quietly, and one arriving inside the
+            # TTL backs off. One UPDATE; expiry is the release. Never let a
+            # lease hiccup break the interactive flow (external review).
+            try:
+                await generation_lease.aacquire(
+                    denial,
+                    holder=generation_lease.new_holder("interactive"),
+                    steal=True,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"generation lease steal failed for denial {denial_id}"
+                )
 
         # Initial keepalive newline so clients know we're alive.
         yield "\n"

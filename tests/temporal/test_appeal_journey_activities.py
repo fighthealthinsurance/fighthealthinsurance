@@ -161,3 +161,25 @@ async def test_generate_denial_lookup_schema_error_is_non_retryable(mock_load):
         await env.run(journey_activities.generate_and_store_appeals, "h", "u")
     assert exc_info.value.non_retryable
     assert "nope" not in str(exc_info.value)
+
+
+@patch(f"{_MOD}.aload_denial", new_callable=AsyncMock, return_value=None)
+async def test_postcondition_missing_denial_is_false(mock_load):
+    env = ActivityEnvironment()
+    assert (
+        await env.run(journey_activities.check_generation_postcondition, "h", "u")
+        is False
+    )
+
+
+@pytest.mark.asyncio
+@patch(f"{_MOD}.acheck_generation_postcondition", new_callable=AsyncMock, return_value=True)
+@patch(f"{_MOD}.aload_denial", new_callable=AsyncMock)
+async def test_postcondition_delegates_to_core(mock_load, mock_check):
+    mock_load.return_value = object()
+    env = ActivityEnvironment()
+    assert (
+        await env.run(journey_activities.check_generation_postcondition, "h", "u")
+        is True
+    )
+    mock_check.assert_awaited_once()
