@@ -30,9 +30,27 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     its retention -- so an address that has been cleared (or was never
     stored) simply cannot be nudged. No content from the case is included.
     """
+    from fighthealthinsurance import intake_outbox
+
     denial = await aload_denial(hashed_email, denial_uuid)
     if denial is None or not (denial.raw_email or "").strip():
         logger.info(f"Intake nudge skipped for denial {denial_uuid}: no retained email")
+        return False
+    # Single-shot claim: inserting the nudge_sent event is the claim (unique
+    # per denial), so a retried or duplicated activity can never send twice.
+    if not await intake_outbox.aclaim_nudge(denial):
+        logger.info(f"Intake nudge skipped for denial {denial_uuid}: already claimed")
+        return False
+    # Authoritative completion is the outbox record, not workflow state: a
+    # form_completed event that is recorded but whose signal is still in
+    # flight must not produce a "you didn't finish" email to someone who
+    # did. Rechecked immediately before the SMTP call. Honest limit: a
+    # completion landing DURING SMTP acceptance cannot be prevented without
+    # an idempotent or cancellable provider operation; the claim above
+    # guarantees at-most-once, and this recheck narrows the window to the
+    # send itself (external review).
+    if await intake_outbox.ahas_event(denial, intake_outbox.FORM_COMPLETED):
+        logger.info(f"Intake nudge skipped for denial {denial_uuid}: form completed")
         return False
     base = getattr(
         settings, "FHI_PUBLIC_BASE_URL", "https://www.fighthealthinsurance.com"

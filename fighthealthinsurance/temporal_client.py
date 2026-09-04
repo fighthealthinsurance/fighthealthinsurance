@@ -303,40 +303,76 @@ def dispatch_fax_send(
         return False
 
 
-async def start_intake_journey(
-    hashed_email: str, denial_uuid: str, contact_opt_in: bool
-) -> str:
-    """Start (or attach to) the intake journey for a denial.
+async def signal_with_start_intake(
+    hashed_email: str, denial_uuid: str, contact_opt_in: bool, event: str
+) -> None:
+    """Start-or-signal the intake journey for a denial, atomically.
 
-    Deterministic id: one journey per denial; a duplicate start while one is
-    open raises WorkflowAlreadyStartedError, which the dispatcher treats as
-    satisfied.
+    Signal-With-Start (Temporal's own primitive for "signal it if it exists,
+    start it with the signal if not") is the request-path half of the intake
+    outbox (see intake_outbox.py); the Denial row's intent/ack timestamps are
+    the durable half. Deterministic id: one journey per denial.
+
+    - ``intake_started``: a plain start; an already-open journey means the
+      event is already satisfied.
+    - ``form_completed``: signal-with-start, so a journey whose start was
+      never delivered is created already-completed instead of the signal
+      vanishing.
+
+    Returns quietly when Temporal reports the event as already satisfied.
+    Raises on transport failure so the caller can leave the row pending for
+    the sweep.
     """
+    from temporalio.common import WorkflowIDReusePolicy
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
     from fighthealthinsurance.workflows.types import IntakeJourneyInput
 
-    from temporalio.common import WorkflowIDReusePolicy
-
     client = await get_temporal_client()
-    handle = await client.start_workflow(
-        "IntakeJourneyWorkflow",
-        IntakeJourneyInput(
-            hashed_email=hashed_email,
-            denial_uuid=str(denial_uuid),
-            contact_opt_in=contact_opt_in,
-        ),
-        id=f"intake-{denial_uuid}",
-        task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
-        # One intake journey per denial: re-running the form update after a
-        # completed journey must not start a fresh run (and a fresh 24h
-        # nudge timer) for a finished case. NOTE this guarantee is bounded
-        # by namespace history retention (720h) -- after the old run's
-        # history expires, the id becomes startable again. The durable
-        # backstop is the precheck: existing drafts end a journey at its
-        # first step, so a post-retention duplicate no-ops (external review).
-        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+    workflow_id = f"intake-{denial_uuid}"
+    payload = IntakeJourneyInput(
+        hashed_email=hashed_email,
+        denial_uuid=str(denial_uuid),
+        contact_opt_in=contact_opt_in,
     )
-    logger.info(f"Started IntakeJourneyWorkflow {handle.id}")
-    return str(handle.id)
+    if event == "form_completed":
+        # A RUNNING journey just receives the signal. A CLOSED one (abandoned,
+        # failed, terminated) must not swallow the completion: ALLOW_DUPLICATE
+        # starts a fresh run with the signal already delivered, which owns
+        # generation through its child immediately (external review). An
+        # "already started" here is therefore never an ack -- it propagates.
+        handle = await client.start_workflow(
+            "IntakeJourneyWorkflow",
+            payload,
+            id=workflow_id,
+            task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+            start_signal="form_completed",
+            start_signal_args=[],
+        )
+        logger.info(f"Intake event {event} delivered to {handle.id}")
+        return
+    try:
+        handle = await client.start_workflow(
+            "IntakeJourneyWorkflow",
+            payload,
+            id=workflow_id,
+            task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+            # One intake journey per denial: a repeat of the first step must
+            # not start a fresh run (and a fresh 24h nudge timer) for a case
+            # that already has one. Bounded by namespace history retention;
+            # the precheck is the durable backstop.
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+        )
+    except WorkflowAlreadyStartedError:
+        # Rejection alone is not an ack: verify the business fact -- that an
+        # execution for this id exists (any status) -- before treating the
+        # start as satisfied. If describe fails, the caller leaves the event
+        # pending and the relay retries (external review).
+        await client.get_workflow_handle(workflow_id).describe()
+        logger.info(f"Intake event {event} already satisfied by {workflow_id}")
+        return
+    logger.info(f"Intake event {event} delivered to {handle.id}")
 
 
 def _intake_enabled() -> bool:
@@ -351,61 +387,7 @@ def _intake_enabled() -> bool:
     )
 
 
-def dispatch_intake_started(
-    hashed_email: str, denial_uuid: str, contact_opt_in: bool
-) -> bool:
-    """Fire-and-forget: the user reached the first substantive step."""
-    if not _intake_enabled():
-        return False
-    from temporalio.exceptions import WorkflowAlreadyStartedError
-
-    try:
-        async_to_sync(start_intake_journey)(hashed_email, denial_uuid, contact_opt_in)
-        return True
-    except WorkflowAlreadyStartedError:
-        return True
-    except Exception:
-        logger.opt(exception=True).error("Failed to start intake journey")
-        return False
-
-
-def signal_intake(denial_uuid: str, signal: str, *args) -> bool:
-    """Fire-and-forget signal to an intake journey (step_reached,
-    contact_opt_in, form_completed). Never raises: the journey observes the
-    funnel and must not be able to break the user-facing flow."""
-    if not _intake_enabled():
-        return False
-
-    async def _send() -> None:
-        client = await get_temporal_client()
-        handle = client.get_workflow_handle(f"intake-{denial_uuid}")
-        await handle.signal(signal, *args)
-
-    try:
-        async_to_sync(_send)()
-        return True
-    except Exception:
-        logger.opt(exception=True).warning(
-            f"Intake signal {signal} not delivered for denial {denial_uuid}"
-        )
-        return False
-
-
-async def asignal_intake_fire_and_forget(denial_uuid: str, signal: str) -> None:
-    """Async fire-and-forget intake signal for callers already on a loop
-    (e.g. generate_appeals). Spawns a task and swallows every failure --
-    the journey observes; it never gates the user-facing flow."""
-    if not _intake_enabled():
-        return
-    import asyncio as _asyncio
-
-    async def _send() -> None:
-        try:
-            client = await get_temporal_client()
-            await client.get_workflow_handle(f"intake-{denial_uuid}").signal(signal)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Intake signal {signal} not delivered for denial {denial_uuid}"
-            )
-
-    _asyncio.create_task(_send())
+# The fire-and-forget dispatch/signal helpers that used to live here were
+# lossy (a swallowed failure or a process recycle lost the event with no
+# trace); intake_outbox.py replaced them with intent/ack bookkeeping on the
+# Denial row plus signal_with_start_intake above (external review).

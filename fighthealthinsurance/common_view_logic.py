@@ -2749,19 +2749,26 @@ class DenialCreatorHelper:
             )
         if health_history_anonymized is not None:
             denial.health_history_anonymized = health_history_anonymized
-        denial.save()
-        # Durable intake journey (dark until TEMPORAL_INTAKE_JOURNEY_ENABLED):
-        # the journey observes the funnel from the first substantive step; it
-        # must never be able to break the user-facing flow, so the dispatcher
-        # swallows every failure. Opt-in for the nudge = store_raw_email,
-        # observable here as a retained raw_email.
-        from fighthealthinsurance.temporal_client import dispatch_intake_started
+        # Durable intake journey (dark until TEMPORAL_INTAKE_JOURNEY_ENABLED).
+        # The intent stamp rides the SAME save as the form data, so the two
+        # commit together; delivery is then attempted Temporal-first, and a
+        # failure leaves intent-without-ack for the sweep to repair. The
+        # journey can never break the user-facing flow either way. Opt-in
+        # for the nudge = store_raw_email, observable here as a retained
+        # raw_email.
+        from django.db import transaction as _transaction
 
-        dispatch_intake_started(
-            denial.hashed_email,
-            str(denial.uuid),
-            bool((denial.raw_email or "").strip()),
-        )
+        from fighthealthinsurance import intake_outbox
+
+        # The intent row commits WITH the form data (one transaction); a
+        # failed intent insert fails the mutation, which is the correct
+        # contract -- the alternative is a silent gap. Everything after the
+        # commit lives behind deliver()'s exception boundary.
+        with _transaction.atomic():
+            denial.save()
+            intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
+        if intent is not None:
+            intake_outbox.deliver(intent)
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
@@ -4382,6 +4389,21 @@ class AppealsBackendHelper:
                 result["save_failed"] = True
             return result
 
+        # Form completed: record the intent and tell the intake journey
+        # BEFORE generation starts. Signalling only at the end meant a
+        # crash mid-generation looked like the user abandoning the form
+        # (wrong nudge, no background generation). Intent is one atomic
+        # UPDATE; a failed delivery leaves it pending for the sweep. Skipped
+        # for the journey's own background child (external review).
+        if not background:
+            from fighthealthinsurance import intake_outbox
+
+            intent = await intake_outbox.arecord_intent(
+                denial, intake_outbox.FORM_COMPLETED
+            )
+            if intent is not None:
+                await intake_outbox.adeliver(intent)
+
         # Yield status: generating appeals
         yield json.dumps(
             {
@@ -5041,18 +5063,9 @@ class AppealsBackendHelper:
                 f"models_tried=[{models_tried}]{reserve_note}"
             )
 
-        # Interactive generation finished: NOW complete the intake journey
-        # (fire-and-forget; dark until enabled; skipped for the journey's own
-        # background child). Signalling at the END, not the start, means the
-        # child generation the workflow launches sees the delivered drafts
-        # and no-ops -- a backstop, never a concurrent second generator
-        # (external review: the start-time signal raced this very run).
-        if not background:
-            from fighthealthinsurance.temporal_client import (
-                asignal_intake_fire_and_forget,
-            )
-
-            await asignal_intake_fire_and_forget(str(denial.uuid), "form_completed")
+        # (The form_completed intake event is recorded and delivered at the
+        # START of generation, above; the generation lease is what keeps the
+        # journey's child from racing this run, not signal timing.)
 
         # Explicit end-of-stream so the client knows exactly what was sent.
         # Carries the correlation id + generating-phase instrumentation so a
