@@ -744,3 +744,27 @@ def test_deploy_script_waits_for_the_strict_backfill_job():
     assert "exit 1" in build[wait_at : wait_at + 400]
     for dep in ("web", "fhi-fax-worker", "fhi-appeal-worker"):
         assert f"rollout status deployment" in build and dep in build
+
+
+def test_backfill_job_runs_non_root_with_a_read_only_root_filesystem():
+    """The Job carries both production secret sets, so it gets the same
+    posture the web-extralink-prefetch Job already proves for this image:
+    non-root, read-only root filesystem, writable /tmp (external review)."""
+    import pathlib
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    raw = (root / "k8s" / "temporal" / "backfill-fingerprints-job.yaml").read_text()
+    job = yaml.safe_load(raw.replace("${FHI_BASE}:${FHI_VERSION}", "image"))
+    pod = job["spec"]["template"]["spec"]
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    assert pod["securityContext"]["runAsUser"] == 1000
+    container = pod["containers"][0]["securityContext"]
+    assert container["readOnlyRootFilesystem"] is True
+    assert container["allowPrivilegeEscalation"] is False
+    assert container["capabilities"]["drop"] == ["ALL"]
+    assert container["seccompProfile"]["type"] == "RuntimeDefault"
+    # A read-only root needs scratch space, exactly as the prefetch Job does.
+    assert {"name": "tmp", "mountPath": "/tmp"} in pod["containers"][0]["volumeMounts"]
+    assert any(v["name"] == "tmp" and "emptyDir" in v for v in pod["volumes"])

@@ -22,6 +22,17 @@ spec:
       labels:
         group: fight-health-insurance-prod-webbackend-batch
     spec:
+      # Non-root with a read-only root filesystem, mirroring the
+      # web-extralink-prefetch Job in k8s/deploy.yaml: the same image already
+      # runs that way, so this posture is proven for this image rather than
+      # aspirational. The backfill writes only to Postgres and stdout; /tmp
+      # is mounted writable because Python and the Django startup path may
+      # still want scratch space (external review).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
@@ -40,14 +51,17 @@ spec:
             - secretRef:
                 name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
-          # Same partial hardening as the worker manifests: no privilege
-          # escalation, all capabilities dropped, default seccomp.
-          # runAsNonRoot / readOnlyRootFilesystem stay deferred with the
-          # rest of the fleet -- the image entrypoint runs as root today.
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
             seccompProfile:
               type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
       restartPolicy: OnFailure
