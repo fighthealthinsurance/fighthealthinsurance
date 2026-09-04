@@ -136,9 +136,16 @@ class IntakeJourneyWorkflow:
         # retake ownership if that run closes short of the target.
         delay = RECONCILE_INITIAL_DELAY
         reconcile_until = workflow.now() + RECONCILE_FOR
-        while workflow.now() < reconcile_until:
-            await asyncio.sleep(delay.total_seconds())
+        while True:
+            # Never sleep past the window, and give up BEFORE doing any
+            # more work once it has elapsed (review).
+            remaining = reconcile_until - workflow.now()
+            if remaining <= timedelta(0):
+                break
+            await asyncio.sleep(min(delay, remaining).total_seconds())
             delay = min(delay * 2, RECONCILE_MAX_DELAY)
+            if workflow.now() >= reconcile_until:
+                break
             satisfied = await workflow.execute_activity(
                 intake_activities.check_generation_postcondition,
                 args=[journey.hashed_email, journey.denial_uuid],

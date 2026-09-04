@@ -20,6 +20,8 @@ from typing import (
     List,
     Optional,
     Tuple,
+    AsyncGenerator,
+    cast,
 )
 
 if TYPE_CHECKING:
@@ -2902,7 +2904,9 @@ class AppealsBackendHelper:
     SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS = 90.0
 
     @classmethod
-    def generate_appeals_for_denial(cls, denial, background: bool = True):
+    def generate_appeals_for_denial(
+        cls, denial, background: bool = True, lease_epoch: Optional[int] = None
+    ):
         """Internal entry point: the caller already holds a loaded, authorized
         ``Denial``. Builds the parameters itself (including the private
         identity key), so internal dispatchers never construct the public
@@ -2916,11 +2920,43 @@ class AppealsBackendHelper:
                 "semi_sekret": denial.semi_sekret,
                 "_internal_hashed_email": denial.hashed_email,
                 "_background": background,
+                # The journey's generation-lease epoch: save_appeal fences
+                # every draft insert on it (generation_lease.assert_holds).
+                "_lease_epoch": lease_epoch,
             }
         )
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
+        """Public generator: streams ``_generate_appeals_body`` and, for the
+        interactive path, RELEASES the generation lease the body stole when
+        the stream finishes or the client hangs up (``aclose``). Wrapping
+        rather than a try/finally around the ~1900-line body keeps that
+        body's diff untouched (review)."""
+        lease_ref: dict[str, Any] = {}
+        # Declared AsyncIterator, an async generator at runtime (aclose exists).
+        agen = cast(
+            AsyncGenerator[str, None], cls._generate_appeals_body(parameters, lease_ref)
+        )
+        try:
+            async for chunk in agen:
+                yield chunk
+        finally:
+            await agen.aclose()
+            if lease_ref.get("denial") is not None and lease_ref.get("epoch"):
+                try:
+                    await generation_lease.arelease(
+                        lease_ref["denial"], lease_ref["epoch"]
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "generation lease release failed; expiry will free it"
+                    )
+
+    @classmethod
+    async def _generate_appeals_body(
+        cls, parameters, lease_ref: dict[str, Any]
+    ) -> AsyncIterator[str]:
         """
         Asynchronously generates and streams appeal texts for a given denial, including both previously saved and newly generated appeals.
 
@@ -2942,6 +2978,13 @@ class AppealsBackendHelper:
             "_internal_hashed_email"
         ) or Denial.get_hashed_email(email)
         background = bool(parameters.get("_background"))
+        # Generation-lease epoch this run writes under. Journeys pass theirs
+        # in; the interactive path takes one by stealing below. Draft inserts
+        # are FENCED on it only for background runs -- a human is the
+        # preemptor, and two tabs of the same human are out of scope
+        # (approved design) -- while interactive runs use it to keep the
+        # lease alive across a long stream and to release it at the end.
+        lease_epoch: Optional[int] = parameters.get("_lease_epoch")
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
         # Set by the JS client when this socket replaces one that dropped (see
@@ -3014,12 +3057,16 @@ class AppealsBackendHelper:
             # TTL backs off. One UPDATE; expiry is the release. Never let a
             # lease hiccup break the interactive flow (external review).
             try:
-                await generation_lease.aacquire(
+                stolen = await generation_lease.aacquire(
                     denial,
                     holder=generation_lease.new_holder("interactive"),
                     steal=True,
                 )
+                lease_epoch = stolen.epoch
+                lease_ref["denial"] = denial
+                lease_ref["epoch"] = stolen.epoch
             except Exception:
+                # Never let a lease hiccup stop a human: run un-leased.
                 logger.opt(exception=True).warning(
                     f"generation lease steal failed for denial {denial_id}"
                 )
@@ -4125,17 +4172,25 @@ class AppealsBackendHelper:
                     text_fingerprint=fingerprint,
                 )
 
-                def _insert_with_savepoint() -> None:
-                    # atomic() nests as a SAVEPOINT inside any enclosing
-                    # transaction, so an IntegrityError here cannot poison
-                    # the caller's transaction state before the recovery
-                    # query below runs (external review). In autocommit it
-                    # is just a short transaction around the insert.
+                def _insert_fenced() -> None:
+                    # One transaction, which atomic() nests as a SAVEPOINT
+                    # inside any enclosing one: the lease ownership check and
+                    # the draft insert commit together, so a run that was
+                    # stolen from cannot persist a draft after the steal
+                    # however far along its model call was -- and an
+                    # IntegrityError here cannot poison the caller's
+                    # transaction state before the recovery query below runs
+                    # (external reviews). In autocommit it is just a short
+                    # transaction around the insert.
                     with transaction.atomic():
+                        if background and lease_epoch is not None:
+                            generation_lease.assert_holds(denial, lease_epoch)
                         pa.save()
 
                 try:
-                    await database_sync_to_async(_insert_with_savepoint)()
+                    await database_sync_to_async(_insert_fenced)()
+                except generation_lease.LeaseSuperseded:
+                    raise
                 except IntegrityError:
                     # Another writer (a racing journey activity, a retry, or
                     # a concurrent interactive run) already stored this exact
@@ -4172,8 +4227,20 @@ class AppealsBackendHelper:
                     # connection on this consumer's thread; refresh
                     # connections and retry once before giving up.
                     await database_sync_to_async(close_old_connections)()
-                    await pa.asave()
+                    await database_sync_to_async(_insert_fenced)()
                 id = str(pa.id)
+                if not background and lease_epoch is not None:
+                    # Keep a long interactive stream inside its lease: each
+                    # persisted draft pushes the expiry out, so a journey
+                    # cannot join a human's run after the TTL (review).
+                    await generation_lease.aextend(denial, lease_epoch)
+            except generation_lease.LeaseSuperseded as e:
+                # Superseded by an interactive steal: the draft is NOT
+                # persisted and goes out flagged as unsaved (the existing
+                # contract for a row without a durable id). The journey's
+                # per-frame epoch check ends the run right after.
+                save_failed = True
+                logger.info(f"Draft not persisted, generation lease superseded: {e}")
             except Exception as e:
                 # Still stream the draft -- the user gets their appeal even
                 # when the save fails -- but tell the client the row has no

@@ -220,7 +220,12 @@ async def agenerate_and_store_appeals(denial) -> int:
     # aclose() exists at runtime; the cast lets mypy see it.
     agen = cast(
         AsyncGenerator[str, None],
-        AppealsBackendHelper.generate_appeals_for_denial(denial),
+        # The epoch rides into the generator so save_appeal fences every
+        # draft insert on it: the per-frame check below is the early stop,
+        # the write boundary is the guarantee (review).
+        AppealsBackendHelper.generate_appeals_for_denial(
+            denial, lease_epoch=lease.epoch
+        ),
     )
     try:
         async with asyncio.timeout(GENERATION_BUDGET_SECONDS):

@@ -239,4 +239,8 @@ async def test_collision_never_resolved_defers_after_the_window():
             await handle.signal(IntakeJourneyWorkflow.form_completed)
             result = await handle.result()
     assert result == "deferred"
-    assert rec.calls.count(("postcondition", "u")) > 1
+    checks = rec.calls.count(("postcondition", "u"))
+    # Backoff 30s doubling to a 10m cap over a 24h window: ~148 iterations,
+    # and the final clamped sleep exits BEFORE another check -- so the
+    # count is bounded, never one-extra past the deadline (review).
+    assert 1 < checks <= 150

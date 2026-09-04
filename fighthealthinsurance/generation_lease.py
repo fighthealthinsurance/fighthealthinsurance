@@ -50,14 +50,17 @@ def new_holder(kind: str) -> str:
 def acquire(
     denial,
     holder: str,
-    ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    ttl_seconds: Optional[int] = None,
     steal: bool = False,
 ) -> Lease:
     """Take the lease if it is free/expired (or unconditionally when
     ``steal``). Returns the resulting epoch and deadline either way, so a
-    refused caller can log who holds it."""
+    refused caller can log who holds it. ``ttl_seconds`` defaults to
+    DEFAULT_TTL_SECONDS at call time (so tests can shrink it)."""
     from fighthealthinsurance.models import AppealGenerationLease
 
+    if ttl_seconds is None:
+        ttl_seconds = DEFAULT_TTL_SECONDS
     now = timezone.now()
     until = now + timedelta(seconds=ttl_seconds)
     with transaction.atomic():
@@ -94,16 +97,46 @@ def acquire(
         return Lease(True, row.epoch, until)
 
 
-def extend(denial, epoch: int, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> bool:
+def extend(denial, epoch: int, ttl_seconds: Optional[int] = None) -> bool:
     """Push the expiry out for the holder of ``epoch``. False means the
-    lease was stolen or expired-and-retaken: the caller no longer owns it."""
+    lease was stolen, or expired (never revived): the caller no longer
+    owns it."""
     from fighthealthinsurance.models import AppealGenerationLease
 
+    if ttl_seconds is None:
+        ttl_seconds = DEFAULT_TTL_SECONDS
+    now = timezone.now()
     return bool(
-        AppealGenerationLease.objects.filter(for_denial=denial, epoch=epoch).update(
-            expires_at=timezone.now() + timedelta(seconds=ttl_seconds)
-        )
+        AppealGenerationLease.objects.filter(
+            for_denial=denial,
+            epoch=epoch,
+            # Never revive an expired lease: once it lapsed another holder
+            # may acquire at the same epoch's successor any moment, and a
+            # late extend would silently re-fence them out (review).
+            expires_at__gt=now,
+        ).update(expires_at=now + timedelta(seconds=ttl_seconds))
     )
+
+
+class LeaseSuperseded(Exception):
+    """The caller's epoch no longer holds a live lease on the denial."""
+
+
+def assert_holds(denial, epoch: int) -> None:
+    """Row-locked check that ``epoch`` currently holds a live lease. Called
+    inside the writer's transaction so a draft insert and the ownership
+    check commit together: a superseded generator cannot persist a draft
+    after a steal, however far along it was (review)."""
+    from fighthealthinsurance.models import AppealGenerationLease
+
+    row = (
+        AppealGenerationLease.objects.select_for_update()
+        .filter(for_denial=denial)
+        .first()
+    )
+    if row is None or row.epoch != epoch or row.expires_at <= timezone.now():
+        held = "none" if row is None else f"epoch {row.epoch}"
+        raise LeaseSuperseded(f"epoch {epoch} does not hold the lease ({held})")
 
 
 def release(denial, epoch: int) -> bool:

@@ -51,7 +51,9 @@ class TestLeaseApi(TransactionTestCase):
         denial = _make_denial(9201)
         lease = generation_lease.acquire(denial, "journey:a")
         assert lease.acquired and lease.epoch == 1
-        assert AppealGenerationLease.objects.get(for_denial=denial).holder == "journey:a"
+        assert (
+            AppealGenerationLease.objects.get(for_denial=denial).holder == "journey:a"
+        )
 
     def test_held_lease_refuses_a_second_acquire(self):
         denial = _make_denial(9202)
@@ -72,6 +74,15 @@ class TestLeaseApi(TransactionTestCase):
         assert dead.acquired and dead.epoch == 1
         revived = generation_lease.acquire(denial, "journey:next")
         assert revived.acquired and revived.epoch == 2
+
+    def test_extend_never_revives_an_expired_lease(self):
+        """A late extend from a holder whose lease already lapsed must be
+        refused: the next acquirer may be seconds away, and reviving the old
+        epoch would silently fence them out (review)."""
+        denial = _make_denial(9210)
+        dead = generation_lease.acquire(denial, "journey:slow", ttl_seconds=0)
+        assert not generation_lease.extend(denial, dead.epoch)
+        assert generation_lease.acquire(denial, "journey:next").acquired
 
     def test_extend_and_release_are_fenced_by_epoch(self):
         denial = _make_denial(9205)
@@ -153,10 +164,13 @@ class TestLeaseGovernsGenerators(_JourneyTestBase):
 
         mock_gen.make_appeals.side_effect = stealing_make_appeals
         stored = appeal_journey_core.generate_and_store_appeals(denial)
-        assert stored >= 1
+        # Exactly the pre-steal draft persisted: every later insert is
+        # fenced at the write boundary (save_appeal), not just skipped by
+        # the per-frame check.
+        assert stored == 1
         assert (
             ProposedAppeal.objects.filter(for_denial=denial, speculative=False).count()
-            < appeal_journey_core.TARGET_APPEALS
+            == 1
         )
         # The journey never released the interactive lease it did not own.
         assert generation_lease.current_epoch(denial) == 2
@@ -180,3 +194,60 @@ class TestLeaseGovernsGenerators(_JourneyTestBase):
         )
         # Released (expired now): a fresh acquire succeeds without stealing.
         assert generation_lease.acquire(denial, "journey:next").acquired
+
+
+class TestInteractiveLease(_JourneyTestBase):
+    """The public (interactive) path: steals at start, keeps the lease alive
+    across a long stream by extending on every saved draft, and releases it
+    when the stream finishes."""
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_interactive_run_extends_past_ttl_and_releases_at_end(self, mock_gen):
+        import json as _json
+        import time as _time
+
+        from fighthealthinsurance import common_view_logic
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9211)
+        email = "lease_9211@example.com"
+        journey_attempts: list = []
+
+        def slow_make_appeals(*args, **kwargs):
+            yield _drafts([LETTERS[0]])[0]
+            _time.sleep(2)
+            # Past the initial 3s steal window once the first save extended
+            # it; a journey arriving now must still be refused.
+            journey_attempts.append(
+                generation_lease.acquire(denial, "journey:late").acquired
+            )
+            yield _drafts([LETTERS[1]])[0]
+            _time.sleep(2)
+            journey_attempts.append(
+                generation_lease.acquire(denial, "journey:later").acquired
+            )
+            yield _drafts([LETTERS[2]])[0]
+
+        mock_gen.make_appeals.side_effect = slow_make_appeals
+
+        async def drive():
+            frames = 0
+            async for chunk in AppealsBackendHelper.generate_appeals(
+                {"denial_id": denial.denial_id, "email": email, "semi_sekret": "sekret"}
+            ):
+                if appeal_journey_core._appeal_text_from_chunk(chunk) is not None:
+                    frames += 1
+            return frames
+
+        with patch.object(generation_lease, "DEFAULT_TTL_SECONDS", 3):
+            frames = async_to_sync(drive)()
+        assert frames >= 3
+        # Both mid-stream journey attempts were refused: without per-save
+        # extension the 3s steal would have lapsed before the second one.
+        assert journey_attempts == [False, False]
+        # Released at the end of the stream: a journey may now proceed.
+        assert generation_lease.acquire(denial, "journey:after").acquired
+        assert (
+            ProposedAppeal.objects.filter(for_denial=denial, speculative=False).count()
+            == appeal_journey_core.TARGET_APPEALS
+        )
