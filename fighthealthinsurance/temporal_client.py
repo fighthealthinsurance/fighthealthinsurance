@@ -21,6 +21,11 @@ from loguru import logger
 # for the full 1-hour delay timer -- long enough to exhaust a web worker.
 _RESULT_WAIT_SECONDS = 15 * 60
 
+# Per-RPC bound on every intake-journey start/signal/describe call: the SDK
+# default is no timeout, and the outbox relay must never let one call eat
+# its lifetime (belt and suspenders with the caller's asyncio.wait_for).
+INTAKE_RPC_TIMEOUT_SECONDS = 15.0
+
 
 async def get_temporal_client(runtime: Any = None) -> Any:
     """Connect a Temporal client using Django settings.
@@ -327,6 +332,9 @@ async def signal_with_start_intake(
     Raises on transport failure so the caller can leave the row pending for
     the sweep.
     """
+    from datetime import timedelta
+
+    from temporalio.client import WorkflowExecutionStatus
     from temporalio.common import WorkflowIDReusePolicy
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -336,6 +344,7 @@ async def signal_with_start_intake(
     # its own for a single delivery.
     if client is None:
         client = await get_temporal_client()
+    rpc_timeout = timedelta(seconds=INTAKE_RPC_TIMEOUT_SECONDS)
     workflow_id = f"intake-{denial_uuid}"
     payload = IntakeJourneyInput(
         hashed_email=hashed_email,
@@ -356,6 +365,7 @@ async def signal_with_start_intake(
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
             start_signal="form_completed",
             start_signal_args=[],
+            rpc_timeout=rpc_timeout,
         )
         logger.info(f"Intake event {event} delivered to {handle.id}")
         return
@@ -370,16 +380,42 @@ async def signal_with_start_intake(
             # that already has one. Bounded by namespace history retention;
             # the precheck is the durable backstop.
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            rpc_timeout=rpc_timeout,
         )
     except WorkflowAlreadyStartedError:
         # Rejection alone is not an ack: verify the business fact -- that an
         # execution for this id exists (any status) -- before treating the
         # start as satisfied. If describe fails, the caller leaves the event
         # pending and the relay retries (external review).
-        await client.get_workflow_handle(workflow_id).describe()
+        existing = client.get_workflow_handle(workflow_id)
+        description = await existing.describe(rpc_timeout=rpc_timeout)
+        if description.status == WorkflowExecutionStatus.RUNNING:
+            # The journey was started by an earlier attempt with whatever
+            # opt-in it had then; a still-open run must learn the CURRENT
+            # value (derived from the retained raw_email at delivery time)
+            # before this delivery counts as acknowledged (review).
+            await existing.signal(
+                "contact_opt_in", contact_opt_in, rpc_timeout=rpc_timeout
+            )
         logger.info(f"Intake event {event} already satisfied by {workflow_id}")
         return
     logger.info(f"Intake event {event} delivered to {handle.id}")
+
+
+async def signal_intake_contact_opt_in(
+    denial_uuid: str, contact_opt_in: bool, client: Any = None
+) -> None:
+    """Push a changed nudge opt-in to a running intake journey. Raises on
+    transport failure; callers treat it as best-effort (see intake_outbox)."""
+    from datetime import timedelta
+
+    if client is None:
+        client = await get_temporal_client()
+    await client.get_workflow_handle(f"intake-{denial_uuid}").signal(
+        "contact_opt_in",
+        contact_opt_in,
+        rpc_timeout=timedelta(seconds=INTAKE_RPC_TIMEOUT_SECONDS),
+    )
 
 
 def _intake_enabled() -> bool:

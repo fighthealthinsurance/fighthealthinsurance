@@ -42,7 +42,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        counts = intake_outbox.sweep(options["limit"], options["time_budget"])
+        limit = options["limit"]
+        if limit is not None and limit < 0:
+            raise CommandError(f"--limit must be >= 0 (got {limit})")
+        counts = intake_outbox.sweep(limit, options["time_budget"])
         self.stdout.write(
             "intake outbox relay: "
             f"backlog={counts.get('backlog', 0)} "

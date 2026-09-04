@@ -1628,6 +1628,9 @@ class DenialCreatorHelper:
             denial.denial_text = denial_text
             denial.hashed_email = hashed_email
             denial.use_external = use_external_models
+            # Nudge opt-in = a retained raw_email; remember the old value so a
+            # change can be pushed to an already-running intake journey below.
+            contact_opt_in_before = bool((denial.raw_email or "").strip())
             denial.raw_email = possible_email
             # Guarded like every other optional field here: the denial form
             # has no health_history field, so this path is ALWAYS called with
@@ -1663,6 +1666,15 @@ class DenialCreatorHelper:
                 tracking_info.update_model_fields(denial)
 
             denial.save()
+            if contact_opt_in_before != bool((possible_email or "").strip()):
+                # Best-effort, no outbox row: a lost signal fails SAFE because
+                # the nudge activity independently gates on the RETAINED
+                # raw_email before sending, so the journey's copy of the
+                # flag can only ever make it skip, never send to someone who
+                # opted out (external review).
+                from fighthealthinsurance import intake_outbox
+
+                intake_outbox.signal_contact_opt_in(denial)
 
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)

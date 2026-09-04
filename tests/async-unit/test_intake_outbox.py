@@ -38,12 +38,20 @@ def _make_denial(denial_id, raw_email=_EMAIL):
     )
 
 
-def _client(start_side_effect=None, describe_side_effect=None):
-    """A Temporal client stand-in recording start_workflow / describe calls."""
+def _client(start_side_effect=None, describe_side_effect=None, describe_status=None):
+    """A Temporal client stand-in recording start_workflow / describe /
+    signal calls. ``describe_status`` sets the described execution's status
+    (a Mock, i.e. not RUNNING, when omitted)."""
     client = Mock()
     client.start_workflow = AsyncMock(side_effect=start_side_effect)
     handle = Mock()
-    handle.describe = AsyncMock(side_effect=describe_side_effect)
+    description = Mock()
+    if describe_status is not None:
+        description.status = describe_status
+    handle.describe = AsyncMock(
+        side_effect=describe_side_effect, return_value=description
+    )
+    handle.signal = AsyncMock()
     client.get_workflow_handle = Mock(return_value=handle)
     return client
 
@@ -563,3 +571,110 @@ class TestNudge(TransactionTestCase):
         again, send = self._send(denial)
         assert again is False
         send.assert_not_awaited()
+
+
+@override_settings(**_INTAKE_ON)
+class TestContactOptIn(TransactionTestCase):
+    def test_retry_with_running_execution_signals_current_opt_in_then_acks(self):
+        """intake_started rejected because a journey is already RUNNING: it
+        was started with an older opt-in, so the current value is signalled
+        before the delivery counts as acknowledged."""
+        from temporalio.client import WorkflowExecutionStatus
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        denial = _make_denial(8136)
+        row = _pending(denial, intake_outbox.INTAKE_STARTED)
+        err = WorkflowAlreadyStartedError(
+            f"intake-{denial.uuid}", "IntakeJourneyWorkflow"
+        )
+        client = _client(
+            start_side_effect=err, describe_status=WorkflowExecutionStatus.RUNNING
+        )
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            assert intake_outbox.deliver(row) is True
+        handle = client.get_workflow_handle.return_value
+        handle.signal.assert_awaited_once()
+        args, kwargs = handle.signal.call_args
+        assert args[0] == "contact_opt_in" and args[1] is True
+        assert "rpc_timeout" in kwargs
+        row.refresh_from_db()
+        assert row.acked_at is not None
+
+    def test_retry_with_closed_execution_acks_without_signalling(self):
+        from temporalio.client import WorkflowExecutionStatus
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        denial = _make_denial(8137)
+        row = _pending(denial, intake_outbox.INTAKE_STARTED)
+        err = WorkflowAlreadyStartedError(
+            f"intake-{denial.uuid}", "IntakeJourneyWorkflow"
+        )
+        client = _client(
+            start_side_effect=err, describe_status=WorkflowExecutionStatus.COMPLETED
+        )
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            assert intake_outbox.deliver(row) is True
+        client.get_workflow_handle.return_value.signal.assert_not_awaited()
+
+    def test_opt_in_change_after_ack_signals_best_effort(self):
+        denial = _make_denial(8138)
+        _pending(denial, intake_outbox.INTAKE_STARTED, acked_at=timezone.now())
+        client = _client()
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            assert intake_outbox.signal_contact_opt_in(denial) is True
+        args, _ = client.get_workflow_handle.return_value.signal.call_args
+        assert args[0] == "contact_opt_in" and args[1] is True
+
+    def test_opt_in_change_signal_failure_never_raises(self):
+        denial = _make_denial(8139)
+        _pending(denial, intake_outbox.INTAKE_STARTED, acked_at=timezone.now())
+        client = _client()
+        client.get_workflow_handle.return_value.signal = AsyncMock(
+            side_effect=ConnectionError("temporal down")
+        )
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            assert intake_outbox.signal_contact_opt_in(denial) is False
+
+    def test_opt_in_change_before_any_acked_start_is_a_noop(self):
+        denial = _make_denial(8140)
+        client = _client()
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            assert intake_outbox.signal_contact_opt_in(denial) is False
+        client.get_workflow_handle.assert_not_called()
+
+    def test_start_calls_carry_a_bounded_rpc_timeout(self):
+        denial = _make_denial(8141)
+        row = _pending(denial, intake_outbox.FORM_COMPLETED)
+        client = _client()
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            assert intake_outbox.deliver(row) is True
+        kwargs = client.start_workflow.call_args.kwargs
+        assert kwargs["rpc_timeout"].total_seconds() == 15
+
+
+@override_settings(**_INTAKE_ON)
+class TestRelayLimit(TransactionTestCase):
+    def test_negative_limit_is_a_command_error(self):
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        with pytest.raises(CommandError):
+            call_command("deliver_intake_events", "--limit", "-1")
+
+    def test_negative_limit_is_rejected_by_sweep(self):
+        with pytest.raises(ValueError):
+            intake_outbox.sweep(limit=-1)
+
+    def test_zero_limit_is_an_empty_run(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        denial = _make_denial(8142)
+        _pending(denial, intake_outbox.INTAKE_STARTED)
+        client = _client()
+        out = StringIO()
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            call_command("deliver_intake_events", "--limit", "0", stdout=out)
+        client.start_workflow.assert_not_awaited()
+        assert "attempted=0" in out.getvalue() and "backlog=1" in out.getvalue()

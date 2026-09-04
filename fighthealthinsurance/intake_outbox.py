@@ -214,6 +214,46 @@ def deliver(row: Any) -> bool:
     return async_to_sync(adeliver)(row)
 
 
+# ----------------------------------------------------------- opt-in change --
+
+
+async def asignal_contact_opt_in(denial: Any) -> bool:
+    """Best-effort push of a CHANGED nudge opt-in to an already-started
+    intake journey. No outbox row, and never raises: a lost signal fails
+    SAFE, because the nudge activity independently gates on the RETAINED
+    raw_email before sending -- the journey's copy of the flag can only make
+    it skip, never send to someone who opted out. Only meaningful once the
+    intake_started event has been acknowledged (a journey may exist)."""
+    from fighthealthinsurance.models import IntakeJourneyEvent
+    from fighthealthinsurance.temporal_client import signal_intake_contact_opt_in
+
+    try:
+        if not _enabled():
+            return False
+        started = await IntakeJourneyEvent.objects.filter(
+            denial=denial, event_type=INTAKE_STARTED, acked_at__isnull=False
+        ).aexists()
+        if not started:
+            return False
+        await asyncio.wait_for(
+            signal_intake_contact_opt_in(
+                str(denial.uuid), bool((denial.raw_email or "").strip())
+            ),
+            timeout=RPC_TIMEOUT_SECONDS,
+        )
+        return True
+    except Exception:
+        logger.opt(exception=True).info(
+            f"intake outbox: contact_opt_in signal not delivered for denial "
+            f"{getattr(denial, 'uuid', '?')} (best-effort; fails safe)"
+        )
+        return False
+
+
+def signal_contact_opt_in(denial: Any) -> bool:
+    return async_to_sync(asignal_contact_opt_in)(denial)
+
+
 # ------------------------------------------------------------------ nudge --
 
 
@@ -263,7 +303,7 @@ def _unclaimed(now: datetime.datetime) -> Q:
     return Q(claimed_until__isnull=True) | Q(claimed_until__lte=now)
 
 
-def claim_batch(limit: int = 200) -> List[Tuple[int, uuid.UUID]]:
+def claim_batch(limit: Optional[int] = 200) -> List[Tuple[int, uuid.UUID]]:
     """Phase 1 of the relay: one SHORT locked transaction stamps a claim
     token + expiry on due, unclaimed (or claim-expired) pending rows and
     commits. SELECT ... FOR UPDATE SKIP LOCKED where the backend supports
@@ -271,6 +311,10 @@ def claim_batch(limit: int = 200) -> List[Tuple[int, uuid.UUID]]:
     call happens while this lock is held."""
     from fighthealthinsurance.models import IntakeJourneyEvent
 
+    if limit is not None and limit < 0:
+        raise ValueError(f"limit must be >= 0, got {limit}")
+    if limit == 0:
+        return []
     token = uuid.uuid4()
     now = timezone.now()
     with transaction.atomic():
@@ -286,7 +330,10 @@ def claim_batch(limit: int = 200) -> List[Tuple[int, uuid.UUID]]:
             qs = qs.select_for_update(skip_locked=True)
         elif connection.features.has_select_for_update:
             qs = qs.select_for_update()
-        pks = list(qs.values_list("pk", flat=True)[:limit])
+        pk_qs = qs.values_list("pk", flat=True)
+        if limit is not None:
+            pk_qs = pk_qs[:limit]
+        pks = list(pk_qs)
         if pks:
             IntakeJourneyEvent.objects.filter(pk__in=pks).update(
                 claimed_token=token,
@@ -396,9 +443,14 @@ def pending_stats() -> Tuple[int, float]:
     return pending.count(), max(age, 0.0)
 
 
-def sweep(limit: int = 200, time_budget: float = DEFAULT_TIME_BUDGET_SECONDS) -> dict:
+def sweep(
+    limit: Optional[int] = 200, time_budget: float = DEFAULT_TIME_BUDGET_SECONDS
+) -> dict:
     """One relay run: claim (short lock, commit), deliver (no lock), report.
-    Inert while the intake journey is dark."""
+    Inert while the intake journey is dark. ``limit=0`` is an empty run;
+    a negative limit is a caller error."""
+    if limit is not None and limit < 0:
+        raise ValueError(f"limit must be >= 0, got {limit}")
     counts: dict = {
         "attempted": 0,
         "delivered": 0,
