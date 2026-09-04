@@ -238,9 +238,20 @@ async def test_collision_never_resolved_defers_after_the_window():
         async with worker:
             await handle.signal(IntakeJourneyWorkflow.form_completed)
             result = await handle.result()
+            state = await handle.query(IntakeJourneyWorkflow.reconcile_state)
     assert result == "deferred"
+    # The guarantee, in logical (workflow) time: every postcondition check
+    # and every start attempt happened strictly inside the reconciliation
+    # window -- the final clamped sleep exits BEFORE another check, and the
+    # window is re-checked between a failed check and a start (review).
+    from datetime import datetime as _dt
+
+    until = _dt.fromisoformat(state["reconcile_until"])
+    assert state["check_times"], state
+    assert all(_dt.fromisoformat(t) < until for t in state["check_times"])
+    assert all(_dt.fromisoformat(t) < until for t in state["start_times"])
+    # Secondary: backoff 30s doubling to a 10m cap over 24h is ~148
+    # iterations, so the count stays bounded.
     checks = rec.calls.count(("postcondition", "u"))
-    # Backoff 30s doubling to a 10m cap over a 24h window: ~148 iterations,
-    # and the final clamped sleep exits BEFORE another check -- so the
-    # count is bounded, never one-extra past the deadline (review).
     assert 1 < checks <= 150
+    assert len(state["check_times"]) == checks

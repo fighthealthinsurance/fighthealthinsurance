@@ -196,39 +196,62 @@ class TestLeaseGovernsGenerators(_JourneyTestBase):
         assert generation_lease.acquire(denial, "journey:next").acquired
 
 
+class _Clock:
+    """A controllable lease clock: tests advance it between drafts instead
+    of racing wall-clock sleeps against a shrunk TTL (review)."""
+
+    def __init__(self):
+        import datetime as _dt
+
+        self._dt = _dt
+        self.offset = _dt.timedelta(0)
+
+    def now(self):
+        from django.utils import timezone
+
+        return timezone.now() + self.offset
+
+    def advance(self, seconds):
+        self.offset += self._dt.timedelta(seconds=seconds)
+
+
 class TestInteractiveLease(_JourneyTestBase):
-    """The public (interactive) path: steals at start, keeps the lease alive
-    across a long stream by extending on every saved draft, and releases it
-    when the stream finishes."""
+    """The public (interactive) path: steals at start, renews from the
+    moment of acquisition and on every saved draft, and releases when the
+    stream finishes. Driven by a controlled clock: every journey attempt
+    below is provably past the UNEXTENDED expiry and inside the extended
+    one."""
 
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
-    def test_interactive_run_extends_past_ttl_and_releases_at_end(self, mock_gen):
-        import json as _json
-        import time as _time
-
-        from fighthealthinsurance import common_view_logic
+    def test_interactive_run_extends_on_each_save_and_releases_at_end(
+        self, mock_gen
+    ):
         from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 
         denial = _make_denial(9211)
         email = "lease_9211@example.com"
+        clock = _Clock()
+        ttl = generation_lease.DEFAULT_TTL_SECONDS  # 300s, unchanged
         journey_attempts: list = []
 
-        def slow_make_appeals(*args, **kwargs):
+        def clocked_make_appeals(*args, **kwargs):
+            # Acquired at T0 (expires T0+ttl). First draft saved at T0+200
+            # extends to T0+500.
+            clock.advance(200)
             yield _drafts([LETTERS[0]])[0]
-            _time.sleep(2)
-            # Past the initial 3s steal window once the first save extended
-            # it; a journey arriving now must still be refused.
+            # T0+400: past the unextended expiry, inside the extended one.
+            clock.advance(200)
             journey_attempts.append(
                 generation_lease.acquire(denial, "journey:late").acquired
             )
-            yield _drafts([LETTERS[1]])[0]
-            _time.sleep(2)
+            yield _drafts([LETTERS[1]])[0]  # saved at T0+400 -> T0+700
+            clock.advance(200)  # T0+600: past T0+500, inside T0+700
             journey_attempts.append(
                 generation_lease.acquire(denial, "journey:later").acquired
             )
             yield _drafts([LETTERS[2]])[0]
 
-        mock_gen.make_appeals.side_effect = slow_make_appeals
+        mock_gen.make_appeals.side_effect = clocked_make_appeals
 
         async def drive():
             frames = 0
@@ -239,17 +262,76 @@ class TestInteractiveLease(_JourneyTestBase):
                     frames += 1
             return frames
 
-        with patch.object(generation_lease, "DEFAULT_TTL_SECONDS", 3):
+        with patch.object(generation_lease, "_now", clock.now):
             frames = async_to_sync(drive)()
-        assert frames >= 3
-        # Both mid-stream journey attempts were refused: without per-save
-        # extension the 3s steal would have lapsed before the second one.
-        assert journey_attempts == [False, False]
-        # Released at the end of the stream: a journey may now proceed.
-        assert generation_lease.acquire(denial, "journey:after").acquired
+            assert frames >= 3
+            # Both journey attempts fell in a window that only per-save
+            # extension keeps closed.
+            assert journey_attempts == [False, False]
+            assert ttl == 300
+            # Released at the end of the stream: a journey may now proceed.
+            assert generation_lease.acquire(denial, "journey:after").acquired
         assert (
             ProposedAppeal.objects.filter(for_denial=denial, speculative=False).count()
             == appeal_journey_core.TARGET_APPEALS
+        )
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_slow_first_draft_is_kept_alive_by_renewal_from_acquisition(
+        self, mock_gen
+    ):
+        """make_appeals can run past the TTL before its first draft. The
+        renewal task started at acquisition keeps the lease live across
+        that window, so the eventual first draft persists and a journey
+        arriving mid-wait is refused (review). Ordering is enforced by
+        events, not sleeps: each clock step waits for one renewal."""
+        import threading
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9214)
+        email = "lease_9214@example.com"
+        clock = _Clock()
+        renewed = threading.Event()
+        real_aextend = generation_lease.aextend
+
+        async def observed_aextend(denial_, epoch, ttl_seconds=None):
+            ok = await real_aextend(denial_, epoch, ttl_seconds)
+            if ok:
+                renewed.set()
+            return ok
+
+        journey_attempt: list = []
+
+        def slow_first_draft(*args, **kwargs):
+            # Three 200s steps = T0+600, twice the TTL, each step waiting
+            # for the renewal task to have extended the lease first.
+            for _ in range(3):
+                renewed.clear()
+                clock.advance(200)
+                assert renewed.wait(timeout=15), "renewal task never ran"
+            journey_attempt.append(
+                generation_lease.acquire(denial, "journey:midwait").acquired
+            )
+            yield _drafts([LETTERS[0]])[0]
+
+        mock_gen.make_appeals.side_effect = slow_first_draft
+
+        async def drive():
+            async for _chunk in AppealsBackendHelper.generate_appeals(
+                {"denial_id": denial.denial_id, "email": email, "semi_sekret": "sekret"}
+            ):
+                pass
+
+        with patch.object(generation_lease, "_now", clock.now), patch.object(
+            generation_lease, "EXTEND_INTERVAL_SECONDS", 0.05
+        ), patch.object(generation_lease, "aextend", observed_aextend):
+            async_to_sync(drive)()
+            assert journey_attempt == [False]
+            assert generation_lease.acquire(denial, "journey:after").acquired
+        assert (
+            ProposedAppeal.objects.filter(for_denial=denial, speculative=False).count()
+            == 1
         )
 
 

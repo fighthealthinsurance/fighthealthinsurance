@@ -2943,6 +2943,13 @@ class AppealsBackendHelper:
                 yield chunk
         finally:
             await agen.aclose()
+            extender = lease_ref.get("extender")
+            if extender is not None:
+                extender.cancel()
+                try:
+                    await extender
+                except (asyncio.CancelledError, Exception):
+                    pass
             if lease_ref.get("denial") is not None and lease_ref.get("epoch"):
                 try:
                     await generation_lease.arelease(
@@ -3072,6 +3079,42 @@ class AppealsBackendHelper:
                 lease_epoch = stolen.epoch
                 lease_ref["denial"] = denial
                 lease_ref["epoch"] = stolen.epoch
+
+                async def _keep_interactive_lease(epoch: int) -> None:
+                    # Renew from the moment of acquisition, not the first
+                    # insert: make_appeals can run past the TTL before its
+                    # first draft, and an expired lease would let a journey
+                    # supersede a live human (review). A renewal matching
+                    # zero rows means we were superseded; persistent DB
+                    # failure is treated the same way rather than writing
+                    # under a lease we cannot prove we hold.
+                    nonlocal superseded
+                    failures = 0
+                    while True:
+                        await asyncio.sleep(generation_lease.EXTEND_INTERVAL_SECONDS)
+                        try:
+                            renewed = await generation_lease.aextend(denial, epoch)
+                        except Exception:
+                            failures += 1
+                            logger.opt(exception=True).warning(
+                                f"[gen_id={generation_id}] lease renewal failed "
+                                f"({failures}) for denial {denial_id}"
+                            )
+                            if failures < 3:
+                                continue
+                            renewed = False
+                        if not renewed:
+                            superseded = True
+                            logger.info(
+                                f"[gen_id={generation_id}] interactive lease no "
+                                f"longer held for denial {denial_id}; stopping"
+                            )
+                            return
+                        failures = 0
+
+                lease_ref["extender"] = asyncio.create_task(
+                    _keep_interactive_lease(stolen.epoch)
+                )
             except Exception:
                 # Never let a lease hiccup stop a human: run un-leased.
                 logger.opt(exception=True).warning(

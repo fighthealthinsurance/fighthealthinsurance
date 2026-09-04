@@ -33,6 +33,17 @@ from django.utils import timezone
 
 DEFAULT_TTL_SECONDS = 300  # generation budget (240s) + drain margin
 
+# Interval at which a live holder renews its lease, from the moment of
+# acquisition (a model call can run several minutes before its first draft,
+# longer than the TTL, so renewal cannot wait for the first insert).
+EXTEND_INTERVAL_SECONDS = 10.0
+
+
+def _now():
+    """The lease clock. Indirected so tests can drive expiry deterministically
+    instead of racing wall-clock sleeps against a shrunk TTL."""
+    return timezone.now()
+
 
 @dataclass(frozen=True)
 class Lease:
@@ -61,7 +72,7 @@ def acquire(
 
     if ttl_seconds is None:
         ttl_seconds = DEFAULT_TTL_SECONDS
-    now = timezone.now()
+    now = _now()
     until = now + timedelta(seconds=ttl_seconds)
     with transaction.atomic():
         row = (
@@ -105,7 +116,7 @@ def extend(denial, epoch: int, ttl_seconds: Optional[int] = None) -> bool:
 
     if ttl_seconds is None:
         ttl_seconds = DEFAULT_TTL_SECONDS
-    now = timezone.now()
+    now = _now()
     return bool(
         AppealGenerationLease.objects.filter(
             for_denial=denial,
@@ -134,7 +145,7 @@ def assert_holds(denial, epoch: int) -> None:
         .filter(for_denial=denial)
         .first()
     )
-    if row is None or row.epoch != epoch or row.expires_at <= timezone.now():
+    if row is None or row.epoch != epoch or row.expires_at <= _now():
         held = "none" if row is None else f"epoch {row.epoch}"
         raise LeaseSuperseded(f"epoch {epoch} does not hold the lease ({held})")
 
@@ -146,7 +157,7 @@ def release(denial, epoch: int) -> bool:
 
     return bool(
         AppealGenerationLease.objects.filter(for_denial=denial, epoch=epoch).update(
-            expires_at=timezone.now()
+            expires_at=_now()
         )
     )
 

@@ -64,6 +64,13 @@ class IntakeJourneyWorkflow:
         self._step: str = STEP_STARTED
         self._completed: bool = False
         self._contact_opt_in: bool = False
+        # Reconciliation bookkeeping (logical workflow time, ISO strings),
+        # exposed by the reconcile_state query so operators -- and tests --
+        # can see that every check and start attempt stayed inside the
+        # window. Bounded by the window arithmetic (~150 entries).
+        self._reconcile_until: str = ""
+        self._check_times: list = []
+        self._start_times: list = []
 
     @workflow.signal
     def step_reached(self, step: str) -> None:
@@ -82,6 +89,14 @@ class IntakeJourneyWorkflow:
     @workflow.query
     def journey_state(self) -> dict:
         return {"step": self._step, "completed": self._completed}
+
+    @workflow.query
+    def reconcile_state(self) -> dict:
+        return {
+            "reconcile_until": self._reconcile_until,
+            "check_times": list(self._check_times),
+            "start_times": list(self._start_times),
+        }
 
     @workflow.run
     async def run(self, journey: IntakeJourneyInput) -> str:
@@ -136,6 +151,7 @@ class IntakeJourneyWorkflow:
         # retake ownership if that run closes short of the target.
         delay = RECONCILE_INITIAL_DELAY
         reconcile_until = workflow.now() + RECONCILE_FOR
+        self._reconcile_until = reconcile_until.isoformat()
         while True:
             # Never sleep past the window, and give up BEFORE doing any
             # more work once it has elapsed (review).
@@ -146,6 +162,7 @@ class IntakeJourneyWorkflow:
             delay = min(delay * 2, RECONCILE_MAX_DELAY)
             if workflow.now() >= reconcile_until:
                 break
+            self._check_times.append(workflow.now().isoformat())
             satisfied = await workflow.execute_activity(
                 intake_activities.check_generation_postcondition,
                 args=[journey.hashed_email, journey.denial_uuid],
@@ -154,6 +171,13 @@ class IntakeJourneyWorkflow:
             )
             if satisfied:
                 return "completed"
+            # The check itself takes time (its activity timeout is a
+            # minute, with retries): re-check the window before starting
+            # generation, so a child can never be started outside it
+            # (review).
+            if workflow.now() >= reconcile_until:
+                break
+            self._start_times.append(workflow.now().isoformat())
             if await self._start_generation(journey):
                 return "completed"
         workflow.logger.warning(
