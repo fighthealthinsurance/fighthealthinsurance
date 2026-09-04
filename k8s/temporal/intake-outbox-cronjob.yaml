@@ -20,6 +20,10 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
+      # Hard ceiling on one run: the command stops STARTING rows after its
+      # ~240s budget and every Temporal call carries a ~15s timeout, so no
+      # single call and no long backlog can consume the job's lifetime.
+      activeDeadlineSeconds: 300
       ttlSecondsAfterFinished: 600
       template:
         metadata:

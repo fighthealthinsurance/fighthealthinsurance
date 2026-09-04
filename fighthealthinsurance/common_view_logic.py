@@ -2734,37 +2734,33 @@ class DenialCreatorHelper:
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
     ):
-        if plan_documents is not None:
-            for plan_document in plan_documents:
-                pd = PlanDocuments.objects.create(
-                    plan_document_enc=plan_document, denial=denial
-                )
-                pd.save()
-
-        if health_history is not None:
-            denial.health_history = health_history
-        if include_provided_health_history_in_appeal is not None:
-            denial.include_provided_health_history_in_appeal = (
-                include_provided_health_history_in_appeal
-            )
-        if health_history_anonymized is not None:
-            denial.health_history_anonymized = health_history_anonymized
-        # Durable intake journey (dark until TEMPORAL_INTAKE_JOURNEY_ENABLED).
-        # The intent stamp rides the SAME save as the form data, so the two
-        # commit together; delivery is then attempted Temporal-first, and a
-        # failure leaves intent-without-ack for the sweep to repair. The
-        # journey can never break the user-facing flow either way. Opt-in
-        # for the nudge = store_raw_email, observable here as a retained
-        # raw_email.
         from django.db import transaction as _transaction
 
         from fighthealthinsurance import intake_outbox
 
-        # The intent row commits WITH the form data (one transaction); a
-        # failed intent insert fails the mutation, which is the correct
-        # contract -- the alternative is a silent gap. Everything after the
-        # commit lives behind deliver()'s exception boundary.
+        # ONE transaction for the whole intake mutation: the plan documents,
+        # the denial update, and the intake_started intent (dark until
+        # TEMPORAL_INTAKE_JOURNEY_ENABLED) commit together or not at all. A
+        # failed intent insert fails the mutation -- the correct contract; the
+        # alternative is a silent gap in the durable journey (external
+        # review). Delivery happens AFTER the commit, behind deliver()'s
+        # exception boundary, so the journey can never break the user-facing
+        # flow. Opt-in for the nudge = store_raw_email, observable as a
+        # retained raw_email.
         with _transaction.atomic():
+            if plan_documents is not None:
+                for plan_document in plan_documents:
+                    PlanDocuments.objects.create(
+                        plan_document_enc=plan_document, denial=denial
+                    )
+            if health_history is not None:
+                denial.health_history = health_history
+            if include_provided_health_history_in_appeal is not None:
+                denial.include_provided_health_history_in_appeal = (
+                    include_provided_health_history_in_appeal
+                )
+            if health_history_anonymized is not None:
+                denial.health_history_anonymized = health_history_anonymized
             denial.save()
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:
@@ -3078,6 +3074,20 @@ class AppealsBackendHelper:
             "primary_professional__user",
         )
         denial = await denial_query.aget()
+        if not background:
+            # Form completed: the durable intent is recorded the moment the
+            # authenticated lookup succeeds -- before any yield, enrichment,
+            # research, RAG, or reserve logic can crash and make a completed
+            # user look abandoned (external review). One short transaction
+            # (an INSERT-or-get); delivery is best-effort behind adeliver's
+            # exception boundary and the relay repairs anything that fails.
+            from fighthealthinsurance import intake_outbox
+
+            form_intent = await intake_outbox.arecord_intent(
+                denial, intake_outbox.FORM_COMPLETED
+            )
+            if form_intent is not None:
+                await intake_outbox.adeliver(form_intent)
         if not background:
             # A live human outranks any background generator: STEAL the
             # denial's generation lease so a journey attempt in flight sees
@@ -4389,20 +4399,8 @@ class AppealsBackendHelper:
                 result["save_failed"] = True
             return result
 
-        # Form completed: record the intent and tell the intake journey
-        # BEFORE generation starts. Signalling only at the end meant a
-        # crash mid-generation looked like the user abandoning the form
-        # (wrong nudge, no background generation). Intent is one atomic
-        # UPDATE; a failed delivery leaves it pending for the sweep. Skipped
-        # for the journey's own background child (external review).
-        if not background:
-            from fighthealthinsurance import intake_outbox
-
-            intent = await intake_outbox.arecord_intent(
-                denial, intake_outbox.FORM_COMPLETED
-            )
-            if intent is not None:
-                await intake_outbox.adeliver(intent)
+        # (The form_completed intake event was recorded right after the
+        # authenticated denial lookup at the top of this generator.)
 
         # Yield status: generating appeals
         yield json.dumps(

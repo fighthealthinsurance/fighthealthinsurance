@@ -2793,18 +2793,35 @@ class IntakeJourneyEvent(models.Model):
     because a full-row ``denial.save()`` from a stale instance would write
     stale values over timestamps another request set (external review).
 
-    ``nudge_sent`` doubles as the single-shot claim for the abandonment
-    email: the unique constraint IS the claim. Timestamps, a counter and an
-    exception TYPE NAME only -- never case content (data protection).
+    ``nudge_claimed`` is the single-shot claim for the abandonment email:
+    the unique constraint IS the claim, and ``outcome`` records what the
+    claimant did with it. Timestamps, a counter and an exception TYPE NAME
+    only -- never case content (data protection).
+
+    Relay claims are two-phase (external review): a short locked
+    transaction stamps ``claimed_token``/``claimed_until``, and the Temporal
+    call happens with no database lock held; the ack is conditional on the
+    token, so a lost or expired claim can never ack another relay's work.
     """
 
     INTAKE_STARTED = "intake_started"
     FORM_COMPLETED = "form_completed"
-    NUDGE_SENT = "nudge_sent"
+    NUDGE_CLAIMED = "nudge_claimed"
     EVENT_CHOICES = [
         (INTAKE_STARTED, "Intake started"),
         (FORM_COMPLETED, "Form completed"),
-        (NUDGE_SENT, "Abandonment nudge sent"),
+        (NUDGE_CLAIMED, "Abandonment nudge claimed"),
+    ]
+
+    OUTCOME_CLAIMED = "claimed"
+    OUTCOME_SKIPPED_COMPLETED = "skipped_completed"
+    OUTCOME_SENT = "sent"
+    OUTCOME_SMTP_FAILED = "smtp_failed"
+    OUTCOME_CHOICES = [
+        (OUTCOME_CLAIMED, "Claimed"),
+        (OUTCOME_SKIPPED_COMPLETED, "Skipped: form completed"),
+        (OUTCOME_SENT, "Sent"),
+        (OUTCOME_SMTP_FAILED, "SMTP failed"),
     ]
 
     denial = models.ForeignKey(
@@ -2818,6 +2835,15 @@ class IntakeJourneyEvent(models.Model):
     last_error_at = models.DateTimeField(null=True, blank=True)
     # Exception type name only (sanitized); the detail lives in worker logs.
     last_error = models.CharField(max_length=128, blank=True, default="")
+    # Relay claim (deliverable events): who holds this row and until when.
+    claimed_token = models.UUIDField(null=True, blank=True)
+    claimed_until = models.DateTimeField(null=True, blank=True)
+    # Nudge bookkeeping (nudge_claimed rows only).
+    attempted_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    outcome = models.CharField(
+        max_length=24, choices=OUTCOME_CHOICES, blank=True, default=""
+    )
 
     class Meta:
         constraints = [

@@ -13,6 +13,15 @@ class FightHealthInsuranceConfig(AppConfig):
 
         register_pool_stats_collector()
 
+        # Intake outbox backlog gauges on the same endpoint (zero-cost while
+        # nothing is pending; degrades to a log line if the table is not
+        # migrated yet).
+        from fighthealthinsurance.intake_outbox_metrics import (
+            register_intake_outbox_collector,
+        )
+
+        register_intake_outbox_collector()
+
         # Soft-fail visibility for IP geo lookups (chat state guessing +
         # ASN tracking): warn once, naming FHI_GEOIP_CITY_DB, when they are
         # disabled — otherwise the features silently return nothing.

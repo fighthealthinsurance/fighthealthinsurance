@@ -304,7 +304,11 @@ def dispatch_fax_send(
 
 
 async def signal_with_start_intake(
-    hashed_email: str, denial_uuid: str, contact_opt_in: bool, event: str
+    hashed_email: str,
+    denial_uuid: str,
+    contact_opt_in: bool,
+    event: str,
+    client: Any = None,
 ) -> None:
     """Start-or-signal the intake journey for a denial, atomically.
 
@@ -328,7 +332,10 @@ async def signal_with_start_intake(
 
     from fighthealthinsurance.workflows.types import IntakeJourneyInput
 
-    client = await get_temporal_client()
+    # The relay passes ONE client for a whole batch; the request path opens
+    # its own for a single delivery.
+    if client is None:
+        client = await get_temporal_client()
     workflow_id = f"intake-{denial_uuid}"
     payload = IntakeJourneyInput(
         hashed_email=hashed_email,
