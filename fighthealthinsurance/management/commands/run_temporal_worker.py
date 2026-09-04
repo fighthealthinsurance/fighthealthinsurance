@@ -104,7 +104,6 @@ class Command(BaseCommand):
         )
         from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 
-        task_queue = options.get("task_queue") or settings.TEMPORAL_TASK_QUEUE
         max_workers = options.get("max_workers") or getattr(
             settings, "TEMPORAL_MAX_ACTIVITY_WORKERS", 20
         )
@@ -115,6 +114,17 @@ class Command(BaseCommand):
             raise CommandError(
                 f"TEMPORAL_WORKER_QUEUES={role!r}: expected one of {QUEUE_ROLES}"
             )
+        # --task-queue overrides the queue of the SELECTED role: for the fax
+        # role (or 'all') it replaces the fax queue as before; for the appeal
+        # role it replaces the appeal queue, instead of silently setting a fax
+        # queue that role never polls (review).
+        queue_override = options.get("task_queue")
+        task_queue = (
+            queue_override if role != "appeal" and queue_override else None
+        ) or settings.TEMPORAL_TASK_QUEUE
+        appeal_queue = (
+            queue_override if role == "appeal" and queue_override else None
+        ) or settings.TEMPORAL_APPEAL_TASK_QUEUE
 
         from typing import Any as _Any, Callable, List
 
@@ -152,6 +162,10 @@ class Command(BaseCommand):
                     workflows=fax_workflows,
                     activities=fax_activity_fns,
                     activity_executor=activity_executor,
+                    # Match the slot count to the thread executor: with more
+                    # slots than threads, accepted activities queue locally
+                    # while their start-to-close clock runs (review).
+                    max_concurrent_activities=max_workers,
                     # Kubernetes sends SIGTERM at pod shutdown; a running
                     # send_fax_via_vendor attempt may legitimately spend up
                     # to its 30-minute start_to_close in vendor backends
@@ -175,7 +189,6 @@ class Command(BaseCommand):
                 # thread executor and its concurrency is bounded separately
                 # (low and explicit: current letter volume is small, and a
                 # small bound is most of the blast-radius story).
-                appeal_queue = settings.TEMPORAL_APPEAL_TASK_QUEUE
                 appeal_workflows: List[type] = [GenerateAppealWorkflow]
                 appeal_activity_fns = [
                     journey_activities.precheck_appeal_journey,

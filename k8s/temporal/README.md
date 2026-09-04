@@ -157,6 +157,19 @@ back to plain TLS.
    (`launch_polling_actors --force` relaunch excludes it under Temporal, but
    does not kill a live one).
 
+5. **Worker observability (review-9)** — before relying on the alert
+   rules in `worker-alerts.yaml`, verify against the LIVE Prometheus:
+   the PodMonitor selector actually produces `up{pod=~"fhi-(fax|appeal)-worker-.*"}`
+   targets (operator `podMonitorSelector` caveat), kube-state-metrics is
+   scraped (`kube_deployment_status_replicas_available`), the SDK series
+   carry `namespace="default"` (the Temporal namespace, not the Kubernetes
+   one), and every SERVER-side metric name in the `fhi-temporal-server-side`
+   group exists on the deployed Temporal server version (`approximate_backlog_count`,
+   `task_schedule_to_start_latency`, `activity_timeout`) with the units the
+   thresholds assume. Worker-side series vanish when the last worker dies,
+   so only the worker-loss and server-side rules can page on "zero workers";
+   promote their severity once verified.
+
 ## Applying a values.yaml change
 
 Editing `values.yaml` does **not** change anything by itself, and neither does

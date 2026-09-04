@@ -214,3 +214,90 @@ def test_worker_manifests_are_redundant_and_scraped():
     build = (root / "scripts" / "build.sh").read_text()
     for manifest in ("worker-pdb.yaml", "worker-podmonitor.yaml", "worker-alerts.yaml"):
         assert f"k8s/temporal/{manifest}" in build, f"build.sh must apply {manifest}"
+
+
+def _run_with_options(options, **flags):
+    """Like _run_with but with arbitrary command options (task_queue etc.)."""
+    from django.test import override_settings
+    from unittest.mock import AsyncMock, Mock
+
+    worker_cls = _recording_worker_cls()
+    settings = dict(
+        TEMPORAL_ENABLED=True,
+        TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
+        TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
+        TEMPORAL_TASK_QUEUE="q-fax",
+        TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
+        TEMPORAL_HOST="test-host",
+        TEMPORAL_NAMESPACE="test-ns",
+    )
+    settings.update(flags)
+    with (
+        patch("temporalio.worker.Worker", worker_cls),
+        patch(
+            "fighthealthinsurance.temporal_client.get_temporal_client",
+            AsyncMock(return_value=Mock()),
+        ),
+        override_settings(**settings),
+    ):
+        asyncio.run(asyncio.wait_for(Command()._run(options), timeout=2))
+    return [c.kwargs for c in worker_cls.call_args_list]
+
+
+def test_task_queue_override_applies_to_the_selected_role():
+    """--task-queue must override the queue the selected role actually
+    polls; for the appeal role it previously set a fax queue that role
+    never used (review)."""
+    fax = _run_with_options({"queues": "fax", "task_queue": "custom"})
+    assert [k["task_queue"] for k in fax] == ["custom"]
+    appeal = _run_with_options({"queues": "appeal", "task_queue": "custom"})
+    assert [k["task_queue"] for k in appeal] == ["custom"]
+    both = _run_with_options({"queues": "all", "task_queue": "custom"})
+    assert [k["task_queue"] for k in both] == ["custom", "q-appeal"]
+
+
+def test_fax_worker_slots_match_the_thread_executor():
+    """More activity slots than executor threads would let accepted
+    activities queue locally while their start-to-close clock runs."""
+    kwargs = _run_with_options({"queues": "fax", "max_workers": 7})
+    assert kwargs[0]["max_concurrent_activities"] == 7
+
+
+def test_alert_rules_use_the_workers_temporal_namespace_and_cover_worker_loss():
+    """Review-9: rules filtered on the Kubernetes namespace could never match
+    SDK series (which carry the Temporal namespace, 'default'); and worker-
+    side series vanish with the last worker, so worker-loss must be alerted
+    from scrape/kube-state data and server-side metrics."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    tdir = root / "k8s" / "temporal"
+    configured = set()
+    for name in ("worker.yaml", "appeal-worker.yaml"):
+        text = (tdir / name).read_text()
+        m = re.search(r'name: TEMPORAL_NAMESPACE\s*\n\s*value: "([^"]+)"', text)
+        assert m, f"{name} must pin TEMPORAL_NAMESPACE"
+        configured.add(m.group(1))
+    assert len(configured) == 1
+    (ns,) = configured
+
+    rules = (tdir / "worker-alerts.yaml").read_text()
+    # Every Temporal-namespace matcher in a PromQL expr must be the configured
+    # one; the Kubernetes namespace may only appear as a kube_* label or in
+    # the manifest's own metadata.
+    exprs = re.findall(r"expr:\s*>-\s*\n((?:\s{12}.*\n)+)", rules)
+    assert exprs, "no rule expressions parsed"
+    for expr in exprs:
+        for label_ns in re.findall(r'(?<!kube_)\bnamespace="([^"]+)"', expr):
+            if "kube_deployment" in expr:
+                continue  # kube-state label: Kubernetes namespace is correct
+            assert label_ns == ns, f"rule filters on Temporal namespace {label_ns!r}, workers use {ns!r}"
+    for needle in (
+        "absent(up{",
+        "kube_deployment_status_replicas_available",
+        "approximate_backlog_count",
+        "FhiTemporalFaxWorkerAbsent",
+        "FhiTemporalAppealWorkerAbsent",
+    ):
+        assert needle in rules, f"worker-loss/server-side coverage missing: {needle}"
