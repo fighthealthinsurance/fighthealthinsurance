@@ -4253,7 +4253,7 @@ class AppealsBackendHelper:
                     f"denial {denial_id}: no generation lease held"
                 )
                 if appeal_text:
-                    served_texts.add(str(appeal_text).strip())
+                    served_keys.add(_served_key(appeal_text))
                 return {
                     "id": "unknown",
                     "content": appeal_text,
