@@ -8,14 +8,25 @@ Activities are synchronous (blocking ORM + vendor I/O), so they run in a
 Run it as its own process / Kubernetes Deployment::
 
     python manage.py run_temporal_worker
+
+``--queues`` (or ``TEMPORAL_WORKER_QUEUES``) selects which queue(s) this
+process hosts, so fax and appeal work can run as SEPARATE Deployments and
+share no failure domain: appeal-generation memory/CPU pressure or an appeal
+crash-loop must never take fax sending down with it (external review).
+``all`` (the default) keeps the single-process shape for dev and small
+installs.
 """
 
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from typing import Any
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+
+QUEUE_ROLES = ("fax", "appeal", "all")
 
 
 class Command(BaseCommand):
@@ -34,6 +45,15 @@ class Command(BaseCommand):
             help=(
                 "Max activity threads (defaults to "
                 "settings.TEMPORAL_MAX_ACTIVITY_WORKERS)."
+            ),
+        )
+        parser.add_argument(
+            "--queues",
+            choices=QUEUE_ROLES,
+            default=None,
+            help=(
+                "Which queue(s) this process hosts: 'fax', 'appeal', or "
+                "'all'. Defaults to TEMPORAL_WORKER_QUEUES, else 'all'."
             ),
         )
 
@@ -61,6 +81,13 @@ class Command(BaseCommand):
         max_workers = options.get("max_workers") or getattr(
             settings, "TEMPORAL_MAX_ACTIVITY_WORKERS", 20
         )
+        role = (
+            options.get("queues") or os.environ.get("TEMPORAL_WORKER_QUEUES") or "all"
+        ).lower()
+        if role not in QUEUE_ROLES:
+            raise CommandError(
+                f"TEMPORAL_WORKER_QUEUES={role!r}: expected one of {QUEUE_ROLES}"
+            )
 
         from typing import Any as _Any, Callable, List
 
@@ -82,26 +109,43 @@ class Command(BaseCommand):
         client = await get_temporal_client()
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
-            f"(namespace={settings.TEMPORAL_NAMESPACE}); appeal journey "
-            f"{'ENABLED' if journey_enabled else 'disabled'}"
+            f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
+            f"journey {'ENABLED' if journey_enabled else 'disabled'}"
         )
 
         with ThreadPoolExecutor(max_workers=max_workers) as activity_executor:
-            fax_worker = Worker(
-                client,
-                task_queue=task_queue,
-                workflows=fax_workflows,
-                activities=fax_activity_fns,
-                activity_executor=activity_executor,
-            )
-            runs = [fax_worker.run()]
-            queues = [task_queue]
-            if journey_enabled:
+            runs = []
+            queues = []
+            if role in ("fax", "all"):
+                fax_worker = Worker(
+                    client,
+                    task_queue=task_queue,
+                    workflows=fax_workflows,
+                    activities=fax_activity_fns,
+                    activity_executor=activity_executor,
+                    # Kubernetes sends SIGTERM at pod shutdown; a running
+                    # send_fax_via_vendor attempt may legitimately spend up
+                    # to its 30-minute start_to_close in vendor backends
+                    # (~1300s each), and killing it mid-send risks the
+                    # vendor delivering a fax whose result we lost -- the
+                    # exact double-send the fax rule forbids. Drain covers
+                    # the full activity bound; when nothing is running,
+                    # shutdown is immediate, so rollouts only wait when a
+                    # fax is actually in flight (review).
+                    # terminationGracePeriodSeconds in the manifest must
+                    # exceed this.
+                    graceful_shutdown_timeout=timedelta(minutes=30),
+                )
+                runs.append(fax_worker.run())
+                queues.append(task_queue)
+            if role in ("appeal", "all") and journey_enabled:
                 # The journey runs on its OWN task queue and worker: several
                 # slow appeal generations must never occupy the fax worker's
                 # activity slots (separate failure domain; PR #963 review).
                 # Its activities are asyncio activities, so it needs no
-                # thread executor and its concurrency is bounded separately.
+                # thread executor and its concurrency is bounded separately
+                # (low and explicit: current letter volume is small, and a
+                # small bound is most of the blast-radius story).
                 appeal_queue = settings.TEMPORAL_APPEAL_TASK_QUEUE
                 appeal_workflows: List[type] = [GenerateAppealWorkflow]
                 appeal_activity_fns = [
@@ -120,9 +164,26 @@ class Command(BaseCommand):
                     workflows=appeal_workflows,
                     activities=appeal_activity_fns,
                     max_concurrent_activities=4,
+                    # Longer than the fax worker's: a generation attempt owns
+                    # a GENERATION_BUDGET_SECONDS (240s) model-call window and
+                    # cancelling it cooperatively takes time to drain.
+                    graceful_shutdown_timeout=timedelta(seconds=300),
                 )
                 runs.append(appeal_worker.run())
                 queues.append(appeal_queue)
+            if not runs:
+                # role=appeal with the journey flags dark. Idle instead of
+                # exiting: an exit would crash-loop the Deployment, but this
+                # pod being inert IS the kill switch working -- flipping the
+                # flags and restarting the Deployment brings it live.
+                self.stdout.write(
+                    "Appeal worker role selected but the appeal journey flags "
+                    "are OFF; idling (this process will host nothing until "
+                    "TEMPORAL_ENABLED and TEMPORAL_APPEAL_JOURNEY_ENABLED are "
+                    "set and the process restarts)."
+                )
+                await asyncio.Event().wait()
+                return
             self.stdout.write(
                 f"Starting Temporal worker(s) on task queue(s) "
                 f"{', '.join(repr(q) for q in queues)} "
