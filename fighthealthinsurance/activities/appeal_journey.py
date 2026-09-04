@@ -132,7 +132,16 @@ async def check_generation_postcondition(hashed_email: str, denial_uuid: str) ->
     than assume after a child-start collision (external review). Missing
     denial -> False: the caller's child start then reaches precheck, which
     ends that path terminally."""
-    denial = await aload_denial(hashed_email, denial_uuid)
-    if denial is None:
-        return False
-    return bool(await acheck_generation_postcondition(denial))
+    # Same wrapper as the other ORM activities: refresh connections at entry
+    # (a long-lived worker can hold a server-closed one between attempts) and
+    # classify schema/validation failures as non-retryable, so they fail fast
+    # instead of burning the reconciliation loop's bookkeeping retries
+    # (review). Operational database errors stay retryable.
+    await _aclose_old_connections()
+    try:
+        denial = await aload_denial(hashed_email, denial_uuid)
+        if denial is None:
+            return False
+        return bool(await acheck_generation_postcondition(denial))
+    except _NON_RETRYABLE_ERRORS as e:
+        raise _non_retryable(e, denial_uuid) from None

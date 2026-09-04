@@ -4238,15 +4238,16 @@ class AppealsBackendHelper:
             await asyncio.sleep(0)
             id = "unknown"
             save_failed = False
-            if lease_unavailable:
-                # This run never obtained an epoch (the steal raised twice).
-                # Persisting would create a durable draft nobody can prove
-                # ownership of, beside whatever the real lease holder is
-                # writing -- exactly the concurrency the lease prevents. The
-                # letter still streams, flagged unsaved; generation
-                # continues, since the user losing every remaining draft
-                # would be a worse outcome than losing durability for this
-                # run (external review).
+            if lease_unavailable or lease_epoch is None:
+                # No epoch, no durable row -- whatever the reason: the
+                # interactive steal raised twice (lease_unavailable), or a
+                # caller drove generation without one. Persisting would
+                # create a draft nobody can prove ownership of, beside
+                # whatever the real lease holder is writing, which is
+                # exactly the concurrency the lease prevents (external
+                # review). The letter still streams, flagged unsaved, and
+                # generation continues: losing every remaining draft would
+                # be a worse outcome than losing durability for this run.
                 logger.warning(
                     f"[gen_id={generation_id}] not persisting a draft for "
                     f"denial {denial_id}: no generation lease held"

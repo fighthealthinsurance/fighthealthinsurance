@@ -72,14 +72,18 @@ def acquire(
 
     if ttl_seconds is None:
         ttl_seconds = DEFAULT_TTL_SECONDS
-    now = _now()
-    until = now + timedelta(seconds=ttl_seconds)
     with transaction.atomic():
         row = (
             AppealGenerationLease.objects.select_for_update()
             .filter(for_denial=denial)
             .first()
         )
+        # The clock is read AFTER the row lock, never before: waiting on
+        # select_for_update can itself cross the expiry, which would make a
+        # stale `now` refuse a lease that has since expired -- or, when
+        # stealing, write an expiry already in the past (external review).
+        now = _now()
+        until = now + timedelta(seconds=ttl_seconds)
         if row is None:
             try:
                 with transaction.atomic():
@@ -92,12 +96,15 @@ def acquire(
                     )
                 return Lease(True, 1, until)
             except IntegrityError:
-                # Lost the first-use race; fall through to the locked row.
+                # Lost the first-use race; fall through to the locked row,
+                # re-reading the clock after that second lock as well.
                 row = (
                     AppealGenerationLease.objects.select_for_update()
                     .filter(for_denial=denial)
                     .get()
                 )
+                now = _now()
+                until = now + timedelta(seconds=ttl_seconds)
         if row.expires_at > now and not steal:
             return Lease(False, row.epoch, row.deadline)
         row.holder = holder

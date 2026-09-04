@@ -506,3 +506,25 @@ class TestInteractiveFencing(_JourneyTestBase):
         assert (
             ProposedAppeal.objects.filter(for_denial=denial).count() == 0
         ), "a draft was persisted without a generation lease"
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_background_run_without_an_epoch_persists_nothing(self, mock_gen):
+        """No epoch, no durable row -- whatever the reason. A background
+        caller that drives generation without a lease must not slip past the
+        fence the way a failed interactive steal cannot (review)."""
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9215)
+        mock_gen.make_appeals.return_value = iter(_drafts([LETTERS[0]]))
+
+        async def drive():
+            # background=True, lease_epoch left unset: the internal entry
+            # point's default, which the journey never uses but a future
+            # caller might.
+            async for _chunk in AppealsBackendHelper.generate_appeals_for_denial(
+                denial
+            ):
+                pass
+
+        async_to_sync(drive)()
+        assert ProposedAppeal.objects.filter(for_denial=denial).count() == 0
