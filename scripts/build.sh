@@ -151,6 +151,27 @@ envsubst < k8s/temporal/appeal-worker.yaml | kubectl apply -f -
 # pre-fingerprint writer is left, so the "run again after old pods drain"
 # step is enforced by the deploy, not by a README. Jobs are immutable:
 # delete the previous run before applying.
+#
+# ROLLOUT GATE (external review): a strict pass that runs while ANY pod on
+# pre-fingerprint code can still handle a request proves nothing -- two quiet
+# scans succeed, then an idle old pod inserts a NULL fingerprint or edits text
+# under a stale one. So wait for every ProposedAppeal writer to finish rolling
+# (rollout status returns only after new replicas are available AND the old
+# ReplicaSet's pods are gone): the web Deployment, both Temporal workers, and
+# the Ray cluster (its SpeculativeAppealsActor writes speculative drafts; the
+# cluster was deleted + recreated above, so readiness of the new pods means the
+# old ones are gone). A rollout that does not finish fails the deploy here
+# rather than letting the Job run against a mixed fleet.
+for dep in web fhi-fax-worker fhi-appeal-worker; do
+  if kubectl -n totallylegitco get deployment "$dep" >/dev/null 2>&1; then
+    kubectl -n totallylegitco rollout status deployment "$dep" --timeout=15m \
+      || { echo "Rollout of $dep did not complete; not running the fingerprint backfill Job"; exit 1; }
+  else
+    echo "Deployment $dep not present; skipping rollout wait"
+  fi
+done
+kubectl -n totallylegitco wait --for=condition=Ready pod -l ray.io/cluster=raycluster-kuberay --timeout=15m \
+  || { echo "Ray cluster pods not Ready; not running the fingerprint backfill Job"; exit 1; }
 kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
 envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
 

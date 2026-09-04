@@ -115,3 +115,55 @@ def run_backfill(ProposedAppeal: Any) -> dict:
     ).count()
     logger.info(f"appeal fingerprint backfill: {counts}")
     return counts
+
+
+REKEYED = "rekeyed"
+MISMATCH_DUPLICATE = "mismatch_duplicate"
+
+
+def verify_fingerprints(ProposedAppeal: Any) -> dict:
+    """Integrity pass: every un-chosen fingerprinted row must satisfy
+    ``text_fingerprint == fingerprint_text(appeal_text)``.
+
+    NULL checks alone cannot prove the invariant during a rollout: a pod
+    still on pre-fingerprint code can EDIT text under a fingerprint that
+    no longer matches it (external review). Such rows are re-keyed with the
+    same observed-text-guarded conditional update ``fill_row`` uses; a
+    re-key that would collide with a twin is left as-is and counted as
+    ``mismatch_duplicate`` (it is a duplicate now). Returns counters; a
+    non-zero ``rekeyed`` is proof an old writer touched the table.
+    """
+    counts = {REKEYED: 0, MISMATCH_DUPLICATE: 0, "checked": 0}
+    qs = (
+        ProposedAppeal.objects.filter(text_fingerprint__isnull=False, chosen=False)
+        .order_by("id")
+        .only("id", "appeal_text", "text_fingerprint", "for_denial_id")
+    )
+    for row in qs.iterator(chunk_size=500):
+        counts["checked"] += 1
+        expected = fingerprint_text(row.appeal_text)
+        if expected is None or expected == row.text_fingerprint:
+            continue
+        if (
+            ProposedAppeal.objects.filter(
+                for_denial_id=row.for_denial_id, text_fingerprint=expected
+            )
+            .exclude(pk=row.pk)
+            .exists()
+        ):
+            counts[MISMATCH_DUPLICATE] += 1
+            continue
+        try:
+            with transaction.atomic():
+                updated = ProposedAppeal.objects.filter(
+                    pk=row.pk,
+                    appeal_text=row.appeal_text,
+                    text_fingerprint=row.text_fingerprint,
+                ).update(text_fingerprint=expected)
+        except IntegrityError:
+            counts[MISMATCH_DUPLICATE] += 1
+            continue
+        if updated:
+            counts[REKEYED] += 1
+    logger.info(f"appeal fingerprint verify: {counts}")
+    return counts

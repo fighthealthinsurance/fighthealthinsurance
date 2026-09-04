@@ -3,23 +3,34 @@
 Migration 0202 runs the first pass, but it can race writer processes still
 on pre-fingerprint code during the rollout (external review). The
 post-rollout Job (k8s/temporal/backfill-fingerprints-job.yaml, applied by
-scripts/build.sh) runs this command with ``--strict``::
+scripts/build.sh only AFTER every writer Deployment and the Ray cluster have
+finished rolling) runs this command with ``--strict``::
 
     python manage.py backfill_appeal_fingerprints --strict
 
-Strict mode runs the backfill twice back to back and FAILS (non-zero exit)
-if the second pass still found rows to fill or lost a race -- proof that a
-pre-fingerprint writer is still active. The Job's backoff then retries
-until a pass comes back quiet, which is the enforceable version of "after
-old writers drain". Without ``--strict`` it is a plain idempotent pass
-that prints counters; safe to run any number of times.
+Strict mode runs the backfill twice back to back and then an integrity
+pass, and FAILS (non-zero exit) if:
+
+* the second fill pass still filled rows, lost races, or left NULL rows it
+  never classified (a pre-fingerprint writer inserted behind the scan), or
+* the integrity pass had to re-key any row whose fingerprint no longer
+  matched its current text (a pre-fingerprint writer EDITED text under a
+  stale fingerprint -- NULL checks alone cannot see that; external review).
+
+The Job's backoff then retries until a run comes back quiet. Without
+``--strict`` it is a plain idempotent fill pass that prints counters; safe
+to run any number of times.
 """
 
 from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from fighthealthinsurance.appeal_fingerprints import run_backfill
+from fighthealthinsurance.appeal_fingerprints import (
+    REKEYED,
+    run_backfill,
+    verify_fingerprints,
+)
 from fighthealthinsurance.models import ProposedAppeal
 
 
@@ -31,8 +42,8 @@ class Command(BaseCommand):
             "--strict",
             action="store_true",
             help=(
-                "Run two passes and exit non-zero if the second still fills "
-                "rows or loses races (a pre-fingerprint writer is still active)."
+                "Run two fill passes plus an integrity pass and exit non-zero "
+                "if a pre-fingerprint writer is evidently still active."
             ),
         )
 
@@ -58,7 +69,17 @@ class Command(BaseCommand):
                 "writer on pre-fingerprint code is still running; retry after "
                 "the rollout finishes draining old pods"
             )
+        verified = verify_fingerprints(ProposedAppeal)
+        self.stdout.write(f"verify: {verified}")
+        if verified[REKEYED]:
+            raise CommandError(
+                f"fingerprint invariant violated: {verified[REKEYED]} row(s) "
+                "carried a fingerprint that did not match their current text "
+                "(re-keyed now) -- a writer on pre-fingerprint code edited "
+                "appeal text; retry after the rollout finishes draining old pods"
+            )
         self.stdout.write(
-            f"quiescent: {second['remaining_null']} NULL row(s) remain, all "
-            "known duplicates or empty legacy rows"
+            f"quiescent: {second['remaining_null']} NULL row(s) remain (all "
+            "known duplicates or empty legacy rows); "
+            f"{verified['checked']} fingerprinted row(s) verified"
         )

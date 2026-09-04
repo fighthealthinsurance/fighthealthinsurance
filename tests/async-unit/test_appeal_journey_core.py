@@ -597,3 +597,67 @@ class TestFingerprintCompleteness(_JourneyTestBase):
                 call_command("backfill_appeal_fingerprints", "--strict")
         with _patch(target, side_effect=[quiet, quiet]):
             call_command("backfill_appeal_fingerprints", "--strict")
+
+    def test_verify_rekeys_a_fingerprint_that_no_longer_matches_its_text(self):
+        """A pod on pre-fingerprint code can EDIT text under a stale
+        fingerprint (its save() never re-keys). NULL checks cannot see that;
+        the integrity pass must (review)."""
+        from fighthealthinsurance import appeal_fingerprints
+
+        denial = _make_denial(9125)
+        row = ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="Dear Reviewer, the text as first saved."
+        )
+        stale_fp = row.text_fingerprint
+        # Old-style edit: text changes, fingerprint left behind.
+        ProposedAppeal.objects.filter(pk=row.pk).update(
+            appeal_text="Dear Reviewer, the text after an old-pod edit."
+        )
+        counts = appeal_fingerprints.verify_fingerprints(ProposedAppeal)
+        row.refresh_from_db()
+        assert counts[appeal_fingerprints.REKEYED] == 1
+        assert row.text_fingerprint != stale_fp
+        assert row.text_fingerprint == ProposedAppeal.fingerprint(row.appeal_text)
+
+    def test_verify_leaves_a_mismatch_that_would_collide_as_duplicate(self):
+        from fighthealthinsurance import appeal_fingerprints
+
+        denial = _make_denial(9126)
+        keeper_text = "Dear Reviewer, the letter that already owns its key."
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=keeper_text)
+        other = ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="Dear Reviewer, a different letter."
+        )
+        stale_fp = other.text_fingerprint
+        # Old-style edit that makes `other` a twin of the keeper.
+        ProposedAppeal.objects.filter(pk=other.pk).update(appeal_text=keeper_text)
+        counts = appeal_fingerprints.verify_fingerprints(ProposedAppeal)
+        other.refresh_from_db()
+        assert counts[appeal_fingerprints.MISMATCH_DUPLICATE] == 1
+        assert other.text_fingerprint == stale_fp  # untouched, not collided
+
+    def test_strict_backfill_fails_when_verify_had_to_rekey(self):
+        from unittest.mock import patch as _patch
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        quiet = {
+            "filled": 0,
+            "skipped_duplicate": 0,
+            "skipped_empty": 0,
+            "lost_race": 0,
+            "remaining_null": 0,
+        }
+        base = "fighthealthinsurance.management.commands.backfill_appeal_fingerprints."
+        with _patch(base + "run_backfill", side_effect=[quiet, quiet]), _patch(
+            base + "verify_fingerprints",
+            return_value={"rekeyed": 1, "mismatch_duplicate": 0, "checked": 5},
+        ):
+            with pytest.raises(CommandError):
+                call_command("backfill_appeal_fingerprints", "--strict")
+        with _patch(base + "run_backfill", side_effect=[quiet, quiet]), _patch(
+            base + "verify_fingerprints",
+            return_value={"rekeyed": 0, "mismatch_duplicate": 0, "checked": 5},
+        ):
+            call_command("backfill_appeal_fingerprints", "--strict")
