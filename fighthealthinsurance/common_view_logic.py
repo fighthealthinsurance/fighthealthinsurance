@@ -35,7 +35,7 @@ from django.conf import settings
 from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
-from django.db import IntegrityError, close_old_connections
+from django.db import IntegrityError, close_old_connections, transaction
 
 
 from django.db.models import F, Q, QuerySet
@@ -4087,8 +4087,18 @@ class AppealsBackendHelper:
                     context_level=item.context_level,
                     text_fingerprint=fingerprint,
                 )
+
+                def _insert_with_savepoint() -> None:
+                    # atomic() nests as a SAVEPOINT inside any enclosing
+                    # transaction, so an IntegrityError here cannot poison
+                    # the caller's transaction state before the recovery
+                    # query below runs (external review). In autocommit it
+                    # is just a short transaction around the insert.
+                    with transaction.atomic():
+                        pa.save()
+
                 try:
-                    await pa.asave()
+                    await database_sync_to_async(_insert_with_savepoint)()
                 except IntegrityError:
                     # Another writer (a racing journey activity, a retry, or
                     # a concurrent interactive run) already stored this exact
@@ -4099,6 +4109,20 @@ class AppealsBackendHelper:
                     ).afirst()
                     if existing is None:
                         raise
+                    if existing.speculative:
+                        # The twin is a HELD-BACK reserve row. Reusing it
+                        # un-promoted would stream a draft whose row stays
+                        # invisible to every downstream reader (page
+                        # reloads, choose/edit, journey counting): the
+                        # appeal the user just watched would disappear
+                        # (external review). Claim it atomically, same
+                        # pattern as the reserve flush; if the flush claimed
+                        # it first the update is a no-op and the row is
+                        # already deliverable.
+                        await ProposedAppeal.objects.filter(
+                            pk=existing.pk, speculative=True
+                        ).aupdate(speculative=False)
+                        existing.speculative = False
                     pa = existing
                 except Exception:
                     # Most save failures here are a stale/idle-killed

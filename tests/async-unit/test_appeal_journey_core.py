@@ -357,3 +357,51 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         dup.refresh_from_db()
         assert dup.text_fingerprint is None
         assert keeper.pk != dup.pk
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_live_draft_matching_unserved_reserve_promotes_the_reserve(
+        self, mock_gen
+    ):
+        """A fast live generation can produce the same letter a speculative
+        reserve already holds. The insert conflicts on the fingerprint; the
+        reuse path must atomically PROMOTE the reserve row, or the streamed
+        draft's row stays speculative=True and the appeal the user just
+        watched disappears from every later read (external review)."""
+        denial = _make_denial(9117)
+        letter = (
+            "Dear Reviewer, the reserve and the live run agree on this "
+            "letter about documented medical necessity."
+        )
+        reserve = ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text=letter, speculative=True
+        )
+        mock_gen.make_appeals.return_value = iter(_drafts([letter]))
+        with pytest.raises(appeal_journey_core.JourneyIncomplete):
+            # 1 durable draft < TARGET, so the postcondition still raises --
+            # the assertions below are the point.
+            appeal_journey_core.generate_and_store_appeals(denial)
+        reserve.refresh_from_db()
+        assert reserve.speculative is False
+        assert ProposedAppeal.objects.filter(for_denial=denial).count() == 1
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_case_variant_of_reserve_collides_and_promotes_not_duplicates(
+        self, mock_gen
+    ):
+        """Fingerprints are case/whitespace-normalized, so a trivial variant
+        of a reserve letter must also land on the reserve row (promoted),
+        never as a second near-identical draft."""
+        denial = _make_denial(9118)
+        letter = (
+            "Dear Reviewer, my physician documented repeated conservative "
+            "care before requesting this imaging study."
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text=letter, speculative=True
+        )
+        mock_gen.make_appeals.return_value = iter(_drafts([letter.upper()]))
+        with pytest.raises(appeal_journey_core.JourneyIncomplete):
+            appeal_journey_core.generate_and_store_appeals(denial)
+        rows = list(ProposedAppeal.objects.filter(for_denial=denial))
+        assert len(rows) == 1
+        assert rows[0].speculative is False
