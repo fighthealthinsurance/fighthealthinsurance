@@ -528,3 +528,45 @@ class TestInteractiveFencing(_JourneyTestBase):
 
         async_to_sync(drive)()
         assert ProposedAppeal.objects.filter(for_denial=denial).count() == 0
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_renewal_error_after_a_successful_save_keeps_the_draft_valid(
+        self, mock_gen
+    ):
+        """The row is durable before the lease is renewed, so a transient
+        renewal error must not report a stored draft as failed -- the client
+        would suppress choose/edit for a perfectly valid id (review)."""
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9216)
+        email = "lease_9216@example.com"
+        mock_gen.make_appeals.return_value = iter(_drafts([LETTERS[0]]))
+        frames: list = []
+        real_aextend = generation_lease.aextend
+
+        async def flaky_aextend(denial_, epoch, ttl_seconds=None):
+            # The renewal driven from save_appeal raises; the periodic
+            # renewal task keeps working so the run is not superseded.
+            raise OSError("transient database blip")
+
+        async def drive():
+            async for chunk in AppealsBackendHelper.generate_appeals(
+                {"denial_id": denial.denial_id, "email": email, "semi_sekret": "sekret"}
+            ):
+                try:
+                    data = json.loads(chunk)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(data, dict) and "content" in data:
+                    frames.append(data)
+
+        with patch.object(generation_lease, "aextend", flaky_aextend):
+            async_to_sync(drive)()
+
+        rows = list(ProposedAppeal.objects.filter(for_denial=denial))
+        assert len(rows) == 1, rows
+        saved_frames = [f for f in frames if f.get("content") == LETTERS[0]]
+        assert saved_frames, frames
+        assert not saved_frames[0].get("save_failed"), saved_frames[0]
+        assert saved_frames[0]["id"] == str(rows[0].id)
+        assert real_aextend is generation_lease.aextend  # patch cleaned up

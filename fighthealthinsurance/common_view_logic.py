@@ -4330,11 +4330,6 @@ class AppealsBackendHelper:
                     await database_sync_to_async(close_old_connections)()
                     await database_sync_to_async(_insert_fenced)()
                 id = str(pa.id)
-                if not background and lease_epoch is not None:
-                    # Keep a long interactive stream inside its lease: each
-                    # persisted draft pushes the expiry out, so a journey
-                    # cannot join a human's run after the TTL (review).
-                    await generation_lease.aextend(denial, lease_epoch)
             except generation_lease.LeaseSuperseded as e:
                 # Superseded by a newer steal: the draft is NOT persisted and
                 # goes out flagged as unsaved (the existing contract for a
@@ -4352,6 +4347,29 @@ class AppealsBackendHelper:
                 logger.opt(exception=True).warning(
                     f"Failed to save proposed appeal: {e}"
                 )
+            if not save_failed and not background and lease_epoch is not None:
+                # Keep a long interactive stream inside its lease: each
+                # persisted draft pushes the expiry out, so a journey cannot
+                # join a human's run after the TTL (review). Its own try,
+                # AFTER the save handling: the row is already durable here,
+                # so a transient renewal error must not report a stored
+                # draft as failed -- the client would suppress choose/edit
+                # for a perfectly valid id. A renewal that returns False
+                # means the lease moved on: this draft is still legitimately
+                # stored (it passed the fence when it was inserted), but the
+                # run is superseded and stops after this frame.
+                try:
+                    if not await generation_lease.aextend(denial, lease_epoch):
+                        superseded = True
+                        logger.info(
+                            f"[gen_id={generation_id}] lease no longer held after "
+                            f"saving a draft for denial {denial_id}"
+                        )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"[gen_id={generation_id}] lease renewal failed after a "
+                        f"successful save for denial {denial_id}"
+                    )
             passed = time.time() - t
             logger.debug(f"Saved appeal ({len(appeal_text)} chars) in {passed:.1f}s")
             # Mark it served as soon as it is on its way out, so the early
