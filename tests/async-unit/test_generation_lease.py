@@ -7,6 +7,7 @@ scenario actually lives.
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -451,3 +452,57 @@ class TestInteractiveFencing(_JourneyTestBase):
         assert pulled["n"] < 10, pulled
         # The stealing tab's lease was left untouched (not released by the loser).
         assert generation_lease.current_epoch(denial) == 2
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_run_that_cannot_acquire_a_lease_persists_nothing(self, mock_gen):
+        """A transient database error during the steal used to fall back to
+        an "un-leased" run whose drafts were persisted unfenced -- beside
+        whatever the real lease holder was writing (external review). Such a
+        run must still STREAM (a hiccup must not cost a human their letters)
+        but must persist nothing."""
+        from django.db.utils import OperationalError
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9214)
+        email = "lease_9214@example.com"
+        letters = [
+            "Dear Reviewer, first draft: my physician documented months of "
+            "conservative treatment before requesting this imaging study.",
+            "To the appeals board, second draft: the plan's own policy covers "
+            "imaging once conservative care has failed, as my records show.",
+        ]
+        mock_gen.make_appeals.return_value = iter(_drafts(letters))
+
+        frames: list = []
+
+        async def drive():
+            with patch(
+                "fighthealthinsurance.generation_lease.aacquire",
+                side_effect=OperationalError("server closed the connection"),
+            ):
+                async for chunk in AppealsBackendHelper.generate_appeals(
+                    {
+                        "denial_id": denial.denial_id,
+                        "email": email,
+                        "semi_sekret": "sekret",
+                    }
+                ):
+                    try:
+                        data = json.loads(chunk)
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(data, dict) and "content" in data:
+                        frames.append(data)
+
+        async_to_sync(drive)()
+
+        # Streaming continued: the user still receives their letters...
+        assert len(frames) >= 1, frames
+        # ...every one flagged as not durable...
+        assert all(f.get("save_failed") for f in frames), frames
+        assert all(f.get("id") == "unknown" for f in frames), frames
+        # ...and nothing was written without a live epoch.
+        assert (
+            ProposedAppeal.objects.filter(for_denial=denial).count() == 0
+        ), "a draft was persisted without a generation lease"

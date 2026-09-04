@@ -163,6 +163,7 @@ async def test_generate_denial_lookup_schema_error_is_non_retryable(mock_load):
     assert "nope" not in str(exc_info.value)
 
 
+@pytest.mark.asyncio
 @patch(f"{_MOD}.aload_denial", new_callable=AsyncMock, return_value=None)
 async def test_postcondition_missing_denial_is_false(mock_load):
     env = ActivityEnvironment()

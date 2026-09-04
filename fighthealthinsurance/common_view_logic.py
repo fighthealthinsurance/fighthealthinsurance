@@ -2999,6 +2999,13 @@ class AppealsBackendHelper:
         # Set when this run's epoch is superseded mid-stream: the streaming
         # loop stops pulling from the model and skips synthesis.
         superseded = False
+        # Set when an interactive run could not acquire a lease at all (the
+        # steal raised, twice). Such a run keeps STREAMING -- a database
+        # hiccup must not cost a human their letters -- but it may not
+        # PERSIST: a durable draft row without a live epoch could be written
+        # alongside another owner's, which is the concurrency the lease
+        # exists to prevent (external review).
+        lease_unavailable = False
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
         # Set by the JS client when this socket replaces one that dropped (see
@@ -3070,6 +3077,38 @@ class AppealsBackendHelper:
             # the epoch move and stops quietly, and one arriving inside the
             # TTL backs off. One UPDATE; expiry is the release. Never let a
             # lease hiccup break the interactive flow (external review).
+            async def _keep_interactive_lease(epoch: int) -> None:
+                # Renew from the moment of acquisition, not the first
+                # insert: make_appeals can run past the TTL before its
+                # first draft, and an expired lease would let a journey
+                # supersede a live human (review). A renewal matching
+                # zero rows means we were superseded; persistent DB
+                # failure is treated the same way rather than writing
+                # under a lease we cannot prove we hold.
+                nonlocal superseded
+                failures = 0
+                while True:
+                    await asyncio.sleep(generation_lease.EXTEND_INTERVAL_SECONDS)
+                    try:
+                        renewed = await generation_lease.aextend(denial, epoch)
+                    except Exception:
+                        failures += 1
+                        logger.opt(exception=True).warning(
+                            f"[gen_id={generation_id}] lease renewal failed "
+                            f"({failures}) for denial {denial_id}"
+                        )
+                        if failures < 3:
+                            continue
+                        renewed = False
+                    if not renewed:
+                        superseded = True
+                        logger.info(
+                            f"[gen_id={generation_id}] interactive lease no "
+                            f"longer held for denial {denial_id}; stopping"
+                        )
+                        return
+                    failures = 0
+
             try:
                 stolen = await generation_lease.aacquire(
                     denial,
@@ -3080,46 +3119,34 @@ class AppealsBackendHelper:
                 lease_ref["denial"] = denial
                 lease_ref["epoch"] = stolen.epoch
 
-                async def _keep_interactive_lease(epoch: int) -> None:
-                    # Renew from the moment of acquisition, not the first
-                    # insert: make_appeals can run past the TTL before its
-                    # first draft, and an expired lease would let a journey
-                    # supersede a live human (review). A renewal matching
-                    # zero rows means we were superseded; persistent DB
-                    # failure is treated the same way rather than writing
-                    # under a lease we cannot prove we hold.
-                    nonlocal superseded
-                    failures = 0
-                    while True:
-                        await asyncio.sleep(generation_lease.EXTEND_INTERVAL_SECONDS)
-                        try:
-                            renewed = await generation_lease.aextend(denial, epoch)
-                        except Exception:
-                            failures += 1
-                            logger.opt(exception=True).warning(
-                                f"[gen_id={generation_id}] lease renewal failed "
-                                f"({failures}) for denial {denial_id}"
-                            )
-                            if failures < 3:
-                                continue
-                            renewed = False
-                        if not renewed:
-                            superseded = True
-                            logger.info(
-                                f"[gen_id={generation_id}] interactive lease no "
-                                f"longer held for denial {denial_id}; stopping"
-                            )
-                            return
-                        failures = 0
-
                 lease_ref["extender"] = asyncio.create_task(
                     _keep_interactive_lease(stolen.epoch)
                 )
             except Exception:
-                # Never let a lease hiccup stop a human: run un-leased.
-                logger.opt(exception=True).warning(
-                    f"generation lease steal failed for denial {denial_id}"
-                )
+                # One quick retry -- a transient connection blip should not
+                # cost this run its ability to persist.
+                await asyncio.sleep(0.5)
+                try:
+                    stolen = await generation_lease.aacquire(
+                        denial,
+                        holder=generation_lease.new_holder("interactive"),
+                        steal=True,
+                    )
+                    lease_epoch = stolen.epoch
+                    lease_ref["denial"] = denial
+                    lease_ref["epoch"] = stolen.epoch
+                    lease_ref["extender"] = asyncio.create_task(
+                        _keep_interactive_lease(stolen.epoch)
+                    )
+                except Exception:
+                    # Still no lease: STREAM, but never persist. Drafts go
+                    # out flagged unsaved rather than becoming durable rows
+                    # this run cannot prove it owns (external review).
+                    lease_unavailable = True
+                    logger.opt(exception=True).error(
+                        f"generation lease unavailable for denial {denial_id}; "
+                        "streaming without persisting any draft"
+                    )
 
         # Initial keepalive newline so clients know we're alive.
         yield "\n"
@@ -4211,6 +4238,26 @@ class AppealsBackendHelper:
             await asyncio.sleep(0)
             id = "unknown"
             save_failed = False
+            if lease_unavailable:
+                # This run never obtained an epoch (the steal raised twice).
+                # Persisting would create a durable draft nobody can prove
+                # ownership of, beside whatever the real lease holder is
+                # writing -- exactly the concurrency the lease prevents. The
+                # letter still streams, flagged unsaved; generation
+                # continues, since the user losing every remaining draft
+                # would be a worse outcome than losing durability for this
+                # run (external review).
+                logger.warning(
+                    f"[gen_id={generation_id}] not persisting a draft for "
+                    f"denial {denial_id}: no generation lease held"
+                )
+                if appeal_text:
+                    served_texts.add(str(appeal_text).strip())
+                return {
+                    "id": "unknown",
+                    "content": appeal_text,
+                    "save_failed": True,
+                }
             try:
                 fingerprint = ProposedAppeal.fingerprint(appeal_text)
                 pa = ProposedAppeal(
@@ -4230,9 +4277,11 @@ class AppealsBackendHelper:
                     # persist a draft after the steal, however far along its
                     # model call was; and an IntegrityError here cannot
                     # poison the caller's transaction state before the
-                    # recovery query below runs (external reviews). In
-                    # autocommit it is just a short transaction around the
-                    # insert.
+                    # recovery query below runs (external reviews). Every
+                    # generated-draft write requires a live, matching epoch:
+                    # a run that cannot prove ownership never reaches here
+                    # (see the no-epoch guard above). In autocommit this is
+                    # just a short transaction around the insert.
                     with transaction.atomic():
                         if lease_epoch is not None:
                             generation_lease.assert_holds(denial, lease_epoch)
