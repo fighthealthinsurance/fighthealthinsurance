@@ -251,3 +251,121 @@ class TestInteractiveLease(_JourneyTestBase):
             ProposedAppeal.objects.filter(for_denial=denial, speculative=False).count()
             == appeal_journey_core.TARGET_APPEALS
         )
+
+
+class TestInteractiveFencing(_JourneyTestBase):
+    """Every writer is fenced, interactive included (review 9's barrier test
+    produced six drafts from two concurrent interactive runs when only
+    background runs were fenced)."""
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_two_concurrent_interactive_runs_persist_at_most_the_target(
+        self, mock_gen
+    ):
+        import threading
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9212)
+        email = "lease_9212@example.com"
+        letters_by_run = {
+            0: [
+                "Dear Reviewer, run A draft one: my physician documented months "
+                "of conservative treatment before requesting this imaging.",
+                "To the appeals board, run A draft two: the plan's coverage "
+                "policy covers imaging after failed conservative care.",
+                "I request an independent review, run A draft three: the denial "
+                "mischaracterizes my treatment history and the specialist's note.",
+            ],
+            1: [
+                "Dear Reviewer, run B draft one: the specialist recommended this "
+                "study after documented conservative care failed to help.",
+                "To the appeals board, run B draft two: my records show six "
+                "documented visits before this imaging was requested.",
+                "I request an independent review, run B draft three: the plan "
+                "ignored the treating physician's written recommendation.",
+            ],
+        }
+        # Both runs reach generation before either yields a draft, so both
+        # have stolen the lease and only the LATER epoch may persist.
+        barrier = threading.Barrier(2, timeout=30)
+        calls = {"n": 0}
+        lock = threading.Lock()
+
+        def barrier_make_appeals(*args, **kwargs):
+            with lock:
+                run = calls["n"]
+                calls["n"] += 1
+            barrier.wait()
+            for text in letters_by_run[run]:
+                yield _drafts([text])[0]
+
+        mock_gen.make_appeals.side_effect = barrier_make_appeals
+
+        async def drive_one():
+            async for _chunk in AppealsBackendHelper.generate_appeals(
+                {"denial_id": denial.denial_id, "email": email, "semi_sekret": "sekret"}
+            ):
+                pass
+
+        async def drive_both():
+            await asyncio.gather(drive_one(), drive_one())
+
+        async_to_sync(drive_both)()
+        rows = list(
+            ProposedAppeal.objects.filter(
+                for_denial=denial, speculative=False
+            ).values_list("appeal_text", flat=True)
+        )
+        assert len(rows) <= appeal_journey_core.TARGET_APPEALS, rows
+        # Exactly one run persisted after the steal: every stored letter
+        # comes from a single run's set.
+        owners = {run for run, texts in letters_by_run.items() if set(rows) & set(texts)}
+        assert len(owners) == 1, rows
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_superseded_interactive_run_stops_generating(self, mock_gen):
+        """Another tab steals the lease mid-stream: the first run's later
+        drafts are not persisted AND it stops pulling from the model
+        (bounded invocations), rather than burning spend on drafts it can
+        no longer store."""
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9213)
+        email = "lease_9213@example.com"
+        pulled = {"n": 0}
+
+        def stolen_mid_stream(*args, **kwargs):
+            pulled["n"] += 1
+            yield _drafts([LETTERS[0]])[0]
+            # A second tab takes over (worker thread, hence the sync API).
+            generation_lease.acquire(denial, "interactive:tab2", steal=True)
+            for i in range(9):
+                pulled["n"] += 1
+                yield _drafts(
+                    [
+                        f"Dear Reviewer, post-steal draft {i}: my physician "
+                        "documented conservative care before this imaging request."
+                    ]
+                )[0]
+
+        mock_gen.make_appeals.side_effect = stolen_mid_stream
+
+        async def drive():
+            frames = 0
+            async for chunk in AppealsBackendHelper.generate_appeals(
+                {"denial_id": denial.denial_id, "email": email, "semi_sekret": "sekret"}
+            ):
+                if appeal_journey_core._appeal_text_from_chunk(chunk) is not None:
+                    frames += 1
+            return frames
+
+        async_to_sync(drive)()
+        assert (
+            ProposedAppeal.objects.filter(for_denial=denial, speculative=False).count()
+            == 1
+        )
+        # Stopped early: the producer was not drained to the end.
+        assert pulled["n"] < 10, pulled
+        # The stealing tab's lease was left untouched (not released by the loser).
+        assert generation_lease.current_epoch(denial) == 2

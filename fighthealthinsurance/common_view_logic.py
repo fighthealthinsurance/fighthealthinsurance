@@ -2979,12 +2979,19 @@ class AppealsBackendHelper:
         ) or Denial.get_hashed_email(email)
         background = bool(parameters.get("_background"))
         # Generation-lease epoch this run writes under. Journeys pass theirs
-        # in; the interactive path takes one by stealing below. Draft inserts
-        # are FENCED on it only for background runs -- a human is the
-        # preemptor, and two tabs of the same human are out of scope
-        # (approved design) -- while interactive runs use it to keep the
-        # lease alive across a long stream and to release it at the end.
+        # in; the interactive path takes one by stealing below. EVERY draft
+        # insert is fenced on it (save_appeal -> assert_holds), interactive
+        # included: two concurrent interactive runs -- two tabs, a reconnect
+        # racing the socket it replaced, retries through a proxy -- would
+        # otherwise both persist and blow past the draft target at double
+        # model spend (external review's barrier test: six drafts). The
+        # newer steal wins; the superseded run stops generating quietly.
+        # Interactive runs also use the epoch to keep the lease alive across
+        # a long stream and to release it at the end.
         lease_epoch: Optional[int] = parameters.get("_lease_epoch")
+        # Set when this run's epoch is superseded mid-stream: the streaming
+        # loop stops pulling from the model and skips synthesis.
+        superseded = False
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
         # Set by the JS client when this socket replaces one that dropped (see
@@ -4149,7 +4156,7 @@ class AppealsBackendHelper:
 
         async def save_appeal(item: GeneratedAppeal) -> dict[str, Any]:
             # Save all of the proposed appeals, so we can use RL later.
-            nonlocal first_model
+            nonlocal first_model, superseded
             appeal_text = item.text
             model_name = item.model_name
             if first_model is None and model_name:
@@ -4175,15 +4182,16 @@ class AppealsBackendHelper:
                 def _insert_fenced() -> None:
                     # One transaction, which atomic() nests as a SAVEPOINT
                     # inside any enclosing one: the lease ownership check and
-                    # the draft insert commit together, so a run that was
-                    # stolen from cannot persist a draft after the steal
-                    # however far along its model call was -- and an
-                    # IntegrityError here cannot poison the caller's
-                    # transaction state before the recovery query below runs
-                    # (external reviews). In autocommit it is just a short
-                    # transaction around the insert.
+                    # the draft insert commit together, so ANY run that was
+                    # stolen from -- background or interactive -- cannot
+                    # persist a draft after the steal, however far along its
+                    # model call was; and an IntegrityError here cannot
+                    # poison the caller's transaction state before the
+                    # recovery query below runs (external reviews). In
+                    # autocommit it is just a short transaction around the
+                    # insert.
                     with transaction.atomic():
-                        if background and lease_epoch is not None:
+                        if lease_epoch is not None:
                             generation_lease.assert_holds(denial, lease_epoch)
                         pa.save()
 
@@ -4235,11 +4243,13 @@ class AppealsBackendHelper:
                     # cannot join a human's run after the TTL (review).
                     await generation_lease.aextend(denial, lease_epoch)
             except generation_lease.LeaseSuperseded as e:
-                # Superseded by an interactive steal: the draft is NOT
-                # persisted and goes out flagged as unsaved (the existing
-                # contract for a row without a durable id). The journey's
-                # per-frame epoch check ends the run right after.
+                # Superseded by a newer steal: the draft is NOT persisted and
+                # goes out flagged as unsaved (the existing contract for a
+                # row without a durable id). The journey's per-frame epoch
+                # check ends its run right after; the interactive streaming
+                # loop reads the flag below and stops pulling from the model.
                 save_failed = True
+                superseded = True
                 logger.info(f"Draft not persisted, generation lease superseded: {e}")
             except Exception as e:
                 # Still stream the draft -- the user gets their appeal even
@@ -4583,6 +4593,18 @@ class AppealsBackendHelper:
             else:
                 logger.debug("Sending keep alive....")
             yield i
+            if superseded:
+                # A newer run owns this denial now (a second tab, a reconnect
+                # replacing this socket, a retry through a proxy): stop
+                # pulling from the model instead of generating drafts that
+                # can no longer be persisted. The producer thread already in
+                # flight finishes on its own (see the gen_task note above);
+                # nothing it yields after this is consumed. (Review.)
+                logger.info(
+                    f"[gen_id={generation_id}] generation lease superseded; "
+                    f"stopping the stream for denial {denial_id}"
+                )
+                break
             # Also a checkpoint: draining this iterator blocks on the next model
             # future, so a run that streams one draft and then stalls for
             # minutes still gets the reserve at the deadline.
@@ -4636,7 +4658,7 @@ class AppealsBackendHelper:
         # input, models often regurgitate it verbatim. The client dedupes
         # by content, so a verbatim copy gets silently dropped, which then
         # trips the "partial delivery" error path in appeal_fetcher.ts.
-        if len(saved_appeal_texts) >= 2:
+        if len(saved_appeal_texts) >= 2 and not superseded:
             yield json.dumps(
                 {
                     "type": "status",
