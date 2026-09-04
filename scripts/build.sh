@@ -142,7 +142,45 @@ envsubst < k8s/temporal/worker.yaml | kubectl apply -f -
 # accepts workflow starts for a queue with NO pollers and queues them
 # silently, so an applied-by-hand-once appeal worker (or a forgotten one)
 # would look healthy while nothing executes (external review).
+# This apply must stay ABOVE the rollout gate below, which waits on this very
+# Deployment: waiting first would either time out on a Deployment that does
+# not exist yet or, worse, pass against the previous image.
 envsubst < k8s/temporal/appeal-worker.yaml | kubectl apply -f -
+# Post-rollout second pass of the appeal fingerprint backfill (see the Job
+# manifest): --strict keeps failing -- and the Job keeps retrying -- until no
+# pre-fingerprint writer is left, so the "run again after old pods drain"
+# step is enforced by the deploy, not by a README. Jobs are immutable:
+# delete the previous run before applying.
+#
+# ROLLOUT GATE (external review): a strict pass that runs while ANY pod on
+# pre-fingerprint code can still handle a request proves nothing -- two quiet
+# scans succeed, then an idle old pod inserts a NULL fingerprint or edits text
+# under a stale one. So wait for every ProposedAppeal writer to finish rolling
+# (rollout status returns only after new replicas are available AND the old
+# ReplicaSet's pods are gone): the web Deployment, both Temporal workers, and
+# the Ray cluster (its SpeculativeAppealsActor writes speculative drafts; the
+# cluster was deleted + recreated above, so readiness of the new pods means the
+# old ones are gone). A rollout that does not finish fails the deploy here
+# rather than letting the Job run against a mixed fleet.
+for dep in web fhi-fax-worker fhi-appeal-worker; do
+  if kubectl -n totallylegitco get deployment "$dep" >/dev/null 2>&1; then
+    kubectl -n totallylegitco rollout status deployment "$dep" --timeout=15m \
+      || { echo "Rollout of $dep did not complete; not running the fingerprint backfill Job"; exit 1; }
+  else
+    echo "Deployment $dep not present; skipping rollout wait"
+  fi
+done
+kubectl -n totallylegitco wait --for=condition=Ready pod -l ray.io/cluster=raycluster-kuberay --timeout=15m \
+  || { echo "Ray cluster pods not Ready; not running the fingerprint backfill Job"; exit 1; }
+kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
+# Wait for the strict backfill to COMPLETE and fail the deploy if it cannot.
+# Every writer rollout was awaited above, so a Job that does not finish
+# inside this window means either a writer on old code is still active or
+# the verify pass keeps finding fingerprints to repair -- both are deploy
+# problems to look at, not background noise to leave retrying unattended.
+kubectl -n totallylegitco wait --for=condition=complete job/fhi-backfill-appeal-fingerprints --timeout=30m \
+  || { echo "Fingerprint backfill Job did not complete within 30m; inspect it: kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints"; exit 1; }
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
 # the internet -- see docs/metrics-endpoint-access.md). The apply is skipped

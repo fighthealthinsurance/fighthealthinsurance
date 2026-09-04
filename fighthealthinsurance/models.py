@@ -2640,6 +2640,83 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         normalized = " ".join(str(text).lower().split())
         return hashlib.sha256(normalized.encode()).hexdigest()
 
+    # Sentinel: the row was loaded without appeal_text (deferred), so save()
+    # cannot tell whether the text changed.
+    _TEXT_UNLOADED = object()
+
+    @classmethod
+    def from_db(
+        cls,
+        db: typing.Any,
+        field_names: typing.Any,
+        values: typing.Any,
+        **kwargs: typing.Any,
+    ) -> "ProposedAppeal":
+        instance = super().from_db(db, field_names, values, **kwargs)
+        # Snapshot for save(): distinguishes a REAL text edit on a legacy
+        # NULL-fingerprint row from an unrelated-field save (deferred
+        # appeal_text is absent from __dict__ and stays unknown).
+        instance._loaded_appeal_text = instance.__dict__.get(
+            "appeal_text", cls._TEXT_UNLOADED
+        )
+        return instance
+
+    def save(self, *args, **kwargs):
+        # Every un-chosen row carries a content fingerprint that MATCHES its
+        # current text, no matter which code path wrote it (live save_appeal,
+        # speculative precompute, admin, tests) -- otherwise the unique
+        # constraint above only protects the paths that remembered to set it,
+        # and an edited row would keep a stale key (external review). The
+        # cases:
+        # - chosen rows: deliberate COPIES of the picked draft
+        #   (mark_proposal_chosen); a fingerprint would collide with the
+        #   original draft's row, so it is cleared.
+        # - existing un-chosen rows already NULL (the backfill's
+        #   known-legacy-duplicate marker): NULL is preserved for saves that
+        #   do not change the text, so touching an unrelated field cannot
+        #   trip the constraint against the row's fingerprinted twin -- but
+        #   an ACTUAL text edit re-keys the row, because edited-to-unique
+        #   content must rejoin the constraint and journey counting
+        #   (external review).
+        # - everything else: recomputed from the current text.
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and not (
+            {"appeal_text", "chosen"} & set(update_fields)
+        ):
+            # A partial save that persists neither source field must not
+            # touch the fingerprint: hashing an in-memory text change that
+            # is NOT being written would store a fingerprint for text the
+            # row does not hold (review). Leave both the column and the
+            # loaded-text baseline exactly as they are.
+            super().save(*args, **kwargs)
+            return
+        if self.chosen:
+            desired = None
+        elif self.text_fingerprint is None and not self._state.adding:
+            loaded = getattr(self, "_loaded_appeal_text", self._TEXT_UNLOADED)
+            if loaded is not self._TEXT_UNLOADED:
+                text_changed = self.appeal_text != loaded
+            else:
+                # Text state unknown (deferred load / detached instance):
+                # trust an explicit update_fields declaration, else preserve.
+                text_changed = update_fields is not None and "appeal_text" in set(
+                    update_fields
+                )
+            desired = (
+                ProposedAppeal.fingerprint(self.appeal_text) if text_changed else None
+            )
+        else:
+            desired = ProposedAppeal.fingerprint(self.appeal_text)
+        if desired != self.text_fingerprint:
+            self.text_fingerprint = desired
+            if update_fields is not None:
+                # A partial save that changed appeal_text must persist the
+                # re-key too, not just set it in memory.
+                kwargs["update_fields"] = set(update_fields) | {"text_fingerprint"}
+        super().save(*args, **kwargs)
+        # The persisted text is now the comparison baseline for later saves.
+        self._loaded_appeal_text = self.appeal_text
+
     def __str__(self):
         if self.appeal_text is not None:
             return f"{self.appeal_text[0:100]}"

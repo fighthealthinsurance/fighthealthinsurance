@@ -88,14 +88,21 @@ async def aprecheck_appeal_journey(denial) -> str:
         return STATUS_ALREADY_HAS_APPEALS
     # speculative=True rows are the background precompute held in reserve;
     # the interactive flow doesn't count them as delivered appeals and
-    # neither does the journey (PR #963 review).
-    existing = 0
-    async for text in ProposedAppeal.objects.filter(
-        for_denial=denial, speculative=False, chosen=False
-    ).values_list("appeal_text", flat=True):
+    # neither does the journey (PR #963 review). Counted as DISTINCT
+    # fingerprints, not rows: the pre-constraint era double-stored drafts,
+    # and three copies of one letter are one deliverable draft, not three.
+    # NULL fingerprints are exactly the rows the backfill migration left
+    # as known legacy duplicates, so they never count (external review).
+    existing_fingerprints = set()
+    async for text, fp in ProposedAppeal.objects.filter(
+        for_denial=denial,
+        speculative=False,
+        chosen=False,
+        text_fingerprint__isnull=False,
+    ).values_list("appeal_text", "text_fingerprint"):
         if is_real_appeal(text):
-            existing += 1
-    if existing >= TARGET_APPEALS:
+            existing_fingerprints.add(fp)
+    if len(existing_fingerprints) >= TARGET_APPEALS:
         # A retry after a crash, or a duplicate dispatch: the drafts are
         # already there, so the journey is idempotently done.
         return STATUS_ALREADY_HAS_APPEALS
@@ -115,11 +122,12 @@ async def agenerate_and_store_appeals(denial) -> int:
     within a bounded budget -- it must never create rows from the streamed
     output, or every draft would be stored twice.
 
-    Progress is measured in durable row IDENTITIES, never yielded text: the
-    generator re-serves existing drafts transformed by ``sub_in_appeals`` (so
-    their text differs from what is stored) and can yield content whose save
-    FAILED -- both fooled a text-based count into stopping early with nothing
-    persisted (PR #963 review). The postcondition is enforced against the
+    Progress is measured in durable DISTINCT content fingerprints, never
+    yielded text: the generator re-serves existing drafts transformed by
+    ``sub_in_appeals`` (so their text differs from what is stored) and can
+    yield content whose save FAILED -- both fooled a text-based count into
+    stopping early with nothing persisted (PR #963 review). Fingerprints
+    rather than row ids so duplicate rows count once (external review). The postcondition is enforced against the
     database; falling short raises :class:`JourneyIncomplete` so the activity
     retries instead of reporting a hollow success.
 
@@ -131,20 +139,28 @@ async def agenerate_and_store_appeals(denial) -> int:
     from fighthealthinsurance.common_view_logic import AppealsBackendHelper
     from fighthealthinsurance.models import ProposedAppeal
 
-    async def _stored_ids() -> set:
+    async def _stored_fingerprints() -> set:
         # Deliverable candidates only: non-speculative (reserves are not
         # delivered drafts), un-chosen (a chosen row is a COPY the pick
         # flow creates, not a candidate), and real letters (legacy empty/
-        # runt rows must not satisfy the target). Native async ORM.
+        # runt rows must not satisfy the target). Measured as DISTINCT
+        # fingerprints rather than row ids so duplicate rows -- historical
+        # double-stores, or a racing writer on a database whose constraint
+        # enforcement lapsed -- count as the one draft they are; NULL
+        # fingerprints are the backfill's known-legacy-duplicate marker and
+        # never count (external review). Native async ORM.
         return {
-            pk
-            async for pk, text in ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=False, chosen=False
-            ).values_list("id", "appeal_text")
+            fp
+            async for fp, text in ProposedAppeal.objects.filter(
+                for_denial=denial,
+                speculative=False,
+                chosen=False,
+                text_fingerprint__isnull=False,
+            ).values_list("text_fingerprint", "appeal_text")
             if is_real_appeal(text)
         }
 
-    baseline = await _stored_ids()
+    baseline = await _stored_fingerprints()
     if len(baseline) >= TARGET_APPEALS:
         return 0
 
@@ -164,7 +180,7 @@ async def agenerate_and_store_appeals(denial) -> int:
                 # count query per frame is cheap, and only rows that actually
                 # persisted can end the consumption early.
                 frames += 1
-                if len(await _stored_ids()) >= TARGET_APPEALS:
+                if len(await _stored_fingerprints()) >= TARGET_APPEALS:
                     break
     except TimeoutError:
         logger.info(
@@ -174,7 +190,7 @@ async def agenerate_and_store_appeals(denial) -> int:
     finally:
         await agen.aclose()
 
-    after = await _stored_ids()
+    after = await _stored_fingerprints()
     stored = len(after - baseline)
     logger.info(
         f"Appeal journey: {stored} new draft(s) persisted for denial "

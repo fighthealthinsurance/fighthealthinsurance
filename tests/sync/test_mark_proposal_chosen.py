@@ -160,18 +160,26 @@ class MarkProposalChosenTest(TestCase):
 
     def test_picks_most_recent_original_on_ties(self):
         # Two original rows with the same appeal_text but different model_name;
-        # the most recent (highest id) wins.
-        ProposedAppeal.objects.create(
-            for_denial=self.denial,
-            appeal_text="dup",
-            chosen=False,
-            model_name="model-old",
-        )
-        ProposedAppeal.objects.create(
-            for_denial=self.denial,
-            appeal_text="dup",
-            chosen=False,
-            model_name="model-new",
+        # the most recent (highest id) wins. Identical un-chosen texts can only
+        # exist as LEGACY data now (save() fingerprints every new row and the
+        # unique constraint rejects the twin), so build the tie the way legacy
+        # data actually exists: bulk_create bypasses save(), leaving NULL
+        # fingerprints exactly like pre-constraint rows.
+        ProposedAppeal.objects.bulk_create(
+            [
+                ProposedAppeal(
+                    for_denial=self.denial,
+                    appeal_text="dup",
+                    chosen=False,
+                    model_name="model-old",
+                ),
+                ProposedAppeal(
+                    for_denial=self.denial,
+                    appeal_text="dup",
+                    chosen=False,
+                    model_name="model-new",
+                ),
+            ]
         )
         pa = mark_proposal_chosen(self.denial, "dup")
         self.assertEqual(pa.model_name, "model-new")
