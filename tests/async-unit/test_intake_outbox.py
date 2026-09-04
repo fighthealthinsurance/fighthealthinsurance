@@ -828,3 +828,45 @@ class TestInlineDeliveryRespectsClaims(TransactionTestCase):
         with patch.object(intake_outbox, "_acall", acall):
             assert async_to_sync(intake_outbox.adeliver)(row) is True
         assert acall.await_args.kwargs["timeout"] == intake_outbox.INLINE_RPC_TIMEOUT_SECONDS
+
+
+class TestRelayDeployment:
+    """The relay only helps if it is actually deployed and watched: a stalled
+    outbox is invisible in worker and web metrics, because the events simply
+    stop moving (external review)."""
+
+    def _repo(self):
+        import pathlib
+
+        return pathlib.Path(__file__).resolve().parents[2]
+
+    def test_build_script_applies_the_relay_and_its_alerts(self):
+        build = (self._repo() / "scripts" / "build.sh").read_text()
+        assert "k8s/temporal/intake-outbox-cronjob.yaml" in build
+        assert "k8s/temporal/intake-outbox-alerts.yaml" in build
+        # The alerts need the operator CRD; guarded like every other rule.
+        alerts_at = build.index("k8s/temporal/intake-outbox-alerts.yaml")
+        guard = build.rindex(
+            "kubectl get crd prometheusrules.monitoring.coreos.com", 0, alerts_at
+        )
+        assert alerts_at - guard < 400
+
+    def test_cronjob_cannot_hang_forever(self):
+        cronjob = (
+            self._repo() / "k8s" / "temporal" / "intake-outbox-cronjob.yaml"
+        ).read_text()
+        assert "activeDeadlineSeconds" in cronjob
+        assert "concurrencyPolicy: Forbid" in cronjob
+
+    def test_alerts_cover_backlog_age_size_and_relay_success(self):
+        alerts = (
+            self._repo() / "k8s" / "temporal" / "intake-outbox-alerts.yaml"
+        ).read_text()
+        # The gauges the app actually exports.
+        assert "fhi_intake_outbox_oldest_pending_seconds" in alerts
+        assert "fhi_intake_outbox_pending_total" in alerts
+        # ...and the one signal the app cannot emit about itself: a relay
+        # that stopped running produces no series at all.
+        assert "kube_cronjob_status_last_successful_time" in alerts
+        assert 'cronjob="fhi-intake-outbox-relay"' in alerts
+        assert "VERIFY-LIVE" in alerts
