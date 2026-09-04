@@ -685,3 +685,62 @@ class TestFingerprintCompleteness(_JourneyTestBase):
             return_value={"rekeyed": 0, "mismatch_duplicate": 0, "checked": 5},
         ):
             call_command("backfill_appeal_fingerprints", "--strict")
+
+    def test_review_scenario_stale_key_after_old_pod_edit_is_repaired_end_to_end(self):
+        """Review 10's exact chain: rows A/B/C each fingerprinted; a pod on
+        old code edits C's text to A's, leaving fp(C) in place. Strict must
+        fail on the first run (a repair happened), C's fingerprint must be
+        NULL afterwards (known duplicate, not a third distinct draft), the
+        retry must pass, and the journey precheck must see TWO drafts."""
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        denial = _make_denial(9128)
+        text_a = "Dear Reviewer, letter A about documented medical necessity."
+        text_b = "Dear Reviewer, letter B about the plan's own coverage policy."
+        text_c = "Dear Reviewer, letter C requesting an independent review."
+        row_a = ProposedAppeal.objects.create(for_denial=denial, appeal_text=text_a)
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=text_b)
+        row_c = ProposedAppeal.objects.create(for_denial=denial, appeal_text=text_c)
+        fp_c = row_c.text_fingerprint
+        assert fp_c is not None
+        # Old-pod edit: text changes, fingerprint left behind.
+        ProposedAppeal.objects.filter(pk=row_c.pk).update(appeal_text=text_a)
+
+        with pytest.raises(CommandError):
+            call_command("backfill_appeal_fingerprints", "--strict")
+        row_c.refresh_from_db()
+        assert row_c.text_fingerprint is None
+        row_a.refresh_from_db()
+        assert row_a.text_fingerprint == ProposedAppeal.fingerprint(text_a)
+
+        call_command("backfill_appeal_fingerprints", "--strict")  # retry: quiet
+
+        distinct = set(
+            ProposedAppeal.objects.filter(
+                for_denial=denial, chosen=False, text_fingerprint__isnull=False
+            ).values_list("text_fingerprint", flat=True)
+        )
+        assert len(distinct) == 2
+        assert (
+            appeal_journey_core.precheck_appeal_journey(denial)
+            == appeal_journey_core.STATUS_OK  # 2 < TARGET_APPEALS: not "done"
+        )
+
+
+def test_deploy_script_waits_for_the_strict_backfill_job():
+    """build.sh must not just apply the strict backfill Job -- it must wait
+    for it to complete and fail the deploy otherwise (review 10)."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    build = (root / "scripts" / "build.sh").read_text()
+    apply_at = build.index("backfill-fingerprints-job.yaml | kubectl apply -f -")
+    wait_at = build.index(
+        "wait --for=condition=complete job/fhi-backfill-appeal-fingerprints"
+    )
+    assert wait_at > apply_at
+    assert "|| { echo" in build[wait_at : wait_at + 400]
+    assert "exit 1" in build[wait_at : wait_at + 400]
+    for dep in ("web", "fhi-fax-worker", "fhi-appeal-worker"):
+        assert f"rollout status deployment" in build and dep in build

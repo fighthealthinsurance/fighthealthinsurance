@@ -174,6 +174,13 @@ kubectl -n totallylegitco wait --for=condition=Ready pod -l ray.io/cluster=raycl
   || { echo "Ray cluster pods not Ready; not running the fingerprint backfill Job"; exit 1; }
 kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
 envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
+# Wait for the strict backfill to COMPLETE and fail the deploy if it cannot.
+# Every writer rollout was awaited above, so a Job that does not finish
+# inside this window means either a writer on old code is still active or
+# the verify pass keeps finding fingerprints to repair -- both are deploy
+# problems to look at, not background noise to leave retrying unattended.
+kubectl -n totallylegitco wait --for=condition=complete job/fhi-backfill-appeal-fingerprints --timeout=30m \
+  || { echo "Fingerprint backfill Job did not complete within 30m; inspect it: kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints"; exit 1; }
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
 # the internet -- see docs/metrics-endpoint-access.md). The apply is skipped
