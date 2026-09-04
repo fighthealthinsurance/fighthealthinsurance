@@ -1,0 +1,232 @@
+# =============================================================================
+# PrometheusRule for the Temporal workers (fhi-fax-worker, fhi-appeal-worker).
+#
+# Temporal accepts work for a task queue with no healthy poller and queues it
+# silently -- no error anywhere -- so worker health has to be OBSERVED, not
+# assumed (external review). Three families of rules, because no single
+# source can see every failure:
+#
+#   1. WORKER-SIDE (SDK metrics scraped from the worker pods): slot
+#      exhaustion, activity failures, RPC failures, schedule-to-start as the
+#      worker measures it. These series come from the worker process itself,
+#      so they VANISH when the last worker dies -- they can never fire on
+#      "zero workers" (external review).
+#   2. WORKER-LOSS (Kubernetes + scrape targets): absent(up) per Deployment
+#      and kube-state available-replica counts. These are the only rules that
+#      can fire when no worker exists to emit anything.
+#   3. SERVER-SIDE (the Temporal server's own metrics): backlog, timeouts and
+#      schedule-to-start as the MATCHING/HISTORY services measure them, which
+#      keep counting when every worker is gone.
+#
+# The Temporal NAMESPACE the workers use is `default` (TEMPORAL_NAMESPACE in
+# worker.yaml / appeal-worker.yaml); the Kubernetes namespace is
+# `totallylegitco`. SDK series carry the Temporal namespace as `namespace`,
+# so worker-side rules match namespace="default" -- NOT the Kubernetes one
+# (external review found the previous rules filtered on totallylegitco and
+# could never match). The manifest test pins this.
+#
+# ==> VERIFY-LIVE before enablement (README checklist):
+#   - SDK metric names/labels (sdk-core 1.32):
+#       kubectl -n totallylegitco exec deploy/fhi-fax-worker -- \
+#         curl -s localhost:9464/metrics | grep -E 'temporal_(activity|worker|request)'
+#   - `up{...}` label shape for PodMonitor targets (pod / container labels).
+#   - kube-state-metrics present (kube_deployment_status_replicas_available).
+#   - Server metric names: scrape the temporal-frontend/matching/history
+#     services' /metrics (Helm release "temporal") and confirm the names in
+#     family 3 exist on the deployed server version; adjust before relying on
+#     them. They are shipped here with long `for:` and low severity on
+#     purpose until verified.
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fhi-temporal-workers
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+    role: alert-rules
+spec:
+  groups:
+    # ------------------------------------------------------------------------
+    # Family 2: WORKER LOSS. Fires when a worker Deployment has no scrape
+    # target or no available replica -- the case worker-side metrics are
+    # blind to, because a dead worker emits nothing.
+    # ------------------------------------------------------------------------
+    - name: fhi-temporal-worker-loss
+      rules:
+        - alert: FhiTemporalFaxWorkerAbsent
+          expr: absent(up{pod=~"fhi-fax-worker-.*", container="totallylegitco"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No scraped, healthy fhi-fax-worker pod for 5m"
+            description: >-
+              Prometheus has no live scrape target for the fax worker. Fax
+              workflows keep queueing on the fhi-fax task queue with nobody
+              polling -- Temporal will not raise an error about this.
+        - alert: FhiTemporalAppealWorkerAbsent
+          expr: absent(up{pod=~"fhi-appeal-worker-.*", container="totallylegitco"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No scraped, healthy fhi-appeal-worker pod for 5m"
+            description: >-
+              Prometheus has no live scrape target for the appeal worker. Any
+              appeal/intake journey work queues silently until a poller
+              returns.
+        # kube-state-metrics view of the same condition; independent of the
+        # PodMonitor working at all. VERIFY-LIVE: kube-state-metrics installed.
+        - alert: FhiTemporalWorkerNoAvailableReplicas
+          expr: >-
+            kube_deployment_status_replicas_available{namespace="totallylegitco", deployment=~"fhi-(fax|appeal)-worker"} < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.deployment }} has no available replicas"
+            description: >-
+              Deployment {{ $labels.deployment }} reports zero available
+              replicas for 5 minutes (rollout stuck, node loss, crash loop).
+              Its task queue has no poller.
+        - alert: FhiTemporalWorkerBelowRedundancy
+          expr: >-
+            kube_deployment_status_replicas_available{namespace="totallylegitco", deployment=~"fhi-(fax|appeal)-worker"} < 2
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.deployment }} running below 2 replicas for 30m"
+            description: >-
+              One poller left on {{ $labels.deployment }}; the next node
+              drain or deploy removes the queue's last poller.
+
+    # ------------------------------------------------------------------------
+    # Family 1: WORKER-SIDE SDK metrics. Temporal namespace label is
+    # "default" here (see header).
+    # ------------------------------------------------------------------------
+    - name: fhi-temporal-workers
+      rules:
+        # ---- WORK WAITING: schedule-to-start latency as the worker sees it ----
+        - alert: FhiTemporalActivityScheduleToStartSlow
+          expr: >-
+            histogram_quantile(0.95,
+              sum by (le, task_queue) (
+                rate(temporal_activity_schedule_to_start_latency_bucket{namespace="default"}[10m])
+              )
+            ) > 60
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal activities waiting >60s to start on {{ $labels.task_queue }}"
+            description: >-
+              p95 schedule-to-start latency on task queue {{ $labels.task_queue }}
+              is {{ $value }}s: too few pollers/slots. NOTE this rule needs a
+              live worker to report it; a queue with NO poller is caught by
+              the worker-loss and server-side rules, not this one.
+
+        # ---- SLOT EXHAUSTION -------------------------------------------------
+        - alert: FhiTemporalWorkerSlotsExhausted
+          expr: >-
+            max_over_time(temporal_worker_task_slots_available{namespace="default"}[5m]) == 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal worker {{ $labels.pod }} has had 0 free task slots for 5m"
+            description: >-
+              {{ $labels.pod }} ({{ $labels.task_queue }}, {{ $labels.worker_type }})
+              has reported zero available task slots for 5 minutes. Work is
+              queueing behind it; raise replicas or the slot bound after checking
+              the activities are actually progressing (not stuck model calls).
+
+        # ---- ACTIVITY FAILURES (includes heartbeat-timeout-shaped failures) ---
+        # sdk-core exposes no distinct heartbeat-timeout counter; a heartbeat-
+        # timed-out attempt surfaces as an activity failure here and as an
+        # activity timeout on the SERVER (family 3).
+        - alert: FhiTemporalActivityFailures
+          expr: >-
+            sum by (task_queue, activity_type) (
+              increase(temporal_activity_execution_failed{namespace="default"}[15m])
+            ) > 3
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal activity {{ $labels.activity_type }} failing on {{ $labels.task_queue }}"
+            description: >-
+              More than 3 failed executions of {{ $labels.activity_type }} in 15m
+              ({{ $value }}). For the fax queue this can mean vendor trouble; for
+              the appeal queue, model-backend or database trouble.
+
+        # ---- CLIENT RPC FAILURES against the Temporal frontend ----------------
+        - alert: FhiTemporalRequestFailures
+          expr: >-
+            sum by (pod) (increase(temporal_request_failure{namespace="default"}[10m])) > 10
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Temporal worker {{ $labels.pod }} cannot talk to the frontend"
+            description: >-
+              {{ $value }} failed RPCs from {{ $labels.pod }} to temporal-frontend
+              in 10m. If every worker pod fires at once the frontend or its
+              database is the problem; if one pod fires, check that pod's
+              network/TLS config.
+
+    # ------------------------------------------------------------------------
+    # Family 3: SERVER-SIDE. Measured by the Temporal server's matching and
+    # history services, so they keep counting with zero workers alive.
+    # ==> VERIFY-LIVE: metric names below follow the Temporal server's
+    #     Prometheus naming (no temporal_ prefix on server series; labels
+    #     namespace / taskqueue / task_type per the server's metric
+    #     definitions) but are NOT confirmed against this cluster's server
+    #     version. Long `for:` and low severity until verified; promote after.
+    # ------------------------------------------------------------------------
+    - name: fhi-temporal-server-side
+      rules:
+        - alert: FhiTemporalTaskQueueBacklog
+          expr: >-
+            max by (taskqueue, task_type) (approximate_backlog_count{namespace="default", taskqueue=~"fhi-.*"}) > 25
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal backlog >25 tasks on {{ $labels.taskqueue }} ({{ $labels.task_type }}) for 30m"
+            description: >-
+              Server-side backlog on {{ $labels.taskqueue }} is {{ $value }}
+              tasks. This is the authoritative "nobody is polling / pollers
+              can't keep up" signal: it is measured by the matching service
+              and survives every worker dying. VERIFY-LIVE: metric name.
+        - alert: FhiTemporalServerScheduleToStartSlow
+          expr: >-
+            histogram_quantile(0.95,
+              sum by (le, taskqueue) (
+                rate(task_schedule_to_start_latency_bucket{namespace="default", taskqueue=~"fhi-.*"}[10m])
+              )
+            ) > 60
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Server-side p95 schedule-to-start >60s on {{ $labels.taskqueue }}"
+            description: >-
+              The matching service measured tasks waiting >60s (p95) before a
+              worker picked them up on {{ $labels.taskqueue }}. Unlike the
+              worker-side latency rule, this fires with zero workers. Units:
+              VERIFY-LIVE (server histograms may be milliseconds; adjust the
+              threshold if so).
+        - alert: FhiTemporalActivityTimeouts
+          expr: >-
+            sum by (namespace) (increase(activity_timeout{namespace="default"}[30m])) > 3
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal server recorded >3 activity timeouts in 30m"
+            description: >-
+              Heartbeat / start-to-close / schedule-to-start activity timeouts
+              as counted by the history service -- the server-side face of a
+              worker dying mid-attempt. VERIFY-LIVE: metric name and the
+              timeout_type label on the deployed server version.

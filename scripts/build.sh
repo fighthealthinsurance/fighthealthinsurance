@@ -181,6 +181,22 @@ envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
 # problems to look at, not background noise to leave retrying unattended.
 kubectl -n totallylegitco wait --for=condition=complete job/fhi-backfill-appeal-fingerprints --timeout=30m \
   || { echo "Fingerprint backfill Job did not complete within 30m; inspect it: kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints"; exit 1; }
+# Worker redundancy + observability (external review): PDBs keep one poller
+# per queue through drains; the PodMonitor scrapes the SDK's Prometheus
+# endpoint and the PrometheusRule alerts on the silent failure modes (work
+# waiting, slots exhausted, activity/RPC failures). Same CRD-gating as the
+# web PodMonitor below: skipped only where the operator is absent.
+kubectl apply -f k8s/temporal/worker-pdb.yaml
+if kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1; then
+    kubectl apply -f k8s/temporal/worker-podmonitor.yaml
+else
+    echo "WARNING: no PodMonitor CRD in this cluster -- Temporal worker metrics will not be scraped"
+fi
+if kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then
+    kubectl apply -f k8s/temporal/worker-alerts.yaml
+else
+    echo "WARNING: no PrometheusRule CRD in this cluster -- Temporal worker alerts not installed"
+fi
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
 # the internet -- see docs/metrics-endpoint-access.md). The apply is skipped

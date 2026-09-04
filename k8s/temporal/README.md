@@ -77,6 +77,16 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
    # ${FHI_BASE}/${FHI_VERSION} are substituted the same way as the other k8s/ manifests.
    envsubst < worker.yaml | kubectl apply -f -
    envsubst < appeal-worker.yaml | kubectl apply -f -
+   kubectl apply -f worker-pdb.yaml
+   # The PodMonitor and PrometheusRule need the Prometheus operator's CRDs.
+   # scripts/build.sh skips each when its CRD is absent; do the same by hand
+   # so these commands work on a cluster without the operator.
+   kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1 \
+     && kubectl apply -f worker-podmonitor.yaml \
+     || echo "no PodMonitor CRD -- worker metrics will not be scraped"
+   kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1 \
+     && kubectl apply -f worker-alerts.yaml \
+     || echo "no PrometheusRule CRD -- worker alerts not installed"
    ```
 
 ## Turning it on
@@ -154,6 +164,19 @@ back to plain TLS.
    (`launch_polling_actors --force` relaunch excludes it under Temporal, but
    does not kill a live one).
 
+5. **Worker observability (review-9)** — before relying on the alert
+   rules in `worker-alerts.yaml`, verify against the LIVE Prometheus:
+   the PodMonitor selector actually produces `up{pod=~"fhi-(fax|appeal)-worker-.*"}`
+   targets (operator `podMonitorSelector` caveat), kube-state-metrics is
+   scraped (`kube_deployment_status_replicas_available`), the SDK series
+   carry `namespace="default"` (the Temporal namespace, not the Kubernetes
+   one), and every SERVER-side metric name in the `fhi-temporal-server-side`
+   group exists on the deployed Temporal server version (`approximate_backlog_count`,
+   `task_schedule_to_start_latency`, `activity_timeout`) with the units the
+   thresholds assume. Worker-side series vanish when the last worker dies,
+   so only the worker-loss and server-side rules can page on "zero workers";
+   promote their severity once verified.
+
 ## Applying a values.yaml change
 
 Editing `values.yaml` does **not** change anything by itself, and neither does
@@ -205,6 +228,9 @@ required.
   the install command pins): Postgres-backed, no Cassandra/Elasticsearch.
 - `worker.yaml` — the `fhi-fax-worker` Deployment.
 - `appeal-worker.yaml` — the `fhi-appeal-worker` Deployment (dark-safe; idles until the journey flags flip).
+- `worker-pdb.yaml` — PodDisruptionBudgets (minAvailable: 1) for both worker Deployments.
+- `worker-podmonitor.yaml` — scrapes the SDK's Prometheus endpoint (`TEMPORAL_METRICS_BIND`, port 9464) on both workers.
+- `worker-alerts.yaml` — PrometheusRule: schedule-to-start latency, slot exhaustion, activity failures, frontend RPC failures.
 
 ## What runs here today vs. next
 

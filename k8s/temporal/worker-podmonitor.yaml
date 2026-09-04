@@ -1,0 +1,32 @@
+# =============================================================================
+# PodMonitor for BOTH Temporal worker Deployments (fhi-fax-worker and
+# fhi-appeal-worker). The Temporal Python SDK exposes Prometheus metrics from
+# the worker process itself (TEMPORAL_METRICS_BIND, default 0.0.0.0:9464 --
+# see run_temporal_worker.py); scraping per pod gives complete series labelled
+# by pod, same reasoning as fhi-web-podmonitor.yaml.
+#
+# ==> VERIFY-LIVE: same operator-selector caveat as fhi-web-podmonitor.yaml --
+#     the operator only picks this up if its podMonitorSelector /
+#     podMonitorNamespaceSelector match; mirror any required label here.
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: fhi-temporal-workers
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+spec:
+  selector:
+    matchExpressions:
+      - key: group
+        operator: In
+        values:
+          - fight-health-insurance-prod-temporal-worker
+          - fight-health-insurance-prod-temporal-appeal-worker
+  podMetricsEndpoints:
+    # "metrics" is the named containerPort (9464) on both worker Deployments.
+    - port: metrics
+      path: /metrics
+      scheme: http
+      interval: 30s

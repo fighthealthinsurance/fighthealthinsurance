@@ -22,11 +22,15 @@ from loguru import logger
 _RESULT_WAIT_SECONDS = 15 * 60
 
 
-async def get_temporal_client() -> Any:
+async def get_temporal_client(runtime: Any = None) -> Any:
     """Connect a Temporal client using Django settings.
 
     Supports a plain connection (local dev server), server-side TLS, and mTLS
     with client cert/key files for a self-hosted cluster.
+
+    ``runtime`` is the SDK ``temporalio.runtime.Runtime`` carrying telemetry
+    config; only the worker process passes one (it hosts the Prometheus
+    metrics endpoint). Web/Ray callers leave it None and get the default.
     """
     from temporalio.client import Client
     from temporalio.service import TLSConfig
@@ -56,6 +60,8 @@ async def get_temporal_client() -> Any:
     payload_key = getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
     if payload_key:
         connect_kwargs["data_converter"] = _encrypting_data_converter(payload_key)
+    if runtime is not None:
+        connect_kwargs["runtime"] = runtime
 
     return await Client.connect(
         settings.TEMPORAL_HOST,

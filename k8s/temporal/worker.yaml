@@ -9,9 +9,11 @@ metadata:
     app: fight-health-insurance-prod
     group: fight-health-insurance-prod-temporal-worker
 spec:
-  # Faxes are low volume; start with one worker and scale out by raising
-  # replicas (Temporal load-balances tasks across all workers on the queue).
-  replicas: 1
+  # Two pollers on the queue: a deploy or node failure must never remove
+  # every fax poller at once (Temporal queues work for a pollerless queue
+  # silently -- external review). Volume is low; two is redundancy, not
+  # capacity. Paired with worker-pdb.yaml and the spread constraint below.
+  replicas: 2
   selector:
     matchLabels:
       group: fight-health-insurance-prod-temporal-worker
@@ -28,11 +30,28 @@ spec:
       # fax is genuinely mid-send, which is exactly when killing the pod
       # would risk a double-send.
       terminationGracePeriodSeconds: 1860
+      # Spread the two replicas across nodes so one node failure cannot take
+      # both fax pollers. ScheduleAnyway (not DoNotSchedule): on a one-node
+      # cluster the second replica must still schedule.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              group: fight-health-insurance-prod-temporal-worker
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
           # start-server.sh runs `manage.py run_temporal_worker` when this is set.
+          ports:
+            # Temporal SDK Prometheus metrics (scraped by worker-podmonitor.yaml).
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
           env:
+            - name: TEMPORAL_METRICS_BIND
+              value: "0.0.0.0:9464"
             # SSH to FaxyMcFaxFace must go as user "ray" (the account the fax
             # host trusts). asyncssh/paramiko take the default username from
             # getpass.getuser(), which reads USER/LOGNAME before /etc/passwd,

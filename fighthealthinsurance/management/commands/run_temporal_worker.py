@@ -28,6 +28,33 @@ from django.core.management.base import BaseCommand, CommandError
 
 QUEUE_ROLES = ("fax", "appeal", "all")
 
+# Prometheus scrape endpoint for the SDK's worker metrics. Temporal accepts
+# work for a task queue with no healthy poller and queues it silently, so
+# worker health must be OBSERVED: schedule-to-start latency, task-slot
+# availability, activity failures, RPC failures (external review). Set by
+# the worker manifests; unset (dev, tests) means no endpoint.
+METRICS_BIND_ENV = "TEMPORAL_METRICS_BIND"
+
+
+def metrics_runtime() -> Any:
+    """The SDK ``Runtime`` carrying the Prometheus config, or None when
+    ``TEMPORAL_METRICS_BIND`` is unset/blank."""
+    bind = (os.environ.get(METRICS_BIND_ENV) or "").strip()
+    if not bind:
+        return None
+    from temporalio.runtime import PrometheusConfig, Runtime, TelemetryConfig
+
+    return Runtime(
+        telemetry=TelemetryConfig(
+            metrics=PrometheusConfig(
+                bind_address=bind,
+                # Seconds, not the SDK's millisecond default, so alert
+                # thresholds in k8s/temporal/worker-alerts.yaml read plainly.
+                durations_as_seconds=True,
+            )
+        )
+    )
+
 
 class Command(BaseCommand):
     help = "Run the Temporal worker for FHI workflows and activities."
@@ -77,7 +104,6 @@ class Command(BaseCommand):
         )
         from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 
-        task_queue = options.get("task_queue") or settings.TEMPORAL_TASK_QUEUE
         max_workers = options.get("max_workers") or getattr(
             settings, "TEMPORAL_MAX_ACTIVITY_WORKERS", 20
         )
@@ -88,6 +114,17 @@ class Command(BaseCommand):
             raise CommandError(
                 f"TEMPORAL_WORKER_QUEUES={role!r}: expected one of {QUEUE_ROLES}"
             )
+        # --task-queue overrides the queue of the SELECTED role: for the fax
+        # role (or 'all') it replaces the fax queue as before; for the appeal
+        # role it replaces the appeal queue, instead of silently setting a fax
+        # queue that role never polls (review).
+        queue_override = options.get("task_queue")
+        task_queue = (
+            queue_override if role != "appeal" and queue_override else None
+        ) or settings.TEMPORAL_TASK_QUEUE
+        appeal_queue = (
+            queue_override if role == "appeal" and queue_override else None
+        ) or settings.TEMPORAL_APPEAL_TASK_QUEUE
 
         from typing import Any as _Any, Callable, List
 
@@ -106,11 +143,13 @@ class Command(BaseCommand):
             settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False
         )
 
-        client = await get_temporal_client()
+        runtime = metrics_runtime()
+        client = await get_temporal_client(runtime=runtime)
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
-            f"journey {'ENABLED' if journey_enabled else 'disabled'}"
+            f"journey {'ENABLED' if journey_enabled else 'disabled'}; metrics "
+            f"{os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}"
         )
 
         with ThreadPoolExecutor(max_workers=max_workers) as activity_executor:
@@ -123,6 +162,10 @@ class Command(BaseCommand):
                     workflows=fax_workflows,
                     activities=fax_activity_fns,
                     activity_executor=activity_executor,
+                    # Match the slot count to the thread executor: with more
+                    # slots than threads, accepted activities queue locally
+                    # while their start-to-close clock runs (review).
+                    max_concurrent_activities=max_workers,
                     # Kubernetes sends SIGTERM at pod shutdown; a running
                     # send_fax_via_vendor attempt may legitimately spend up
                     # to its 30-minute start_to_close in vendor backends
@@ -146,7 +189,6 @@ class Command(BaseCommand):
                 # thread executor and its concurrency is bounded separately
                 # (low and explicit: current letter volume is small, and a
                 # small bound is most of the blast-radius story).
-                appeal_queue = settings.TEMPORAL_APPEAL_TASK_QUEUE
                 appeal_workflows: List[type] = [GenerateAppealWorkflow]
                 appeal_activity_fns = [
                     journey_activities.precheck_appeal_journey,
