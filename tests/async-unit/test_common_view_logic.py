@@ -32,6 +32,7 @@ from fighthealthinsurance.models import (
     Appeal,
     FaxesToSend,
     ModelCallAttempt,
+    PlanSource,
     ProposedAppeal,
     Regulator,
 )
@@ -2182,6 +2183,40 @@ class RegulatorContactInfoTest(TestCase):
         denial.regulator = regulator
         denial.save()
         self.assertIn("HTTPS://example.gov/complaint", self._outside_help_text(denial))
+
+    def test_outside_help_includes_medicaid_work_requirement_note(self):
+        medicaid = PlanSource.objects.create(
+            name="Medicaid", regex="medicaid", negative_regex="$^"
+        )
+        denial = self._make_denial()
+        denial.your_state = "GA"
+        denial.save()
+        denial.plan_source.set([medicaid])
+        text = self._outside_help_text(denial)
+        self.assertIn("work/community-engagement requirement", text)
+        self.assertIn("Georgia", text)
+
+    def test_outside_help_omits_work_requirement_note_for_non_medicaid_plan(self):
+        employer = PlanSource.objects.create(
+            name="Employer -- Private", regex="employer", negative_regex="$^"
+        )
+        denial = self._make_denial()
+        denial.your_state = "GA"
+        denial.save()
+        denial.plan_source.set([employer])
+        text = self._outside_help_text(denial)
+        self.assertNotIn("work/community-engagement requirement", text)
+
+    def test_outside_help_omits_work_requirement_note_without_state(self):
+        medicaid = PlanSource.objects.create(
+            name="Medicaid", regex="medicaid", negative_regex="$^"
+        )
+        denial = self._make_denial()
+        denial.your_state = None
+        denial.save()
+        denial.plan_source.set([medicaid])
+        text = self._outside_help_text(denial)
+        self.assertNotIn("work/community-engagement requirement", text)
 
     def test_migration_backfill_fills_blank_regulator_phones(self):
         """The regulator-phone data migration must backfill phones for
