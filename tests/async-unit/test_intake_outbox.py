@@ -173,8 +173,8 @@ class TestFormCompletedRecordedEarly(TransactionTestCase):
                 }
             )
             try:
-                await agen.__anext__()  # init status (pre-auth)
-                await agen.__anext__()  # first post-authentication yield
+                await agen.__anext__()  # init status (now post-auth, post-intent)
+                await agen.__anext__()  # keepalive
             finally:
                 await agen.aclose()
 
@@ -307,27 +307,33 @@ class TestRelay(TransactionTestCase):
         assert counts["delivered"] == 3
         assert connect.await_count == 1
 
-    def test_claim_holds_no_lock_and_ack_is_conditional(self):
-        """Review 8: claim first (short transaction, committed), deliver with
-        no lock. A request-path delivery of the same event during the relay's
-        window is NOT blocked (it acks), and the relay's conditional ack then
-        matches zero rows instead of double-acking."""
+    def test_claim_holds_no_lock_and_request_path_defers_to_a_live_claim(self):
+        """Review 8/9: claim first (short transaction, committed), deliver
+        with no lock. A request-path delivery of the same event during the
+        relay's window is NOT blocked by a lock -- but it respects the live
+        claim (skips, returns False) instead of racing the relay, and the
+        relay then delivers and acks exactly once."""
         denial = _make_denial(8117)
         row = _pending(denial, intake_outbox.INTAKE_STARTED)
         claims = intake_outbox.claim_batch()
         assert [pk for pk, _ in claims] == [row.pk]
         row.refresh_from_db()
         assert row.claimed_token is not None and row.claimed_until is not None
-        # Another path acks the same event while the relay "is on the wire".
-        with patch(_CLIENT, AsyncMock(return_value=_client())):
-            assert intake_outbox.deliver(row) is True
+        # The request path arrives while the relay "is on the wire".
+        inline_client = _client()
+        with patch(_CLIENT, AsyncMock(return_value=inline_client)):
+            assert intake_outbox.deliver(row) is False
+        inline_client.start_workflow.assert_not_awaited()
+        row.refresh_from_db()
+        assert row.claimed_token == claims[0][1]  # claim untouched
         from asgiref.sync import async_to_sync
 
         client = _client()
         with patch(_CLIENT, AsyncMock(return_value=client)):
             counts = async_to_sync(intake_outbox.adeliver_claimed)(claims)
-        assert counts["lost_claim"] == 1 and counts["delivered"] == 0
-        client.start_workflow.assert_not_awaited()
+        assert counts["delivered"] == 1 and counts["lost_claim"] == 0
+        row.refresh_from_db()
+        assert row.acked_at is not None
 
     def test_conditional_ack_matches_zero_rows_when_claim_was_stolen(self):
         """The token, not the row, authorizes the ack: a claim re-issued to a
@@ -678,3 +684,147 @@ class TestRelayLimit(TransactionTestCase):
             call_command("deliver_intake_events", "--limit", "0", stdout=out)
         client.start_workflow.assert_not_awaited()
         assert "attempted=0" in out.getvalue() and "backlog=1" in out.getvalue()
+
+
+class TestFormCompletedBeforeFirstYield(TestFormCompletedRecordedEarly):
+    """Review 9 blocker: the init frame used to precede authentication, so a
+    disconnect while the generator sat at that first yield lost the
+    completion. Now NOTHING is yielded before the durable intent exists."""
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_intent_exists_after_exactly_one_yield(self, mock_gen):
+        from asgiref.sync import async_to_sync
+
+        denial = _make_denial(8140)
+        mock_gen.make_appeals.return_value = iter([])
+
+        async def drive():
+            agen = common_view_logic.AppealsBackendHelper.generate_appeals(
+                {
+                    "denial_id": denial.denial_id,
+                    "email": _EMAIL,
+                    "semi_sekret": denial.semi_sekret,
+                }
+            )
+            try:
+                await agen.__anext__()  # the very first frame
+            finally:
+                await agen.aclose()
+
+        with patch(_CLIENT, AsyncMock(return_value=_client())):
+            async_to_sync(drive)()
+        assert IntakeJourneyEvent.objects.filter(
+            denial=denial, event_type=intake_outbox.FORM_COMPLETED
+        ).exists()
+
+
+@override_settings(**_INTAKE_ON)
+class TestClaimExpiry(TransactionTestCase):
+    """Review 9: an expired claim must not deliver or ack, the claim is
+    renewed just in time before each RPC, and a reclaim after expiry can
+    never produce a duplicate ack."""
+
+    def test_claim_ttl_outlives_the_relay_run(self):
+        assert intake_outbox.CLAIM_TTL_SECONDS > intake_outbox.DEFAULT_TIME_BUDGET_SECONDS
+        assert intake_outbox.CLAIM_TTL_SECONDS >= 600  # Job activeDeadlineSeconds 300 + margin
+
+    def test_expired_claim_with_the_right_token_neither_delivers_nor_acks(self):
+        from asgiref.sync import async_to_sync
+
+        denial = _make_denial(8141)
+        token = uuid.uuid4()
+        row = _pending(
+            denial,
+            intake_outbox.INTAKE_STARTED,
+            claimed_token=token,
+            claimed_until=timezone.now() - datetime.timedelta(seconds=1),
+        )
+        client = _client()
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            counts = async_to_sync(intake_outbox.adeliver_claimed)([(row.pk, token)])
+        assert counts["lost_claim"] == 1 and counts["delivered"] == 0
+        client.start_workflow.assert_not_awaited()
+        row.refresh_from_db()
+        assert row.acked_at is None
+
+    def test_claim_is_renewed_before_the_rpc(self):
+        from asgiref.sync import async_to_sync
+
+        denial = _make_denial(8142)
+        row = _pending(denial, intake_outbox.INTAKE_STARTED)
+        claims = intake_outbox.claim_batch()
+        (pk, token) = claims[0]
+        short = timezone.now() + datetime.timedelta(seconds=30)
+        IntakeJourneyEvent.objects.filter(pk=pk).update(claimed_until=short)
+        seen = {}
+
+        async def observe(denial_, event, client=None, timeout=None):
+            seen["claimed_until"] = (
+                await IntakeJourneyEvent.objects.filter(pk=pk)
+                .values_list("claimed_until", flat=True)
+                .afirst()
+            )
+
+        with patch(_CLIENT, AsyncMock(return_value=_client())), patch.object(
+            intake_outbox, "_acall", observe
+        ):
+            counts = async_to_sync(intake_outbox.adeliver_claimed)(claims)
+        assert counts["delivered"] == 1
+        assert seen["claimed_until"] > short + datetime.timedelta(seconds=60)
+
+    def test_reclaim_after_expiry_cannot_double_ack(self):
+        from asgiref.sync import async_to_sync
+
+        denial = _make_denial(8143)
+        stale = uuid.uuid4()
+        row = _pending(
+            denial,
+            intake_outbox.INTAKE_STARTED,
+            claimed_token=stale,
+            claimed_until=timezone.now() - datetime.timedelta(seconds=1),
+        )
+        fresh_claims = intake_outbox.claim_batch()  # a second relay re-claims
+        assert [pk for pk, _ in fresh_claims] == [row.pk]
+        client = _client()
+        with patch(_CLIENT, AsyncMock(return_value=client)):
+            stale_counts = async_to_sync(intake_outbox.adeliver_claimed)(
+                [(row.pk, stale)]
+            )
+            fresh_counts = async_to_sync(intake_outbox.adeliver_claimed)(fresh_claims)
+        assert stale_counts["lost_claim"] == 1 and stale_counts["delivered"] == 0
+        assert fresh_counts["delivered"] == 1
+        assert client.start_workflow.await_count == 1
+        assert IntakeJourneyEvent.objects.filter(pk=row.pk, acked_at__isnull=False).count() == 1
+
+
+@override_settings(**_INTAKE_ON)
+class TestInlineDeliveryRespectsClaims(TransactionTestCase):
+    def test_inline_bookkeeping_never_clears_a_relay_claim(self):
+        from asgiref.sync import async_to_sync
+
+        denial = _make_denial(8144)
+        token = uuid.uuid4()
+        until = timezone.now() + datetime.timedelta(minutes=5)
+        row = _pending(
+            denial,
+            intake_outbox.INTAKE_STARTED,
+            claimed_token=token,
+            claimed_until=until,
+        )
+        async_to_sync(intake_outbox._aschedule_retry)(row, RuntimeError("boom"))
+        row.refresh_from_db()
+        assert row.claimed_token == token
+        assert row.claimed_until == until
+        assert row.attempts == 0  # tokenless bookkeeping touches only unclaimed rows
+
+    def test_inline_delivery_uses_the_short_timeout(self):
+        from asgiref.sync import async_to_sync
+
+        assert intake_outbox.INLINE_RPC_TIMEOUT_SECONDS == 3.0
+        assert intake_outbox.RPC_TIMEOUT_SECONDS == 15.0
+        denial = _make_denial(8145)
+        row = _pending(denial, intake_outbox.INTAKE_STARTED)
+        acall = AsyncMock(return_value=None)
+        with patch.object(intake_outbox, "_acall", acall):
+            assert async_to_sync(intake_outbox.adeliver)(row) is True
+        assert acall.await_args.kwargs["timeout"] == intake_outbox.INLINE_RPC_TIMEOUT_SECONDS

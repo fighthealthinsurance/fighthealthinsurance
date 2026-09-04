@@ -3064,17 +3064,11 @@ class AppealsBackendHelper:
         first_model: Optional[str] = None
         make_appeals_diag: dict[str, Any] = {}
 
-        # Yield status: starting
-        yield json.dumps(
-            {
-                "type": "status",
-                "phase": "init",
-                "message": "Starting appeal generation...",
-                "generation_id": generation_id,
-            }
-        ) + "\n"
-
-        # Get the current info (e.g. denial).
+        # Get the current info (e.g. denial). NOTHING is yielded before the
+        # authenticated lookup and the durable form_completed intent below:
+        # the init frame used to go out first, and a disconnect while the
+        # generator sat suspended at that yield lost the completion entirely
+        # (external review's one-yield-and-close test).
         await asyncio.sleep(0)
         denial_query = Denial.objects.filter(
             denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
@@ -3098,8 +3092,25 @@ class AppealsBackendHelper:
             form_intent = await intake_outbox.arecord_intent(
                 denial, intake_outbox.FORM_COMPLETED
             )
-            if form_intent is not None:
-                await intake_outbox.adeliver(form_intent)
+        else:
+            form_intent = None
+
+        # Yield status: starting -- the first byte to the client, and it
+        # follows the durable intent above by design.
+        yield json.dumps(
+            {
+                "type": "status",
+                "phase": "init",
+                "message": "Starting appeal generation...",
+                "generation_id": generation_id,
+            }
+        ) + "\n"
+
+        if form_intent is not None:
+            # Best-effort inline delivery (short timeout; the relay covers
+            # the rest within a minute). After the first byte so a Temporal
+            # stall never delays the user's first response.
+            await intake_outbox.adeliver(form_intent, inline=True)
         if not background:
             # A live human outranks any background generator: STEAL the
             # denial's generation lease so a journey attempt in flight sees

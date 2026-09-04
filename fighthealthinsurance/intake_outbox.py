@@ -55,7 +55,16 @@ OUTCOME_SMTP_FAILED = "smtp_failed"
 BACKOFF_BASE_SECONDS = 30
 BACKOFF_CAP_SECONDS = 3600
 # How long a relay claim holds a row before another run may take it.
-CLAIM_TTL_SECONDS = 120
+# A claim must outlive the WHOLE relay run it belongs to, or a second relay
+# can re-claim and re-deliver a row this run is still working on: the
+# command stops starting rows after DEFAULT_TIME_BUDGET_SECONDS (240s) and
+# the Job's activeDeadlineSeconds is 300s, so 600s = deadline + margin.
+# Every load, the renew before each RPC, and every ack/bookkeeping update
+# additionally require the claim to be UNEXPIRED (review).
+CLAIM_TTL_SECONDS = 600
+# The user-facing request path tries once, briefly: a Temporal stall must
+# never become request latency -- the relay covers it within a minute.
+INLINE_RPC_TIMEOUT_SECONDS = 3.0
 # No single Temporal call may consume the relay's lifetime.
 RPC_TIMEOUT_SECONDS = 15.0
 # Stop STARTING new rows after this long; whatever is left waits for the
@@ -140,23 +149,33 @@ async def _aschedule_retry(
         attempts = int(row.attempts) + 1
         now = timezone.now()
         qs = IntakeJourneyEvent.objects.filter(pk=row.pk, acked_at__isnull=True)
-        if token is not None:
-            qs = qs.filter(claimed_token=token)
-        await qs.aupdate(
+        fields = dict(
             attempts=F("attempts") + 1,
             next_attempt_at=now + datetime.timedelta(seconds=backoff_seconds(attempts)),
             last_error_at=now,
             last_error=type(exc).__name__[:128],
-            claimed_token=None,
-            claimed_until=None,
         )
+        if token is not None:
+            # The relay releases ITS claim (and only its claim).
+            qs = qs.filter(claimed_token=token)
+            fields.update(claimed_token=None, claimed_until=None)
+        else:
+            # The request path holds no claim and must never clear or
+            # overwrite one a relay owns: it only touches unclaimed rows.
+            qs = qs.filter(claimed_token__isnull=True)
+        await qs.aupdate(**fields)
     except Exception:
         logger.opt(exception=True).warning(
             f"intake outbox: could not record retry for event {row.pk}"
         )
 
 
-async def _acall(denial: Any, event: str, client: Any = None) -> None:
+async def _acall(
+    denial: Any,
+    event: str,
+    client: Any = None,
+    timeout: float = RPC_TIMEOUT_SECONDS,
+) -> None:
     from fighthealthinsurance.temporal_client import signal_with_start_intake
 
     await asyncio.wait_for(
@@ -167,18 +186,22 @@ async def _acall(denial: Any, event: str, client: Any = None) -> None:
             event,
             client=client,
         ),
-        timeout=RPC_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
 
 
-async def adeliver(row: Any) -> bool:
+async def adeliver(row: Any, inline: bool = True) -> bool:
     """Request-path delivery of one event: deliver and ack. NEVER raises.
 
     Returns True when the event is (now or already) acknowledged. On a
     delivery failure the row is scheduled for retry and False is returned.
     Every step -- the reload, the RPC, the ack, the bookkeeping -- sits
     inside one boundary so nothing escapes into a user request. Holds no
-    claim: its ack is conditional only on the row still being unacked.
+    claim, and RESPECTS the relay's: a row under a live claim is skipped
+    (the relay owns it right now), and neither the ack nor the retry
+    bookkeeping ever clears or overwrites a claim (review). The RPC gets
+    the short inline timeout so a Temporal stall never becomes request
+    latency; the relay retries with the full one.
     """
     from fighthealthinsurance.models import IntakeJourneyEvent
 
@@ -188,8 +211,18 @@ async def adeliver(row: Any) -> bool:
         row = await IntakeJourneyEvent.objects.select_related("denial").aget(pk=row.pk)
         if row.acked_at is not None:
             return True
+        if row.claimed_until is not None and row.claimed_until > timezone.now():
+            logger.info(
+                f"intake outbox: {row.event_type} for denial {row.denial.uuid} "
+                "is under a live relay claim; leaving it to the relay"
+            )
+            return False
         try:
-            await _acall(row.denial, row.event_type)
+            await _acall(
+                row.denial,
+                row.event_type,
+                timeout=INLINE_RPC_TIMEOUT_SECONDS if inline else RPC_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
             logger.opt(exception=True).warning(
                 f"intake outbox: {row.event_type} not delivered for denial "
@@ -197,8 +230,10 @@ async def adeliver(row: Any) -> bool:
             )
             await _aschedule_retry(row, exc)
             return False
+        # Ack only an UNCLAIMED row: if a relay claimed it meanwhile, the
+        # relay's own conditional ack settles it (idempotent re-delivery).
         await IntakeJourneyEvent.objects.filter(
-            pk=row.pk, acked_at__isnull=True
+            pk=row.pk, acked_at__isnull=True, claimed_token__isnull=True
         ).aupdate(acked_at=timezone.now())
         return True
     except Exception:
@@ -384,13 +419,28 @@ async def adeliver_claimed(
             continue
         counts["attempted"] += 1
         try:
+            now = timezone.now()
             row = (
                 await IntakeJourneyEvent.objects.select_related("denial")
-                .filter(pk=pk, claimed_token=token)
+                .filter(pk=pk, claimed_token=token, claimed_until__gt=now)
                 .afirst()
             )
             if row is None or row.acked_at is not None:
-                counts["lost_claim"] += 1  # acked or re-claimed elsewhere
+                # Acked, re-claimed elsewhere, or our claim EXPIRED: an
+                # expired claim may already belong to another relay, so
+                # nothing is delivered or acked under it (review).
+                counts["lost_claim"] += 1
+                continue
+            # Renew just in time, conditionally: a claim that has lapsed
+            # between the load and here is treated exactly like a lost one.
+            renewed = await IntakeJourneyEvent.objects.filter(
+                pk=pk, claimed_token=token, claimed_until__gt=now, acked_at__isnull=True
+            ).aupdate(
+                claimed_until=timezone.now()
+                + datetime.timedelta(seconds=CLAIM_TTL_SECONDS)
+            )
+            if not renewed:
+                counts["lost_claim"] += 1
                 continue
             try:
                 await _acall(row.denial, row.event_type, client=client)
@@ -405,7 +455,10 @@ async def adeliver_claimed(
                 counts["failed"] += 1
                 continue
             updated = await IntakeJourneyEvent.objects.filter(
-                pk=pk, claimed_token=token, acked_at__isnull=True
+                pk=pk,
+                claimed_token=token,
+                claimed_until__gt=timezone.now(),
+                acked_at__isnull=True,
             ).aupdate(acked_at=timezone.now(), claimed_token=None, claimed_until=None)
             if updated:
                 counts["delivered"] += 1
