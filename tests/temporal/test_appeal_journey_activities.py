@@ -97,3 +97,67 @@ async def test_generate_sanitizes_exceptions(mock_load, mock_generate):
     assert "sensitive" not in str(exc_info.value)
     assert "u" in str(exc_info.value)
     assert exc_info.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+@patch(f"{_MOD}.aprecheck_appeal_journey", new_callable=AsyncMock)
+@patch(f"{_MOD}.aload_denial", new_callable=AsyncMock)
+async def test_precheck_programming_error_is_non_retryable(mock_load, mock_precheck):
+    """The precheck's retry policy is unbounded, so a schema/programming
+    failure must be classified non-retryable instead of spinning forever
+    disguised as a transient error."""
+    from django.db.utils import ProgrammingError
+
+    mock_load.return_value = object()
+    mock_precheck.side_effect = ProgrammingError('column "nope" does not exist')
+    env = ActivityEnvironment()
+    with pytest.raises(ApplicationError) as exc_info:
+        await env.run(journey_activities.precheck_appeal_journey, "h", "u")
+    assert exc_info.value.non_retryable
+    # Sanitized: the failure names the error type and opaque uuid only.
+    assert "nope" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@patch(f"{_MOD}.agenerate_and_store_appeals", new_callable=AsyncMock)
+@patch(f"{_MOD}.aload_denial", new_callable=AsyncMock)
+async def test_generate_validation_error_is_non_retryable(mock_load, mock_generate):
+    from django.core.exceptions import ValidationError
+
+    mock_load.return_value = object()
+    mock_generate.side_effect = ValidationError("bad value")
+    env = ActivityEnvironment()
+    with pytest.raises(ApplicationError) as exc_info:
+        await env.run(journey_activities.generate_and_store_appeals, "h", "u")
+    assert exc_info.value.non_retryable
+
+
+@pytest.mark.asyncio
+@patch(f"{_MOD}.agenerate_and_store_appeals", new_callable=AsyncMock)
+@patch(f"{_MOD}.aload_denial", new_callable=AsyncMock)
+async def test_generate_operational_error_stays_retryable(mock_load, mock_generate):
+    """A dropped/refused database connection is exactly the transient class
+    the retry policy exists for -- it must NOT be marked non-retryable."""
+    from django.db.utils import OperationalError
+
+    mock_load.return_value = object()
+    mock_generate.side_effect = OperationalError("server closed the connection")
+    env = ActivityEnvironment()
+    with pytest.raises(ApplicationError) as exc_info:
+        await env.run(journey_activities.generate_and_store_appeals, "h", "u")
+    assert not exc_info.value.non_retryable
+
+
+@pytest.mark.asyncio
+@patch(f"{_MOD}.aload_denial", new_callable=AsyncMock)
+async def test_generate_denial_lookup_schema_error_is_non_retryable(mock_load):
+    """The denial LOOKUP runs before the inner classifier; a schema failure
+    there must get the same non-retryable classification (PR review)."""
+    from django.db.utils import ProgrammingError
+
+    mock_load.side_effect = ProgrammingError('relation "nope" does not exist')
+    env = ActivityEnvironment()
+    with pytest.raises(ApplicationError) as exc_info:
+        await env.run(journey_activities.generate_and_store_appeals, "h", "u")
+    assert exc_info.value.non_retryable
+    assert "nope" not in str(exc_info.value)

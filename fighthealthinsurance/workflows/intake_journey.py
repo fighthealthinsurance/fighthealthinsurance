@@ -22,6 +22,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from fighthealthinsurance.workflows.types import GenerateAppealInput, IntakeJourneyInput
 
@@ -118,12 +119,22 @@ class IntakeJourneyWorkflow:
         # retry policy; the deterministic child id keeps duplicate journeys
         # idempotent, and precheck no-ops if drafts already exist (e.g. the
         # interactive flow delivered them first).
-        await workflow.execute_child_workflow(
-            "GenerateAppealWorkflow",
-            GenerateAppealInput(
-                hashed_email=journey.hashed_email,
-                denial_uuid=journey.denial_uuid,
-            ),
-            id=f"generate-appeal-{journey.denial_uuid}",
-        )
+        try:
+            await workflow.execute_child_workflow(
+                "GenerateAppealWorkflow",
+                GenerateAppealInput(
+                    hashed_email=journey.hashed_email,
+                    denial_uuid=journey.denial_uuid,
+                ),
+                id=f"generate-appeal-{journey.denial_uuid}",
+            )
+        except WorkflowAlreadyStartedError:
+            # A standalone generation with this id is already RUNNING (e.g. a
+            # management-command dispatch); a child cannot attach to it, and
+            # failing the whole intake journey over work that is underway
+            # would be wrong. Drafts are governed by the durable database
+            # postcondition either way (external review).
+            workflow.logger.info(
+                "generation already running for this denial; intake defers to it"
+            )
         return "completed"

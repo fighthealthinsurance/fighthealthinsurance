@@ -10,10 +10,12 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from fighthealthinsurance import intake_journey_core
+from fighthealthinsurance.activities.appeal_journey import _aclose_old_connections
 
 
 @activity.defn
 async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
+    await _aclose_old_connections()
     try:
         return await intake_journey_core.send_abandonment_nudge(
             hashed_email, denial_uuid
