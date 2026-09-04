@@ -40,4 +40,14 @@ spec:
             - secretRef:
                 name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
+          # Same partial hardening as the worker manifests: no privilege
+          # escalation, all capabilities dropped, default seccomp.
+          # runAsNonRoot / readOnlyRootFilesystem stay deferred with the
+          # rest of the fleet -- the image entrypoint runs as root today.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
       restartPolicy: OnFailure

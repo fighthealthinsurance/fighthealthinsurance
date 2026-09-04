@@ -2680,6 +2680,16 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         #   (external review).
         # - everything else: recomputed from the current text.
         update_fields = kwargs.get("update_fields")
+        if update_fields is not None and not (
+            {"appeal_text", "chosen"} & set(update_fields)
+        ):
+            # A partial save that persists neither source field must not
+            # touch the fingerprint: hashing an in-memory text change that
+            # is NOT being written would store a fingerprint for text the
+            # row does not hold (review). Leave both the column and the
+            # loaded-text baseline exactly as they are.
+            super().save(*args, **kwargs)
+            return
         if self.chosen:
             desired = None
         elif self.text_fingerprint is None and not self._state.adding:

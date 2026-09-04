@@ -527,3 +527,73 @@ class TestFingerprintCompleteness(_JourneyTestBase):
                 call_command("backfill_appeal_fingerprints", "--strict")
         with _patch(target, side_effect=[busy, quiet]):
             call_command("backfill_appeal_fingerprints", "--strict")
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_legacy_duplicate_existing_rows_stream_once(self, mock_gen):
+        """Two legacy NULL-fingerprint twins are one draft: the existing-
+        rows loop streams the first and skips the second (review)."""
+        import json as _json
+
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9123)
+        letter = (
+            "Dear Reviewer, this legacy letter was stored twice before the "
+            "fingerprint constraint existed and must stream only once."
+        )
+        ProposedAppeal.objects.bulk_create(
+            [ProposedAppeal(for_denial=denial, appeal_text=letter) for _ in range(2)]
+        )
+        mock_gen.make_appeals.return_value = iter([])
+
+        async def collect():
+            frames = []
+            async for chunk in AppealsBackendHelper.generate_appeals_for_denial(
+                denial
+            ):
+                if appeal_journey_core._appeal_text_from_chunk(chunk) is None:
+                    continue
+                data = _json.loads(chunk)
+                if "id" in data:
+                    frames.append(data)
+            return frames
+
+        assert len(async_to_sync(collect)()) == 1
+
+    def test_partial_save_excluding_text_leaves_fingerprint_alone(self):
+        """In-memory text change + save(update_fields=['model_name']) must
+        not persist a fingerprint for text the row does not hold (review)."""
+        denial = _make_denial(9124)
+        row = ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="Dear Reviewer, the stored text."
+        )
+        original_fp = row.text_fingerprint
+        row.appeal_text = "Dear Reviewer, an unsaved in-memory edit."
+        row.model_name = "fhi-internal"
+        row.save(update_fields=["model_name"])
+        row.refresh_from_db()
+        assert row.appeal_text == "Dear Reviewer, the stored text."
+        assert row.text_fingerprint == original_fp
+
+    def test_strict_backfill_fails_on_unclassified_null_rows(self):
+        from unittest.mock import patch as _patch
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        quiet = {
+            "filled": 0,
+            "skipped_duplicate": 1,
+            "skipped_empty": 0,
+            "lost_race": 0,
+            "remaining_null": 1,
+        }
+        sneaky = dict(quiet, remaining_null=2)  # a NULL row the pass never saw
+        target = "fighthealthinsurance.management.commands.backfill_appeal_fingerprints.run_backfill"
+        with _patch(target, side_effect=[quiet, sneaky]):
+            with pytest.raises(CommandError):
+                call_command("backfill_appeal_fingerprints", "--strict")
+        with _patch(target, side_effect=[quiet, quiet]):
+            call_command("backfill_appeal_fingerprints", "--strict")

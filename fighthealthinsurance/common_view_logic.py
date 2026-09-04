@@ -3236,9 +3236,17 @@ class AppealsBackendHelper:
             # checks existed (or by paths that skipped the filter), and we must
             # not re-deliver them.
             if is_real_appeal(appeal.appeal_text):
+                key = _served_key(appeal.appeal_text)
+                if key in served_keys:
+                    # Legacy duplicate rows (NULL fingerprints, equivalent
+                    # normalized text) are one draft to the user: stream
+                    # the first, skip its twins, and don't count them in
+                    # `old` (review).
+                    logger.debug(f"Skipping duplicate existing appeal {appeal}")
+                    continue
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
-                served_keys.add(_served_key(appeal.appeal_text))
+                served_keys.add(key)
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
                 )

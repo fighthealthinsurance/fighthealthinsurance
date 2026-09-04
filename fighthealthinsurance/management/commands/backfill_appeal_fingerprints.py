@@ -43,10 +43,18 @@ class Command(BaseCommand):
             return
         second = run_backfill(ProposedAppeal)
         self.stdout.write(f"pass 2: {second}")
-        if second["filled"] or second["lost_race"]:
+        # Quiescent means: the pass wrote nothing, lost no races, AND every
+        # NULL row still present is one the pass itself classified (known
+        # duplicate or empty). A NULL row inserted after the pass took its
+        # snapshot shows up only in remaining_null -- that is a live
+        # pre-fingerprint writer, and must fail strict mode too (review).
+        accounted = second["skipped_duplicate"] + second["skipped_empty"]
+        unaccounted = second["remaining_null"] - accounted
+        if second["filled"] or second["lost_race"] or unaccounted > 0:
             raise CommandError(
                 "fingerprint backfill not quiescent: pass 2 filled "
-                f"{second['filled']} and lost {second['lost_race']} races -- a "
+                f"{second['filled']}, lost {second['lost_race']} races, and "
+                f"{max(unaccounted, 0)} NULL row(s) appeared unclassified -- a "
                 "writer on pre-fingerprint code is still running; retry after "
                 "the rollout finishes draining old pods"
             )
