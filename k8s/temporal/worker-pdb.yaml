@@ -1,0 +1,32 @@
+# =============================================================================
+# PodDisruptionBudgets for the Temporal worker Deployments. With replicas: 2
+# and a hostname spread constraint on each Deployment, minAvailable: 1 keeps
+# at least one poller on every task queue through node drains and voluntary
+# evictions -- a queue with zero pollers is the silent-failure mode Temporal
+# never errors on (external review).
+# =============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fhi-fax-worker
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      group: fight-health-insurance-prod-temporal-worker
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fhi-appeal-worker
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      group: fight-health-insurance-prod-temporal-appeal-worker

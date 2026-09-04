@@ -12,10 +12,12 @@ metadata:
     app: fight-health-insurance-prod
     group: fight-health-insurance-prod-temporal-appeal-worker
 spec:
-  # One replica while volume is low. Raise to 2 before relying on the
-  # journey in production so a deploy or node failure doesn't remove every
-  # appeal poller at once.
-  replicas: 1
+  # Two pollers on the queue so a deploy or node failure doesn't remove every
+  # appeal poller at once (external review). Volume is low; this is
+  # redundancy, not capacity -- concurrency stays bounded per pod by
+  # max_concurrent_activities. Paired with worker-pdb.yaml and the spread
+  # constraint below.
+  replicas: 2
   selector:
     matchLabels:
       group: fight-health-insurance-prod-temporal-appeal-worker
@@ -30,6 +32,15 @@ spec:
       # SIGTERM'd pod finishes or cleanly cancels its attempt instead of
       # orphaning it into a costly retry.
       terminationGracePeriodSeconds: 360
+      # Spread the two replicas across nodes; ScheduleAnyway so a one-node
+      # cluster still schedules the second replica.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              group: fight-health-insurance-prod-temporal-appeal-worker
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
@@ -37,7 +48,14 @@ spec:
           # TEMPORAL_WORKER is set; TEMPORAL_WORKER_QUEUES picks the role.
           # No fax SSH identity or key mount here: appeal activities touch
           # only the database and model backends.
+          ports:
+            # Temporal SDK Prometheus metrics (scraped by worker-podmonitor.yaml).
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
           env:
+            - name: TEMPORAL_METRICS_BIND
+              value: "0.0.0.0:9464"
             - name: TEMPORAL_WORKER
               value: "1"
             - name: TEMPORAL_WORKER_QUEUES

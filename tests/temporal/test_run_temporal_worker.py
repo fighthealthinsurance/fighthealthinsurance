@@ -115,3 +115,102 @@ def test_deploy_script_applies_both_worker_manifests():
         assert m, f"{name} must pin TEMPORAL_WORKER_QUEUES"
         roles[name] = m.group(1)
     assert roles == {"worker.yaml": "fax", "appeal-worker.yaml": "appeal"}
+
+
+def _free_bind() -> str:
+    """A loopback address with an OS-assigned free port: building a real
+    SDK Runtime binds the Prometheus exporter immediately, so each test
+    needs its own port."""
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return f"127.0.0.1:{sock.getsockname()[1]}"
+
+
+def test_metrics_runtime_is_off_when_unset():
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        metrics_runtime,
+    )
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("TEMPORAL_METRICS_BIND", None)
+        assert metrics_runtime() is None
+
+
+def test_metrics_runtime_builds_prometheus_config_when_set():
+    """Runtime exposes no config introspection (and binds the port on
+    construction), so capture what it was built WITH."""
+    from unittest.mock import Mock
+
+    from temporalio.runtime import PrometheusConfig
+
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        metrics_runtime,
+    )
+
+    runtime_cls = Mock()
+    with (
+        patch.dict(os.environ, {"TEMPORAL_METRICS_BIND": "0.0.0.0:9464"}),
+        patch("temporalio.runtime.Runtime", runtime_cls),
+    ):
+        metrics_runtime()
+    cfg = runtime_cls.call_args.kwargs["telemetry"].metrics
+    assert isinstance(cfg, PrometheusConfig)
+    assert cfg.bind_address == "0.0.0.0:9464"
+    assert cfg.durations_as_seconds is True
+
+
+def test_worker_passes_metrics_runtime_to_the_client():
+    """The runtime reaches Client.connect only through get_temporal_client's
+    runtime kwarg; web/Ray callers never pass one."""
+    from django.test import override_settings
+    from unittest.mock import AsyncMock, Mock
+
+    connect = AsyncMock(return_value=Mock())
+    with (
+        patch.dict(os.environ, {"TEMPORAL_METRICS_BIND": _free_bind()}),
+        patch("temporalio.worker.Worker", _recording_worker_cls()),
+        patch("fighthealthinsurance.temporal_client.get_temporal_client", connect),
+        override_settings(
+            TEMPORAL_ENABLED=True,
+            TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+            TEMPORAL_TASK_QUEUE="q-fax",
+            TEMPORAL_HOST="test-host",
+            TEMPORAL_NAMESPACE="test-ns",
+        ),
+    ):
+        asyncio.run(asyncio.wait_for(Command()._run({"queues": "fax"}), timeout=2))
+    from temporalio.runtime import Runtime
+
+    assert isinstance(connect.call_args.kwargs.get("runtime"), Runtime)
+
+
+def test_worker_manifests_are_redundant_and_scraped():
+    """Review-5 finding 8: two pollers per queue, a PDB per Deployment, a
+    hostname spread constraint, and a metrics port on both workers."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    tdir = root / "k8s" / "temporal"
+    for name in ("worker.yaml", "appeal-worker.yaml"):
+        text = (tdir / name).read_text()
+        replicas = int(re.search(r"^\s*replicas:\s*(\d+)", text, re.M).group(1))
+        assert replicas >= 2, f"{name} must run >=2 replicas"
+        assert "topologySpreadConstraints:" in text, f"{name} needs a spread constraint"
+        assert "kubernetes.io/hostname" in text
+        assert re.search(r"name: metrics\s*\n\s*containerPort: 9464", text), (
+            f"{name} must expose the metrics port"
+        )
+        assert 'name: TEMPORAL_METRICS_BIND' in text
+    pdb = (tdir / "worker-pdb.yaml").read_text()
+    assert pdb.count("kind: PodDisruptionBudget") == 2
+    for group in (
+        "fight-health-insurance-prod-temporal-worker",
+        "fight-health-insurance-prod-temporal-appeal-worker",
+    ):
+        assert group in pdb, f"PDB missing for {group}"
+    build = (root / "scripts" / "build.sh").read_text()
+    for manifest in ("worker-pdb.yaml", "worker-podmonitor.yaml", "worker-alerts.yaml"):
+        assert f"k8s/temporal/{manifest}" in build, f"build.sh must apply {manifest}"

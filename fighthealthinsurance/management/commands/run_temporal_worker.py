@@ -28,6 +28,33 @@ from django.core.management.base import BaseCommand, CommandError
 
 QUEUE_ROLES = ("fax", "appeal", "all")
 
+# Prometheus scrape endpoint for the SDK's worker metrics. Temporal accepts
+# work for a task queue with no healthy poller and queues it silently, so
+# worker health must be OBSERVED: schedule-to-start latency, task-slot
+# availability, activity failures, RPC failures (external review). Set by
+# the worker manifests; unset (dev, tests) means no endpoint.
+METRICS_BIND_ENV = "TEMPORAL_METRICS_BIND"
+
+
+def metrics_runtime() -> Any:
+    """The SDK ``Runtime`` carrying the Prometheus config, or None when
+    ``TEMPORAL_METRICS_BIND`` is unset/blank."""
+    bind = (os.environ.get(METRICS_BIND_ENV) or "").strip()
+    if not bind:
+        return None
+    from temporalio.runtime import PrometheusConfig, Runtime, TelemetryConfig
+
+    return Runtime(
+        telemetry=TelemetryConfig(
+            metrics=PrometheusConfig(
+                bind_address=bind,
+                # Seconds, not the SDK's millisecond default, so alert
+                # thresholds in k8s/temporal/worker-alerts.yaml read plainly.
+                durations_as_seconds=True,
+            )
+        )
+    )
+
 
 class Command(BaseCommand):
     help = "Run the Temporal worker for FHI workflows and activities."
@@ -106,11 +133,13 @@ class Command(BaseCommand):
             settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False
         )
 
-        client = await get_temporal_client()
+        runtime = metrics_runtime()
+        client = await get_temporal_client(runtime=runtime)
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
-            f"journey {'ENABLED' if journey_enabled else 'disabled'}"
+            f"journey {'ENABLED' if journey_enabled else 'disabled'}; metrics "
+            f"{os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}"
         )
 
         with ThreadPoolExecutor(max_workers=max_workers) as activity_executor:

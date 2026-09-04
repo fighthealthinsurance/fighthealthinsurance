@@ -77,6 +77,9 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
    # ${FHI_BASE}/${FHI_VERSION} are substituted the same way as the other k8s/ manifests.
    envsubst < worker.yaml | kubectl apply -f -
    envsubst < appeal-worker.yaml | kubectl apply -f -
+   kubectl apply -f worker-pdb.yaml
+   kubectl apply -f worker-podmonitor.yaml   # needs the Prometheus operator CRDs
+   kubectl apply -f worker-alerts.yaml
    ```
 
 ## Turning it on
@@ -205,6 +208,9 @@ required.
   the install command pins): Postgres-backed, no Cassandra/Elasticsearch.
 - `worker.yaml` — the `fhi-fax-worker` Deployment.
 - `appeal-worker.yaml` — the `fhi-appeal-worker` Deployment (dark-safe; idles until the journey flags flip).
+- `worker-pdb.yaml` — PodDisruptionBudgets (minAvailable: 1) for both worker Deployments.
+- `worker-podmonitor.yaml` — scrapes the SDK's Prometheus endpoint (`TEMPORAL_METRICS_BIND`, port 9464) on both workers.
+- `worker-alerts.yaml` — PrometheusRule: schedule-to-start latency, slot exhaustion, activity failures, frontend RPC failures.
 
 ## What runs here today vs. next
 

@@ -1,0 +1,106 @@
+# =============================================================================
+# PrometheusRule for the Temporal workers (fhi-fax-worker, fhi-appeal-worker).
+#
+# Temporal accepts work for a task queue with no healthy poller and queues it
+# silently -- no error anywhere -- so worker health has to be OBSERVED, not
+# assumed (external review). These rules cover the four failure shapes the
+# review named: work waiting because nobody polls or slots are exhausted,
+# activities failing, heartbeat-timeout-shaped failures, and the client's own
+# RPC failures against the Temporal frontend. Scraped via
+# worker-podmonitor.yaml; the SDK is configured with durations_as_seconds, so
+# the latency thresholds below are in seconds.
+#
+# ==> VERIFY-LIVE (metric names/labels): these are the Temporal Python SDK
+#     (sdk-core 1.32) Prometheus names as shipped in the installed package;
+#     confirm labels on your build before relying on them:
+#       kubectl -n totallylegitco exec deploy/fhi-fax-worker -- \
+#         curl -s localhost:9464/metrics | grep -E 'temporal_(activity|worker|request)'
+#     Note: sdk-core exposes no distinct heartbeat-timeout counter; a
+#     heartbeat-timed-out attempt surfaces as an activity failure/cancellation
+#     on the worker and as an activity timeout on the SERVER's metrics. The
+#     activity-failure rule below is the worker-side signal for it.
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fhi-temporal-workers
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+    role: alert-rules
+spec:
+  groups:
+    - name: fhi-temporal-workers
+      rules:
+        # ---- WORK WAITING: schedule-to-start latency ---------------------------
+        # p95 time an activity task sat on the queue before a worker picked it
+        # up. Sustained high values mean too few pollers/slots -- or NO poller,
+        # the silent-queue failure mode.
+        - alert: FhiTemporalActivityScheduleToStartSlow
+          expr: >-
+            histogram_quantile(0.95,
+              sum by (le, task_queue) (
+                rate(temporal_activity_schedule_to_start_latency_bucket{namespace="totallylegitco"}[10m])
+              )
+            ) > 60
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal activities waiting >60s to start on {{ $labels.task_queue }}"
+            description: >-
+              p95 schedule-to-start latency on task queue {{ $labels.task_queue }}
+              is {{ $value }}s. Either the worker Deployment for that queue is
+              down/undersized or its activity slots are exhausted
+              (FhiTemporalWorkerSlotsExhausted). A queue with no poller shows
+              here first -- Temporal never errors on it.
+
+        # ---- SLOT EXHAUSTION ---------------------------------------------------
+        # max_concurrent_activities is deliberately small on the appeal worker;
+        # zero available slots for 5 minutes means work is queueing behind it.
+        - alert: FhiTemporalWorkerSlotsExhausted
+          expr: >-
+            min_over_time(temporal_worker_task_slots_available{namespace="totallylegitco"}[5m]) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal worker {{ $labels.pod }} has had 0 free task slots for 5m"
+            description: >-
+              {{ $labels.pod }} ({{ $labels.task_queue }}, {{ $labels.worker_type }})
+              has reported zero available task slots for 5 minutes. Work is
+              queueing behind it; raise replicas or the slot bound after checking
+              the activities are actually progressing (not stuck model calls).
+
+        # ---- ACTIVITY FAILURES (includes heartbeat-timeout-shaped failures) -----
+        - alert: FhiTemporalActivityFailures
+          expr: >-
+            sum by (task_queue, activity_type) (
+              increase(temporal_activity_execution_failed{namespace="totallylegitco"}[15m])
+            ) > 3
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Temporal activity {{ $labels.activity_type }} failing on {{ $labels.task_queue }}"
+            description: >-
+              More than 3 failed executions of {{ $labels.activity_type }} in 15m
+              ({{ $value }}). For the fax queue this can mean vendor trouble; for
+              the appeal queue, model-backend or database trouble. Heartbeat
+              timeouts (dead worker mid-attempt) land here too.
+
+        # ---- CLIENT RPC FAILURES against the Temporal frontend ------------------
+        - alert: FhiTemporalRequestFailures
+          expr: >-
+            sum by (pod) (increase(temporal_request_failure{namespace="totallylegitco"}[10m])) > 10
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Temporal worker {{ $labels.pod }} cannot talk to the frontend"
+            description: >-
+              {{ $value }} failed RPCs from {{ $labels.pod }} to temporal-frontend
+              in 10m. If every worker pod fires at once the frontend or its
+              database is the problem; if one pod fires, check that pod's
+              network/TLS config. Workflows keep queueing meanwhile -- nothing
+              is lost, but nothing progresses.
