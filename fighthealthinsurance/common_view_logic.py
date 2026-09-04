@@ -50,6 +50,8 @@ import ray
 import uszipcode
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
+
+from fighthealthinsurance.appeal_fingerprints import fingerprint_text
 from loguru import logger
 from PyPDF2 import PdfMerger
 from stopit.utils import TimeoutException
@@ -3214,7 +3216,17 @@ class AppealsBackendHelper:
         # Grown by every path that ships an appeal (existing rows, streamed
         # drafts, the early reserve flush, synthesis, the end-of-flow
         # reconciliation) so no path can send the same text twice.
-        served_texts: set[str] = set()
+        served_keys: set[str] = set()
+
+        def _served_key(text: Any) -> str:
+            # Normalized content fingerprint -- the SAME normalization the
+            # database constraint enforces (fingerprint_text is the pure
+            # function ProposedAppeal.fingerprint mirrors). An exact-string
+            # set let a capitalization or whitespace variant through the
+            # dedupe and then collide on insert, streaming two drafts against
+            # one stored row (external review).
+            return fingerprint_text(text) or str(text).strip()
+
         # Yield the existing appeals first
         old = 0
         new = 0
@@ -3226,7 +3238,7 @@ class AppealsBackendHelper:
             if is_real_appeal(appeal.appeal_text):
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
-                served_texts.add(str(appeal.appeal_text).strip())
+                served_keys.add(_served_key(appeal.appeal_text))
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
                 )
@@ -3356,9 +3368,9 @@ class AppealsBackendHelper:
                     if not is_real_appeal(row.appeal_text):
                         continue
                     normalized = str(row.appeal_text).strip()
-                    if normalized in served_texts:
+                    if _served_key(row.appeal_text) in served_keys:
                         continue
-                    # Claim the row atomically. served_texts is per-run, so it
+                    # Claim the row atomically. served_keys is per-run, so it
                     # cannot dedupe against a concurrent flow -- and a reconnect
                     # makes exactly that overlap likely, since the dropped
                     # socket's generator can still be draining server-side while
@@ -3387,7 +3399,7 @@ class AppealsBackendHelper:
                         {"id": str(row.id), "content": row.appeal_text}
                     )
                     yield await format_response(row_dict)
-                    served_texts.add(normalized)
+                    served_keys.add(_served_key(normalized))
                     early_reserve_texts.add(normalized)
                     new += 1
                     reserve_served += 1
@@ -4123,6 +4135,12 @@ class AppealsBackendHelper:
                             pk=existing.pk, speculative=True
                         ).aupdate(speculative=False)
                         existing.speculative = False
+                    if existing.appeal_text != appeal_text:
+                        # A normalized variant collided: stream the DURABLE
+                        # text under the stored row's id. Sending the variant
+                        # would show the client two drafts for one row, and a
+                        # reload would 'lose' one (external review).
+                        appeal_text = existing.appeal_text or appeal_text
                     pa = existing
                 except Exception:
                     # Most save failures here are a stale/idle-killed
@@ -4145,7 +4163,7 @@ class AppealsBackendHelper:
             # reserve flush running between streamed drafts can't ship a
             # speculative row whose text matches one already sent.
             if appeal_text:
-                served_texts.add(str(appeal_text).strip())
+                served_keys.add(_served_key(appeal_text))
             result: dict[str, Any] = {"id": id, "content": appeal_text}
             if save_failed:
                 result["save_failed"] = True
@@ -4418,11 +4436,11 @@ class AppealsBackendHelper:
                 # trips the "partial delivery" error path in appeal_fetcher.ts.
                 # (Same reasoning as the verbatim-copy guard on synthesis.)
                 # This runs on the sync_iterator_to_async worker thread while the
-                # event loop may be adding to served_texts; a set membership test
+                # event loop may be adding to served_keys; a set membership test
                 # is a single atomic lookup, and the only cost of racing one is
                 # an occasional duplicate slipping through -- exactly today's
                 # behavior.
-                if str(text).strip() in served_texts:
+                if _served_key(text) in served_keys:
                     dupes += 1
                     logger.info(
                         f"[gen_id={generation_id}] dropping a live draft "
@@ -4514,14 +4532,14 @@ class AppealsBackendHelper:
         ]
         # Everything streamed so far this run persists as speculative=False
         # (existing rows + drafts saved during streaming), so this doubles as
-        # the set already sent. served_texts is tracked from the top of the flow
+        # the set already sent. served_keys is tracked from the top of the flow
         # (and grown by synthesis / the end-of-flow reconciliation below), so
         # this only fills in anything a row landed for that no yield path saw.
         # Caveat: save_appeal deliberately swallows a failed asave and still
         # streams the draft; such a draft has no row here, but the streaming
         # path already recorded its text, so the reconciliation still won't
         # re-serve it.
-        served_texts.update({s.strip() for s in saved_appeal_texts if s})
+        served_keys.update({_served_key(s) for s in saved_appeal_texts if s})
         # Synthesis requires >=2 drafts to be meaningful: with a single
         # input, models often regurgitate it verbatim. The client dedupes
         # by content, so a verbatim copy gets silently dropped, which then
@@ -4583,7 +4601,7 @@ class AppealsBackendHelper:
                         # can still pick one verbatim. Skip the yield in
                         # that case rather than ship a known duplicate.
                         normalized = synthesized.strip()
-                        if normalized in served_texts:
+                        if _served_key(synthesized) in served_keys:
                             logger.info(
                                 "Synthesis returned a verbatim copy of an input draft; skipping yield"
                             )
@@ -4599,7 +4617,7 @@ class AppealsBackendHelper:
                             subbed = await sub_in_appeals(saved)
                             subbed["synthesized"] = "true"
                             yield await format_response(subbed)
-                            served_texts.add(normalized)
+                            served_keys.add(_served_key(normalized))
                             new += 1
                             logger.info(
                                 f"Synthesized appeal generated from {len(saved_appeal_texts)} drafts"
@@ -4625,7 +4643,7 @@ class AppealsBackendHelper:
         # Served speculative rows are flipped to non-speculative so they persist
         # as real appeals and later calls serve them as existing. Runs before
         # the zero/underdelivery logging and the done frame so the counts stay
-        # truthful. Dedup is by normalized raw text via served_texts.
+        # truthful. Dedup is by normalized raw text via served_keys.
         ENOUGH_APPEALS = cls.ENOUGH_APPEALS
         MINI_LEVELS = {
             *SPECULATIVE_CONTEXT_LEVELS,
@@ -4653,13 +4671,13 @@ class AppealsBackendHelper:
         # promotes the oldest reserve rows first (deterministic FIFO).
         try:
             # chosen=False: never hand the user their own pick back as a "new
-            # appeal". In the ordinary case served_texts already covers this --
+            # appeal". In the ordinary case served_keys already covers this --
             # saved_appeal_texts above is not chosen-filtered, so a chosen row's
             # text is in the set and the dedup below skips it. This closes the
             # gap where that is NOT true: mark_proposal_chosen running in
             # another request mid-stream lands a chosen row (for an editted one,
             # text the user wrote, which was never a draft) in between that
-            # query and this one, leaving it absent from served_texts.
+            # query and this one, leaving it absent from served_keys.
             async for row in deliverable_candidates(
                 ProposedAppeal.objects.filter(for_denial=denial, chosen=False)
             ).order_by("id"):
@@ -4667,7 +4685,7 @@ class AppealsBackendHelper:
                 if not is_real_appeal(text):
                     continue
                 normalized = str(text).strip()
-                if normalized in served_texts:
+                if _served_key(text) in served_keys:
                     continue
                 is_mini = bool(row.speculative) or row.context_level in MINI_LEVELS
                 # Re-evaluate the threshold each iteration: serving increments new.
@@ -4696,7 +4714,7 @@ class AppealsBackendHelper:
                     row.speculative = False
                 row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
                 yield await format_response(row_dict)
-                served_texts.add(normalized)
+                served_keys.add(_served_key(normalized))
                 new += 1
                 reconciled += 1
                 if from_precompute:

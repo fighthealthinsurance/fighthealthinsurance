@@ -6,28 +6,34 @@ must run TWICE in a mixed-version deployment (external review):
 
 1. The migration runs while old writer processes (pre-fingerprint
    ``save()``) may still be inserting NULL rows behind its cursor.
-2. After the deploy completes and every old writer is gone, the management
-   command re-runs the same backfill to catch rows the migration raced,
-   then audits what remains.
+2. After the deploy completes and every old writer is gone, the post-rollout
+   Job re-runs the same backfill in ``--strict`` mode, which only succeeds
+   once a full pass finds nothing left to fill (i.e. the writers are gone).
 
 After step 2, a ``chosen=False, text_fingerprint IS NULL`` row means
 exactly one thing: a known historical duplicate (its fingerprint is
 already taken for that denial). Journey counting relies on that meaning.
 
-Every row is handled independently (no batch transaction) and a losing
-race on any single row -- another writer inserting the same fingerprint
-between our check and update -- is caught and skipped, never allowed to
-abort the run.
+Every row is handled independently (no batch transaction), each row is
+fingerprinted from a FRESH read whose observed text guards the write, and a
+losing race on any single row is counted, never allowed to abort the run.
 """
 
 import hashlib
+from typing import Any
 
 from django.db import IntegrityError, transaction
 
 from loguru import logger
 
+FILLED = "filled"
+SKIPPED_DUPLICATE = "skipped_duplicate"
+SKIPPED_EMPTY = "skipped_empty"
+LOST_RACE = "lost_race"
+OUTCOMES = (FILLED, SKIPPED_DUPLICATE, SKIPPED_EMPTY, LOST_RACE)
 
-def fingerprint_text(text):
+
+def fingerprint_text(text: Any) -> Any:
     """Stable copy of ``ProposedAppeal.fingerprint``'s normalization.
 
     Kept here (and referenced by the migration) so the backfill's meaning
@@ -40,59 +46,72 @@ def fingerprint_text(text):
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def run_backfill(ProposedAppeal) -> dict:
-    """Fill NULL fingerprints on un-chosen rows; returns counters.
+def fill_row(ProposedAppeal: Any, pk: int, attempts: int = 3) -> str:
+    """Fingerprint one NULL row; returns the outcome (one of OUTCOMES).
 
-    ``ProposedAppeal`` is passed in so the migration can hand over its
-    historical model while the management command passes the live one.
-    Duplicate content (fingerprint already taken for the denial) is left
-    NULL deliberately -- that IS the known-duplicate marker.
+    The text is re-read fresh on every attempt and the UPDATE is guarded by
+    the observed ``appeal_text`` and ``for_denial_id``: a concurrent edit
+    landing between the read and the write matches zero rows instead of
+    attaching a stale fingerprint to the new text (external review). A
+    zero-row match loops to a fresh read; the row is NEVER written from a
+    stale snapshot.
     """
-    filled = skipped_duplicate = skipped_empty = lost_race = 0
-    qs = (
-        ProposedAppeal.objects.filter(text_fingerprint__isnull=True, chosen=False)
-        .order_by("id")
-        .only("id", "appeal_text", "for_denial_id")
-    )
-    for row in qs.iterator(chunk_size=500):
+    for _ in range(attempts):
+        row = (
+            ProposedAppeal.objects.filter(
+                pk=pk, text_fingerprint__isnull=True, chosen=False
+            )
+            .only("id", "appeal_text", "for_denial_id")
+            .first()
+        )
+        if row is None:
+            # Filled (or re-keyed/removed) by another writer since the scan.
+            return LOST_RACE
         fp = fingerprint_text(row.appeal_text)
         if fp is None:
-            skipped_empty += 1
-            continue
+            return SKIPPED_EMPTY
         if (
             ProposedAppeal.objects.filter(
                 for_denial_id=row.for_denial_id, text_fingerprint=fp
             )
-            .exclude(pk=row.pk)
+            .exclude(pk=pk)
             .exists()
         ):
-            skipped_duplicate += 1
-            continue
+            return SKIPPED_DUPLICATE  # deliberately left NULL (known duplicate)
         try:
             with transaction.atomic():
                 updated = ProposedAppeal.objects.filter(
-                    pk=row.pk, text_fingerprint__isnull=True
+                    pk=pk,
+                    text_fingerprint__isnull=True,
+                    appeal_text=row.appeal_text,
+                    for_denial_id=row.for_denial_id,
                 ).update(text_fingerprint=fp)
-            if updated:
-                filled += 1
-            else:
-                # Another writer filled (or re-keyed) this row between our
-                # scan and the conditional update: nothing was written here,
-                # so it must not count as a fill (review).
-                lost_race += 1
         except IntegrityError:
             # A concurrent writer took this fingerprint between our check
             # and the update; this row is therefore a duplicate now.
-            lost_race += 1
-    remaining = ProposedAppeal.objects.filter(
+            return LOST_RACE
+        if updated:
+            return FILLED
+        # Text changed under us: loop and recompute from the fresh row.
+    return LOST_RACE
+
+
+def run_backfill(ProposedAppeal: Any) -> dict:
+    """Fill NULL fingerprints on un-chosen rows; returns counters.
+
+    ``ProposedAppeal`` is passed in so the migration can hand over its
+    historical model while the management command passes the live one.
+    """
+    counts = {k: 0 for k in OUTCOMES}
+    pks = list(
+        ProposedAppeal.objects.filter(text_fingerprint__isnull=True, chosen=False)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    for pk in pks:
+        counts[fill_row(ProposedAppeal, pk)] += 1
+    counts["remaining_null"] = ProposedAppeal.objects.filter(
         text_fingerprint__isnull=True, chosen=False
     ).count()
-    counts = {
-        "filled": filled,
-        "skipped_duplicate": skipped_duplicate,
-        "skipped_empty": skipped_empty,
-        "lost_race": lost_race,
-        "remaining_null": remaining,
-    }
     logger.info(f"appeal fingerprint backfill: {counts}")
     return counts

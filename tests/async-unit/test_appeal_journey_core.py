@@ -435,3 +435,95 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         dup.save()  # full save, text unchanged: must not recompute/collide
         dup.refresh_from_db()
         assert dup.text_fingerprint is None
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_variant_of_existing_draft_streams_once_against_one_row(self, mock_gen):
+        """Client-visible corruption from external review: an existing draft
+        is re-served, then the model emits a case/whitespace VARIANT. Exact-
+        string dedupe let it through, the insert collided on the normalized
+        fingerprint, and the variant streamed under the stored row's id --
+        two drafts on screen, one row in the database, one 'lost' on reload.
+        Frames, ids and rows must all agree."""
+        import json as _json
+
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9121)
+        letter = (
+            "Dear Reviewer, this appeal contests the denial because my "
+            "physician documented medical necessity across repeated visits."
+        )
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=letter)
+        mock_gen.make_appeals.return_value = iter(_drafts([letter.upper()]))
+
+        async def collect():
+            frames = []
+            async for chunk in AppealsBackendHelper.generate_appeals_for_denial(
+                denial
+            ):
+                if appeal_journey_core._appeal_text_from_chunk(chunk) is None:
+                    continue
+                data = _json.loads(chunk)
+                if "id" in data:
+                    frames.append(data)
+            return frames
+
+        frames = async_to_sync(collect)()
+        assert len(frames) == 1, [f.get("id") for f in frames]
+        assert len({f["id"] for f in frames}) == 1
+        assert ProposedAppeal.objects.filter(for_denial=denial).count() == 1
+
+    def test_backfill_never_attaches_a_stale_fingerprint_to_edited_text(self):
+        """A concurrent edit between the backfill's read and its write must
+        not leave fp(A) on text B (external review). The write is guarded by
+        the observed text; a miss re-reads and recomputes."""
+        from unittest.mock import patch as _patch
+
+        from fighthealthinsurance import appeal_fingerprints
+
+        denial = _make_denial(9122)
+        text_a = "Dear Reviewer, the original legacy text before an edit."
+        text_b = "Dear Reviewer, the edited text that landed mid-backfill."
+        (row,) = ProposedAppeal.objects.bulk_create(
+            [ProposedAppeal(for_denial=denial, appeal_text=text_a)]
+        )
+        real = appeal_fingerprints.fingerprint_text
+        calls = {"n": 0}
+
+        def edit_between_read_and_write(text):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # The "old worker" edits the row after the backfill read it.
+                ProposedAppeal.objects.filter(pk=row.pk).update(appeal_text=text_b)
+            return real(text)
+
+        with _patch.object(
+            appeal_fingerprints, "fingerprint_text", edit_between_read_and_write
+        ):
+            outcome = appeal_fingerprints.fill_row(ProposedAppeal, row.pk)
+        row.refresh_from_db()
+        assert outcome == appeal_fingerprints.FILLED
+        assert row.text_fingerprint == ProposedAppeal.fingerprint(text_b)
+
+    def test_strict_backfill_fails_while_writers_are_active(self):
+        from unittest.mock import patch as _patch
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        quiet = {
+            "filled": 0,
+            "skipped_duplicate": 0,
+            "skipped_empty": 0,
+            "lost_race": 0,
+            "remaining_null": 0,
+        }
+        busy = dict(quiet, filled=2)
+        target = "fighthealthinsurance.management.commands.backfill_appeal_fingerprints.run_backfill"
+        with _patch(target, side_effect=[busy, busy]):
+            with pytest.raises(CommandError):
+                call_command("backfill_appeal_fingerprints", "--strict")
+        with _patch(target, side_effect=[busy, quiet]):
+            call_command("backfill_appeal_fingerprints", "--strict")

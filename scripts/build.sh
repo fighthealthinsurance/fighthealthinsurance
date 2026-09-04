@@ -142,7 +142,17 @@ envsubst < k8s/temporal/worker.yaml | kubectl apply -f -
 # accepts workflow starts for a queue with NO pollers and queues them
 # silently, so an applied-by-hand-once appeal worker (or a forgotten one)
 # would look healthy while nothing executes (external review).
+# This apply must stay ABOVE the rollout gate below, which waits on this very
+# Deployment: waiting first would either time out on a Deployment that does
+# not exist yet or, worse, pass against the previous image.
 envsubst < k8s/temporal/appeal-worker.yaml | kubectl apply -f -
+# Post-rollout second pass of the appeal fingerprint backfill (see the Job
+# manifest): --strict keeps failing -- and the Job keeps retrying -- until no
+# pre-fingerprint writer is left, so the "run again after old pods drain"
+# step is enforced by the deploy, not by a README. Jobs are immutable:
+# delete the previous run before applying.
+kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
 # the internet -- see docs/metrics-endpoint-access.md). The apply is skipped

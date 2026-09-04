@@ -43,6 +43,12 @@ elif [ -n "$PREFETCH_EXTRALINKS" ]; then
   python manage.py launch_prefetch_actor || echo "Pre-fetch failed (non-blocking)"
   sleep 10
   exit 0
+elif [ -n "$BACKFILL_APPEAL_FINGERPRINTS" ]; then
+  # Post-rollout Job (k8s/temporal/backfill-fingerprints-job.yaml): second
+  # pass of the ProposedAppeal fingerprint backfill. --strict exits non-zero
+  # while pre-fingerprint writers are still active, so the Job's backoff
+  # retries until the database is quiescent.
+  exec python manage.py backfill_appeal_fingerprints --strict
 elif [ -n "$TEMPORAL_WORKER" ]; then
   # Long-running Temporal worker hosting SendFaxWorkflow + fax activities.
   # Unlike the Ray launchers above this stays in the foreground; exec so signals

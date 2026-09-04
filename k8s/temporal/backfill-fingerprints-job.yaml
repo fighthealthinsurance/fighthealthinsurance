@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Post-rollout second pass of the ProposedAppeal fingerprint backfill.
+  # Migration 0202 (run by the web-migrations Job) races writer pods still
+  # on pre-fingerprint code; this Job re-runs the backfill in --strict mode,
+  # which exits non-zero while such writers are still active, so the Job's
+  # backoff keeps retrying until a pass comes back quiet. That makes "run
+  # again after old pods drain" deployment machinery rather than a doc
+  # note (external review). Applied by scripts/build.sh after the worker
+  # manifests; Jobs are immutable, so build.sh deletes any previous run
+  # first.
+  name: fhi-backfill-appeal-fingerprints
+  namespace: totallylegitco
+spec:
+  ttlSecondsAfterFinished: 3600
+  # Retries with exponential backoff (capped at 6 min) over roughly the
+  # length of a rollout; a Job that exhausts this is an alert, not a shrug.
+  backoffLimit: 40
+  template:
+    metadata:
+      labels:
+        group: fight-health-insurance-prod-webbackend-batch
+    spec:
+      containers:
+        - image: ${FHI_BASE}:${FHI_VERSION}
+          name: totallylegitco
+          # start-server.sh runs the strict backfill when this is set.
+          env:
+            - name: BACKFILL_APPEAL_FINGERPRINTS
+              value: "1"
+            - name: PDBHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: fhi-db-config
+                  key: PDBHOST
+          envFrom:
+            - secretRef:
+                name: fight-health-insurance-secret
+            - secretRef:
+                name: fight-health-insurance-primary-secret
+          imagePullPolicy: Always
+      restartPolicy: OnFailure
