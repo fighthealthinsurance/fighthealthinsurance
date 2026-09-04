@@ -78,8 +78,15 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
    envsubst < worker.yaml | kubectl apply -f -
    envsubst < appeal-worker.yaml | kubectl apply -f -
    kubectl apply -f worker-pdb.yaml
-   kubectl apply -f worker-podmonitor.yaml   # needs the Prometheus operator CRDs
-   kubectl apply -f worker-alerts.yaml
+   # The PodMonitor and PrometheusRule need the Prometheus operator's CRDs.
+   # scripts/build.sh skips each when its CRD is absent; do the same by hand
+   # so these commands work on a cluster without the operator.
+   kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1 \
+     && kubectl apply -f worker-podmonitor.yaml \
+     || echo "no PodMonitor CRD -- worker metrics will not be scraped"
+   kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1 \
+     && kubectl apply -f worker-alerts.yaml \
+     || echo "no PrometheusRule CRD -- worker alerts not installed"
    ```
 
 ## Turning it on

@@ -130,8 +130,7 @@ spec:
         # ---- SLOT EXHAUSTION -------------------------------------------------
         - alert: FhiTemporalWorkerSlotsExhausted
           expr: >-
-            min_over_time(temporal_worker_task_slots_available{namespace="default"}[5m]) == 0
-          for: 5m
+            max_over_time(temporal_worker_task_slots_available{namespace="default"}[5m]) == 0
           labels:
             severity: warning
           annotations:

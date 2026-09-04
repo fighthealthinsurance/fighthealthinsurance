@@ -117,17 +117,6 @@ def test_deploy_script_applies_both_worker_manifests():
     assert roles == {"worker.yaml": "fax", "appeal-worker.yaml": "appeal"}
 
 
-def _free_bind() -> str:
-    """A loopback address with an OS-assigned free port: building a real
-    SDK Runtime binds the Prometheus exporter immediately, so each test
-    needs its own port."""
-    import socket
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return f"127.0.0.1:{sock.getsockname()[1]}"
-
-
 def test_metrics_runtime_is_off_when_unset():
     from fighthealthinsurance.management.commands.run_temporal_worker import (
         metrics_runtime,
@@ -168,8 +157,14 @@ def test_worker_passes_metrics_runtime_to_the_client():
     from unittest.mock import AsyncMock, Mock
 
     connect = AsyncMock(return_value=Mock())
+    sentinel_runtime = Mock(name="sentinel-runtime")
     with (
-        patch.dict(os.environ, {"TEMPORAL_METRICS_BIND": _free_bind()}),
+        patch.dict(os.environ, {"TEMPORAL_METRICS_BIND": "127.0.0.1:9464"}),
+        patch(
+            "fighthealthinsurance.management.commands.run_temporal_worker."
+            "metrics_runtime",
+            return_value=sentinel_runtime,
+        ),
         patch("temporalio.worker.Worker", _recording_worker_cls()),
         patch("fighthealthinsurance.temporal_client.get_temporal_client", connect),
         override_settings(
@@ -181,9 +176,7 @@ def test_worker_passes_metrics_runtime_to_the_client():
         ),
     ):
         asyncio.run(asyncio.wait_for(Command()._run({"queues": "fax"}), timeout=2))
-    from temporalio.runtime import Runtime
-
-    assert isinstance(connect.call_args.kwargs.get("runtime"), Runtime)
+    assert connect.call_args.kwargs.get("runtime") is sentinel_runtime
 
 
 def test_worker_manifests_are_redundant_and_scraped():
