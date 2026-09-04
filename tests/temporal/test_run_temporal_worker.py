@@ -91,3 +91,27 @@ def test_appeal_role_with_journey_dark_idles_hosting_nothing():
     and block (idle) rather than exit into a Deployment crash-loop."""
     with pytest.raises(asyncio.TimeoutError):
         _run_with("appeal", TEMPORAL_APPEAL_JOURNEY_ENABLED=False)
+
+
+def test_deploy_script_applies_both_worker_manifests():
+    """Temporal queues work for a pollerless task queue silently, so a
+    deploy that forgets the appeal worker looks healthy while nothing
+    executes. The deploy script must apply BOTH worker manifests, and the
+    manifests must pin complementary queue roles (external review)."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    build = (root / "scripts" / "build.sh").read_text()
+    assert "k8s/temporal/worker.yaml" in build
+    assert "k8s/temporal/appeal-worker.yaml" in build
+
+    roles = {}
+    for name in ("worker.yaml", "appeal-worker.yaml"):
+        text = (root / "k8s" / "temporal" / name).read_text()
+        m = re.search(
+            r'name: TEMPORAL_WORKER_QUEUES\s*\n\s*value: "(\w+)"', text
+        )
+        assert m, f"{name} must pin TEMPORAL_WORKER_QUEUES"
+        roles[name] = m.group(1)
+    assert roles == {"worker.yaml": "fax", "appeal-worker.yaml": "appeal"}

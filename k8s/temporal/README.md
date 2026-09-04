@@ -76,6 +76,7 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
    ```sh
    # ${FHI_BASE}/${FHI_VERSION} are substituted the same way as the other k8s/ manifests.
    envsubst < worker.yaml | kubectl apply -f -
+   envsubst < appeal-worker.yaml | kubectl apply -f -
    ```
 
 ## Turning it on
@@ -203,6 +204,7 @@ required.
 - `values.yaml` — Helm values (validated against chart `temporal-1.6.0`, which
   the install command pins): Postgres-backed, no Cassandra/Elasticsearch.
 - `worker.yaml` — the `fhi-fax-worker` Deployment.
+- `appeal-worker.yaml` — the `fhi-appeal-worker` Deployment (dark-safe; idles until the journey flags flip).
 
 ## What runs here today vs. next
 

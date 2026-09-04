@@ -138,6 +138,11 @@ envsubst < k8s/deploy.yaml | kubectl apply -f -
 # versions behind prod (v0.22.4a-dev vs v0.23.1a-dev). Same ${FHI_BASE}/${FHI_VERSION}
 # substitution as the manifests above.
 envsubst < k8s/temporal/worker.yaml | kubectl apply -f -
+# The appeal worker Deployment must roll with every deploy too -- Temporal
+# accepts workflow starts for a queue with NO pollers and queues them
+# silently, so an applied-by-hand-once appeal worker (or a forgotten one)
+# would look healthy while nothing executes (external review).
+envsubst < k8s/temporal/appeal-worker.yaml | kubectl apply -f -
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
 # the internet -- see docs/metrics-endpoint-access.md). The apply is skipped
