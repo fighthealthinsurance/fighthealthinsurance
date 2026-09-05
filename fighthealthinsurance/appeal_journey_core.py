@@ -27,6 +27,7 @@ from asgiref.sync import async_to_sync
 from loguru import logger
 
 from fighthealthinsurance import generation_lease
+from fighthealthinsurance.ml import ml_models
 from fighthealthinsurance.utils import is_real_appeal
 
 STATUS_OK = "ok"
@@ -61,10 +62,9 @@ class LeaseHeld(Exception):
     """
 
 
-# How often a running journey pushes its lease expiry out; well inside the
-# lease TTL so a live attempt never expires mid-run while a dead one frees
-# the denial within one TTL.
-LEASE_EXTEND_INTERVAL_S = 10.0
+# The renewal interval and the give-up policy now live with the lease itself
+# (generation_lease.EXTEND_INTERVAL_SECONDS and keep_renewed), so the journey
+# and the interactive flow cannot drift apart on either one.
 
 
 async def acheck_generation_postcondition(denial) -> bool:
@@ -205,13 +205,33 @@ async def agenerate_and_store_appeals(denial) -> int:
             f"generation lease held for denial {denial.uuid} (epoch {lease.epoch})"
         )
 
+    # The same shared renewal policy the interactive flow uses
+    # (generation_lease.keep_renewed). This loop previously had NO error
+    # handling at all: a single transient aextend exception killed the task,
+    # after which the lease expired within one TTL while the attempt kept
+    # generating -- and every draft insert then failed the assert_holds fence
+    # inside its own transaction, so the journey burned model calls and
+    # persisted nothing. The dead task's exception was never retrieved
+    # either, surfacing only as an asyncio warning (external review).
+    lease_clock = generation_lease.RenewalClock()
+
     async def _keep_lease() -> None:
         # Owned by this attempt: cancelled in the finally below, so a dead
         # attempt stops extending and the lease expires within one TTL.
-        while True:
-            await asyncio.sleep(LEASE_EXTEND_INTERVAL_S)
-            if not await generation_lease.aextend(denial, lease.epoch):
-                return  # stolen: the per-frame check ends the run
+        # Returns when ownership is provably lost; the per-frame check ends
+        # the run.
+        def _lost(reason: str) -> None:
+            # A STOLEN lease moves the epoch and the per-frame check sees it;
+            # an EXPIRED one does not, so without this the only symptom is a
+            # fenced insert failing later (external review).
+            logger.warning(
+                f"Appeal journey: lease no longer held for denial "
+                f"{denial.uuid}: {reason}"
+            )
+
+        await generation_lease.keep_renewed(
+            denial, lease.epoch, lease_clock, on_lost=_lost
+        )
 
     extender = asyncio.create_task(_keep_lease())
     frames = 0
@@ -228,25 +248,34 @@ async def agenerate_and_store_appeals(denial) -> int:
         ),
     )
     try:
-        async with asyncio.timeout(GENERATION_BUDGET_SECONDS):
-            async for chunk in agen:
-                if _appeal_text_from_chunk(chunk) is None:
-                    continue
-                # Early stop on DURABLE progress: appeal frames are few, so a
-                # count query per frame is cheap, and only rows that actually
-                # persisted can end the consumption early.
-                frames += 1
-                if await generation_lease.acurrent_epoch(denial) != lease.epoch:
-                    # Fencing token moved: an interactive run stole the
-                    # lease. Stop quietly with what is stored; the user is
-                    # being served live and the retry's baseline check will
-                    # see their drafts.
-                    stolen = True
-                    break
-                # Distinct fingerprints, not row ids: duplicate rows are one
-                # deliverable draft (the fingerprint work now on main).
-                if len(await _stored_fingerprints()) >= TARGET_APPEALS:
-                    break
+        # Bound the PROVIDER calls to the same budget, not just this loop.
+        # asyncio.timeout stops awaiting the generator, but a model call
+        # already submitted to a thread keeps its socket open and keeps
+        # spending -- start_to_close does not kill threads. The appeal task
+        # timeout defaults to 300s against a 240s budget, so a single call
+        # could outlive the whole attempt, three times per workflow (enable
+        # gate 3). Inside this block ml_task_timeout() clamps every provider
+        # call to whatever is left.
+        with ml_models.attempt_deadline(GENERATION_BUDGET_SECONDS):
+            async with asyncio.timeout(GENERATION_BUDGET_SECONDS):
+                async for chunk in agen:
+                    if _appeal_text_from_chunk(chunk) is None:
+                        continue
+                    # Early stop on DURABLE progress: appeal frames are few, so a
+                    # count query per frame is cheap, and only rows that actually
+                    # persisted can end the consumption early.
+                    frames += 1
+                    if await generation_lease.acurrent_epoch(denial) != lease.epoch:
+                        # Fencing token moved: an interactive run stole the
+                        # lease. Stop quietly with what is stored; the user is
+                        # being served live and the retry's baseline check will
+                        # see their drafts.
+                        stolen = True
+                        break
+                    # Distinct fingerprints, not row ids: duplicate rows are one
+                    # deliverable draft (the fingerprint work now on main).
+                    if len(await _stored_fingerprints()) >= TARGET_APPEALS:
+                        break
     except TimeoutError:
         logger.info(
             f"Appeal journey: generation budget reached after {frames} "

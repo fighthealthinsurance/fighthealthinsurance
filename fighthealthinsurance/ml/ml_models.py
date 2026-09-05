@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import contextvars
 import itertools
 import os
 import random
@@ -774,10 +776,73 @@ _ML_TASK_TIMEOUT_ENVS: dict[str, tuple[str, float]] = {
 }
 
 
+# The deadline of the attempt currently in flight, as a time.monotonic()
+# stamp, or None outside one. A ContextVar (not a global) so concurrent
+# generations on the same worker cannot read each other's budget; asgiref's
+# sync_to_async and channels' database_sync_to_async both copy the calling
+# context into the worker thread, so a clamp set here reaches the blocking
+# provider call that actually holds the socket.
+_ATTEMPT_DEADLINE: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
+    "fhi_ml_attempt_deadline", default=None
+)
+
+# Never hand a client a zero or negative timeout. requests treats 0 as
+# "fail immediately" and None as "wait forever" -- passing either by
+# accident at the moment the budget runs out would be worse than the
+# unclamped behaviour this exists to fix.
+MIN_TASK_TIMEOUT_SECONDS = 1.0
+
+
+@contextlib.contextmanager
+def attempt_deadline(seconds: float):
+    """Bound every provider call made inside this block to ``seconds``.
+
+    The appeal task timeout defaults to 300s while the journey's generation
+    budget is 240s, so one provider call could outlive the whole attempt and
+    keep spending after Temporal had already moved on -- three attempts of
+    that per workflow. start_to_close does not kill the thread holding the
+    socket, so the only way to stop the spend is to not let the call outlive
+    the budget in the first place (enable gate 3).
+
+    Nested blocks keep the EARLIER deadline when it is tighter: an inner
+    stage may not award itself more time than the attempt has left.
+    """
+    proposed = time.monotonic() + max(0.0, seconds)
+    current = _ATTEMPT_DEADLINE.get()
+    token = _ATTEMPT_DEADLINE.set(
+        proposed if current is None else min(current, proposed)
+    )
+    try:
+        yield
+    finally:
+        _ATTEMPT_DEADLINE.reset(token)
+
+
+def remaining_attempt_budget() -> Optional[float]:
+    """Seconds left in the current attempt, or None when unbounded."""
+    deadline = _ATTEMPT_DEADLINE.get()
+    if deadline is None:
+        return None
+    return deadline - time.monotonic()
+
+
 def ml_task_timeout(task: str) -> float:
-    """Effective inference timeout (seconds) for a named task type."""
+    """Effective inference timeout (seconds) for a named task type.
+
+    Clamped to whatever is left of the enclosing attempt budget, when there
+    is one. Outside an attempt_deadline block this is exactly the configured
+    value, so the interactive and chat paths are unchanged.
+    """
     env_name, default = _ML_TASK_TIMEOUT_ENVS.get(task, _ML_TASK_TIMEOUT_ENVS["appeal"])
-    return _env_float(env_name, default)
+    configured = _env_float(env_name, default)
+    remaining = remaining_attempt_budget()
+    if remaining is None:
+        return configured
+    # The floor is a guard against handing a client 0 or a negative value, not
+    # a licence to LENGTHEN a deliberately short timeout: max(1.0, ...) turned
+    # a configured 0.5s into 1.0s (external review). Never exceed either bound.
+    floor = min(MIN_TASK_TIMEOUT_SECONDS, configured)
+    return max(floor, min(configured, remaining))
 
 
 class RemoteModelLike(DenialBase):
