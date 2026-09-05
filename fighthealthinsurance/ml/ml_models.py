@@ -2879,21 +2879,17 @@ class RemoteOpenLike(RemoteModel):
         if model in self._temperature_unsupported_models:
             return False
         name = model.split("/")[-1].lower()
-        # The family ships dotted point releases (gpt-5.1 ... gpt-5.5) as well as
-        # hyphenated variants (gpt-5-mini), and both reject a custom temperature.
-        # Matching only "gpt-5" and "gpt-5-" let every dotted release through and
-        # paid one rejected request before the runtime fallback learned better.
+        # The family ships dotted point releases (gpt-5.1 ... gpt-5.5) and
+        # hyphenated variants (gpt-5-mini, gpt-5.1-codex, dated snapshots); all
+        # of them reject a custom temperature.
         #
-        # The dotted arm requires a DIGIT after the dot. Azure deployment names
-        # are operator-chosen, so a bare "gpt-5." prefix match would also strip
-        # the parameter from something like a "gpt-5.production" deployment
-        # backed by a non-reasoning model, silently dropping a temperature the
-        # model does support.
-        if (
-            name == "gpt-5"
-            or name.startswith("gpt-5-")
-            or re.match(r"^gpt-5\.\d", name)
-        ):
+        # Anchored on the WHOLE identifier rather than a prefix. Azure
+        # deployment names are operator-chosen, so "gpt-5.production" or
+        # "gpt-5.5x" may be a non-reasoning model behind a suggestive name, and
+        # silently dropping a temperature it does support is a worse failure
+        # than the single 400 this check exists to avoid. Unrecognized
+        # deployments are still caught at runtime (see the docstring).
+        if re.match(r"^gpt-5(\.\d+)?($|-)", name):
             return False
         if re.match(r"^o[134](-|$)", name):
             return False

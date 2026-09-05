@@ -710,6 +710,9 @@ class TestAzureClaudeMessages(unittest.TestCase):
             "gpt-5.5",
             "gpt-5.1",
             "gpt-5.4-mini",
+            "gpt-5.1-codex",
+            "gpt-5-2026-04-24",  # dated snapshot ids
+            "gpt-5.5-2026-04-24",
             "azure-openai/gpt-5.5",  # provider-prefixed registrations too
         ):
             with self.subTest(model=name):
@@ -720,7 +723,13 @@ class TestAzureClaudeMessages(unittest.TestCase):
         # Azure deployment names are chosen by whoever creates them, so a bare
         # prefix match would strip temperature from a non-reasoning model behind
         # a name like this, which is a silent wrong answer rather than a 400.
-        for name in ("gpt-5.production", "gpt-5.legacy-mini", "gpt-5x"):
+        for name in (
+            "gpt-5.production",
+            "gpt-5.legacy-mini",
+            "gpt-5x",
+            "gpt-5.5.production",  # a real release id is only a PREFIX here
+            "gpt-5.5x",
+        ):
             with self.subTest(model=name):
                 self.assertTrue(m._supports_custom_temperature(name))
 
