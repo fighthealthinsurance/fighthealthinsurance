@@ -870,3 +870,33 @@ class TestRelayDeployment:
         assert "kube_cronjob_status_last_successful_time" in alerts
         assert 'cronjob="fhi-intake-outbox-relay"' in alerts
         assert "VERIFY-LIVE" in alerts
+
+    def test_non_positive_time_budget_fails_fast(self):
+        """A zero/negative budget defers every claimed row, and each keeps
+        its claim for the full TTL, so later runs skip it too -- a mis-set
+        CronJob argument would stall the relay silently (review)."""
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        for bad in (0, -5):
+            with pytest.raises(CommandError):
+                call_command("deliver_intake_events", "--time-budget", str(bad))
+
+    def test_form_completed_start_uses_the_running_execution(self):
+        """Both id policies are set and they cover different states: reuse
+        (ALLOW_DUPLICATE) starts a fresh run after a CLOSED one, conflict
+        (USE_EXISTING) delivers into a RUNNING one."""
+        from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+        from fighthealthinsurance import temporal_client
+
+        from asgiref.sync import async_to_sync as _a2s
+
+        client = _client()
+        _a2s(temporal_client.signal_with_start_intake)(
+            "h", "u", False, "form_completed", client=client
+        )
+        kwargs = client.start_workflow.call_args.kwargs
+        assert kwargs["id_reuse_policy"] is WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        assert kwargs["id_conflict_policy"] is WorkflowIDConflictPolicy.USE_EXISTING
+        assert kwargs["start_signal"] == "form_completed"

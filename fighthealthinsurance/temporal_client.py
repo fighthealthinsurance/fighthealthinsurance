@@ -335,7 +335,7 @@ async def signal_with_start_intake(
     from datetime import timedelta
 
     from temporalio.client import WorkflowExecutionStatus
-    from temporalio.common import WorkflowIDReusePolicy
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from fighthealthinsurance.workflows.types import IntakeJourneyInput
@@ -363,6 +363,13 @@ async def signal_with_start_intake(
             id=workflow_id,
             task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+            # The two policies cover different states and BOTH are needed:
+            # reuse governs a CLOSED execution (start a fresh run), conflict
+            # governs a RUNNING one (deliver into it). Signal-with-start
+            # already signals a running execution without a conflict policy
+            # -- verified against a real server -- so this is belt and
+            # braces: it states the intent and survives a future default.
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             start_signal="form_completed",
             start_signal_args=[],
             rpc_timeout=rpc_timeout,

@@ -45,6 +45,14 @@ class Command(BaseCommand):
         limit = options["limit"]
         if limit is not None and limit < 0:
             raise CommandError(f"--limit must be >= 0 (got {limit})")
+        budget = options.get("time_budget")
+        if budget is not None and budget <= 0:
+            # A non-positive budget makes every claimed row exceed it on the
+            # first iteration, so the run defers all of them -- and each row
+            # keeps its claim for the full TTL, so later runs skip it too. A
+            # mis-set CronJob argument would stall the relay instead of
+            # failing loudly (review).
+            raise CommandError(f"--time-budget must be > 0 (got {budget})")
         counts = intake_outbox.sweep(limit, options["time_budget"])
         self.stdout.write(
             "intake outbox relay: "
