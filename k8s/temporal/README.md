@@ -97,37 +97,49 @@ PrometheusRules, `intake-outbox-cronjob.yaml` and
 `backfill-fingerprints-job.yaml` — so the hand commands above are for a
 first bring-up or a one-off repair, not for every release.
 
-Two things to know before you run it:
+Three things to know before you run it:
 
-- **It can wait up to ~90 minutes.** After applying, it blocks on the `web`,
-  `fhi-fax-worker` and `fhi-appeal-worker` rollouts (15m each) and on the Ray
-  pods going Ready (5m to appear, then 15m), then runs the strict fingerprint
-  backfill Job and polls up to 30m for it to finish. That is the mixed-version
-  guard: a strict pass that runs while any pre-fingerprint pod can still take
-  a request proves nothing, so the deploy makes sure the old writers are gone
-  first.
-- **A rollout that stalls or a backfill Job that fails ends the deploy
-  non-zero, on purpose.** The Job failing means it found rows a
-  pre-fingerprint writer produced; look at it before rerunning:
+- **It can wait a long time.** Worst case is about two hours: 15m per
+  Deployment rollout (`web`, `fhi-fax-worker`, `fhi-appeal-worker`), then up
+  to 10m each waiting for the old `web` and `fhi-appeal-worker` pods to
+  actually exit, up to 25m for the Ray cluster (old pods gone, new pods
+  appear, new pods Ready), then up to 30m for the strict fingerprint backfill
+  Job. In practice it is far shorter — the drains are mostly done by the time
+  the rollouts report, and the backfill on an already-clean table takes a
+  couple of minutes.
+- **Rolling out is not the same as draining, and the script waits for both.**
+  `kubectl rollout status` returns as soon as the new replicas are available
+  and the old ones stop being *counted* — a pod stops counting the moment it
+  is marked for deletion, while its process keeps running preStop and
+  finishing in-flight work. `web` allows 420s plus a 15s preStop and
+  `fhi-appeal-worker` 360s, and both write `ProposedAppeal` rows, so the
+  script additionally waits for those pods to be gone before the strict
+  backfill runs. `fhi-fax-worker` is rolled but deliberately not drained: it
+  polls the fax queue only, writes no `ProposedAppeal`, and its 1860s grace
+  period would add half an hour to every deploy for nothing.
+- **A stalled rollout or a failed backfill Job ends the deploy non-zero, on
+  purpose.** The Job failing means it found rows a pre-fingerprint writer
+  produced; look at it before rerunning:
 
   ```sh
   kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints
   ```
 
-  The applies all happen before the waits, so a failure here still leaves the
-  new image, the PDBs, the monitors, the alerts and the relay CronJob in place.
+  Every apply happens before every wait, so a failure here still leaves the
+  new image, the PDBs, the monitors, the alerts and the relay CronJob in
+  place.
 
-Two escape hatches when you need the deploy without the waits:
+Two escape hatches when the waiting is not what you want:
 
 | Flag | Effect |
 | --- | --- |
-| `--skip-journey-gates` | Applies everything including the backfill Job, but does not block on the rollouts or the Job. You check the Job yourself. |
-| `--skip-backfill` | Does not apply or wait for the backfill Job at all. For a cluster where it has already run clean. |
+| `--skip-journey-gates` | Applies everything including the backfill Job, but blocks on nothing — no rollout wait, no drain, no Job wait. You check the Job yourself. |
+| `--skip-backfill` | Does not apply or wait for the backfill Job, nor for the writer drain that only that Job needs. Rollout waits still run, because a Deployment that never finishes rolling is a broken deploy either way. |
 
-Both skip only the *waiting* (and, for `--skip-backfill`, the Job). Neither
-changes what image ships. Use them knowing what the gate buys you: without it,
-`ProposedAppeal.text_fingerprint` can carry NULLs or stale values from a pod
-that had not rolled yet, which only matters once the journey flags are on.
+Neither changes what image ships. What the gate buys you, if you skip it:
+`ProposedAppeal.text_fingerprint` can carry NULLs or stale values written by a
+pod that had not finished draining, which only matters once the journey flags
+are on.
 
 ## Turning it on
 
