@@ -1190,6 +1190,31 @@ def test_temporal_workers_get_enough_memory_for_this_image():
         assert lim == "3Gi", f"{path} limit {lim}"
 
 
+def test_backfill_job_has_a_writable_home():
+    """readOnlyRootFilesystem + runAsUser 1000 leaves HOME="/" . Importing the
+    app pulls fighthealthinsurance.urls -> fax_views -> common_view_logic,
+    whose DenialCreatorHelper constructs a uszipcode SearchEngine at CLASS-BODY
+    scope; that constructor mkdir's ~/.uszipcode. With HOME unset the Job
+    crash-looped on `OSError: [Errno 30] Read-only file system: '/.uszipcode'`
+    before running a single query, and the deploy sat on the backfill gate
+    until it timed out. HOME must point at the writable /tmp emptyDir."""
+    import pathlib
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    raw = (root / "k8s" / "temporal" / "backfill-fingerprints-job.yaml").read_text()
+    job = yaml.safe_load(raw.replace("${FHI_BASE}:${FHI_VERSION}", "image"))
+    pod = job["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    assert env.get("HOME") == "/tmp", env
+    # ...and that path is actually writable in this pod.
+    assert {"name": "tmp", "mountPath": "/tmp"} in container["volumeMounts"]
+    assert any(v["name"] == "tmp" and "emptyDir" in v for v in pod["volumes"])
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+
+
 def test_backfill_job_runs_non_root_with_a_read_only_root_filesystem():
     """The Job carries both production secret sets, so it gets the same
     posture the web-extralink-prefetch Job already proves for this image:
