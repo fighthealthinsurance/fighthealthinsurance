@@ -39,7 +39,7 @@ export function hideErrorMessages(event: Event): void {
     }
     rehideHiddenMessage("email_error");
   }
-  if (form.denial_text.value.length > 1) {
+  if (form.denial_text.value.trim().length > 0) {
     const denialTextLabel = document.getElementById("denial_text_label");
     if (denialTextLabel) {
       denialTextLabel.style.color = "";
@@ -61,6 +61,12 @@ export function beginOcr(): void {
 
 export function endOcr(): void {
   ocrInFlight = Math.max(0, ocrInFlight - 1);
+  if (ocrInFlight === 0) {
+    // The gate only re-evaluates on submit, so without this the "still
+    // reading your file" message stays on screen after the file has
+    // finished being read (external review).
+    rehideHiddenMessage("ocr_in_progress");
+  }
 }
 
 export function isOcrInFlight(): boolean {
@@ -97,7 +103,7 @@ export function validateScrubForm(event: Event): void {
     }
     rehideHiddenMessage("email_error");
   }
-  if (form.denial_text.value.length < 1) {
+  if (form.denial_text.value.trim().length < 1) {
     showHiddenMessage("need_denial");
     const denialTextLabel = document.getElementById("denial_text_label");
     if (denialTextLabel) {
