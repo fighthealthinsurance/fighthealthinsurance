@@ -4747,10 +4747,17 @@ class RemoteAzureOpenAI(RemoteAzureOpenLike):
     MAX_LEN: ClassVar[int] = 128000
 
     # Latest broadly-available Azure OpenAI deployments (cheapest -> premium).
+    # Only gpt-5.5 is deployed on our sponsored Foundry resource (deployments
+    # checked 2026-09-04). gpt-4.1-mini / gpt-5-mini / gpt-5 were never
+    # provisioned there, so the previous defaults named deployments that do not
+    # exist and every call through them would 404. Sponsorship credits make this
+    # backend free to us, so it carries the lowest proxy cost of any external
+    # backend; "frontier" is what puts it in the default fan-out at all, because
+    # tier outranks cost and cost only breaks ties within a tier.
+    # Deployments change more often than this file: set AZURE_OPENAI_MODELS to
+    # override without a code change.
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
-        ("gpt-4.1-mini", 55, "speed"),
-        ("gpt-5-mini", 75, "quality"),
-        ("gpt-5", 135, "premium"),
+        ("gpt-5.5", 10, "frontier"),
     ]
 
     # Per-subclass rate-limit state (do not share across providers).
@@ -4800,9 +4807,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     # "premium" in MLRouter.best_external_models, so it is preferred rather
     # than merely registered. Cost only breaks ties WITHIN a tier, so leaving
     # it at "premium" would have kept it out of the default fan-out entirely.
+    # Only these two are deployed on our resource (checked 2026-09-04);
+    # claude-haiku-4-5 and claude-sonnet-4-6 were never provisioned, so naming
+    # them here just produced dead entries. Override with AZURE_ANTHROPIC_MODELS
+    # when a deployment is added rather than editing this list.
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
-        ("claude-haiku-4-5", 55, "speed"),
-        ("claude-sonnet-4-6", 95, "quality"),
         ("claude-opus-4-8", 135, "premium"),
         ("claude-fable-5", 175, "frontier"),
     ]

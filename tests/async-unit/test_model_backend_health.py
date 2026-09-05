@@ -295,17 +295,19 @@ class TestEnumeration:
         assert static == []
 
     def test_only_models_filter_accepts_internal_name(self, monkeypatch, fresh_router):
-        # The wire id "claude-sonnet-4-6" matches BOTH the direct Anthropic
+        # The wire id "claude-opus-4-8" matches BOTH the direct Anthropic
         # model and the (unconfigured) azure-anthropic deployment of the same
         # name — the configured one is checkable, the other reports its
-        # configuration state.
+        # configuration state. (Was claude-sonnet-4-6 until that deployment was
+        # dropped from the Azure defaults: it was never provisioned on our
+        # resource. Opus is the id that still spans both providers.)
         _clear_provider_env(monkeypatch)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-123")
         static, checkable = mhc.enumerate_backend_checks(
-            only_models=["claude-sonnet-4-6"]
+            only_models=["claude-opus-4-8"]
         )
-        assert [r.model_name for r, _ in checkable] == ["anthropic/claude-sonnet-4-6"]
-        assert {r.model_name for r in static} == {"azure-anthropic/claude-sonnet-4-6"}
+        assert [r.model_name for r, _ in checkable] == ["anthropic/claude-opus-4-8"]
+        assert {r.model_name for r in static} == {"azure-anthropic/claude-opus-4-8"}
         assert {r.category for r in static} == {mhc.CATEGORY_NOT_CONFIGURED}
 
     def test_disabled_backends_never_invoked_end_to_end(
