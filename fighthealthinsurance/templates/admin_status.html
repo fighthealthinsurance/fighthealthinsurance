@@ -307,13 +307,27 @@
       </div>
       {% if fax_outcomes.recent_failures %}
       <table class="status">
-        <thead><tr><th>Fax</th><th>When</th><th>Claim</th></tr></thead>
+        <thead><tr><th>Fax</th><th>When</th><th>Claim</th><th>Action</th></tr></thead>
         <tbody>
         {% for f in fax_outcomes.recent_failures %}
           <tr>
             <td><code>{{ f.uuid }}</code></td>
             <td>{{ f.date|date:"Y-m-d H:i" }}</td>
             <td>{% if f.claim_stuck %}<span class="badge bad">STUCK</span>{% else %}<span class="badge ok">released</span>{% endif %}</td>
+            <td>
+              {# POST, never GET: a GET would let a crawler or prefetch re-fax
+                 a patient's appeal to an insurer. The view refuses any fax
+                 whose fax_success is True, so a mis-click cannot double-send
+                 one that already went through. #}
+              <form method="post" action="/timbit/help/resend_stuck_fax" style="margin:0">
+                {% csrf_token %}
+                <input type="hidden" name="uuid" value="{{ f.uuid }}">
+                <button type="submit"
+                        onclick="return confirm('Re-send this fax to the insurer? Only do this if it never went through.');">
+                  Resend
+                </button>
+              </form>
+            </td>
           </tr>
         {% endfor %}
         </tbody>

@@ -4,6 +4,7 @@ import json
 from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, F, QuerySet
 from django.db.models.functions import Lower
@@ -598,6 +599,70 @@ class AdminModelQueryView(View):
             "result": result,
             "error": error,
         }
+
+
+class ResendStuckFaxView(View):
+    """Release a stranded vendor-send claim and re-dispatch the fax.
+
+    A fax whose worker died mid-send (OOM, eviction, node loss) leaves
+    ``vendor_send_completed`` True with no in-process ``except`` alive to
+    release it. ``send_fax_via_vendor`` then short-circuits on that claim
+    forever, so the fax can never be retried by any normal path -- it just
+    sits in the status dashboard as "STUCK". Clearing it by hand meant a
+    shell on a prod pod; this is that operation, gated and audited.
+
+    POST only, and deliberately so: a GET would let a crawler, a prefetch or
+    a mis-pasted link re-fax a patient's appeal to an insurer.
+
+    The one thing this must never do is re-send a fax that actually went
+    through. A stranded claim means the send was CLAIMED, not that it
+    completed -- the claim is taken before the document is handed to the
+    vendor. So the guard is ``fax_success``: if the fax succeeded, refuse,
+    whatever the claim says. ``precheck_fax`` enforces the same rule
+    downstream, but refusing here keeps a dashboard mis-click from ever
+    reaching the send path.
+    """
+
+    def post(self, request):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance import temporal_client
+        from fighthealthinsurance.models import FaxesToSend
+
+        fax_uuid = (request.POST.get("uuid") or "").strip()
+        if not fax_uuid:
+            return HttpResponse("Missing uuid", status=400)
+        try:
+            fax = FaxesToSend.objects.get(uuid=fax_uuid)
+        except (FaxesToSend.DoesNotExist, ValidationError, ValueError):
+            return HttpResponse("No such fax", status=404)
+
+        if fax.fax_success:
+            # Already delivered; re-sending would fax the insurer twice.
+            logger.warning(
+                f"Staff resend refused for fax uuid={fax.uuid}: already successful"
+            )
+            return HttpResponse("Fax already sent successfully; refusing", status=409)
+        if fax.destination is None:
+            return HttpResponse("Fax has no destination", status=400)
+
+        released = FaxesToSend.objects.filter(pk=fax.pk).update(
+            vendor_send_completed=False
+        )
+        logger.info(
+            f"Staff {request.user} resending fax uuid={fax.uuid} "
+            f"(claim released: {bool(released)})"
+        )
+        try:
+            workflow_id = async_to_sync(temporal_client.start_send_fax_workflow)(
+                fax.hashed_email, str(fax.uuid)
+            )
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Staff resend failed to start workflow for fax uuid={fax.uuid}"
+            )
+            return HttpResponse(f"Could not start send: {e}", status=502)
+        return HttpResponse(f"Resend started: {workflow_id}")
 
 
 class ScheduleFollowUps(View):
