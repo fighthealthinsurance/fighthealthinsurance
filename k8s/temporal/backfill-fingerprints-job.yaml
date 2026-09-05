@@ -40,6 +40,19 @@ spec:
           env:
             - name: BACKFILL_APPEAL_FINGERPRINTS
               value: "1"
+            # Importing the app pulls fighthealthinsurance.urls -> fax_views ->
+            # common_view_logic, whose DenialCreatorHelper builds a
+            # uszipcode SearchEngine AT CLASS-BODY SCOPE. That constructor
+            # mkdir's ~/.uszipcode on first use. This pod runs as UID 1000
+            # with readOnlyRootFilesystem and no home directory, so HOME is
+            # "/" and the mkdir dies with
+            #   OSError: [Errno 30] Read-only file system: '/.uszipcode'
+            # crash-looping the Job before the backfill runs a single query.
+            # Point HOME at the writable /tmp emptyDir this pod already
+            # mounts. (web-extralink-prefetch shares the hardening but never
+            # reaches this import, which is why it was not a warning sign.)
+            - name: HOME
+              value: "/tmp"
             - name: PDBHOST
               valueFrom:
                 configMapKeyRef:
