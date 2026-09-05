@@ -692,6 +692,31 @@ class TestAzureClaudeMessages(unittest.TestCase):
 
         asyncio.run(run())
 
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_gpt5_point_releases_drop_temperature(self):
+        """The gpt-5 family 400s on a custom temperature, and it ships DOTTED
+        point releases as well as hyphenated variants.
+
+        The matcher recognised "gpt-5" and the "gpt-5-" prefix only, so every
+        dotted release looked temperature-capable: the first call to it posted
+        a temperature, ate an HTTP 400, and only then landed in the runtime
+        fallback. Harmless when no dotted release was configured; gpt-5.5 is a
+        shipped default now, so that rejected request is on the hot path.
+        """
+        m = RemoteAzureOpenAI(model="gpt-5.5")
+        for name in (
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5.5",
+            "gpt-5.1",
+            "gpt-5.4-mini",
+            "azure-openai/gpt-5.5",  # provider-prefixed registrations too
+        ):
+            with self.subTest(model=name):
+                self.assertFalse(m._supports_custom_temperature(name))
+        # Non-reasoning deployments must keep the parameter.
+        self.assertTrue(m._supports_custom_temperature("gpt-4.1-mini"))
+
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_every_no_sampling_prefix_is_recognized(self):
         """Each id in _CLAUDE_NO_SAMPLING_PREFIXES must actually be matched — a

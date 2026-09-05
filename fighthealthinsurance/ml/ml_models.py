@@ -2879,7 +2879,11 @@ class RemoteOpenLike(RemoteModel):
         if model in self._temperature_unsupported_models:
             return False
         name = model.split("/")[-1].lower()
-        if name == "gpt-5" or name.startswith("gpt-5-"):
+        # The family ships dotted point releases (gpt-5.1 ... gpt-5.5) as well as
+        # hyphenated variants (gpt-5-mini), and both reject a custom temperature.
+        # Matching only "gpt-5" and "gpt-5-" let every dotted release through and
+        # paid one rejected request before the runtime fallback learned better.
+        if name == "gpt-5" or name.startswith(("gpt-5-", "gpt-5.")):
             return False
         if re.match(r"^o[134](-|$)", name):
             return False

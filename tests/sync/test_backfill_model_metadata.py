@@ -95,15 +95,20 @@ class BackfillModelMetadataTest(TestCase):
 
     def test_bare_wire_id_repaired_only_when_unique(self):
         # claude-haiku-4-5-20251001 exists only in the direct Anthropic
-        # catalog -> repaired. claude-sonnet-4-6 is both an anthropic wire id
+        # catalog -> repaired. claude-opus-4-8 is both an anthropic wire id
         # and an azure-anthropic deployment name -> ambiguous, untouched.
+        #
+        # The ambiguous example was claude-sonnet-4-6 until that deployment was
+        # dropped from the Azure defaults (it was never provisioned on our
+        # resource), which made the id unique and silently inverted what this
+        # test was checking. Opus is the id that still spans both providers.
         unique = self._make_appeal("claude-haiku-4-5-20251001")
-        ambiguous = self._make_appeal("claude-sonnet-4-6")
+        ambiguous = self._make_appeal("claude-opus-4-8")
         self._run("--apply")
         unique.refresh_from_db()
         ambiguous.refresh_from_db()
         self.assertEqual(unique.model_name, "anthropic/claude-haiku-4-5")
-        self.assertEqual(ambiguous.model_name, "claude-sonnet-4-6")
+        self.assertEqual(ambiguous.model_name, "claude-opus-4-8")
 
     def test_null_rows_left_for_unknown_bucket(self):
         row = self._make_appeal(None)
