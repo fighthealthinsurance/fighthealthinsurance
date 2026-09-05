@@ -1145,11 +1145,23 @@ def test_gate_kubectl_calls_carry_a_request_timeout():
         assert lines, call
         for line in lines:
             assert "--request-timeout=" not in line, line
-    # The one bound that has to stay on the rollout is its own.
-    rollout = next(
-        ln for ln in build.splitlines() if "rollout status deployment" in ln
-    )
-    assert "--timeout=15m" in rollout
+    # Each of them still needs its OWN bound, or there is none at all:
+    # `kubectl delete` waits for finalizers by default and --timeout=0 means
+    # "work it out from the object", which for a waited delete is effectively
+    # forever (external review).
+    for call, bound in (
+        ("rollout status deployment", "--timeout=15m"),
+        ("delete raycluster", "--timeout=5m"),
+        ("delete job", "--timeout=2m"),
+    ):
+        lines = [
+            ln
+            for ln in build.splitlines()
+            if call in ln and not ln.lstrip().startswith("#")
+        ]
+        assert lines, call
+        for line in lines:
+            assert bound in line, line
 
 
 def test_backfill_job_runs_non_root_with_a_read_only_root_filesystem():

@@ -330,7 +330,13 @@ ray_old_pods_remaining() {
 # swallowed every failure -- 403, API error, timeout -- and reported a missing
 # cluster, after which the apply would merely update the CR still standing
 # (external review).
-kubectl delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-found
+# --timeout because `kubectl delete` waits for finalizers by default and
+# --timeout=0 means "work it out from the object", which for a waited delete
+# is effectively forever (external review). 5m matches the budget the gate
+# below gives these same pods to disappear: if the delete cannot finish in
+# that time, the gate would fail anyway, so fail here where the message is
+# about the actual problem.
+kubectl delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-found --timeout=5m
 envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 
 # Deploy a staging env
@@ -420,7 +426,7 @@ if [ "$SKIP_BACKFILL" = true ]; then
     echo "--skip-backfill: not applying or waiting for the fingerprint backfill Job"
 elif [ "$SKIP_JOURNEY_GATES" = true ]; then
     echo "--skip-journey-gates: applying the backfill Job WITHOUT gating on the writers"
-    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found --timeout=2m
     envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
     echo "NOTE: check it yourself -- kubectl -n totallylegitco get job/fhi-backfill-appeal-fingerprints"
 else
@@ -492,7 +498,7 @@ else
       echo "No Ray cluster pods after 5m; skipping the Ray readiness wait (no Ray writers to drain)"
     fi
 
-    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found --timeout=2m
     envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
     # Wait for the strict backfill, and FAIL FAST on a failed Job (external
     # review): `kubectl wait --for=condition=complete` ignores condition=Failed,
