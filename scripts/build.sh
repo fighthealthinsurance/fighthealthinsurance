@@ -191,6 +191,23 @@ deployment_present() {
     exit 1
 }
 
+# Same rule as deployment_present, for the optional Prometheus operator CRDs:
+# `kubectl get crd X >/dev/null 2>&1` reads a 403 or an API blip as "not
+# installed", silently skipping the PodMonitors and alert rules and printing a
+# message that says the cluster does not have the operator. That is the same
+# no-metrics gap the apply ordering above exists to close (external review).
+crd_present() {
+    local out
+    if out=$(kubectl --request-timeout=30s get crd "$1" -o name 2>&1); then
+        return 0
+    fi
+    if printf '%s' "$out" | grep -qi "not found"; then
+        return 1
+    fi
+    echo "kubectl get crd $1 failed, refusing to guess whether it exists: $out" >&2
+    exit 1
+}
+
 # Pods under a selector that are marked for deletion but whose processes are
 # still running.
 terminating_pods() {
@@ -237,6 +254,40 @@ ray_pods_exist() {
     [ -n "$out" ]
 }
 
+# KubeRay clamps a worker group's desired size UP to minReplicas, so
+# k8s/ray/cluster.yaml asking for `replicas: 1` under `minReplicas: 2` really
+# schedules TWO worker pods. "Some pod under this label is Ready" would let
+# the head satisfy the gate on its own while both workers were still being
+# created -- and the head is not the pod running SpeculativeAppealsActor
+# (external review). Work out the size this cluster should reach, and require
+# that many Ready.
+ray_expected_pods() {
+    local reps_raw mins_raw total=1 i
+    local -a reps mins
+    reps_raw="$("${KGET[@]}" get raycluster raycluster-kuberay \
+        -o jsonpath='{.spec.workerGroupSpecs[*].replicas}')" || return 1
+    mins_raw="$("${KGET[@]}" get raycluster raycluster-kuberay \
+        -o jsonpath='{.spec.workerGroupSpecs[*].minReplicas}')" || return 1
+    read -r -a reps <<< "$reps_raw"
+    read -r -a mins <<< "$mins_raw"
+    for i in "${!reps[@]}"; do
+        if [ "${mins[i]:-0}" -gt "${reps[i]:-0}" ]; then
+            total=$((total + ${mins[i]:-0}))
+        else
+            total=$((total + ${reps[i]:-0}))
+        fi
+    done
+    printf '%s' "$total"
+}
+
+ray_ready_pods() {
+    local out
+    out="$("${KGET[@]}" get pods -l ray.io/cluster=raycluster-kuberay \
+        --field-selector=status.phase!=Succeeded,status.phase!=Failed \
+        -o go-template='{{range .items}}{{range .status.conditions}}{{if and (eq .type "Ready") (eq .status "True")}}R{{end}}{{end}}{{end}}')" || return 1
+    printf '%s' "${#out}"
+}
+
 ray_pod_uids() {
     "${KGET[@]}" get pods -l ray.io/cluster=raycluster-kuberay \
         -o jsonpath='{.items[*].metadata.uid}'
@@ -263,6 +314,9 @@ ray_old_pods_remaining() {
         exit 1
     fi
     now=" $now "
+    # Split on spaces regardless of any ambient IFS: with a changed IFS the
+    # whole UID list becomes one token and every old pod would read as gone.
+    local IFS=' '
     for uid in $RAY_PODS_BEFORE; do
         case "$now" in *" $uid "*) return 0 ;; esac
     done
@@ -301,12 +355,12 @@ envsubst < k8s/temporal/appeal-worker.yaml | kubectl apply -f -
 # to close. They are cheap, idempotent applies with nothing to wait for, so
 # they belong above the waits.
 kubectl apply -f k8s/temporal/worker-pdb.yaml
-if kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1; then
+if crd_present podmonitors.monitoring.coreos.com; then
     kubectl apply -f k8s/temporal/worker-podmonitor.yaml
 else
     echo "WARNING: no PodMonitor CRD in this cluster -- Temporal worker metrics will not be scraped"
 fi
-if kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then
+if crd_present prometheusrules.monitoring.coreos.com; then
     kubectl apply -f k8s/temporal/worker-alerts.yaml
 else
     echo "WARNING: no PrometheusRule CRD in this cluster -- Temporal worker alerts not installed"
@@ -319,7 +373,7 @@ envsubst < k8s/temporal/intake-outbox-cronjob.yaml | kubectl apply -f -
 # Alerts for the relay itself: a stalled outbox is invisible in worker and
 # web metrics (the events simply stop moving), so backlog age and CronJob
 # success age are the only signals that catch it (external review).
-if kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then
+if crd_present prometheusrules.monitoring.coreos.com; then
     kubectl apply -f k8s/temporal/intake-outbox-alerts.yaml
 else
     echo "WARNING: no PrometheusRule CRD in this cluster -- intake outbox alerts not installed"
@@ -373,7 +427,7 @@ else
     # Ray: the pods that existed before the delete must be gone before their
     # replacements can vouch for anything.
     ray_deadline=$((SECONDS + 300))
-    while ray_old_pods_remaining; do
+    while ray_old_pods_remaining || [ -n "$(terminating_pods ray.io/cluster=raycluster-kuberay)" ]; do
       if [ "$SECONDS" -ge "$ray_deadline" ]; then
         echo "Ray pods from before the cluster delete are still running after 5m; not running the fingerprint backfill Job" >&2
         exit 1
@@ -395,30 +449,30 @@ else
       sleep 10
     done
     if [ "$ray_pods_present" = true ]; then
-      # `kubectl wait` resolves its selector ONCE per invocation, so a single
-      # long wait started when only the head pod existed would never look at
-      # the worker pods created after it (external review). Call it
-      # repeatedly with a short timeout -- each call re-lists -- and require
-      # two consecutive clean passes so a lone head cannot satisfy the gate
-      # in the window before its workers are scheduled.
+      # Not `kubectl wait`: it resolves its selector ONCE per invocation, so a
+      # wait begun when only the head pod existed would never look at the
+      # worker pods created after it (external review). Re-count every tick
+      # against the size the cluster is supposed to reach.
+      if ! ray_expected="$(ray_expected_pods)"; then
+        echo "Could not read the RayCluster spec; refusing to guess how many pods to wait for" >&2
+        exit 1
+      fi
       ray_ready_deadline=$((SECONDS + 900))
-      ray_stable=0
-      while [ "$SECONDS" -lt "$ray_ready_deadline" ]; do
-        if kubectl --request-timeout=60s -n totallylegitco wait --for=condition=Ready pod \
-             -l ray.io/cluster=raycluster-kuberay \
-             --field-selector=status.phase!=Succeeded,status.phase!=Failed \
-             --timeout=30s >/dev/null 2>&1; then
-          ray_stable=$((ray_stable + 1))
-          [ "$ray_stable" -ge 2 ] && break
-        else
-          ray_stable=0
+      while :; do
+        if ! ray_ready="$(ray_ready_pods)"; then
+          echo "Could not count Ready Ray pods; refusing to treat that as ready" >&2
+          exit 1
+        fi
+        [ "$ray_ready" -ge "$ray_expected" ] && break
+        # Deadline checked AFTER a count, so a cluster that finishes in the
+        # last few seconds is not reported as a timeout.
+        if [ "$SECONDS" -ge "$ray_ready_deadline" ]; then
+          echo "Ray cluster: only $ray_ready of $ray_expected pods Ready after 15m; not running the fingerprint backfill Job" >&2
+          exit 1
         fi
         sleep 10
       done
-      if [ "$ray_stable" -lt 2 ]; then
-        echo "Ray cluster pods not consistently Ready within 15m; not running the fingerprint backfill Job" >&2
-        exit 1
-      fi
+      echo "Ray cluster: $ray_ready of $ray_expected pods Ready"
     else
       echo "No Ray cluster pods after 5m; skipping the Ray readiness wait (no Ray writers to drain)"
     fi
@@ -471,7 +525,7 @@ fi
 # only where the Prometheus operator's CRD is absent; every other failure (bad
 # manifest, RBAC, API error) is fatal, because a deploy that "succeeded" with no
 # metrics targets is exactly the silent gap this endpoint lockdown could create.
-if kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1; then
+if crd_present podmonitors.monitoring.coreos.com; then
     kubectl apply -f k8s/fhi-web-podmonitor.yaml
 else
     echo "WARNING: no PodMonitor CRD in this cluster -- app metrics will not be scraped"

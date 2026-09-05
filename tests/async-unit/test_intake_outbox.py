@@ -845,9 +845,11 @@ class TestRelayDeployment:
         assert "k8s/temporal/intake-outbox-cronjob.yaml" in build
         assert "k8s/temporal/intake-outbox-alerts.yaml" in build
         # The alerts need the operator CRD; guarded like every other rule.
+        # crd_present() replaced the bare `kubectl get crd ... 2>&1` probe so
+        # an API error can no longer masquerade as a missing operator.
         alerts_at = build.index("k8s/temporal/intake-outbox-alerts.yaml")
         guard = build.rindex(
-            "kubectl get crd prometheusrules.monitoring.coreos.com", 0, alerts_at
+            "crd_present prometheusrules.monitoring.coreos.com", 0, alerts_at
         )
         assert alerts_at - guard < 400
 

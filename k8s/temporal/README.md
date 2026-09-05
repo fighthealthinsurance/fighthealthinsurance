@@ -103,8 +103,9 @@ Three things to know before you run it:
   Deployment rollout (`web`, `fhi-fax-worker`, `fhi-appeal-worker`), then up
   to 10m each waiting for the old `web` and `fhi-appeal-worker` pods to
   actually exit, up to 25m for the Ray cluster (old pods gone, new pods
-  appear, new pods Ready), then up to 30m for the strict fingerprint backfill
-  Job. In practice it is far shorter — the drains are mostly done by the time
+  appear, and as many pods Ready as the RayCluster spec calls for — head plus
+  each worker group's `replicas` clamped up to its `minReplicas`, which is how
+  KubeRay sizes it), then up to 30m for the strict fingerprint backfill Job. In practice it is far shorter — the drains are mostly done by the time
   the rollouts report, and the backfill on an already-clean table takes a
   couple of minutes.
 - **Rolling out is not the same as draining, and the script waits for both.**

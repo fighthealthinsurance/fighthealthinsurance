@@ -799,7 +799,7 @@ def test_deploy_script_guards_the_ray_wait_on_pods_existing():
     otherwise fine. The Deployments already have an existence guard; Ray needs
     the same one (external review)."""
     build = _build_script()
-    wait_at = build.index("wait --for=condition=Ready pod")
+    wait_at = build.index("ray_expected_pods)")
     guard = build[:wait_at]
     assert "ray_pods_present=false" in guard
     assert 'if [ "$ray_pods_present" = true ]' in guard
@@ -950,6 +950,44 @@ def test_gate_waits_for_the_writer_pods_to_drain_not_just_to_roll():
     assert "exit 1" in fn
 
 
+def test_drained_deployments_actually_carry_the_labels_the_drain_selects_on():
+    """The drain keys on `group=` labels, which are NARROWER than the web
+    Deployment's own selector (`app: fight-health-insurance-prod`, which also
+    matches the worker pods and so cannot be used here). That is only sound
+    while every pod of those Deployments carries the group label -- if one
+    ever stopped, `rollout status` could finish and the drain would see an
+    empty list while an old pod was still inside its grace period (external
+    review). Pin the labels so that becomes a CI failure, not a silent hole."""
+    import pathlib
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    build = _build_script()
+
+    def pod_template_labels(path, deployment_name):
+        raw = (root / path).read_text().replace("${FHI_BASE}:${FHI_VERSION}", "image")
+        for doc in yaml.safe_load_all(raw):
+            if (
+                doc
+                and doc.get("kind") == "Deployment"
+                and doc["metadata"]["name"] == deployment_name
+            ):
+                return doc["spec"]["template"]["metadata"]["labels"]
+        raise AssertionError(f"{deployment_name} not found in {path}")
+
+    for path, name, label in (
+        ("k8s/deploy.yaml", "web", "fight-health-insurance-prod-webbackend"),
+        (
+            "k8s/temporal/appeal-worker.yaml",
+            "fhi-appeal-worker",
+            "fight-health-insurance-prod-temporal-appeal-worker",
+        ),
+    ):
+        assert pod_template_labels(path, name).get("group") == label, name
+        assert f"wait_for_drain group={label} " in build
+
+
 def test_ray_gate_requires_the_pre_delete_pods_to_be_gone():
     """`kubectl delete` is background-cascading: the RayCluster object goes
     before its pods do, and both generations carry the same ray.io/cluster
@@ -966,15 +1004,60 @@ def test_ray_gate_requires_the_pre_delete_pods_to_be_gone():
     assert 'raycluster-kuberay || echo' not in build
 
 
-def test_ray_readiness_is_rechecked_against_a_relisted_pod_set():
-    """`kubectl wait` resolves its selector once per invocation, so a single
-    long wait begun when only the head pod existed would never look at the
-    worker pods created after it (external review)."""
+def test_ray_readiness_counts_pods_against_the_size_the_cluster_should_reach():
+    """`kubectl wait` resolves its selector once per invocation, so a wait
+    begun when only the head pod existed would never look at the worker pods
+    created after it -- and the head is not what runs SpeculativeAppealsActor.
+    KubeRay also clamps a worker group UP to minReplicas, so k8s/ray/cluster.yaml
+    (`replicas: 1`, `minReplicas: 2`) really means head + 2 workers
+    (external review)."""
+    import os
+    import pathlib
+    import subprocess
+    import tempfile
+
     build = _build_script()
-    assert "ray_stable=$((ray_stable + 1))" in build
-    assert 'if [ "$ray_stable" -lt 2 ]' in build
-    at = build.index('if [ "$ray_stable" -lt 2 ]')
-    assert "exit 1" in build[at : at + 300]
+    fns = "\n".join(
+        _extract_shell_function(build, name)
+        for name in ("ray_expected_pods", "ray_ready_pods")
+    )
+
+    def expected_for(replicas: str, min_replicas: str) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            shim = pathlib.Path(tmp) / "kubectl"
+            shim.write_text(
+                "#!/bin/bash\n"
+                'for a in "$@"; do case "$a" in\n'
+                f'  *minReplicas*) echo -n "{min_replicas}"; exit 0 ;;\n'
+                f'  *workerGroupSpecs*replicas*) echo -n "{replicas}"; exit 0 ;;\n'
+                "esac; done\n"
+                "exit 0\n"
+            )
+            shim.chmod(0o755)
+            env = {**os.environ, "PATH": f"{tmp}:{os.environ['PATH']}"}
+            r = subprocess.run(
+                ["bash", "-c", "set -e\nKGET=(kubectl)\n" + fns + "\nray_expected_pods\n"],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=60,
+            )
+            assert r.returncode == 0, r.stderr
+            return r.stdout
+
+    # The real manifest: one head plus a group clamped from 1 up to 2.
+    assert expected_for("1", "2") == "3"
+    # No clamp needed.
+    assert expected_for("3", "1") == "4"
+    # Several worker groups, each clamped independently.
+    assert expected_for("1 5", "2 2") == "8"
+    # No worker groups at all: the head alone.
+    assert expected_for("", "") == "1"
+
+    # And the gate compares the two rather than accepting any Ready pod.
+    assert '[ "$ray_ready" -ge "$ray_expected" ] && break' in build
+    at = build.index("only $ray_ready of $ray_expected pods Ready")
+    assert "exit 1" in build[at : at + 200]
 
 
 def test_skip_backfill_still_gates_the_rollouts():
@@ -1003,6 +1086,21 @@ def test_skip_backfill_still_gates_the_rollouts():
     assert "Rollout waits still run" in helped.stdout
 
 
+def test_crd_probes_do_not_read_an_api_error_as_a_missing_operator():
+    """`kubectl get crd X >/dev/null 2>&1` reads a 403 or an API blip as "not
+    installed", silently skipping the PodMonitors and alert rules while
+    printing a message blaming the cluster -- the same no-metrics gap the
+    apply ordering exists to close (external review)."""
+    build = _build_script()
+    code = [ln for ln in build.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("get crd" in ln and "2>&1; then" in ln for ln in code), (
+        "a CRD probe is still swallowing errors"
+    )
+    assert build.count("if crd_present ") == 4
+    fn = _extract_shell_function(build, "crd_present")
+    assert "not found" in fn and "exit 1" in fn
+
+
 def test_deploy_script_enables_pipefail():
     """Every pipe here is `envsubst < manifest | kubectl apply -f -`. Without
     pipefail only kubectl's status counts, so an envsubst that died partway
@@ -1018,11 +1116,18 @@ def test_gate_kubectl_calls_carry_a_request_timeout():
     claim to enforce (external review)."""
     build = _build_script()
     assert "KGET=(kubectl --request-timeout=" in build
-    # The long-running gate calls are not routed through KGET, so check them
-    # individually.
-    for call in ("rollout status deployment", "wait --for=condition=Ready pod"):
-        line = next(ln for ln in build.splitlines() if call in ln and "#" not in ln)
-        assert "--request-timeout=" in line, line
+    # The blocking gate calls are not routed through KGET, so they carry
+    # their own. Plain `kubectl apply` is deliberately not in this list: an
+    # apply is not a poll and should not be cut off at 30s.
+    for call in ("rollout status deployment", "delete raycluster", "delete job"):
+        lines = [
+            ln.strip()
+            for ln in build.splitlines()
+            if call in ln and not ln.lstrip().startswith("#")
+        ]
+        assert lines, call
+        for line in lines:
+            assert "--request-timeout=" in line, line
 
 
 def test_backfill_job_runs_non_root_with_a_read_only_root_filesystem():
