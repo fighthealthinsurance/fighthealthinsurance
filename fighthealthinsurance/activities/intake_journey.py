@@ -12,6 +12,13 @@ from temporalio.exceptions import ApplicationError
 from fighthealthinsurance import intake_journey_core
 from fighthealthinsurance.activities.appeal_journey import _aclose_old_connections
 
+# Registered alongside the intake bookkeeping activities: the intake
+# workflow calls it during post-collision reconciliation (the activity
+# itself lives with the appeal-journey activities it belongs to).
+from fighthealthinsurance.activities.appeal_journey import (  # noqa: F401
+    check_generation_postcondition,
+)
+
 
 @activity.defn
 async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:

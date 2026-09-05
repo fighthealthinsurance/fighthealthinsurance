@@ -26,6 +26,7 @@ from asgiref.sync import async_to_sync
 
 from loguru import logger
 
+from fighthealthinsurance import generation_lease
 from fighthealthinsurance.utils import is_real_appeal
 
 STATUS_OK = "ok"
@@ -48,6 +49,34 @@ class JourneyIncomplete(Exception):
     save inside the generator, or an empty stream must look like a retryable
     failure, not success (PR #963 review).
     """
+
+
+class LeaseHeld(Exception):
+    """Raised when another generator currently owns the denial's lease.
+
+    Retryable by design: by the activity's next attempt the other owner has
+    either delivered (the baseline check then ends the journey with zero
+    work) or died (its lease expired and the journey proceeds). Nobody ever
+    waits on the lock (external review; generation_lease.py).
+    """
+
+
+# How often a running journey pushes its lease expiry out; well inside the
+# lease TTL so a live attempt never expires mid-run while a dead one frees
+# the denial within one TTL.
+LEASE_EXTEND_INTERVAL_S = 10.0
+
+
+async def acheck_generation_postcondition(denial) -> bool:
+    """Is the durable outcome the journey exists for already true: a chosen
+    appeal, or the target number of real drafts? Used by the intake
+    workflow after a child-start collision instead of assuming the other
+    generation run succeeded (external review)."""
+    return (await aprecheck_appeal_journey(denial)) == STATUS_ALREADY_HAS_APPEALS
+
+
+def check_generation_postcondition(denial) -> bool:
+    return async_to_sync(acheck_generation_postcondition)(denial)
 
 
 async def aload_denial(hashed_email: str, denial_uuid: str):
@@ -164,12 +193,39 @@ async def agenerate_and_store_appeals(denial) -> int:
     if len(baseline) >= TARGET_APPEALS:
         return 0
 
+    # Single-writer boundary: take the denial's generation lease (never
+    # stealing -- a live interactive run outranks a background job). Held
+    # means another generator owns it right now; back off via the retry
+    # policy rather than double-generating (external review).
+    lease = await generation_lease.aacquire(
+        denial, holder=generation_lease.new_holder("journey")
+    )
+    if not lease.acquired:
+        raise LeaseHeld(
+            f"generation lease held for denial {denial.uuid} (epoch {lease.epoch})"
+        )
+
+    async def _keep_lease() -> None:
+        # Owned by this attempt: cancelled in the finally below, so a dead
+        # attempt stops extending and the lease expires within one TTL.
+        while True:
+            await asyncio.sleep(LEASE_EXTEND_INTERVAL_S)
+            if not await generation_lease.aextend(denial, lease.epoch):
+                return  # stolen: the per-frame check ends the run
+
+    extender = asyncio.create_task(_keep_lease())
     frames = 0
+    stolen = False
     # generate_appeals is an async generator (declared AsyncIterator), so
     # aclose() exists at runtime; the cast lets mypy see it.
     agen = cast(
         AsyncGenerator[str, None],
-        AppealsBackendHelper.generate_appeals_for_denial(denial),
+        # The epoch rides into the generator so save_appeal fences every
+        # draft insert on it: the per-frame check below is the early stop,
+        # the write boundary is the guarantee (review).
+        AppealsBackendHelper.generate_appeals_for_denial(
+            denial, lease_epoch=lease.epoch
+        ),
     )
     try:
         async with asyncio.timeout(GENERATION_BUDGET_SECONDS):
@@ -180,6 +236,15 @@ async def agenerate_and_store_appeals(denial) -> int:
                 # count query per frame is cheap, and only rows that actually
                 # persisted can end the consumption early.
                 frames += 1
+                if await generation_lease.acurrent_epoch(denial) != lease.epoch:
+                    # Fencing token moved: an interactive run stole the
+                    # lease. Stop quietly with what is stored; the user is
+                    # being served live and the retry's baseline check will
+                    # see their drafts.
+                    stolen = True
+                    break
+                # Distinct fingerprints, not row ids: duplicate rows are one
+                # deliverable draft (the fingerprint work now on main).
                 if len(await _stored_fingerprints()) >= TARGET_APPEALS:
                     break
     except TimeoutError:
@@ -188,7 +253,9 @@ async def agenerate_and_store_appeals(denial) -> int:
             f"appeal frame(s) for denial {denial.uuid}"
         )
     finally:
+        extender.cancel()
         await agen.aclose()
+        await generation_lease.arelease(denial, lease.epoch)
 
     after = await _stored_fingerprints()
     stored = len(after - baseline)
@@ -196,6 +263,12 @@ async def agenerate_and_store_appeals(denial) -> int:
         f"Appeal journey: {stored} new draft(s) persisted for denial "
         f"uuid={denial.uuid}"
     )
+    if stolen:
+        logger.info(
+            f"Appeal journey: lease stolen mid-run for denial {denial.uuid}; "
+            "deferring to the interactive generator"
+        )
+        return stored
     if len(after) < TARGET_APPEALS:
         raise JourneyIncomplete(
             f"{len(after)} of {TARGET_APPEALS} drafts durable for denial "

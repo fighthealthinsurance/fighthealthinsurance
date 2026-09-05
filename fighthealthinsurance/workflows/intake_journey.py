@@ -45,6 +45,15 @@ BOOKKEEPING_RETRY = RetryPolicy(
 # no nudge (external review).
 NUDGE_RETRY = RetryPolicy(maximum_attempts=1)
 
+# After a child-start collision (a standalone generation already owns
+# generate-appeal-{uuid}), the journey verifies the durable postcondition on
+# a backoff instead of declaring success, and retakes ownership if that run
+# dies short of the target. Bounded: past RECONCILE_FOR it closes as
+# "deferred" rather than waiting forever (external review).
+RECONCILE_FOR = timedelta(hours=24)
+RECONCILE_INITIAL_DELAY = timedelta(seconds=30)
+RECONCILE_MAX_DELAY = timedelta(minutes=10)
+
 STEP_STARTED = "started"
 STEP_COMPLETED = "completed"
 
@@ -55,6 +64,13 @@ class IntakeJourneyWorkflow:
         self._step: str = STEP_STARTED
         self._completed: bool = False
         self._contact_opt_in: bool = False
+        # Reconciliation bookkeeping (logical workflow time, ISO strings),
+        # exposed by the reconcile_state query so operators -- and tests --
+        # can see that every check and start attempt stayed inside the
+        # window. Bounded by the window arithmetic (~150 entries).
+        self._reconcile_until: str = ""
+        self._check_times: list = []
+        self._start_times: list = []
 
     @workflow.signal
     def step_reached(self, step: str) -> None:
@@ -73,6 +89,14 @@ class IntakeJourneyWorkflow:
     @workflow.query
     def journey_state(self) -> dict:
         return {"step": self._step, "completed": self._completed}
+
+    @workflow.query
+    def reconcile_state(self) -> dict:
+        return {
+            "reconcile_until": self._reconcile_until,
+            "check_times": list(self._check_times),
+            "start_times": list(self._start_times),
+        }
 
     @workflow.run
     async def run(self, journey: IntakeJourneyInput) -> str:
@@ -119,6 +143,51 @@ class IntakeJourneyWorkflow:
         # retry policy; the deterministic child id keeps duplicate journeys
         # idempotent, and precheck no-ops if drafts already exist (e.g. the
         # interactive flow delivered them first).
+        if await self._start_generation(journey):
+            return "completed"
+        # A standalone generation already owns this denial's workflow id. A
+        # child cannot attach to it, and "another run exists" is not
+        # "drafts exist": verify the durable postcondition on a backoff and
+        # retake ownership if that run closes short of the target.
+        delay = RECONCILE_INITIAL_DELAY
+        reconcile_until = workflow.now() + RECONCILE_FOR
+        self._reconcile_until = reconcile_until.isoformat()
+        while True:
+            # Never sleep past the window, and give up BEFORE doing any
+            # more work once it has elapsed (review).
+            remaining = reconcile_until - workflow.now()
+            if remaining <= timedelta(0):
+                break
+            await asyncio.sleep(min(delay, remaining).total_seconds())
+            delay = min(delay * 2, RECONCILE_MAX_DELAY)
+            if workflow.now() >= reconcile_until:
+                break
+            self._check_times.append(workflow.now().isoformat())
+            satisfied = await workflow.execute_activity(
+                intake_activities.check_generation_postcondition,
+                args=[journey.hashed_email, journey.denial_uuid],
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=BOOKKEEPING_RETRY,
+            )
+            if satisfied:
+                return "completed"
+            # The check itself takes time (its activity timeout is a
+            # minute, with retries): re-check the window before starting
+            # generation, so a child can never be started outside it
+            # (review).
+            if workflow.now() >= reconcile_until:
+                break
+            self._start_times.append(workflow.now().isoformat())
+            if await self._start_generation(journey):
+                return "completed"
+        workflow.logger.warning(
+            "generation postcondition unmet after the reconciliation window"
+        )
+        return "deferred"
+
+    async def _start_generation(self, journey: IntakeJourneyInput) -> bool:
+        """Run generation as our child; False when a standalone run holds
+        the id (WorkflowAlreadyStartedError), which the caller reconciles."""
         try:
             await workflow.execute_child_workflow(
                 "GenerateAppealWorkflow",
@@ -129,12 +198,8 @@ class IntakeJourneyWorkflow:
                 id=f"generate-appeal-{journey.denial_uuid}",
             )
         except WorkflowAlreadyStartedError:
-            # A standalone generation with this id is already RUNNING (e.g. a
-            # management-command dispatch); a child cannot attach to it, and
-            # failing the whole intake journey over work that is underway
-            # would be wrong. Drafts are governed by the durable database
-            # postcondition either way (external review).
             workflow.logger.info(
-                "generation already running for this denial; intake defers to it"
+                "generation already running for this denial; reconciling"
             )
-        return "completed"
+            return False
+        return True

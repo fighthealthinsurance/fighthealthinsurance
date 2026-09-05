@@ -5,6 +5,7 @@ import json
 from contextlib import contextmanager
 
 import pytest
+from types import SimpleNamespace
 from loguru import logger as loguru_logger
 
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
@@ -257,6 +258,27 @@ async def _run_generate_appeals_over_saved(saved_texts, synthesized=None):
         patch(
             "fighthealthinsurance.common_view_logic.appealGenerator"
         ) as mock_appeal_gen,
+        # The denial here is a MagicMock, so the real per-denial generation
+        # lease cannot be taken against it. Stub the lease so this test keeps
+        # exercising what it is about (citations and synthesis): an
+        # interactive run that cannot prove it holds a lease deliberately
+        # persists nothing (see test_generation_lease.py).
+        patch(
+            "fighthealthinsurance.generation_lease.aacquire",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(epoch=1),
+        ),
+        patch("fighthealthinsurance.generation_lease.assert_holds"),
+        patch(
+            "fighthealthinsurance.generation_lease.aextend",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "fighthealthinsurance.generation_lease.arelease",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_regex.get_appeal_templates = AsyncMock(return_value=[])
         mock_sync_to_async.side_effect = _sync_to_async_router(
@@ -787,6 +809,23 @@ async def test_synthesis_threshold(saved_texts, synthesis_should_run):
         patch(
             "fighthealthinsurance.common_view_logic.appealGenerator"
         ) as mock_appeal_gen,
+        # Mock denial: stub the generation lease (see the helper above).
+        patch(
+            "fighthealthinsurance.generation_lease.aacquire",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(epoch=1),
+        ),
+        patch("fighthealthinsurance.generation_lease.assert_holds"),
+        patch(
+            "fighthealthinsurance.generation_lease.aextend",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "fighthealthinsurance.generation_lease.arelease",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_regex.get_appeal_templates = AsyncMock(return_value=[])
         mock_sync_to_async.side_effect = _sync_to_async_router(
@@ -877,6 +916,23 @@ async def test_synthesis_skips_verbatim_duplicate():
         patch(
             "fighthealthinsurance.common_view_logic.appealGenerator"
         ) as mock_appeal_gen,
+        # Mock denial: stub the generation lease (see the helper above).
+        patch(
+            "fighthealthinsurance.generation_lease.aacquire",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(epoch=1),
+        ),
+        patch("fighthealthinsurance.generation_lease.assert_holds"),
+        patch(
+            "fighthealthinsurance.generation_lease.aextend",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "fighthealthinsurance.generation_lease.arelease",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_regex.get_appeal_templates = AsyncMock(return_value=[])
         mock_sync_to_async.side_effect = _sync_to_async_router(

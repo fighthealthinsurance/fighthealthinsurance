@@ -26,6 +26,8 @@ from temporalio.exceptions import ApplicationError
 from fighthealthinsurance.appeal_journey_core import (
     STATUS_NOT_FOUND,
     JourneyIncomplete,
+    LeaseHeld,
+    acheck_generation_postcondition,
     agenerate_and_store_appeals,
     aload_denial,
     aprecheck_appeal_journey,
@@ -95,9 +97,11 @@ async def generate_and_store_appeals(hashed_email: str, denial_uuid: str) -> int
             return int(await agenerate_and_store_appeals(denial))
         except _NON_RETRYABLE_ERRORS as e:
             raise _non_retryable(e, denial_uuid) from None
-        except JourneyIncomplete as e:
-            # Counts and uuid only -- safe for history, and retryable by
-            # design: the durable postcondition was not met.
+        except (JourneyIncomplete, LeaseHeld) as e:
+            # Counts/epoch and uuid only -- safe for history, and retryable
+            # by design: the durable postcondition was not met, or another
+            # generator holds the lease and will have delivered or died by
+            # the next attempt.
             raise ApplicationError(str(e)) from None
         except asyncio.CancelledError:
             # Cancellation/timeout: the core's finally already closed the
@@ -119,3 +123,25 @@ async def generate_and_store_appeals(hashed_email: str, denial_uuid: str) -> int
         raise _non_retryable(e, denial_uuid) from None
     finally:
         beat.cancel()
+
+
+@activity.defn
+async def check_generation_postcondition(hashed_email: str, denial_uuid: str) -> bool:
+    """Is the journey's durable outcome already true (chosen appeal, or the
+    target number of real drafts)? Lets the intake workflow verify rather
+    than assume after a child-start collision (external review). Missing
+    denial -> False: the caller's child start then reaches precheck, which
+    ends that path terminally."""
+    # Same wrapper as the other ORM activities: refresh connections at entry
+    # (a long-lived worker can hold a server-closed one between attempts) and
+    # classify schema/validation failures as non-retryable, so they fail fast
+    # instead of burning the reconciliation loop's bookkeeping retries
+    # (review). Operational database errors stay retryable.
+    await _aclose_old_connections()
+    try:
+        denial = await aload_denial(hashed_email, denial_uuid)
+        if denial is None:
+            return False
+        return bool(await acheck_generation_postcondition(denial))
+    except _NON_RETRYABLE_ERRORS as e:
+        raise _non_retryable(e, denial_uuid) from None

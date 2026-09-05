@@ -2760,6 +2760,28 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         return (model_name, synthesized, context_level)
 
 
+class AppealGenerationLease(models.Model):
+    """Single-writer lease for appeal generation on one denial.
+
+    See :mod:`fighthealthinsurance.generation_lease` for the semantics. One
+    row per denial, reused; ``epoch`` is the fencing token, ``expires_at``
+    frees a dead holder, ``deadline`` is the attempt deadline the holder's
+    inner layers inherit. Fingerprint uniqueness dedupes CONTENT; this
+    governs WORK ownership (external review).
+    """
+
+    for_denial = models.OneToOneField(
+        Denial, on_delete=models.CASCADE, related_name="generation_lease"
+    )
+    holder = models.CharField(max_length=128, blank=True, default="")
+    expires_at = models.DateTimeField()
+    deadline = models.DateTimeField()
+    epoch = models.PositiveIntegerField(default=0)
+
+    def __str__(self):
+        return f"lease(denial={self.for_denial_id}, epoch={self.epoch})"
+
+
 class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
     """
     Tracks an escalation packet generated alongside an appeal.
