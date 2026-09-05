@@ -278,6 +278,177 @@ class TestInteractiveLease(_JourneyTestBase):
         )
 
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_transient_renewal_errors_do_not_abort_a_run_that_still_holds(
+        self, mock_gen
+    ):
+        """A renewal EXCEPTION says the database was briefly unreachable --
+        it says nothing about ownership. The old loop treated three of them
+        (30 seconds) as 'superseded' and killed the stream, while the lease's
+        expires_at was still ~270s away: the run aborted a lease it provably
+        still held, costing the user drafts and synthesis (external review).
+        Errors well inside the TTL must not stop the run."""
+        import threading
+        import time as _time
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        denial = _make_denial(9220)
+        email = "lease_9220@example.com"
+        attempts = {"n": 0}
+        enough_failures = threading.Event()
+
+        async def always_raises(denial_, epoch, ttl_seconds=None):
+            attempts["n"] += 1
+            # Far more than the three that used to be fatal.
+            if attempts["n"] >= 6:
+                enough_failures.set()
+            raise RuntimeError("transient connection error")
+
+        def three_drafts(*args, **kwargs):
+            # Hold the generator open until well past the old 3-failure
+            # threshold, so the renewal loop provably keeps running.
+            assert enough_failures.wait(timeout=30), "renewal task never retried"
+            for d in _drafts(LETTERS):
+                yield d
+
+        mock_gen.make_appeals.side_effect = three_drafts
+
+        async def drive():
+            async for _chunk in AppealsBackendHelper.generate_appeals(
+                {"denial_id": denial.denial_id, "email": email, "semi_sekret": "sekret"}
+            ):
+                pass
+
+        with patch.object(generation_lease, "EXTEND_INTERVAL_SECONDS", 0.02), patch.object(
+            generation_lease, "DEFAULT_TTL_SECONDS", 30
+        ), patch.object(generation_lease, "aextend", always_raises):
+            async_to_sync(drive)()
+
+        assert attempts["n"] >= 6, f"only {attempts['n']} renewal attempts"
+        # The run kept its lease and persisted every draft. Under the old
+        # loop it would have broken out after the third failure.
+        assert (
+            ProposedAppeal.objects.filter(for_denial=denial, speculative=False).count()
+            == len(LETTERS)
+        )
+
+    def test_expiry_is_decided_by_the_clock_not_by_an_attempt_count(self):
+        """The give-up rule, tested directly on the shared helper.
+
+        The previous version of this test drove the whole generator with a
+        shrunken TTL and asserted "fewer drafts than LETTERS". That passed for
+        the wrong reason: the loop gives up on about the third exception, but
+        the test waited for an eighth that never came, timed out inside the
+        generator, and the swallowed error produced zero drafts -- so it would
+        have passed identically with the expiry rule deleted (external
+        review). Assert the mechanism instead.
+        """
+        calls: list = []
+
+        async def always_raises(denial_, epoch, ttl_seconds=None):
+            calls.append(1)
+            raise RuntimeError("transient connection error")
+
+        lost: list = []
+        clock = generation_lease.RenewalClock()
+
+        async def drive():
+            with patch.object(generation_lease, "EXTEND_INTERVAL_SECONDS", 0.01), patch.object(
+                generation_lease, "DEFAULT_TTL_SECONDS", 0.25
+            ), patch.object(generation_lease, "aextend", always_raises):
+                await generation_lease.keep_renewed(
+                    object(), 1, clock, on_lost=lambda why: lost.append(why)
+                )
+
+        async_to_sync(drive)()
+
+        # It kept retrying well past the old three-strikes rule...
+        assert len(calls) > 3, calls
+        # ...and gave up only once the clock said a full TTL had elapsed
+        # without a confirmed renewal.
+        assert lost, "never reported the lease lost"
+        assert "has expired" in lost[0]
+        assert clock.stale_for() >= 0.25
+
+    def test_a_renewal_confirmed_anywhere_keeps_the_run_alive(self):
+        """CodeRabbit's finding: the lease is renewed from TWO places -- the
+        background loop and once more after each draft is saved. Ownership is
+        a property of the LEASE, not of one loop, so a renewal confirmed by
+        the save path has to stop the background loop declaring expiry."""
+        clock = generation_lease.RenewalClock()
+        lost: list = []
+        ticks = {"n": 0}
+
+        async def always_raises(denial_, epoch, ttl_seconds=None):
+            ticks["n"] += 1
+            # Stand in for save_appeal confirming the same lease out-of-band.
+            if ticks["n"] % 3 == 0:
+                clock.confirm()
+            raise RuntimeError("background renewal is failing")
+
+        async def drive():
+            with patch.object(generation_lease, "EXTEND_INTERVAL_SECONDS", 0.01), patch.object(
+                generation_lease, "DEFAULT_TTL_SECONDS", 0.15
+            ), patch.object(generation_lease, "aextend", always_raises):
+                await asyncio.wait_for(
+                    generation_lease.keep_renewed(
+                        object(), 1, clock, on_lost=lambda why: lost.append(why)
+                    ),
+                    timeout=2.0,
+                )
+
+        # Every background call raises, but the out-of-band confirmations keep
+        # resetting staleness, so the run is never declared expired.
+        with pytest.raises(asyncio.TimeoutError):
+            async_to_sync(drive)()
+        assert not lost, lost
+        assert ticks["n"] > 10, ticks
+
+    def test_a_renewal_that_returns_false_stops_immediately(self):
+        """Returning False IS proof of loss -- unchanged behaviour, and the
+        thing the error handling must not accidentally swallow."""
+        lost: list = []
+
+        async def says_lost(denial_, epoch, ttl_seconds=None):
+            return False
+
+        async def drive():
+            with patch.object(generation_lease, "EXTEND_INTERVAL_SECONDS", 0.01), patch.object(
+                generation_lease, "aextend", says_lost
+            ):
+                await generation_lease.keep_renewed(
+                    object(), 1, generation_lease.RenewalClock(),
+                    on_lost=lambda why: lost.append(why),
+                )
+
+        async_to_sync(drive)()
+        assert lost and "no longer held" in lost[0]
+
+    def test_a_hanging_renewal_is_bounded_and_still_expires(self):
+        """A renewal that never returns used to park the loop forever, so the
+        deadline was never evaluated at all (external review). Each call is
+        bounded by the extend interval."""
+        lost: list = []
+
+        async def hangs(denial_, epoch, ttl_seconds=None):
+            await asyncio.sleep(60)
+
+        async def drive():
+            with patch.object(generation_lease, "EXTEND_INTERVAL_SECONDS", 0.01), patch.object(
+                generation_lease, "DEFAULT_TTL_SECONDS", 0.2
+            ), patch.object(generation_lease, "aextend", hangs):
+                await asyncio.wait_for(
+                    generation_lease.keep_renewed(
+                        object(), 1, generation_lease.RenewalClock(),
+                        on_lost=lambda why: lost.append(why),
+                    ),
+                    timeout=5.0,
+                )
+
+        async_to_sync(drive)()
+        assert lost and "has expired" in lost[0]
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_slow_first_draft_is_kept_alive_by_renewal_from_acquisition(
         self, mock_gen
     ):

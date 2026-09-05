@@ -22,7 +22,10 @@ bridge through channels' ``database_sync_to_async`` per the repo rule for
 ORM-touching app code.
 """
 
+import asyncio
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
@@ -37,6 +40,90 @@ DEFAULT_TTL_SECONDS = 300  # generation budget (240s) + drain margin
 # acquisition (a model call can run several minutes before its first draft,
 # longer than the TTL, so renewal cannot wait for the first insert).
 EXTEND_INTERVAL_SECONDS = 10.0
+
+
+class RenewalClock:
+    """The last CONFIRMED renewal of one held lease, shared by every path
+    that extends it.
+
+    A lease can be renewed from more than one place: a background task on a
+    timer, and (interactively) once more after each draft is saved. Whether
+    the holder still owns the lease is a property of the LEASE, not of any
+    one renewal loop, so a renewal confirmed anywhere has to count
+    everywhere. Tracking it per-loop meant a background loop whose calls kept
+    raising declared the lease lost after one TTL while per-save renewals
+    were succeeding the whole time -- stopping a generation that provably
+    still held it (external review).
+
+    Stamps are taken BEFORE the call that they describe, never after: the
+    database anchors ``expires_at`` on a clock read taken before its own
+    UPDATE, so crediting the round trip to ourselves would put our local
+    deadline later than the real one -- exactly wrong when the database is
+    slow, which is the only time any of this matters.
+    """
+
+    __slots__ = ("_last_confirmed",)
+
+    def __init__(self, started: Optional[float] = None) -> None:
+        self._last_confirmed = time.monotonic() if started is None else started
+
+    def confirm(self, at: Optional[float] = None) -> None:
+        """Record a renewal that the database acknowledged."""
+        stamp = time.monotonic() if at is None else at
+        if stamp > self._last_confirmed:
+            self._last_confirmed = stamp
+
+    def stale_for(self) -> float:
+        """Seconds since the last renewal we can actually vouch for."""
+        return time.monotonic() - self._last_confirmed
+
+
+async def keep_renewed(
+    denial,
+    epoch: int,
+    clock: "RenewalClock",
+    *,
+    on_lost: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Renew a held lease until ownership is provably lost, then return.
+
+    One policy, shared by the interactive flow and the appeal journey, so the
+    two cannot drift apart.
+
+    A renewal that RETURNS False is proof of loss: the row's epoch moved or
+    the lease expired, so someone else owns it -- stop immediately. An
+    EXCEPTION proves nothing of the kind; it says the database was briefly
+    unreachable, not that ownership changed, and the lease stays valid until
+    its TTL. Give up on errors only once more than a TTL has passed since the
+    last confirmed renewal, at which point it really has expired.
+
+    Each call is bounded by the extend interval so a HANGING renewal cannot
+    park the loop forever without the deadline ever being evaluated -- a hang
+    surfaces as a timeout the elapsed check can see.
+    """
+    interval = EXTEND_INTERVAL_SECONDS
+    while True:
+        await asyncio.sleep(interval)
+        started = time.monotonic()
+        try:
+            renewed = await asyncio.wait_for(aextend(denial, epoch), timeout=interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            stale = clock.stale_for()
+            if stale < DEFAULT_TTL_SECONDS:
+                continue
+            if on_lost is not None:
+                on_lost(
+                    f"no confirmed renewal for {stale:.0f}s (TTL "
+                    f"{DEFAULT_TTL_SECONDS}s); lease has expired"
+                )
+            return
+        if not renewed:
+            if on_lost is not None:
+                on_lost("renewal reported the lease is no longer held")
+            return
+        clock.confirm(started)
 
 
 def _now():

@@ -3117,37 +3117,28 @@ class AppealsBackendHelper:
             # the epoch move and stops quietly, and one arriving inside the
             # TTL backs off. One UPDATE; expiry is the release. Never let a
             # lease hiccup break the interactive flow (external review).
-            async def _keep_interactive_lease(epoch: int) -> None:
-                # Renew from the moment of acquisition, not the first
-                # insert: make_appeals can run past the TTL before its
-                # first draft, and an expired lease would let a journey
-                # supersede a live human (review). A renewal matching
-                # zero rows means we were superseded; persistent DB
-                # failure is treated the same way rather than writing
-                # under a lease we cannot prove we hold.
+            # One shared renewal policy for the interactive flow and the
+            # appeal journey (generation_lease.keep_renewed), so the two
+            # cannot drift apart, and one shared clock so a renewal
+            # confirmed by EITHER path counts for both -- save_appeal below
+            # renews this same lease after each draft, and crediting only
+            # the background loop meant a run whose background calls kept
+            # raising declared the lease lost after a TTL while per-save
+            # renewals were succeeding throughout (external review).
+            lease_clock = generation_lease.RenewalClock()
+
+            def _lease_lost(reason: str) -> None:
                 nonlocal superseded
-                failures = 0
-                while True:
-                    await asyncio.sleep(generation_lease.EXTEND_INTERVAL_SECONDS)
-                    try:
-                        renewed = await generation_lease.aextend(denial, epoch)
-                    except Exception:
-                        failures += 1
-                        logger.opt(exception=True).warning(
-                            f"[gen_id={generation_id}] lease renewal failed "
-                            f"({failures}) for denial {denial_id}"
-                        )
-                        if failures < 3:
-                            continue
-                        renewed = False
-                    if not renewed:
-                        superseded = True
-                        logger.info(
-                            f"[gen_id={generation_id}] interactive lease no "
-                            f"longer held for denial {denial_id}; stopping"
-                        )
-                        return
-                    failures = 0
+                superseded = True
+                logger.info(
+                    f"[gen_id={generation_id}] interactive lease no longer "
+                    f"held for denial {denial_id}: {reason}"
+                )
+
+            async def _keep_interactive_lease(epoch: int) -> None:
+                await generation_lease.keep_renewed(
+                    denial, epoch, lease_clock, on_lost=_lease_lost
+                )
 
             try:
                 stolen = await generation_lease.aacquire(
@@ -4399,12 +4390,25 @@ class AppealsBackendHelper:
                 # stored (it passed the fence when it was inserted), but the
                 # run is superseded and stops after this frame.
                 try:
-                    if not await generation_lease.aextend(denial, lease_epoch):
+                    _renew_started = time.monotonic()
+                    # Bounded like the background loop: a hung renewal here
+                    # would park the interactive flow AFTER the draft was
+                    # already durable (external review). The timeout is
+                    # caught by the except below and treated as transient.
+                    if not await asyncio.wait_for(
+                        generation_lease.aextend(denial, lease_epoch),
+                        timeout=generation_lease.EXTEND_INTERVAL_SECONDS,
+                    ):
                         superseded = True
                         logger.info(
                             f"[gen_id={generation_id}] lease no longer held after "
                             f"saving a draft for denial {denial_id}"
                         )
+                    else:
+                        # A renewal confirmed HERE is still a renewal: tell the
+                        # shared clock, or the background loop's expiry check
+                        # counts from a staleness this path already disproved.
+                        lease_clock.confirm(_renew_started)
                 except Exception:
                     logger.opt(exception=True).warning(
                         f"[gen_id={generation_id}] lease renewal failed after a "
