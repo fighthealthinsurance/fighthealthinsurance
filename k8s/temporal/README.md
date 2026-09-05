@@ -89,6 +89,46 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
      || echo "no PrometheusRule CRD -- worker alerts not installed"
    ```
 
+## What `scripts/build.sh` does with these manifests
+
+A normal prod deploy applies all of the above for you — `worker.yaml`,
+`appeal-worker.yaml`, `worker-pdb.yaml`, both PodMonitors, both
+PrometheusRules, `intake-outbox-cronjob.yaml` and
+`backfill-fingerprints-job.yaml` — so the hand commands above are for a
+first bring-up or a one-off repair, not for every release.
+
+Two things to know before you run it:
+
+- **It can wait up to ~90 minutes.** After applying, it blocks on the `web`,
+  `fhi-fax-worker` and `fhi-appeal-worker` rollouts (15m each) and on the Ray
+  pods going Ready (5m to appear, then 15m), then runs the strict fingerprint
+  backfill Job and polls up to 30m for it to finish. That is the mixed-version
+  guard: a strict pass that runs while any pre-fingerprint pod can still take
+  a request proves nothing, so the deploy makes sure the old writers are gone
+  first.
+- **A rollout that stalls or a backfill Job that fails ends the deploy
+  non-zero, on purpose.** The Job failing means it found rows a
+  pre-fingerprint writer produced; look at it before rerunning:
+
+  ```sh
+  kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints
+  ```
+
+  The applies all happen before the waits, so a failure here still leaves the
+  new image, the PDBs, the monitors, the alerts and the relay CronJob in place.
+
+Two escape hatches when you need the deploy without the waits:
+
+| Flag | Effect |
+| --- | --- |
+| `--skip-journey-gates` | Applies everything including the backfill Job, but does not block on the rollouts or the Job. You check the Job yourself. |
+| `--skip-backfill` | Does not apply or wait for the backfill Job at all. For a cluster where it has already run clean. |
+
+Both skip only the *waiting* (and, for `--skip-backfill`, the Job). Neither
+changes what image ships. Use them knowing what the gate buys you: without it,
+`ProposedAppeal.text_fingerprint` can carry NULLs or stale values from a pod
+that had not rolled yet, which only matters once the journey flags are on.
+
 ## Turning it on
 
 Fax sending only routes through Temporal when `TEMPORAL_ENABLED=true`. Until

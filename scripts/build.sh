@@ -10,21 +10,48 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 # setup (mypy, migrations, collectstatic, npm build) and the image builds -- so
 # the script can run on a deploy-only host or CI job that has just kubectl and
 # envsubst (no Python/Node build toolchain).
+#
+# --skip-journey-gates: apply everything, but do not BLOCK the deploy on the
+# writer rollouts or the fingerprint backfill Job. The Job is still applied and
+# still runs (with its own backoff); you just stop waiting for it here. Use it
+# when you want the deploy to land promptly and intend to check the Job
+# yourself -- and note the invariant it guards: until that strict pass is
+# quiet, a `chosen=False, text_fingerprint IS NULL` row does not yet reliably
+# mean "known duplicate", so journey counting should not be trusted (which
+# matters only once the journey flags are on).
+#
+# --skip-backfill: do not apply or wait for the backfill Job at all. For
+# clusters where it has already run clean, or a deploy that must not touch it.
 NO_BUILD=false
+SKIP_JOURNEY_GATES=false
+SKIP_BACKFILL=false
+usage() {
+    echo "Usage: $0 [--no-build] [--skip-journey-gates] [--skip-backfill]"
+    echo "  --no-build             Skip all build steps (template/static setup and image"
+    echo "                         builds); assume images are already built and pushed."
+    echo "  --skip-journey-gates   Apply everything but do not block on the writer"
+    echo "                         rollouts or the fingerprint backfill Job (~90m of"
+    echo "                         waits). The Job still runs; you check it yourself."
+    echo "  --skip-backfill        Do not apply or wait for the fingerprint backfill Job."
+}
 for arg in "$@"; do
     case "$arg" in
         --no-build)
             NO_BUILD=true
             ;;
+        --skip-journey-gates)
+            SKIP_JOURNEY_GATES=true
+            ;;
+        --skip-backfill)
+            SKIP_BACKFILL=true
+            ;;
         -h|--help)
-            echo "Usage: $0 [--no-build]"
-            echo "  --no-build  Skip all build steps (template/static setup and image builds);"
-            echo "              assume images are already built and pushed, and only deploy."
+            usage
             exit 0
             ;;
         *)
             echo "Unknown argument: $arg" >&2
-            echo "Usage: $0 [--no-build]" >&2
+            usage >&2
             exit 1
             ;;
     esac
@@ -40,7 +67,7 @@ else
 fi
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.23.2a
+FHI_VERSION=v0.23.3a
 
 
 MYORG=${MYORG:-totallylegitco}
@@ -146,46 +173,12 @@ envsubst < k8s/temporal/worker.yaml | kubectl apply -f -
 # Deployment: waiting first would either time out on a Deployment that does
 # not exist yet or, worse, pass against the previous image.
 envsubst < k8s/temporal/appeal-worker.yaml | kubectl apply -f -
-# Post-rollout second pass of the appeal fingerprint backfill (see the Job
-# manifest): --strict keeps failing -- and the Job keeps retrying -- until no
-# pre-fingerprint writer is left, so the "run again after old pods drain"
-# step is enforced by the deploy, not by a README. Jobs are immutable:
-# delete the previous run before applying.
-#
-# ROLLOUT GATE (external review): a strict pass that runs while ANY pod on
-# pre-fingerprint code can still handle a request proves nothing -- two quiet
-# scans succeed, then an idle old pod inserts a NULL fingerprint or edits text
-# under a stale one. So wait for every ProposedAppeal writer to finish rolling
-# (rollout status returns only after new replicas are available AND the old
-# ReplicaSet's pods are gone): the web Deployment, both Temporal workers, and
-# the Ray cluster (its SpeculativeAppealsActor writes speculative drafts; the
-# cluster was deleted + recreated above, so readiness of the new pods means the
-# old ones are gone). A rollout that does not finish fails the deploy here
-# rather than letting the Job run against a mixed fleet.
-for dep in web fhi-fax-worker fhi-appeal-worker; do
-  if kubectl -n totallylegitco get deployment "$dep" >/dev/null 2>&1; then
-    kubectl -n totallylegitco rollout status deployment "$dep" --timeout=15m \
-      || { echo "Rollout of $dep did not complete; not running the fingerprint backfill Job"; exit 1; }
-  else
-    echo "Deployment $dep not present; skipping rollout wait"
-  fi
-done
-kubectl -n totallylegitco wait --for=condition=Ready pod -l ray.io/cluster=raycluster-kuberay --timeout=15m \
-  || { echo "Ray cluster pods not Ready; not running the fingerprint backfill Job"; exit 1; }
-kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
-envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
-# Wait for the strict backfill to COMPLETE and fail the deploy if it cannot.
-# Every writer rollout was awaited above, so a Job that does not finish
-# inside this window means either a writer on old code is still active or
-# the verify pass keeps finding fingerprints to repair -- both are deploy
-# problems to look at, not background noise to leave retrying unattended.
-kubectl -n totallylegitco wait --for=condition=complete job/fhi-backfill-appeal-fingerprints --timeout=30m \
-  || { echo "Fingerprint backfill Job did not complete within 30m; inspect it: kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints"; exit 1; }
-# Worker redundancy + observability (external review): PDBs keep one poller
-# per queue through drains; the PodMonitor scrapes the SDK's Prometheus
-# endpoint and the PrometheusRule alerts on the silent failure modes (work
-# waiting, slots exhausted, activity/RPC failures). Same CRD-gating as the
-# web PodMonitor below: skipped only where the operator is absent.
+# Observability FIRST, before any gate that can exit (external review): a
+# backfill or rollout problem below used to skip the PDBs, both PodMonitors,
+# both PrometheusRules and the relay CronJob -- shipping the new image with no
+# metrics and no alerts, which is the exact silent gap these manifests exist
+# to close. They are cheap, idempotent applies with nothing to wait for, so
+# they belong above the waits.
 kubectl apply -f k8s/temporal/worker-pdb.yaml
 if kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1; then
     kubectl apply -f k8s/temporal/worker-podmonitor.yaml
@@ -209,6 +202,87 @@ if kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then
     kubectl apply -f k8s/temporal/intake-outbox-alerts.yaml
 else
     echo "WARNING: no PrometheusRule CRD in this cluster -- intake outbox alerts not installed"
+fi
+
+# Post-rollout second pass of the appeal fingerprint backfill (see the Job
+# manifest): --strict keeps failing -- and the Job keeps retrying -- until no
+# pre-fingerprint writer is left, so the "run again after old pods drain"
+# step is enforced by the deploy, not by a README. Jobs are immutable:
+# delete the previous run before applying.
+#
+# ROLLOUT GATE (external review): a strict pass that runs while ANY pod on
+# pre-fingerprint code can still handle a request proves nothing -- two quiet
+# scans succeed, then an idle old pod inserts a NULL fingerprint or edits text
+# under a stale one. So wait for every ProposedAppeal writer to finish rolling
+# (rollout status returns only after new replicas are available AND the old
+# ReplicaSet's pods are gone): the web Deployment, both Temporal workers, and
+# the Ray cluster (its SpeculativeAppealsActor writes speculative drafts).
+# A rollout that does not finish fails the deploy rather than letting the Job
+# run against a mixed fleet. --skip-journey-gates skips the waiting only.
+if [ "$SKIP_BACKFILL" = true ]; then
+    echo "--skip-backfill: not applying or waiting for the fingerprint backfill Job"
+elif [ "$SKIP_JOURNEY_GATES" = true ]; then
+    echo "--skip-journey-gates: applying the backfill Job WITHOUT waiting for writer rollouts"
+    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+    envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
+    echo "NOTE: check it yourself -- kubectl -n totallylegitco get job/fhi-backfill-appeal-fingerprints"
+else
+    for dep in web fhi-fax-worker fhi-appeal-worker; do
+      if kubectl -n totallylegitco get deployment "$dep" >/dev/null 2>&1; then
+        kubectl -n totallylegitco rollout status deployment "$dep" --timeout=15m \
+          || { echo "Rollout of $dep did not complete; not running the fingerprint backfill Job"; exit 1; }
+      else
+        echo "Deployment $dep not present; skipping rollout wait"
+      fi
+    done
+    # Ray gets the same existence guard the Deployments have (external review):
+    # the cluster was deleted and re-applied above, so `kubectl wait` on a
+    # selector the operator has not populated yet errors out immediately with
+    # "no matching resources found" and would fail an otherwise fine deploy.
+    # Give the operator a chance to create pods, then wait on readiness.
+    ray_pods_present=false
+    for _ in $(seq 1 30); do
+      if [ -n "$(kubectl -n totallylegitco get pods -l ray.io/cluster=raycluster-kuberay \
+                   --field-selector=status.phase!=Succeeded,status.phase!=Failed \
+                   -o name 2>/dev/null)" ]; then
+        ray_pods_present=true
+        break
+      fi
+      sleep 10
+    done
+    if [ "$ray_pods_present" = true ]; then
+      # Same field selector as the presence check: a Succeeded/Failed pod left
+      # over from a previous cluster never goes Ready and would hang the wait.
+      kubectl -n totallylegitco wait --for=condition=Ready pod -l ray.io/cluster=raycluster-kuberay \
+        --field-selector=status.phase!=Succeeded,status.phase!=Failed --timeout=15m \
+        || { echo "Ray cluster pods not Ready; not running the fingerprint backfill Job"; exit 1; }
+    else
+      echo "No Ray cluster pods after 5m; skipping the Ray readiness wait (no Ray writers to drain)"
+    fi
+    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+    envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
+    # Wait for the strict backfill, and FAIL FAST on a failed Job (external
+    # review): `kubectl wait --for=condition=complete` ignores condition=Failed,
+    # so a Job that gives up would still cost the full 30 minutes before the
+    # deploy heard about it. Poll both conditions instead.
+    backfill_done=false
+    for _ in $(seq 1 180); do
+      if [ "$(kubectl -n totallylegitco get job fhi-backfill-appeal-fingerprints \
+                -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null)" = "True" ]; then
+        backfill_done=true
+        break
+      fi
+      if [ "$(kubectl -n totallylegitco get job fhi-backfill-appeal-fingerprints \
+                -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null)" = "True" ]; then
+        echo "Fingerprint backfill Job FAILED; inspect it: kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints"
+        exit 1
+      fi
+      sleep 10
+    done
+    if [ "$backfill_done" != true ]; then
+      echo "Fingerprint backfill Job did not complete within 30m; inspect it: kubectl -n totallylegitco logs job/fhi-backfill-appeal-fingerprints"
+      exit 1
+    fi
 fi
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from

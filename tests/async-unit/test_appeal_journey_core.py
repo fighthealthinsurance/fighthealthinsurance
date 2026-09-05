@@ -728,22 +728,119 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         )
 
 
-def test_deploy_script_waits_for_the_strict_backfill_job():
-    """build.sh must not just apply the strict backfill Job -- it must wait
-    for it to complete and fail the deploy otherwise (review 10)."""
+def _build_script() -> str:
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[2]
-    build = (root / "scripts" / "build.sh").read_text()
+    return (root / "scripts" / "build.sh").read_text()
+
+
+def test_deploy_script_waits_for_the_strict_backfill_job():
+    """build.sh must not just apply the strict backfill Job -- it must wait
+    for it to complete and fail the deploy otherwise (review 10)."""
+    build = _build_script()
     apply_at = build.index("backfill-fingerprints-job.yaml | kubectl apply -f -")
-    wait_at = build.index(
-        "wait --for=condition=complete job/fhi-backfill-appeal-fingerprints"
-    )
+    wait_at = build.index("backfill_done=true")
     assert wait_at > apply_at
-    assert "|| { echo" in build[wait_at : wait_at + 400]
-    assert "exit 1" in build[wait_at : wait_at + 400]
+    tail = build[wait_at:]
+    assert 'if [ "$backfill_done" != true ]' in tail
+    assert "exit 1" in tail
     for dep in ("web", "fhi-fax-worker", "fhi-appeal-worker"):
-        assert f"rollout status deployment" in build and dep in build
+        assert "rollout status deployment" in build and dep in build
+
+
+def test_deploy_script_fails_fast_on_a_failed_backfill_job():
+    """`kubectl wait --for=condition=complete` ignores condition=Failed, so a
+    Job that gives up would burn the full 30m before the deploy noticed. The
+    poll has to look at both conditions (external review)."""
+    build = _build_script()
+    assert '@.type=="Complete"' in build
+    failed_at = build.index('@.type=="Failed"')
+    # ...and act on it: the Failed branch exits rather than continuing to poll.
+    assert "exit 1" in build[failed_at : failed_at + 500]
+    # ...and the blind wait is gone from the executed script (the comment
+    # explaining why it is gone naturally still names it).
+    code = [ln for ln in build.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("wait --for=condition=complete" in ln for ln in code)
+
+
+def test_deploy_script_applies_observability_before_any_gate_that_can_exit():
+    """A stalled rollout or a failed backfill used to skip the PDB, the
+    PodMonitors, the alert rules and the relay CronJob -- shipping a new image
+    with no metrics and no alerts. Every one of those applies belongs above
+    the first gate that can exit (external review)."""
+    build = _build_script()
+    gate_at = build.index('if [ "$SKIP_BACKFILL" = true ]')
+    for manifest in (
+        "worker-pdb.yaml",
+        "worker-podmonitor.yaml",
+        "worker-alerts.yaml",
+        "intake-outbox-cronjob.yaml",
+        "intake-outbox-alerts.yaml",
+        "appeal-worker.yaml",
+    ):
+        assert build.index(manifest) < gate_at, manifest
+
+
+def test_deploy_script_guards_the_ray_wait_on_pods_existing():
+    """The Ray cluster is deleted and recreated earlier in the same script, so
+    `kubectl wait` against a selector the operator has not populated yet fails
+    immediately with "no matching resources found" -- killing a deploy that is
+    otherwise fine. The Deployments already have an existence guard; Ray needs
+    the same one (external review)."""
+    build = _build_script()
+    wait_at = build.index("wait --for=condition=Ready pod -l ray.io/cluster")
+    guard = build[:wait_at]
+    assert "ray_pods_present=false" in guard
+    assert 'if [ "$ray_pods_present" = true ]' in guard
+    # A cluster with no Ray pods at all is a skip, not a deploy failure.
+    assert "skipping the Ray readiness wait" in build
+
+
+def test_deploy_script_version_is_bumped_past_the_last_deployed_image():
+    """build_django.sh short-circuits when the tag already exists in the
+    registry, so a deploy on an unbumped FHI_VERSION silently ships the old
+    image. v0.23.2a is what prod ran before this tranche."""
+    import re
+
+    build = _build_script()
+    version = re.search(r"^FHI_VERSION=(\S+)", build, re.MULTILINE).group(1)
+    assert version != "v0.23.2a"
+
+
+def test_deploy_script_rejects_unknown_flags_and_documents_the_real_ones():
+    """The flags are the escape hatch from ~90m of waits, so a typo has to be
+    a fast, loud failure rather than a silently ignored argument."""
+    import pathlib
+    import subprocess
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    script = str(root / "scripts" / "build.sh")
+
+    typo = subprocess.run(
+        ["bash", script, "--skip-backfil"], capture_output=True, text=True, timeout=60
+    )
+    assert typo.returncode != 0
+    assert "Unknown argument" in typo.stderr
+
+    helped = subprocess.run(
+        ["bash", script, "--help"], capture_output=True, text=True, timeout=60
+    )
+    assert helped.returncode == 0
+    for flag in ("--no-build", "--skip-journey-gates", "--skip-backfill"):
+        assert flag in helped.stdout
+
+
+def test_skip_flags_only_skip_waiting_not_the_applies():
+    """--skip-journey-gates must still apply the Job (you check it yourself);
+    only --skip-backfill opts out of the Job entirely. Neither may sit above
+    an apply of the image or the observability manifests."""
+    build = _build_script()
+    skip_gates_at = build.index('elif [ "$SKIP_JOURNEY_GATES" = true ]')
+    end_at = build.index("\nelse\n", skip_gates_at)
+    branch = build[skip_gates_at:end_at]
+    assert "backfill-fingerprints-job.yaml | kubectl apply -f -" in branch
+    assert "rollout status" not in branch
 
 
 def test_backfill_job_runs_non_root_with_a_read_only_root_filesystem():
