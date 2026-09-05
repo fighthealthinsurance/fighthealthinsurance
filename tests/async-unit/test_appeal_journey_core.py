@@ -1004,6 +1004,20 @@ def test_ray_gate_requires_the_pre_delete_pods_to_be_gone():
     assert 'raycluster-kuberay || echo' not in build
 
 
+def test_ray_terminating_check_does_not_discard_kubectls_exit_status():
+    """`[ -n "$(terminating_pods ...)" ]` throws away the exit status: a failed
+    list is an empty string, which reads as "nothing is terminating" and opens
+    the gate while old Ray pods can still write (external review)."""
+    build = _build_script()
+    code = [ln for ln in build.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any(
+        'terminating_pods' in ln and '-n "$(' in ln for ln in code
+    ), "a terminating_pods read is still inside a bare test substitution"
+    assert 'if ! ray_terminating="$(terminating_pods' in build
+    at = build.index('if ! ray_terminating="$(terminating_pods')
+    assert "exit 1" in build[at : at + 300]
+
+
 def test_ray_readiness_counts_pods_against_the_size_the_cluster_should_reach():
     """`kubectl wait` resolves its selector once per invocation, so a wait
     begun when only the head pod existed would never look at the worker pods
@@ -1083,6 +1097,7 @@ def test_skip_backfill_still_gates_the_rollouts():
         text=True,
         timeout=60,
     )
+    assert helped.returncode == 0, helped.stderr
     assert "Rollout waits still run" in helped.stdout
 
 
@@ -1116,9 +1131,11 @@ def test_gate_kubectl_calls_carry_a_request_timeout():
     claim to enforce (external review)."""
     build = _build_script()
     assert "KGET=(kubectl --request-timeout=" in build
-    # The blocking gate calls are not routed through KGET, so they carry
-    # their own. Plain `kubectl apply` is deliberately not in this list: an
-    # apply is not a poll and should not be cut off at 30s.
+    # ...and the blocking commands deliberately do NOT carry one. They take
+    # their own --timeout, and a per-request bound aborts an operation that is
+    # progressing normally -- on older kubectl clients `rollout status` exits
+    # when its watch request expires rather than re-establishing it
+    # (external review). `kubectl apply` is in the same category.
     for call in ("rollout status deployment", "delete raycluster", "delete job"):
         lines = [
             ln.strip()
@@ -1127,7 +1144,12 @@ def test_gate_kubectl_calls_carry_a_request_timeout():
         ]
         assert lines, call
         for line in lines:
-            assert "--request-timeout=" in line, line
+            assert "--request-timeout=" not in line, line
+    # The one bound that has to stay on the rollout is its own.
+    rollout = next(
+        ln for ln in build.splitlines() if "rollout status deployment" in ln
+    )
+    assert "--timeout=15m" in rollout
 
 
 def test_backfill_job_runs_non_root_with_a_read_only_root_filesystem():

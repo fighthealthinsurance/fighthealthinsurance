@@ -168,10 +168,12 @@ echo "PDBHOST now set to: $(kubectl -n totallylegitco get configmap fhi-db-confi
 kubectl apply -f k8s/fhi-pg-main-9-scheduledbackup.yaml
 
 # --- deploy gate helpers ---------------------------------------------------
-# Every gate call below carries an explicit --request-timeout. kubectl's
+# Every POLLING call below carries an explicit --request-timeout. kubectl's
 # default is 0, i.e. wait forever, so one stuck API request would hang the
 # deploy straight through whatever budget the loops claim to enforce
-# (external review).
+# (external review). Blocking commands -- `rollout status`, `delete` -- are
+# deliberately left alone: they already take their own --timeout, and a
+# per-request bound there aborts operations that are progressing normally.
 KGET=(kubectl --request-timeout=30s -n totallylegitco)
 
 # `if kubectl get deployment X >/dev/null 2>&1` is NOT a safe presence test.
@@ -328,7 +330,7 @@ ray_old_pods_remaining() {
 # swallowed every failure -- 403, API error, timeout -- and reported a missing
 # cluster, after which the apply would merely update the CR still standing
 # (external review).
-kubectl --request-timeout=60s delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-found
+kubectl delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-found
 envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 
 # Deploy a staging env
@@ -387,7 +389,11 @@ if [ "$SKIP_JOURNEY_GATES" = true ]; then
 else
     for dep in web fhi-fax-worker fhi-appeal-worker; do
       if deployment_present "$dep"; then
-        kubectl --request-timeout=60s -n totallylegitco rollout status deployment "$dep" --timeout=15m \
+        # No --request-timeout here: --timeout=15m already bounds the wait,
+        # and a per-request bound makes older kubectl clients exit when the
+        # watch request expires instead of re-establishing it (external
+        # review).
+        kubectl -n totallylegitco rollout status deployment "$dep" --timeout=15m \
           || { echo "Rollout of $dep did not complete"; exit 1; }
       else
         echo "Deployment $dep not present; skipping rollout wait"
@@ -414,7 +420,7 @@ if [ "$SKIP_BACKFILL" = true ]; then
     echo "--skip-backfill: not applying or waiting for the fingerprint backfill Job"
 elif [ "$SKIP_JOURNEY_GATES" = true ]; then
     echo "--skip-journey-gates: applying the backfill Job WITHOUT gating on the writers"
-    kubectl --request-timeout=60s delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
     envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
     echo "NOTE: check it yourself -- kubectl -n totallylegitco get job/fhi-backfill-appeal-fingerprints"
 else
@@ -427,7 +433,16 @@ else
     # Ray: the pods that existed before the delete must be gone before their
     # replacements can vouch for anything.
     ray_deadline=$((SECONDS + 300))
-    while ray_old_pods_remaining || [ -n "$(terminating_pods ray.io/cluster=raycluster-kuberay)" ]; do
+    while :; do
+      # `[ -n "$(terminating_pods ...)" ]` would discard kubectl's exit
+      # status: a failed list is an empty string, which reads as "nothing is
+      # terminating" and opens the gate (external review). Check it the way
+      # wait_for_drain does.
+      if ! ray_terminating="$(terminating_pods ray.io/cluster=raycluster-kuberay)"; then
+        echo "Could not list terminating Ray pods; refusing to guess that they are gone" >&2
+        exit 1
+      fi
+      ray_old_pods_remaining || [ -n "$ray_terminating" ] || break
       if [ "$SECONDS" -ge "$ray_deadline" ]; then
         echo "Ray pods from before the cluster delete are still running after 5m; not running the fingerprint backfill Job" >&2
         exit 1
@@ -477,7 +492,7 @@ else
       echo "No Ray cluster pods after 5m; skipping the Ray readiness wait (no Ray writers to drain)"
     fi
 
-    kubectl --request-timeout=60s delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
+    kubectl delete job fhi-backfill-appeal-fingerprints -n totallylegitco --ignore-not-found
     envsubst < k8s/temporal/backfill-fingerprints-job.yaml | kubectl apply -f -
     # Wait for the strict backfill, and FAIL FAST on a failed Job (external
     # review): `kubectl wait --for=condition=complete` ignores condition=Failed,
