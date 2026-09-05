@@ -102,6 +102,7 @@ class Command(BaseCommand):
         from fighthealthinsurance.workflows.intake_journey import (
             IntakeJourneyWorkflow,
         )
+        from fighthealthinsurance.workflows import registry as workflow_registry
         from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 
         max_workers = options.get("max_workers") or getattr(
@@ -128,7 +129,7 @@ class Command(BaseCommand):
 
         from typing import Any as _Any, Callable, List
 
-        fax_workflows: List[type] = [SendFaxWorkflow]
+        fax_workflows: List[type] = workflow_registry.fax_workflows()
         fax_activity_fns: List[Callable[..., _Any]] = [
             fax_activities.precheck_fax,
             fax_activities.send_fax_via_vendor,
@@ -189,13 +190,16 @@ class Command(BaseCommand):
                 # thread executor and its concurrency is bounded separately
                 # (low and explicit: current letter volume is small, and a
                 # small bound is most of the blast-radius story).
-                appeal_workflows: List[type] = [GenerateAppealWorkflow]
+                appeal_workflows: List[type] = workflow_registry.appeal_workflows(
+                    intake_enabled=getattr(
+                        settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False
+                    )
+                )
                 appeal_activity_fns = [
                     journey_activities.precheck_appeal_journey,
                     journey_activities.generate_and_store_appeals,
                 ]
                 if getattr(settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False):
-                    appeal_workflows.append(IntakeJourneyWorkflow)
                     appeal_activity_fns += [
                         intake_activities.send_abandonment_nudge,
                         intake_activities.close_incomplete_journey,
