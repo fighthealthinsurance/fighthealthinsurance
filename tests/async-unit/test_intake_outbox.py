@@ -871,16 +871,35 @@ class TestRelayDeployment:
         assert 'cronjob="fhi-intake-outbox-relay"' in alerts
         assert "VERIFY-LIVE" in alerts
 
-    def test_non_positive_time_budget_fails_fast(self):
+    def test_non_positive_time_budget_does_no_relay_work(self):
         """A zero/negative budget defers every claimed row, and each keeps
         its claim for the full TTL, so later runs skip it too -- a mis-set
-        CronJob argument would stall the relay silently (review)."""
+        CronJob argument would stall the relay silently (review). Raising is
+        not enough: the command must fail BEFORE anything claims a row, so
+        assert the relay entry points were never reached."""
         from django.core.management import call_command
         from django.core.management.base import CommandError
 
-        for bad in (0, -5):
+        for bad in ("0", "-5"):
+            with (
+                patch.object(intake_outbox, "sweep") as sweep,
+                patch.object(intake_outbox, "claim_batch") as claim,
+                patch.object(intake_outbox, "adeliver_claimed") as deliver,
+            ):
+                with pytest.raises(CommandError):
+                    call_command("deliver_intake_events", "--time-budget", bad)
+                assert not sweep.called, bad
+                assert not claim.called, bad
+                assert not deliver.called, bad
+
+        # Same for a negative --limit, whose check guards the same rows.
+        with (
+            patch.object(intake_outbox, "sweep") as sweep,
+            patch.object(intake_outbox, "claim_batch") as claim,
+        ):
             with pytest.raises(CommandError):
-                call_command("deliver_intake_events", "--time-budget", str(bad))
+                call_command("deliver_intake_events", "--limit", "-1")
+            assert not sweep.called and not claim.called
 
     def test_form_completed_start_uses_the_running_execution(self):
         """Both id policies are set and they cover different states: reuse
