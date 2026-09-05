@@ -6,6 +6,8 @@ import { clean } from "./scrub_scrub";
 
 import {
   addText,
+  beginOcr,
+  endOcr,
   hideErrorMessages,
   validateScrubForm,
 } from "./scrub_client_side_form";
@@ -57,8 +59,16 @@ const recognizeEvent = async function (evt: Event) {
 
   const filesArray = Array.from(files);
 
-  for (const file of filesArray) {
-    await recognize(file, addText);
+  // Mark OCR as in flight for the whole batch so the submit gate can tell the
+  // user we are still reading their file rather than letting them submit an
+  // empty denial_text. endOcr() must run even when recognize() throws.
+  beginOcr();
+  try {
+    for (const file of filesArray) {
+      await recognize(file, addText);
+    }
+  } finally {
+    endOcr();
   }
 };
 
