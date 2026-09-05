@@ -1,0 +1,73 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  # Alerts for the intake outbox relay. Without these, a broken relay or a
+  # poison row accumulates silently: the workers stay healthy, the web app
+  # stays healthy, and journey events simply stop being delivered (external
+  # review). The gauges come from fighthealthinsurance/intake_outbox_metrics.py
+  # (scrape-time, zero-cost while nothing is pending).
+  name: fhi-intake-outbox-alerts
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-prod
+spec:
+  groups:
+    - name: fhi-intake-outbox
+      rules:
+        # Backlog age is the honest health signal: the relay runs every
+        # minute and retries with backoff, so a pending event older than a
+        # quarter hour means delivery is not recovering on its own.
+        - alert: FHIIntakeOutboxBacklogAging
+          expr: fhi_intake_outbox_oldest_pending_seconds > 900
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Intake outbox has events pending for over 15 minutes"
+            description: >-
+              The oldest undelivered intake journey event is
+              {{ $value | humanizeDuration }} old. Check the relay CronJob
+              (fhi-intake-outbox-relay) and Temporal reachability; events are
+              never dropped, so this is a delivery stall, not data loss.
+        - alert: FHIIntakeOutboxBacklogStuck
+          expr: fhi_intake_outbox_oldest_pending_seconds > 3600
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Intake outbox delivery has been stalled for an hour"
+            description: >-
+              The oldest undelivered intake journey event is
+              {{ $value | humanizeDuration }} old. Journeys are not starting
+              and completions are not being signalled; abandonment nudges may
+              go to users who finished.
+        - alert: FHIIntakeOutboxBacklogGrowing
+          expr: fhi_intake_outbox_pending_total > 200
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Intake outbox backlog above one relay batch"
+            description: >-
+              {{ $value }} intake journey events are pending. One sweep claims
+              at most 200 rows, so a sustained backlog above that means the
+              relay cannot keep up or rows keep failing.
+        # The relay is a CronJob, so "it stopped running" is invisible in the
+        # app's own metrics -- a suspended schedule or a Job that never
+        # completes produces no series at all. kube-state-metrics is the only
+        # producer that can see it.
+        # VERIFY-LIVE: metric and label shape vary across kube-state-metrics
+        # versions (kube_cronjob_status_last_successful_time is v2.x); confirm
+        # against the live Prometheus before relying on this alert.
+        - alert: FHIIntakeOutboxRelayNotSucceeding
+          expr: >-
+            time() - kube_cronjob_status_last_successful_time{cronjob="fhi-intake-outbox-relay"} > 600
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Intake outbox relay has not completed successfully in 10+ minutes"
+            description: >-
+              The relay CronJob runs every minute. No successful completion in
+              over ten minutes means the schedule is suspended, the Job is
+              failing, or one run is hung past its activeDeadlineSeconds.

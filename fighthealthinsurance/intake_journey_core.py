@@ -30,9 +30,34 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     its retention -- so an address that has been cleared (or was never
     stored) simply cannot be nudged. No content from the case is included.
     """
+    from fighthealthinsurance import intake_outbox
+
     denial = await aload_denial(hashed_email, denial_uuid)
     if denial is None or not (denial.raw_email or "").strip():
         logger.info(f"Intake nudge skipped for denial {denial_uuid}: no retained email")
+        return False
+    # Single-shot claim: inserting the nudge_claimed event is the claim
+    # (unique per denial), so a retried or duplicated activity can never
+    # send twice. The claim is NEVER released -- not even after an
+    # ambiguous SMTP failure, because "the provider may have accepted it"
+    # is exactly the case a release would turn into a second email.
+    claim = await intake_outbox.aclaim_nudge(denial)
+    if claim is None:
+        logger.info(f"Intake nudge skipped for denial {denial_uuid}: already claimed")
+        return False
+    # Authoritative completion is the outbox record, not workflow state: a
+    # form_completed event that is recorded but whose signal is still in
+    # flight must not produce a "you didn't finish" email to someone who
+    # did. Rechecked immediately before the SMTP call. Honest
+    # linearization limit: a completion landing DURING SMTP acceptance
+    # cannot be prevented without an idempotent or cancellable provider
+    # operation; the claim guarantees at-most-once, and this recheck
+    # narrows the window to the send itself (external review).
+    if await intake_outbox.ahas_event(denial, intake_outbox.FORM_COMPLETED):
+        await intake_outbox.arecord_nudge_outcome(
+            claim, intake_outbox.OUTCOME_SKIPPED_COMPLETED
+        )
+        logger.info(f"Intake nudge skipped for denial {denial_uuid}: form completed")
         return False
     base = getattr(
         settings, "FHI_PUBLIC_BASE_URL", "https://www.fighthealthinsurance.com"
@@ -42,10 +67,22 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     # belong in a URL (mail clients log and preview them). A real resume
     # link needs a signed, expiring token and its own route (external
     # review); that lands with the resume feature itself.
-    await _asend_mail(
-        NUDGE_SUBJECT,
-        NUDGE_BODY.format(url=base),
-        denial.raw_email,
+    try:
+        await _asend_mail(
+            NUDGE_SUBJECT,
+            NUDGE_BODY.format(url=base),
+            denial.raw_email,
+        )
+    except Exception:
+        # Ambiguous: the provider may or may not have accepted. Record it,
+        # keep the claim, re-raise so the activity reports the failure
+        # (its retry policy is one attempt -- no second email either way).
+        await intake_outbox.arecord_nudge_outcome(
+            claim, intake_outbox.OUTCOME_SMTP_FAILED
+        )
+        raise
+    await intake_outbox.arecord_nudge_outcome(
+        claim, intake_outbox.OUTCOME_SENT, sent=True
     )
     logger.info(f"Intake nudge sent for denial {denial_uuid}")
     return True

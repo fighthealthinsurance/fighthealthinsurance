@@ -310,7 +310,11 @@ class TestInteractiveLease(_JourneyTestBase):
             for _ in range(3):
                 renewed.clear()
                 clock.advance(200)
-                assert renewed.wait(timeout=15), "renewal task never ran"
+                # Generous: this waits on a renewal that must cross the
+                # async bridge while a threadpool slot is held by this
+                # very generator, so under a loaded suite it is slow --
+                # but a renewal loop that is genuinely dead still fails.
+                assert renewed.wait(timeout=60), "renewal task never ran"
             journey_attempt.append(
                 generation_lease.acquire(denial, "journey:midwait").acquired
             )

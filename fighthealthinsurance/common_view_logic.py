@@ -1628,6 +1628,9 @@ class DenialCreatorHelper:
             denial.denial_text = denial_text
             denial.hashed_email = hashed_email
             denial.use_external = use_external_models
+            # Nudge opt-in = a retained raw_email; remember the old value so a
+            # change can be pushed to an already-running intake journey below.
+            contact_opt_in_before = bool((denial.raw_email or "").strip())
             denial.raw_email = possible_email
             # Guarded like every other optional field here: the denial form
             # has no health_history field, so this path is ALWAYS called with
@@ -1663,6 +1666,15 @@ class DenialCreatorHelper:
                 tracking_info.update_model_fields(denial)
 
             denial.save()
+            if contact_opt_in_before != bool((possible_email or "").strip()):
+                # Best-effort, no outbox row: a lost signal fails SAFE because
+                # the nudge activity independently gates on the RETAINED
+                # raw_email before sending, so the journey's copy of the
+                # flag can only ever make it skip, never send to someone who
+                # opted out (external review).
+                from fighthealthinsurance import intake_outbox
+
+                intake_outbox.signal_contact_opt_in(denial)
 
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)
@@ -2734,34 +2746,37 @@ class DenialCreatorHelper:
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
     ):
-        if plan_documents is not None:
-            for plan_document in plan_documents:
-                pd = PlanDocuments.objects.create(
-                    plan_document_enc=plan_document, denial=denial
+        from django.db import transaction as _transaction
+
+        from fighthealthinsurance import intake_outbox
+
+        # ONE transaction for the whole intake mutation: the plan documents,
+        # the denial update, and the intake_started intent (dark until
+        # TEMPORAL_INTAKE_JOURNEY_ENABLED) commit together or not at all. A
+        # failed intent insert fails the mutation -- the correct contract; the
+        # alternative is a silent gap in the durable journey (external
+        # review). Delivery happens AFTER the commit, behind deliver()'s
+        # exception boundary, so the journey can never break the user-facing
+        # flow. Opt-in for the nudge = store_raw_email, observable as a
+        # retained raw_email.
+        with _transaction.atomic():
+            if plan_documents is not None:
+                for plan_document in plan_documents:
+                    PlanDocuments.objects.create(
+                        plan_document_enc=plan_document, denial=denial
+                    )
+            if health_history is not None:
+                denial.health_history = health_history
+            if include_provided_health_history_in_appeal is not None:
+                denial.include_provided_health_history_in_appeal = (
+                    include_provided_health_history_in_appeal
                 )
-                pd.save()
-
-        if health_history is not None:
-            denial.health_history = health_history
-        if include_provided_health_history_in_appeal is not None:
-            denial.include_provided_health_history_in_appeal = (
-                include_provided_health_history_in_appeal
-            )
-        if health_history_anonymized is not None:
-            denial.health_history_anonymized = health_history_anonymized
-        denial.save()
-        # Durable intake journey (dark until TEMPORAL_INTAKE_JOURNEY_ENABLED):
-        # the journey observes the funnel from the first substantive step; it
-        # must never be able to break the user-facing flow, so the dispatcher
-        # swallows every failure. Opt-in for the nudge = store_raw_email,
-        # observable here as a retained raw_email.
-        from fighthealthinsurance.temporal_client import dispatch_intake_started
-
-        dispatch_intake_started(
-            denial.hashed_email,
-            str(denial.uuid),
-            bool((denial.raw_email or "").strip()),
-        )
+            if health_history_anonymized is not None:
+                denial.health_history_anonymized = health_history_anonymized
+            denial.save()
+            intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
+        if intent is not None:
+            intake_outbox.deliver(intent)
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
@@ -3049,17 +3064,11 @@ class AppealsBackendHelper:
         first_model: Optional[str] = None
         make_appeals_diag: dict[str, Any] = {}
 
-        # Yield status: starting
-        yield json.dumps(
-            {
-                "type": "status",
-                "phase": "init",
-                "message": "Starting appeal generation...",
-                "generation_id": generation_id,
-            }
-        ) + "\n"
-
-        # Get the current info (e.g. denial).
+        # Get the current info (e.g. denial). NOTHING is yielded before the
+        # authenticated lookup and the durable form_completed intent below:
+        # the init frame used to go out first, and a disconnect while the
+        # generator sat suspended at that yield lost the completion entirely
+        # (external review's one-yield-and-close test).
         await asyncio.sleep(0)
         denial_query = Denial.objects.filter(
             denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
@@ -3071,6 +3080,37 @@ class AppealsBackendHelper:
             "primary_professional__user",
         )
         denial = await denial_query.aget()
+        if not background:
+            # Form completed: the durable intent is recorded the moment the
+            # authenticated lookup succeeds -- before any yield, enrichment,
+            # research, RAG, or reserve logic can crash and make a completed
+            # user look abandoned (external review). One short transaction
+            # (an INSERT-or-get); delivery is best-effort behind adeliver's
+            # exception boundary and the relay repairs anything that fails.
+            from fighthealthinsurance import intake_outbox
+
+            form_intent = await intake_outbox.arecord_intent(
+                denial, intake_outbox.FORM_COMPLETED
+            )
+        else:
+            form_intent = None
+
+        # Yield status: starting -- the first byte to the client, and it
+        # follows the durable intent above by design.
+        yield json.dumps(
+            {
+                "type": "status",
+                "phase": "init",
+                "message": "Starting appeal generation...",
+                "generation_id": generation_id,
+            }
+        ) + "\n"
+
+        if form_intent is not None:
+            # Best-effort inline delivery (short timeout; the relay covers
+            # the rest within a minute). After the first byte so a Temporal
+            # stall never delays the user's first response.
+            await intake_outbox.adeliver(form_intent, inline=True)
         if not background:
             # A live human outranks any background generator: STEAL the
             # denial's generation lease so a journey attempt in flight sees
@@ -4382,6 +4422,9 @@ class AppealsBackendHelper:
                 result["save_failed"] = True
             return result
 
+        # (The form_completed intake event was recorded right after the
+        # authenticated denial lookup at the top of this generator.)
+
         # Yield status: generating appeals
         yield json.dumps(
             {
@@ -5041,18 +5084,9 @@ class AppealsBackendHelper:
                 f"models_tried=[{models_tried}]{reserve_note}"
             )
 
-        # Interactive generation finished: NOW complete the intake journey
-        # (fire-and-forget; dark until enabled; skipped for the journey's own
-        # background child). Signalling at the END, not the start, means the
-        # child generation the workflow launches sees the delivered drafts
-        # and no-ops -- a backstop, never a concurrent second generator
-        # (external review: the start-time signal raced this very run).
-        if not background:
-            from fighthealthinsurance.temporal_client import (
-                asignal_intake_fire_and_forget,
-            )
-
-            await asignal_intake_fire_and_forget(str(denial.uuid), "form_completed")
+        # (The form_completed intake event is recorded and delivered at the
+        # START of generation, above; the generation lease is what keeps the
+        # journey's child from racing this run, not signal timing.)
 
         # Explicit end-of-stream so the client knows exactly what was sent.
         # Carries the correlation id + generating-phase instrumentation so a

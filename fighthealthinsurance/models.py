@@ -2782,6 +2782,88 @@ class AppealGenerationLease(models.Model):
         return f"lease(denial={self.for_denial_id}, epoch={self.epoch})"
 
 
+class IntakeJourneyEvent(models.Model):
+    """Append-only outbox record for one intake-journey event on one denial.
+
+    The Django-to-Temporal handoff must survive a crash or a Temporal blip
+    between the commit and the RPC. Each event is INSERTED in the same
+    transaction as the mutation it describes (intent), and ``acked_at`` is
+    set only after Temporal accepts it; ``intake_outbox.sweep`` re-delivers
+    pending rows with backoff. Its own table -- never columns on Denial --
+    because a full-row ``denial.save()`` from a stale instance would write
+    stale values over timestamps another request set (external review).
+
+    ``nudge_claimed`` is the single-shot claim for the abandonment email:
+    the unique constraint IS the claim, and ``outcome`` records what the
+    claimant did with it. Timestamps, a counter and an exception TYPE NAME
+    only -- never case content (data protection).
+
+    Relay claims are two-phase (external review): a short locked
+    transaction stamps ``claimed_token``/``claimed_until``, and the Temporal
+    call happens with no database lock held; the ack is conditional on the
+    token, so a lost or expired claim can never ack another relay's work.
+    """
+
+    INTAKE_STARTED = "intake_started"
+    FORM_COMPLETED = "form_completed"
+    NUDGE_CLAIMED = "nudge_claimed"
+    EVENT_CHOICES = [
+        (INTAKE_STARTED, "Intake started"),
+        (FORM_COMPLETED, "Form completed"),
+        (NUDGE_CLAIMED, "Abandonment nudge claimed"),
+    ]
+
+    OUTCOME_CLAIMED = "claimed"
+    OUTCOME_SKIPPED_COMPLETED = "skipped_completed"
+    OUTCOME_SENT = "sent"
+    OUTCOME_SMTP_FAILED = "smtp_failed"
+    OUTCOME_CHOICES = [
+        (OUTCOME_CLAIMED, "Claimed"),
+        (OUTCOME_SKIPPED_COMPLETED, "Skipped: form completed"),
+        (OUTCOME_SENT, "Sent"),
+        (OUTCOME_SMTP_FAILED, "SMTP failed"),
+    ]
+
+    denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="intake_events"
+    )
+    event_type = models.CharField(max_length=32, choices=EVENT_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    acked_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_error_at = models.DateTimeField(null=True, blank=True)
+    # Exception type name only (sanitized); the detail lives in worker logs.
+    last_error = models.CharField(max_length=128, blank=True, default="")
+    # Relay claim (deliverable events): who holds this row and until when.
+    claimed_token = models.UUIDField(null=True, blank=True)
+    claimed_until = models.DateTimeField(null=True, blank=True)
+    # Nudge bookkeeping (nudge_claimed rows only).
+    attempted_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    outcome = models.CharField(
+        max_length=24, choices=OUTCOME_CHOICES, blank=True, default=""
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["denial", "event_type"],
+                name="uniq_intake_event_per_denial",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["next_attempt_at", "id"],
+                condition=models.Q(acked_at__isnull=True),
+                name="intake_event_pending_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"intake_event({self.event_type}, denial={self.denial_id})"
+
+
 class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
     """
     Tracks an escalation packet generated alongside an appeal.

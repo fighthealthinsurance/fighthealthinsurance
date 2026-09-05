@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  # Intake outbox relay: every minute, re-deliver intake-journey events
+  # (IntakeJourneyEvent rows) whose Temporal ack never landed, with backoff
+  # per row. Its own process by design -- a hook inside the web or Ray pods
+  # would die with the very crash the outbox exists to survive (external
+  # review). Inert while the intake journey flags are off. Applied by
+  # scripts/build.sh next to the worker manifests.
+  name: fhi-intake-outbox-relay
+  namespace: totallylegitco
+spec:
+  schedule: "* * * * *"
+  # Never overlap two relays; a run that misses its slot by more than a
+  # minute is simply skipped (the next one picks the rows up).
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Hard ceiling on one run: the command stops STARTING rows after its
+      # ~240s budget and every Temporal call carries a ~15s timeout, so no
+      # single call and no long backlog can consume the job's lifetime.
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            group: fight-health-insurance-prod-webbackend-batch
+        spec:
+          containers:
+            - image: ${FHI_BASE}:${FHI_VERSION}
+              name: totallylegitco
+              # start-server.sh runs the relay command when this is set.
+              env:
+                - name: DELIVER_INTAKE_EVENTS
+                  value: "1"
+                - name: PDBHOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: fhi-db-config
+                      key: PDBHOST
+              envFrom:
+                - secretRef:
+                    name: fight-health-insurance-secret
+                - secretRef:
+                    name: fight-health-insurance-primary-secret
+              imagePullPolicy: Always
+              # Same partial hardening as the worker manifests; runAsNonRoot /
+              # readOnlyRootFilesystem stay deferred with the rest of the fleet.
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: 256Mi
+                limits:
+                  cpu: "500m"
+                  memory: 512Mi
+          restartPolicy: Never

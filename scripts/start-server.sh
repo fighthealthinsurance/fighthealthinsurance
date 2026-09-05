@@ -49,6 +49,12 @@ elif [ -n "$BACKFILL_APPEAL_FINGERPRINTS" ]; then
   # while pre-fingerprint writers are still active, so the Job's backoff
   # retries until the database is quiescent.
   exec python manage.py backfill_appeal_fingerprints --strict
+elif [ -n "$DELIVER_INTAKE_EVENTS" ]; then
+  # Intake outbox relay (k8s/temporal/intake-outbox-cronjob.yaml, every
+  # minute): re-deliver intake-journey events whose Temporal ack never
+  # landed. Independent of the web/Ray processes so a crash there cannot
+  # take the relay with it. Inert while the intake flags are off.
+  exec python manage.py deliver_intake_events
 elif [ -n "$TEMPORAL_WORKER" ]; then
   # Long-running Temporal worker hosting SendFaxWorkflow + fax activities.
   # Unlike the Ray launchers above this stays in the foreground; exec so signals

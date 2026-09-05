@@ -197,6 +197,19 @@ if kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then
 else
     echo "WARNING: no PrometheusRule CRD in this cluster -- Temporal worker alerts not installed"
 fi
+# Intake outbox relay: a CronJob (every minute, no overlap) that re-delivers
+# intake-journey events whose Temporal ack never landed. Its own process,
+# not a hook in the web/Ray pods, so a crash there cannot take the relay
+# with it (external review). Inert while the intake flags are off.
+envsubst < k8s/temporal/intake-outbox-cronjob.yaml | kubectl apply -f -
+# Alerts for the relay itself: a stalled outbox is invisible in worker and
+# web metrics (the events simply stop moving), so backlog age and CronJob
+# success age are the only signals that catch it (external review).
+if kubectl get crd prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then
+    kubectl apply -f k8s/temporal/intake-outbox-alerts.yaml
+else
+    echo "WARNING: no PrometheusRule CRD in this cluster -- intake outbox alerts not installed"
+fi
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
 # the internet -- see docs/metrics-endpoint-access.md). The apply is skipped
