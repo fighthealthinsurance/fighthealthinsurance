@@ -1164,6 +1164,32 @@ def test_gate_kubectl_calls_carry_a_request_timeout():
             assert bound in line, line
 
 
+def test_temporal_workers_get_enough_memory_for_this_image():
+    """Both workers run the SAME image as the web pods, which request 1.5Gi and
+    sit around 1.45Gi in production. The workers were capped at 1Gi, and
+    fhi-fax-worker was OOMKilled in prod (exitCode 137) sitting at 1020Mi
+    against that 1024Mi ceiling. Shipping fhi-appeal-worker -- a brand-new
+    Deployment doing strictly more work -- under the same cap would crashloop
+    it on first start and time out the deploy's rollout gate."""
+    import pathlib
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+
+    def mem(path):
+        raw = (root / path).read_text().replace("${FHI_BASE}:${FHI_VERSION}", "image")
+        doc = yaml.safe_load(raw)
+        res = doc["spec"]["template"]["spec"]["containers"][0]["resources"]
+        return res["requests"]["memory"], res["limits"]["memory"]
+
+    for path in ("k8s/temporal/worker.yaml", "k8s/temporal/appeal-worker.yaml"):
+        req, lim = mem(path)
+        # The web Deployment's own request is the honest floor for this image.
+        assert req == "1.5Gi", f"{path} requests {req}"
+        assert lim == "3Gi", f"{path} limit {lim}"
+
+
 def test_backfill_job_runs_non_root_with_a_read_only_root_filesystem():
     """The Job carries both production secret sets, so it gets the same
     posture the web-extralink-prefetch Job already proves for this image:

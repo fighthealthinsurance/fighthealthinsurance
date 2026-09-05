@@ -87,7 +87,13 @@ spec:
           resources:
             requests:
               cpu: "250m"
-              memory: 512Mi
+              # The web pods run this SAME image with no memory limit and
+              # settle around 1.45Gi, so 1.5Gi is the honest floor for it.
+              memory: 1.5Gi
             limits:
               cpu: "1"
-              memory: 1Gi
+              # Double the expected working set. The old 1Gi cap was not a
+              # measurement -- fhi-fax-worker's observed 1020Mi was CENSORED
+              # by that very ceiling, so its real appetite was never known.
+              # Trivial against ~320GB of cluster memory at 4-42% used.
+              memory: 3Gi
