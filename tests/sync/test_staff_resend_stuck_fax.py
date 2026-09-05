@@ -51,6 +51,10 @@ class ResendStuckFaxTest(TestCase):
         self.fax.refresh_from_db()
         assert self.fax.vendor_send_completed is False
         assert start.called
+        # An explicit resend must supersede any run still open for this fax,
+        # or the deterministic workflow id makes this endpoint 502 in exactly
+        # the case it exists for.
+        assert start.call_args.kwargs.get("force_restart") is True, start.call_args
 
     def test_refuses_a_fax_that_already_succeeded(self):
         """The stranded claim means the send was CLAIMED, not that it
@@ -66,6 +70,20 @@ class ResendStuckFaxTest(TestCase):
         assert not start.called
         self.fax.refresh_from_db()
         # ...and the claim is left exactly as it was.
+        assert self.fax.vendor_send_completed is True
+
+    def test_blank_destination_is_refused(self):
+        """Whitespace passes an `is None` check but precheck_fax treats it as
+        missing, so we would report a resend that could never send."""
+        FaxesToSend.objects.filter(pk=self.fax.pk).update(destination="   ")
+        self._login()
+        with patch(
+            "fighthealthinsurance.temporal_client.start_send_fax_workflow"
+        ) as start:
+            r = self.client.post(self.url, {"uuid": str(self.fax.uuid)})
+        assert r.status_code == 400
+        assert not start.called
+        self.fax.refresh_from_db()
         assert self.fax.vendor_send_completed is True
 
     def test_get_is_not_allowed(self):

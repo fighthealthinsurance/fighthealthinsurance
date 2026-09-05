@@ -643,7 +643,10 @@ class ResendStuckFaxView(View):
                 f"Staff resend refused for fax uuid={fax.uuid}: already successful"
             )
             return HttpResponse("Fax already sent successfully; refusing", status=409)
-        if fax.destination is None:
+        if not fax.destination or not fax.destination.strip():
+            # Blank and whitespace-only pass an `is None` check but precheck_fax
+            # treats them as missing, so the endpoint would report a resend
+            # started that could never send (external review).
             return HttpResponse("Fax has no destination", status=400)
 
         released = FaxesToSend.objects.filter(pk=fax.pk).update(
@@ -654,8 +657,13 @@ class ResendStuckFaxView(View):
             f"(claim released: {bool(released)})"
         )
         try:
+            # force_restart because this IS the explicit resend that flag is
+            # for: the workflow id is deterministic per fax, so a failed send
+            # whose run is still open would raise WorkflowAlreadyStartedError
+            # and this recovery endpoint would answer 502 for the one case it
+            # exists to handle (external review).
             workflow_id = async_to_sync(temporal_client.start_send_fax_workflow)(
-                fax.hashed_email, str(fax.uuid)
+                fax.hashed_email, str(fax.uuid), force_restart=True
             )
         except Exception as e:
             logger.opt(exception=True).error(
