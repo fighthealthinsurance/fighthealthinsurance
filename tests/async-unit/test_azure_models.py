@@ -24,6 +24,7 @@ from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
 )
 from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.ml.ml_router import MLRouter
 
 AZURE_OPENAI_ENV = {
     "AZURE_OPENAI_API_KEY": "test-key",
@@ -161,12 +162,12 @@ class TestAzureBackends(unittest.TestCase):
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_openai_init(self):
         """Azure OpenAI init wires model, external/system flags, context, tier."""
-        m = RemoteAzureOpenAI(model="gpt-5")
-        self.assertEqual(m.model, "gpt-5")
+        m = RemoteAzureOpenAI(model="gpt-5.5")
+        self.assertEqual(m.model, "gpt-5.5")
         self.assertTrue(m.external)
         self.assertTrue(m.supports_system)
         self.assertEqual(m.get_max_context(), 128000)
-        self.assertEqual(m.get_tier(), "premium")
+        self.assertEqual(m.get_tier(), "frontier")
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_claude_init(self):
@@ -208,26 +209,73 @@ class TestAzureBackends(unittest.TestCase):
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_openai_models_prefixed_and_cost_ordered(self):
-        """models() yields azure-openai/-prefixed entries, cheapest first."""
+        """models() yields azure-openai/-prefixed entries, cheapest first.
+
+        Only gpt-5.5 is provisioned on our sponsored resource, so the default
+        list has one entry; the prefixing and ordering contract is unchanged
+        and an env override can still add more.
+        """
         models = RemoteAzureOpenAI.models()
-        self.assertEqual(len(models), 3)
+        self.assertEqual(len(models), 1)
         self.assertTrue(all(m.name.startswith("azure-openai/") for m in models))
         costs = [m.cost for m in models]
         self.assertEqual(costs, sorted(costs))  # cheapest -> premium
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_claude_models_use_latest_ids(self):
-        """Azure Claude exposes the latest Haiku/Sonnet/Opus/Fable deployments."""
+        """Azure Claude exposes exactly the deployments we have provisioned.
+
+        Haiku 4.5 and Sonnet 4.6 were never deployed on our resource, so
+        listing them produced entries that would 404 on first use.
+        """
         names = {m.name for m in RemoteAzureClaude.models()}
         self.assertEqual(
             names,
             {
-                "azure-anthropic/claude-haiku-4-5",
-                "azure-anthropic/claude-sonnet-4-6",
                 "azure-anthropic/claude-opus-4-8",
                 "azure-anthropic/claude-fable-5",
             },
         )
+
+    @patch.dict(os.environ, {**AZURE_OPENAI_ENV, **AZURE_CLAUDE_ENV})
+    def test_sponsored_gpt_leads_the_external_fanout(self):
+        """The sponsored deployment must LEAD the external fan-out, which takes
+        two independent properties, asserted separately here.
+
+        First its proxy cost has to fall below the paid-external band, because
+        ``external_models_by_cost`` is what feeds selection and anything sorting
+        after the paid backends can never lead. Second it has to survive
+        ``best_external_models``, which sorts by quality descending and only
+        falls back to cost order for ties, so too low a tier drops it before
+        cost is ever consulted. Asserting either alone lets the other regress
+        silently and quietly hands traffic back to a paid backend.
+        """
+        gpt_desc = RemoteAzureOpenAI.models()[0]
+        self.assertEqual(gpt_desc.internal_name, "gpt-5.5")
+
+        # 20 is the bottom of the paid-external proxy band in this codebase. If
+        # a paid backend is ever priced below it, this is the assertion that
+        # should fail and force that decision back into the open rather than
+        # letting paid traffic quietly take the lead.
+        paid_external_floor = 20
+        self.assertLess(
+            gpt_desc.cost,
+            paid_external_floor,
+            "the sponsored deployment must undercut the paid-external band",
+        )
+
+        # And it must actually win the router's own selection against an
+        # equally capable paid backend, not merely look cheaper in a table.
+        gpt = RemoteAzureOpenAI(model="gpt-5.5")
+        paid = MagicMock(spec=RemoteModelLike)
+        paid.external = True
+        paid.quality.return_value = gpt.quality()
+        paid.is_available.return_value = True
+        paid.health_checked_live = True
+
+        router = MLRouter()
+        router.external_models_by_cost = [gpt, paid]
+        self.assertIs(router.best_external_models(limit=2)[0], gpt)
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_claude_fable_is_the_priciest_deployment(self):
@@ -292,10 +340,7 @@ class TestAzureBackends(unittest.TestCase):
         """A separators-only AZURE_OPENAI_MODELS (no real names) falls back to
         the defaults instead of silently disabling the provider."""
         models = RemoteAzureOpenAI.models()
-        self.assertEqual(
-            [m.internal_name for m in models],
-            ["gpt-4.1-mini", "gpt-5-mini", "gpt-5"],
-        )
+        self.assertEqual([m.internal_name for m in models], ["gpt-5.5"])
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_model_is_ok(self):
@@ -646,6 +691,47 @@ class TestAzureClaudeMessages(unittest.TestCase):
             self.assertIn("max_tokens", getattr(ctx.exception, "fhi_response_body"))
 
         asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_gpt5_point_releases_drop_temperature(self):
+        """The gpt-5 family 400s on a custom temperature, and it ships DOTTED
+        point releases as well as hyphenated variants.
+
+        The matcher recognised "gpt-5" and the "gpt-5-" prefix only, so every
+        dotted release looked temperature-capable: the first call to it posted
+        a temperature, ate an HTTP 400, and only then landed in the runtime
+        fallback. Harmless when no dotted release was configured; gpt-5.5 is a
+        shipped default now, so that rejected request is on the hot path.
+        """
+        m = RemoteAzureOpenAI(model="gpt-5.5")
+        for name in (
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5.5",
+            "gpt-5.1",
+            "gpt-5.4-mini",
+            "gpt-5.1-codex",
+            "gpt-5-2026-04-24",  # dated snapshot ids
+            "gpt-5.5-2026-04-24",
+            "azure-openai/gpt-5.5",  # provider-prefixed registrations too
+        ):
+            with self.subTest(model=name):
+                self.assertFalse(m._supports_custom_temperature(name))
+        # Non-reasoning deployments must keep the parameter...
+        self.assertTrue(m._supports_custom_temperature("gpt-4.1-mini"))
+        # ...including operator-named deployments that merely start "gpt-5.".
+        # Azure deployment names are chosen by whoever creates them, so a bare
+        # prefix match would strip temperature from a non-reasoning model behind
+        # a name like this, which is a silent wrong answer rather than a 400.
+        for name in (
+            "gpt-5.production",
+            "gpt-5.legacy-mini",
+            "gpt-5x",
+            "gpt-5.5.production",  # a real release id is only a PREFIX here
+            "gpt-5.5x",
+        ):
+            with self.subTest(model=name):
+                self.assertTrue(m._supports_custom_temperature(name))
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_every_no_sampling_prefix_is_recognized(self):

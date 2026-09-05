@@ -2879,7 +2879,17 @@ class RemoteOpenLike(RemoteModel):
         if model in self._temperature_unsupported_models:
             return False
         name = model.split("/")[-1].lower()
-        if name == "gpt-5" or name.startswith("gpt-5-"):
+        # The family ships dotted point releases (gpt-5.1 ... gpt-5.5) and
+        # hyphenated variants (gpt-5-mini, gpt-5.1-codex, dated snapshots); all
+        # of them reject a custom temperature.
+        #
+        # Anchored on the WHOLE identifier rather than a prefix. Azure
+        # deployment names are operator-chosen, so "gpt-5.production" or
+        # "gpt-5.5x" may be a non-reasoning model behind a suggestive name, and
+        # silently dropping a temperature it does support is a worse failure
+        # than the single 400 this check exists to avoid. Unrecognized
+        # deployments are still caught at runtime (see the docstring).
+        if re.match(r"^gpt-5(\.\d+)?($|-)", name):
             return False
         if re.match(r"^o[134](-|$)", name):
             return False
@@ -4747,10 +4757,17 @@ class RemoteAzureOpenAI(RemoteAzureOpenLike):
     MAX_LEN: ClassVar[int] = 128000
 
     # Latest broadly-available Azure OpenAI deployments (cheapest -> premium).
+    # Only gpt-5.5 is deployed on our sponsored Foundry resource (deployments
+    # checked 2026-09-04). gpt-4.1-mini / gpt-5-mini / gpt-5 were never
+    # provisioned there, so the previous defaults named deployments that do not
+    # exist and every call through them would 404. Sponsorship credits make this
+    # backend free to us, so it carries the lowest proxy cost of any external
+    # backend; "frontier" is what puts it in the default fan-out at all, because
+    # tier outranks cost and cost only breaks ties within a tier.
+    # Deployments change more often than this file: set AZURE_OPENAI_MODELS to
+    # override without a code change.
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
-        ("gpt-4.1-mini", 55, "speed"),
-        ("gpt-5-mini", 75, "quality"),
-        ("gpt-5", 135, "premium"),
+        ("gpt-5.5", 10, "frontier"),
     ]
 
     # Per-subclass rate-limit state (do not share across providers).
@@ -4800,9 +4817,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     # "premium" in MLRouter.best_external_models, so it is preferred rather
     # than merely registered. Cost only breaks ties WITHIN a tier, so leaving
     # it at "premium" would have kept it out of the default fan-out entirely.
+    # Only these two are deployed on our resource (checked 2026-09-04);
+    # claude-haiku-4-5 and claude-sonnet-4-6 were never provisioned, so naming
+    # them here just produced dead entries. Override with AZURE_ANTHROPIC_MODELS
+    # when a deployment is added rather than editing this list.
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
-        ("claude-haiku-4-5", 55, "speed"),
-        ("claude-sonnet-4-6", 95, "quality"),
         ("claude-opus-4-8", 135, "premium"),
         ("claude-fable-5", 175, "frontier"),
     ]
