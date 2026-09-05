@@ -93,6 +93,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="admin_model_query",
     ),
     path(
+        "timbit/help/resend_stuck_fax",
+        staff_member_required(staff_views.ResendStuckFaxView.as_view()),
+        name="resend_stuck_fax",
+    ),
+    path(
         "timbit/help/followup_sched",
         staff_member_required(staff_views.ScheduleFollowUps.as_view()),
     ),
