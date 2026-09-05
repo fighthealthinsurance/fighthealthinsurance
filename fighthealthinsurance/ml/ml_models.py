@@ -2883,7 +2883,17 @@ class RemoteOpenLike(RemoteModel):
         # hyphenated variants (gpt-5-mini), and both reject a custom temperature.
         # Matching only "gpt-5" and "gpt-5-" let every dotted release through and
         # paid one rejected request before the runtime fallback learned better.
-        if name == "gpt-5" or name.startswith(("gpt-5-", "gpt-5.")):
+        #
+        # The dotted arm requires a DIGIT after the dot. Azure deployment names
+        # are operator-chosen, so a bare "gpt-5." prefix match would also strip
+        # the parameter from something like a "gpt-5.production" deployment
+        # backed by a non-reasoning model, silently dropping a temperature the
+        # model does support.
+        if (
+            name == "gpt-5"
+            or name.startswith("gpt-5-")
+            or re.match(r"^gpt-5\.\d", name)
+        ):
             return False
         if re.match(r"^o[134](-|$)", name):
             return False

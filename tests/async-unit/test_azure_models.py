@@ -714,8 +714,15 @@ class TestAzureClaudeMessages(unittest.TestCase):
         ):
             with self.subTest(model=name):
                 self.assertFalse(m._supports_custom_temperature(name))
-        # Non-reasoning deployments must keep the parameter.
+        # Non-reasoning deployments must keep the parameter...
         self.assertTrue(m._supports_custom_temperature("gpt-4.1-mini"))
+        # ...including operator-named deployments that merely start "gpt-5.".
+        # Azure deployment names are chosen by whoever creates them, so a bare
+        # prefix match would strip temperature from a non-reasoning model behind
+        # a name like this, which is a silent wrong answer rather than a 400.
+        for name in ("gpt-5.production", "gpt-5.legacy-mini", "gpt-5x"):
+            with self.subTest(model=name):
+                self.assertTrue(m._supports_custom_temperature(name))
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_every_no_sampling_prefix_is_recognized(self):
