@@ -14,6 +14,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Selenium is by far the slowest check (~12 min against 40s-7min for
+  # everything else): it installs texlive, tesseract and pandoc, then drives a
+  # real browser through 97 tests. Most of that cost is wasted on changes it
+  # cannot possibly exercise -- a k8s manifest, a markdown file, a mypy
+  # setting. This job decides whether it needs to run at all.
+  #
+  # DENY-list, not an allow-list: anything not explicitly listed as irrelevant
+  # runs Selenium. Being wrong in that direction costs 12 minutes; being wrong
+  # the other way ships a broken form (a client-side gate regression was caught
+  # by this suite and nothing else).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "ui=true" >> "$GITHUB_OUTPUT"   # always run on push to main
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          files=$(git diff --name-only "$base"...HEAD)
+          echo "changed files:"; echo "$files" | sed 's/^/  /'
+          # Paths that cannot affect a rendered page or a browser interaction.
+          irrelevant='^(k8s/|charts/|docs/|scripts/|\.github/|.*\.md$|mypy\.ini$|\.gitignore$)'
+          if [ -z "$files" ] || echo "$files" | grep -qvE "$irrelevant"; then
+            echo "ui=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ui=false" >> "$GITHUB_OUTPUT"
+            echo "Only Selenium-irrelevant paths changed; skipping the browser suite."
+          fi
+
   style:
     runs-on: ubuntu-latest
     steps:
@@ -168,6 +206,8 @@ jobs:
 
   tests-selenium:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     strategy:
       fail-fast: false
       matrix:
