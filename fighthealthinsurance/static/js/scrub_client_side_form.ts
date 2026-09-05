@@ -131,10 +131,15 @@ export function validateScrubForm(event: Event): void {
   } else {
     rehideHiddenMessage("ocr_in_progress");
   }
+  // Gate on exactly what the SERVER requires: forms/__init__.py marks pii,
+  // tos and privacy required=True, plus email and denial_text. personalonly
+  // is deliberately NOT here -- it is an optional checkbox that the
+  // agree_chk_error branch above happens to mention, and gating on it made
+  // the client stricter than the server, blocking a submission the server
+  // would have accepted (caught by the Selenium suite).
   if (
     form.pii.checked &&
     form.privacy.checked &&
-    form.personalonly.checked &&
     form.tos.checked &&
     form.email.value.length > 0 &&
     denialTextReady

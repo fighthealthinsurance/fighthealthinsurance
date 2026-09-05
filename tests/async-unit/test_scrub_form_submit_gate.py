@@ -63,13 +63,29 @@ def test_submit_gate_ANDs_every_field_it_validates():
     AND. Previously the gate checked only pii/privacy/email, so the form
     showed "need_denial" and submitted anyway."""
     gate = _submit_gate(_form_source())
-    for field in ("pii", "privacy", "personalonly", "tos"):
+    # Exactly the server-required set (forms/__init__.py: pii, tos, privacy
+    # required=True) plus email and denial_text.
+    for field in ("pii", "privacy", "tos"):
         assert f"form.{field}.checked" in gate, f"{field} not gated: {gate}"
     assert "form.email.value.length > 0" in gate, gate
     assert "denialTextReady" in gate, gate
     # Combined with AND -- an OR would let any single field satisfy the gate.
     assert "||" not in gate, gate
-    assert gate.count("&&") >= 5, gate
+    assert gate.count("&&") >= 4, gate
+
+
+def test_the_gate_is_not_stricter_than_the_server():
+    """personalonly is NOT required=True server-side. Gating on it made the
+    client refuse a submission the server would have accepted, which the
+    Selenium suite caught -- no test clicks that box because nothing requires
+    it."""
+    gate = _submit_gate(_form_source())
+    assert "personalonly" not in gate, gate
+    forms_src = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance" / "forms" / "__init__.py"
+    ).read_text()
+    assert "personalonly = forms.BooleanField(required=True)" not in forms_src
 
 
 def test_whitespace_only_denial_text_is_treated_as_missing_everywhere():
