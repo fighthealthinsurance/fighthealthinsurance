@@ -9,7 +9,7 @@ decisions: ``docs/appeal-intake-journey-design.md``.
   actual form data goes to Django exactly as before -- this workflow
   tracks state, never content).
 - Abandonment: a single email nudge at 24h, only when the user opted into
-  stored contact; the journey closes at 30 days regardless.
+  stored contact; the journey closes at 3 days regardless.
 - On form completion it runs ``GenerateAppealWorkflow`` as a CHILD
   workflow -- intent to generate is therefore held durably from screen
   one, which is what deletes the dispatch-durability gap.
@@ -30,7 +30,11 @@ with workflow.unsafe.imports_passed_through():
     from fighthealthinsurance.activities import intake_journey as intake_activities
 
 NUDGE_AFTER = timedelta(hours=24)
-CLOSE_AFTER = timedelta(days=30)
+# Kept deliberately short: an abandoned journey is an ORPHAN holding a
+# Temporal run open, and after the 24h nudge there is nothing left for it to
+# do but wait. Three days bounds that window without cutting off a user who
+# comes back over a weekend.
+CLOSE_AFTER = timedelta(days=3)
 
 # Bookkeeping activities retry with a bound: a nudge or close that cannot
 # land after several tries should fail visibly, not spin forever on a
@@ -127,7 +131,7 @@ class IntakeJourneyWorkflow:
                 pass
 
         if not self._completed:
-            # 30 days without completion: close and hand the uuid to the
+            # CLOSE_AFTER without completion: close and hand the uuid to the
             # incomplete-form hygiene hook (a stub in v1; the deletion
             # policy is its own follow-up).
             await workflow.execute_activity(
