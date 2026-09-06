@@ -7,8 +7,11 @@ import { clean } from "./scrub_scrub";
 import {
   addText,
   beginOcr,
+  clearOcrFailure,
   endOcr,
   hideErrorMessages,
+  notePartialOcrFailure,
+  noteOcrFailure,
   validateScrubForm,
 } from "./scrub_client_side_form";
 
@@ -49,6 +52,13 @@ async function initAdvancedOCRCheckbox(): Promise<void> {
   }
 }
 
+// Which selection is current. Reading a batch is slow enough that a user can
+// pick again while one is still running, and only the newest pick describes
+// what is on screen: without this, a slow FAILING batch could finish after a
+// newer successful one and re-post "we couldn't read your file" over text
+// that had just arrived.
+let latestOcrSelection = 0;
+
 const recognizeEvent = async function (evt: Event) {
   const input = evt.target as HTMLInputElement;
   const files = input.files;
@@ -58,17 +68,71 @@ const recognizeEvent = async function (evt: Event) {
   }
 
   const filesArray = Array.from(files);
+  const selection = ++latestOcrSelection;
 
   // Mark OCR as in flight for the whole batch so the submit gate can tell the
   // user we are still reading their file rather than letting them submit an
   // empty denial_text. endOcr() must run even when recognize() throws.
+  //
+  // A fresh selection replaces the previous verdict: the last attempt having
+  // failed says nothing about this one.
+  clearOcrFailure();
+  let failures = 0;
+  let ocrChars = 0;
+
+  // Guard the CALLBACK, not just the verdict. recognize() invokes this after
+  // async OCR work, so a superseded batch could still append its text into
+  // denial_text long after the user picked different files -- they would get
+  // the old document's text back with no way to know why.
+  //
+  // Counting here also keeps the verdict honest about who produced what.
+  // Measuring the textarea before and after instead would count the USER's
+  // typing: someone typing while a doomed batch runs made it look like OCR
+  // had produced something, which reported partial success and re-posted a
+  // message their typing had just cleared.
+  const addTextForThisSelection = (text: string): void => {
+    if (selection !== latestOcrSelection) {
+      return;
+    }
+    ocrChars += text.trim().length;
+    addText(text);
+  };
+
   beginOcr();
   try {
     for (const file of filesArray) {
-      await recognize(file, addText);
+      // Catch PER FILE, not around the loop. The uploader is multiple="true"
+      // and people attach a denial one page per image; with a single catch
+      // outside, one unreadable page abandoned every page after it and the
+      // user was never told which -- or that anything had gone wrong at all.
+      try {
+        await recognize(file, addTextForThisSelection);
+      } catch (error) {
+        failures += 1;
+        // The filename can carry the patient's name; keep it out of logs.
+        console.error("OCR failed for an uploaded file:", error);
+      }
     }
   } finally {
     endOcr();
+  }
+
+  // A superseded batch says nothing about what the user is looking at.
+  if (selection !== latestOcrSelection) {
+    return;
+  }
+
+  // "Threw" is not the only failure. Every engine can return cleanly and
+  // still yield nothing for a photo too blurry to read, which looks
+  // identical to the user: an empty box under a form that says a file is
+  // enough. Treat "produced no text" as a failure too.
+  const producedText = ocrChars > 0;
+  if (failures > 0 && producedText) {
+    // Some pages read and some did not. Saying "we couldn't read your file"
+    // here would be plainly false with their text sitting right below it.
+    notePartialOcrFailure();
+  } else if (failures > 0 || !producedText) {
+    noteOcrFailure();
   }
 };
 

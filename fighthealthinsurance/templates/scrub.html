@@ -102,7 +102,17 @@ Upload your Health Insurance Denial
 		<small class="text-muted">Attach all insurance denial pages below:</small><br>
 		<small class="text-muted">Once uploaded, your file(s) will populate below in plain text.</small><br>
 	    <div class="col-md-4">
-			<input id="uploader" type="file" name="uploader" multiple="true" class="form-control mt-2"><br>
+			{# DELIBERATELY has no name= attribute. The browser only includes
+			   a file input in the multipart body when it has a name, and this
+			   input sits inside the /process form. With a name, every denial
+			   document a user attached was uploaded and buffered server-side
+			   even though BaseDenialForm has no field for it and nothing ever
+			   read it -- an unnecessary disclosure of the exact document this
+			   flow is built to keep in the browser. The OCR binds by
+			   getElementById("uploader"), so the id is all it needs. Do not
+			   add a name back without also changing what the copy below
+			   promises. #}
+			<input id="uploader" type="file" multiple="true" class="form-control mt-2"><br>
 	    </div>
 	</div>
 	{% endif %}
@@ -200,13 +210,26 @@ Upload your Health Insurance Denial
 		Can't proceed as you didn't check that you had removed your personal identifiable information (PII) from the text areas.
 	    </div>
 	    <div class="hidden-error-message" id="need_denial" role="alert" aria-live="polite">
-	      We need you to provide your denial message from your insurance company in the text field right underneath the words "Your Insurance Denial" if you didn't get one you can write that you have not received a denial but describe what was denied (for example: The pharmacy said my PrEP was denied). Normally insurance companies are required to provide denials, but in our experience they do not always comply with that.
+	      We need your denial in the box below. If you never got one, say so and
+	      describe what was denied (for example: the pharmacy said my PrEP was
+	      denied).
 	    </div>
 	    <div class="hidden-error-message" id="ocr_in_progress" role="alert" aria-live="polite">
 	      We're still reading the file you uploaded &mdash; a scanned PDF has to be
 	      processed a page at a time, which can take a little while. The text will
 	      appear in "Your Insurance Denial" below when it's done. You can also type
 	      or paste the denial text yourself instead of waiting.
+	    </div>
+	    <div class="hidden-error-message" id="ocr_partial" role="alert" aria-live="polite">
+	      We read some of what you uploaded but not all of it, so check the box
+	      below and add anything that's missing. Clear photos and text PDFs read
+	      better than scans.
+	    </div>
+	    <div class="hidden-error-message" id="ocr_failed" role="alert" aria-live="polite">
+	      We couldn't read your file, so there's nothing in the box below yet.
+	      Please copy and paste your denial into it. Your file is read on your
+	      own device and is never uploaded to us, so we can't read it for you
+	      on our end. Clear photos and text PDFs read better than scans.
 	    </div>
 	    <button type="submit" class="btn btn-green" id="submit">Submit</button>
 	</form>
