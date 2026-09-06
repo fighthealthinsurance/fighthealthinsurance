@@ -757,7 +757,7 @@ class TestClaimExpiry(TransactionTestCase):
         denial = _make_denial(8142)
         row = _pending(denial, intake_outbox.INTAKE_STARTED)
         claims = intake_outbox.claim_batch()
-        pk, token = claims[0]
+        pk, _token = claims[0]
         short = timezone.now() + datetime.timedelta(seconds=30)
         IntakeJourneyEvent.objects.filter(pk=pk).update(claimed_until=short)
         seen = {}
@@ -864,6 +864,22 @@ class TestRelayDeployment:
         )
         assert alerts_at - guard < 400
 
+    @staticmethod
+    def _alert_expr(manifest_text: str, alert_name: str) -> str:
+        """The `expr` of one named alert, parsed out of the PrometheusRule.
+
+        Scoped on purpose: asserting against the whole manifest lets the
+        surrounding comments satisfy the check.
+        """
+        import yaml
+
+        doc = yaml.safe_load(manifest_text)
+        for group in doc["spec"]["groups"]:
+            for rule in group.get("rules", []):
+                if rule.get("alert") == alert_name:
+                    return rule["expr"]
+        raise AssertionError(f"no alert named {alert_name} in the manifest")
+
     def test_cronjob_cannot_hang_forever(self):
         cronjob = (
             self._repo() / "k8s" / "temporal" / "intake-outbox-cronjob.yaml"
@@ -890,15 +906,27 @@ class TestRelayDeployment:
         # empty vector and could not fire for a relay broken from birth --
         # which is exactly what happened, silently, for six hours.
         #
-        # So the reminder is discharged and these assert the fix instead: the
-        # never-succeeded arm, the created-guard that stops it firing for a
-        # CronJob that does not exist, the `on()` without which the two
-        # vectors share no labels and the arm is silently empty, and the
-        # namespace pin that stops absent() being satisfied elsewhere.
-        assert "absent(kube_cronjob_status_last_successful_time" in alerts
-        assert "kube_cronjob_created" in alerts
-        assert "and on()" in alerts
-        assert 'namespace="totallylegitco"' in alerts
+        # So the reminder is discharged and these assert the fix instead.
+        # Parsed and scoped to the one alert, NOT grepped against the file:
+        # the prose above these rules necessarily discusses absent(), on() and
+        # kube_cronjob_created, so a substring check against the whole manifest
+        # is satisfied by the commentary and would keep passing with the
+        # expression gutted back to its broken single-armed form (verified --
+        # two of four such checks did exactly that).
+        expr = self._alert_expr(alerts, "FHIIntakeOutboxRelayNotSucceeding")
+        # The never-succeeded arm.
+        assert "absent(kube_cronjob_status_last_successful_time" in expr
+        # The guard that stops it firing for a CronJob that does not exist.
+        assert "kube_cronjob_created" in expr
+        # Without on() the two vectors share no label set and the arm is
+        # silently empty -- the same class of bug as the original expression.
+        assert "and on()" in expr
+        # Pins the namespace so absent() cannot be satisfied by a same-named
+        # CronJob elsewhere in the cluster.
+        assert expr.count('namespace="totallylegitco"') >= 2
+        # ...and the original arm is still there for the has-succeeded-then-
+        # stopped case, so the fix added coverage rather than replacing it.
+        assert "time() - kube_cronjob_status_last_successful_time" in expr
 
     def test_non_positive_time_budget_does_no_relay_work(self):
         """A zero/negative budget defers every claimed row, and each keeps
