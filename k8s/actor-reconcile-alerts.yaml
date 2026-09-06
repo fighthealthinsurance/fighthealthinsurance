@@ -1,0 +1,54 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  # The reconciler exists because losing the polling actors was SILENT: Ray
+  # itself stayed healthy, the web app stayed healthy, and email polling plus
+  # three refresh loops simply stopped. A reconciler that cannot do its job is
+  # the same silence again, so it needs its own alert.
+  #
+  # Deliberately about the CRONJOB, not about actor count: the app cannot
+  # report on actors it has no cluster to ask, which is precisely the outage.
+  # kube-state-metrics can see the CronJob from outside.
+  name: fhi-actor-reconcile-alerts
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-prod
+spec:
+  groups:
+    - name: fhi-actor-reconcile
+      rules:
+        - alert: FHIActorReconcileNotSucceeding
+          # Two arms, and the second is the one that matters. kube-state-metrics
+          # emits NO last_successful_time series at all for a CronJob that has
+          # never succeeded, so `time() - <absent>` is an empty vector and a
+          # single-armed expression cannot fire for a reconciler that has been
+          # broken since the day it shipped. That exact hole kept the intake
+          # outbox relay silent for six hours (PR 986).
+          #
+          # `and on()` is required: absent() yields only the labels named in its
+          # matcher while kube_cronjob_created carries namespace/job/instance, so
+          # a bare `and` matches no label set and is silently empty. The
+          # created-guard stops the arm firing where the CronJob does not exist.
+          expr: >-
+            (time() - kube_cronjob_status_last_successful_time{cronjob="fhi-actor-reconcile",namespace="totallylegitco"} > 1800)
+            or
+            ((absent(kube_cronjob_status_last_successful_time{cronjob="fhi-actor-reconcile",namespace="totallylegitco"}) == 1)
+             and on()
+             ((time() - kube_cronjob_created{cronjob="fhi-actor-reconcile",namespace="totallylegitco"}) > 1800))
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Ray polling-actor reconciler has not succeeded in 30+ minutes"
+            description: >-
+              The reconciler runs every five minutes and exits non-zero when a
+              polling actor is missing and could not be restored, or when no Ray
+              cluster is reachable. Sustained failure means the actors are down
+              and staying down: email polling and the IMR/UCR/PA refresh loops
+              are not running. Read the success time explicitly -- the default
+              `kubectl get cronjob` columns show LAST SCHEDULE, which keeps
+              advancing even while every run fails:
+                kubectl -n totallylegitco get cronjob fhi-actor-reconcile \
+                  -o jsonpath='{.status.lastSuccessfulTime}'
+              Then check the most recent Job pod's logs, and /timbit/help/status
+              for the live actor count.

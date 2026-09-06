@@ -1,0 +1,78 @@
+# =============================================================================
+# Ray polling-actor reconciler.
+#
+# The polling actors (email polling, chooser refill, IMR/UCR/PA refresh) are
+# created ONCE per deploy by the web-actor-launch Job in k8s/deploy.yaml, which
+# has ttlSecondsAfterFinished: 10 and never runs again. They are detached, so
+# they survive the pod that made them -- but not the Ray head. When the head
+# goes away, every actor goes with it, and nothing notices or puts them back.
+#
+# That happened: a node reboot took the Ray head, Ray itself recovered fine,
+# and the actors stayed dead. The status page read 0/5 and stayed that way
+# until someone read it. Email polling and three refresh loops were simply not
+# running, and only a deploy would have fixed it.
+#
+# So: check every five minutes, relaunch only what is missing. The command is
+# idempotent and attaches to healthy actors rather than restarting them, so a
+# healthy cluster costs one health check and nothing else.
+# =============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fhi-actor-reconcile
+  namespace: totallylegitco
+spec:
+  schedule: "*/5 * * * *"
+  # Never overlap two reconcilers: two pods creating the same detached actor
+  # at once is exactly the race the get-or-create is not designed to win.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # No retry: the schedule IS the retry, five minutes later. A backoff
+      # loop here would stack attempts against a cluster that is still down.
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            group: fight-health-insurance-prod-webbackend-batch
+        spec:
+          containers:
+            - image: ${FHI_BASE}:${FHI_VERSION}
+              name: totallylegitco
+              # start-server.sh runs the reconcile command when this is set.
+              env:
+                - name: RECONCILE_POLLING_ACTORS
+                  value: "1"
+                - name: PDBHOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: fhi-db-config
+                      key: PDBHOST
+              envFrom:
+                - secretRef:
+                    name: fight-health-insurance-secret
+                - secretRef:
+                    name: fight-health-insurance-primary-secret
+              imagePullPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              # Same Django/ML import footprint every pod on this image pays;
+              # see k8s/temporal/intake-outbox-cronjob.yaml, which was OOMKilled
+              # on every run for being sized below it.
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: 1536Mi
+                limits:
+                  cpu: "500m"
+                  memory: 3Gi
+          restartPolicy: Never

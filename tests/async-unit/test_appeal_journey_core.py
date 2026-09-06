@@ -277,8 +277,9 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         ProposedAppeal.objects.create(for_denial=denial, appeal_text=text)
         with _pytest.raises(IntegrityError):
             ProposedAppeal.objects.create(
-                for_denial=denial, appeal_text="  dear   reviewer, THE same "
-                "letter twice must be one row."
+                for_denial=denial,
+                appeal_text="  dear   reviewer, THE same "
+                "letter twice must be one row.",
             )
 
     def test_backfill_fingerprints_skips_duplicates_and_fills_the_rest(self):
@@ -359,9 +360,7 @@ class TestFingerprintCompleteness(_JourneyTestBase):
         assert keeper.pk != dup.pk
 
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
-    def test_live_draft_matching_unserved_reserve_promotes_the_reserve(
-        self, mock_gen
-    ):
+    def test_live_draft_matching_unserved_reserve_promotes_the_reserve(self, mock_gen):
         """A fast live generation can produce the same letter a speculative
         reserve already holds. The insert conflicts on the fingerprint; the
         reuse path must atomically PROMOTE the reserve row, or the streamed
@@ -460,9 +459,7 @@ class TestFingerprintCompleteness(_JourneyTestBase):
 
         async def collect():
             frames = []
-            async for chunk in AppealsBackendHelper.generate_appeals_for_denial(
-                denial
-            ):
+            async for chunk in AppealsBackendHelper.generate_appeals_for_denial(denial):
                 if appeal_journey_core._appeal_text_from_chunk(chunk) is None:
                     continue
                 data = _json.loads(chunk)
@@ -550,9 +547,7 @@ class TestFingerprintCompleteness(_JourneyTestBase):
 
         async def collect():
             frames = []
-            async for chunk in AppealsBackendHelper.generate_appeals_for_denial(
-                denial
-            ):
+            async for chunk in AppealsBackendHelper.generate_appeals_for_denial(denial):
                 if appeal_journey_core._appeal_text_from_chunk(chunk) is None:
                     continue
                 data = _json.loads(chunk)
@@ -908,7 +903,7 @@ def test_deployment_presence_check_distinguishes_notfound_from_an_api_error():
                 "set -e\n"
                 "KGET=(kubectl -n totallylegitco)\n"
                 + fn
-                + '\nif deployment_present web; then echo PRESENT; else echo ABSENT; fi\n'
+                + "\nif deployment_present web; then echo PRESENT; else echo ABSENT; fi\n"
             )
             return subprocess.run(
                 ["bash", "-c", script],
@@ -922,7 +917,7 @@ def test_deployment_presence_check_distinguishes_notfound_from_an_api_error():
     assert found.returncode == 0 and "PRESENT" in found.stdout
 
     missing = run_against(
-        'echo \'Error from server (NotFound): deployments.apps "web" not found\' >&2; exit 1'
+        "echo 'Error from server (NotFound): deployments.apps \"web\" not found' >&2; exit 1"
     )
     assert missing.returncode == 0 and "ABSENT" in missing.stdout
 
@@ -1004,8 +999,11 @@ def test_ray_gate_requires_the_pre_delete_pods_to_be_gone():
     assert "ray_old_pods_remaining" in build
     # The old delete masked every failure -- 403, timeout, API error -- as an
     # absent cluster.
-    assert 'delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-found' in build
-    assert 'raycluster-kuberay || echo' not in build
+    assert (
+        "delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-found"
+        in build
+    )
+    assert "raycluster-kuberay || echo" not in build
 
 
 def test_ray_terminating_check_does_not_discard_kubectls_exit_status():
@@ -1015,7 +1013,7 @@ def test_ray_terminating_check_does_not_discard_kubectls_exit_status():
     build = _build_script()
     code = [ln for ln in build.splitlines() if not ln.lstrip().startswith("#")]
     assert not any(
-        'terminating_pods' in ln and '-n "$(' in ln for ln in code
+        "terminating_pods" in ln and '-n "$(' in ln for ln in code
     ), "a terminating_pods read is still inside a bare test substitution"
     assert 'if ! ray_terminating="$(terminating_pods' in build
     at = build.index('if ! ray_terminating="$(terminating_pods')
@@ -1054,7 +1052,11 @@ def test_ray_readiness_counts_pods_against_the_size_the_cluster_should_reach():
             shim.chmod(0o755)
             env = {**os.environ, "PATH": f"{tmp}:{os.environ['PATH']}"}
             r = subprocess.run(
-                ["bash", "-c", "set -e\nKGET=(kubectl)\n" + fns + "\nray_expected_pods\n"],
+                [
+                    "bash",
+                    "-c",
+                    "set -e\nKGET=(kubectl)\n" + fns + "\nray_expected_pods\n",
+                ],
                 capture_output=True,
                 text=True,
                 env=env,
@@ -1112,10 +1114,18 @@ def test_crd_probes_do_not_read_an_api_error_as_a_missing_operator():
     apply ordering exists to close (external review)."""
     build = _build_script()
     code = [ln for ln in build.splitlines() if not ln.lstrip().startswith("#")]
-    assert not any("get crd" in ln and "2>&1; then" in ln for ln in code), (
-        "a CRD probe is still swallowing errors"
-    )
-    assert build.count("if crd_present ") == 4
+    assert not any(
+        "get crd" in ln and "2>&1; then" in ln for ln in code
+    ), "a CRD probe is still swallowing errors"
+    # A tripwire, not a fact about the number 5: adding a CRD-gated apply
+    # should make someone confirm the new one uses crd_present rather than
+    # hand-rolling a probe that swallows errors. Bumped when the Ray
+    # actor-reconcile alerts were added.
+    assert build.count("if crd_present ") == 5
+    # The real invariant: every CRD-gated apply goes through the helper, so
+    # the count above and the number of guarded blocks agree.
+    guarded = build.count("no PrometheusRule CRD") + build.count("no PodMonitor CRD")
+    assert guarded == build.count("if crd_present "), build
     fn = _extract_shell_function(build, "crd_present")
     assert "not found" in fn and "exit 1" in fn
 
