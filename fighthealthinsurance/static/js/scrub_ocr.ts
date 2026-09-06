@@ -9,22 +9,109 @@ import {
 import Tesseract from "tesseract.js";
 import { recognizeWithQwenWebGPU } from "./qwen_webgpu_ocr";
 
-const OCR_GRACE_PERIOD_MS = 10_000;
+// How long to keep waiting for the OTHER engines once one has produced usable
+// text. Qwen is a vision model reading a whole page and 10s often cut it off,
+// so we threw away the better answer; but this delay is paid PER PAGE before
+// anything is appended, so a very long grace turns a ten-page scan into
+// minutes of blank box. 15s is the compromise.
+const OCR_GRACE_PERIOD_MS = 15_000;
 
-interface OCRResults {
-  tesseractText: string;
-  qwenText: string;
+// Absolute ceiling for one image, whatever the engines are doing. Without it a
+// single hung engine stalls the read forever: nothing else can complete the
+// batch, and the user sits on a spinner with no failure ever reported.
+const OCR_TOTAL_BUDGET_MS = 90_000;
+
+// pdf.js renders at 72 DPI when scale is 1. Tesseract wants roughly a 20px
+// x-height, i.e. about 300 DPI for body text; below ~150 DPI accuracy falls
+// off sharply. Rendering a scan at scale 1 does not merely produce a
+// low-resolution image, it DOWNSAMPLES pixels the PDF already contains.
+const PDF_BASE_DPI = 72;
+const OCR_TARGET_DPI = 300;
+
+// Browsers cap a single canvas dimension independently of total area. 8192 is
+// the smallest limit in common use.
+const MAX_CANVAS_EDGE_PX = 8192;
+
+// A PDF text layer holding only a scanner stamp ("Page 1 of 3") used to clear
+// the old 10-character test, so OCR never ran and the user was handed that
+// stamp as their entire denial. Judge DENSITY per page instead: real letters
+// carry hundreds of characters a page, boilerplate carries tens.
+const MIN_TEXT_LAYER_CHARS_PER_PAGE = 200;
+
+/**
+ * How many canvas pixels we are willing to allocate for one page.
+ *
+ * This is a correctness guard, not just a performance one. Safari on iOS caps
+ * total canvas area and silently hands back a BLANK canvas past it -- which
+ * would look exactly like OCR failing, the very thing we are fixing. So the
+ * scale we want is always clamped to fit here.
+ */
+function canvasAreaBudget(): number {
+  const nav = navigator as Navigator & {
+    deviceMemory?: number;
+    maxTouchPoints?: number;
+  };
+  // iPadOS reports as MacIntel, so touch points are what actually identify it.
+  const isIOS =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && (nav.maxTouchPoints ?? 0) > 1);
+  if (isIOS) {
+    // Comfortably under the ~5MP cap older iOS devices enforce.
+    return 4_000_000;
+  }
+  const memoryGb = nav.deviceMemory;
+  if (typeof memoryGb === "number" && memoryGb <= 4) {
+    return 8_000_000;
+  }
+  return 24_000_000;
 }
 
-interface OCRRunnerOutcome {
-  tesseractText: string;
-  qwenText: string;
-  usedFallback: boolean;
+/**
+ * The scale to rasterise a page at: enough for OCR to read it, capped so the
+ * canvas stays within budget.
+ *
+ * This may return LESS than 1. Refusing to go below 1 would have defeated the
+ * clamp exactly when it matters -- a page whose natural size already exceeds
+ * the budget would allocate past it and, on iOS, come back blank.
+ */
+function ocrRenderScale(baseWidth: number, baseHeight: number): number {
+  const baseArea = baseWidth * baseHeight;
+  if (!(baseArea > 0)) {
+    return 1;
+  }
+  const desired = OCR_TARGET_DPI / PDF_BASE_DPI;
+  const byArea = Math.sqrt(canvasAreaBudget() / baseArea);
+  // Browsers also cap a single canvas dimension; a very long or very wide page
+  // can breach that while still fitting the area budget.
+  const byEdge = Math.min(
+    MAX_CANVAS_EDGE_PX / baseWidth,
+    MAX_CANVAS_EDGE_PX / baseHeight,
+  );
+  const scale = Math.min(desired, byArea, byEdge);
+  // Guard against a degenerate page collapsing the canvas to nothing.
+  return scale > 0 ? scale : 1;
+}
+
+// The one string the caller matches on to report "we couldn't read it".
+const NO_USABLE_OCR = "All OCR engines failed or timed out";
+
+interface EngineText {
+  name: string;
+  text: string;
+}
+
+interface OCRResults {
+  results: EngineText[];
 }
 
 type SettledState<T> =
   | { status: "fulfilled"; value: T }
   | { status: "rejected"; reason: unknown };
+
+interface OCREngine {
+  name: string;
+  promise: Promise<string>;
+}
 
 function isUsableOCRState(state: SettledState<string>): boolean {
   return state.status === "fulfilled" && state.value.trim().length > 0;
@@ -36,109 +123,133 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-async function runDualOCRWithGrace(
-  tesseractPromise: Promise<string>,
-  qwenPromise: Promise<string>,
-): Promise<OCRRunnerOutcome> {
-  const trackedTesseract: Promise<SettledState<string>> = tesseractPromise.then(
-    (value) => ({ status: "fulfilled", value }),
-    (reason) => ({ status: "rejected", reason }),
-  );
+/**
+ * Run every available OCR engine against one image and collect what they
+ * produce.
+ *
+ *  - wait for the first engine to return USABLE text (not merely the first to
+ *    settle: an engine that is absent returns "" instantly, and treating that
+ *    as "the first result" made us commit to a branch before anyone had read
+ *    anything);
+ *  - then give the stragglers ONE shared grace window, because a slower engine
+ *    is often the better one and merging beats taking the fast answer;
+ *  - and bound the whole thing, so a hung engine cannot stall the read
+ *    forever with no failure ever surfacing.
+ *
+ * Throws only when every engine failed or produced nothing, which is the
+ * signal the caller turns into "we couldn't read your file".
+ */
+async function runOCREnginesWithGrace(
+  engines: OCREngine[],
+): Promise<OCRResults> {
+  if (engines.length === 0) {
+    throw new Error(NO_USABLE_OCR);
+  }
 
-  const trackedQwen: Promise<SettledState<string>> = qwenPromise.then(
-    (value) => ({ status: "fulfilled", value }),
-    (reason) => ({ status: "rejected", reason }),
-  );
+  const states = new Map<string, SettledState<string>>();
+  let announceUsable: () => void = () => {};
+  const sawUsable = new Promise<void>((resolve) => {
+    announceUsable = resolve;
+  });
 
-  const firstSettled = await Promise.race([
-    trackedTesseract.then((state) => ({ who: "tesseract" as const, state })),
-    trackedQwen.then((state) => ({ who: "qwen" as const, state })),
+  const settling = engines.map((engine) =>
+    engine.promise.then(
+      (value) => {
+        states.set(engine.name, { status: "fulfilled", value });
+        if (value.trim().length > 0) {
+          announceUsable();
+        }
+      },
+      (reason) => {
+        states.set(engine.name, { status: "rejected", reason });
+      },
+    ),
+  );
+  // Every rejection is already absorbed above, so this cannot reject.
+  const allSettled = Promise.all(settling).then(() => undefined);
+
+  const startedAt = Date.now();
+  const remainingBudget = () =>
+    Math.max(0, OCR_TOTAL_BUDGET_MS - (Date.now() - startedAt));
+
+  // Someone useful, everyone finished, or we run out of patience.
+  await Promise.race([
+    sawUsable,
+    allSettled,
+    sleep(remainingBudget()).then(() => undefined),
   ]);
 
-  let tesseractState: SettledState<string> | null = null;
-  let qwenState: SettledState<string> | null = null;
+  if (states.size < engines.length) {
+    // Stragglers get ONE shared window, not one each, and never past the
+    // overall budget.
+    const grace = Math.min(OCR_GRACE_PERIOD_MS, remainingBudget());
+    await Promise.race([allSettled, sleep(grace).then(() => undefined)]);
+  }
 
-  if (firstSettled.who === "tesseract") {
-    tesseractState = firstSettled.state;
-
-    if (isUsableOCRState(tesseractState)) {
-      const qwenResult = await Promise.race([
-        trackedQwen
-          .catch(
-            (reason): SettledState<string> => ({ status: "rejected", reason }),
-          )
-          .then((state) => ({ timedOut: false as const, state })),
-        sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
-      ]);
-
-      if (!qwenResult.timedOut && isUsableOCRState(qwenResult.state)) {
-        qwenState = qwenResult.state;
-      }
-    } else {
-      qwenState = await trackedQwen.catch(
-        (reason): SettledState<string> => ({ status: "rejected", reason }),
-      );
+  const results: EngineText[] = [];
+  for (const engine of engines) {
+    const state = states.get(engine.name);
+    if (state === undefined) {
+      console.warn(`[OCR] ${engine.name} did not finish in time; ignoring it`);
+      continue;
     }
+    if (state.status === "rejected") {
+      console.warn(`[OCR] ${engine.name} failed`, state.reason);
+      continue;
+    }
+    if (state.value.trim().length > 0) {
+      results.push({ name: engine.name, text: state.value });
+    }
+  }
+
+  if (results.length === 0) {
+    throw new Error(NO_USABLE_OCR);
+  }
+
+  return { results };
+}
+
+/**
+ * The browser's own OCR, via the Shape Detection API.
+ *
+ * Where it exists this calls the platform engine (Vision on Apple, ML Kit on
+ * Android), which is fast, needs no model download, and is usually better on
+ * photographs than tesseract. It is not available everywhere, so it is
+ * feature-detected and simply contributes nothing when absent.
+ */
+async function recognizeWithTextDetector(
+  source: Blob | File | string,
+): Promise<string> {
+  const detectorCtor = (
+    globalThis as unknown as {
+      TextDetector?: new () => {
+        detect: (image: ImageBitmapSource) => Promise<{ rawValue: string }[]>;
+      };
+    }
+  ).TextDetector;
+  if (!detectorCtor || typeof createImageBitmap !== "function") {
+    return "";
+  }
+
+  let blob: Blob;
+  if (typeof source === "string") {
+    // recognizePDF hands us a data: URL for the rendered page.
+    blob = await (await fetch(source)).blob();
   } else {
-    qwenState = firstSettled.state;
-
-    if (isUsableOCRState(qwenState)) {
-      const tesseractResult = await Promise.race([
-        trackedTesseract
-          .catch(
-            (reason): SettledState<string> => ({ status: "rejected", reason }),
-          )
-          .then((state) => ({ timedOut: false as const, state })),
-        sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
-      ]);
-
-      if (
-        !tesseractResult.timedOut &&
-        isUsableOCRState(tesseractResult.state)
-      ) {
-        tesseractState = tesseractResult.state;
-      }
-    } else {
-      // If Qwen settles first but with empty/error output, do NOT time-box baseline OCR.
-      tesseractState = await trackedTesseract.catch(
-        (reason): SettledState<string> => ({ status: "rejected", reason }),
-      );
-    }
+    blob = source;
   }
 
-  if (tesseractState?.status === "rejected") {
-    console.warn(
-      "[TesseractOCR] Primary OCR path failed",
-      tesseractState.reason,
-    );
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const blocks = await new detectorCtor().detect(bitmap);
+    return blocks
+      .map((b) => b.rawValue)
+      .join("\n")
+      .trim();
+  } finally {
+    // Bitmaps hold decoded pixels; a multi-page scan leaks fast without this.
+    bitmap.close();
   }
-
-  if (qwenState?.status === "rejected") {
-    console.warn(
-      "[QwenOCR] Parallel OCR path failed; using Tesseract result",
-      qwenState.reason,
-    );
-  }
-
-  if (qwenState === null) {
-    console.warn(
-      `[QwenOCR] Timed out after ${OCR_GRACE_PERIOD_MS}ms grace period; using available OCR result`,
-    );
-  }
-
-  const tesseractText =
-    tesseractState?.status === "fulfilled" ? tesseractState.value : "";
-  const qwenText = qwenState?.status === "fulfilled" ? qwenState.value : "";
-
-  if (!tesseractText && !qwenText) {
-    throw new Error("All OCR engines failed or timed out");
-  }
-
-  return {
-    tesseractText,
-    qwenText,
-    usedFallback: !tesseractText && !!qwenText,
-  };
 }
 
 async function getTesseractWorkerRaw(): Promise<Tesseract.Worker> {
@@ -186,27 +297,64 @@ async function getFileAsArrayBuffer(file: File): Promise<Uint8Array> {
   });
 }
 
-function mergeOCRTexts({ tesseractText, qwenText }: OCRResults): string {
-  const cleanTesseract = tesseractText.trim();
-  const cleanQwen = qwenText.trim();
+// How much we trust an engine when two disagree and neither contains the
+// other. Tesseract and Qwen read the whole page as a document; TextDetector
+// returns detected blocks, which can come back longer than a correct read
+// while being more fragmented -- taking the longest string outright would let
+// it displace an accurate result the two-engine version would have kept.
+// Qwen and Tesseract are PEERS: both read the whole page as a document, and
+// neither is reliably better. Ranking Qwen above Tesseract would let a short
+// vision-model hallucination ("This appears to be a denial") replace a
+// complete transcription -- worse than the two-engine rule it replaced, which
+// took the longer text. Only TextDetector sits lower, because it returns
+// detected blocks that can be longer while more fragmented.
+const ENGINE_PRECEDENCE: Record<string, number> = {
+  qwen: 2,
+  tesseract: 2,
+  "text-detector": 1,
+};
 
-  if (!cleanTesseract) {
-    return cleanQwen;
+/** Containment ignoring how the two sources happen to break their whitespace. */
+function containsNormalised(haystack: string, needle: string): boolean {
+  const flatten = (t: string) => t.replace(/\s+/g, " ").trim();
+  const flatNeedle = flatten(needle);
+  return flatNeedle.length === 0 || flatten(haystack).includes(flatNeedle);
+}
+
+function precedenceOf(name: string): number {
+  return ENGINE_PRECEDENCE[name] ?? 0;
+}
+
+function mergeOCRTexts({ results }: OCRResults): string {
+  const candidates = results
+    .map((r) => ({ name: r.name, text: r.text.trim() }))
+    .filter((r) => r.text.length > 0);
+  if (candidates.length === 0) {
+    return "";
   }
 
-  if (!cleanQwen) {
-    return cleanTesseract;
-  }
+  // Precedence FIRST, across tiers. Containment used to be checked before
+  // rank, which let a fragmented TextDetector result that happened to contain
+  // the tesseract text ("correct text + a duplicated block") win on
+  // containment despite being the least trusted engine -- the opposite of the
+  // guarantee. A supplementary engine now only speaks when no primary one did.
+  const bestRank = Math.max(...candidates.map((c) => precedenceOf(c.name)));
+  const tier = candidates.filter((c) => precedenceOf(c.name) === bestRank);
 
-  if (cleanQwen.includes(cleanTesseract)) {
-    return cleanQwen;
+  // Within one tier, the original two-engine rule: a superset is strictly
+  // more of the same letter, otherwise take the longer read.
+  let best = tier[0];
+  for (const candidate of tier.slice(1)) {
+    if (candidate.text.includes(best.text)) {
+      best = candidate;
+    } else if (
+      !best.text.includes(candidate.text) &&
+      candidate.text.length > best.text.length
+    ) {
+      best = candidate;
+    }
   }
-
-  if (cleanTesseract.includes(cleanQwen)) {
-    return cleanTesseract;
-  }
-
-  return cleanQwen.length > cleanTesseract.length ? cleanQwen : cleanTesseract;
+  return best.text;
 }
 
 function isAdvancedOCREnabled(): boolean {
@@ -220,25 +368,51 @@ function isAdvancedOCREnabled(): boolean {
 async function recognizeImageText(
   file: Blob | File | string,
 ): Promise<OCRResults> {
-  const worker = await getTesseractWorker();
-  const tesseractPromise = worker
-    .recognize(file)
-    .then((result: Tesseract.RecognizeResult) => result.data.text);
-  const qwenPromise = isAdvancedOCREnabled()
-    ? recognizeWithQwenWebGPU(file)
-    : Promise.resolve("");
-  const result = await runDualOCRWithGrace(tesseractPromise, qwenPromise);
+  const engines: OCREngine[] = [];
 
-  if (result.usedFallback) {
-    console.warn(
-      "[TesseractOCR] Falling back to Qwen OCR text because Tesseract output was unavailable",
-    );
+  // Bounding the WAIT does not stop the work. Once a page gives up, its
+  // engines keep running, and the memoized tesseract worker is shared: a
+  // multi-page scan could queue one stale full-resolution recognition per
+  // abandoned page onto the same worker, each still holding its data URL.
+  // This lets an engine notice it has been abandoned before starting work
+  // that nobody will read.
+  const page = { abandoned: false };
+
+  // Worker creation downloads trained data and can itself hang. Awaiting it
+  // HERE put it outside the budget entirely: the timer had not started, no
+  // other engine had been launched, and a stalled download stalled the whole
+  // read with no failure ever reported. Fold it into tesseract's own promise
+  // so it is raced and bounded like any other engine.
+  engines.push({
+    name: "tesseract",
+    promise: getTesseractWorker()
+      .then((worker: Tesseract.Worker) => {
+        if (page.abandoned) {
+          // Initialisation outlived the page. Submitting now would put work
+          // on the shared worker for output nobody is waiting for.
+          throw new Error("page abandoned before tesseract started");
+        }
+        return worker.recognize(file);
+      })
+      .then((result: Tesseract.RecognizeResult) => result.data.text),
+  });
+
+  if (isAdvancedOCREnabled()) {
+    engines.push({ name: "qwen", promise: recognizeWithQwenWebGPU(file) });
   }
 
-  return {
-    tesseractText: result.tesseractText,
-    qwenText: result.qwenText,
-  };
+  // Free where the platform provides it; contributes "" and drops out of the
+  // merge where it does not.
+  engines.push({
+    name: "text-detector",
+    promise: recognizeWithTextDetector(file),
+  });
+
+  try {
+    return await runOCREnginesWithGrace(engines);
+  } finally {
+    page.abandoned = true;
+  }
 }
 
 const recognizePDF = async function (
@@ -248,34 +422,135 @@ const recognizePDF = async function (
   const typedarray = await getFileAsArrayBuffer(file);
   const loadingTask = pdfjsLib.getDocument(typedarray);
   const doc = await loadingTask.promise;
-  const pdfText = await getPDFText(doc);
-  addText(pdfText);
+  const pageCount = doc.numPages;
 
-  // Did we have almost no text? Try OCR
-  if (pdfText.trim().length < 10) {
-    const numPages = doc.numPages;
-
-    for (let pageNo = 1; pageNo <= numPages; pageNo++) {
-      const page = await doc.getPage(pageNo);
-      const viewport = page.getViewport({ scale: 1.0 });
-
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-      if (!context) {
-        throw new Error("Could not get 2D context for PDF page rendering");
+  let unreadablePages = 0;
+  try {
+    for (let pageNo = 1; pageNo <= doc.numPages; pageNo++) {
+      // Caught per page around EVERYTHING, not just the OCR call. getPage,
+      // getTextContent, viewport and context creation can all fail too, and
+      // one of those escaping after earlier pages had been appended reached
+      // the whole-file image fallback -- re-decoding a document we had
+      // already partly emitted.
+      try {
+        if (!(await recognizePDFPage(doc, pageNo, addText))) {
+          unreadablePages += 1;
+        }
+      } catch (error) {
+        unreadablePages += 1;
+        console.warn(`[OCR] page ${pageNo} could not be read`, error);
       }
-
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-
-      await page.render({ canvasContext: context, viewport, canvas }).promise;
-
-      const imageData = canvas.toDataURL("image/png");
-      const mergedText = mergeOCRTexts(await recognizeImageText(imageData));
-      addText(mergedText + "\n");
+    }
+  } finally {
+    // pdf.js caches page proxies and rendering resources. At OCR resolution
+    // that is a lot to leave behind once the batch moves on.
+    //
+    // Swallowed on purpose: destroy() rethrows transport-teardown failures,
+    // and letting one escape here would reach recognize()'s outer catch and
+    // re-decode the whole PDF through the image route -- duplicating text we
+    // had already appended, or reporting failure after a clean read.
+    try {
+      await doc.destroy();
+    } catch (error) {
+      console.warn("[OCR] releasing the PDF failed; text already extracted", error);
     }
   }
+
+  // Tell the caller a page was lost. Without this a three-page denial that
+  // dropped page two reported complete success, and the missing deadline or
+  // reason was never mentioned. The pages that DID read have already been
+  // appended, so the caller sees text plus a failure and reports partial.
+  if (unreadablePages > 0) {
+    throw new Error(
+      `${unreadablePages} of ${pageCount} page(s) could not be read`,
+    );
+  }
 };
+
+/**
+ * Read ONE page: use its embedded text when that text is real, otherwise
+ * rasterise and OCR it.
+ *
+ * The decision is per page and not per document on purpose. Averaging over the
+ * document mixes the two cases and gets both wrong: one dense cover page and
+ * two scanned pages averages out above the threshold, so the scans are
+ * silently dropped; a shorter cover page drags the average under it, so we
+ * discard exact digital text and OCR everything. Mixed documents are the
+ * normal case here -- a typed cover letter stapled to a scanned denial.
+ */
+async function recognizePDFPage(
+  doc: PDFDocumentProxy,
+  pageNo: number,
+  addText: (str: string) => void,
+): Promise<boolean> {
+  const page = await doc.getPage(pageNo);
+  try {
+    const pageText = (await getPDFPageText(doc, pageNo)).trim();
+
+    // A digital page carries its own text: exact, instant, and better than
+    // anything OCR will produce. Only boilerplate falls through -- a scanner
+    // stamping "Page 1 of 3" cleared the old 10-character test, which
+    // suppressed OCR and handed the user that stamp as their whole denial.
+    if (pageText.length >= MIN_TEXT_LAYER_CHARS_PER_PAGE) {
+      addText(pageText + "\n");
+      return true;
+    }
+
+    const base = page.getViewport({ scale: 1.0 });
+    const viewport = page.getViewport({
+      scale: ocrRenderScale(base.width, base.height),
+    });
+
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Could not get 2D context for PDF page rendering");
+    }
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+
+    let ocrText = "";
+    try {
+      await page.render({ canvasContext: context, viewport, canvas }).promise;
+      ocrText = mergeOCRTexts(
+        await recognizeImageText(canvas.toDataURL("image/png")),
+      ).trim();
+    } catch (error) {
+      // Caught PER PAGE so one unreadable page cannot abandon the rest, and
+      // so this page's own text layer is still available as a fallback.
+      console.warn(`[OCR] could not read page ${pageNo}`, error);
+    } finally {
+      // A multi-page scan at OCR resolution holds a lot of pixels; drop them
+      // as we go rather than keeping every page alive until the loop ends.
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+
+    // Compose the page's whole contribution and emit it with ONE addText
+    // call. Callers treat each call as a separate document -- explain_denial
+    // inserts a separator per call -- so emitting twice made one page look
+    // like two uploads.
+    const parts: string[] = [];
+    if (ocrText.length > 0) {
+      parts.push(ocrText);
+    }
+    // Keep the page's own embedded text when OCR did not reproduce it. It is
+    // exact where OCR is a guess, and on a denial the sparse bits are often
+    // the ones that matter: a stamped appeal deadline, a claim number.
+    // Compared with whitespace collapsed, because a text layer joins runs with
+    // spaces while OCR emits line breaks -- a raw comparison called those
+    // different and appended the whole layer a second time.
+    if (pageText.length > 0 && !containsNormalised(ocrText, pageText)) {
+      parts.push(pageText);
+    }
+    if (parts.length > 0) {
+      addText(parts.join("\n") + "\n");
+    }
+    return ocrText.length > 0 || pageText.length > 0;
+  } finally {
+    page.cleanup();
+  }
+}
 
 const recognizeImage = async function (
   file: File,
@@ -289,19 +564,36 @@ export const recognize = async function (
   file: File,
   addText: (str: string) => void,
 ) {
+  // Track whether anything reached the page before falling back. Re-running a
+  // different decoder over a document we have already partly emitted either
+  // duplicates that text or reports failure after a usable read.
+  let emitted = false;
+  const emit = (text: string): void => {
+    if (text.trim().length > 0) {
+      emitted = true;
+    }
+    addText(text);
+  };
+
   if (isPDF(file)) {
     try {
-      await recognizePDF(file, addText);
+      await recognizePDF(file, emit);
     } catch (error) {
+      if (emitted) {
+        throw error;
+      }
       console.error("Error processing PDF, trying image route:", error);
-      await recognizeImage(file, addText);
+      await recognizeImage(file, emit);
     }
   } else {
     try {
-      await recognizeImage(file, addText);
+      await recognizeImage(file, emit);
     } catch (error) {
+      if (emitted) {
+        throw error;
+      }
       console.error("Error processing image, trying PDF route:", error);
-      await recognizePDF(file, addText);
+      await recognizePDF(file, emit);
     }
   }
 };

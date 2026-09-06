@@ -24,28 +24,39 @@ interface NetworkInformation {
   saveData?: boolean;
 }
 
-function isLikelyMobileOrMeteredNetwork(): boolean {
+/**
+ * Only the user's explicit "save data" request, NOT merely being on a phone.
+ *
+ * This used to switch the better OCR engine off for every cellular or 2g
+ * connection, which had the quality argument exactly backwards: a photo taken
+ * on a phone is the hardest input we get, and Qwen is the engine best at
+ * reading it. So the one case we turn it off for is someone who has actually
+ * asked their browser to conserve data -- Qwen downloads a model, and
+ * overriding that request would be rude. Everything else is decided by
+ * whether the DEVICE can run it.
+ */
+function userAskedToSaveData(): boolean {
   const connection = (navigator as Navigator & { connection?: NetworkInformation }).connection;
-  if (!connection) return false;
-  return (
-    connection.saveData === true ||
-    connection.type === "cellular" ||
-    connection.effectiveType === "2g" ||
-    connection.effectiveType === "slow-2g"
-  );
+  return connection?.saveData === true;
 }
 
 async function initAdvancedOCRCheckbox(): Promise<void> {
   const checkbox = document.getElementById("advanced_ocr_enabled") as HTMLInputElement | null;
   if (!checkbox) return;
 
-  // Disable by default on metered/mobile connections.
-  if (isLikelyMobileOrMeteredNetwork()) {
+  if (userAskedToSaveData()) {
     checkbox.checked = false;
     return;
   }
 
-  // Disable by default when WebGPU is unavailable.
+  // Capability, not connection: without WebGPU it cannot run at all, and on
+  // a very small device it will fight the page for memory.
+  const memoryGb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  if (typeof memoryGb === "number" && memoryGb <= 2) {
+    checkbox.checked = false;
+    return;
+  }
+
   const webGpu = await detectWebGPUAvailability();
   if (!webGpu.available) {
     checkbox.checked = false;
