@@ -2,14 +2,14 @@
   "events": [
     {
       "eventId": "1",
-      "eventTime": "2026-09-05T23:45:30.025Z",
+      "eventTime": "2026-09-06T01:21:06.286Z",
       "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
       "workflowExecutionStartedEventAttributes": {
         "workflowType": {
           "name": "SendFaxWorkflow"
         },
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520"
+          "name": "316b888a-4548-4f27-a208-4098bb134369"
         },
         "input": {
           "payloads": [
@@ -24,9 +24,9 @@
         "workflowExecutionTimeout": "315360000s",
         "workflowRunTimeout": "315360000s",
         "workflowTaskTimeout": "10s",
-        "originalExecutionRunId": "fbf89088-eb79-481d-b488-4c8bb464309e",
-        "identity": "33950@circe.local",
-        "firstExecutionRunId": "fbf89088-eb79-481d-b488-4c8bb464309e",
+        "originalExecutionRunId": "393fe02a-0790-4cfe-8dd0-439fca2500ee",
+        "identity": "test-client",
+        "firstExecutionRunId": "393fe02a-0790-4cfe-8dd0-439fca2500ee",
         "attempt": 1,
         "firstWorkflowTaskBackoff": "0s",
         "priority": {}
@@ -34,11 +34,11 @@
     },
     {
       "eventId": "2",
-      "eventTime": "2026-09-05T23:45:30.025Z",
+      "eventTime": "2026-09-06T01:21:06.286Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520"
+          "name": "316b888a-4548-4f27-a208-4098bb134369"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -46,27 +46,27 @@
     },
     {
       "eventId": "3",
-      "eventTime": "2026-09-05T23:45:30.025Z",
+      "eventTime": "2026-09-06T01:21:06.286Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "2",
-        "identity": "33950@circe.local",
-        "historySizeBytes": "353"
+        "identity": "test-worker",
+        "historySizeBytes": "349"
       }
     },
     {
       "eventId": "4",
-      "eventTime": "2026-09-05T23:45:30.033Z",
+      "eventTime": "2026-09-06T01:21:06.295Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "2",
-        "identity": "33950@circe.local",
+        "identity": "test-worker",
         "binaryChecksum": "3893cd912d7053b2e4e5f3775d58022d",
         "sdkMetadata": {
           "coreUsedFlags": [
-            2,
             3,
-            1
+            1,
+            2
           ],
           "sdkName": "temporal-python",
           "sdkVersion": "1.32.0"
@@ -76,7 +76,7 @@
     },
     {
       "eventId": "5",
-      "eventTime": "2026-09-05T23:45:30.033Z",
+      "eventTime": "2026-09-06T01:21:06.295Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "1",
@@ -84,7 +84,7 @@
           "name": "precheck_fax"
         },
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520",
+          "name": "316b888a-4548-4f27-a208-4098bb134369",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -119,17 +119,17 @@
     },
     {
       "eventId": "6",
-      "eventTime": "2026-09-05T23:45:30.033Z",
+      "eventTime": "2026-09-06T01:21:06.295Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "5",
-        "identity": "33950@circe.local",
+        "identity": "test-worker",
         "attempt": 1
       }
     },
     {
       "eventId": "7",
-      "eventTime": "2026-09-05T23:45:30.034Z",
+      "eventTime": "2026-09-06T01:21:06.296Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -144,16 +144,16 @@
         },
         "scheduledEventId": "5",
         "startedEventId": "6",
-        "identity": "33950@circe.local"
+        "identity": "test-worker"
       }
     },
     {
       "eventId": "8",
-      "eventTime": "2026-09-05T23:45:30.034Z",
+      "eventTime": "2026-09-06T01:21:06.296Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520"
+          "name": "316b888a-4548-4f27-a208-4098bb134369"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -161,21 +161,21 @@
     },
     {
       "eventId": "9",
-      "eventTime": "2026-09-05T23:45:30.034Z",
+      "eventTime": "2026-09-06T01:21:06.296Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "8",
-        "identity": "33950@circe.local",
-        "historySizeBytes": "882"
+        "identity": "test-worker",
+        "historySizeBytes": "860"
       }
     },
     {
       "eventId": "10",
-      "eventTime": "2026-09-05T23:45:30.036Z",
+      "eventTime": "2026-09-06T01:21:06.298Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "8",
-        "identity": "33950@circe.local",
+        "identity": "test-worker",
         "binaryChecksum": "3893cd912d7053b2e4e5f3775d58022d",
         "sdkMetadata": {},
         "meteringMetadata": {}
@@ -183,7 +183,7 @@
     },
     {
       "eventId": "11",
-      "eventTime": "2026-09-05T23:45:30.036Z",
+      "eventTime": "2026-09-06T01:21:06.298Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "2",
@@ -191,7 +191,7 @@
           "name": "send_fax_via_vendor"
         },
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520",
+          "name": "316b888a-4548-4f27-a208-4098bb134369",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -227,17 +227,17 @@
     },
     {
       "eventId": "12",
-      "eventTime": "2026-09-05T23:45:30.036Z",
+      "eventTime": "2026-09-06T01:21:06.298Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "11",
-        "identity": "33950@circe.local",
+        "identity": "test-worker",
         "attempt": 1
       }
     },
     {
       "eventId": "13",
-      "eventTime": "2026-09-05T23:45:30.036Z",
+      "eventTime": "2026-09-06T01:21:06.299Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -252,16 +252,16 @@
         },
         "scheduledEventId": "11",
         "startedEventId": "12",
-        "identity": "33950@circe.local"
+        "identity": "test-worker"
       }
     },
     {
       "eventId": "14",
-      "eventTime": "2026-09-05T23:45:30.036Z",
+      "eventTime": "2026-09-06T01:21:06.299Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520"
+          "name": "316b888a-4548-4f27-a208-4098bb134369"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -269,21 +269,21 @@
     },
     {
       "eventId": "15",
-      "eventTime": "2026-09-05T23:45:30.036Z",
+      "eventTime": "2026-09-06T01:21:06.299Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "14",
-        "identity": "33950@circe.local",
-        "historySizeBytes": "1394"
+        "identity": "test-worker",
+        "historySizeBytes": "1354"
       }
     },
     {
       "eventId": "16",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "14",
-        "identity": "33950@circe.local",
+        "identity": "test-worker",
         "binaryChecksum": "3893cd912d7053b2e4e5f3775d58022d",
         "sdkMetadata": {},
         "meteringMetadata": {}
@@ -291,7 +291,7 @@
     },
     {
       "eventId": "17",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_MARKER_RECORDED",
       "markerRecordedEventAttributes": {
         "markerName": "core_patch",
@@ -312,7 +312,7 @@
     },
     {
       "eventId": "18",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES",
       "upsertWorkflowSearchAttributesEventAttributes": {
         "workflowTaskCompletedEventId": "15",
@@ -320,8 +320,8 @@
           "indexedFields": {
             "TemporalChangeVersion": {
               "metadata": {
-                "encoding": "anNvbi9wbGFpbg==",
-                "type": "S2V5d29yZExpc3Q="
+                "type": "S2V5d29yZExpc3Q=",
+                "encoding": "anNvbi9wbGFpbg=="
               },
               "data": "WyJzZW5kLXN0YXR1cy1ub3Qtb3duZXIiXQ=="
             }
@@ -331,7 +331,7 @@
     },
     {
       "eventId": "19",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "3",
@@ -339,7 +339,7 @@
           "name": "finalize_fax"
         },
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520",
+          "name": "316b888a-4548-4f27-a208-4098bb134369",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -386,17 +386,17 @@
     },
     {
       "eventId": "20",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "19",
-        "identity": "33950@circe.local",
+        "identity": "test-worker",
         "attempt": 1
       }
     },
     {
       "eventId": "21",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -411,16 +411,16 @@
         },
         "scheduledEventId": "19",
         "startedEventId": "20",
-        "identity": "33950@circe.local"
+        "identity": "test-worker"
       }
     },
     {
       "eventId": "22",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "64aeae0f-c468-406c-9702-e450737ae520"
+          "name": "316b888a-4548-4f27-a208-4098bb134369"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -428,21 +428,21 @@
     },
     {
       "eventId": "23",
-      "eventTime": "2026-09-05T23:45:30.038Z",
+      "eventTime": "2026-09-06T01:21:06.301Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "22",
-        "identity": "33950@circe.local",
-        "historySizeBytes": "2208"
+        "identity": "test-worker",
+        "historySizeBytes": "2152"
       }
     },
     {
       "eventId": "24",
-      "eventTime": "2026-09-05T23:45:30.040Z",
+      "eventTime": "2026-09-06T01:21:06.303Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "22",
-        "identity": "33950@circe.local",
+        "identity": "test-worker",
         "binaryChecksum": "3893cd912d7053b2e4e5f3775d58022d",
         "sdkMetadata": {},
         "meteringMetadata": {}
@@ -450,7 +450,7 @@
     },
     {
       "eventId": "25",
-      "eventTime": "2026-09-05T23:45:30.040Z",
+      "eventTime": "2026-09-06T01:21:06.303Z",
       "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
       "workflowExecutionCompletedEventAttributes": {
         "result": {

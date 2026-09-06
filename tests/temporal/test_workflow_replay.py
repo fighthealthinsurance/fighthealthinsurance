@@ -154,7 +154,7 @@ async def test_a_completed_journey_replays_against_current_code():
     both the history and the code move together -- which is why the
     committed baseline above exists."""
     task_queue = str(uuid.uuid4())
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with await WorkflowEnvironment.start_time_skipping(identity="test-client") as env:
         async with Worker(
             env.client,
             task_queue=task_queue,
@@ -212,6 +212,11 @@ async def _capture(
         task_queue=task_queue,
         workflows=workflows,
         activities=activities,
+        # The SDK defaults identity to "{pid}@{hostname}" and history.to_json()
+        # preserves it in several event attributes, so captures carried the
+        # machine name of whoever generated them into the repository
+        # (external review). Fixed at the source: regenerating keeps it neutral.
+        identity="test-worker",
     ):
         handle = await env.client.start_workflow(
             entry, arg, id=str(uuid.uuid4()), task_queue=task_queue
@@ -245,7 +250,7 @@ async def test_capture_baseline_histories():
         pytest.skip("set FHI_CAPTURE_HISTORY=1 to regenerate the baselines")
 
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with await WorkflowEnvironment.start_time_skipping(identity="test-client") as env:
         plans = [
             (
                 "send_fax_completed",

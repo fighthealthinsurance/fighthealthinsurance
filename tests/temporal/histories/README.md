@@ -24,24 +24,49 @@ nudge or a reconciliation is strictly better — add one when you have it.
 
 ## Capturing a production history
 
+**Never pipe a production history straight into this directory.** Export it to
+an untracked path first, redact it, and only then copy the sanitised file in
+(external review).
+
 ```sh
+# 1. Export somewhere untracked.
 kubectl -n totallylegitco exec deploy/temporal-admintools -- \
   temporal workflow show \
     --address temporal-frontend:7233 --namespace default \
     --workflow-id <workflow-id> --output json \
-  > tests/temporal/histories/<name>.json
+  > /tmp/history-raw.json
+
+# 2. Read it. TEMPORAL_PAYLOAD_KEY is unset in production, so payloads are
+#    PLAINTEXT. The journey's inputs are ids-only by design (hashed_email,
+#    denial_uuid, contact_opt_in) -- confirm nothing else rode along.
+python3 -m json.tool /tmp/history-raw.json | less
+
+# 3. Replace production identifiers with safe values: the denial uuid, the
+#    hashed email, the workflow id, and the worker/client `identity` fields
+#    (which carry a pod name).
+
+# 4. Only now copy it in.
+cp /tmp/history-raw.json tests/temporal/histories/<name>.json
 ```
 
 Prefer histories that exercised different paths. One of each shape beats ten
 of the same.
 
-## Before committing one
+## A note on `workflowTaskCompletedEventId`
 
-`TEMPORAL_PAYLOAD_KEY` is unset in production, so payloads are **plaintext in
-the JSON**. The journey's inputs are ids-only by design (`hashed_email`,
-`denial_uuid`, `contact_opt_in`), but read the file before committing and
-confirm nothing else rode along. If payload encryption is later enabled, a
-captured history needs the codec configured to replay.
+In these test-server captures that field references the WORKFLOW_TASK_STARTED
+event rather than the WORKFLOW_TASK_COMPLETED one. That is what the SDK's
+time-skipping test server emits; the files are produced by
+`WorkflowHistory.to_json()`, not written by hand.
+
+**Do not "correct" it by editing the JSON.** The edit would be reverted by the
+next regeneration below, and it would make the fixture diverge from what the
+SDK actually produces. Replay works regardless -- the gate passes and each
+injected determinism break fails it.
+
+It is a real fidelity gap between the test server and production histories,
+and one more reason to replace these with sanitised production captures once
+real journeys have run.
 
 ## Regenerating the baseline
 
