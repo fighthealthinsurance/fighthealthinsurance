@@ -177,7 +177,11 @@ def test_producing_no_text_counts_as_a_failure_too():
     The check must compare the text before and after, not only catch."""
     fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
     assert "denialTextLength()" in fn, fn
-    assert re.search(r"denialTextLength\(\)\s*===\s*before", fn), fn
+    # Compared against what was there before the batch, so "the engines ran"
+    # is never mistaken for "the engines produced something".
+    assert re.search(r"denialTextLength\(\)\s*[=><!]+\s*before", fn), fn
+    # ...and having gained nothing is what triggers the report.
+    assert re.search(r"!gainedText|gainedText\s*===\s*false", fn), fn
 
 
 def test_failure_message_element_exists():
@@ -237,3 +241,55 @@ def test_the_denial_file_is_never_posted_to_the_server():
     # No other named file input may sneak into the same form either.
     for other in re.findall(r"<input[^>]*type=\"file\"[^>]*>", tpl):
         assert "name=" not in other, other
+
+
+def test_a_superseded_selection_does_not_post_a_verdict():
+    """Reading is slow enough that a user can pick again mid-run. Without a
+    selection sequence a slow FAILING batch finishing after a newer
+    successful one re-posts "we couldn't read your file" over text that had
+    just arrived (CodeRabbit and Codex both, PR 988)."""
+    src = (JS / "scrub.ts").read_text()
+    assert "latestOcrSelection" in src, src
+    fn = _js_function(src, "const recognizeEvent")
+    assert "++latestOcrSelection" in fn, fn
+    # The guard must sit BEFORE the reporting, or it guards nothing.
+    guard = fn.index("selection !== latestOcrSelection")
+    assert guard < fn.index("noteOcrFailure()"), fn
+
+
+def test_partial_and_total_failure_are_different_messages():
+    """One page failing while another succeeded is not "we couldn't read your
+    file, the box is still empty" -- that is false with their text directly
+    beneath it."""
+    src = (JS / "scrub.ts").read_text()
+    fn = _js_function(src, "const recognizeEvent")
+    assert "notePartialOcrFailure()" in fn, fn
+    assert "gainedText" in fn, fn
+    form = _form_source()
+    for name in ("noteOcrFailure", "notePartialOcrFailure", "clearOcrFailure"):
+        assert f"export function {name}" in form, name
+    # The two states are mutually exclusive on screen.
+    note_total = _js_function(form, "export function noteOcrFailure")
+    note_partial = _js_function(form, "export function notePartialOcrFailure")
+    assert 'rehideHiddenMessage("ocr_partial")' in note_total, note_total
+    assert 'rehideHiddenMessage("ocr_failed")' in note_partial, note_partial
+
+
+def test_typing_clears_the_failure_message():
+    """hideErrorMessages runs on every keystroke in denial_text and cleared
+    need_denial but not ocr_failed, so "the box below is still empty" stayed
+    on screen while the user typed into that very box. The submit gate does
+    not help: it only re-evaluates on submit."""
+    hide = _js_function(_form_source(), "export function hideErrorMessages")
+    assert 'rehideHiddenMessage("ocr_failed")' in hide, hide
+    assert 'rehideHiddenMessage("ocr_partial")' in hide, hide
+
+
+def test_partial_failure_message_element_exists():
+    tpl = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance"
+        / "templates"
+        / "scrub.html"
+    ).read_text()
+    assert 'id="ocr_partial"' in tpl

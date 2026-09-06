@@ -11,6 +11,7 @@ import {
   denialTextLength,
   endOcr,
   hideErrorMessages,
+  notePartialOcrFailure,
   noteOcrFailure,
   validateScrubForm,
 } from "./scrub_client_side_form";
@@ -52,6 +53,13 @@ async function initAdvancedOCRCheckbox(): Promise<void> {
   }
 }
 
+// Which selection is current. Reading a batch is slow enough that a user can
+// pick again while one is still running, and only the newest pick describes
+// what is on screen: without this, a slow FAILING batch could finish after a
+// newer successful one and re-post "we couldn't read your file" over text
+// that had just arrived.
+let latestOcrSelection = 0;
+
 const recognizeEvent = async function (evt: Event) {
   const input = evt.target as HTMLInputElement;
   const files = input.files;
@@ -61,6 +69,7 @@ const recognizeEvent = async function (evt: Event) {
   }
 
   const filesArray = Array.from(files);
+  const selection = ++latestOcrSelection;
 
   // Mark OCR as in flight for the whole batch so the submit gate can tell the
   // user we are still reading their file rather than letting them submit an
@@ -91,11 +100,21 @@ const recognizeEvent = async function (evt: Event) {
     endOcr();
   }
 
+  // A superseded batch says nothing about what the user is looking at.
+  if (selection !== latestOcrSelection) {
+    return;
+  }
+
   // "Threw" is not the only failure. Every engine can return cleanly and
   // still yield nothing for a photo too blurry to read, which looks
   // identical to the user: an empty box under a form that says a file is
   // enough. Treat "no new text" as a failure too.
-  if (failures > 0 || denialTextLength() === before) {
+  const gainedText = denialTextLength() > before;
+  if (failures > 0 && gainedText) {
+    // Some pages read and some did not. Saying "we couldn't read your file"
+    // here would be plainly false with their text sitting right below it.
+    notePartialOcrFailure();
+  } else if (failures > 0 || !gainedText) {
     noteOcrFailure();
   }
 };

@@ -45,6 +45,12 @@ export function hideErrorMessages(event: Event): void {
       denialTextLabel.style.color = "";
     }
     rehideHiddenMessage("need_denial");
+    // This runs on every keystroke in denial_text. Without clearing here,
+    // "we couldn't read your file, so the box below is still empty" stayed on
+    // screen while the user typed into that very box -- the gate only
+    // re-evaluates on submit, so nothing else would have taken it down.
+    rehideHiddenMessage("ocr_failed");
+    rehideHiddenMessage("ocr_partial");
   }
 }
 // OCR runs asynchronously after a file is chosen, and for a scanned PDF it
@@ -80,11 +86,21 @@ export function isOcrInFlight(): boolean {
 // stayed empty and the user got "we need your denial text" underneath copy
 // promising they could upload a file instead. Tell them what happened.
 export function noteOcrFailure(): void {
+  rehideHiddenMessage("ocr_partial");
   showHiddenMessage("ocr_failed");
+}
+
+// Some pages read, some did not. Distinct from total failure on purpose: the
+// total-failure copy says the box is still empty, which is plainly false when
+// the rest of the batch just filled it.
+export function notePartialOcrFailure(): void {
+  rehideHiddenMessage("ocr_failed");
+  showHiddenMessage("ocr_partial");
 }
 
 export function clearOcrFailure(): void {
   rehideHiddenMessage("ocr_failed");
+  rehideHiddenMessage("ocr_partial");
 }
 
 // The length of what we have so far, so the caller can tell "the engines
@@ -149,6 +165,7 @@ export function validateScrubForm(event: Event): void {
     // However the text arrived -- a later file that read fine, or the user
     // pasting it -- the earlier failure is no longer something to act on.
     rehideHiddenMessage("ocr_failed");
+    rehideHiddenMessage("ocr_partial");
   }
   if (!denialTextReady && isOcrInFlight()) {
     // Distinguish "you have not given us the letter" from "we are still
