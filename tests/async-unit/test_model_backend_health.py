@@ -10,6 +10,7 @@ and the check_model_backends management command exit codes.
 """
 
 import asyncio
+import contextvars
 import os
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -87,7 +88,8 @@ class _UnreachableBackend(_StubBackend):
 
     Mirrors what ml_models.__infer does for MODEL_TRANSPORT_ERRORS: it does
     NOT raise (returning None is what lets the real transport fall through to
-    its backup); it records the cause on the instance and returns None.
+    its backup); it records the cause through the probe-observation channel
+    and returns None.
     """
 
     def __init__(self, detail, fail_times=None):
@@ -829,25 +831,40 @@ class TestRealTransportPlumbing:
         err = aiohttp.ConnectionTimeoutError("Connection timeout to host")
         started = asyncio.Event()
 
+        # ONE patch covers both callers. Nesting a second patch.object on the
+        # same attribute from a concurrent task corrupts it process-wide: the
+        # inner patch records the OUTER patch as the original and restores
+        # THAT on exit, so ClientSession.post stays patched for every later
+        # test -- it silently answered 200 to an unrelated cooldown test
+        # probing a dead port. Which caller is which is decided by a
+        # ContextVar, which is the same per-task isolation under test here.
+        in_neighbour: contextvars.ContextVar[bool] = contextvars.ContextVar(
+            "fhi_test_in_neighbour", default=False
+        )
+
         def _post(*a, **k):
-            # The probe's own call answers 200-with-no-completion.
+            if in_neighbour.get():
+                raise err
             return empty_ok()
 
         async def noisy_neighbour():
-            # Ordinary inference, no probe armed: raise_http_errors=False is
-            # the production path, and it must leave no trace a probe reads.
+            # Set in THIS task's context only. _infer runs its legs as Tasks
+            # that copy the context, so every call they make raises.
+            in_neighbour.set(True)
             await started.wait()
-            with patch.object(aiohttp.ClientSession, "post", side_effect=err):
-                await model._infer(system_prompts=["sys"], prompt="hi")
+            # Ordinary inference: raise_http_errors=False is the production
+            # path, and it must leave no trace a probe can read.
+            await model._infer(system_prompts=["sys"], prompt="hi")
 
-        async def probe():
-            started.set()
-            with patch.object(aiohttp.ClientSession, "post", _post):
-                return await mhc.check_backend(_result(), model, timeout=10.0)
-
+        # Created BEFORE the probe arms its observations, so the neighbour's
+        # context carries no binding -- the real shape of production traffic
+        # running alongside a probe.
         neighbour = asyncio.create_task(noisy_neighbour())
-        res = await probe()
-        await neighbour
+
+        with patch.object(aiohttp.ClientSession, "post", _post):
+            started.set()
+            res = await mhc.check_backend(_result(), model, timeout=10.0)
+            await neighbour
 
         assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE, res.error
         assert "no endpoint reachable" not in (res.error or "")
