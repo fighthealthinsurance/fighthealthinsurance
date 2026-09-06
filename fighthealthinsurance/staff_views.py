@@ -83,6 +83,11 @@ from fighthealthinsurance.proconnector import (
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
+# Sort key standing in for a workflow row whose start time is missing, so such
+# a row lands last instead of raising. Timezone-aware because everything it is
+# compared against (the Temporal SDK's timestamps) is.
+_UNDATED = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
 
 class AdminDeleteDataView(generic.FormView):
     """Staff view to delete all data for a user by email address.
@@ -148,6 +153,14 @@ class AdminStatusView(generic.TemplateView):
     """
 
     template_name = "admin_status.html"
+
+    # How many recent SendFaxWorkflow runs the Temporal panel lists.
+    _RECENT_WORKFLOW_LIMIT = 10
+    # Candidates pulled before sorting. Wider than the limit because the store
+    # cannot order by start time for us (see _temporal_status), so a run that
+    # started recently may sit well down the store's own ordering. Bounded so a
+    # busy namespace cannot turn a status page into a full scan.
+    _RECENT_WORKFLOW_SCAN = 100
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -354,6 +367,43 @@ class AdminStatusView(generic.TemplateView):
             return {"error": str(e)}
 
     @staticmethod
+    def _temporal_error_message(exc: Exception) -> str:
+        """One operator-readable sentence for a Temporal failure.
+
+        The strings the frontend hands back name a symptom and nothing else
+        ("invalid query: operation is not supported: 'ORDER BY' clause"), which
+        on a status page reads as an outage even when the cluster is perfectly
+        healthy. The failures we can explain get a hint that says whose problem
+        it is; anything else falls back to the exception type plus its text, so
+        an unrecognised error is still attributable and never renders blank.
+        """
+        detail = str(exc).strip()
+        lowered = detail.lower()
+        if isinstance(exc, TimeoutError):
+            return (
+                "Temporal did not answer within the status page's 8s budget: "
+                "the frontend is unreachable or overloaded. Fax dispatch may "
+                "be affected -- check the temporal-frontend pods."
+            )
+        if "order by" in lowered:
+            return (
+                "Temporal rejected the status page's visibility query: this "
+                "cluster keeps visibility in Postgres, and only an "
+                "Elasticsearch-backed cluster accepts an ORDER BY clause. That "
+                "is a bug in this page, not a fax outage -- the counts above "
+                f"are still live. Detail: {detail}"
+            )
+        if "invalid query" in lowered or "is not supported" in lowered:
+            return (
+                "Temporal rejected the status page's visibility query -- a bug "
+                "in this page rather than a fax outage. "
+                f"Detail: {detail}"
+            )
+        if not detail:
+            return f"{type(exc).__name__} (no detail)"
+        return f"{type(exc).__name__}: {detail}"
+
+    @staticmethod
     def _temporal_status() -> Dict[str, Any]:
         """Temporal fax orchestration: connectivity, recent SendFaxWorkflow runs.
 
@@ -378,6 +428,7 @@ class AdminStatusView(generic.TemplateView):
             "task_queue": getattr(settings, "TEMPORAL_TASK_QUEUE", None),
             "counts": {},
             "recent": [],
+            "recent_error": None,
         }
         if not enabled:
             return out
@@ -409,28 +460,75 @@ class AdminStatusView(generic.TemplateView):
                         f"{scope} AND ExecutionStatus='{status}'"
                     )
                     counts[status] = int(result.count)
+                limit = AdminStatusView._RECENT_WORKFLOW_LIMIT
+                scan = AdminStatusView._RECENT_WORKFLOW_SCAN
                 recent: List[Dict[str, Any]] = []
-                async for wf in client.list_workflows(
-                    "WorkflowType='SendFaxWorkflow' ORDER BY StartTime DESC",
-                    page_size=10,
-                ):
-                    duration = None
-                    if wf.start_time and wf.close_time:
-                        duration = round(
-                            (wf.close_time - wf.start_time).total_seconds()
+                recent_error: Optional[str] = None
+                try:
+                    # Deliberately no ORDER BY. Visibility here is the Postgres
+                    # store (k8s/temporal/values.yaml -- no Elasticsearch), and
+                    # a SQL visibility store rejects the entire query with
+                    # "operation is not supported: 'ORDER BY' clause".
+                    #
+                    # Which means the store's own order is not the one this
+                    # panel wants. Temporal's default is
+                    # "ClosedTime DESC NULL FIRST, StartTime DESC", so taking
+                    # the first ten and sorting THOSE lets an old workflow that
+                    # closed recently push out a genuinely recent one, and the
+                    # panel quietly shows the wrong ten. Scan a wider bounded
+                    # candidate set, then sort and slice locally.
+                    #
+                    # `base` and not a bare type filter: it carries the same
+                    # seven-day window the counts use. Without it the scan is
+                    # over ALL history, and since we can neither order in the
+                    # query nor scan without a bound, a namespace with more
+                    # than `scan` old runs would fill the candidate set with
+                    # them and crowd out the recent ones -- the bounded scan
+                    # would then reintroduce the very defect it was added to
+                    # fix, and the panel and its own counts would disagree.
+                    #
+                    # It follows the TERMINAL counts, not the Running one:
+                    # Running is deliberately unscoped above because a live
+                    # run matters however old it is, but this is a "recent
+                    # runs" table. A fax still open after seven days is
+                    # reported by the Running count rather than listed here.
+                    async for wf in client.list_workflows(
+                        base,
+                        page_size=scan,
+                    ):
+                        duration = None
+                        if wf.start_time and wf.close_time:
+                            duration = round(
+                                (wf.close_time - wf.start_time).total_seconds()
+                            )
+                        recent.append(
+                            {
+                                "id": wf.id,
+                                "status": wf.status.name if wf.status else "UNKNOWN",
+                                "started": wf.start_time,
+                                "closed": wf.close_time,
+                                "duration_s": duration,
+                            }
                         )
-                    recent.append(
-                        {
-                            "id": wf.id,
-                            "status": wf.status.name if wf.status else "UNKNOWN",
-                            "started": wf.start_time,
-                            "closed": wf.close_time,
-                            "duration_s": duration,
-                        }
+                        if len(recent) >= scan:
+                            break
+                except Exception as e:
+                    # The counts are the numbers on-call actually pages on, so
+                    # a listing that blows up costs the table, not the panel.
+                    logger.opt(exception=True).warning(
+                        "Temporal recent-workflow listing failed"
                     )
-                    if len(recent) >= 10:
-                        break
-                return {"counts": counts, "recent": recent}
+                    recent_error = AdminStatusView._temporal_error_message(e)
+                # Sort the whole candidate set, THEN take the ten. Slicing
+                # before sorting is what let the store's ordering decide which
+                # runs the panel could even consider.
+                recent.sort(key=lambda row: row["started"] or _UNDATED, reverse=True)
+                recent = recent[:limit]
+                return {
+                    "counts": counts,
+                    "recent": recent,
+                    "recent_error": recent_error,
+                }
 
             async def bounded() -> Dict[str, Any]:
                 return await asyncio.wait_for(gather(), timeout=8.0)
@@ -438,10 +536,11 @@ class AdminStatusView(generic.TemplateView):
             data = async_to_sync(bounded)()
             out["counts"] = data["counts"]
             out["recent"] = data["recent"]
+            out["recent_error"] = data["recent_error"]
         except Exception as e:
             logger.opt(exception=True).warning("Temporal status check failed")
             out["ok"] = False
-            out["error"] = str(e)
+            out["error"] = AdminStatusView._temporal_error_message(e)
         return out
 
     @staticmethod

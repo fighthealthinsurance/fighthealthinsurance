@@ -224,6 +224,12 @@
           <div class="label">Timed out / terminated (last 7 days)</div>
         </div>
       </div>
+      {% if temporal.recent_error %}
+      <p class="summary-line">
+        <span class="badge bad">RECENT RUNS UNAVAILABLE</span>
+        <span class="error-text">{{ temporal.recent_error }}</span>
+      </p>
+      {% else %}
       <table class="status">
         <thead>
           <tr><th>Workflow</th><th>Status</th><th>Started</th><th>Duration</th></tr>
@@ -245,6 +251,7 @@
         {% endfor %}
         </tbody>
       </table>
+      {% endif %}
       <p class="summary-line">
         <span class="pill">Full event histories: the Temporal Web UI is cluster-internal by design.</span>
         <code>kubectl -n totallylegitco port-forward svc/temporal-web 8080:8080</code> then <code>http://localhost:8080</code>
