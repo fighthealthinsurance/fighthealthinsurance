@@ -477,8 +477,23 @@ class AdminStatusView(generic.TemplateView):
                     # closed recently push out a genuinely recent one, and the
                     # panel quietly shows the wrong ten. Scan a wider bounded
                     # candidate set, then sort and slice locally.
+                    #
+                    # `base` and not a bare type filter: it carries the same
+                    # seven-day window the counts use. Without it the scan is
+                    # over ALL history, and since we can neither order in the
+                    # query nor scan without a bound, a namespace with more
+                    # than `scan` old runs would fill the candidate set with
+                    # them and crowd out the recent ones -- the bounded scan
+                    # would then reintroduce the very defect it was added to
+                    # fix, and the panel and its own counts would disagree.
+                    #
+                    # It follows the TERMINAL counts, not the Running one:
+                    # Running is deliberately unscoped above because a live
+                    # run matters however old it is, but this is a "recent
+                    # runs" table. A fax still open after seven days is
+                    # reported by the Running count rather than listed here.
                     async for wf in client.list_workflows(
-                        "WorkflowType='SendFaxWorkflow'",
+                        base,
                         page_size=scan,
                     ):
                         duration = None

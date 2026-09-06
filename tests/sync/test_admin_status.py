@@ -713,3 +713,48 @@ class AdminStatusTemporalOrderingTest(AdminStatusTemporalTest):
             AdminStatusView._RECENT_WORKFLOW_LIMIT,
         )
         self.assertLessEqual(AdminStatusView._RECENT_WORKFLOW_SCAN, 500)
+
+
+class AdminStatusTemporalScopeTest(AdminStatusTemporalTest):
+    """The listing must carry the same window as the counts beside it."""
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_client_factory(_FakeTemporalClient))
+    def test_the_listing_is_scoped_to_the_same_seven_days_as_the_counts(self):
+        """Dropping ORDER BY meant rebuilding the query, and the time scope
+        went with it. Unscoped, the bounded candidate scan runs over ALL
+        history: a namespace with more old runs than the scan limit fills the
+        candidates with them and crowds out the recent ones, so the bounded
+        scan would reintroduce exactly the defect it was added to fix -- and
+        the table would disagree with the counts printed above it."""
+        self._get()
+        client = _FAKE_CLIENTS[-1]
+        assert client.list_queries, "no visibility listing was issued"
+        listed = client.list_queries[-1]
+        assert "StartTime >" in listed, listed
+        # ...and still no ORDER BY, which is what started all this.
+        assert "ORDER BY" not in listed.upper(), listed
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_client_factory(_FakeTemporalClient))
+    def test_the_listing_shares_the_window_of_the_terminal_counts(self):
+        """The counts are deliberately NOT uniform: Running is a live state
+        and is counted unscoped, while the terminal states are bounded to
+        seven days. The listing belongs with the terminal ones -- it is a
+        "recent runs" table, and a run still open after seven days is
+        reported by the Running count rather than dropped."""
+        self._get()
+        client = _FAKE_CLIENTS[-1]
+        listed = client.list_queries[-1]
+        terminal = [
+            q for q in client.queries if "ExecutionStatus" in q and "Running" not in q
+        ]
+        assert terminal, client.queries
+        for q in terminal:
+            assert q.startswith(listed), (q, listed)
+        # ...and Running really is exempt, so this is a documented asymmetry
+        # rather than one query that got missed.
+        running = [q for q in client.queries if "Running" in q]
+        assert running, client.queries
+        for q in running:
+            assert "StartTime >" not in q, q
