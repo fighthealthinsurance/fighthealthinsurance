@@ -402,12 +402,33 @@ def _attach_error_body(exc: aiohttp.ClientResponseError, body: str) -> None:
     classify on it.
 
     A dedicated attribute rather than ``exc.message``: that field is the HTTP
-    reason phrase every log site, ``describe_model_error``, the persisted
-    attempt record, and ``model_health_check._categorize_http_error`` read, and
-    overwriting it with a body would both bloat those and flip the health
-    check's "400 mentioning model" heuristic to MODEL_NOT_FOUND.
+    reason phrase every log site, ``describe_model_error`` and the persisted
+    attempt record read, and overwriting it with a body would bloat all of
+    them.
+
+    ``model_health_check._categorize_http_error`` reads BOTH -- the reason
+    phrase for the status line and this body for what the provider actually
+    said. It used to classify a "400 mentioning model" off ``exc.message``,
+    which could never match (that field is only ever the reason phrase); it now
+    matches on this body via ``_error_text_indicates_missing_model``.
     """
     setattr(exc, "fhi_response_body", body)
+
+
+# Attributes a probe reads to tell "no endpoint answered" from "an endpoint
+# answered with nothing". Both are set on the backend INSTANCE and are only
+# meaningful to a caller that armed (cleared) them first -- normal inference
+# never reads them.
+#
+# Two are needed, not one. A single _infer can try several endpoints (dual-mode
+# races primary against backup, then falls back sequentially), so a note left
+# by ONE failing leg does not mean nothing answered: the other leg may have
+# returned a 200 with an empty completion, which is a malformed response, not a
+# network failure. ENDPOINT_ANSWERED_ATTR records that some leg got an HTTP
+# response, and it wins -- so the verdict does not depend on which leg finished
+# last.
+LAST_TRANSPORT_ERROR_ATTR = "fhi_last_transport_error"
+ENDPOINT_ANSWERED_ATTR = "fhi_endpoint_answered"
 
 
 def _error_body_of(exc: aiohttp.ClientResponseError) -> str:
@@ -3285,12 +3306,28 @@ class RemoteOpenLike(RemoteModel):
                         headers={"Authorization": f"Bearer {self.token}"},
                         json=request_body,
                     ) as response:
+                        # An endpoint answered -- whatever the status. Probes
+                        # use this to keep one leg's transport failure from
+                        # being read as "nothing answered" when another leg
+                        # did (see ENDPOINT_ANSWERED_ATTR).
+                        setattr(self, ENDPOINT_ANSWERED_ATTR, True)
                         response_body = await _read_error_body(response)
                         # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                         # This allows subclasses to catch and handle specific errors like 429
                         try:
                             response.raise_for_status()
                         except aiohttp.ClientResponseError as e:
+                            # Carry the provider's body on the exception before
+                            # any of the branches below re-raise it. Without
+                            # this the body stays a local, and every caller
+                            # that classifies on it (model_health_check's
+                            # _categorize_http_error) sees only the HTTP reason
+                            # phrase -- "HTTP 400 Bad Request" in place of
+                            # "Your credit balance is too low". RemoteAzureClaude
+                            # attached it on its own transport; this is the
+                            # OpenAI-compatible path, which every other backend
+                            # uses, RemoteAnthropic included.
+                            _attach_error_body(e, response_body)
                             if (
                                 sent_temperature
                                 and _http_error_indicates_unsupported_temperature(
@@ -3430,12 +3467,21 @@ class RemoteOpenLike(RemoteModel):
             # No sleep before returning: there is no retry in here for a delay
             # to pace, callers (e.g. the extraction loop) do their own pacing,
             # and a stall would only slow failover to the backup backend.
-            logger.warning(
-                f"{self}: {model} via {api_base} failed -- {describe_model_error(e)}"
-            )
+            described = describe_model_error(e)
+            logger.warning(f"{self}: {model} via {api_base} failed -- {described}")
             record_ml_failure(model, "transport_error")
+            # Record the cause even when raising is requested. A transport
+            # error deliberately does NOT raise here -- returning None is what
+            # lets the caller fall through to the backup endpoint -- but that
+            # left probes (model_health_check) unable to tell "nothing
+            # answered the socket" from "the model returned nothing", and an
+            # unreachable backend was reported as a malformed response. The
+            # note is read-and-cleared by the probe; normal inference never
+            # looks at it. Strike accounting stays gated: a probe must not
+            # push a backend into the production cooldown.
+            setattr(self, LAST_TRANSPORT_ERROR_ATTR, described)
             if not raise_http_errors:
-                self._note_transport_failure(api_base, model, describe_model_error(e))
+                self._note_transport_failure(api_base, model, described)
             return None
         except Exception:
             logger.opt(exception=True).warning(
@@ -4468,10 +4514,21 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 return None
             raise
         except Exception as e:
+            described = describe_model_error(e)
             logger.warning(
-                f"{type(self).__name__}._infer: {self.model} failed -- "
-                f"{describe_model_error(e)}"
+                f"{type(self).__name__}._infer: {self.model} failed -- {described}"
             )
+            # Backends that override the transport (RemoteAzureClaude speaks
+            # the native Messages API, not /chat/completions) never reach
+            # RemoteOpenLike.__infer, so their connection failures land here
+            # instead. Record the same note that path records, or a Foundry
+            # endpoint that refused every connection is reported as a
+            # malformed response -- the bug this note exists to fix, surviving
+            # on the one provider that does not share the transport. Only for
+            # genuine transport errors: a blanket note would relabel an
+            # ordinary bug as a network failure.
+            if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                setattr(self, LAST_TRANSPORT_ERROR_ATTR, described)
             return None
 
     async def _do_infer(

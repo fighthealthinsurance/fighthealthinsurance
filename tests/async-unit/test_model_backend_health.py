@@ -20,6 +20,10 @@ from django.core.management import call_command
 
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
+from fighthealthinsurance.ml.ml_models import (
+    LAST_TRANSPORT_ERROR_ATTR,
+    _attach_error_body,
+)
 
 
 @pytest.fixture
@@ -77,6 +81,28 @@ class _StubBackend:
         return behavior
 
 
+class _UnreachableBackend(_StubBackend):
+    """Stand-in for a backend whose every endpoint refused or timed out.
+
+    Mirrors what ml_models.__infer does for MODEL_TRANSPORT_ERRORS: it does
+    NOT raise (returning None is what lets the real transport fall through to
+    its backup); it records the cause on the instance and returns None.
+    """
+
+    def __init__(self, detail, fail_times=None):
+        super().__init__(None)
+        self._detail = detail
+        self._fail_times = fail_times
+
+    async def _infer_no_context(self, **kwargs):
+        assert kwargs.get("raise_http_errors") is True
+        if self._fail_times is None or self._fail_times > 0:
+            if self._fail_times is not None:
+                self._fail_times -= 1
+            setattr(self, LAST_TRANSPORT_ERROR_ATTR, self._detail)
+        return None
+
+
 def _result(**overrides):
     base = dict(
         provider="TestProvider",
@@ -90,14 +116,24 @@ def _result(**overrides):
     return mhc.BackendCheckResult(**base)
 
 
-def _http_error(status, message="err", headers=None):
-    return aiohttp.ClientResponseError(
+def _http_error(status, message="err", headers=None, body=None):
+    """Build a ClientResponseError shaped like the ones the transport raises.
+
+    ``message`` is the HTTP REASON PHRASE ("Bad Request") -- that is all
+    aiohttp ever puts there. The provider's actual error text arrives
+    separately, attached by ml_models._attach_error_body, which is what
+    ``body`` simulates here.
+    """
+    exc = aiohttp.ClientResponseError(
         request_info=MagicMock(),
         history=(),
         status=status,
         message=message,
         headers=headers or {},
     )
+    if body is not None:
+        _attach_error_body(exc, body)
+    return exc
 
 
 class TestSanitizeError:
@@ -163,8 +199,44 @@ class TestCheckBackendCategorization:
         assert res.category == mhc.CATEGORY_MODEL_NOT_FOUND
 
     def test_400_mentioning_model_is_model_not_found(self):
-        res = self._check(_http_error(400, "unknown model 'claude-nope'"))
+        res = self._check(
+            _http_error(400, "Bad Request", body="unknown model 'claude-nope'")
+        )
         assert res.category == mhc.CATEGORY_MODEL_NOT_FOUND
+
+    def test_400_model_not_found_is_read_from_body_not_reason_phrase(self):
+        """Regression: this branch used to match on e.message, which aiohttp
+        fills with the reason phrase ("Bad Request") and never the provider
+        text -- so it could not fire in production even though a unit test
+        passed a hand-written message. With no body there is nothing to match
+        and the error must fall through to FAIL_OTHER rather than being
+        guessed at."""
+        res = self._check(_http_error(400, "Bad Request"))
+        assert res.category == mhc.CATEGORY_OTHER
+
+    def test_400_body_is_reported_verbatim(self):
+        """The operator-facing detail must carry what the provider said. A
+        real incident (Anthropic credit exhaustion) was reported only as
+        "HTTP 400 Bad Request", which named neither the cause nor the fix."""
+        res = self._check(
+            _http_error(
+                400,
+                "Bad Request",
+                body='{"error":{"message":"Your credit balance is too low"}}',
+            )
+        )
+        assert res.category == mhc.CATEGORY_OTHER
+        assert "credit balance is too low" in res.error
+
+    def test_400_quota_body_is_not_mistaken_for_a_missing_model(self):
+        """The body match requires a not-found phrasing as well as the word
+        "model", so a message that merely mentions one is not mislabelled."""
+        res = self._check(
+            _http_error(
+                400, "Bad Request", body="temperature unsupported for this model"
+            )
+        )
+        assert res.category == mhc.CATEGORY_OTHER
 
     def test_429_is_rate_limited(self):
         assert self._check(_http_error(429)).category == mhc.CATEGORY_RATE_LIMITED
@@ -191,6 +263,41 @@ class TestCheckBackendCategorization:
         res = self._check(None)
         assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE
         assert res.failed
+
+    def test_all_endpoints_unreachable_is_network_not_malformed(self):
+        """A backend whose every endpoint refused or timed out returns None
+        rather than raising -- returning None is what lets the transport fall
+        through to its backup, and when the backup fails too the caller just
+        sees None. That is a network failure, not a malformed response;
+        reporting the latter points the operator at the model when nothing
+        answered the socket."""
+        res = asyncio.run(
+            mhc.check_backend(
+                _result(), _UnreachableBackend("connection refused"), timeout=5.0
+            )
+        )
+        assert res.category == mhc.CATEGORY_NETWORK
+        assert "connection refused" in res.error
+        assert res.failed
+
+    def test_transport_note_does_not_leak_into_a_later_probe(self):
+        """The note is armed before the call and read-and-cleared after, so a
+        failure recorded by one probe cannot mislabel the next. Here the
+        backend is unreachable on the first probe and merely empty on the
+        second: the second must NOT inherit the first's network verdict."""
+        backend = _UnreachableBackend("connection refused", fail_times=1)
+        first = asyncio.run(mhc.check_backend(_result(), backend, timeout=5.0))
+        assert first.category == mhc.CATEGORY_NETWORK
+        second = asyncio.run(mhc.check_backend(_result(), backend, timeout=5.0))
+        assert second.category == mhc.CATEGORY_MALFORMED_RESPONSE
+
+    def test_stale_transport_note_is_cleared_before_the_probe(self):
+        """A note left on the instance by earlier production traffic must not
+        be read as this probe's result."""
+        backend = _StubBackend(None)
+        setattr(backend, LAST_TRANSPORT_ERROR_ATTR, "stale failure from hours ago")
+        res = asyncio.run(mhc.check_backend(_result(), backend, timeout=5.0))
+        assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE
 
     def test_unexpected_text_response_is_malformed(self):
         """Reachable but garbled (HTML error body, stub text, refusal) must not
@@ -572,3 +679,131 @@ class TestCheckModelBackendsCommand:
         assert run_mock.call_args.kwargs["only_models"] == [
             "anthropic/claude-sonnet-4-6"
         ]
+
+
+class TestRealTransportPlumbing:
+    """End-to-end over the REAL transport, not a hand-mirrored stub.
+
+    The stub-only tests above cannot see whether ml_models actually feeds
+    _categorize_http_error and check_backend what they read. It did not: the
+    body was attached on RemoteAzureClaude's transport only, so on the
+    OpenAI-compatible path -- which RemoteAnthropic and every other backend
+    use -- _error_body_of() was always "" and the reporting fix was inert for
+    the exact incident that motivated it. These pin the plumbing.
+    """
+
+    def _model(self):
+        from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+
+        return RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
+
+    @staticmethod
+    def _response(status, body):
+        class _Resp:
+            def __init__(self):
+                self.status = status
+                self.headers = {}
+                self.request_info = MagicMock()
+                self.history = ()
+
+            async def text(self):
+                return body
+
+            async def json(self):
+                return {}
+
+            def raise_for_status(self):
+                if self.status >= 400:
+                    raise aiohttp.ClientResponseError(
+                        request_info=self.request_info,
+                        history=self.history,
+                        status=self.status,
+                        message="Bad Request",
+                        headers=self.headers,
+                    )
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return _Resp()
+
+            async def __aexit__(self_inner, *a):
+                return False
+
+        return _Ctx
+
+    @pytest.mark.asyncio
+    async def test_openai_compatible_path_attaches_the_provider_body(self):
+        """Regression: __infer read the body into a local and re-raised
+        without attaching it, so every caller that classifies on the body saw
+        nothing. This is the plumbing the reporting fix depends on."""
+        from fighthealthinsurance.ml.ml_models import _error_body_of
+
+        model = self._model()
+        body = '{"error":{"message":"Your credit balance is too low"}}'
+        ctx = self._response(400, body)
+        with patch.object(aiohttp.ClientSession, "post", lambda *a, **k: ctx()):
+            with pytest.raises(aiohttp.ClientResponseError) as caught:
+                await model._infer(
+                    system_prompts=["sys"], prompt="hi", raise_http_errors=True
+                )
+        assert "credit balance is too low" in _error_body_of(caught.value)
+        # ...and the reason phrase is left alone for the log sites that read it
+        assert caught.value.message == "Bad Request"
+
+    @pytest.mark.asyncio
+    async def test_provider_body_reaches_the_operator_facing_report(self):
+        """The whole point, end to end: what the provider said must appear in
+        the health report rather than "HTTP 400 Bad Request"."""
+        model = self._model()
+        body = '{"error":{"message":"Your credit balance is too low"}}'
+        ctx = self._response(400, body)
+        with patch.object(aiohttp.ClientSession, "post", lambda *a, **k: ctx()):
+            res = await mhc.check_backend(_result(), model, timeout=10.0)
+        assert res.failed
+        assert "credit balance is too low" in res.error
+
+    @pytest.mark.asyncio
+    async def test_transport_error_records_the_note_even_when_raising(self):
+        """Bug 2's production half: the note must be written on the real
+        transport, and under raise_http_errors, or the probe cannot tell an
+        unreachable backend from an empty answer."""
+        model = self._model()
+        err = aiohttp.ConnectionTimeoutError("Connection timeout to host")
+        with patch.object(aiohttp.ClientSession, "post", side_effect=err):
+            result = await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_http_errors=True
+            )
+        assert result is None
+        assert "timeout" in str(getattr(model, LAST_TRANSPORT_ERROR_ATTR, "")).lower()
+        # A probe must never push a backend into the production cooldown.
+        assert model._transport_strikes == {}
+
+    @pytest.mark.asyncio
+    async def test_unreachable_backend_reports_network_end_to_end(self):
+        model = self._model()
+        err = aiohttp.ConnectionTimeoutError("Connection timeout to host")
+        with patch.object(aiohttp.ClientSession, "post", side_effect=err):
+            res = await mhc.check_backend(_result(), model, timeout=10.0)
+        assert res.category == mhc.CATEGORY_NETWORK
+
+    @pytest.mark.asyncio
+    async def test_endpoint_that_answered_is_not_reported_as_unreachable(self):
+        """An endpoint answering 200 with no completion is a MALFORMED
+        response. One _infer can try several endpoints, so a note left by a
+        failing leg must not outrank a leg that actually answered -- otherwise
+        the fix sends operators to the network layer for a model fault, which
+        is the original misdirection pointed the other way."""
+        model = self._model()
+        ctx = self._response(200, "")
+
+        def _post(*a, **k):
+            # The note has to be written DURING the probe, the way a failing
+            # leg writes it -- check_backend arms (clears) it beforehand, so a
+            # note planted before the call proves nothing.
+            setattr(model, LAST_TRANSPORT_ERROR_ATTR, "connection refused")
+            return ctx()
+
+        with patch.object(aiohttp.ClientSession, "post", _post):
+            res = await mhc.check_backend(_result(), model, timeout=10.0)
+        assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE
+        assert "no endpoint reachable" not in (res.error or "")
