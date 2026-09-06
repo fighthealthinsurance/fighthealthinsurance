@@ -174,14 +174,15 @@ def test_one_unreadable_page_does_not_abandon_the_rest():
 def test_producing_no_text_counts_as_a_failure_too():
     """Engines can return cleanly and still yield nothing for a photo too
     blurry to read. To the user that is identical to a crash: an empty box.
-    The check must compare the text before and after, not only catch."""
+    Catching is therefore not enough -- what OCR produced has to be counted."""
     fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
-    assert "denialTextLength()" in fn, fn
-    # Compared against what was there before the batch, so "the engines ran"
-    # is never mistaken for "the engines produced something".
-    assert re.search(r"denialTextLength\(\)\s*[=><!]+\s*before", fn), fn
-    # ...and having gained nothing is what triggers the report.
-    assert re.search(r"!gainedText|gainedText\s*===\s*false", fn), fn
+    # Counted from what OCR actually handed back, NOT by measuring the
+    # textarea: measuring counts the user's own typing, so someone typing
+    # while a doomed batch ran looked like OCR had produced something.
+    assert "ocrChars" in fn, fn
+    assert re.search(r"producedText\s*=\s*ocrChars\s*>\s*0", fn), fn
+    assert re.search(r"!producedText", fn), fn
+    assert "denialTextLength" not in fn, fn
 
 
 def test_failure_message_element_exists():
@@ -200,7 +201,7 @@ def test_failure_message_clears_once_the_text_arrives():
     """However the text turns up -- a later file that read fine, or the user
     pasting it -- a stale "we couldn't read your file" is just noise."""
     src = _form_source()
-    for fn in ("noteOcrFailure", "clearOcrFailure", "denialTextLength"):
+    for fn in ("noteOcrFailure", "notePartialOcrFailure", "clearOcrFailure"):
         assert f"export function {fn}" in src, fn
     validate = _js_function(src, "export function validateScrubForm")
     assert 'rehideHiddenMessage("ocr_failed")' in validate, validate
@@ -264,7 +265,7 @@ def test_partial_and_total_failure_are_different_messages():
     src = (JS / "scrub.ts").read_text()
     fn = _js_function(src, "const recognizeEvent")
     assert "notePartialOcrFailure()" in fn, fn
-    assert "gainedText" in fn, fn
+    assert "producedText" in fn, fn
     form = _form_source()
     for name in ("noteOcrFailure", "notePartialOcrFailure", "clearOcrFailure"):
         assert f"export function {name}" in form, name
@@ -293,3 +294,35 @@ def test_partial_failure_message_element_exists():
         / "scrub.html"
     ).read_text()
     assert 'id="ocr_partial"' in tpl
+
+
+def test_a_superseded_batch_cannot_append_its_text():
+    """Guarding only the verdict is not enough. recognize() invokes its
+    callback after async OCR work, so passing addText straight through let a
+    superseded batch write the OLD document's text into denial_text long
+    after the user picked different files, with nothing on screen explaining
+    where it came from (CodeRabbit, PR 988)."""
+    fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+    # The raw appender must not be handed to recognize().
+    assert not re.search(r"recognize\(\s*file\s*,\s*addText\s*\)", fn), fn
+    assert re.search(r"recognize\(\s*file\s*,\s*addTextForThisSelection\s*\)", fn), fn
+    # ...and that wrapper drops writes once it is no longer the current pick.
+    wrapper = fn[fn.index("addTextForThisSelection = ") :]
+    wrapper = wrapper[: wrapper.index("beginOcr()")]
+    assert "selection !== latestOcrSelection" in wrapper, wrapper
+    assert wrapper.index("selection !== latestOcrSelection") < wrapper.index(
+        "addText(text)"
+    ), wrapper
+
+
+def test_ocr_output_is_counted_separately_from_user_typing():
+    """Measuring the textarea before and after counts the USER's keystrokes.
+    Someone typing while a doomed batch ran therefore looked like OCR had
+    produced something: it reported PARTIAL failure -- wrong -- and re-posted
+    a message their typing had just cleared (CodeRabbit, PR 988)."""
+    fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+    # Counting happens where OCR hands text over, not by reading the DOM.
+    assert re.search(r"ocrChars\s*\+=", fn), fn
+    assert "denialTextLength" not in fn, fn
+    # And nothing reads the textarea to decide the verdict.
+    assert not re.search(r"denial_text[^\n]*\.value", fn), fn

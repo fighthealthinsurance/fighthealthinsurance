@@ -8,7 +8,6 @@ import {
   addText,
   beginOcr,
   clearOcrFailure,
-  denialTextLength,
   endOcr,
   hideErrorMessages,
   notePartialOcrFailure,
@@ -78,8 +77,26 @@ const recognizeEvent = async function (evt: Event) {
   // A fresh selection replaces the previous verdict: the last attempt having
   // failed says nothing about this one.
   clearOcrFailure();
-  const before = denialTextLength();
   let failures = 0;
+  let ocrChars = 0;
+
+  // Guard the CALLBACK, not just the verdict. recognize() invokes this after
+  // async OCR work, so a superseded batch could still append its text into
+  // denial_text long after the user picked different files -- they would get
+  // the old document's text back with no way to know why.
+  //
+  // Counting here also keeps the verdict honest about who produced what.
+  // Measuring the textarea before and after instead would count the USER's
+  // typing: someone typing while a doomed batch runs made it look like OCR
+  // had produced something, which reported partial success and re-posted a
+  // message their typing had just cleared.
+  const addTextForThisSelection = (text: string): void => {
+    if (selection !== latestOcrSelection) {
+      return;
+    }
+    ocrChars += text.trim().length;
+    addText(text);
+  };
 
   beginOcr();
   try {
@@ -89,7 +106,7 @@ const recognizeEvent = async function (evt: Event) {
       // outside, one unreadable page abandoned every page after it and the
       // user was never told which -- or that anything had gone wrong at all.
       try {
-        await recognize(file, addText);
+        await recognize(file, addTextForThisSelection);
       } catch (error) {
         failures += 1;
         // The filename can carry the patient's name; keep it out of logs.
@@ -108,13 +125,13 @@ const recognizeEvent = async function (evt: Event) {
   // "Threw" is not the only failure. Every engine can return cleanly and
   // still yield nothing for a photo too blurry to read, which looks
   // identical to the user: an empty box under a form that says a file is
-  // enough. Treat "no new text" as a failure too.
-  const gainedText = denialTextLength() > before;
-  if (failures > 0 && gainedText) {
+  // enough. Treat "produced no text" as a failure too.
+  const producedText = ocrChars > 0;
+  if (failures > 0 && producedText) {
     // Some pages read and some did not. Saying "we couldn't read your file"
     // here would be plainly false with their text sitting right below it.
     notePartialOcrFailure();
-  } else if (failures > 0 || !gainedText) {
+  } else if (failures > 0 || !producedText) {
     noteOcrFailure();
   }
 };

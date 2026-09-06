@@ -103,13 +103,6 @@ export function clearOcrFailure(): void {
   rehideHiddenMessage("ocr_partial");
 }
 
-// The length of what we have so far, so the caller can tell "the engines
-// ran without throwing" from "the engines actually produced text".
-export function denialTextLength(): number {
-  const input = document.getElementById("denial_text") as HTMLTextAreaElement | null;
-  return input ? input.value.trim().length : 0;
-}
-
 export function validateScrubForm(event: Event): void {
   // Listener is bound to the <form>, so currentTarget is always the form
   const form = event.currentTarget as HTMLFormElement;
