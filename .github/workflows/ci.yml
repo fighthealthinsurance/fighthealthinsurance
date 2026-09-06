@@ -44,7 +44,10 @@ jobs:
           files=$(git diff --name-only "$base"...HEAD)
           echo "changed files:"; echo "$files" | sed 's/^/  /'
           # Paths that cannot affect a rendered page or a browser interaction.
-          irrelevant='^(k8s/|charts/|docs/|scripts/|\.github/|.*\.md$|mypy\.ini$|\.gitignore$)'
+          # NOT in this list on purpose: .github/ . A change to CI config is
+          # exactly when you want the expensive job to run -- otherwise a PR
+          # editing the Selenium job cannot validate itself.
+          irrelevant='^(k8s/|charts/|docs/|scripts/|.*\.md$|mypy\.ini$|\.gitignore$)'
           if [ -z "$files" ] || echo "$files" | grep -qvE "$irrelevant"; then
             echo "ui=true" >> "$GITHUB_OUTPUT"
           else
