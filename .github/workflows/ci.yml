@@ -14,6 +14,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Selenium is by far the slowest check (~12 min against 40s-7min for
+  # everything else): it installs texlive, tesseract and pandoc, then drives a
+  # real browser through 97 tests. Most of that cost is wasted on changes it
+  # cannot possibly exercise -- a k8s manifest, a markdown file, a mypy
+  # setting. This job decides whether it needs to run at all.
+  #
+  # DENY-list, not an allow-list: anything not explicitly listed as irrelevant
+  # runs Selenium. Being wrong in that direction costs 12 minutes; being wrong
+  # the other way ships a broken form (a client-side gate regression was caught
+  # by this suite and nothing else).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        run: |
+          set -uo pipefail
+          # FAIL-SAFE: this script must never leave ui unset or fail. If the
+          # filter itself breaks, "skipped" would satisfy a required Selenium
+          # check and merge unverified code -- so any problem runs the suite
+          # (external review).
+          run_it() { echo "ui=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            run_it   # push to main, merge_group, anything else
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          [ -n "$base" ] || run_it
+          # --no-renames: with rename detection a file moved INTO a denied
+          # directory is reported only by its destination, so its removal from
+          # a live path goes unseen. Report both sides instead.
+          files=$(git diff --no-renames --name-only "$base"...HEAD) || run_it
+          echo "changed files:"; echo "$files" | sed 's/^/  /'
+          [ -n "$files" ] || run_it
+          # Paths that cannot reach a browser. Narrow on purpose:
+          #  - scripts/ is NOT here: a build script can change the JS bundle.
+          #  - .github/ is NOT here: a CI change should exercise the job it edits.
+          #  - Markdown is denied only OUTSIDE the app package, since a .md file
+          #    under fighthealthinsurance/ may be fetched and rendered.
+          #  - k8s/ and charts/ change DEPLOYED config (flags, STATIC_URL, CSP).
+          #    That can absolutely change a real page; it cannot change the page
+          #    this suite renders, which runs against a local server.
+          irrelevant='^(k8s/|charts/|docs/[^/]*\.md$|[^/]*\.md$|mypy\.ini$|\.gitignore$)'
+          if echo "$files" | grep -qvE "$irrelevant"; then
+            run_it
+          fi
+          echo "ui=false" >> "$GITHUB_OUTPUT"
+          echo "Only Selenium-irrelevant paths changed; skipping the browser suite."
+
   style:
     runs-on: ubuntu-latest
     steps:
@@ -168,6 +221,8 @@ jobs:
 
   tests-selenium:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     strategy:
       fail-fast: false
       matrix:
