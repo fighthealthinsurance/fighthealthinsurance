@@ -56,12 +56,35 @@ spec:
         # app's own metrics -- a suspended schedule or a Job that never
         # completes produces no series at all. kube-state-metrics is the only
         # producer that can see it.
-        # VERIFY-LIVE: metric and label shape vary across kube-state-metrics
-        # versions (kube_cronjob_status_last_successful_time is v2.x); confirm
-        # against the live Prometheus before relying on this alert.
+        #
+        # VERIFIED LIVE 2026-09-06 against this cluster's Prometheus, and the
+        # check found a hole: kube-state-metrics emits NO
+        # kube_cronjob_status_last_successful_time series at all for a CronJob
+        # that has never once succeeded. `time() - <absent>` is an empty
+        # vector, so the single-armed expression could not fire for the one
+        # failure mode it most needed to catch -- a relay broken from birth.
+        # That is exactly what happened: the relay OOMKilled on every run for
+        # six hours and this alert stayed silent throughout.
+        #
+        # So the second arm covers never-succeeded explicitly. Notes on it:
+        #  * `and on()` is required. absent() yields ONLY the labels named in
+        #    its matcher, while kube_cronjob_created carries namespace/job/
+        #    instance, so a bare `and` matches no label set and is silently
+        #    empty -- the same class of bug as the original expression.
+        #  * The kube_cronjob_created guard keeps this from firing for a
+        #    CronJob that does not exist (a rename, or this rule copied to a
+        #    cluster without the relay): absent() is 1 there too, but
+        #    kube_cronjob_created is empty, so `and on()` drops it.
+        #  * Both selectors pin namespace as well as cronjob. absent() over an
+        #    unpinned matcher would be satisfied by a same-named CronJob in any
+        #    other namespace, which is the one way this arm could fail open.
         - alert: FHIIntakeOutboxRelayNotSucceeding
           expr: >-
-            time() - kube_cronjob_status_last_successful_time{cronjob="fhi-intake-outbox-relay"} > 600
+            (time() - kube_cronjob_status_last_successful_time{cronjob="fhi-intake-outbox-relay",namespace="totallylegitco"} > 600)
+            or
+            ((absent(kube_cronjob_status_last_successful_time{cronjob="fhi-intake-outbox-relay",namespace="totallylegitco"}) == 1)
+             and on()
+             ((time() - kube_cronjob_created{cronjob="fhi-intake-outbox-relay",namespace="totallylegitco"}) > 600))
           for: 10m
           labels:
             severity: warning
@@ -70,4 +93,14 @@ spec:
             description: >-
               The relay CronJob runs every minute. No successful completion in
               over ten minutes means the schedule is suspended, the Job is
-              failing, or one run is hung past its activeDeadlineSeconds.
+              failing, or one run is hung past its activeDeadlineSeconds --
+              or it has never succeeded at all since being created, which is
+              what the second arm of this expression catches. Read the success
+              time explicitly -- the default `kubectl get cronjob` columns show
+              LAST SCHEDULE, which keeps advancing every minute even while
+              every single run dies, so it looks healthy during exactly this
+              failure:
+                kubectl -n totallylegitco get cronjob fhi-intake-outbox-relay \
+                  -o jsonpath='{.status.lastSuccessfulTime}'
+              An empty result means it has never succeeded. Then check the most
+              recent Job pod for an OOMKilled (exit 137) termination.

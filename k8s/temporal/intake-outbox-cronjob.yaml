@@ -56,11 +56,23 @@ spec:
                   drop: ["ALL"]
                 seccompProfile:
                   type: RuntimeDefault
+              # Sized from a measurement, not a guess. Peak RSS of
+              # `manage.py deliver_intake_events` measured in a live web pod
+              # was ~1072 MiB. That run was on the inert path (the intake flag
+              # was off, so it delivered nothing), which makes it a floor, not
+              # a ceiling: it is the Django/ML import footprint every pod on
+              # this image pays before doing any work at all. That floor alone
+              # was already double the old 512Mi limit, which is why the relay
+              # was OOMKilled ~4s in, during import, before ever reaching
+              # deliver_intake_events. Matched to fhi-fax-worker and
+              # fhi-appeal-worker (1536Mi / 3Gi), the two workloads that run
+              # this same image as a long-lived process, so the limit carries
+              # real headroom over the import floor once delivery does work.
               resources:
                 requests:
                   cpu: "100m"
-                  memory: 256Mi
+                  memory: 1536Mi
                 limits:
                   cpu: "500m"
-                  memory: 512Mi
+                  memory: 3Gi
           restartPolicy: Never
