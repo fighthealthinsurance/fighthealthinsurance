@@ -58,6 +58,9 @@ from fighthealthinsurance.ml.ml_models import (
     RateLimitedRemoteOpenLike,
     RemoteModel,
     RemoteModelLike,
+    _error_body_of,
+    _error_text_indicates_missing_model,
+    begin_probe_observations,
     candidate_model_backends,
 )
 from fighthealthinsurance.ml.ml_router import MLRouter
@@ -456,17 +459,62 @@ def enumerate_backend_checks(
 # --- Invocation --------------------------------------------------------------
 
 
+def _consume_transport_error(observations: Optional[dict]) -> str:
+    """The transport failure this probe observed, or "".
+
+    ``observations`` is the dict handed back by ``begin_probe_observations``:
+    private to this probe, so a concurrent production request through the same
+    backend instance cannot write into it.
+    """
+    if not observations:
+        return ""
+    # One _infer can try several endpoints. A note proves SOME leg could not
+    # reach its endpoint; it does not prove none of them did. If any leg got an
+    # HTTP response, the empty result came from a backend that answered, which
+    # is a malformed response -- calling it "no endpoint reachable" would send
+    # the operator to the network layer for a model fault.
+    if observations.get("endpoint_answered"):
+        return ""
+    note = observations.get("transport_error")
+    return str(note) if note else ""
+
+
 def _categorize_http_error(e: aiohttp.ClientResponseError) -> Tuple[str, str]:
-    detail = sanitize_error(f"HTTP {e.status} {e.message or ''}")
+    """Categorize an HTTP failure, reporting what the PROVIDER actually said.
+
+    ``e.message`` is only the HTTP reason phrase ("Bad Request"). The transport
+    already reads the response body and attaches it (``_attach_error_body``),
+    so the operator-facing detail here uses that body: the difference is
+    "HTTP 400 Bad Request" versus "Your credit balance is too low to access
+    the Anthropic API" -- the first is unactionable, the second names the fix.
+    A real incident was diagnosed by hand for exactly this reason.
+
+    The body also repairs the 400 branch below. It matched
+    ``"model" in e.message``, but e.message is the reason phrase and never
+    contains "model", so the branch was unreachable: every provider that
+    rejects an unknown model id with a 400 rather than a 404 landed in
+    FAIL_OTHER. It now matches on the body via the shared
+    ``_error_text_indicates_missing_model``, which requires a not-found
+    phrasing as well as the word "model" -- so a body that merely mentions a
+    model in passing ("temperature is not supported for this model", or a
+    quota message) does not get mislabelled MODEL_NOT_FOUND.
+    """
+    body = _error_body_of(e)
+    reason = e.message or ""
+    # Body first: it is the part a human acts on. sanitize_error() redacts and
+    # length-caps, so a huge HTML error page cannot reach the report whole.
+    detail = sanitize_error(
+        f"HTTP {e.status} {reason}" + (f" -- {body}" if body else "")
+    )
     if e.status in (401, 403):
         return CATEGORY_AUTH, detail
     if e.status == 404:
         return CATEGORY_MODEL_NOT_FOUND, detail
     if e.status in (429, 402):
         return CATEGORY_RATE_LIMITED, detail
-    if e.status == 400 and "model" in (e.message or "").lower():
-        # Providers that reject unknown model ids with a 400 mentioning the
-        # model field (rather than a clean 404).
+    if e.status == 400 and _error_text_indicates_missing_model(body):
+        # Providers that reject unknown model ids with a 400 naming the model
+        # (rather than a clean 404).
         return CATEGORY_MODEL_NOT_FOUND, detail
     if 500 <= e.status < 600:
         return CATEGORY_NETWORK, detail
@@ -496,6 +544,10 @@ async def check_backend(
         except Exception:  # rate limiter not initialized — proceed to probe
             pass
 
+    # Record this probe's transport observations somewhere only this probe can
+    # see, so concurrent production traffic through the same shared backend
+    # instance cannot change the verdict.
+    observations = begin_probe_observations()
     start = time.monotonic()
     try:
         text = await asyncio.wait_for(
@@ -525,6 +577,17 @@ async def check_backend(
 
     result.latency_ms = int((time.monotonic() - start) * 1000)
     if text is None or not str(text).strip():
+        # A backend whose every endpoint refused or timed out returns None
+        # here rather than raising: the transport swallows MODEL_TRANSPORT
+        # errors and falls through to its backup, and when the backup fails
+        # too the caller just sees None. Reporting that as "malformed
+        # response" points the operator at the model when the truth is that
+        # nothing answered the socket. Ask the transport what it last saw.
+        transport = _consume_transport_error(observations)
+        if transport:
+            result.category = CATEGORY_NETWORK
+            result.error = sanitize_error(f"no endpoint reachable -- {transport}")
+            return result
         result.category = CATEGORY_MALFORMED_RESPONSE
         result.error = "empty or no text in provider response"
         return result
