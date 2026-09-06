@@ -54,14 +54,13 @@ from loguru import logger
 
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml.ml_models import (
-    ENDPOINT_ANSWERED_ATTR,
-    LAST_TRANSPORT_ERROR_ATTR,
     ModelDescription,
     RateLimitedRemoteOpenLike,
     RemoteModel,
     RemoteModelLike,
     _error_body_of,
     _error_text_indicates_missing_model,
+    begin_probe_observations,
     candidate_model_backends,
 )
 from fighthealthinsurance.ml.ml_router import MLRouter
@@ -460,40 +459,23 @@ def enumerate_backend_checks(
 # --- Invocation --------------------------------------------------------------
 
 
-def _arm_transport_probe(instance: RemoteModelLike) -> None:
-    """Clear the transport's last-error note before probing ``instance``.
+def _consume_transport_error(observations: Optional[dict]) -> str:
+    """The transport failure this probe observed, or "".
 
-    Best-effort: a backend that does not carry the attribute (a stub, or a
-    non-RemoteOpenLike implementation) simply has no note to read later, and
-    the caller falls back to the malformed-response reading it used before.
+    ``observations`` is the dict handed back by ``begin_probe_observations``:
+    private to this probe, so a concurrent production request through the same
+    backend instance cannot write into it.
     """
-    try:
-        setattr(instance, LAST_TRANSPORT_ERROR_ATTR, None)
-        setattr(instance, ENDPOINT_ANSWERED_ATTR, False)
-    except Exception:
-        pass
-
-
-def _consume_transport_error(instance: RemoteModelLike) -> str:
-    """The transport failure recorded during this probe, or "".
-
-    Read-and-clear, so a note can never leak into a later probe of the same
-    instance.
-    """
-    try:
-        note = getattr(instance, LAST_TRANSPORT_ERROR_ATTR, None)
-        answered = getattr(instance, ENDPOINT_ANSWERED_ATTR, False)
-        setattr(instance, LAST_TRANSPORT_ERROR_ATTR, None)
-        setattr(instance, ENDPOINT_ANSWERED_ATTR, False)
-    except Exception:
+    if not observations:
         return ""
     # One _infer can try several endpoints. A note proves SOME leg could not
     # reach its endpoint; it does not prove none of them did. If any leg got an
     # HTTP response, the empty result came from a backend that answered, which
     # is a malformed response -- calling it "no endpoint reachable" would send
     # the operator to the network layer for a model fault.
-    if answered:
+    if observations.get("endpoint_answered"):
         return ""
+    note = observations.get("transport_error")
     return str(note) if note else ""
 
 
@@ -562,9 +544,10 @@ async def check_backend(
         except Exception:  # rate limiter not initialized — proceed to probe
             pass
 
-    # Clear any transport note left by an earlier call so a stale failure
-    # cannot be read as this probe's.
-    _arm_transport_probe(instance)
+    # Record this probe's transport observations somewhere only this probe can
+    # see, so concurrent production traffic through the same shared backend
+    # instance cannot change the verdict.
+    observations = begin_probe_observations()
     start = time.monotonic()
     try:
         text = await asyncio.wait_for(
@@ -600,7 +583,7 @@ async def check_backend(
         # too the caller just sees None. Reporting that as "malformed
         # response" points the operator at the model when the truth is that
         # nothing answered the socket. Ask the transport what it last saw.
-        transport = _consume_transport_error(instance)
+        transport = _consume_transport_error(observations)
         if transport:
             result.category = CATEGORY_NETWORK
             result.error = sanitize_error(f"no endpoint reachable -- {transport}")

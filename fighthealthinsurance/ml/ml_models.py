@@ -415,20 +415,66 @@ def _attach_error_body(exc: aiohttp.ClientResponseError, body: str) -> None:
     setattr(exc, "fhi_response_body", body)
 
 
-# Attributes a probe reads to tell "no endpoint answered" from "an endpoint
-# answered with nothing". Both are set on the backend INSTANCE and are only
-# meaningful to a caller that armed (cleared) them first -- normal inference
-# never reads them.
+# Per-probe transport observations, for callers (model_health_check) that must
+# tell "no endpoint answered" from "an endpoint answered with nothing".
 #
-# Two are needed, not one. A single _infer can try several endpoints (dual-mode
-# races primary against backup, then falls back sequentially), so a note left
-# by ONE failing leg does not mean nothing answered: the other leg may have
-# returned a 200 with an empty completion, which is a malformed response, not a
-# network failure. ENDPOINT_ANSWERED_ATTR records that some leg got an HTTP
-# response, and it wins -- so the verdict does not depend on which leg finished
-# last.
-LAST_TRANSPORT_ERROR_ATTR = "fhi_last_transport_error"
-ENDPOINT_ANSWERED_ATTR = "fhi_endpoint_answered"
+# Two observations are needed, not one. A single _infer can try several
+# endpoints -- dual-mode races primary against backup, then falls back
+# sequentially -- so a failure noted by ONE leg does not mean nothing answered:
+# another leg may have returned a 200 with an empty completion, which is a
+# malformed response, not a network failure. "endpoint_answered" records that
+# some leg got an HTTP response and it wins, so the verdict does not depend on
+# which leg finished last.
+#
+# This lives in a ContextVar holding a MUTABLE dict, not on the backend
+# instance. The instance is the router's registered singleton, shared with
+# every production request (see model_health_check._registered_instance --
+# probing the real client object is the point), so instance attributes let
+# concurrent inference corrupt a probe's verdict in both directions: a
+# production transport failure turns an empty probe into FAIL_NETWORK, and a
+# production HTTP response hides an unreachable probe as
+# FAIL_MALFORMED_RESPONSE (CodeRabbit, PR 987).
+#
+# A ContextVar alone would not work: _infer runs its dual-mode legs as Tasks,
+# and a Task gets a COPY of the context, so a plain .set() inside a leg is
+# invisible to the probe that started it. Holding a dict and MUTATING it works
+# because the copy carries the same object reference.
+#
+# Inference outside a probe sees None and records nothing, which is the
+# isolation: production traffic cannot write here at all, and two concurrent
+# probes each own a separate dict.
+_PROBE_OBSERVATIONS: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "fhi_probe_observations", default=None
+)
+
+
+def begin_probe_observations() -> dict:
+    """Start recording transport observations for the current probe.
+
+    Returns the dict the probe reads afterwards; only the caller holding it
+    can see what this probe observed.
+
+    No teardown call exists on purpose. run_checks_async dispatches probes
+    through asyncio.gather, which wraps each in a Task, and a Task gets its own
+    copy of the context -- so one probe's binding is invisible to every other
+    and dies with the Task. A direct call re-binds here before it reads, so a
+    stale dict can never be mistaken for a fresh observation either.
+    """
+    observations: dict = {"transport_error": None, "endpoint_answered": False}
+    _PROBE_OBSERVATIONS.set(observations)
+    return observations
+
+
+def _note_probe_transport_error(detail: str) -> None:
+    observations = _PROBE_OBSERVATIONS.get()
+    if observations is not None:
+        observations["transport_error"] = detail
+
+
+def _note_probe_endpoint_answered() -> None:
+    observations = _PROBE_OBSERVATIONS.get()
+    if observations is not None:
+        observations["endpoint_answered"] = True
 
 
 def _error_body_of(exc: aiohttp.ClientResponseError) -> str:
@@ -3309,8 +3355,8 @@ class RemoteOpenLike(RemoteModel):
                         # An endpoint answered -- whatever the status. Probes
                         # use this to keep one leg's transport failure from
                         # being read as "nothing answered" when another leg
-                        # did (see ENDPOINT_ANSWERED_ATTR).
-                        setattr(self, ENDPOINT_ANSWERED_ATTR, True)
+                        # did (see _PROBE_OBSERVATIONS).
+                        _note_probe_endpoint_answered()
                         response_body = await _read_error_body(response)
                         # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                         # This allows subclasses to catch and handle specific errors like 429
@@ -3479,7 +3525,7 @@ class RemoteOpenLike(RemoteModel):
             # note is read-and-cleared by the probe; normal inference never
             # looks at it. Strike accounting stays gated: a probe must not
             # push a backend into the production cooldown.
-            setattr(self, LAST_TRANSPORT_ERROR_ATTR, described)
+            _note_probe_transport_error(described)
             if not raise_http_errors:
                 self._note_transport_failure(api_base, model, described)
             return None
@@ -4528,7 +4574,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             # genuine transport errors: a blanket note would relabel an
             # ordinary bug as a network failure.
             if isinstance(e, MODEL_TRANSPORT_ERRORS):
-                setattr(self, LAST_TRANSPORT_ERROR_ATTR, described)
+                _note_probe_transport_error(described)
             return None
 
     async def _do_infer(

@@ -21,8 +21,9 @@ from django.core.management import call_command
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
 from fighthealthinsurance.ml.ml_models import (
-    LAST_TRANSPORT_ERROR_ATTR,
     _attach_error_body,
+    _note_probe_transport_error,
+    begin_probe_observations,
 )
 
 
@@ -99,7 +100,7 @@ class _UnreachableBackend(_StubBackend):
         if self._fail_times is None or self._fail_times > 0:
             if self._fail_times is not None:
                 self._fail_times -= 1
-            setattr(self, LAST_TRANSPORT_ERROR_ATTR, self._detail)
+            _note_probe_transport_error(self._detail)
         return None
 
 
@@ -291,11 +292,11 @@ class TestCheckBackendCategorization:
         second = asyncio.run(mhc.check_backend(_result(), backend, timeout=5.0))
         assert second.category == mhc.CATEGORY_MALFORMED_RESPONSE
 
-    def test_stale_transport_note_is_cleared_before_the_probe(self):
-        """A note left on the instance by earlier production traffic must not
-        be read as this probe's result."""
+    def test_a_note_from_before_the_probe_is_not_read_as_this_probe(self):
+        """Observations recorded before check_backend armed its own must not
+        be mistaken for this probe's."""
+        _note_probe_transport_error("stale failure from hours ago")
         backend = _StubBackend(None)
-        setattr(backend, LAST_TRANSPORT_ERROR_ATTR, "stale failure from hours ago")
         res = asyncio.run(mhc.check_backend(_result(), backend, timeout=5.0))
         assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE
 
@@ -768,13 +769,14 @@ class TestRealTransportPlumbing:
         transport, and under raise_http_errors, or the probe cannot tell an
         unreachable backend from an empty answer."""
         model = self._model()
+        observations = begin_probe_observations()
         err = aiohttp.ConnectionTimeoutError("Connection timeout to host")
         with patch.object(aiohttp.ClientSession, "post", side_effect=err):
             result = await model._infer(
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
         assert result is None
-        assert "timeout" in str(getattr(model, LAST_TRANSPORT_ERROR_ATTR, "")).lower()
+        assert "timeout" in str(observations.get("transport_error") or "").lower()
         # A probe must never push a backend into the production cooldown.
         assert model._transport_strikes == {}
 
@@ -798,12 +800,66 @@ class TestRealTransportPlumbing:
 
         def _post(*a, **k):
             # The note has to be written DURING the probe, the way a failing
-            # leg writes it -- check_backend arms (clears) it beforehand, so a
-            # note planted before the call proves nothing.
-            setattr(model, LAST_TRANSPORT_ERROR_ATTR, "connection refused")
+            # leg writes it -- check_backend arms its own observations first,
+            # so a note recorded before the call proves nothing.
+            _note_probe_transport_error("connection refused")
             return ctx()
 
         with patch.object(aiohttp.ClientSession, "post", _post):
             res = await mhc.check_backend(_result(), model, timeout=10.0)
         assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE
         assert "no endpoint reachable" not in (res.error or "")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_production_traffic_cannot_change_a_probe_verdict(self):
+        """The probe deliberately uses the router's REGISTERED singleton, so
+        it exercises the client real requests use. That instance is shared, so
+        recording transport observations on it let ordinary traffic corrupt a
+        verdict in both directions: a production connection failure turning an
+        empty probe into FAIL_NETWORK, and a production HTTP response hiding an
+        unreachable probe as FAIL_MALFORMED_RESPONSE (CodeRabbit, PR 987).
+
+        Observations live in a ContextVar-held dict instead, so inference
+        outside a probe records nothing. Here one instance serves an empty 200
+        to the probe while a concurrent inference through the SAME instance
+        fails at the transport: the probe must still say MALFORMED.
+        """
+        model = self._model()
+        empty_ok = self._response(200, "")
+        err = aiohttp.ConnectionTimeoutError("Connection timeout to host")
+        started = asyncio.Event()
+
+        def _post(*a, **k):
+            # The probe's own call answers 200-with-no-completion.
+            return empty_ok()
+
+        async def noisy_neighbour():
+            # Ordinary inference, no probe armed: raise_http_errors=False is
+            # the production path, and it must leave no trace a probe reads.
+            await started.wait()
+            with patch.object(aiohttp.ClientSession, "post", side_effect=err):
+                await model._infer(system_prompts=["sys"], prompt="hi")
+
+        async def probe():
+            started.set()
+            with patch.object(aiohttp.ClientSession, "post", _post):
+                return await mhc.check_backend(_result(), model, timeout=10.0)
+
+        neighbour = asyncio.create_task(noisy_neighbour())
+        res = await probe()
+        await neighbour
+
+        assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE, res.error
+        assert "no endpoint reachable" not in (res.error or "")
+
+    @pytest.mark.asyncio
+    async def test_inference_outside_a_probe_records_nothing(self):
+        """The isolation stated plainly: with no probe armed, a transport
+        failure writes nowhere, so nothing can leak into a later probe."""
+        from fighthealthinsurance.ml.ml_models import _PROBE_OBSERVATIONS
+
+        model = self._model()
+        err = aiohttp.ConnectionTimeoutError("Connection timeout to host")
+        with patch.object(aiohttp.ClientSession, "post", side_effect=err):
+            await model._infer(system_prompts=["sys"], prompt="hi")
+        assert _PROBE_OBSERVATIONS.get() is None
