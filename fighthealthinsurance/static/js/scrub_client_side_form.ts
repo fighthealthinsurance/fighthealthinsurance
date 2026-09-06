@@ -39,7 +39,7 @@ export function hideErrorMessages(event: Event): void {
     }
     rehideHiddenMessage("email_error");
   }
-  if (form.denial_text.value.length > 1) {
+  if (form.denial_text.value.trim().length > 0) {
     const denialTextLabel = document.getElementById("denial_text_label");
     if (denialTextLabel) {
       denialTextLabel.style.color = "";
@@ -47,6 +47,32 @@ export function hideErrorMessages(event: Event): void {
     rehideHiddenMessage("need_denial");
   }
 }
+// OCR runs asynchronously after a file is chosen, and for a scanned PDF it
+// renders every page and runs tesseract -- seconds to minutes. Nothing used to
+// stop the user submitting during that window, so they got a server-side
+// "denial_text: This field is required" while the page was visibly still
+// working. Track it so the submit gate can say "still reading your file"
+// instead.
+let ocrInFlight = 0;
+
+export function beginOcr(): void {
+  ocrInFlight += 1;
+}
+
+export function endOcr(): void {
+  ocrInFlight = Math.max(0, ocrInFlight - 1);
+  if (ocrInFlight === 0) {
+    // The gate only re-evaluates on submit, so without this the "still
+    // reading your file" message stays on screen after the file has
+    // finished being read (external review).
+    rehideHiddenMessage("ocr_in_progress");
+  }
+}
+
+export function isOcrInFlight(): boolean {
+  return ocrInFlight > 0;
+}
+
 export function validateScrubForm(event: Event): void {
   // Listener is bound to the <form>, so currentTarget is always the form
   const form = event.currentTarget as HTMLFormElement;
@@ -77,7 +103,7 @@ export function validateScrubForm(event: Event): void {
     }
     rehideHiddenMessage("email_error");
   }
-  if (form.denial_text.value.length < 1) {
+  if (form.denial_text.value.trim().length < 1) {
     showHiddenMessage("need_denial");
     const denialTextLabel = document.getElementById("denial_text_label");
     if (denialTextLabel) {
@@ -91,7 +117,33 @@ export function validateScrubForm(event: Event): void {
     rehideHiddenMessage("need_denial");
   }
 
-  if (form.pii.checked && form.privacy.checked && form.email.value.length > 0) {
+  // Every field validated above must also GATE the submit. This condition
+  // used to check only pii/privacy/email, so a form with an empty
+  // denial_text displayed "need_denial" and then submitted regardless --
+  // the server rejected it with "denial_text: This field is required" and
+  // the user saw a contradiction. personalonly and tos were validated and
+  // ungated the same way.
+  const denialTextReady = form.denial_text.value.trim().length > 0;
+  if (!denialTextReady && isOcrInFlight()) {
+    // Distinguish "you have not given us the letter" from "we are still
+    // reading the file you just gave us".
+    showHiddenMessage("ocr_in_progress");
+  } else {
+    rehideHiddenMessage("ocr_in_progress");
+  }
+  // Gate on exactly what the SERVER requires: forms/__init__.py marks pii,
+  // tos and privacy required=True, plus email and denial_text. personalonly
+  // is deliberately NOT here -- it is an optional checkbox that the
+  // agree_chk_error branch above happens to mention, and gating on it made
+  // the client stricter than the server, blocking a submission the server
+  // would have accepted (caught by the Selenium suite).
+  if (
+    form.pii.checked &&
+    form.privacy.checked &&
+    form.tos.checked &&
+    form.email.value.length > 0 &&
+    denialTextReady
+  ) {
     rehideHiddenMessage("agree_chk_error");
     rehideHiddenMessage("pii_error");
     rehideHiddenMessage("email_error");
