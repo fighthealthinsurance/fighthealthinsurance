@@ -725,8 +725,12 @@ class TestClaimExpiry(TransactionTestCase):
     never produce a duplicate ack."""
 
     def test_claim_ttl_outlives_the_relay_run(self):
-        assert intake_outbox.CLAIM_TTL_SECONDS > intake_outbox.DEFAULT_TIME_BUDGET_SECONDS
-        assert intake_outbox.CLAIM_TTL_SECONDS >= 600  # Job activeDeadlineSeconds 300 + margin
+        assert (
+            intake_outbox.CLAIM_TTL_SECONDS > intake_outbox.DEFAULT_TIME_BUDGET_SECONDS
+        )
+        assert (
+            intake_outbox.CLAIM_TTL_SECONDS >= 600
+        )  # Job activeDeadlineSeconds 300 + margin
 
     def test_expired_claim_with_the_right_token_neither_delivers_nor_acks(self):
         from asgiref.sync import async_to_sync
@@ -753,7 +757,7 @@ class TestClaimExpiry(TransactionTestCase):
         denial = _make_denial(8142)
         row = _pending(denial, intake_outbox.INTAKE_STARTED)
         claims = intake_outbox.claim_batch()
-        (pk, token) = claims[0]
+        pk, token = claims[0]
         short = timezone.now() + datetime.timedelta(seconds=30)
         IntakeJourneyEvent.objects.filter(pk=pk).update(claimed_until=short)
         seen = {}
@@ -765,8 +769,9 @@ class TestClaimExpiry(TransactionTestCase):
                 .afirst()
             )
 
-        with patch(_CLIENT, AsyncMock(return_value=_client())), patch.object(
-            intake_outbox, "_acall", observe
+        with (
+            patch(_CLIENT, AsyncMock(return_value=_client())),
+            patch.object(intake_outbox, "_acall", observe),
         ):
             counts = async_to_sync(intake_outbox.adeliver_claimed)(claims)
         assert counts["delivered"] == 1
@@ -794,7 +799,10 @@ class TestClaimExpiry(TransactionTestCase):
         assert stale_counts["lost_claim"] == 1 and stale_counts["delivered"] == 0
         assert fresh_counts["delivered"] == 1
         assert client.start_workflow.await_count == 1
-        assert IntakeJourneyEvent.objects.filter(pk=row.pk, acked_at__isnull=False).count() == 1
+        assert (
+            IntakeJourneyEvent.objects.filter(pk=row.pk, acked_at__isnull=False).count()
+            == 1
+        )
 
 
 @override_settings(**_INTAKE_ON)
@@ -827,7 +835,10 @@ class TestInlineDeliveryRespectsClaims(TransactionTestCase):
         acall = AsyncMock(return_value=None)
         with patch.object(intake_outbox, "_acall", acall):
             assert async_to_sync(intake_outbox.adeliver)(row) is True
-        assert acall.await_args.kwargs["timeout"] == intake_outbox.INLINE_RPC_TIMEOUT_SECONDS
+        assert (
+            acall.await_args.kwargs["timeout"]
+            == intake_outbox.INLINE_RPC_TIMEOUT_SECONDS
+        )
 
 
 class TestRelayDeployment:
@@ -871,7 +882,23 @@ class TestRelayDeployment:
         # that stopped running produces no series at all.
         assert "kube_cronjob_status_last_successful_time" in alerts
         assert 'cronjob="fhi-intake-outbox-relay"' in alerts
-        assert "VERIFY-LIVE" in alerts
+        # This used to require an unresolved VERIFY-LIVE marker, because the
+        # kube-state-metrics shape had never been confirmed against a real
+        # Prometheus. It has been now, and the check found a hole: KSM emits
+        # NO last_successful_time series at all for a CronJob that has never
+        # succeeded, so the original single-armed expression evaluated to an
+        # empty vector and could not fire for a relay broken from birth --
+        # which is exactly what happened, silently, for six hours.
+        #
+        # So the reminder is discharged and these assert the fix instead: the
+        # never-succeeded arm, the created-guard that stops it firing for a
+        # CronJob that does not exist, the `on()` without which the two
+        # vectors share no labels and the arm is silently empty, and the
+        # namespace pin that stops absent() being satisfied elsewhere.
+        assert "absent(kube_cronjob_status_last_successful_time" in alerts
+        assert "kube_cronjob_created" in alerts
+        assert "and on()" in alerts
+        assert 'namespace="totallylegitco"' in alerts
 
     def test_non_positive_time_budget_does_no_relay_work(self):
         """A zero/negative budget defers every claimed row, and each keeps
