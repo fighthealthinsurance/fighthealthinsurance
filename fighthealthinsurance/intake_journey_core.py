@@ -102,7 +102,7 @@ async def _asend_mail(subject: str, body: str, to: str) -> None:
 
 
 async def close_incomplete_journey(hashed_email: str, denial_uuid: str) -> bool:
-    """30 days without completion: the incomplete-form hygiene hook.
+    """CLOSE_AFTER (3 days) without completion: the incomplete-form hygiene hook.
 
     v1 records the closure only; whether closed journeys' rows are
     deleted/anonymized is a separate product decision, so nothing

@@ -5,6 +5,7 @@ import random
 import re
 import functools
 import typing
+from datetime import timedelta
 from typing import TypedDict
 from urllib.parse import quote, urlencode
 
@@ -1782,6 +1783,15 @@ class OCRView(View):
         return "\n".join(texts)
 
 
+# How long the denial a session is already working on stays reusable.
+# Re-POSTing the scrub form (a reload, a back-then-resubmit, a double click)
+# is the SAME denial, not a new one -- without reuse every POST minted a
+# fresh Denial row AND a fresh multi-day intake journey for it. Bounded so
+# that someone returning to the same browser session a day later to start a
+# genuinely different denial still gets a new row.
+DENIAL_SESSION_REUSE_WINDOW = timedelta(hours=24)
+
+
 class InitialProcessView(generic.FormView):
     """
     Initial denial processing view that creates a denial record and begins the appeal flow.
@@ -1833,6 +1843,71 @@ class InitialProcessView(generic.FormView):
 
     def get_success_url(self):
         pass
+
+    def _reusable_session_denial(self, email) -> typing.Optional[models.Denial]:
+        """The in-progress denial this POST should UPDATE instead of duplicating.
+
+        The scrub form has no Post/Redirect/Get, so a reload re-POSTs it; the
+        form also carries no denial id. The session is the only link back to
+        the row the user already started, and returning it here is what keeps
+        one submission == one Denial == one intake journey (a stable uuid
+        makes ``intake-{uuid}`` collide, which Temporal's REJECT_DUPLICATE
+        policy and the outbox's unique (denial, event_type) constraint then
+        turn into no-ops, and skips the duplicate speculative precompute).
+
+        Reuse only when ALL of these hold:
+
+        * the session names a denial and it still exists;
+        * its ``hashed_email`` matches the email on THIS submission -- a
+          stale or shared session must never hand one person's denial to
+          somebody else;
+        * its intake journey has not been completed (no ``FORM_COMPLETED``
+          event); a finished journey means the next submission is a new case;
+        * it was created within ``DENIAL_SESSION_REUSE_WINDOW``.
+
+        Anything else -- including any lookup error -- returns ``None``, which
+        is exactly the previous behaviour (create a fresh denial). Dedupe is
+        an optimisation; it must never block a submission.
+        """
+        session_uuid = self.request.session.get("denial_uuid")
+        if not session_uuid or not email:
+            return None
+        try:
+            denial = models.Denial.objects.filter(uuid=str(session_uuid)).first()
+            if denial is None:
+                return None
+            if denial.hashed_email != models.Denial.get_hashed_email(email):
+                logger.debug(
+                    "Session denial belongs to a different email; creating a new denial"
+                )
+                return None
+            if models.IntakeJourneyEvent.objects.filter(
+                denial=denial,
+                event_type=models.IntakeJourneyEvent.FORM_COMPLETED,
+            ).exists():
+                logger.debug(
+                    f"Denial {denial.denial_id} already completed its intake "
+                    "journey; creating a new denial"
+                )
+                return None
+            # Nullable on rows predating the column, and a row with no
+            # creation time cannot be shown to be recent -- so it isn't.
+            created = denial.created
+            if created is None or (
+                timezone.now() - created > DENIAL_SESSION_REUSE_WINDOW
+            ):
+                logger.debug(
+                    f"Denial {denial.denial_id} is outside the session reuse "
+                    "window; creating a new denial"
+                )
+                return None
+            return denial
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to look up the session denial for reuse; "
+                "falling back to creating a new one"
+            )
+            return None
 
     def form_valid(self, form):
         # Legacy doesn't have denial id
@@ -1901,8 +1976,19 @@ class InitialProcessView(generic.FormView):
         if str(cleaned_data.get("email", "")).strip().lower() == "testing@example.com":
             tracking_info.ip_address = get_client_ip(self.request)
 
+        # Same person, same in-flight submission (reload / back-and-resubmit)
+        # => update the denial they already started rather than minting a
+        # duplicate row plus a duplicate intake journey.
+        existing_denial = self._reusable_session_denial(cleaned_data.get("email"))
+        if existing_denial is not None:
+            logger.debug(
+                f"Reusing in-progress denial {existing_denial.denial_id} "
+                "from the session instead of creating a new one"
+            )
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             tracking_info=tracking_info,
+            denial=existing_denial,
             **cleaned_data,
         )
 

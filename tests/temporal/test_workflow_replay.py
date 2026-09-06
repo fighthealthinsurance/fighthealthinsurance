@@ -1,6 +1,6 @@
 """Replay safety for the long-lived journey workflows (enable gate 10).
 
-``IntakeJourneyWorkflow`` runs for THIRTY DAYS. Any workflow-code change
+``IntakeJourneyWorkflow`` runs for THREE DAYS. Any workflow-code change
 deployed inside that window is replayed against histories written by the old
 code, and a change that alters the sequence of commands a workflow issues
 makes those in-flight runs fail with a non-determinism error -- they do not
@@ -294,7 +294,7 @@ async def test_capture_baseline_histories():
         ]
         for name, workflows, activities, entry, arg in plans:
             # The abandoned journey must NOT be signalled: it runs the nudge
-            # and close timers out, which is the branch the 30-day lifetime
+            # and close timers out, which is the branch the CLOSE_AFTER lifetime
             # actually exercises and the one the completion history misses.
             history = await _capture(
                 env,

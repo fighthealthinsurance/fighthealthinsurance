@@ -5,7 +5,7 @@ run by `../test_workflow_replay.py`.
 
 ## Why
 
-`IntakeJourneyWorkflow` runs for **30 days**. A workflow-code change deployed
+`IntakeJourneyWorkflow` runs for **3 days**. A workflow-code change deployed
 inside that window is replayed against histories written by the old code. If
 the change alters the sequence of commands the workflow issues, in-flight runs
 fail with a non-determinism error — not at deploy time, but later and one at a
