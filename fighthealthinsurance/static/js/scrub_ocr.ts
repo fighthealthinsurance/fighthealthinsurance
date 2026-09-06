@@ -267,31 +267,52 @@ async function getTesseractWorkerRaw(): Promise<Tesseract.Worker> {
   return worker;
 }
 
-// The worker is shared, so it is held here rather than memoized: a wedged one
-// has to be THROWN AWAY, and a memoizer has no way to say that.
-let tesseractWorker: Promise<Tesseract.Worker> | null = null;
-
-function getTesseractWorker(): Promise<Tesseract.Worker> {
-  if (tesseractWorker === null) {
-    tesseractWorker = getTesseractWorkerRaw();
-  }
-  return tesseractWorker;
+/**
+ * A tesseract worker and everything that identifies WHICH worker it is.
+ *
+ * Jobs hold a generation rather than reading a module variable, so a timeout
+ * can only ever retire the worker THAT job was using. Reading the current
+ * worker at timeout time let a long-finished job's timer terminate a healthy
+ * worker a much later job was in the middle of using.
+ */
+interface WorkerGeneration {
+  promise: Promise<Tesseract.Worker>;
 }
 
-/** Drop the current worker so the next job builds a fresh one. */
-async function discardTesseractWorker(): Promise<void> {
-  const wedged = tesseractWorker;
-  tesseractWorker = null;
-  if (wedged === null) {
-    return;
+let currentGeneration: WorkerGeneration | null = null;
+
+function acquireWorkerGeneration(): WorkerGeneration {
+  if (currentGeneration === null) {
+    const generation: WorkerGeneration = { promise: getTesseractWorkerRaw() };
+    generation.promise.catch(() => {
+      // A failed construction must not be cached, or every later upload
+      // reuses the failure instead of retrying. Only clear it if it is still
+      // the current one -- a newer generation may already have replaced it.
+      if (currentGeneration === generation) {
+        currentGeneration = null;
+      }
+    });
+    currentGeneration = generation;
   }
-  try {
-    const worker = await wedged;
-    await worker.terminate();
-  } catch (error) {
-    // It was already broken; letting go of the reference is the point.
-    console.warn("[OCR] discarding a stuck tesseract worker", error);
+  return currentGeneration;
+}
+
+/**
+ * Stop handing out this worker, and tear it down in the background.
+ *
+ * Teardown is deliberately fire-and-forget: awaiting it is how a hung
+ * terminate() previously kept the queue pending forever, which was the very
+ * failure this machinery exists to prevent.
+ */
+function retireWorkerGeneration(generation: WorkerGeneration): void {
+  if (currentGeneration === generation) {
+    currentGeneration = null;
   }
+  generation.promise
+    .then((worker) => worker.terminate())
+    .catch((error) => {
+      console.warn("[OCR] discarding a stuck tesseract worker", error);
+    });
 }
 
 // One shared worker means one queue whether we manage it or not: tesseract.js
@@ -304,26 +325,51 @@ async function discardTesseractWorker(): Promise<void> {
 // the worker actually becomes free rather than being committed up front.
 let tesseractQueue: Promise<unknown> = Promise.resolve();
 
-// Longer than the per-image budget, so a slow-but-healthy read is never cut
-// off; this only catches a slot that has genuinely stopped making progress.
+// Applies to time spent HOLDING the slot, not time spent waiting for it. A
+// timer started at enqueue would shrink with every job ahead in the queue and
+// eventually kill healthy reads.
 const TESSERACT_SLOT_TIMEOUT_MS = OCR_TOTAL_BUDGET_MS + 30_000;
 
-function queueTesseractJob<T>(job: () => Promise<T>): Promise<T> {
-  const run = tesseractQueue.then(job, job);
-  // The chain advances on success, on failure, OR when a slot stops
-  // responding. Without that last case one hung recognition -- or one hung
-  // worker startup -- left the chain permanently PENDING, and every later
-  // page, and every later upload in the same tab, waited behind it forever.
-  // Advancing alone would not be enough: the next job would be handed to the
-  // still-wedged worker and rebuild the same hidden queue, so the worker is
-  // discarded and the next job starts a fresh one.
-  tesseractQueue = Promise.race([
-    run.then(
-      () => undefined,
-      () => undefined,
-    ),
-    sleep(TESSERACT_SLOT_TIMEOUT_MS).then(() => discardTesseractWorker()),
-  ]);
+function queueTesseractJob<T>(
+  job: (generation: WorkerGeneration) => Promise<T>,
+): Promise<T> {
+  let releaseSlot: () => void = () => {};
+  const slot = new Promise<void>((resolve) => {
+    releaseSlot = resolve;
+  });
+
+  const run = tesseractQueue.then(async () => {
+    const generation = acquireWorkerGeneration();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const expiry = new Promise<never>((_resolve, reject) => {
+      // Armed only now that this job actually owns the slot.
+      timer = setTimeout(() => {
+        // Retire the generation THIS job was using -- never whatever happens
+        // to be current -- and let the queue move on immediately rather than
+        // waiting on a teardown that may itself be stuck.
+        retireWorkerGeneration(generation);
+        releaseSlot();
+        reject(new Error("tesseract slot timed out"));
+      }, TESSERACT_SLOT_TIMEOUT_MS);
+    });
+
+    try {
+      return await Promise.race([job(generation), expiry]);
+    } finally {
+      // Promise.race does not cancel its loser, so without this every
+      // completed job left a live timer that would later retire a worker some
+      // other job was happily using.
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      releaseSlot();
+    }
+  });
+
+  // The NEXT job waits on the slot being released, not on this job settling,
+  // so a job that never settles cannot block the queue.
+  tesseractQueue = slot;
   return run;
 }
 
@@ -478,8 +524,8 @@ async function recognizeImageText(
   // so it is raced and bounded like any other engine.
   engines.push({
     name: "tesseract",
-    promise: queueTesseractJob(async () => {
-      const worker = await getTesseractWorker();
+    promise: queueTesseractJob(async (generation) => {
+      const worker = await generation.promise;
       // Checked HERE, with the worker actually free and our turn arrived --
       // not when the job was created. By now this page may be long gone.
       if (page.abandoned) {

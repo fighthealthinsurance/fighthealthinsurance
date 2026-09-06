@@ -256,8 +256,8 @@ class TestRoundTwoRegressions:
         # It is awaited INSIDE tesseract's own job, so the budget covers it.
         # What must not happen is awaiting it before the engines exist, which
         # is what put worker startup outside the timer.
-        assert "getTesseractWorker()" in fn, fn
-        assert fn.index("queueTesseractJob(") < fn.index("getTesseractWorker()"), fn
+        assert "generation.promise" in fn, fn
+        assert fn.index("queueTesseractJob(") < fn.index("generation.promise"), fn
         # Nothing at all is awaited before the engine list is assembled.
         preamble = fn[: fn.index("engines.push(")]
         assert "await " not in preamble, preamble
@@ -387,46 +387,76 @@ class TestRoundFourRegressions:
         src = _ocr_source()
         assert "queueTesseractJob" in src, src
         queue = _js_function(src, "function queueTesseractJob")
-        # A failed page must not break the chain for the next one, and the
-        # chain must also advance when a slot stalls (see round five).
-        assert re.search(r"tesseractQueue\s*=\s*Promise\.race", queue), queue
-        assert re.search(r"run\.then\(", queue), queue
+        # A failed page must not break the chain for the next one: the queue
+        # advances on the SLOT, which is released in a finally.
+        assert re.search(r"tesseractQueue\s*=\s*slot", queue), queue
 
         fn = _js_function(src, "async function recognizeImageText")
         assert "queueTesseractJob(" in fn, fn
         # The abandonment check sits AFTER the worker is awaited, i.e. once
         # our turn has come, and BEFORE the work is submitted.
         job = fn[fn.index("queueTesseractJob(") :]
-        assert job.index("await getTesseractWorker()") < job.index(
-            "page.abandoned"
-        ), job
+        assert job.index("await generation.promise") < job.index("page.abandoned"), job
         assert job.index("page.abandoned") < job.index("worker.recognize("), job
 
 
 class TestRoundFiveRegressions:
     def test_a_wedged_slot_cannot_block_the_queue_forever(self):
         """A rejected job could not poison the chain, but a job that never
-        SETTLES could: tesseractQueue stayed permanently pending, so every
-        later page -- and every later upload in the same tab -- waited behind
-        it forever."""
+        SETTLES could: the queue stayed permanently pending, so every later
+        page -- and every later upload in the same tab -- waited behind it."""
         src = _ocr_source()
         assert "TESSERACT_SLOT_TIMEOUT_MS" in src, src
         queue = _js_function(src, "function queueTesseractJob")
-        # The chain advances on success, failure, OR a stalled slot.
-        assert "Promise.race(" in queue, queue
-        assert "TESSERACT_SLOT_TIMEOUT_MS" in queue, queue
+        # The next job waits on the SLOT being released, not on this job
+        # settling, so a job that never settles cannot block anyone.
+        assert re.search(r"tesseractQueue\s*=\s*slot", queue), queue
+        assert "releaseSlot()" in queue, queue
 
-    def test_a_stalled_slot_throws_the_worker_away(self):
-        """Advancing alone would hand the next job to the still-wedged worker
-        and rebuild the same hidden internal queue."""
+    def test_the_slot_timer_is_cancelled_when_the_job_finishes(self):
+        """Promise.race does not cancel its loser. Without clearing it, every
+        completed job left a live timer that would later retire a worker some
+        OTHER job was happily using -- A finishes at 5s, B starts at 110s, A's
+        timer fires at 120s and kills B mid-read."""
+        queue = _js_function(_ocr_source(), "function queueTesseractJob")
+        assert "clearTimeout(timer)" in queue, queue
+        assert re.search(r"finally\s*\{", queue), queue
+
+    def test_the_timer_starts_when_the_slot_is_held_not_when_queued(self):
+        """A timer armed at enqueue shrinks with every job ahead in the queue:
+        if A holds the slot for 110s, B gets 10s of its nominal 120s and a
+        healthy read is killed."""
+        queue = _js_function(_ocr_source(), "function queueTesseractJob")
+        body = queue[queue.index("tesseractQueue.then(") :]
+        # setTimeout is armed inside the slot-owning callback.
+        assert "setTimeout(" in body, body
+        assert body.index("acquireWorkerGeneration()") < body.index("setTimeout("), body
+
+    def test_a_timeout_retires_only_the_worker_that_job_was_using(self):
+        """Reading the CURRENT worker at timeout time let a long-finished
+        job's timer terminate a healthy worker a much later job was using."""
         src = _ocr_source()
         queue = _js_function(src, "function queueTesseractJob")
-        assert "discardTesseractWorker()" in queue, queue
-        discard = _js_function(src, "async function discardTesseractWorker")
-        # The reference is dropped BEFORE awaiting, so a hung terminate()
-        # cannot keep the next job pointed at the dead worker.
-        assert discard.index("tesseractWorker = null") < discard.index("await"), discard
-        assert "terminate()" in discard, discard
+        assert "retireWorkerGeneration(generation)" in queue, queue
+        retire = _js_function(src, "function retireWorkerGeneration")
+        # Only detaches if it is still the current one.
+        assert re.search(r"currentGeneration\s*===\s*generation", retire), retire
+
+    def test_teardown_never_gates_the_queue(self):
+        """Awaiting terminate() is how a hung teardown previously kept the
+        queue pending forever -- the exact failure this exists to prevent."""
+        retire = _js_function(_ocr_source(), "function retireWorkerGeneration")
+        assert "await" not in retire, retire
+        assert ".catch(" in retire, retire
+
+    def test_a_failed_worker_construction_is_not_cached(self):
+        """The removed memoizer cleared its cache on rejection. Storing the
+        rejected promise made every later upload reuse the failure instead of
+        retrying."""
+        fn = _js_function(_ocr_source(), "function acquireWorkerGeneration")
+        assert ".catch(" in fn, fn
+        # ...and only cleared when it is still the current generation.
+        assert re.search(r"currentGeneration\s*===\s*generation", fn), fn
 
     def test_the_slot_timeout_never_cuts_off_a_healthy_read(self):
         """It must outlast the per-image budget, or it would kill slow but
@@ -441,6 +471,5 @@ class TestRoundFiveRegressions:
         src = _ocr_source()
         assert "memoizeOne" not in src, src
         assert "async-memoize-one" not in src, src
-        # Anchored past the Raw builder, whose name contains this one.
-        fn = _js_function(src, "function getTesseractWorker(): Promise")
-        assert "tesseractWorker === null" in fn, fn
+        fn = _js_function(src, "function acquireWorkerGeneration")
+        assert "currentGeneration === null" in fn, fn
