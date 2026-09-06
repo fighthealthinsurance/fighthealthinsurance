@@ -386,6 +386,21 @@ if crd_present prometheusrules.monitoring.coreos.com; then
 else
     echo "WARNING: no PrometheusRule CRD in this cluster -- intake outbox alerts not installed"
 fi
+# Ray polling-actor reconciler: a CronJob (every five minutes, no overlap)
+# that relaunches any polling actor that has gone missing. The actors are
+# created ONCE, by the web-actor-launch Job below, and are detached -- so they
+# survive their creating pod but NOT the Ray head. A node reboot left
+# production at 0 of 5 alive with nothing to restore them until the next
+# deploy. Idempotent: it attaches to healthy actors and creates only the
+# absent ones.
+envsubst < k8s/actor-reconcile-cronjob.yaml | kubectl apply -f -
+# ...and an alert, because a reconciler that cannot restore them is exactly
+# the state that previously went unnoticed for hours.
+if crd_present prometheusrules.monitoring.coreos.com; then
+    kubectl apply -f k8s/actor-reconcile-alerts.yaml
+else
+    echo "WARNING: no PrometheusRule CRD in this cluster -- actor reconcile alerts not installed"
+fi
 
 # ROLLOUT GATE. Independent of the backfill: a Deployment that never finishes
 # rolling is a broken deploy whether or not we are about to fingerprint

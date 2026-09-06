@@ -49,6 +49,13 @@ elif [ -n "$BACKFILL_APPEAL_FINGERPRINTS" ]; then
   # while pre-fingerprint writers are still active, so the Job's backoff
   # retries until the database is quiescent.
   exec python manage.py backfill_appeal_fingerprints --strict
+elif [ -n "$RECONCILE_POLLING_ACTORS" ]; then
+  # Actor reconciler (k8s/actor-reconcile-cronjob.yaml). The polling actors
+  # are detached and created ONCE, by the POLLING_ACTORS job above, so losing
+  # the Ray head loses all of them with nothing to put them back until the
+  # next deploy -- production ran 0 of 5 after a node reboot. This relaunches
+  # only what is missing; a healthy cluster costs one health check.
+  exec python manage.py reconcile_polling_actors
 elif [ -n "$DELIVER_INTAKE_EVENTS" ]; then
   # Intake outbox relay (k8s/temporal/intake-outbox-cronjob.yaml, every
   # minute): re-deliver intake-journey events whose Temporal ack never
