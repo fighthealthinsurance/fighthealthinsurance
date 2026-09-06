@@ -387,8 +387,10 @@ class TestRoundFourRegressions:
         src = _ocr_source()
         assert "queueTesseractJob" in src, src
         queue = _js_function(src, "function queueTesseractJob")
-        # A failed page must not break the chain for the next one.
-        assert re.search(r"tesseractQueue\s*=\s*run\.then", queue), queue
+        # A failed page must not break the chain for the next one, and the
+        # chain must also advance when a slot stalls (see round five).
+        assert re.search(r"tesseractQueue\s*=\s*Promise\.race", queue), queue
+        assert re.search(r"run\.then\(", queue), queue
 
         fn = _js_function(src, "async function recognizeImageText")
         assert "queueTesseractJob(" in fn, fn
@@ -399,3 +401,46 @@ class TestRoundFourRegressions:
             "page.abandoned"
         ), job
         assert job.index("page.abandoned") < job.index("worker.recognize("), job
+
+
+class TestRoundFiveRegressions:
+    def test_a_wedged_slot_cannot_block_the_queue_forever(self):
+        """A rejected job could not poison the chain, but a job that never
+        SETTLES could: tesseractQueue stayed permanently pending, so every
+        later page -- and every later upload in the same tab -- waited behind
+        it forever."""
+        src = _ocr_source()
+        assert "TESSERACT_SLOT_TIMEOUT_MS" in src, src
+        queue = _js_function(src, "function queueTesseractJob")
+        # The chain advances on success, failure, OR a stalled slot.
+        assert "Promise.race(" in queue, queue
+        assert "TESSERACT_SLOT_TIMEOUT_MS" in queue, queue
+
+    def test_a_stalled_slot_throws_the_worker_away(self):
+        """Advancing alone would hand the next job to the still-wedged worker
+        and rebuild the same hidden internal queue."""
+        src = _ocr_source()
+        queue = _js_function(src, "function queueTesseractJob")
+        assert "discardTesseractWorker()" in queue, queue
+        discard = _js_function(src, "async function discardTesseractWorker")
+        # The reference is dropped BEFORE awaiting, so a hung terminate()
+        # cannot keep the next job pointed at the dead worker.
+        assert discard.index("tesseractWorker = null") < discard.index("await"), discard
+        assert "terminate()" in discard, discard
+
+    def test_the_slot_timeout_never_cuts_off_a_healthy_read(self):
+        """It must outlast the per-image budget, or it would kill slow but
+        working reads rather than stuck ones."""
+        src = _ocr_source()
+        assert re.search(
+            r"TESSERACT_SLOT_TIMEOUT_MS\s*=\s*OCR_TOTAL_BUDGET_MS\s*\+", src
+        ), src
+
+    def test_the_worker_is_held_not_memoized(self):
+        """A memoizer has no way to say "this one is broken, build another"."""
+        src = _ocr_source()
+        assert "memoizeOne" not in src, src
+        assert "async-memoize-one" not in src, src
+        # Anchored past the Raw builder, whose name contains this one.
+        fn = _js_function(src, "function getTesseractWorker(): Promise")
+        assert "tesseractWorker === null" in fn, fn

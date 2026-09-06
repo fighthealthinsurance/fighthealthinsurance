@@ -267,9 +267,32 @@ async function getTesseractWorkerRaw(): Promise<Tesseract.Worker> {
   return worker;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const memoizeOne = require("async-memoize-one");
-const getTesseractWorker = memoizeOne(getTesseractWorkerRaw);
+// The worker is shared, so it is held here rather than memoized: a wedged one
+// has to be THROWN AWAY, and a memoizer has no way to say that.
+let tesseractWorker: Promise<Tesseract.Worker> | null = null;
+
+function getTesseractWorker(): Promise<Tesseract.Worker> {
+  if (tesseractWorker === null) {
+    tesseractWorker = getTesseractWorkerRaw();
+  }
+  return tesseractWorker;
+}
+
+/** Drop the current worker so the next job builds a fresh one. */
+async function discardTesseractWorker(): Promise<void> {
+  const wedged = tesseractWorker;
+  tesseractWorker = null;
+  if (wedged === null) {
+    return;
+  }
+  try {
+    const worker = await wedged;
+    await worker.terminate();
+  } catch (error) {
+    // It was already broken; letting go of the reference is the point.
+    console.warn("[OCR] discarding a stuck tesseract worker", error);
+  }
+}
 
 // One shared worker means one queue whether we manage it or not: tesseract.js
 // accepts every recognize() immediately and runs them in turn internally. That
@@ -281,13 +304,26 @@ const getTesseractWorker = memoizeOne(getTesseractWorkerRaw);
 // the worker actually becomes free rather than being committed up front.
 let tesseractQueue: Promise<unknown> = Promise.resolve();
 
+// Longer than the per-image budget, so a slow-but-healthy read is never cut
+// off; this only catches a slot that has genuinely stopped making progress.
+const TESSERACT_SLOT_TIMEOUT_MS = OCR_TOTAL_BUDGET_MS + 30_000;
+
 function queueTesseractJob<T>(job: () => Promise<T>): Promise<T> {
   const run = tesseractQueue.then(job, job);
-  // Never let one page's failure break the chain for the next.
-  tesseractQueue = run.then(
-    () => undefined,
-    () => undefined,
-  );
+  // The chain advances on success, on failure, OR when a slot stops
+  // responding. Without that last case one hung recognition -- or one hung
+  // worker startup -- left the chain permanently PENDING, and every later
+  // page, and every later upload in the same tab, waited behind it forever.
+  // Advancing alone would not be enough: the next job would be handed to the
+  // still-wedged worker and rebuild the same hidden queue, so the worker is
+  // discarded and the next job starts a fresh one.
+  tesseractQueue = Promise.race([
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+    sleep(TESSERACT_SLOT_TIMEOUT_MS).then(() => discardTesseractWorker()),
+  ]);
   return run;
 }
 
