@@ -815,7 +815,11 @@ def test_deploy_script_version_is_bumped_past_the_last_deployed_image():
 
     build = _build_script()
     version = re.search(r"^FHI_VERSION=(\S+)", build, re.MULTILINE).group(1)
-    assert version != "v0.23.2a"
+    # Prod ran v0.23.2a, then v0.23.3a. build_django.sh short-circuits when the
+    # tag already exists in the registry, so shipping either again is a no-op
+    # deploy that silently keeps the running image -- which is how #959's fax
+    # heartbeat sat undeployed for five days.
+    assert version not in ("v0.23.2a", "v0.23.3a")
 
 
 def test_deploy_script_rejects_unknown_flags_and_documents_the_real_ones():
