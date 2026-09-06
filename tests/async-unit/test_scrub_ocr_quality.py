@@ -253,10 +253,14 @@ class TestRoundTwoRegressions:
         entirely: no other engine had started, and a stalled download stalled
         the whole read with no failure ever reported."""
         fn = _js_function(_ocr_source(), "async function recognizeImageText")
-        # It must be folded into tesseract's promise, not awaited first.
-        assert not re.search(r"await\s+getTesseractWorker\(\)", fn), fn
+        # It is awaited INSIDE tesseract's own job, so the budget covers it.
+        # What must not happen is awaiting it before the engines exist, which
+        # is what put worker startup outside the timer.
         assert "getTesseractWorker()" in fn, fn
-        assert re.search(r"getTesseractWorker\(\)\s*\.then", fn), fn
+        assert fn.index("queueTesseractJob(") < fn.index("getTesseractWorker()"), fn
+        # Nothing at all is awaited before the engine list is assembled.
+        preamble = fn[: fn.index("engines.push(")]
+        assert "await " not in preamble, preamble
 
     def test_qwen_does_not_outrank_tesseract(self):
         """They are peers. Ranking Qwen higher let a short vision-model
@@ -349,3 +353,49 @@ class TestRoundThreeRegressions:
         assert "abandoned" in fn, fn
         assert re.search(r"if\s*\(\s*page\.abandoned\s*\)", fn), fn
         assert re.search(r"finally\s*\{\s*page\.abandoned\s*=\s*true", fn), fn
+
+
+class TestRoundFourRegressions:
+    def test_sparse_text_does_not_mask_a_failed_page(self):
+        """Emitting the sparse layer is not the same as having read the page.
+        A scanned page whose only embedded text is "Page 2 of 3" contributed
+        that stamp and reported success, so the denial content on it was lost
+        without a word."""
+        fn = _js_function(_ocr_source(), "async function recognizePDFPage")
+        assert "ocrFailed" in fn, fn
+        # Success is about OCR, not about having emitted something.
+        assert re.search(r"return\s+!ocrFailed\s*&&\s*ocrText\.length\s*>\s*0", fn), fn
+
+    def test_containment_will_not_swallow_a_near_miss_identifier(self):
+        """ "Appeal by 10/1" IS a substring of an OCR guess of "Appeal by
+        10/15", so a plain containment test discarded the EXACT deadline in
+        favour of the wrong one. Claim and member numbers fail the same way."""
+        fn = _js_function(_ocr_source(), "function containsNormalised")
+        assert "isWordChar" in fn, fn
+        # The match has to end on a token boundary, not anywhere.
+        assert re.search(r"startsToken|openOk", fn), fn
+        assert re.search(r"endsToken|closeOk", fn), fn
+        # A bare indexOf-and-return would be the bug.
+        assert not re.search(r"return\s+flatHay\.includes\(", fn), fn
+
+    def test_tesseract_jobs_are_serialised_so_they_can_be_dropped(self):
+        """tesseract.js accepts every recognize() immediately and queues them
+        internally, so a page that timed out had ALREADY handed over a
+        full-resolution job. Checking abandonment when the job was created
+        only covered worker startup; the check has to happen when our turn
+        actually arrives."""
+        src = _ocr_source()
+        assert "queueTesseractJob" in src, src
+        queue = _js_function(src, "function queueTesseractJob")
+        # A failed page must not break the chain for the next one.
+        assert re.search(r"tesseractQueue\s*=\s*run\.then", queue), queue
+
+        fn = _js_function(src, "async function recognizeImageText")
+        assert "queueTesseractJob(" in fn, fn
+        # The abandonment check sits AFTER the worker is awaited, i.e. once
+        # our turn has come, and BEFORE the work is submitted.
+        job = fn[fn.index("queueTesseractJob(") :]
+        assert job.index("await getTesseractWorker()") < job.index(
+            "page.abandoned"
+        ), job
+        assert job.index("page.abandoned") < job.index("worker.recognize("), job

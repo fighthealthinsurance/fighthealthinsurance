@@ -271,6 +271,26 @@ async function getTesseractWorkerRaw(): Promise<Tesseract.Worker> {
 const memoizeOne = require("async-memoize-one");
 const getTesseractWorker = memoizeOne(getTesseractWorkerRaw);
 
+// One shared worker means one queue whether we manage it or not: tesseract.js
+// accepts every recognize() immediately and runs them in turn internally. That
+// hid the queue from us -- a page that timed out had already handed over a
+// full-resolution job, so page two waited behind page one and page three
+// behind page two, all for output nobody would read.
+//
+// Serialising here makes the queue ours, so a job can be dropped at the moment
+// the worker actually becomes free rather than being committed up front.
+let tesseractQueue: Promise<unknown> = Promise.resolve();
+
+function queueTesseractJob<T>(job: () => Promise<T>): Promise<T> {
+  const run = tesseractQueue.then(job, job);
+  // Never let one page's failure break the chain for the next.
+  tesseractQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 function isPDF(file: File): boolean {
   return (
     file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
@@ -314,11 +334,48 @@ const ENGINE_PRECEDENCE: Record<string, number> = {
   "text-detector": 1,
 };
 
-/** Containment ignoring how the two sources happen to break their whitespace. */
+/**
+ * Is `needle` genuinely reproduced inside `haystack`?
+ *
+ * Whitespace is normalised because a PDF text layer joins runs with spaces
+ * while OCR emits line breaks, and calling those different re-appended the
+ * whole sparse layer.
+ *
+ * But a plain substring test is unsafe in the other direction, and unsafely on
+ * exactly the content that matters: "Appeal by 10/1" IS a substring of an OCR
+ * guess of "Appeal by 10/15", so the exact deadline would be discarded in
+ * favour of the wrong one. Claim and member numbers fail the same way. So the
+ * match must end on a token boundary -- if the haystack continues the token,
+ * these are different values and the exact one is kept.
+ */
 function containsNormalised(haystack: string, needle: string): boolean {
   const flatten = (t: string) => t.replace(/\s+/g, " ").trim();
   const flatNeedle = flatten(needle);
-  return flatNeedle.length === 0 || flatten(haystack).includes(flatNeedle);
+  if (flatNeedle.length === 0) {
+    return true;
+  }
+  const flatHay = flatten(haystack);
+
+  const isWordChar = (c: string | undefined) =>
+    c !== undefined && /[A-Za-z0-9]/.test(c);
+  const startsToken = isWordChar(flatNeedle[0]);
+  const endsToken = isWordChar(flatNeedle[flatNeedle.length - 1]);
+
+  let from = 0;
+  for (;;) {
+    const at = flatHay.indexOf(flatNeedle, from);
+    if (at === -1) {
+      return false;
+    }
+    const before = at > 0 ? flatHay[at - 1] : undefined;
+    const after = flatHay[at + flatNeedle.length];
+    const openOk = !startsToken || !isWordChar(before);
+    const closeOk = !endsToken || !isWordChar(after);
+    if (openOk && closeOk) {
+      return true;
+    }
+    from = at + 1;
+  }
 }
 
 function precedenceOf(name: string): number {
@@ -385,16 +442,16 @@ async function recognizeImageText(
   // so it is raced and bounded like any other engine.
   engines.push({
     name: "tesseract",
-    promise: getTesseractWorker()
-      .then((worker: Tesseract.Worker) => {
-        if (page.abandoned) {
-          // Initialisation outlived the page. Submitting now would put work
-          // on the shared worker for output nobody is waiting for.
-          throw new Error("page abandoned before tesseract started");
-        }
-        return worker.recognize(file);
-      })
-      .then((result: Tesseract.RecognizeResult) => result.data.text),
+    promise: queueTesseractJob(async () => {
+      const worker = await getTesseractWorker();
+      // Checked HERE, with the worker actually free and our turn arrived --
+      // not when the job was created. By now this page may be long gone.
+      if (page.abandoned) {
+        throw new Error("page abandoned before tesseract reached it");
+      }
+      const result: Tesseract.RecognizeResult = await worker.recognize(file);
+      return result.data.text;
+    }),
   });
 
   if (isAdvancedOCREnabled()) {
@@ -510,6 +567,7 @@ async function recognizePDFPage(
     canvas.width = viewport.width;
 
     let ocrText = "";
+    let ocrFailed = false;
     try {
       await page.render({ canvasContext: context, viewport, canvas }).promise;
       ocrText = mergeOCRTexts(
@@ -518,6 +576,7 @@ async function recognizePDFPage(
     } catch (error) {
       // Caught PER PAGE so one unreadable page cannot abandon the rest, and
       // so this page's own text layer is still available as a fallback.
+      ocrFailed = true;
       console.warn(`[OCR] could not read page ${pageNo}`, error);
     } finally {
       // A multi-page scan at OCR resolution holds a lot of pixels; drop them
@@ -546,7 +605,12 @@ async function recognizePDFPage(
     if (parts.length > 0) {
       addText(parts.join("\n") + "\n");
     }
-    return ocrText.length > 0 || pageText.length > 0;
+
+    // Emitting the sparse layer is NOT the same as having read the page. A
+    // scanned page whose only embedded text is "Page 2 of 3" would otherwise
+    // contribute that stamp and report success, and the denial content on it
+    // would be lost without a word. Report on whether OCR actually read it.
+    return !ocrFailed && ocrText.length > 0;
   } finally {
     page.cleanup();
   }
