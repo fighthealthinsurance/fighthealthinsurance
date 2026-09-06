@@ -7,8 +7,11 @@ import { clean } from "./scrub_scrub";
 import {
   addText,
   beginOcr,
+  clearOcrFailure,
+  denialTextLength,
   endOcr,
   hideErrorMessages,
+  noteOcrFailure,
   validateScrubForm,
 } from "./scrub_client_side_form";
 
@@ -62,13 +65,38 @@ const recognizeEvent = async function (evt: Event) {
   // Mark OCR as in flight for the whole batch so the submit gate can tell the
   // user we are still reading their file rather than letting them submit an
   // empty denial_text. endOcr() must run even when recognize() throws.
+  //
+  // A fresh selection replaces the previous verdict: the last attempt having
+  // failed says nothing about this one.
+  clearOcrFailure();
+  const before = denialTextLength();
+  let failures = 0;
+
   beginOcr();
   try {
     for (const file of filesArray) {
-      await recognize(file, addText);
+      // Catch PER FILE, not around the loop. The uploader is multiple="true"
+      // and people attach a denial one page per image; with a single catch
+      // outside, one unreadable page abandoned every page after it and the
+      // user was never told which -- or that anything had gone wrong at all.
+      try {
+        await recognize(file, addText);
+      } catch (error) {
+        failures += 1;
+        // The filename can carry the patient's name; keep it out of logs.
+        console.error("OCR failed for an uploaded file:", error);
+      }
     }
   } finally {
     endOcr();
+  }
+
+  // "Threw" is not the only failure. Every engine can return cleanly and
+  // still yield nothing for a photo too blurry to read, which looks
+  // identical to the user: an empty box under a form that says a file is
+  // enough. Treat "no new text" as a failure too.
+  if (failures > 0 || denialTextLength() === before) {
+    noteOcrFailure();
   }
 };
 

@@ -73,6 +73,27 @@ export function isOcrInFlight(): boolean {
   return ocrInFlight > 0;
 }
 
+// Reading the file can fail outright (every OCR engine erroring or timing
+// out) or "succeed" while producing nothing usable -- a blurry photo, a
+// scan too faint for tesseract. Both used to be SILENT: recognize() threw
+// into a handler that had a finally and no catch, so the textarea simply
+// stayed empty and the user got "we need your denial text" underneath copy
+// promising they could upload a file instead. Tell them what happened.
+export function noteOcrFailure(): void {
+  showHiddenMessage("ocr_failed");
+}
+
+export function clearOcrFailure(): void {
+  rehideHiddenMessage("ocr_failed");
+}
+
+// The length of what we have so far, so the caller can tell "the engines
+// ran without throwing" from "the engines actually produced text".
+export function denialTextLength(): number {
+  const input = document.getElementById("denial_text") as HTMLTextAreaElement | null;
+  return input ? input.value.trim().length : 0;
+}
+
 export function validateScrubForm(event: Event): void {
   // Listener is bound to the <form>, so currentTarget is always the form
   const form = event.currentTarget as HTMLFormElement;
@@ -124,6 +145,11 @@ export function validateScrubForm(event: Event): void {
   // the user saw a contradiction. personalonly and tos were validated and
   // ungated the same way.
   const denialTextReady = form.denial_text.value.trim().length > 0;
+  if (denialTextReady) {
+    // However the text arrived -- a later file that read fine, or the user
+    // pasting it -- the earlier failure is no longer something to act on.
+    rehideHiddenMessage("ocr_failed");
+  }
   if (!denialTextReady && isOcrInFlight()) {
     // Distinguish "you have not given us the letter" from "we are still
     // reading the file you just gave us".

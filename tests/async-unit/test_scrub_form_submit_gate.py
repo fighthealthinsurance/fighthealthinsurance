@@ -13,7 +13,12 @@ There is no JS test harness in this repo, so this asserts on the source.
 import pathlib
 import re
 
-JS = pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "static" / "js"
+JS = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "fighthealthinsurance"
+    / "static"
+    / "js"
+)
 
 
 def _form_source() -> str:
@@ -83,7 +88,9 @@ def test_the_gate_is_not_stricter_than_the_server():
     assert "personalonly" not in gate, gate
     forms_src = (
         pathlib.Path(__file__).resolve().parents[2]
-        / "fighthealthinsurance" / "forms" / "__init__.py"
+        / "fighthealthinsurance"
+        / "forms"
+        / "__init__.py"
     ).read_text()
     assert "personalonly = forms.BooleanField(required=True)" not in forms_src
 
@@ -115,7 +122,9 @@ def test_the_uploader_releases_ocr_state_even_on_error():
     assert "await recognize(" in fn, fn
     assert re.search(r"finally\s*\{\s*endOcr\(\);", fn), fn
     # ...and the release is inside the same function, after the loop.
-    assert fn.index("beginOcr();") < fn.index("await recognize(") < fn.index("endOcr();")
+    assert (
+        fn.index("beginOcr();") < fn.index("await recognize(") < fn.index("endOcr();")
+    )
 
 
 def test_the_gate_actually_consults_ocr_state():
@@ -132,6 +141,99 @@ def test_progress_message_element_exists():
     user gets a silent refusal."""
     tpl = (
         pathlib.Path(__file__).resolve().parents[2]
-        / "fighthealthinsurance" / "templates" / "scrub.html"
+        / "fighthealthinsurance"
+        / "templates"
+        / "scrub.html"
     ).read_text()
     assert 'id="ocr_in_progress"' in tpl
+
+
+def test_a_failed_read_is_reported_instead_of_failing_silently():
+    """recognize() throwing used to land in a handler with a finally and no
+    catch, so every OCR engine failing left the textarea empty with no
+    explanation -- under copy telling the user a file was enough. The
+    production path must notice and say so."""
+    fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+    assert "noteOcrFailure()" in fn, fn
+    # The failure branch has to be reachable: a catch around the recognize
+    # call, not merely the pre-existing finally.
+    assert re.search(r"catch\s*\([^)]*\)\s*\{[^}]*failures", fn), fn
+
+
+def test_one_unreadable_page_does_not_abandon_the_rest():
+    """The uploader is multiple="true" and people attach a denial one page
+    per image. A single catch outside the loop stopped at the first bad page
+    and silently dropped every page after it, so the catch must be INSIDE."""
+    fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+    loop = fn.index("for (const file of filesArray)")
+    catch = fn.index("catch", loop)
+    close = fn.index("finally", loop)
+    assert loop < catch < close, fn
+
+
+def test_producing_no_text_counts_as_a_failure_too():
+    """Engines can return cleanly and still yield nothing for a photo too
+    blurry to read. To the user that is identical to a crash: an empty box.
+    The check must compare the text before and after, not only catch."""
+    fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+    assert "denialTextLength()" in fn, fn
+    assert re.search(r"denialTextLength\(\)\s*===\s*before", fn), fn
+
+
+def test_failure_message_element_exists():
+    """The handler shows #ocr_failed; the template must define it or the
+    report is a no-op and the silence returns."""
+    tpl = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance"
+        / "templates"
+        / "scrub.html"
+    ).read_text()
+    assert 'id="ocr_failed"' in tpl
+
+
+def test_failure_message_clears_once_the_text_arrives():
+    """However the text turns up -- a later file that read fine, or the user
+    pasting it -- a stale "we couldn't read your file" is just noise."""
+    src = _form_source()
+    for fn in ("noteOcrFailure", "clearOcrFailure", "denialTextLength"):
+        assert f"export function {fn}" in src, fn
+    validate = _js_function(src, "export function validateScrubForm")
+    assert 'rehideHiddenMessage("ocr_failed")' in validate, validate
+
+
+def test_the_need_denial_message_stays_short():
+    """It is the message a blocked user reads. It had grown to four
+    sentences of editorial about insurers, which buries the one thing they
+    have to do."""
+    tpl = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance"
+        / "templates"
+        / "scrub.html"
+    ).read_text()
+    block = tpl[tpl.index('id="need_denial"') :]
+    block = block[: block.index("</div>")]
+    words = len(re.sub(r"<[^>]+>", " ", block).split())
+    assert words < 45, f"need_denial is {words} words:\n{block}"
+
+
+def test_the_denial_file_is_never_posted_to_the_server():
+    """The whole OCR design keeps the denial document in the browser:
+    BaseDenialForm has no file field and nothing on /process reads one. But
+    the uploader sits INSIDE the /process form, and a file input with a name
+    is included in the multipart body regardless of whether Django binds it
+    -- so every attached denial was uploaded and buffered for nothing. The
+    input must stay nameless, and the copy promises exactly that."""
+    tpl = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance"
+        / "templates"
+        / "scrub.html"
+    ).read_text()
+    tag = re.search(r"<input[^>]*id=\"uploader\"[^>]*>", tpl)
+    assert tag, "uploader input not found"
+    assert "name=" not in tag.group(0), tag.group(0)
+    # No other named file input may sneak into the same form either.
+    for other in re.findall(r"<input[^>]*type=\"file\"[^>]*>", tpl):
+        assert "name=" not in other, other
