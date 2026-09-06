@@ -35,25 +35,37 @@ jobs:
           persist-credentials: false
       - id: filter
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          # FAIL-SAFE: this script must never leave ui unset or fail. If the
+          # filter itself breaks, "skipped" would satisfy a required Selenium
+          # check and merge unverified code -- so any problem runs the suite
+          # (external review).
+          run_it() { echo "ui=true" >> "$GITHUB_OUTPUT"; exit 0; }
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "ui=true" >> "$GITHUB_OUTPUT"   # always run on push to main
-            exit 0
+            run_it   # push to main, merge_group, anything else
           fi
           base="${{ github.event.pull_request.base.sha }}"
-          files=$(git diff --name-only "$base"...HEAD)
+          [ -n "$base" ] || run_it
+          # --no-renames: with rename detection a file moved INTO a denied
+          # directory is reported only by its destination, so its removal from
+          # a live path goes unseen. Report both sides instead.
+          files=$(git diff --no-renames --name-only "$base"...HEAD) || run_it
           echo "changed files:"; echo "$files" | sed 's/^/  /'
-          # Paths that cannot affect a rendered page or a browser interaction.
-          # NOT in this list on purpose: .github/ . A change to CI config is
-          # exactly when you want the expensive job to run -- otherwise a PR
-          # editing the Selenium job cannot validate itself.
-          irrelevant='^(k8s/|charts/|docs/|scripts/|.*\.md$|mypy\.ini$|\.gitignore$)'
-          if [ -z "$files" ] || echo "$files" | grep -qvE "$irrelevant"; then
-            echo "ui=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ui=false" >> "$GITHUB_OUTPUT"
-            echo "Only Selenium-irrelevant paths changed; skipping the browser suite."
+          [ -n "$files" ] || run_it
+          # Paths that cannot reach a browser. Narrow on purpose:
+          #  - scripts/ is NOT here: a build script can change the JS bundle.
+          #  - .github/ is NOT here: a CI change should exercise the job it edits.
+          #  - Markdown is denied only OUTSIDE the app package, since a .md file
+          #    under fighthealthinsurance/ may be fetched and rendered.
+          #  - k8s/ and charts/ change DEPLOYED config (flags, STATIC_URL, CSP).
+          #    That can absolutely change a real page; it cannot change the page
+          #    this suite renders, which runs against a local server.
+          irrelevant='^(k8s/|charts/|docs/[^/]*\.md$|[^/]*\.md$|mypy\.ini$|\.gitignore$)'
+          if echo "$files" | grep -qvE "$irrelevant"; then
+            run_it
           fi
+          echo "ui=false" >> "$GITHUB_OUTPUT"
+          echo "Only Selenium-irrelevant paths changed; skipping the browser suite."
 
   style:
     runs-on: ubuntu-latest
