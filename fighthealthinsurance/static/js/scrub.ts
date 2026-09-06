@@ -79,6 +79,21 @@ const recognizeEvent = async function (evt: Event) {
   }
 
   const filesArray = Array.from(files);
+  if (filesArray.length === 0) {
+    // An EMPTY FileList is truthy, so the null check above does not catch it,
+    // and browsers fire `change` with one when a selection is cleared. The
+    // loop then does nothing, failures stays 0 and ocrChars stays 0, so the
+    // verdict below reported "we couldn't read your file" about a file the
+    // user had just removed. Harmless before this branch existed, because no
+    // verdict was reported at all.
+    //
+    // Deliberately does NOT take a selection number: clearing the input is
+    // not a new read, and superseding an in-flight batch would throw away
+    // text that is still arriving from a file the user did choose.
+    clearOcrFailure();
+    return;
+  }
+
   const selection = ++latestOcrSelection;
 
   // Mark OCR as in flight for the whole batch so the submit gate can tell the

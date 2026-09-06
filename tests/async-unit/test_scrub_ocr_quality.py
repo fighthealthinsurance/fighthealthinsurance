@@ -270,9 +270,17 @@ class TestRoundTwoRegressions:
         m = re.search(r"ENGINE_PRECEDENCE[^=]*=\s*\{(.*?)\}", src, re.S)
         assert m, src
         block = m.group(1)
-        qwen = int(re.search(r"qwen:\s*(\d+)", block).group(1))
-        tess = int(re.search(r"tesseract:\s*(\d+)", block).group(1))
-        detector = int(re.search(r'"text-detector":\s*(\d+)', block).group(1))
+
+        def _rank(pattern: str) -> int:
+            # Guarded: a renamed or reformatted key would otherwise raise
+            # AttributeError on .group and hide WHICH key went missing.
+            found = re.search(pattern, block)
+            assert found, f"{pattern} missing from ENGINE_PRECEDENCE:\n{block}"
+            return int(found.group(1))
+
+        qwen = _rank(r"qwen:\s*(\d+)")
+        tess = _rank(r"tesseract:\s*(\d+)")
+        detector = _rank(r'"text-detector":\s*(\d+)')
         assert qwen == tess, block
         assert detector < tess, block
 
@@ -473,3 +481,21 @@ class TestRoundFiveRegressions:
         assert "async-memoize-one" not in src, src
         fn = _js_function(src, "function acquireWorkerGeneration")
         assert "currentGeneration === null" in fn, fn
+
+
+class TestEmptySelection:
+    def test_clearing_the_file_input_is_not_a_failed_read(self):
+        """An EMPTY FileList is truthy, so the null check does not catch it,
+        and browsers fire `change` with one when a selection is cleared. The
+        loop then does nothing, failures stays 0 and ocrChars stays 0, so the
+        verdict reported "we couldn't read your file" about a file the user
+        had just removed. Harmless before a verdict was reported at all."""
+        fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+        assert re.search(r"filesArray\.length\s*===\s*0", fn), fn
+        # It returns before any verdict can be produced.
+        guard = fn.index("filesArray.length === 0")
+        assert guard < fn.index("noteOcrFailure()"), fn
+        # ...and it does not consume a selection number: clearing the input is
+        # not a new read, and superseding an in-flight batch would discard
+        # text still arriving from a file the user did choose.
+        assert guard < fn.index("++latestOcrSelection"), fn
