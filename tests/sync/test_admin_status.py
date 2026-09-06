@@ -216,39 +216,99 @@ class _FakeStatus:
 
 
 class _FakeWorkflow:
-    id = "send-fax-test-1234"
-    status = _FakeStatus()
-    start_time = timezone.now() - datetime.timedelta(seconds=42)
-    close_time = timezone.now()
+    def __init__(self, id="send-fax-test-1234", started_seconds_ago=42, closed=True):
+        self.id = id
+        self.status = _FakeStatus()
+        self.start_time = timezone.now() - datetime.timedelta(
+            seconds=started_seconds_ago
+        )
+        self.close_time = timezone.now() if closed else None
 
 
 class _FakeTemporalClient:
     """Stands in for a temporalio Client: two completed runs, one listed.
 
-    Records every visibility query so tests can check their shape.
+    Records every visibility query so tests can check their shape. Subclasses
+    vary only what the listing does; the counts behave the same everywhere.
     """
+
+    #: Runs the visibility store yields, in the order it yields them.
+    listed: tuple = (_FakeWorkflow(),)
 
     def __init__(self):
         self.queries: list = []
+        self.list_queries: list = []
 
     async def count_workflows(self, query):
         self.queries.append(query)
         return _FakeCount(2 if "Completed" in query else 0)
 
+    def _listing(self):
+        return self.listed
+
     def list_workflows(self, query, page_size=10):
+        self.list_queries.append(query)
+
         async def gen():
-            yield _FakeWorkflow()
+            for wf in self._listing():
+                yield wf
 
         return gen()
+
+
+class _UnorderedTemporalClient(_FakeTemporalClient):
+    """A visibility store that hands its runs back oldest-first."""
+
+    listed = (
+        _FakeWorkflow(id="send-fax-oldest", started_seconds_ago=900),
+        _FakeWorkflow(id="send-fax-newest", started_seconds_ago=30),
+        _FakeWorkflow(id="send-fax-middle", started_seconds_ago=300),
+    )
+
+
+class _StoreOrderTemporalClient(_FakeTemporalClient):
+    """A visibility store ordering the way Temporal actually does.
+
+    Temporal's default is "ClosedTime DESC NULL FIRST, StartTime DESC" and the
+    SQL store will not accept an ORDER BY, so old runs that merely CLOSED
+    recently come back ahead of a genuinely recent one. Enough of them to fill
+    the panel, then the newest run last.
+    """
+
+    listed = tuple(
+        [
+            _FakeWorkflow(id=f"send-fax-old-{i}", started_seconds_ago=900 + i)
+            for i in range(10)
+        ]
+        + [_FakeWorkflow(id="send-fax-newest", started_seconds_ago=5)]
+    )
+
+
+class _RejectingListTemporalClient(_FakeTemporalClient):
+    """Counts fine, refuses the listing the way SQL visibility refuses a
+    clause it does not implement."""
+
+    def _listing(self):
+        raise RuntimeError(
+            "invalid query: operation is not supported: 'ORDER BY' clause"
+        )
 
 
 _FAKE_CLIENTS: list = []  # every fake handed to the view, newest last
 
 
-async def _fake_get_client():
-    client = _FakeTemporalClient()
-    _FAKE_CLIENTS.append(client)
-    return client
+def _client_factory(cls):
+    """A ``get_temporal_client`` stand-in that hands out *cls* instances."""
+
+    async def _get_client(*args, **kwargs):
+        client = cls()
+        _FAKE_CLIENTS.append(client)
+        return client
+
+    return _get_client
+
+
+_fake_get_client = _client_factory(_FakeTemporalClient)
 
 
 async def _broken_get_client():
@@ -309,6 +369,54 @@ class AdminStatusTemporalTest(TestCase):
         self.assertTrue(completed and all("StartTime" in q for q in completed))
         self.assertContains(response, "CONNECTED")
         self.assertContains(response, "send-fax-test-1234")
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_fake_get_client)
+    def test_recent_runs_query_carries_no_order_by_clause(self):
+        # Visibility on this cluster is SQL (Postgres, no Elasticsearch), and
+        # only Elasticsearch-backed visibility accepts ORDER BY -- a listing
+        # query carrying one is rejected outright with
+        # "operation is not supported: 'ORDER BY' clause".
+        self._get()
+        listed = _FAKE_CLIENTS[0].list_queries
+        self.assertEqual(len(listed), 1)
+        self.assertNotIn("ORDER BY", listed[0].upper())
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_client_factory(_UnorderedTemporalClient))
+    def test_recent_runs_are_sorted_most_recent_first(self):
+        # Ordering is the panel's own guarantee now that the store cannot be
+        # asked for it, so a store yielding oldest-first still renders newest
+        # at the top.
+        response = self._get()
+        ids = [row["id"] for row in response.context["temporal"]["recent"]]
+        self.assertEqual(ids, ["send-fax-newest", "send-fax-middle", "send-fax-oldest"])
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_client_factory(_RejectingListTemporalClient))
+    def test_rejected_listing_keeps_the_counts_and_explains_itself(self):
+        # A refused listing costs the table, not the whole panel: the counts
+        # are what on-call pages on.
+        response = self._get()
+        t = response.context["temporal"]
+        self.assertTrue(t["ok"])
+        self.assertIsNone(t["error"])
+        self.assertEqual(t["counts"]["Completed"], 2)
+        self.assertEqual(t["recent"], [])
+        self.assertContains(response, "CONNECTED")
+        self.assertContains(response, "RECENT RUNS UNAVAILABLE")
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_client_factory(_RejectingListTemporalClient))
+    def test_rejected_listing_message_is_not_the_raw_grpc_string(self):
+        # The raw text names a symptom and nothing else; an operator needs to
+        # be told whose problem it is.
+        response = self._get()
+        message = response.context["temporal"]["recent_error"]
+        self.assertIn("Elasticsearch", message)
+        self.assertNotEqual(
+            message, "invalid query: operation is not supported: 'ORDER BY' clause"
+        )
 
 
 class AdminStatusStorageTest(TestCase):
@@ -576,3 +684,32 @@ class SonicCheckHealthTest(TestCase):
         mock_get.return_value = _members_response(text="Please Member Login")
         with self.assertRaisesRegex(Exception, "not authenticated"):
             SonicFax().check_health()
+
+
+class AdminStatusTemporalOrderingTest(AdminStatusTemporalTest):
+    """The panel's ordering must be its own, not the visibility store's."""
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_TEMPORAL_CLIENT, new=_client_factory(_StoreOrderTemporalClient))
+    def test_a_recently_closed_old_run_cannot_displace_a_recent_one(self):
+        """Taking the first ten in the STORE's order and sorting only those
+        lets an old workflow that merely closed recently push a genuinely
+        recent run off the list. The panel then shows the wrong ten and looks
+        entirely correct doing it."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        response = self._get()
+        rows = response.context["temporal"]["recent"]
+        self.assertEqual(len(rows), AdminStatusView._RECENT_WORKFLOW_LIMIT)
+        self.assertEqual(rows[0]["id"], "send-fax-newest", [r["id"] for r in rows])
+
+    def test_the_candidate_scan_is_wider_than_the_panel_but_bounded(self):
+        """It has to look past the store's ordering to sort honestly, without
+        turning a status page into a full scan of a busy namespace."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        self.assertGreater(
+            AdminStatusView._RECENT_WORKFLOW_SCAN,
+            AdminStatusView._RECENT_WORKFLOW_LIMIT,
+        )
+        self.assertLessEqual(AdminStatusView._RECENT_WORKFLOW_SCAN, 500)
