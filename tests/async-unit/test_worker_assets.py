@@ -33,7 +33,7 @@ def test_webpack_copies_every_runtime_worker_asset_into_dist_workers():
     text = WEBPACK.read_text()
     assert "copy-webpack-plugin" in text
     for src, dest in (
-        ("pdfjs-dist/build/pdf.worker.min.mjs", "workers/pdf.worker.min.mjs"),
+        ("pdfjs-dist/build/pdf.worker.min.mjs", "workers/pdf.worker.min.js"),
         ("tesseract.js/dist/worker.min.js", "workers/tesseract.js/worker.min.js"),
         ("tesseract.js-core/", "workers/tesseract.js-core/"),
     ):
@@ -45,6 +45,28 @@ def test_sources_point_at_the_copied_workers():
     shared = (JS_DIR / "shared.ts").read_text()
     ocr = (JS_DIR / "scrub_ocr.ts").read_text()
     assert '"/static/js/dist/workers/"' in shared
-    assert 'workers_path + "pdf.worker.min.mjs"' in shared
+    assert 'workers_path + "pdf.worker.min.js"' in shared
     assert 'workers_path + "tesseract.js-core"' in ocr
     assert 'workers_path + "tesseract.js/worker.min.js"' in ocr
+
+
+def test_no_runtime_worker_is_published_or_loaded_with_an_mjs_extension():
+    """The web image's nginx has no MIME entry for .mjs.
+
+    It served dist/workers/pdf.worker.min.mjs as application/octet-stream,
+    browsers refuse to run a module worker (or dynamic import()) without a
+    JavaScript MIME type, and pdf.js's fake-worker fallback does the same
+    import -- so every PDF attached on /scan failed with "Setting up fake
+    worker failed" while images read fine. Publishing the same bytes under
+    .js is what fixed it; keep it that way.
+    """
+    webpack = WEBPACK.read_text()
+    published_as_mjs = re.findall(r"to:\s*'workers/[^']*\.mjs'", webpack)
+    assert published_as_mjs == [], published_as_mjs
+
+    loaded_as_mjs = {
+        p.name: re.findall(r'workers_path\s*\+\s*"[^"]*\.mjs"', p.read_text())
+        for p in SOURCES
+    }
+    loaded_as_mjs = {k: v for k, v in loaded_as_mjs.items() if v}
+    assert loaded_as_mjs == {}, loaded_as_mjs

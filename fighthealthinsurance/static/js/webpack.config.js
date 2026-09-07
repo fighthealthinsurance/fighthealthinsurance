@@ -11,7 +11,15 @@ const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 // which ships with the bundles. Nothing at runtime may reference a
 // node_modules URL; tests/async-unit/test_worker_assets.py pins that.
 const workerAssets = [
-  { from: 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs', to: 'workers/pdf.worker.min.mjs' },
+  // Published as .js on purpose. nginx in the web image (Debian bookworm's
+  // mime.types) has no entry for .mjs, so the worker went out as
+  // application/octet-stream, and browsers refuse to run a module worker or
+  // dynamic import() without a JavaScript MIME type. pdf.js then fell back to
+  // its "fake worker", which does the same import and failed the same way, so
+  // every PDF a user attached on /scan was unreadable ("Setting up fake worker
+  // failed"). Same bytes; only the extension decides the MIME type.
+  // tests/async-unit/test_worker_assets.py pins the extension.
+  { from: 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs', to: 'workers/pdf.worker.min.js' },
   { from: 'node_modules/tesseract.js/dist/worker.min.js', to: 'workers/tesseract.js/worker.min.js' },
   { from: 'node_modules/tesseract.js-core/*.{js,wasm}', to: 'workers/tesseract.js-core/[name][ext]' },
 ];

@@ -131,8 +131,10 @@ const storeTextareaLocal = async function (event: Event) {
 // and OCR in production. tests/async-unit/test_worker_assets.py pins this.
 const workers_path = "/static/js/dist/workers/";
 
-// pdf.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = workers_path + "pdf.worker.min.mjs";
+// pdf.js. The worker is published under a .js name (see webpack.config.js):
+// nginx serves .mjs as application/octet-stream, which no browser will run as
+// a module worker, and that broke every PDF upload in production.
+pdfjsLib.GlobalWorkerOptions.workerSrc = workers_path + "pdf.worker.min.js";
 
 /**
  * Get CSRF token from cookies for Django requests.
