@@ -30,9 +30,14 @@ _COMMENT_CLOSE = "#}"
 
 # Inside {% verbatim %} Django deliberately prints template syntax as-is, so a
 # ``{# #}`` there is content that is meant to show, not a comment gone wrong.
+# Inside {% comment %} nothing renders at all, so a multi-line ``{# #}`` there
+# is harmless too (CodeRabbit on #994).
 _VERBATIM = re.compile(
     r"{%\s*verbatim(?:\s+\w+)?\s*%}.*?{%\s*endverbatim(?:\s+\w+)?\s*%}",
     re.DOTALL,
+)
+_BLOCK_COMMENT = re.compile(
+    r"{%\s*comment(?:\s+\S+)?\s*%}.*?{%\s*endcomment\s*%}", re.DOTALL
 )
 
 
@@ -54,8 +59,10 @@ def first_party_templates():
 
 
 def _blank_verbatim_regions(source: str) -> str:
-    """Drop verbatim blocks but keep their newlines so line numbers hold."""
-    return _VERBATIM.sub(lambda m: "\n" * m.group(0).count("\n"), source)
+    """Drop verbatim and block-comment regions, keeping their newlines so
+    line numbers hold."""
+    keep_lines = lambda m: "\n" * m.group(0).count("\n")
+    return _BLOCK_COMMENT.sub(keep_lines, _VERBATIM.sub(keep_lines, source))
 
 
 def _multiline_comments(source: str):
@@ -109,6 +116,11 @@ class MultilineTemplateCommentTest(TestCase):
 
     def test_scanner_reports_an_unclosed_comment(self):
         self.assertEqual(1, len(list(_multiline_comments("x {# never closed\n"))))
+
+    def test_scanner_ignores_block_comments(self):
+        # A {# #} inside {% comment %} never renders, whatever its shape.
+        inside = "{% comment %}\n{# two\nlines #}\n{% endcomment %}\nx {# fine #}"
+        self.assertEqual([], list(_multiline_comments(inside)))
 
     def test_scanner_ignores_verbatim_blocks(self):
         shown_on_purpose = "{% verbatim %}\n{# this is\ncontent #}\n{% endverbatim %}"
