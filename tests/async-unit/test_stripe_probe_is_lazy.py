@@ -54,7 +54,9 @@ def test_importing_conftest_with_a_key_makes_no_network_call():
     path = Path(root_conftest.__file__)
     with patch.dict(os.environ, {"STRIPE_TEST_SECRET_KEY": "sk_test_not_real"}), patch.object(
         socket, "create_connection", _no_network
-    ), patch.object(socket.socket, "connect", _no_network):
+    ), patch.object(socket.socket, "connect", _no_network), patch.object(
+        socket.socket, "connect_ex", _no_network
+    ):
         spec = importlib.util.spec_from_file_location("_root_conftest_isolated", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)  # raises if anything reached the network
@@ -98,36 +100,65 @@ def test_a_blocked_probe_skips_with_the_proxy_reason():
 
 REPO_ROOT = Path(root_conftest.__file__).resolve().parents[1]
 _INNER_FLAG = "_STRIPE_LAZY_INNER_RUN"
+_DENY_FLAG = "_STRIPE_LAZY_DENY_NETWORK"
 
-# Runs pytest for real, in a subprocess, with every socket connect patched to
-# raise BEFORE pytest starts. A probe hidden in any hook of the lifecycle
-# (pytest_sessionstart, collection hooks, setup) would connect, raise, and
-# surface in the output (review). Nothing else in the test process is touched.
-_RUNNER = """
-import socket, sys
-def _deny(*args, **kwargs):
-    raise RuntimeError("NETWORK ACCESS DURING PYTEST LIFECYCLE")
-socket.create_connection = _deny
-socket.socket.connect = _deny
-import pytest
-sys.exit(pytest.main(sys.argv[1:]))
-"""
+# Installed as sitecustomize.py on PYTHONPATH, so it runs at interpreter start
+# in the pytest process AND in every xdist worker (workers are separate
+# interpreters that inherit the environment, not the parent's monkeypatches).
+# A probe hidden in any hook of the lifecycle, in the controller or a worker,
+# would connect, raise, and surface in the output (review). It is gated on an
+# environment flag so it can never affect anything else.
+_SITECUSTOMIZE = """
+import os
+if os.environ.get("%s") == "1":
+    import socket
+    _real_create_connection = socket.create_connection
+    _real_connect = socket.socket.connect
+    _real_connect_ex = socket.socket.connect_ex
+
+    def _is_local(address):
+        # Loopback and Unix sockets stay open: xdist's own plumbing and
+        # pytest-rerunfailures' shared-state server connect to localhost at
+        # configure time. api.stripe.com is never loopback.
+        if isinstance(address, (str, bytes)):
+            return True
+        host = address[0] if isinstance(address, tuple) and address else address
+        return host in ("", "localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+    def _guard(real):
+        def wrapped(*args, **kwargs):
+            address = args[1] if len(args) > 1 else args[0] if args else kwargs.get("address")
+            if not _is_local(address):
+                raise RuntimeError("NETWORK ACCESS DURING PYTEST LIFECYCLE: %%r" %% (address,))
+            return real(*args, **kwargs)
+        return wrapped
+
+    socket.create_connection = _guard(_real_create_connection)
+    socket.socket.connect = _guard(_real_connect)
+    socket.socket.connect_ex = _guard(_real_connect_ex)
+""" % _DENY_FLAG
 
 
 def _inner_pytest(tmp_path, *args):
     import subprocess
     import sys
 
-    runner = tmp_path / "runner.py"
-    runner.write_text(_RUNNER)
-    env = dict(os.environ, STRIPE_TEST_SECRET_KEY="sk_test_not_real", **{_INNER_FLAG: "1"})
+    site_dir = tmp_path / "site"
+    site_dir.mkdir(exist_ok=True)
+    (site_dir / "sitecustomize.py").write_text(_SITECUSTOMIZE)
+    env = dict(
+        os.environ,
+        STRIPE_TEST_SECRET_KEY="sk_test_not_real",
+        PYTHONPATH=str(site_dir) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        **{_INNER_FLAG: "1", _DENY_FLAG: "1"},
+    )
     return subprocess.run(
-        [sys.executable, str(runner), "-q", "-p", "no:cacheprovider", "-p", "no:randomly", *args],
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:randomly", "-n", "2", *args],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=600,
     )
 
 
@@ -135,8 +166,12 @@ def _inner_pytest(tmp_path, *args):
 def test_a_real_pytest_session_over_unmarked_tests_never_reaches_the_network(tmp_path):
     """The whole lifecycle, with a key in the environment: still no connect."""
     result = _inner_pytest(tmp_path, "tests/async-unit/test_worker_assets.py")
-    assert "NETWORK ACCESS" not in result.stdout + result.stderr, result.stdout + result.stderr
-    assert result.returncode == 0, result.stdout + result.stderr
+    out = result.stdout + result.stderr
+    assert "NETWORK ACCESS" not in out, out
+    assert result.returncode == 0, out
+    # The guard was live in the workers too: xdist actually ran. Under -q
+    # its only trace is the "bringing up nodes" line.
+    assert "bringing up nodes" in out or "[gw0]" in out or "2 workers" in out, out
 
 
 @pytest.mark.skipif(os.environ.get(_INNER_FLAG) == "1", reason="inner run")
@@ -150,8 +185,9 @@ def test_a_marked_test_is_what_triggers_the_probe(tmp_path):
         "def test_marked():\n"
         "    pass\n"
     )
-    result = _inner_pytest(tmp_path, "-p", "tests.conftest", str(marked))
+    result = _inner_pytest(tmp_path, "-p", "tests.conftest", "-rs", str(marked))
     out = result.stdout + result.stderr
-    # The probe ran (the guard fired) and, because the connect "failed", the
-    # marked test was skipped with the proxy reason rather than run.
+    # The probe ran, inside a worker (the guard fired there) and, because
+    # the connect "failed", the marked test was skipped with the proxy
+    # reason rather than run.
     assert "SSL-intercepting proxy" in out or "NETWORK ACCESS" in out, out
