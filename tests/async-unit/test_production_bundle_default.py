@@ -92,20 +92,51 @@ def test_console_stripping_covers_exactly_the_chatty_levels():
 
 
 def test_build_marks_its_mode_and_the_cache_checks_it():
-    """build_static.sh must not reuse a development dist under a matching checksum.
+    """build_static.sh must not reuse a dist built in a different mode.
 
-    webpack writes dist/BUILD_MODE after emit; the cache skip requires it to
-    name the mode this run wants (review).
+    webpack removes dist/BUILD_MODE before every compilation and writes it
+    back, with the real mode, only after an error-free emit, so an
+    interrupted or failed build leaves no marker. build_static.sh wants
+    production unless NODE_ENV=development, and skips only when the marker
+    says so (review). Regexes tolerate wrapping and quote style; they pin
+    the values and the wiring, not the formatting.
     """
     src = _webpack_config()
-    assert "BuildModeMarker" in src and "'dist', 'BUILD_MODE'" in src, (
-        "webpack no longer records the build mode in dist/BUILD_MODE"
-    )
+    q = r"['\"]"
+    assert re.search(
+        r"path\.resolve\(\s*__dirname\s*,\s*" + q + r"dist" + q + r"\s*,\s*" + q + r"BUILD_MODE" + q + r"\s*\)",
+        src,
+        re.S,
+    ), "the marker is no longer dist/BUILD_MODE"
+    assert re.search(r"beforeCompile\.tap\(\s*" + q + r"BuildModeMarker", src, re.S) and re.search(
+        r"unlinkSync\(\s*marker\s*\)", src
+    ), "the marker is no longer removed before compilation"
+    assert re.search(
+        r"afterEmit\.tap\(\s*" + q + r"BuildModeMarker.*?compilation\.errors\.length\s*>\s*0\s*\)\s*return",
+        src,
+        re.S,
+    ), "the marker is written even when the compilation had errors"
+    assert re.search(
+        r"writeFileSync\(\s*marker\s*,\s*\(\s*isProduction\s*\?\s*" + q + r"production" + q
+        + r"\s*:\s*" + q + r"development" + q + r"\s*\)",
+        src,
+        re.S,
+    ), "the marker no longer records the real mode (a hardcoded value would let a dev build pass as production)"
+
     sh = (JS.parents[2] / "scripts" / "build_static.sh").read_text()
-    assert 'BUILT_MODE=$(cat "${JS_PATH}/dist/BUILD_MODE"' in sh, (
+    assert re.search(r"^\s*EXPECTED_BUILD_MODE=production\s*$", sh, re.M), (
+        "build_static.sh no longer expects production by default"
+    )
+    assert re.search(
+        r"\[\s*\"\$\{NODE_ENV:-\}\"\s*=\s*\"development\"\s*\].*?EXPECTED_BUILD_MODE=development",
+        sh,
+        re.S,
+    ), "build_static.sh no longer expects development only when NODE_ENV=development"
+    assert re.search(r"BUILT_MODE=\$\(cat\s+\"\$\{JS_PATH\}/dist/BUILD_MODE\"", sh), (
         "build_static.sh no longer reads dist/BUILD_MODE"
     )
     assert re.search(
-        r'\[ "\$CURRENT_JS_CHECKSUM" = "\$STORED_JS_CHECKSUM" \].*\[ "\$BUILT_MODE" = "\$EXPECTED_BUILD_MODE" \]',
+        r"\"\$CURRENT_JS_CHECKSUM\"\s*=\s*\"\$STORED_JS_CHECKSUM\".*?\"\$BUILT_MODE\"\s*=\s*\"\$EXPECTED_BUILD_MODE\"",
         sh,
+        re.S,
     ), "the cache skip no longer requires the built mode to match"

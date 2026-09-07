@@ -173,11 +173,22 @@ module.exports = async (env, argv) => {
     // next build_static.sh would skip webpack and collect it (review).
     {
       apply(compiler) {
-        compiler.hooks.afterEmit.tap('BuildModeMarker', () => {
-          fs.writeFileSync(
-            path.resolve(__dirname, 'dist', 'BUILD_MODE'),
-            (isProduction ? 'production' : 'development') + '\n'
-          );
+        const marker = path.resolve(__dirname, 'dist', 'BUILD_MODE');
+        // Invalidate first, write last. An interrupted or failed build must
+        // not leave the previous mode's marker next to partially overwritten
+        // output, or build_static.sh would trust it and skip the rebuild
+        // (review). So the marker is removed before every compilation and
+        // written back only after an error-free emit.
+        compiler.hooks.beforeCompile.tap('BuildModeMarker', () => {
+          try {
+            fs.unlinkSync(marker);
+          } catch (e) {
+            if (e.code !== 'ENOENT') throw e;
+          }
+        });
+        compiler.hooks.afterEmit.tap('BuildModeMarker', (compilation) => {
+          if (compilation.errors.length > 0) return;
+          fs.writeFileSync(marker, (isProduction ? 'production' : 'development') + '\n');
         });
       },
     },
