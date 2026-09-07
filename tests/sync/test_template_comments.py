@@ -61,7 +61,10 @@ def first_party_templates():
 def _blank_verbatim_regions(source: str) -> str:
     """Drop verbatim and block-comment regions, keeping their newlines so
     line numbers hold."""
-    keep_lines = lambda m: "\n" * m.group(0).count("\n")
+
+    def keep_lines(match: "re.Match[str]") -> str:
+        return "\n" * match.group(0).count("\n")
+
     return _BLOCK_COMMENT.sub(keep_lines, _VERBATIM.sub(keep_lines, source))
 
 
