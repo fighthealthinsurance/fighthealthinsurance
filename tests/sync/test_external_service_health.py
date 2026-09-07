@@ -66,6 +66,47 @@ class ExternalServiceHealthTest(TestCase):
             async_to_sync(ExternalServiceHealth.anote_success)("typesafe")
         self.assertEqual(self._row().last_success_at, t2)
 
+    def test_a_row_created_between_the_two_statements_still_takes_the_newer_outcome(self):
+        """Before the row exists: a failure's conditional update finds nothing,
+        another pod's OLDER success creates the row, and the failure's
+        get-or-create comes back with created=False. The failure must still
+        land (review)."""
+        t2 = timezone.now() - datetime.timedelta(minutes=2)
+        t3 = t2 + datetime.timedelta(minutes=1)
+
+        async def racing_get_or_create(**kwargs):
+            row = await ExternalServiceHealth.objects.acreate(
+                service=kwargs["service"], last_success_at=t2
+            )
+            return row, False
+
+        with _at(t3), mock.patch.object(
+            ExternalServiceHealth.objects, "aget_or_create", new=racing_get_or_create
+        ):
+            async_to_sync(ExternalServiceHealth.anote_failure)("typesafe", "HTTP 402")
+        row = self._row()
+        self.assertEqual(row.last_failure, "HTTP 402")
+        self.assertEqual(row.last_failure_at, t3)
+        self.assertEqual(row.last_success_at, t2)
+
+    def test_a_stale_write_arriving_during_creation_still_loses(self):
+        t1 = timezone.now() - datetime.timedelta(minutes=3)
+        t3 = t1 + datetime.timedelta(minutes=2)
+
+        async def racing_get_or_create(**kwargs):
+            row = await ExternalServiceHealth.objects.acreate(
+                service=kwargs["service"], last_failure_at=t3, last_failure="HTTP 503"
+            )
+            return row, False
+
+        with _at(t1), mock.patch.object(
+            ExternalServiceHealth.objects, "aget_or_create", new=racing_get_or_create
+        ):
+            async_to_sync(ExternalServiceHealth.anote_failure)("typesafe", "HTTP 402")
+        row = self._row()
+        self.assertEqual(row.last_failure, "HTTP 503")
+        self.assertEqual(row.last_failure_at, t3)
+
     def test_the_summary_is_cut_to_the_column(self):
         async_to_sync(ExternalServiceHealth.anote_failure)("typesafe", "x" * 200)
         self.assertEqual(len(self._row().last_failure), 80)

@@ -4054,28 +4054,37 @@ class ExternalServiceHealth(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
-    async def anote_success(cls, service: str) -> None:
-        """Best effort: a health record must never break the call it watches.
+    async def _advance(cls, service: str, field: str, now, values: dict) -> None:
+        """Forward-only write of ``values`` (which set ``field`` to ``now``).
 
-        Only ever moves the timestamp forward. Calls overlap (several drafts
-        score at once, on several pods), so a slow write from an older call
-        must not land on top of a newer outcome and fake a recovery (review):
-        a conditional UPDATE does the move, and aget_or_create covers the
-        first-ever row.
+        Calls overlap (several drafts score at once, on several pods), so a
+        slow write from an older call must not land on top of a newer
+        outcome and fake a recovery (review). A conditional UPDATE moves the
+        column only when it is empty or older; aget_or_create covers the
+        first-ever row; and if the row appeared between those two statements
+        (another pod's first write), the conditional UPDATE runs once more
+        against it, so the newer outcome still wins (review).
         """
+        older = models.Q(**{f"{field}__isnull": True}) | models.Q(
+            **{f"{field}__lt": now}
+        )
+        if await cls.objects.filter(models.Q(service=service) & older).aupdate(
+            **values
+        ):
+            return
+        _, created = await cls.objects.aget_or_create(service=service, defaults=values)
+        if created:
+            return
+        await cls.objects.filter(models.Q(service=service) & older).aupdate(**values)
+
+    @classmethod
+    async def anote_success(cls, service: str) -> None:
+        """Best effort: a health record must never break the call it watches."""
         try:
             now = timezone.now()
-            moved = await cls.objects.filter(
-                models.Q(service=service)
-                & (
-                    models.Q(last_success_at__isnull=True)
-                    | models.Q(last_success_at__lt=now)
-                )
-            ).aupdate(last_success_at=now)
-            if not moved:
-                await cls.objects.aget_or_create(
-                    service=service, defaults={"last_success_at": now}
-                )
+            await cls._advance(
+                service, "last_success_at", now, {"last_success_at": now}
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 f"could not record a success for external service {service}"
@@ -4088,19 +4097,12 @@ class ExternalServiceHealth(models.Model):
         the column, and travels with its timestamp in one statement."""
         try:
             now = timezone.now()
-            text = (summary or "")[:80]
-            moved = await cls.objects.filter(
-                models.Q(service=service)
-                & (
-                    models.Q(last_failure_at__isnull=True)
-                    | models.Q(last_failure_at__lt=now)
-                )
-            ).aupdate(last_failure_at=now, last_failure=text)
-            if not moved:
-                await cls.objects.aget_or_create(
-                    service=service,
-                    defaults={"last_failure_at": now, "last_failure": text},
-                )
+            await cls._advance(
+                service,
+                "last_failure_at",
+                now,
+                {"last_failure_at": now, "last_failure": (summary or "")[:80]},
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 f"could not record a failure for external service {service}"
