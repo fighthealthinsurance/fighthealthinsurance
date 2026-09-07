@@ -68,13 +68,22 @@ def _js_function_at(src: str, head: str) -> str:
             if depth == 0:
                 end_of_params = i
                 break
-    assert end_of_params is not None, f"unbalanced parens reading {declaration}"
+    assert end_of_params is not None, f"unbalanced parens reading {head}"
     return _brace_block(src, src.index("{", end_of_params))
 
 
-def test_begin_ocr_shows_the_progress_box():
-    """Show it when reading starts. This is the whole fix."""
+def test_begin_ocr_records_the_selection_and_shows_the_progress_box():
+    """Show it when reading starts, and record WHICH batch is being read.
+
+    The recording is the central state transition: without it every read
+    reports "not in flight", a mid-read submit hides the box, and a read that
+    finishes without a submit leaves it up forever because endOcr returns
+    early for a selection that was never recorded (review).
+    """
     body = _js_function(_form_source(), "export function beginOcr")
+    assert re.search(r"activeOcrSelection\s*=\s*selection\s*;", body), (
+        "beginOcr no longer records the active selection"
+    )
     assert 'showHiddenMessage("ocr_in_progress")' in body, (
         "beginOcr no longer shows the progress box; the user is back to "
         "staring at an idle page while their file is read"
@@ -167,10 +176,11 @@ def test_progress_box_is_not_styled_as_an_error():
     assert rule is not None, "the neutral colour rule is gone"
     color = re.search(r"color\s*:\s*([^;]+);", rule.group(1))
     assert color is not None, "the rule no longer sets a colour"
-    value = color.group(1).strip().lower()
-    assert value not in {"red", "#f00", "#ff0000", "rgb(255, 0, 0)", "rgb(255,0,0)"}, (
-        f"the progress box is red again: {value}"
-    )
+    # Pin the chosen neutral, with any !important stripped: a deny-list of
+    # reds accepted "red !important" (review). Change this and the CSS
+    # together.
+    value = re.sub(r"\s*!important\s*$", "", color.group(1).strip().lower())
+    assert value == "#2c3e50", f"the progress box colour changed: {value}"
 
 
 def test_progress_box_keeps_the_sibling_live_region_role():
