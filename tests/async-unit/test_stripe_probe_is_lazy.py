@@ -171,10 +171,14 @@ def _inner_pytest(tmp_path, *args):
         PYTHONPATH=str(site_dir) + os.pathsep + os.environ.get("PYTHONPATH", ""),
         **{_INNER_FLAG: "1", _DENY_FLAG: "1", _ATTEMPT_LOG_FLAG: str(attempts)},
     )
-    # No proxy in the child: behind an HTTPS proxy the probe's first connect
-    # is to the proxy, not to Stripe, and the attempt log would name the
-    # proxy (review). With these gone the target is deterministic.
-    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+    # The child runs with the outer environment minus two things. No proxy:
+    # behind an HTTPS proxy the probe's first connect is to the proxy, not to
+    # Stripe, and the attempt log would name the proxy. And no inherited
+    # pytest selection: a PYTEST_ADDOPTS of `-m "not stripe_e2e"` on the
+    # outer run would deselect the positive control's own marked test
+    # (review). Anything else the outer environment carries is inherited
+    # as is; that is the documented boundary of these two tests.
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "PYTEST_ADDOPTS"):
         env.pop(name, None)
         env.pop(name.lower(), None)
     return subprocess.run(
