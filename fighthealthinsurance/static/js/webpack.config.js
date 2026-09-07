@@ -56,9 +56,20 @@ try {
 // console.log/info/debug as a defense against logging PHI to the browser
 // console. Defaulting the other way means the safe build is the one you get
 // by accident. `npm run build:dev` (or NODE_ENV=development) opts out.
-const isProduction = process.env.NODE_ENV !== 'development';
+// isProduction is decided INSIDE the exported function, from the CLI's --mode
+// when one is given, so see below.
 
 module.exports = async (env, argv) => {
+  // One source of truth for mode, optimization and the BUILD_MODE marker.
+  // `webpack --mode X` overrides the configured mode after this file has
+  // run, so if this flag came only from NODE_ENV the two could disagree:
+  // `NODE_ENV=development npm run build -- --mode production` produced
+  // production-mode bundles WITHOUT the pure_funcs console stripping, under
+  // a marker that said production (review). When the CLI passes a mode, it
+  // decides; otherwise production unless NODE_ENV=development.
+  const isProduction = argv && argv.mode
+    ? argv.mode === 'production'
+    : process.env.NODE_ENV !== 'development';
   // Load ESM-only plugins with dynamic import()
   const [{ default: remarkGfm }, { default: rehypeHighlight }] = await Promise.all([
     import('remark-gfm'),

@@ -27,11 +27,19 @@ def _scripts() -> dict:
 
 
 def test_production_is_the_default_mode():
+    """Production unless NODE_ENV=development, with a CLI --mode taking precedence.
+
+    The CLI clause matters: `webpack --mode X` overrides the configured mode
+    after the config has run, so a flag derived only from NODE_ENV could
+    disagree with the mode actually built (review).
+    """
     src = _webpack_config()
     assert re.search(
-        r"const\s+isProduction\s*=\s*process\.env\.NODE_ENV\s*!==\s*['\"]development['\"]\s*;",
+        r"const\s+isProduction\s*=\s*argv\s*&&\s*argv\.mode\s*\?\s*argv\.mode\s*===\s*['\"]production['\"]"
+        r"\s*:\s*process\.env\.NODE_ENV\s*!==\s*['\"]development['\"]\s*;",
         src,
-    ), "isProduction no longer defaults to true; the deployed bundle is a dev build again"
+        re.S,
+    ), "isProduction is no longer: CLI --mode if given, else production unless NODE_ENV=development"
     assert not re.search(
         r"isProduction\s*=\s*process\.env\.NODE_ENV\s*===\s*['\"]production['\"]",
         src,
