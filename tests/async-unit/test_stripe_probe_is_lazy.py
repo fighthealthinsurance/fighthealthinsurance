@@ -36,16 +36,29 @@ def _fresh_decision():
     root_conftest._stripe_e2e_skip_reason = None
 
 
-def test_the_probe_is_never_called_at_import():
-    """Every call site of the probe sits inside a function, none at module level."""
-    src = Path(root_conftest.__file__).read_text()
-    assert "_skip_stripe_ssl = (" not in src, "the import-time probe is back"
-    # Call sites only; the definition line itself starts at column 0.
-    for m in re.finditer(r"(?<!def )_has_ssl_intercepting_proxy\(\)", src):
-        line_start = src.rfind("\n", 0, m.start()) + 1
-        assert src[line_start:m.start()].startswith(" "), (
-            "the probe is called at module level again"
-        )
+def test_importing_conftest_with_a_key_makes_no_network_call():
+    """Behavioural, not textual: load the conftest source fresh, with a key in
+    the environment and every socket connect patched to raise, and require
+    the import to complete. A guarded probe at module scope (review's
+    counterexample) would connect, raise, and fail the import.
+    """
+    import importlib.util
+    import socket
+    import urllib.request
+
+    def _no_network(*args, **kwargs):
+        raise AssertionError("network access during conftest import")
+
+    path = Path(root_conftest.__file__)
+    with patch.dict(os.environ, {"STRIPE_TEST_SECRET_KEY": "sk_test_not_real"}), patch.object(
+        socket, "create_connection", _no_network
+    ), patch.object(socket.socket, "connect", _no_network), patch.object(
+        urllib.request, "build_opener", _no_network
+    ):
+        spec = importlib.util.spec_from_file_location("_root_conftest_isolated", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # raises if anything reached the network
+    assert callable(module.pytest_runtest_setup)
 
 
 def test_an_unmarked_test_never_triggers_the_probe():
