@@ -54,8 +54,18 @@ if [ -d "${JS_PATH}" ]; then
     STORED_JS_CHECKSUM=$(cat "$JS_CHECKSUM_FILE")
   fi
 
-  if [ "$CURRENT_JS_CHECKSUM" = "$STORED_JS_CHECKSUM" ] && [ -d "${JS_PATH}/dist" ]; then
-    echo "JavaScript source files unchanged, skipping build..."
+  # The checksum covers sources, not the build mode. A `npm run build:dev`
+  # in between leaves development output (unminified, console.log intact)
+  # under an unchanged checksum, so also require the BUILD_MODE marker that
+  # webpack writes into dist/ to name the mode this run wants (review).
+  EXPECTED_BUILD_MODE=production
+  if [ "${NODE_ENV:-}" = "development" ]; then
+    EXPECTED_BUILD_MODE=development
+  fi
+  BUILT_MODE=$(cat "${JS_PATH}/dist/BUILD_MODE" 2>/dev/null || true)
+
+  if [ "$CURRENT_JS_CHECKSUM" = "$STORED_JS_CHECKSUM" ] && [ -d "${JS_PATH}/dist" ] && [ "$BUILT_MODE" = "$EXPECTED_BUILD_MODE" ]; then
+    echo "JavaScript source files unchanged and dist is a ${BUILT_MODE} build, skipping build..."
     SKIP_JS_BUILD=true
   fi
 fi

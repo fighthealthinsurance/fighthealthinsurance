@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 const glob = require('glob');
 const TerserPlugin = require('terser-webpack-plugin');
 const CopyPlugin = require('copy-webpack-plugin');
@@ -165,6 +166,21 @@ module.exports = async (env, argv) => {
   // Plugins - the worker asset copy always; the bundle analyzer on request
   plugins: [
     new CopyPlugin({ patterns: workerAssets }),
+    // Record which mode produced dist/, so scripts/build_static.sh can tell a
+    // production build from a development one. Its cache keys on source
+    // checksums only, so without this an `npm run build:dev` in between would
+    // leave development output in place under an unchanged checksum and the
+    // next build_static.sh would skip webpack and collect it (review).
+    {
+      apply(compiler) {
+        compiler.hooks.afterEmit.tap('BuildModeMarker', () => {
+          fs.writeFileSync(
+            path.resolve(__dirname, 'dist', 'BUILD_MODE'),
+            (isProduction ? 'production' : 'development') + '\n'
+          );
+        });
+      },
+    },
     ...(shouldAnalyze ? [
       new BundleAnalyzerPlugin({
         analyzerMode: 'static',

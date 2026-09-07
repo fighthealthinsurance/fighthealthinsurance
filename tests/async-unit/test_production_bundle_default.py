@@ -44,10 +44,68 @@ def test_developers_can_still_opt_out():
     assert "NODE_ENV=development" in scripts["build:dev"], scripts["build:dev"]
 
 
-def test_console_stripping_still_covers_the_chatty_levels():
-    """The PHI defense is the reason production mode matters; keep it intact."""
+def _brace_block(src: str, open_at: int) -> str:
+    assert src[open_at] == "{", src[open_at : open_at + 20]
+    depth = 0
+    for i in range(open_at, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[open_at : i + 1]
+    raise AssertionError("unbalanced braces")
+
+
+def test_mode_and_optimization_are_wired_to_the_flag():
+    """A correct flag that nothing consumes is no fix (review).
+
+    A hardcoded mode, or an optimization block kept as text but no longer
+    conditional on the flag, would ship development output again with the
+    default test above still green.
+    """
     src = _webpack_config()
-    m = re.search(r"pure_funcs\s*:\s*\[([^\]]*)\]", src)
-    assert m is not None, "the Terser pure_funcs list is gone"
+    assert re.search(
+        r"mode\s*:\s*isProduction\s*\?\s*['\"]production['\"]\s*:\s*['\"]development['\"]",
+        src,
+    ), "webpack mode is no longer selected by isProduction"
+    assert re.search(r"optimization\s*:\s*isProduction\s*\?\s*\{", src), (
+        "the optimization block is no longer conditional on isProduction"
+    )
+
+
+def test_console_stripping_covers_exactly_the_chatty_levels():
+    """The PHI defense is the reason production mode matters; keep it intact.
+
+    Exactly log/info/debug: warn and error stay, on purpose, so production
+    issues remain debuggable. The list must live inside the optimization
+    block, where it is actually consumed.
+    """
+    src = _webpack_config()
+    opt = re.search(r"optimization\s*:\s*isProduction\s*\?\s*\{", src)
+    assert opt is not None
+    block = _brace_block(src, opt.end() - 1)
+    m = re.search(r"pure_funcs\s*:\s*\[([^\]]*)\]", block)
+    assert m is not None, "the Terser pure_funcs list is gone from the optimization block"
     listed = set(re.findall(r"['\"]([\w.]+)['\"]", m.group(1)))
-    assert {"console.log", "console.info", "console.debug"} <= listed, listed
+    assert listed == {"console.log", "console.info", "console.debug"}, listed
+
+
+def test_build_marks_its_mode_and_the_cache_checks_it():
+    """build_static.sh must not reuse a development dist under a matching checksum.
+
+    webpack writes dist/BUILD_MODE after emit; the cache skip requires it to
+    name the mode this run wants (review).
+    """
+    src = _webpack_config()
+    assert "BuildModeMarker" in src and "'dist', 'BUILD_MODE'" in src, (
+        "webpack no longer records the build mode in dist/BUILD_MODE"
+    )
+    sh = (JS.parents[2] / "scripts" / "build_static.sh").read_text()
+    assert 'BUILT_MODE=$(cat "${JS_PATH}/dist/BUILD_MODE"' in sh, (
+        "build_static.sh no longer reads dist/BUILD_MODE"
+    )
+    assert re.search(
+        r'\[ "\$CURRENT_JS_CHECKSUM" = "\$STORED_JS_CHECKSUM" \].*\[ "\$BUILT_MODE" = "\$EXPECTED_BUILD_MODE" \]',
+        sh,
+    ), "the cache skip no longer requires the built mode to match"
