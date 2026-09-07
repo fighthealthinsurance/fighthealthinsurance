@@ -73,12 +73,9 @@ class AppealReplayCapTest(TestCase):
                 contents.append(parsed["content"])
         return contents
 
-    @pytest.mark.django_db
-    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
-    def test_replay_is_capped_and_newest_first(self, mock_appeal_generator):
-        """Eighteen stored drafts must not all come back."""
+    def _replay_of_eighteen(self, mock_appeal_generator):
+        """Eighteen stored drafts, created oldest to newest; the drafts replayed."""
         email, denial = self._create_denial()
-        # Created oldest to newest, so "Stored draft 17" is the most recent.
         for i in range(18):
             ProposedAppeal.objects.create(
                 for_denial=denial,
@@ -90,7 +87,7 @@ class AppealReplayCapTest(TestCase):
             )
         mock_appeal_generator.make_appeals.return_value = iter([])
 
-        async def test():
+        async def run():
             try:
                 contents = await self._collect_contents(
                     {
@@ -99,25 +96,35 @@ class AppealReplayCapTest(TestCase):
                         "semi_sekret": denial.semi_sekret,
                     }
                 )
-                replayed = [c for c in contents if "Stored draft" in c]
-                self.assertEqual(
-                    len(replayed),
-                    AppealsBackendHelper.MAX_REPLAYED_APPEALS,
-                    "the stored-draft replay is uncapped again; the page opens "
-                    f"with a wall of letters. Got {len(replayed)}",
-                )
-                # Newest first: 17, 16, 15 -- never 0, 1, 2.
-                self.assertIn("Stored draft 17", replayed[0])
-                self.assertNotIn(
-                    "Stored draft 0",
-                    " ".join(replayed),
-                    "the oldest draft was replayed, so the ordering is not "
-                    "newest-first",
-                )
+                return [c for c in contents if "Stored draft" in c]
             finally:
                 await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
 
-        async_to_sync(test)()
+        return async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_replay_is_capped(self, mock_appeal_generator):
+        """Eighteen stored drafts must not all come back."""
+        replayed = self._replay_of_eighteen(mock_appeal_generator)
+        self.assertEqual(
+            len(replayed),
+            AppealsBackendHelper.MAX_REPLAYED_APPEALS,
+            "the stored-draft replay is uncapped again; the page opens "
+            f"with a wall of letters. Got {len(replayed)}",
+        )
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_replay_is_newest_first(self, mock_appeal_generator):
+        """The budget goes to the most recent drafts: 17, 16, 15, never 0."""
+        replayed = self._replay_of_eighteen(mock_appeal_generator)
+        self.assertIn("Stored draft 17", replayed[0])
+        self.assertNotIn(
+            "Stored draft 0",
+            " ".join(replayed),
+            "the oldest draft was replayed, so the ordering is not newest-first",
+        )
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
