@@ -63,7 +63,16 @@ def test_importing_conftest_with_a_key_makes_no_network_call():
         spec = importlib.util.spec_from_file_location("tests._root_conftest_isolated", path)
         module = importlib.util.module_from_spec(spec)
         module.__package__ = "tests"
-        spec.loader.exec_module(module)  # raises if anything reached the network
+        # Registered while it executes, as a real import would be: dataclass
+        # processing under `from __future__ import annotations` looks the
+        # module up in sys.modules (review).
+        import sys
+
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)  # raises if anything reached the network
+        finally:
+            sys.modules.pop(spec.name, None)
     assert callable(module.pytest_runtest_setup)
 
 
