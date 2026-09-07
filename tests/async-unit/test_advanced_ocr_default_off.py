@@ -29,6 +29,7 @@ Delete these only together with a measurement showing the engine beats tesseract
 on real denial scans. See ``qwen_webgpu_ocr.ts`` for what a working version needs.
 """
 
+import html as html_lib
 import pathlib
 import re
 
@@ -286,8 +287,12 @@ def test_pages_without_the_checkbox_default_off():
     body = _js_function(_ocr_structural(), "isAdvancedOCREnabled")
     returns = re.findall(r"\breturn\b[^;]*;", body)
     assert len(returns) == 1, f"expected exactly one return, found {returns}"
+    # Either spelling of "the box if present, else false": the ternary, or
+    # optional chaining with a nullish default (review).
     assert re.fullmatch(
-        r"return\s+checkbox\s*\?\s*checkbox\.checked\s*:\s*false\s*;", returns[0]
+        r"return\s+checkbox\s*\?\s*checkbox\.checked\s*:\s*false\s*;"
+        r"|return\s+checkbox\?\.checked\s*\?\?\s*false\s*;",
+        returns[0],
     ), (
         "isAdvancedOCREnabled no longer returns `checkbox ? checkbox.checked : "
         f"false`; the no-opt-out pages would start downloading again. Got: "
@@ -309,7 +314,7 @@ def test_qwen_engine_only_runs_inside_the_checkbox_gate():
         "recognizeWithQwenWebGPU is launched more than once, or not at all, in "
         "recognizeImageText"
     )
-    gate = re.search(r"if\s*\(\s*isAdvancedOCREnabled\(\)\s*\)\s*\{", body)
+    gate = re.search(r"if\s*\(\s*isAdvancedOCREnabled\s*\(\s*\)\s*\)\s*\{", body)
     assert gate is not None, "no `if (isAdvancedOCREnabled())` block in recognizeImageText"
     block = _brace_block(body, gate.end() - 1)
     assert re.search(launch, block), (
@@ -327,10 +332,11 @@ def test_no_hardcoded_onnxruntime_version_pin():
     the same bug waiting to happen, because the two versions drift
     independently. Strings, nested templates included, are kept in this view.
     """
-    # The identifier is checked on the string-blanked view: a diagnostic like
-    # console.debug("wasmPaths:", env) mentions it without touching it (review).
-    # The version pin is checked with strings kept, because a pin lives in one.
-    assert "wasmPaths" not in _qwen_structural(), (
+    # What is forbidden is ASSIGNING wasmPaths. A read-only diagnostic of
+    # env.backends.onnx.wasm.wasmPaths is fine, and so is a string mentioning
+    # it; the check runs on the string-blanked view and looks for the
+    # identifier followed by a single `=` (review).
+    assert not re.search(r"\bwasmPaths\s*=(?!=)", _qwen_structural()), (
         "wasmPaths is being set again; let transformers.js derive it from the "
         "onnxruntime build it actually shipped with"
     )
@@ -353,9 +359,11 @@ def test_label_states_the_download_cost_truthfully():
     """
     html = _scrub_template()
     start = html.index('id="advanced_ocr_section"')
-    # Rendered whitespace: a line wrap inside a phrase is the same text to a
-    # browser and must be the same text to this test (review).
-    label = re.sub(r"\s+", " ", html[start : html.index("</label>", start)])
+    # Rendered text: a line wrap inside a phrase, or an &nbsp; used to stop
+    # one, is the same text to a browser and must be the same text to this
+    # test (review). Entities are decoded, then whitespace normalized.
+    label = html_lib.unescape(html[start : html.index("</label>", start)])
+    label = re.sub(r"\s+", " ", label)
     assert re.search(r"not working|does not work|fails to load", label, re.I), (
         "the label no longer says the engine is broken, but it still is"
     )
