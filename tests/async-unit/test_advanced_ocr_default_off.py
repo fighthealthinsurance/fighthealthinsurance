@@ -224,6 +224,10 @@ def _qwen_executable() -> str:
     return _executable((JS / "qwen_webgpu_ocr.ts").read_text())
 
 
+def _qwen_structural() -> str:
+    return _structural((JS / "qwen_webgpu_ocr.ts").read_text())
+
+
 def _checkbox_tag(html: str) -> str:
     """The live advanced-OCR <input> tag, whole. Case-insensitive: HTML is."""
     match = re.search(r"<input[^>]*id=\"advanced_ocr_enabled\"[^>]*>", html, re.I)
@@ -300,14 +304,15 @@ def test_qwen_engine_only_runs_inside_the_checkbox_gate():
     interpolation cannot fake or evade the gate here.
     """
     body = _js_function(_ocr_structural(), "recognizeImageText")
-    assert body.count("recognizeWithQwenWebGPU(") == 1, (
+    launch = r"recognizeWithQwenWebGPU\s*\("
+    assert len(re.findall(launch, body)) == 1, (
         "recognizeWithQwenWebGPU is launched more than once, or not at all, in "
         "recognizeImageText"
     )
     gate = re.search(r"if\s*\(\s*isAdvancedOCREnabled\(\)\s*\)\s*\{", body)
     assert gate is not None, "no `if (isAdvancedOCREnabled())` block in recognizeImageText"
     block = _brace_block(body, gate.end() - 1)
-    assert "recognizeWithQwenWebGPU(" in block, (
+    assert re.search(launch, block), (
         "the qwen engine is launched outside the `if (isAdvancedOCREnabled())` "
         "block; the checkbox would stop meaning anything"
     )
@@ -322,13 +327,15 @@ def test_no_hardcoded_onnxruntime_version_pin():
     the same bug waiting to happen, because the two versions drift
     independently. Strings, nested templates included, are kept in this view.
     """
-    code = _qwen_executable()
-    assert "wasmPaths" not in code, (
+    # The identifier is checked on the string-blanked view: a diagnostic like
+    # console.debug("wasmPaths:", env) mentions it without touching it (review).
+    # The version pin is checked with strings kept, because a pin lives in one.
+    assert "wasmPaths" not in _qwen_structural(), (
         "wasmPaths is being set again; let transformers.js derive it from the "
         "onnxruntime build it actually shipped with"
     )
     assert not re.search(
-        r"onnxruntime-web@\d", code
+        r"onnxruntime-web@\d", _qwen_executable()
     ), "a hardcoded onnxruntime-web version is back in qwen_webgpu_ocr.ts"
 
 
@@ -346,7 +353,9 @@ def test_label_states_the_download_cost_truthfully():
     """
     html = _scrub_template()
     start = html.index('id="advanced_ocr_section"')
-    label = html[start : html.index("</label>", start)]
+    # Rendered whitespace: a line wrap inside a phrase is the same text to a
+    # browser and must be the same text to this test (review).
+    label = re.sub(r"\s+", " ", html[start : html.index("</label>", start)])
     assert re.search(r"not working|does not work|fails to load", label, re.I), (
         "the label no longer says the engine is broken, but it still is"
     )
