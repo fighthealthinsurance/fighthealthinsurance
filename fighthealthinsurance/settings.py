@@ -179,6 +179,10 @@ class Base(Configuration):
     TYPESAFE_TIMEOUT_SECONDS = _env_int(
         "TYPESAFE_TIMEOUT_SECONDS", 20, minimum=1, maximum=300
     )
+    # Denial triage (ml/denial_triage.py): same key, its own switch.
+    TYPESAFE_DENIAL_TRIAGE_ENABLED = (
+        os.getenv("TYPESAFE_DENIAL_TRIAGE_ENABLED", "false").lower() == "true"
+    )
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
