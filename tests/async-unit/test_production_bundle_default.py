@@ -99,19 +99,22 @@ def test_console_stripping_covers_exactly_the_chatty_levels():
     assert listed == {"console.log", "console.info", "console.debug"}, listed
 
 
-def test_cache_key_covers_mode_and_the_bundles_actually_in_dist():
-    """build_static.sh must not reuse bundles it did not produce.
+def _build_static_sh() -> str:
+    return (JS.parents[2] / "scripts" / "build_static.sh").read_text()
 
-    Any intervening build (`build:dev`, a CLI `--mode` or
-    `--no-optimization-minimize` override, an interrupted run) rewrites
-    bundles under an unchanged source checksum, and a marker written by
-    webpack is only a claim by whoever ran webpack. So the stored key is
-    source checksum + wanted mode + a fingerprint of dist/*.bundle.js, saved
-    after this script's own successful build, and the skip requires the
-    whole key to match (review). Regexes tolerate wrapping; they pin the
-    shape and the wiring, not the formatting.
-    """
-    sh = (JS.parents[2] / "scripts" / "build_static.sh").read_text()
+
+# build_static.sh must not reuse bundles it did not produce. Any intervening
+# build (`build:dev`, a CLI `--mode` or `--no-optimization-minimize` override,
+# an interrupted run) rewrites bundles under an unchanged source checksum, and
+# a marker written by webpack is only a claim by whoever ran webpack. So the
+# stored key is source checksum + wanted mode + a fingerprint of every file
+# under dist/, saved after this script's own successful build, and the skip
+# requires the whole key to match. One contract per test below (second
+# reviewer); regexes tolerate wrapping and pin the wiring, not the formatting.
+
+
+def test_cache_expects_production_unless_development_is_asked_for():
+    sh = _build_static_sh()
     assert re.search(r"^\s*EXPECTED_BUILD_MODE=production\s*$", sh, re.M), (
         "build_static.sh no longer expects production by default"
     )
@@ -120,37 +123,56 @@ def test_cache_key_covers_mode_and_the_bundles_actually_in_dist():
         sh,
         re.S,
     ), "build_static.sh no longer expects development only when NODE_ENV=development"
+
+
+def test_dist_fingerprint_covers_every_file_recursively_following_a_linked_dist():
+    sh = _build_static_sh()
     fp = re.search(r"dist_fingerprint\(\)\s*\{(.*?)\n\s*\}", sh, re.S)
     assert fp is not None, "dist_fingerprint is gone from build_static.sh"
     body = fp.group(1)
     # -H so a symlinked dist/ is followed; without it the fingerprint is the
-    # hash of nothing and a stale key matches forever (review).
+    # hash of nothing and a stale key matches forever.
     assert re.search(r"find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-type\s+f.*?md5sum", body, re.S), (
         "the dist fingerprint no longer hashes the files in dist/ following a symlinked dist"
     )
-    assert re.search(r"dist_has_files\(\)\s*\{.*?find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-print\s+-quit", sh, re.S), (
-        "the empty-dist guard is gone"
-    )
     # Recursive and unfiltered: workers/, the wasm, .mjs and .map files ship
     # too, and a missing worker with untouched bundles broke PDF uploads
-    # while the narrower fingerprint still matched (review).
+    # while a narrower fingerprint still matched.
     assert "-maxdepth" not in body and "-name" not in body, (
         "the dist fingerprint is restricted again; it must cover every file "
         "under dist/, recursively"
     )
-    assert re.search(
-        r"CURRENT_BUILD_KEY=\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"",
-        sh,
-    ), "the cache key no longer combines sources, mode and the dist fingerprint"
+
+
+def test_an_empty_or_missing_dist_never_skips_the_build():
+    sh = _build_static_sh()
+    assert re.search(r"dist_has_files\(\)\s*\{.*?find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-print\s+-quit", sh, re.S), (
+        "the empty-dist guard is gone"
+    )
     assert re.search(
         r"\[\s*\"\$CURRENT_BUILD_KEY\"\s*=\s*\"\$STORED_JS_CHECKSUM\"\s*\]\s*&&\s*dist_has_files.*?SKIP_JS_BUILD=true",
         sh,
         re.S,
     ), "the skip no longer requires the whole key to match AND a non-empty dist/"
+
+
+def test_cache_key_combines_sources_mode_and_the_dist_fingerprint():
+    sh = _build_static_sh()
+    assert re.search(
+        r"CURRENT_BUILD_KEY=\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"",
+        sh,
+    ), "the cache key no longer combines sources, mode and the dist fingerprint"
+
+
+def test_the_saved_key_records_the_build_just_made():
+    sh = _build_static_sh()
     assert re.search(
         r"echo\s+\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"\s*>\s*\"\$JS_CHECKSUM_FILE\"",
         sh,
     ), "the saved key no longer records the mode and fingerprint of the build just made"
+
+
+def test_no_webpack_written_build_mode_marker():
     src = _webpack_config()
     assert "BUILD_MODE" not in src, (
         "a webpack-written build-mode marker is back; it is only a claim by "
