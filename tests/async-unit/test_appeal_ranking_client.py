@@ -105,8 +105,8 @@ def test_coverage_is_decided_before_anything_moves_and_a_partial_end_never_reord
     move = body.index(ranked_move)
     assert body.index("const partialAtEnd = final && !complete;") < move
     first_move = body.index("outputContainer.append(el)")
-    assert body.index("if (!anyScore) return;") < first_move, "no scores: the DOM is not touched"
-    assert body.index("if (!partialAtEnd) {") < move < body.index("const first = ")
+    assert body.index("if (!anyScore && !final) return;") < first_move, "no scores, not final: the DOM is not touched"
+    assert body.index("if (!partialAtEnd) {\n      const changed") < move < body.index("const first = ")
     assert "const changed = ordered.some((el, i) => el !== drafts[i]);" in body
 
 
@@ -117,14 +117,16 @@ def test_a_deduplicated_reserved_letter_with_a_score_still_reranks():
 
 def test_two_scorers_restore_arrival_order_and_say_so_at_the_end():
     body = _fn("applyRanking")
-    start = body.index("if (!oneScale) {")
+    start = body.index("if (anyScore && !oneScale) {")
     two = _brace_block(body, body.index("{", start))
     # The caption claims arrival order, so the block must produce it: an
     # earlier single-scorer pass may have moved drafts (review).
     assert "const byArrival = drafts.slice().sort((a, b) => draftArrival(a) - draftArrival(b));" in two
     assert "if (byArrival.some((el, i) => el !== drafts[i])) for (const el of byArrival) outputContainer.append(el);" in two
     assert two.index("outputContainer.append(el)") < two.index("RANKING_CAPTION_UNRANKED")
-    assert "if (final) {" in two and two.rstrip().endswith("return;\n  }"), two[-60:]
+    assert "if (final) {" in two
+    # The branch no longer returns: the shared fold below applies at the end.
+    assert "return;" not in two
 
 
 def test_a_fresh_generation_drops_the_final_latch_but_keeps_scores_and_the_open_fold():
@@ -150,22 +152,35 @@ def test_caption_makes_no_promise_about_the_outcome():
 def test_three_visible_then_a_show_more_button_not_a_delete():
     assert re.search(r"const RANKED_VISIBLE_LIMIT = 3;", SRC)
     assert "Show ${hidden.length} more draft" in SRC
-    fold = SRC.split("const hidden = scored.slice(RANKED_VISIBLE_LIMIT)", 1)[1].split("button.remove()", 1)[0]
+    fold = SRC.split("const hidden = foldable.slice(RANKED_VISIBLE_LIMIT)", 1)[1].split("button.remove()", 1)[0]
     assert "el.hidden = true" in fold and ".remove()" not in fold
 
 
-def test_fresh_and_edited_drafts_are_never_hidden():
+def test_live_folds_only_scored_drafts_and_the_end_folds_whatever_is_displayed():
     body = _fn("applyRanking")
-    # Only SCORED drafts past the limit fold; unscored ones are appended after
-    # them and stay revealed. An edited draft is filtered out of the fold.
-    assert 'const hidden = scored.slice(RANKED_VISIBLE_LIMIT).filter((el) => el.getAttribute("data-dirty") !== "1");' in body
+    # Live: only SCORED drafts past the limit fold; unscored ones are appended
+    # after them and stay revealed. At the end: the displayed order folds,
+    # scored or not (arrival order when unranked). An edited draft is never
+    # hidden.
+    assert "const foldable = final ? displayed : oneScale ? scored : [];" in body
+    assert 'const hidden = foldable.slice(RANKED_VISIBLE_LIMIT).filter((el) => el.getAttribute("data-dirty") !== "1");' in body
     assert "const ordered = [...scored, ...unscored];" in body
+    assert "foldable[RANKED_VISIBLE_LIMIT - 1].after(button);" in body
+
+
+def test_with_no_scores_live_passes_touch_nothing_but_the_end_still_folds():
+    body = _fn("applyRanking")
+    assert "if (!anyScore && !final) return;" in body
+    # ...and that return precedes every DOM move and the fold.
+    assert body.index("if (!anyScore && !final) return;") < body.index("outputContainer.append(el)")
+    assert body.index("if (!anyScore && !final) return;") < body.index("const foldable = ")
 
 
 def test_show_more_is_sticky_for_the_session():
     body = _fn("applyRanking")
     assert "showAllDrafts = true;" in body
     assert "if (showAllDrafts) return;" in body
+    assert body.index("if (showAllDrafts) return;") < body.index("const foldable = ")
     # doQuery also drives the automatic retries: resetting there would refold
     # what the reader chose to open.
     assert "showAllDrafts = false;" not in SRC.split("export function doQuery", 1)[1]
@@ -203,8 +218,9 @@ def test_one_scale_only_and_partial_coverage_at_the_end_drops_label_and_fold():
     # Partial at the end: the caption says so, no badge, no fold; the order
     # already on screen stays (no reshuffle back to arrival order).
     assert "partialAtEnd ? RANKING_CAPTION_PARTIAL : RANKING_CAPTION" in body
-    assert body.index("if (partialAtEnd) return;") < body.index("top.prepend(badge)")
-    assert body.index("if (partialAtEnd) return;") < body.index("const hidden = scored.slice")
+    # Partial end: no label, but the fold still applies to the displayed order.
+    assert body.index("if (!partialAtEnd) {\n      const top = scored[0];") < body.index("top.prepend(badge)")
+    assert "const foldable = final ? displayed : oneScale ? scored : [];" in body
 
 
 def test_an_edited_draft_never_carries_the_label():

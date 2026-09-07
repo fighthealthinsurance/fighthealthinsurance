@@ -619,11 +619,13 @@ function applyRanking(final: boolean): void {
     });
   const partialAtEnd = final && !complete;
 
-  // Scoring off, or nothing scored yet: the page is exactly as it was
-  // before ranking existed, and nothing is touched.
-  if (!anyScore) return;
+  // Scoring off, or nothing scored yet: live passes touch nothing, so the
+  // page is exactly as it was before ranking existed while drafts land. The
+  // final pass still folds past the limit in arrival order (owner's call:
+  // unranked is not the same as unfolded).
+  if (!anyScore && !final) return;
 
-  if (!oneScale) {
+  if (anyScore && !oneScale) {
     // Nothing is ranked, so the page must actually be in arrival order: an
     // earlier single-scorer pass may have moved drafts (review). Same rule
     // as below, the DOM is touched only if the order differs.
@@ -637,52 +639,55 @@ function applyRanking(final: boolean): void {
       note.textContent = RANKING_CAPTION_UNRANKED;
       byArrival[0].before(note);
     }
-    return;
-  }
+  } else if (anyScore) {
+    // Order: scored first in rank order, then unscored in arrival order. The
+    // DOM is touched only when that differs from what is on screen (moving a
+    // node drops its focus, and a no-op move still costs layout), and never
+    // at the partial end: the order the reader has been watching stays.
+    // Re-appending moves the existing nodes, so anything the user has typed
+    // into a draft's textarea comes along with it.
+    const ordered = [...scored, ...unscored];
+    if (!partialAtEnd) {
+      const changed = ordered.some((el, i) => el !== drafts[i]);
+      if (changed) for (const el of ordered) outputContainer.append(el);
+    }
+    const first = (outputContainer.children('[id^="magic"]').toArray() as HTMLElement[])[0];
 
-  // Order: scored first in rank order, then unscored in arrival order. The
-  // DOM is touched only when that differs from what is on screen (moving a
-  // node drops its focus, and a no-op move still costs layout), and never
-  // at the partial end: the order the reader has been watching stays.
-  // Re-appending moves the existing nodes, so anything the user has typed
-  // into a draft's textarea comes along with it.
-  const ordered = [...scored, ...unscored];
-  if (!partialAtEnd) {
-    const changed = ordered.some((el, i) => el !== drafts[i]);
-    if (changed) for (const el of ordered) outputContainer.append(el);
-  }
-  const first = (outputContainer.children('[id^="magic"]').toArray() as HTMLElement[])[0];
+    const note = document.createElement("p");
+    note.id = "appeal-ranking-note";
+    note.className = "text-muted";
+    note.style.margin = "8px 20px";
+    note.textContent = partialAtEnd ? RANKING_CAPTION_PARTIAL : RANKING_CAPTION;
+    first.before(note);
 
-  const note = document.createElement("p");
-  note.id = "appeal-ranking-note";
-  note.className = "text-muted";
-  note.style.margin = "8px 20px";
-  note.textContent = partialAtEnd ? RANKING_CAPTION_PARTIAL : RANKING_CAPTION;
-  first.before(note);
-
-  // At the partial end nothing is labelled over a draft that was never
-  // assessed, and nothing is hidden behind one.
-  if (partialAtEnd) return;
-
-  const top = scored[0];
-  // A draft the reader has already rewritten is not the draft that was
-  // scored: it keeps its place in the order but never gets the label.
-  const topIsDirty = top.getAttribute("data-dirty") === "1";
-  if (!topIsDirty && draftSortKey(top)[0] === 2) {
-    const badge = document.createElement("div");
-    badge.className = "appeal-recommended-badge";
-    badge.textContent = RECOMMENDED_LABEL;
-    badge.style.cssText =
-      "display:inline-block;padding:4px 10px;margin:0 0 8px;border-radius:4px;" +
-      "background:#2e7d32;color:#fff;font-weight:600;font-size:0.9em;";
-    top.prepend(badge);
+    // At the partial end nothing is labelled over a draft that was never
+    // assessed.
+    if (!partialAtEnd) {
+      const top = scored[0];
+      // A draft the reader has already rewritten is not the draft that was
+      // scored: it keeps its place in the order but never gets the label.
+      const topIsDirty = top.getAttribute("data-dirty") === "1";
+      if (!topIsDirty && draftSortKey(top)[0] === 2) {
+        const badge = document.createElement("div");
+        badge.className = "appeal-recommended-badge";
+        badge.textContent = RECOMMENDED_LABEL;
+        badge.style.cssText =
+          "display:inline-block;padding:4px 10px;margin:0 0 8px;border-radius:4px;" +
+          "background:#2e7d32;color:#fff;font-weight:600;font-size:0.9em;";
+        top.prepend(badge);
+      }
+    }
   }
 
   if (showAllDrafts) return;
-  // Fold scored drafts past the limit. Unscored drafts are never hidden:
-  // they just landed and sit revealed at the end until their score arrives.
-  // A draft the reader has edited is never hidden either.
-  const hidden = scored.slice(RANKED_VISIBLE_LIMIT).filter((el) => el.getAttribute("data-dirty") !== "1");
+  // The fold. Live: only scored drafts past the limit fold, so a draft that
+  // has just landed stays revealed until its score arrives. At the end:
+  // whatever is past the limit in the DISPLAYED order folds, scored or not,
+  // because an unranked page still should not open with a wall of letters
+  // (owner's call). A draft the reader has edited is never hidden.
+  const displayed = outputContainer.children('[id^="magic"]').toArray() as HTMLElement[];
+  const foldable = final ? displayed : oneScale ? scored : [];
+  const hidden = foldable.slice(RANKED_VISIBLE_LIMIT).filter((el) => el.getAttribute("data-dirty") !== "1");
   if (hidden.length === 0) return;
   for (const el of hidden) el.hidden = true;
   const button = document.createElement("button");
@@ -703,7 +708,7 @@ function applyRanking(final: boolean): void {
     (first ?? hidden[0]).focus();
     button.remove();
   });
-  scored[RANKED_VISIBLE_LIMIT - 1].after(button);
+  foldable[RANKED_VISIBLE_LIMIT - 1].after(button);
 }
 
 // Diagnostic counters used in the client error report so server logs
