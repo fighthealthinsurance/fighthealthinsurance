@@ -55,7 +55,9 @@ def _rgb(value: str):
     if m:
         h = m.group(1)
         return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
-    m = re.fullmatch(r"rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", value)
+    # Comma or space separated: rgb(44, 62, 80) and rgb(44 62 80) are the
+    # same colour (review).
+    m = re.fullmatch(r"rgb\(\s*(\d+)\s*[, ]\s*(\d+)\s*[, ]\s*(\d+)\s*\)", value)
     if m:
         return tuple(int(x) for x in m.groups())
     return None
@@ -112,8 +114,10 @@ def test_end_ocr_hides_only_for_the_batch_that_is_still_current():
     early would clear the indicator for the batch that replaced it.
     """
     body = _js_function(_form_source(), "export function endOcr")
+    # Either operand order: `selection !== activeOcrSelection` or the reverse
+    # is the same guard (review).
     guard = re.search(
-        r"if\s*\(\s*selection\s*!==\s*activeOcrSelection\s*\)\s*\{[^}]*\breturn\s*;",
+        r"if\s*\(\s*(?:selection\s*!==\s*activeOcrSelection|activeOcrSelection\s*!==\s*selection)\s*\)\s*\{[^}]*\breturn\s*;",
         body,
         re.DOTALL,
     )

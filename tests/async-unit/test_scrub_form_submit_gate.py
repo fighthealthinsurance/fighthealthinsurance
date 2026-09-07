@@ -111,7 +111,10 @@ def test_ocr_progress_message_is_cleared_when_the_last_run_finishes():
     end_ocr = _js_function(_form_source(), "export function endOcr")
     # Only the batch that is still current may clear it; a superseded batch
     # ending must not hide the indicator for the batch that replaced it.
-    assert "selection !== activeOcrSelection" in end_ocr, end_ocr
+    assert re.search(
+        r"selection\s*!==\s*activeOcrSelection|activeOcrSelection\s*!==\s*selection",
+        end_ocr,
+    ), end_ocr
     assert 'rehideHiddenMessage("ocr_in_progress")' in end_ocr, end_ocr
 
 
