@@ -34,7 +34,7 @@ class PlanLawContextWiringTest(TestCase):
         denial = self._denial(insurance_company="Meritain", insurance_company_obj=company)
         block = AppealGenerator._collect_plan_law_context(denial)
         self.assertIsNotNone(block)
-        self.assertIn("ERISA governs the appeal", block)
+        self.assertIn("most likely a self-funded plan", block)
 
     def test_a_denial_with_nothing_known_gets_the_hedged_block(self):
         block = AppealGenerator._collect_plan_law_context(self._denial())

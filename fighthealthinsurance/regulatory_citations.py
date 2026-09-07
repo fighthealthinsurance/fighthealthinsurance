@@ -398,23 +398,49 @@ _ERISA = (
     "for the denial and the plan provisions it relied on, must provide on "
     "request the internal rule or clinical criteria it applied and identify "
     "any medical expert it consulted, and must give a full and fair review by "
-    "someone who did not make the original decision. A non-grandfathered plan "
-    "also owes an independent external review (45 C.F.R. § 147.136, applied "
-    "to group plans by 29 C.F.R. § 2590.715-2719). ERISA does not apply to "
-    "government or church employer plans."
+    "someone who did not make the original decision. If the plan is not "
+    "grandfathered and the denial turns on medical judgment (medical "
+    "necessity, appropriateness, level of care, or an experimental label) or "
+    "is a rescission, the patient is also owed an independent external review "
+    "(45 C.F.R. § 147.136, applied to group plans by 29 C.F.R. § "
+    "2590.715-2719); a denial for ineligibility is not. ERISA does not apply "
+    "to government or church employer plans (29 U.S.C. § 1003(b))."
+)
+_TPA_ONLY = (
+    "The carrier administers self-funded employer plans as a third-party "
+    "administrator, so this is most likely a self-funded plan. If the "
+    "employer is a private company or a union, ERISA governs the appeal "
+    "(ERISA section 503, 29 U.S.C. § 1133, and 29 C.F.R. § 2560.503-1: the "
+    "specific reasons, the criteria relied on, and a full and fair review). "
+    "If the employer is a government or a church, ERISA does not apply "
+    "(29 U.S.C. § 1003(b)); the plan's own appeal terms apply, and for a "
+    "non-grandfathered plan the ACA internal appeal and external review rules "
+    "(45 C.F.R. § 147.136) as well. Use whichever the denial letter or the "
+    "plan documents support."
+)
+_OTHER_GROUP = (
+    "This is group coverage that is not clearly an employer or union plan. If "
+    "an employer or union sponsors it, ERISA governs (29 C.F.R. § "
+    "2560.503-1); if it is an association or membership plan, ERISA may not "
+    "apply, and for non-grandfathered coverage the ACA internal appeal and "
+    "external review rules (45 C.F.R. § 147.136) apply along with state "
+    "insurance law. Name ERISA only if the denial letter or the plan "
+    "documents show an employer or union sponsor."
 )
 _ACA_MARKETPLACE = (
     "This is a marketplace (Affordable Care Act) plan, so ERISA does not "
-    "apply. The plan owes an internal appeal and an independent external "
-    "review under the ACA (45 C.F.R. § 147.136), and it must cover the ten "
-    "essential health benefit categories (42 U.S.C. § 18022), so if the "
-    "service falls in one of them, say so."
+    "apply. The plan owes an internal appeal and, for a denial that turns on "
+    "medical judgment or is a rescission, an independent external review "
+    "under the ACA (45 C.F.R. § 147.136), and it must cover the ten essential "
+    "health benefit categories (42 U.S.C. § 18022), so if the service falls "
+    "in one of them, say so."
 )
 _GOVERNMENT_EMPLOYER = (
     "This is a state or local government employer plan, so ERISA does not "
     "apply (29 U.S.C. § 1003(b)(1)). A non-grandfathered plan still owes the "
-    "ACA internal appeal and external review process (45 C.F.R. § 147.136), "
-    "and state insurance law may apply if the plan is fully insured."
+    "ACA internal appeal and, for a denial that turns on medical judgment, an "
+    "independent external review (45 C.F.R. § 147.136), and state insurance "
+    "law may apply if the plan is fully insured."
 )
 _FEDERAL_EMPLOYER = (
     "This is a federal employee (FEHB) plan under 5 U.S.C. chapter 89, so "
@@ -424,15 +450,21 @@ _FEDERAL_EMPLOYER = (
 )
 _MEDICARE_ADVANTAGE = (
     "This is a Medicare Advantage plan. Neither ERISA nor the ACA appeal rules "
-    "apply; the appeal follows the Medicare Advantage organization "
-    "determination and reconsideration process (42 C.F.R. Part 422, Subpart "
-    "M), with automatic review by the independent review entity if the plan "
-    "upholds its denial."
+    "apply. A denial of a medical service or item follows the Medicare "
+    "Advantage organization determination and reconsideration process "
+    "(42 C.F.R. Part 422, Subpart M), and the plan must itself forward an "
+    "upheld denial to the independent review entity. A denial of a "
+    "prescription drug under the plan's Part D benefit follows the Part D "
+    "process instead (42 C.F.R. Part 423, Subpart M), where after the plan's "
+    "redetermination the patient must ask the independent review entity for "
+    "reconsideration themselves."
 )
 _MEDICARE = (
-    "This is Original Medicare. Neither ERISA nor the ACA appeal rules apply; "
-    "the appeal follows the Medicare redetermination and reconsideration "
-    "process (42 C.F.R. Part 405, Subpart I)."
+    "This is Original Medicare. Neither ERISA nor the ACA appeal rules apply. "
+    "A claim denial follows the Medicare redetermination and reconsideration "
+    "process (42 C.F.R. Part 405, Subpart I); a prescription drug denial "
+    "under a Part D plan follows the Part D process (42 C.F.R. Part 423, "
+    "Subpart M)."
 )
 _MEDICAID = (
     "This is a Medicaid plan. Neither ERISA nor the ACA appeal rules apply; a "
@@ -442,18 +474,22 @@ _MEDICAID = (
 )
 _VA = (
     "This is Veterans Affairs coverage. Neither ERISA nor the ACA appeal "
-    "rules apply; VA has its own clinical appeal process, so argue the "
-    "medical case and do not cite either law."
+    "rules apply. VA has its own processes: a clinical appeal for a decision "
+    "about treatment, and a benefits decision review for a claim such as "
+    "reimbursement of care outside VA. Argue the medical case and do not cite "
+    "either law."
 )
 _UNKNOWN = (
     "We do not know how the patient gets this coverage. If the denial letter "
     "or the plan documents show it is a private employer or union plan, "
     "ERISA's claims-procedure rule (29 C.F.R. § 2560.503-1) most likely "
-    "applies; if they show it is a marketplace or individual plan, the ACA "
-    "internal appeal and external review rules (45 C.F.R. § 147.136) apply. "
+    "applies; if they show it is a marketplace plan or other non-grandfathered "
+    "individual coverage, the ACA internal appeal and external review rules "
+    "(45 C.F.R. § 147.136) apply to a denial that turns on medical judgment. "
     "Name one of them only when the letter itself supports it; otherwise ask "
-    "for the plan's internal appeal and independent external review in plain "
-    "words rather than naming a statute."
+    "for the plan's internal appeal and, where the denial is about medical "
+    "judgment, an independent external review in plain words rather than "
+    "naming a statute."
 )
 _TWO_SOURCES = (
     "More than one coverage source was given. Use the one the denial letter "
@@ -461,13 +497,13 @@ _TWO_SOURCES = (
 )
 _INVITATION = (
     "If citing the applicable law strengthens this appeal (for example to "
-    "demand the clinical criteria the plan relied on, or to insist on an "
-    "independent external review), cite it by name and section exactly as "
-    "given here; a reviewer takes a letter more seriously when it names the "
-    "rule the plan must follow. Cite it only where it applies and where it "
-    "helps the argument. Never cite a law that does not govern this plan, and "
-    "do not invent section numbers, deadlines, quotations, or case names "
-    "beyond what is listed here."
+    "demand the clinical criteria the plan relied on, or to insist on the "
+    "independent external review that a medical-judgment denial is owed), "
+    "cite it by name and section exactly as given here; a reviewer takes a "
+    "letter more seriously when it names the rule the plan must follow. Cite "
+    "it only where it applies and where it helps the argument. Never cite a "
+    "law that does not govern this plan, and do not invent section numbers, "
+    "deadlines, quotations, or case names beyond what is listed here."
 )
 
 # (marker in the lower-cased plan source name, paragraph). First match wins,
@@ -484,7 +520,7 @@ _PLAN_SOURCE_LAW: tuple[tuple[str, str], ...] = (
     ("government", _GOVERNMENT_EMPLOYER),
     ("employer", _ERISA),
     ("union", _ERISA),
-    ("other group", _ERISA),
+    ("other group", _OTHER_GROUP),
 )
 
 
@@ -512,12 +548,19 @@ def get_plan_law_context(
     paragraph, so the model is never left to guess in silence.
     """
     paragraphs: list[str] = []
-    if is_tpa or (regulator_alt_name or "").strip().upper() == "ERISA":
+    # The denial letter naming ERISA rights is the strongest signal we have.
+    if (regulator_alt_name or "").strip().upper() == "ERISA":
         paragraphs.append(_ERISA)
     for name in plan_sources:
         paragraph = _law_for_plan_source(name)
         if paragraph is not None and paragraph not in paragraphs:
             paragraphs.append(paragraph)
+    # A TPA administers self-funded plans, and a self-funded plan can belong
+    # to a city as easily as to a company, so the flag alone does not make it
+    # ERISA (review). With a plan source, the source decides; without one,
+    # the hedged self-funded paragraph.
+    if is_tpa and not paragraphs:
+        paragraphs.append(_TPA_ONLY)
     if not paragraphs:
         paragraphs.append(_UNKNOWN)
     elif len(paragraphs) > 1:

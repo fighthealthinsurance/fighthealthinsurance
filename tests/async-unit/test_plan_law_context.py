@@ -32,6 +32,8 @@ CITATION_ALLOWLIST = {
     "42 C.F.R. Part 405, Subpart I",
     "42 C.F.R. Part 438, Subpart F",
     "42 C.F.R. Part 431, Subpart E",
+    "42 C.F.R. Part 423, Subpart M",
+    "29 U.S.C. § 1003(b)",
 }
 # A section number is digits, dots and dashes, then any number of
 # parenthesised subsections; trailing prose punctuation is not part of it.
@@ -46,12 +48,29 @@ def _block(*sources, **kw):
 
 
 class TestWhichLawGoverns:
-    @pytest.mark.parametrize("source", ["Employer -- Private   ", "Union", "Other Group"])
+    @pytest.mark.parametrize("source", ["Employer -- Private   ", "Union"])
     def test_private_employer_and_union_plans_are_erisa(self, source):
         block = _block(source)
         assert "ERISA governs the appeal" in block
         assert "29 C.F.R. § 2560.503-1" in block
         assert "45 C.F.R. § 147.136" in block  # external review for non-grandfathered
+
+    def test_other_group_is_hedged_because_an_association_plan_may_not_be_erisa(self):
+        block = _block("Other Group")
+        assert "not clearly an employer or union plan" in block
+        assert "Name ERISA only if" in block
+        assert "ERISA governs the appeal" not in block
+
+    @pytest.mark.parametrize(
+        "source",
+        ["Employer -- Private", "Employer -- State Government", "State Marketplace / Affordable Care Act"],
+    )
+    def test_external_review_is_owed_for_medical_judgment_denials_only(self, source):
+        block = _block(source)
+        assert "medical judgment" in block
+
+    def test_an_ineligibility_denial_is_not_owed_external_review_under_erisa(self):
+        assert "a denial for ineligibility is not" in _block("Employer -- Private")
 
     @pytest.mark.parametrize(
         "source", ["Employer -- State Government ", "Employer -- Other Government"]
@@ -80,7 +99,7 @@ class TestWhichLawGoverns:
             ("Medicare Advantage", "42 C.F.R. Part 422, Subpart M"),
             ("Medicare Regular", "42 C.F.R. Part 405, Subpart I"),
             ("Medicaid  ", "42 C.F.R. Part 438, Subpart F"),
-            ("Veterans Affairs", "VA has its own clinical appeal process"),
+            ("Veterans Affairs", "VA has its own processes"),
         ],
     )
     def test_public_programs_name_their_own_process_and_rule_out_both_laws(self, source, marker):
@@ -92,17 +111,49 @@ class TestWhichLawGoverns:
         block = _block("Medicare Advantage")
         assert "Part 405" not in block
 
+    @pytest.mark.parametrize("source", ["Medicare Advantage", "Medicare Regular"])
+    def test_a_part_d_drug_denial_has_its_own_process(self, source):
+        block = _block(source)
+        assert "42 C.F.R. Part 423, Subpart M" in block
+
+    def test_medicare_advantage_forwards_medical_denials_but_drug_denials_must_be_requested(self):
+        block = _block("Medicare Advantage")
+        assert "must itself forward an upheld denial" in block
+        assert "must ask the independent review entity for reconsideration themselves" in block
+
+    def test_va_separates_treatment_decisions_from_benefits_claims(self):
+        block = _block("Veterans Affairs")
+        assert "clinical appeal for a decision about treatment" in block
+        assert "benefits decision review" in block
+
     @pytest.mark.parametrize("sources", [(), ("Other",), ("Don't know",), ("",)])
     def test_an_unknown_source_gets_the_hedged_paragraph(self, sources):
         block = _block(*sources)
         assert "We do not know how the patient gets this coverage" in block
         assert "only when the letter itself supports it" in block
+        assert "non-grandfathered individual coverage" in block
         assert "ERISA governs" not in block
 
-    def test_a_tpa_carrier_means_erisa_even_with_no_source(self):
+    def test_a_tpa_carrier_alone_is_hedged_not_asserted(self):
+        """A TPA administers self-funded plans, and a city's plan is
+        self-funded too; ERISA excludes it (review)."""
         block = _block(is_tpa=True)
-        assert "ERISA governs the appeal" in block
+        assert "most likely a self-funded plan" in block
+        assert "If the employer is a private company or a union, ERISA governs" in block
+        assert "government or a church, ERISA does not apply (29 U.S.C. § 1003(b))" in block
         assert "We do not know" not in block
+
+    def test_a_tpa_flag_defers_to_a_government_source(self):
+        block = _block("Employer -- State Government", is_tpa=True)
+        assert "ERISA does not apply (29 U.S.C. § 1003(b)(1))" in block
+        assert "ERISA governs" not in block
+        assert "self-funded" not in block
+
+    def test_a_tpa_flag_adds_nothing_to_a_private_employer_source(self):
+        block = _block("Employer -- Private", is_tpa=True)
+        assert block.count("ERISA governs the appeal") == 1
+        assert "third-party administrator" not in block
+        assert "More than one coverage source" not in block
 
     def test_the_erisa_regulator_match_means_erisa(self):
         block = _block("Don't know", regulator_alt_name="erisa")
@@ -119,6 +170,9 @@ class TestWhichLawGoverns:
         assert block.count("ERISA governs the appeal") == 1
         assert "More than one coverage source" not in block
 
+    def test_the_invitation_limits_external_review_to_medical_judgment_denials(self):
+        assert "independent external review that a medical-judgment denial is owed" in _block()
+
 
 class TestTheBlockItself:
     ALL = [
@@ -132,6 +186,8 @@ class TestTheBlockItself:
         _block("Veterans Affairs"),
         _block(),
         _block("Medicare Advantage", "Employer -- Private"),
+        _block(is_tpa=True),
+        _block("Other Group"),
     ]
 
     @pytest.mark.parametrize("block", ALL)
@@ -204,7 +260,7 @@ class TestCollector:
             plan_source=_Sources(),
             insurance_company_obj=SimpleNamespace(is_tpa=True),
         )
-        assert "ERISA governs" in (AppealGenerator._collect_plan_law_context(denial) or "")
+        assert "self-funded plan" in (AppealGenerator._collect_plan_law_context(denial) or "")
         denial = SimpleNamespace(
             plan_source=_Sources(), regulator=SimpleNamespace(alt_name="ERISA")
         )
