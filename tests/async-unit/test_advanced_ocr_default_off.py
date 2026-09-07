@@ -15,9 +15,15 @@ Source is tokenized, not regexed, before asserting. Two views come out of it:
 one with comments removed and string literals kept, for "no version pin
 anywhere in executable code" (a pin inside a URL literal must still be caught);
 and one with string literals blanked as well, for every structural check, so a
-string containing ``if (isAdvancedOCREnabled()) {`` or a stray ``}`` cannot
-impersonate syntax. Both earlier cuts of this file were beaten exactly those
-ways in review.
+string cannot impersonate syntax. Template interpolations are code and stay
+code in both views. Function declarations must be unique and at statement
+position, so a decoy expression cannot be inspected in place of the real thing.
+
+What these guards are for, and what they are not: they catch DRIFT, a future
+edit that flips a default or reintroduces a pin without meaning to. They are
+not a defence against someone deliberately writing evasive TypeScript in the
+same file to defeat them; three review rounds have shown that game has no
+floor. The defence against that is a reviewer reading the diff.
 
 Delete these only together with a measurement showing the engine beats tesseract
 on real denial scans. See ``qwen_webgpu_ocr.ts`` for what a working version needs.
@@ -31,60 +37,34 @@ JS = REPO / "static" / "js"
 TEMPLATES = REPO / "templates"
 
 
-def _tokenize_ts(src: str):
+def _simple_string_end(src: str, i: int, quote: str) -> int:
+    j = i + 1
+    while j < len(src):
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == quote:
+            return j + 1
+        j += 1
+    return len(src)
+
+
+def _tokenize_ts(src: str, start: int = 0, until_close_brace: bool = False):
     """Split TypeScript into ('code' | 'string' | 'comment', text) segments.
 
-    A template literal is one 'string' token INCLUDING its ``${...}``
-    interpolations, which are scanned recursively so a nested template or a
-    brace inside one cannot end the outer literal early. Regex literals are not
-    recognized; none of the files asserted on contain one with ``//`` in it.
+    Returns ``(tokens, index)``. A template literal's quoted text is 'string';
+    each ``${...}`` interpolation is tokenized recursively as code (with its
+    own nested strings and comments), because an interpolation is executable
+    and blanking it would hide ``${(checkbox.checked = true)}``. With
+    ``until_close_brace`` the scan stops at the ``}`` that closes the
+    interpolation it was called for. Regex literals are not recognized; none
+    of the files asserted on contain one with ``//`` in it.
     """
-    n = len(src)
-
-    def string_end(i: int, quote: str) -> int:
-        j = i + 1
-        while j < n:
-            c = src[j]
-            if c == "\\":
-                j += 2
-                continue
-            if c == quote:
-                return j + 1
-            if quote == "`" and src.startswith("${", j):
-                j = interpolation_end(j + 2)
-                continue
-            j += 1
-        return n
-
-    def interpolation_end(i: int) -> int:
-        """Index just past the ``}`` closing the ``${`` opened before ``i``."""
-        depth = 0
-        j = i
-        while j < n:
-            c = src[j]
-            if c in "\"'`":
-                j = string_end(j, c)
-                continue
-            if src.startswith("//", j):
-                k = src.find("\n", j)
-                j = n if k < 0 else k
-                continue
-            if src.startswith("/*", j):
-                k = src.find("*/", j + 2)
-                j = n if k < 0 else k + 2
-                continue
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                if depth == 0:
-                    return j + 1
-                depth -= 1
-            j += 1
-        return n
-
     tokens = []
     buf = []
-    i = 0
+    i = start
+    n = len(src)
+    depth = 0
 
     def flush():
         if buf:
@@ -93,10 +73,15 @@ def _tokenize_ts(src: str):
 
     while i < n:
         c = src[i]
-        if c in "\"'`":
+        if c in "\"'":
             flush()
-            j = string_end(i, c)
+            j = _simple_string_end(src, i, c)
             tokens.append(("string", src[i:j]))
+            i = j
+        elif c == "`":
+            flush()
+            sub, j = _template_tokens(src, i)
+            tokens.extend(sub)
             i = j
         elif src.startswith("//", i):
             flush()
@@ -110,23 +95,60 @@ def _tokenize_ts(src: str):
             j = n if k < 0 else k + 2
             tokens.append(("comment", src[i:j]))
             i = j
+        elif until_close_brace and c == "}" and depth == 0:
+            flush()
+            return tokens, i + 1
         else:
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
             buf.append(c)
             i += 1
     flush()
-    return tokens
+    return tokens, n
+
+
+def _template_tokens(src: str, i: int):
+    """Tokens for the template literal opening at ``src[i]``, and the end index."""
+    assert src[i] == "`"
+    tokens = [("string", "`")]
+    chunk = []
+    j = i + 1
+    n = len(src)
+    while j < n:
+        c = src[j]
+        if c == "\\":
+            chunk.append(src[j : j + 2])
+            j += 2
+            continue
+        if c == "`":
+            tokens.append(("string", "".join(chunk) + "`"))
+            return tokens, j + 1
+        if src.startswith("${", j):
+            tokens.append(("string", "".join(chunk)))
+            chunk = []
+            tokens.append(("code", "${"))
+            inner, j = _tokenize_ts(src, j + 2, until_close_brace=True)
+            tokens.extend(inner)
+            tokens.append(("code", "}"))
+            continue
+        chunk.append(c)
+        j += 1
+    tokens.append(("string", "".join(chunk)))
+    return tokens, n
 
 
 def _executable(src: str) -> str:
     """Comments removed, string literals kept verbatim."""
-    return "".join(t for k, t in _tokenize_ts(src) if k != "comment")
+    return "".join(t for k, t in _tokenize_ts(src)[0] if k != "comment")
 
 
 def _structural(src: str) -> str:
     """Comments removed AND every string literal replaced by an empty one."""
     return "".join(
         t if k == "code" else ('""' if k == "string" else "")
-        for k, t in _tokenize_ts(src)
+        for k, t in _tokenize_ts(src)[0]
     )
 
 
@@ -150,16 +172,28 @@ def _brace_block(src: str, open_at: int) -> str:
     raise AssertionError("unbalanced braces")
 
 
-def _js_function(src: str, declaration: str) -> str:
-    """Body of the function declared EXACTLY as ``declaration`` followed by ``(``.
+def _js_function(src: str, name: str) -> str:
+    """Body of the one function DECLARED as ``name``.
 
-    ``function isAdvancedOCREnabled`` must not match
-    ``function isAdvancedOCREnabledForCheckbox``; requiring the parameter list
-    to open right after the name is what stops a look-alike helper from being
-    inspected in place of the real thing.
+    Two rules, each because review defeated the previous version:
+    the name must appear as a function name exactly once in the file, so a
+    decoy named function expression (``const d = function name() {...}``)
+    cannot be inspected in place of the real one; and the declaration must sit
+    at statement position (optionally ``export``/``async``), not after ``=``.
     """
-    match = re.search(re.escape(declaration) + r"\s*\(", src)
-    assert match is not None, f"{declaration}( not found"
+    occurrences = re.findall(r"\bfunction\s+" + re.escape(name) + r"\b", src)
+    assert len(occurrences) == 1, (
+        f"expected exactly one `function {name}` in the file, found "
+        f"{len(occurrences)}; a second one is a decoy the guard would inspect "
+        "instead of the real function"
+    )
+    match = re.search(
+        r"(?m)^[ \t]*(?:export\s+)?(?:async\s+)?function\s+"
+        + re.escape(name)
+        + r"\s*\(",
+        src,
+    )
+    assert match is not None, f"function {name} is not declared at statement position"
     depth = 0
     end_of_params = None
     for i in range(match.end() - 1, len(src)):
@@ -170,7 +204,7 @@ def _js_function(src: str, declaration: str) -> str:
             if depth == 0:
                 end_of_params = i
                 break
-    assert end_of_params is not None, f"unbalanced parens reading {declaration}"
+    assert end_of_params is not None, f"unbalanced parens reading {name}"
     return _brace_block(src, src.index("{", end_of_params))
 
 
@@ -198,11 +232,19 @@ def _checkbox_tag(html: str) -> str:
 
 
 def test_tokenizer_keeps_a_pin_inside_a_nested_template_literal():
-    """Guard the guard: the exact construct that beat the previous stripper."""
+    """Guard the guard: the exact construct that beat an earlier stripper."""
     sample = "const u = `${`https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/`}`; // x\n"
     assert "onnxruntime-web@1.22.0" in _executable(sample)
     assert "onnxruntime-web@1.22.0" not in _structural(sample)
     assert "// x" not in _executable(sample)
+
+
+def test_tokenizer_keeps_interpolation_code_in_the_structural_view():
+    """And the construct that beat the next one: code hidden in ``${...}``."""
+    sample = 'void `${(checkbox.checked = true)}`; const s = "if (x) {";\n'
+    structural = _structural(sample)
+    assert "checkbox.checked = true" in structural
+    assert "if (x) {" not in structural
 
 
 def test_scrub_checkbox_markup_is_not_checked():
@@ -218,8 +260,9 @@ def test_checkbox_init_never_turns_it_on():
     """scrub.ts may screen the box DOWN, never up.
 
     initAdvancedOCRCheckbox only ever sets checked=false. A single
-    ``checkbox.checked = true`` there would restore the download for every
-    WebGPU visitor while the markup test above still passed.
+    ``checkbox.checked = true`` there, including inside a template
+    interpolation, would restore the download for every WebGPU visitor while
+    the markup test above still passed.
     """
     assert not re.search(r"\.checked\s*=\s*true\b", _scrub_structural()), (
         "scrub.ts sets a checkbox to true; the advanced OCR box must never be "
@@ -236,7 +279,7 @@ def test_pages_without_the_checkbox_default_off():
     it is caught too. Strings are blanked first, so a string cannot supply the
     expected text.
     """
-    body = _js_function(_ocr_structural(), "function isAdvancedOCREnabled")
+    body = _js_function(_ocr_structural(), "isAdvancedOCREnabled")
     returns = re.findall(r"\breturn\b[^;]*;", body)
     assert len(returns) == 1, f"expected exactly one return, found {returns}"
     assert re.fullmatch(
@@ -253,9 +296,10 @@ def test_qwen_engine_only_runs_inside_the_checkbox_gate():
 
     Brace-match the ``if (isAdvancedOCREnabled())`` block on string-blanked
     source and require the one launch to sit inside it. A string containing the
-    gate's text, or a ``}`` inside a string, cannot fake a gate here.
+    gate's text, a ``}`` inside a string, or a launch hidden in a template
+    interpolation cannot fake or evade the gate here.
     """
-    body = _js_function(_ocr_structural(), "async function recognizeImageText")
+    body = _js_function(_ocr_structural(), "recognizeImageText")
     assert body.count("recognizeWithQwenWebGPU(") == 1, (
         "recognizeWithQwenWebGPU is launched more than once, or not at all, in "
         "recognizeImageText"
@@ -291,15 +335,26 @@ def test_no_hardcoded_onnxruntime_version_pin():
 def test_label_states_the_download_cost_truthfully():
     """Off-by-default is only honest if the label tells the truth in both directions.
 
-    It must state the size in MB (not just the digits) and the source. It must
-    not claim standard OCR needs no download or no model: tesseract fetches
-    English trained data, which is an LSTM model, from a CDN on first use.
+    While the engine is broken the label must say so, and must disclose that
+    turning it on still fetches model files (the tokenizer alone is ~19 MB)
+    before the load fails. It must state the eventual size in MB with the unit.
+    It must not claim standard OCR needs no download or no model: tesseract
+    fetches English trained data, an LSTM model, from a CDN on first use.
+
+    When the engine works, drop the "not working" assertion together with the
+    label sentence it pins; keep the rest.
     """
     html = _scrub_template()
     start = html.index('id="advanced_ocr_section"')
     label = html[start : html.index("</label>", start)]
+    assert re.search(r"not working|does not work|fails to load", label, re.I), (
+        "the label no longer says the engine is broken, but it still is"
+    )
+    assert re.search(r"\b(19|20)\s*MB\b", label), (
+        "the label no longer discloses the ~20 MB fetched before the load fails"
+    )
     assert re.search(r"\b684\s*MB\b", label), (
-        "the advanced OCR label no longer states the download size in MB"
+        "the advanced OCR label no longer states the eventual download size in MB"
     )
     assert (
         "huggingface.co" in label
