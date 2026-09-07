@@ -46,6 +46,21 @@ def _brace_block(src: str, open_at: int) -> str:
     raise AssertionError("unbalanced braces")
 
 
+def _rgb(value: str):
+    """(r, g, b) for #rgb, #rrggbb, or rgb(r, g, b); None for anything else."""
+    m = re.fullmatch(r"#([0-9a-f]{3})", value)
+    if m:
+        return tuple(int(c * 2, 16) for c in m.group(1))
+    m = re.fullmatch(r"#([0-9a-f]{6})", value)
+    if m:
+        h = m.group(1)
+        return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
+    m = re.fullmatch(r"rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", value)
+    if m:
+        return tuple(int(x) for x in m.groups())
+    return None
+
+
 def _js_function(src: str, declaration: str) -> str:
     """Body of the function declared exactly as ``declaration`` followed by ``(``."""
     return _js_function_at(src, re.escape(declaration) + r"\s*\(")
@@ -141,8 +156,11 @@ def test_submit_gate_keeps_the_box_up_while_reading_continues():
     are read with no indicator (review).
     """
     validate = _js_function(_form_source(), "export function validateScrubForm")
+    # `else if` or a standalone `if`: both guard the clear on nothing being in
+    # flight, and the standalone form is a behaviour-preserving refactor
+    # because the preceding branch requires a read in flight (review).
     m = re.search(
-        r"else\s+if\s*\(\s*!\s*isOcrInFlight\(\)\s*\)\s*\{", validate
+        r"(?:else\s+)?if\s*\(\s*!\s*isOcrInFlight\(\)\s*\)\s*\{", validate
     )
     assert m is not None, (
         "the submit gate clears ocr_in_progress unconditionally again"
@@ -176,11 +194,12 @@ def test_progress_box_is_not_styled_as_an_error():
     assert rule is not None, "the neutral colour rule is gone"
     color = re.search(r"color\s*:\s*([^;]+);", rule.group(1))
     assert color is not None, "the rule no longer sets a colour"
-    # Pin the chosen neutral, with any !important stripped: a deny-list of
-    # reds accepted "red !important" (review). Change this and the CSS
-    # together.
+    # Pin the chosen neutral by its parsed RGB, with any !important stripped:
+    # a deny-list of reds accepted "red !important", and an exact-string pin
+    # rejected rgb(44, 62, 80), which is the same colour (review). Change
+    # this and the CSS together.
     value = re.sub(r"\s*!important\s*$", "", color.group(1).strip().lower())
-    assert value == "#2c3e50", f"the progress box colour changed: {value}"
+    assert _rgb(value) == (44, 62, 80), f"the progress box colour changed: {value}"
 
 
 def test_progress_box_keeps_the_sibling_live_region_role():
@@ -198,6 +217,23 @@ def test_progress_box_keeps_the_sibling_live_region_role():
     tag = re.search(r'<div[^>]*id="ocr_in_progress"[^>]*>', html)
     assert tag is not None
     assert 'role="alert"' in tag.group(0), tag.group(0)
+
+
+def test_progress_box_sits_by_the_uploader():
+    """Under the file picker, above the textarea, not a screen away.
+
+    The box used to live with the submit-gate messages below a 20-row
+    textarea, so on a phone the person who had just picked a file saw
+    nothing change (review). It must come after the uploader and before the
+    denial textarea, which also makes its "below" wording true.
+    """
+    html = (TEMPLATES / "scrub.html").read_text()
+    uploader = html.index('id="uploader"')
+    box = html.index('id="ocr_in_progress"')
+    textarea = html.index('id="denial_text"')
+    assert uploader < box < textarea, (
+        "the progress box is no longer between the uploader and the textarea"
+    )
 
 
 def test_progress_copy_has_no_em_dash():
