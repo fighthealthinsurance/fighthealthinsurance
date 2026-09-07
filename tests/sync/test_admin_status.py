@@ -483,7 +483,7 @@ class AdminStatusLetterScoringTest(TestCase):
     _drafts_made = 0
 
     @classmethod
-    def _draft(cls, denial, *, minutes_ago=5, speculative=False, scored=False):
+    def _draft(cls, denial, *, minutes_ago=5, speculative=False, scored=False, now=None):
         # Distinct text per row: (denial, text fingerprint) is unique.
         cls._drafts_made += 1
         row = ProposedAppeal.objects.create(
@@ -491,7 +491,7 @@ class AdminStatusLetterScoringTest(TestCase):
             appeal_text=f"Draft number {cls._drafts_made}, long enough to read as a letter.",
             speculative=speculative,
         )
-        stamp = timezone.now() - datetime.timedelta(minutes=minutes_ago)
+        stamp = (now or timezone.now()) - datetime.timedelta(minutes=minutes_ago)
         fields = {"created_at": stamp}
         if scored:
             fields.update(
@@ -541,14 +541,49 @@ class AdminStatusLetterScoringTest(TestCase):
     def test_drafts_that_were_never_eligible_do_not_count_as_unscored(self):
         """Still in flight (younger than the drain window), speculative, or
         from a denial that did not allow external models."""
+        # The clock is frozen for the helper: the in-flight draft is five
+        # seconds old at the instant the page reads it, however long the
+        # test takes to get there (review).
+        frozen = timezone.now()
         denial = self._denial()
-        self._draft(denial, minutes_ago=0)
-        self._draft(denial, speculative=True)
-        self._draft(self._denial(use_external=False))
-        with override_settings(**_SCORING_ON):
+        ProposedAppeal.objects.filter(pk=self._draft(denial, now=frozen).pk).update(
+            created_at=frozen - datetime.timedelta(seconds=5)
+        )
+        self._draft(denial, speculative=True, now=frozen)
+        self._draft(self._denial(use_external=False), now=frozen)
+        with override_settings(**_SCORING_ON), mock.patch(
+            "django.utils.timezone.now", return_value=frozen
+        ):
             status = self._status()
         self.assertEqual(status["unscored"], 0)
         self.assertEqual(status["level"], "idle")
+
+    def test_unscored_drafts_newer_than_the_last_score_mean_not_scoring(self):
+        """One score in the morning must not keep the badge green all day
+        after scoring silently stopped (review)."""
+        now = timezone.now()
+        self._health(last_success_at=now - datetime.timedelta(hours=2))
+        denial = self._denial()
+        self._draft(denial, minutes_ago=120, scored=True)
+        self._draft(denial, minutes_ago=5)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["scored"], 1)
+        self.assertEqual(status["stalled"], 1)
+        self.assertEqual(status["level"], "not_scoring")
+
+    def test_unscored_drafts_older_than_the_last_score_do_not_stall(self):
+        """A miss followed by a success is scoring again."""
+        now = timezone.now()
+        self._health(last_success_at=now - datetime.timedelta(minutes=1))
+        denial = self._denial()
+        self._draft(denial, minutes_ago=30)
+        self._draft(denial, minutes_ago=1, scored=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["unscored"], 1)
+        self.assertEqual(status["stalled"], 0)
+        self.assertEqual(status["level"], "scoring")
 
     def test_a_score_outside_the_window_does_not_count(self):
         self._draft(self._denial(), minutes_ago=25 * 60, scored=True)
@@ -619,6 +654,18 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertContains(response, "HTTP 402")
         self.assertContains(response, "credits or billing")
         self.assertNotContains(response, "test-key")
+
+    def test_the_page_counts_drafts_stalled_since_the_last_score(self):
+        self._health(last_success_at=timezone.now() - datetime.timedelta(hours=1))
+        self._draft(self._denial(), minutes_ago=5)
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        with override_settings(**_SCORING_ON), mock.patch(_MODELS, return_value=[]), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            response = self.client.get(reverse("admin_status"))
+        self.assertContains(response, "NOT SCORING")
+        self.assertContains(response, "1 eligible draft since the last score, none scored")
 
 
 class ComputeModelHealthDetailsTest(TestCase):

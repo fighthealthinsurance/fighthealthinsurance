@@ -579,6 +579,7 @@ class AdminStatusView(generic.TemplateView):
             "window_hours": 24,
             "scored": 0,
             "unscored": 0,
+            "stalled": 0,
             "last_success_at": None,
             "last_failure_at": None,
             "last_failure": "",
@@ -607,13 +608,14 @@ class AdminStatusView(generic.TemplateView):
             # real (not speculative), old enough that a score in flight would
             # have landed, and still without one.
             settled = now - datetime.timedelta(seconds=letter_quality.DRAIN_SECONDS)
-            out["unscored"] = ProposedAppeal.objects.filter(
+            eligible_unscored = ProposedAppeal.objects.filter(
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
                 for_denial__use_external=True,
                 quality_score__isnull=True,
-            ).count()
+            )
+            out["unscored"] = eligible_unscored.count()
 
             health = ExternalServiceHealth.objects.filter(
                 service=letter_quality.SERVICE
@@ -634,11 +636,21 @@ class AdminStatusView(generic.TemplateView):
                 and failure_at >= since
                 and (success_at is None or failure_at > success_at)
             )
+            # Eligible drafts newer than the last recorded success that never
+            # got a score: scoring stopped in a way the failure hook cannot
+            # see (it never ran), and one older score must not keep the badge
+            # green all day (review).
+            stalled = eligible_unscored
+            if success_at is not None:
+                stalled = stalled.filter(created_at__gt=success_at)
+            out["stalled"] = stalled.count()
 
             if not letter_quality.enabled():
                 out["level"] = "off"
             elif fresh_failure:
                 out["level"] = "failing"
+            elif out["stalled"]:
+                out["level"] = "not_scoring"
             elif out["scored"]:
                 out["level"] = "scoring"
             elif out["unscored"]:

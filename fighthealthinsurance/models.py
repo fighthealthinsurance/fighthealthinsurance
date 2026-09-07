@@ -4055,11 +4055,27 @@ class ExternalServiceHealth(models.Model):
 
     @classmethod
     async def anote_success(cls, service: str) -> None:
-        """Best effort: a health record must never break the call it watches."""
+        """Best effort: a health record must never break the call it watches.
+
+        Only ever moves the timestamp forward. Calls overlap (several drafts
+        score at once, on several pods), so a slow write from an older call
+        must not land on top of a newer outcome and fake a recovery (review):
+        a conditional UPDATE does the move, and aget_or_create covers the
+        first-ever row.
+        """
         try:
-            await cls.objects.aupdate_or_create(
-                service=service, defaults={"last_success_at": timezone.now()}
-            )
+            now = timezone.now()
+            moved = await cls.objects.filter(
+                models.Q(service=service)
+                & (
+                    models.Q(last_success_at__isnull=True)
+                    | models.Q(last_success_at__lt=now)
+                )
+            ).aupdate(last_success_at=now)
+            if not moved:
+                await cls.objects.aget_or_create(
+                    service=service, defaults={"last_success_at": now}
+                )
         except Exception:
             logger.opt(exception=True).warning(
                 f"could not record a success for external service {service}"
@@ -4067,16 +4083,24 @@ class ExternalServiceHealth(models.Model):
 
     @classmethod
     async def anote_failure(cls, service: str, summary: str) -> None:
-        """Best effort, see anote_success. ``summary`` must already be
-        allowlisted by the caller; it is stored as given, cut to the column."""
+        """Best effort and forward-only, see anote_success. ``summary`` must
+        already be allowlisted by the caller; it is stored as given, cut to
+        the column, and travels with its timestamp in one statement."""
         try:
-            await cls.objects.aupdate_or_create(
-                service=service,
-                defaults={
-                    "last_failure_at": timezone.now(),
-                    "last_failure": (summary or "")[:80],
-                },
-            )
+            now = timezone.now()
+            text = (summary or "")[:80]
+            moved = await cls.objects.filter(
+                models.Q(service=service)
+                & (
+                    models.Q(last_failure_at__isnull=True)
+                    | models.Q(last_failure_at__lt=now)
+                )
+            ).aupdate(last_failure_at=now, last_failure=text)
+            if not moved:
+                await cls.objects.aget_or_create(
+                    service=service,
+                    defaults={"last_failure_at": now, "last_failure": text},
+                )
         except Exception:
             logger.opt(exception=True).warning(
                 f"could not record a failure for external service {service}"
