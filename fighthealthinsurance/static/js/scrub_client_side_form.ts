@@ -63,6 +63,13 @@ let ocrInFlight = 0;
 
 export function beginOcr(): void {
   ocrInFlight += 1;
+  // Show it as soon as reading starts, not just when the user hits submit.
+  // Reading one photographed page takes several seconds and nothing else on
+  // screen says so, so the page looked idle and people retyped their denial by
+  // hand or gave up. The submit gate still shows this same box; it is now a
+  // second entry point to a message that is already up rather than the only
+  // way to ever see it.
+  showHiddenMessage("ocr_in_progress");
 }
 
 export function endOcr(): void {
