@@ -101,6 +101,7 @@ def test_a_blocked_probe_skips_with_the_proxy_reason():
 REPO_ROOT = Path(root_conftest.__file__).resolve().parents[1]
 _INNER_FLAG = "_STRIPE_LAZY_INNER_RUN"
 _DENY_FLAG = "_STRIPE_LAZY_DENY_NETWORK"
+_ATTEMPT_LOG_FLAG = "_STRIPE_LAZY_ATTEMPT_LOG"
 
 # Installed as sitecustomize.py on PYTHONPATH, so it runs at interpreter start
 # in the pytest process AND in every xdist worker (workers are separate
@@ -115,6 +116,7 @@ if os.environ.get("%s") == "1":
     _real_create_connection = socket.create_connection
     _real_connect = socket.socket.connect
     _real_connect_ex = socket.socket.connect_ex
+    _log = os.environ.get("%s")
 
     def _is_local(address):
         # Loopback and Unix sockets stay open: xdist's own plumbing and
@@ -125,18 +127,34 @@ if os.environ.get("%s") == "1":
         host = address[0] if isinstance(address, tuple) and address else address
         return host in ("", "localhost", "127.0.0.1", "::1", "0.0.0.0")
 
-    def _guard(real):
-        def wrapped(*args, **kwargs):
-            address = args[1] if len(args) > 1 else args[0] if args else kwargs.get("address")
+    def _attempt(address):
+        # Recorded BEFORE raising, so a probe that swallows the error is
+        # still on the record (review).
+        if _log:
+            with open(_log, "a") as fh:
+                fh.write(repr(address) + "\\n")
+        raise RuntimeError("NETWORK ACCESS DURING PYTEST LIFECYCLE: %%r" %% (address,))
+
+    def _guard_method(real):
+        # socket.socket.connect / connect_ex, called as (self, address, ...).
+        def wrapped(self, address, *args, **kwargs):
             if not _is_local(address):
-                raise RuntimeError("NETWORK ACCESS DURING PYTEST LIFECYCLE: %%r" %% (address,))
-            return real(*args, **kwargs)
+                _attempt(address)
+            return real(self, address, *args, **kwargs)
         return wrapped
 
-    socket.create_connection = _guard(_real_create_connection)
-    socket.socket.connect = _guard(_real_connect)
-    socket.socket.connect_ex = _guard(_real_connect_ex)
-""" % _DENY_FLAG
+    def _guard_create_connection(real):
+        # socket.create_connection(address, timeout=..., ...): address first.
+        def wrapped(address, *args, **kwargs):
+            if not _is_local(address):
+                _attempt(address)
+            return real(address, *args, **kwargs)
+        return wrapped
+
+    socket.create_connection = _guard_create_connection(_real_create_connection)
+    socket.socket.connect = _guard_method(_real_connect)
+    socket.socket.connect_ex = _guard_method(_real_connect_ex)
+""" % (_DENY_FLAG, _ATTEMPT_LOG_FLAG)
 
 
 def _inner_pytest(tmp_path, *args):
@@ -146,11 +164,12 @@ def _inner_pytest(tmp_path, *args):
     site_dir = tmp_path / "site"
     site_dir.mkdir(exist_ok=True)
     (site_dir / "sitecustomize.py").write_text(_SITECUSTOMIZE)
+    attempts = tmp_path / "attempts.log"
     env = dict(
         os.environ,
         STRIPE_TEST_SECRET_KEY="sk_test_not_real",
         PYTHONPATH=str(site_dir) + os.pathsep + os.environ.get("PYTHONPATH", ""),
-        **{_INNER_FLAG: "1", _DENY_FLAG: "1"},
+        **{_INNER_FLAG: "1", _DENY_FLAG: "1", _ATTEMPT_LOG_FLAG: str(attempts)},
     )
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:randomly", "-n", "2", *args],
@@ -167,6 +186,10 @@ def test_a_real_pytest_session_over_unmarked_tests_never_reaches_the_network(tmp
     """The whole lifecycle, with a key in the environment: still no connect."""
     result = _inner_pytest(tmp_path, "tests/async-unit/test_worker_assets.py")
     out = result.stdout + result.stderr
+    attempts = tmp_path / "attempts.log"
+    # The record, not the exception: a probe that swallows the error is
+    # still an attempt (review).
+    assert not attempts.exists() or attempts.read_text() == "", attempts.read_text()
     assert "NETWORK ACCESS" not in out, out
     assert result.returncode == 0, out
     # The guard was live in the workers too: xdist actually ran. Under -q
@@ -187,7 +210,9 @@ def test_a_marked_test_is_what_triggers_the_probe(tmp_path):
     )
     result = _inner_pytest(tmp_path, "-p", "tests.conftest", "-rs", str(marked))
     out = result.stdout + result.stderr
-    # The probe ran, inside a worker (the guard fired there) and, because
-    # the connect "failed", the marked test was skipped with the proxy
-    # reason rather than run.
+    attempts = tmp_path / "attempts.log"
+    # The probe ran, inside a worker (the attempt is on the record) and,
+    # because the connect "failed", the marked test was skipped with the
+    # proxy reason rather than run.
+    assert attempts.exists() and "api.stripe.com" in attempts.read_text(), out
     assert "SSL-intercepting proxy" in out or "NETWORK ACCESS" in out, out
