@@ -2909,6 +2909,14 @@ class AppealsBackendHelper:
     # ranking flags off there are no scores to sort by, and the page still must
     # not open with a haystack. Ranking sits on top of this rather than
     # replacing it.
+    #
+    # The cap limits what is SHOWN at the start of a run. It does not fence the
+    # held-back rows off from the rest of the run, and that is deliberate:
+    # synthesis below still draws on every stored draft for the denial (it is
+    # choosing inputs, not showing them), and if the model regenerates text
+    # identical to a held-back row, the uniqueness handler streams that stored
+    # row -- a draft the user has not seen this session, which is the right
+    # outcome even though the done frame counts it as new (review).
     MAX_REPLAYED_APPEALS = 3
 
     # Deadlines, measured from the start of the generation flow, after which a

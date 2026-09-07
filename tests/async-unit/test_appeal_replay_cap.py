@@ -6,9 +6,15 @@ times opened with a wall of stored letters and buried the fresh draft at the
 bottom. Melanie hit exactly this on prod: eighteen stored drafts, then one new
 one, last.
 
-These pin the cap and the ordering. They are deliberately independent of
-TypeSafe scoring: with the ranking flags off there are no scores to sort by, and
-the page still must not open with a haystack.
+These pin the cap and the ordering of what is SHOWN. They are deliberately
+independent of TypeSafe scoring: with the ranking flags off there are no scores
+to sort by, and the page still must not open with a haystack.
+
+What the cap does not do, on purpose: rows it holds back stay available to the
+rest of the run. Synthesis still draws on every stored draft, because it is
+choosing inputs rather than showing them; and if the model regenerates text
+identical to a held-back row, the uniqueness handler streams that stored row,
+which is a draft the user has not seen this session and is the right outcome.
 """
 
 import json
@@ -29,11 +35,16 @@ class AppealReplayCapTest(TestCase):
 
     def _create_denial(self):
         email = "replay-cap@example.com"
+        # gen_attempts=3 skips the research phase, the same way the sibling
+        # tests in test_common_view_logic.py do. At 1, generation bumps it to
+        # 2 and enters research, and the RAG helper's health check makes a
+        # real HTTP request to whatever RAG_SERVICE_URL is in the ambient
+        # environment (review). Nothing here is about research.
         denial = Denial.objects.create(
             denial_id=self.DENIAL_ID,
             semi_sekret="sekret",
             hashed_email=Denial.get_hashed_email(email),
-            gen_attempts=1,
+            gen_attempts=3,
         )
         return email, denial
 
