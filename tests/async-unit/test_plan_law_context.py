@@ -60,6 +60,8 @@ class TestWhichLawGoverns:
         assert "not clearly an employer or union plan" in block
         assert "Name ERISA only if" in block
         assert "ERISA governs the appeal" not in block
+        # A church's or a city's employee plan is group coverage too (review).
+        assert "government or church employer's plan is exempt (29 U.S.C. § 1003(b))" in block
 
     @pytest.mark.parametrize(
         "source",
@@ -89,9 +91,17 @@ class TestWhichLawGoverns:
 
     def test_marketplace_plans_are_aca_not_erisa(self):
         block = _block("State Marketplace / Affordable Care Act")
-        assert "ERISA does not apply" in block
+        assert "individual plan bought on the marketplace, ERISA does not apply" in block
         assert "45 C.F.R. § 147.136" in block
         assert "42 U.S.C. § 18022" in block
+
+    def test_small_employer_shop_coverage_is_still_an_erisa_plan(self):
+        """A small business buys group coverage on the SHOP marketplace; that
+        is an employer plan, so a blanket "ERISA does not apply" would be
+        wrong (review)."""
+        block = _block("State Marketplace / Affordable Care Act")
+        assert "small employer (SHOP) coverage" in block
+        assert "ERISA governs it as for any private employer plan" in block
 
     @pytest.mark.parametrize(
         "source, marker",
@@ -170,8 +180,12 @@ class TestWhichLawGoverns:
         assert block.count("ERISA governs the appeal") == 1
         assert "More than one coverage source" not in block
 
-    def test_the_invitation_limits_external_review_to_medical_judgment_denials(self):
-        assert "independent external review that a medical-judgment denial is owed" in _block()
+    def test_the_invitation_defers_to_the_paragraph_on_external_review(self):
+        """The closing invitation must not promise an external review on its
+        own; a grandfathered self-funded plan owes none (review)."""
+        block = _block()
+        assert "only where the paragraph above says the plan owes one" in block
+        assert "is owed" not in block.split("If citing the applicable law", 1)[1]
 
 
 class TestTheBlockItself:
@@ -253,7 +267,7 @@ class TestCollector:
     def test_reads_plan_sources_from_the_denial(self):
         denial = SimpleNamespace(plan_source=_Sources("State Marketplace / Affordable Care Act"))
         block = AppealGenerator._collect_plan_law_context(denial)
-        assert block is not None and "marketplace (Affordable Care Act) plan" in block
+        assert block is not None and "marketplace (Affordable Care Act) coverage" in block
 
     def test_reads_the_tpa_flag_and_the_regulator(self):
         denial = SimpleNamespace(

@@ -420,20 +420,24 @@ _TPA_ONLY = (
 )
 _OTHER_GROUP = (
     "This is group coverage that is not clearly an employer or union plan. If "
-    "an employer or union sponsors it, ERISA governs (29 C.F.R. § "
-    "2560.503-1); if it is an association or membership plan, ERISA may not "
-    "apply, and for non-grandfathered coverage the ACA internal appeal and "
-    "external review rules (45 C.F.R. § 147.136) apply along with state "
-    "insurance law. Name ERISA only if the denial letter or the plan "
-    "documents show an employer or union sponsor."
+    "a private employer or union sponsors it, ERISA governs (29 C.F.R. § "
+    "2560.503-1); a government or church employer's plan is exempt "
+    "(29 U.S.C. § 1003(b)); and if it is an association or membership plan, "
+    "ERISA may not apply, and for non-grandfathered coverage the ACA internal "
+    "appeal and external review rules (45 C.F.R. § 147.136) apply along with "
+    "state insurance law. Name ERISA only if the denial letter or the plan "
+    "documents show a private employer or union sponsor."
 )
 _ACA_MARKETPLACE = (
-    "This is a marketplace (Affordable Care Act) plan, so ERISA does not "
-    "apply. The plan owes an internal appeal and, for a denial that turns on "
-    "medical judgment or is a rescission, an independent external review "
-    "under the ACA (45 C.F.R. § 147.136), and it must cover the ten essential "
-    "health benefit categories (42 U.S.C. § 18022), so if the service falls "
-    "in one of them, say so."
+    "This is marketplace (Affordable Care Act) coverage. If it is an "
+    "individual plan bought on the marketplace, ERISA does not apply; the "
+    "plan owes an internal appeal and, for a denial that turns on medical "
+    "judgment or is a rescission, an independent external review under the "
+    "ACA (45 C.F.R. § 147.136), and it must cover the ten essential health "
+    "benefit categories (42 U.S.C. § 18022), so if the service falls in one "
+    "of them, say so. If it is small employer (SHOP) coverage, it is an "
+    "employer plan and ERISA governs it as for any private employer plan "
+    "(29 C.F.R. § 2560.503-1)."
 )
 _GOVERNMENT_EMPLOYER = (
     "This is a state or local government employer plan, so ERISA does not "
@@ -497,9 +501,10 @@ _TWO_SOURCES = (
 )
 _INVITATION = (
     "If citing the applicable law strengthens this appeal (for example to "
-    "demand the clinical criteria the plan relied on, or to insist on the "
-    "independent external review that a medical-judgment denial is owed), "
-    "cite it by name and section exactly as given here; a reviewer takes a "
+    "demand the clinical criteria the plan relied on, or, only where the "
+    "paragraph above says the plan owes one, to insist on an independent "
+    "external review), cite it by name and section exactly as given here; a "
+    "reviewer takes a "
     "letter more seriously when it names the rule the plan must follow. Cite "
     "it only where it applies and where it helps the argument. Never cite a "
     "law that does not govern this plan, and do not invent section numbers, "

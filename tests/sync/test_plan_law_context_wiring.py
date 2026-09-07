@@ -24,7 +24,7 @@ class PlanLawContextWiringTest(TestCase):
         PlanSourceRelation.objects.create(denial=denial, plan_source=source)
         block = AppealGenerator._collect_plan_law_context(denial)
         self.assertIsNotNone(block)
-        self.assertIn("marketplace (Affordable Care Act) plan", block)
+        self.assertIn("marketplace (Affordable Care Act) coverage", block)
         self.assertIn("45 C.F.R. § 147.136", block)
 
     def test_a_tpa_carrier_reaches_the_block(self):
