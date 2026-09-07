@@ -116,12 +116,19 @@ def test_build_marks_its_mode_and_the_cache_checks_it():
         src,
         re.S,
     ), "the marker is written even when the compilation had errors"
+    # The marker must come from the compiler's EFFECTIVE mode, not from the
+    # isProduction flag: `webpack --mode development` overrides the configured
+    # mode after the config has run (review). A hardcoded value, or one
+    # derived from the flag, would let a development build pass as production.
     assert re.search(
-        r"writeFileSync\(\s*marker\s*,\s*\(\s*isProduction\s*\?\s*" + q + r"production" + q
-        + r"\s*:\s*" + q + r"development" + q + r"\s*\)",
+        r"compiler\.options\.mode\s*===\s*" + q + r"production" + q
+        + r"\s*\?\s*" + q + r"production" + q + r"\s*:\s*" + q + r"development" + q,
         src,
         re.S,
-    ), "the marker no longer records the real mode (a hardcoded value would let a dev build pass as production)"
+    ), "the marker no longer records the compiler's effective mode"
+    assert re.search(r"writeFileSync\(\s*marker\s*,\s*mode\s*\+", src, re.S), (
+        "the marker is no longer written from the effective mode"
+    )
 
     sh = (JS.parents[2] / "scripts" / "build_static.sh").read_text()
     assert re.search(r"^\s*EXPECTED_BUILD_MODE=production\s*$", sh, re.M), (

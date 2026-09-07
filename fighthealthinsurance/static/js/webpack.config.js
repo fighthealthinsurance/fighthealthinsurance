@@ -188,8 +188,16 @@ module.exports = async (env, argv) => {
         });
         compiler.hooks.afterEmit.tap('BuildModeMarker', (compilation) => {
           if (compilation.errors.length > 0) return;
-          fs.writeFileSync(marker, (isProduction ? 'production' : 'development') + '\n');
+          // The EFFECTIVE mode, not isProduction: `webpack --mode development`
+          // overrides the configured mode after this file has run, and the
+          // marker has to describe what was actually built (review).
+          const mode = compiler.options.mode === 'production' ? 'production' : 'development';
+          fs.writeFileSync(marker, mode + '\n');
         });
+        // Not covered, on purpose: two webpack processes writing this dist/ at
+        // once. They corrupt the bundles themselves, marker or not, so
+        // concurrent builds in one working tree are unsupported, and
+        // build_static.sh runs one build at a time.
       },
     },
     ...(shouldAnalyze ? [
