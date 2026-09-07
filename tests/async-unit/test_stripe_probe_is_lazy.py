@@ -57,8 +57,12 @@ def test_importing_conftest_with_a_key_makes_no_network_call():
     ), patch.object(socket.socket, "connect", _no_network), patch.object(
         socket.socket, "connect_ex", _no_network
     ):
-        spec = importlib.util.spec_from_file_location("_root_conftest_isolated", path)
+        # Loaded under the `tests` package, as pytest loads it, so a relative
+        # import inside the conftest (a helper extracted to tests/x.py)
+        # resolves here too (review).
+        spec = importlib.util.spec_from_file_location("tests._root_conftest_isolated", path)
         module = importlib.util.module_from_spec(spec)
+        module.__package__ = "tests"
         spec.loader.exec_module(module)  # raises if anything reached the network
     assert callable(module.pytest_runtest_setup)
 
