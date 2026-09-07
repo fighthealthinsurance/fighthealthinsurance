@@ -510,6 +510,11 @@ let focusListenerArmed = false;
 // Once the final pass has run, every later pass is final too: a live pass
 // queued behind a focusout must not undo the terminal state (review).
 let finalApplied = false;
+// Bumped when a fresh generation starts on the same page. A deferred pass
+// queued in the previous generation captured its own `pending` value, so
+// resetting rankingPending cannot reach it; it checks this instead and
+// does nothing if the page has moved on (review).
+let rankingGeneration = 0;
 
 function recordDraftScore(proposedId: unknown, quality: unknown, grounding: unknown, scorer: unknown): void {
   if (proposedId === undefined || proposedId === null || proposedId === "unknown") return;
@@ -564,8 +569,13 @@ function applyRanking(final: boolean): void {
         () => {
           focusListenerArmed = false;
           const pending = rankingPending;
+          const generation = rankingGeneration;
           rankingPending = null;
-          if (pending !== null) setTimeout(() => applyRanking(pending), 0);
+          if (pending !== null) {
+            setTimeout(() => {
+              if (generation === rankingGeneration) applyRanking(pending);
+            }, 0);
+          }
         },
         { once: true },
       );
@@ -1194,6 +1204,7 @@ async function requestExternalModels(
     // under a partial caption with live ordering suppressed (review).
     finalApplied = false;
     rankingPending = null;
+    rankingGeneration += 1;
     // The wait for the next appeal starts now, not when the last pre-rerun
     // appeal arrived — otherwise the "Current appeal" clock would include
     // however long the user spent reading drafts before opting in. The

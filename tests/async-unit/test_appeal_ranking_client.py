@@ -81,7 +81,11 @@ def test_nothing_moves_while_the_reader_is_using_a_draft():
     # ...and the pass is not lost: it runs once focus leaves the drafts, and
     # a deferred final pass stays final.
     assert "rankingPending = rankingPending === true || final;" in block
-    assert "setTimeout(() => applyRanking(pending), 0)" in block
+    # A queued pass belongs to the generation that queued it: it captures
+    # the counter and does nothing once a fresh generation has bumped it
+    # (review).
+    assert "const generation = rankingGeneration;" in block
+    assert "if (generation === rankingGeneration) applyRanking(pending);" in block
 
 
 def test_after_the_final_pass_every_pass_is_final():
@@ -130,6 +134,7 @@ def test_a_fresh_generation_drops_the_final_latch_but_keeps_scores_and_the_open_
     handler = SRC[start : SRC.index("doQuery(my_backend_url, my_data, my_rest_fallback_url);", start)]
     assert "retries = 0;" in handler
     assert "finalApplied = false;" in handler and "rankingPending = null;" in handler
+    assert "rankingGeneration += 1;" in handler
     assert "draftScores = new Map" not in handler and "showAllDrafts = false" not in handler
 
 
