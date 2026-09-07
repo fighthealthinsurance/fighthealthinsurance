@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, F, QuerySet
+from django.db.models import Avg, Count, F, Max, QuerySet
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
@@ -45,7 +45,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
-from fighthealthinsurance.ml import model_query
+from fighthealthinsurance.ml import letter_quality, model_query
 from fighthealthinsurance.ml.model_identity import (
     LEGACY_UNATTRIBUTED_LABEL,
     normalize_model_label,
@@ -1065,7 +1065,9 @@ UNKNOWN_MODEL_LABEL = "(unattributed)"
 
 
 def _merge_stats(
-    chosen: Dict[str, int], presented: Dict[str, int]
+    chosen: Dict[str, int],
+    presented: Dict[str, int],
+    quality: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """Combine per-model chosen + presented counts into a sorted list of dicts.
 
@@ -1073,18 +1075,32 @@ def _merge_stats(
     model has no presented count (no denominator — e.g. legacy chosen rows
     without presentation records). Templates render ``None`` as an em dash;
     it must never be displayed as 0.0%.
+
+    ``quality`` (optional) is per-model draft-quality aggregates from
+    ``ml/letter_quality.py``: ``{"avg": 0..1, "scored": n, "ungrounded": n}``.
+    Win rate is the lagging signal (it needs a user to pick a draft, weeks of
+    them to mean anything); the quality average is the leading one, available
+    the minute a backend ships. A model with no scored drafts gets ``None``
+    for the average, rendered as a dash, never as 0.
     """
+    quality = quality or {}
     rows: List[Dict[str, Any]] = []
-    for model_name in set(chosen) | set(presented):
+    for model_name in set(chosen) | set(presented) | set(quality):
         c = chosen.get(model_name, 0)
         p = presented.get(model_name, 0)
         win_rate = (c / p * 100.0) if p > 0 else None
+        q = quality.get(model_name) or {}
         rows.append(
             {
                 "model_name": model_name,
                 "chosen": c,
                 "presented": p,
                 "win_rate": win_rate,
+                "quality_avg": q.get("avg"),
+                "quality_scored": int(q.get("scored") or 0),
+                "quality_ungrounded": int(q.get("ungrounded") or 0),
+                "quality_scorer": q.get("scorer"),
+                "quality_other_scorer": int(q.get("other_scorer") or 0),
             }
         )
     rows.sort(
@@ -1254,7 +1270,95 @@ class ModelUsageDashboardView(generic.TemplateView):
             presented_label = normalize_model_label(name)
             if presented_label is not None:
                 presented[presented_label] += count
-        return _merge_stats(dict(chosen), dict(presented))
+        return _merge_stats(
+            dict(chosen),
+            dict(presented),
+            ModelUsageDashboardView._draft_quality_stats(since),
+        )
+
+    @staticmethod
+    def _draft_quality_stats(
+        since: Optional[datetime.datetime],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Per-model draft quality (ml/letter_quality.py) over the window.
+
+        Every scored, non-speculative draft counts, chosen or not: this is
+        about what each backend PRODUCES, not what users picked, so it is
+        anchored on the draft's own created_at rather than on a later pick.
+        Labels are normalized the same way as chosen/presented so the three
+        line up in one row.
+
+        One EXACT scorer per table: the provenance string of the most
+        recently SCORED row (by quality_scored_at, not the draft's age: old
+        drafts are rescored) in the window. Rows scored by any other scorer
+        (an older rubric, or the same rubric answered by a repointed
+        model) are counted in ``other_scorer`` and never averaged in, so a
+        change on TypeSafe's side cannot masquerade as backend drift.
+        """
+        scored_qs = ProposedAppeal.objects.filter(
+            quality_score__isnull=False,
+            speculative=False,
+            model_name__isnull=False,
+        )
+        if since is not None:
+            scored_qs = scored_qs.filter(created_at__gte=since)
+        latest = None
+        for candidate in (
+            scored_qs.filter(
+                quality_scorer__startswith="typesafe/",
+                quality_scorer__endswith=letter_quality._RUBRIC_SUFFIX,
+            )
+            .values("quality_scorer")
+            .annotate(newest=Max("quality_scored_at"))
+            .order_by("-newest")
+            .values_list("quality_scorer", flat=True)[:20]
+        ):
+            if letter_quality.same_rubric(candidate):
+                latest = candidate
+                break
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, avg, scored, ungrounded in (
+            (scored_qs.filter(quality_scorer=latest) if latest else scored_qs.none())
+            .values_list("model_name")
+            .annotate(
+                avg=Avg("quality_score"),
+                scored=Count("id"),
+                ungrounded=Count(
+                    "id",
+                    filter=Q(grounding_score__lt=letter_quality.GROUNDING_DEMOTE_BELOW),
+                ),
+            )
+            .values_list("model_name", "avg", "scored", "ungrounded")
+        ):
+            label = normalize_model_label(name)
+            if label is None:
+                continue
+            bucket = out.setdefault(
+                label, {"sum": 0.0, "scored": 0, "ungrounded": 0, "other_scorer": 0}
+            )
+            bucket["sum"] += float(avg or 0.0) * int(scored)
+            bucket["scored"] += int(scored)
+            bucket["ungrounded"] += int(ungrounded)
+        for name, count in (
+            scored_qs.exclude(quality_scorer=latest)
+            .values_list("model_name")
+            .annotate(c=Count("id"))
+            .values_list("model_name", "c")
+        ):
+            label = normalize_model_label(name)
+            if label is None:
+                continue
+            bucket = out.setdefault(
+                label, {"sum": 0.0, "scored": 0, "ungrounded": 0, "other_scorer": 0}
+            )
+            bucket["other_scorer"] += int(count)
+        for bucket in out.values():
+            bucket["avg"] = (
+                bucket["sum"] / bucket["scored"] if bucket["scored"] else None
+            )
+            bucket["scorer"] = latest
+            del bucket["sum"]
+        return out
 
     @staticmethod
     def _context_level_stats(

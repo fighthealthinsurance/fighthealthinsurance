@@ -20,7 +20,11 @@ from fighthealthinsurance.models import (
     Denial,
     ProposedAppeal,
 )
-from fighthealthinsurance.staff_views import UNKNOWN_MODEL_LABEL, _merge_stats
+from fighthealthinsurance.staff_views import (
+    UNKNOWN_MODEL_LABEL,
+    ModelUsageDashboardView,
+    _merge_stats,
+)
 
 User = get_user_model()
 
@@ -708,3 +712,131 @@ class ModelUsageDashboardChartTableAgreementTest(ChooserStatsHelperMixin, TestCa
                 for name, y in points.items():
                     if y:
                         self.assertEqual(table.get(name, 0), y, (w["slug"], name))
+
+
+class DraftQualityColumnsTest(TestCase):
+    """The leading indicator beside the lagging one: draft quality per model
+    (ml/letter_quality.py) shares the window and the labels of win rate."""
+
+    def setUp(self):
+        self.staff = User.objects.create_user(
+            username="staff-q", password="pw123", is_staff=True
+        )
+        self.client.login(username="staff-q", password="pw123")
+        self.denial = Denial.objects.create(
+            hashed_email="hash-q",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def _scored(self, model_name, quality, grounding, days_ago=0, chosen=False, scorer=None):
+        from fighthealthinsurance.ml import letter_quality
+
+        pa = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text=f"draft-{model_name}-{quality}-{days_ago}-{scorer}",
+            model_name=model_name,
+            chosen=chosen,
+            quality_score=quality,
+            grounding_score=grounding,
+            quality_scorer=scorer or letter_quality.SCORER,
+            quality_scored_at=timezone.now() - datetime.timedelta(days=days_ago),
+        )
+        if days_ago > 0:
+            ProposedAppeal.objects.filter(pk=pa.pk).update(
+                created_at=timezone.now() - datetime.timedelta(days=days_ago)
+            )
+        return pa
+
+    def test_quality_is_averaged_per_model_in_the_window(self):
+        self._scored("m1", 0.9, 2)
+        self._scored("m1", 0.5, 0, chosen=True)
+        self._scored("m1", 0.1, 0, days_ago=45)  # outside a 30-day window
+        self._scored("m2", 0.7, 2)
+        since = timezone.now() - datetime.timedelta(days=30)
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(since)
+        }
+        self.assertAlmostEqual(rows["m1"]["quality_avg"], 0.7)
+        self.assertEqual(rows["m1"]["quality_scored"], 2)
+        self.assertEqual(rows["m1"]["quality_ungrounded"], 1)
+        self.assertAlmostEqual(rows["m2"]["quality_avg"], 0.7)
+
+    def test_unscored_models_show_no_average_not_zero(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="plain", model_name="m3", chosen=True
+        )
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        self.assertIsNone(rows["m3"]["quality_avg"])
+        self.assertEqual(rows["m3"]["quality_scored"], 0)
+
+    def test_only_the_latest_scorer_is_averaged_and_the_rest_are_counted(self):
+        from fighthealthinsurance.ml import letter_quality
+
+        older = f"typesafe/speed_20260401/rubric-{letter_quality.RUBRIC_VERSION}"
+        self._scored("m1", 0.1, 0, scorer="typesafe/speed_latest/rubric-0", days_ago=3)
+        self._scored("m1", 0.7, 2, scorer=older, days_ago=2)
+        self._scored("m1", 0.9, 2, days_ago=1)  # the current SCORER, most recent
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        self.assertAlmostEqual(rows["m1"]["quality_avg"], 0.9)
+        self.assertEqual(rows["m1"]["quality_scored"], 1)
+        self.assertEqual(rows["m1"]["quality_scorer"], letter_quality.SCORER)
+        self.assertEqual(rows["m1"]["quality_other_scorer"], 2)
+
+    def test_a_newer_old_rubric_row_does_not_hide_the_current_series(self):
+        from fighthealthinsurance.ml import letter_quality
+
+        self._scored("m1", 0.9, 2, days_ago=2)  # current rubric
+        self._scored("m1", 0.1, 0, scorer="typesafe/speed_latest/rubric-0", days_ago=1)  # newer, old rubric
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        self.assertAlmostEqual(rows["m1"]["quality_avg"], 0.9)
+        self.assertEqual(rows["m1"]["quality_other_scorer"], 1)
+
+    def test_twenty_newer_old_rubric_rows_do_not_hide_the_current_scorer(self):
+        self._scored("m1", 0.9, 2, days_ago=5)  # current rubric, oldest
+        for i in range(20):
+            # Distinct text per row: drafts are unique per denial by fingerprint.
+            self._scored("m1", 0.1 + i * 0.001, 0, scorer="typesafe/speed_latest/rubric-0", days_ago=1)
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        self.assertAlmostEqual(rows["m1"]["quality_avg"], 0.9)
+        self.assertEqual(rows["m1"]["quality_other_scorer"], 20)
+
+    def test_twenty_distinct_newer_old_scorers_do_not_hide_the_current_one(self):
+        self._scored("m1", 0.9, 2, days_ago=5)
+        for i in range(20):
+            self._scored("m1", 0.1 + i * 0.001, 0, scorer=f"typesafe/old-{i}/rubric-0", days_ago=1)
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        self.assertAlmostEqual(rows["m1"]["quality_avg"], 0.9)
+        self.assertEqual(rows["m1"]["quality_other_scorer"], 20)
+
+    def test_only_old_rubric_rows_still_count_as_other_scorer(self):
+        self._scored("m1", 0.1, 0, scorer="typesafe/speed_latest/rubric-0")
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        self.assertIsNone(rows["m1"]["quality_avg"])
+        self.assertEqual(rows["m1"]["quality_other_scorer"], 1)
+
+    def test_merge_keeps_old_callers_working(self):
+        rows = _merge_stats({"a": 1}, {"a": 2})
+        self.assertIsNone(rows[0]["quality_avg"])
+        self.assertEqual(rows[0]["quality_scored"], 0)

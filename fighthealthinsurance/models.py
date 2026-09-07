@@ -2621,6 +2621,19 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     text_fingerprint = models.CharField(
         max_length=64, null=True, blank=True, db_index=True
     )
+    # Criteria score from ml/letter_quality.py, used to ORDER drafts on the
+    # page and to watch draft quality per backend on the staff dashboard.
+    # quality_score is a 0..1 composite; grounding_score is the
+    # no_invented_facts answer alone (0..2, an expected level so it can be
+    # fractional), kept separate because a draft that
+    # invents facts is demoted regardless of how well it reads. quality_scorer
+    # names the scorer + question set so a re-tuned rubric never mixes scales.
+    # Null for unscored rows: scoring is optional, fails closed, and only runs
+    # when the user allowed external models.
+    quality_score = models.FloatField(null=True, blank=True)
+    grounding_score = models.FloatField(null=True, blank=True)
+    quality_scorer = models.CharField(max_length=80, null=True, blank=True)
+    quality_scored_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         constraints = [

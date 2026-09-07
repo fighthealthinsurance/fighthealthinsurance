@@ -81,6 +81,27 @@ def _env_list(name: str) -> list:
 POD_IP = (os.getenv("POD_IP") or "").strip()
 
 
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    """An int from the environment within [minimum, maximum], or the default.
+
+    Read at import, so a stray unit suffix ("20s"), an empty value, or a
+    value outside the plausible range must not crash-loop every web and
+    worker process over an optional setting -- and a zero or negative
+    timeout, which aiohttp reads as "no timeout at all", must never get
+    through.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return default
+    if not minimum <= value <= maximum:
+        return default
+    return value
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -143,6 +164,20 @@ class Base(Configuration):
     # journey would strand completions.
     TEMPORAL_INTAKE_JOURNEY_ENABLED = (
         os.getenv("TEMPORAL_INTAKE_JOURNEY_ENABLED", "false").lower() == "true"
+    )
+
+    # TypeSafe System One letter scoring (ml/letter_quality.py). Inert until
+    # BOTH the key and the flag are set: the key alone must not start sending
+    # denial text to a new processor before the privacy policy names it.
+    TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY")
+    TYPESAFE_API_URL = os.getenv(
+        "TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone"
+    )
+    TYPESAFE_LETTER_RANKING_ENABLED = (
+        os.getenv("TYPESAFE_LETTER_RANKING_ENABLED", "false").lower() == "true"
+    )
+    TYPESAFE_TIMEOUT_SECONDS = _env_int(
+        "TYPESAFE_TIMEOUT_SECONDS", 20, minimum=1, maximum=300
     )
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
@@ -796,6 +831,15 @@ class Dev(Base):
 
 
 class Test(Dev):
+    # TypeSafe is hard-off under test: a developer's key and flag in the
+    # environment must never let an exercised generation path send test
+    # denial text to a real endpoint. Scorer tests opt in with
+    # override_settings and stub the transport.
+    TYPESAFE_API_KEY = None
+    TYPESAFE_API_URL = "http://typesafe.invalid/v1/systemone"
+    TYPESAFE_LETTER_RANKING_ENABLED = False
+    TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
     # timeout would poll until it expires on every generate_appeals test.
     FHI_CONTEXT_BARRIER_TIMEOUT_S = 0
@@ -852,6 +896,15 @@ class Test(Dev):
 
 
 class TestSync(Dev):
+    # TypeSafe is hard-off under test: a developer's key and flag in the
+    # environment must never let an exercised generation path send test
+    # denial text to a real endpoint. Scorer tests opt in with
+    # override_settings and stub the transport.
+    TYPESAFE_API_KEY = None
+    TYPESAFE_API_URL = "http://typesafe.invalid/v1/systemone"
+    TYPESAFE_LETTER_RANKING_ENABLED = False
+    TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
     FHI_CONTEXT_BARRIER_TIMEOUT_S = 0
@@ -884,6 +937,15 @@ class TestSync(Dev):
 
 
 class TestActor(Dev):
+    # TypeSafe is hard-off under test: a developer's key and flag in the
+    # environment must never let an exercised generation path send test
+    # denial text to a real endpoint. Scorer tests opt in with
+    # override_settings and stub the transport.
+    TYPESAFE_API_KEY = None
+    TYPESAFE_API_URL = "http://typesafe.invalid/v1/systemone"
+    TYPESAFE_LETTER_RANKING_ENABLED = False
+    TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
     FHI_CONTEXT_BARRIER_TIMEOUT_S = 0

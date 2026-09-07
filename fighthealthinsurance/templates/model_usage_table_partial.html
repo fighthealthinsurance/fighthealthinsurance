@@ -6,6 +6,10 @@
       <th class="num">Chosen</th>
       <th class="num">Presented</th>
       <th class="num">Win rate</th>
+      <th class="num" title="Mean draft quality 0..1 from the letter scorer (ml/letter_quality.py); a criteria score, not a success rate">Quality</th>
+      <th class="num" title="Drafts scored in the window">Scored</th>
+      <th class="num" title="Scored drafts that invented facts (grounding below threshold)">Ungrounded</th>
+      <th class="num" title="Scored drafts from a different scorer or rubric than the current one; never averaged in">Other scorer</th>
     </tr>
   </thead>
   <tbody>
@@ -20,6 +24,15 @@
       {% else %}
       <td class="num">{{ r.win_rate|floatformat:1 }}%</td>
       {% endif %}
+      {% if r.quality_avg is None %}
+      {# Nothing scored for this model in the window; a dash, never 0.00. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.quality_avg|floatformat:2 }}</td>
+      {% endif %}
+      <td class="num">{{ r.quality_scored|default:0 }}</td>
+      <td class="num">{{ r.quality_ungrounded|default:0 }}</td>
+      <td class="num">{{ r.quality_other_scorer|default:0 }}</td>
     </tr>
     {% endfor %}
   </tbody>

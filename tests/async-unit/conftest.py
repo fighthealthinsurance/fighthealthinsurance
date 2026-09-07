@@ -38,6 +38,12 @@ _AMBIENT_BACKEND_ENV_VARS = (
     "PERPLEXITY_API",
     "SECONDARY_NEW_HEALTH_BACKEND_HOST",
     "SECONDARY_NEW_HEALTH_BACKEND_PORT",
+    # Not a router backend, but the same hazard: a developer's TypeSafe key in
+    # the environment must never let a unit test score a letter for real.
+    "TYPESAFE_API_KEY",
+    "TYPESAFE_LETTER_RANKING_ENABLED",
+    "TYPESAFE_TIMEOUT_SECONDS",
+    "TYPESAFE_API_URL",
 )
 for _name in _AMBIENT_BACKEND_ENV_VARS:
     os.environ.pop(_name, None)
