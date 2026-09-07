@@ -18,16 +18,27 @@ which is a draft the user has not seen this session and is the right outcome.
 """
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from asgiref.sync import async_to_sync
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.models import Denial, ProposedAppeal
 
 
+# Temporal off, explicitly. The interactive path records a durable intake
+# intent and tries an inline delivery to the Temporal cluster when the three
+# flags are on; they are read from the environment at settings import, so an
+# ambient TEMPORAL_ENABLED=true would make these tests open a connection to a
+# real backend (review). The flags are read through getattr(settings, ...) at
+# call time, so an override here is enough.
+@override_settings(
+    TEMPORAL_ENABLED=False,
+    TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+    TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
+)
 class AppealReplayCapTest(TestCase):
     """The replay budget is spent on the newest deliverable drafts, and no more."""
 
@@ -209,6 +220,64 @@ class AppealReplayCapTest(TestCase):
                     len([c for c in replayed if "duplicated newest draft" in c]),
                     1,
                     "the duplicate was delivered twice",
+                )
+            finally:
+                await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_synthesis_result_matching_a_held_back_draft_is_still_delivered(
+        self, mock_appeal_generator
+    ):
+        """The cap hides a draft; it must not make the synthesis of it vanish.
+
+        Synthesis inputs are marked served so the end-of-flow reconciliation
+        does not dump them. Marking a HELD-BACK input served made the
+        verbatim-copy guard discard a synthesis result that matched it, so the
+        user never saw the one copy they could have (review). Held-back rows
+        now stay out of served_keys; the result lands as the stored row.
+        """
+        email, denial = self._create_denial()
+        texts = [
+            (
+                f"Stored draft {i} for this denial, long enough to be a "
+                "deliverable appeal rather than a runt row."
+            )
+            for i in range(18)
+        ]
+        for text in texts:
+            ProposedAppeal.objects.create(
+                for_denial=denial, appeal_text=text, speculative=False
+            )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+        # Draft 5 is well past the cap of three (17, 16, 15 are replayed).
+        mock_appeal_generator.synthesize_appeals = AsyncMock(return_value=texts[5])
+
+        async def test():
+            try:
+                contents = await self._collect_contents(
+                    {
+                        "denial_id": self.DENIAL_ID,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                stored = [c for c in contents if "Stored draft" in c]
+                fives = [c for c in stored if "Stored draft 5 " in c]
+                self.assertEqual(
+                    len(fives),
+                    1,
+                    "the synthesis result that matched a held-back draft was "
+                    f"discarded (or duplicated): {len(fives)} copies",
+                )
+                # Three replayed plus the one synthesis landed on, and nothing
+                # else: the held-back rows must not come back at the end.
+                self.assertEqual(
+                    len(stored),
+                    AppealsBackendHelper.MAX_REPLAYED_APPEALS + 1,
+                    f"unexpected stored drafts on screen: {len(stored)}",
                 )
             finally:
                 await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
