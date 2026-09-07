@@ -500,8 +500,11 @@ function isAdvancedOCREnabled(): boolean {
   const checkbox = document.getElementById(
     "advanced_ocr_enabled",
   ) as HTMLInputElement | null;
-  // Default to true when the checkbox is absent (non-scrub pages).
-  return checkbox ? checkbox.checked : true;
+  // Default to FALSE when the checkbox is absent. The pages with no checkbox
+  // (explain_denial, chat_interface) have no way to opt out, so defaulting on
+  // there started a ~684 MB model download that those users never asked for
+  // and, because the engine is broken, could never benefit from.
+  return checkbox ? checkbox.checked : false;
 }
 
 async function recognizeImageText(

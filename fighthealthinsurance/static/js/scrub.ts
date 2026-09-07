@@ -40,6 +40,15 @@ function userAskedToSaveData(): boolean {
   return connection?.saveData === true;
 }
 
+/**
+ * Screens the advanced-OCR checkbox down, never up.
+ *
+ * The box now ships unchecked, so today every branch here is a no-op and the
+ * screening below is belt-and-braces. It is kept rather than deleted because
+ * the moment the engine works and the default goes back on, these are exactly
+ * the devices that must not get it, and rebuilding the screening from scratch
+ * is how it comes back wrong.
+ */
 async function initAdvancedOCRCheckbox(): Promise<void> {
   const checkbox = document.getElementById("advanced_ocr_enabled") as HTMLInputElement | null;
   if (!checkbox) return;
