@@ -1,5 +1,4 @@
 const path = require('path');
-const fs = require('fs');
 const glob = require('glob');
 const TerserPlugin = require('terser-webpack-plugin');
 const CopyPlugin = require('copy-webpack-plugin');
@@ -60,13 +59,16 @@ try {
 // when one is given, so see below.
 
 module.exports = async (env, argv) => {
-  // One source of truth for mode, optimization and the BUILD_MODE marker.
+  // One source of truth for mode and optimization.
   // `webpack --mode X` overrides the configured mode after this file has
   // run, so if this flag came only from NODE_ENV the two could disagree:
   // `NODE_ENV=development npm run build -- --mode production` produced
   // production-mode bundles WITHOUT the pure_funcs console stripping, under
   // a marker that said production (review). When the CLI passes a mode, it
   // decides; otherwise production unless NODE_ENV=development.
+  // Whether dist/ still holds what the deploy build produced is not this
+  // file's problem: scripts/build_static.sh fingerprints its own output and
+  // rebuilds when the bundles changed underneath it, whoever changed them.
   const isProduction = argv && argv.mode
     ? argv.mode === 'production'
     : process.env.NODE_ENV !== 'development';
@@ -177,40 +179,6 @@ module.exports = async (env, argv) => {
   // Plugins - the worker asset copy always; the bundle analyzer on request
   plugins: [
     new CopyPlugin({ patterns: workerAssets }),
-    // Record which mode produced dist/, so scripts/build_static.sh can tell a
-    // production build from a development one. Its cache keys on source
-    // checksums only, so without this an `npm run build:dev` in between would
-    // leave development output in place under an unchanged checksum and the
-    // next build_static.sh would skip webpack and collect it (review).
-    {
-      apply(compiler) {
-        const marker = path.resolve(__dirname, 'dist', 'BUILD_MODE');
-        // Invalidate first, write last. An interrupted or failed build must
-        // not leave the previous mode's marker next to partially overwritten
-        // output, or build_static.sh would trust it and skip the rebuild
-        // (review). So the marker is removed before every compilation and
-        // written back only after an error-free emit.
-        compiler.hooks.beforeCompile.tap('BuildModeMarker', () => {
-          try {
-            fs.unlinkSync(marker);
-          } catch (e) {
-            if (e.code !== 'ENOENT') throw e;
-          }
-        });
-        compiler.hooks.afterEmit.tap('BuildModeMarker', (compilation) => {
-          if (compilation.errors.length > 0) return;
-          // The EFFECTIVE mode, not isProduction: `webpack --mode development`
-          // overrides the configured mode after this file has run, and the
-          // marker has to describe what was actually built (review).
-          const mode = compiler.options.mode === 'production' ? 'production' : 'development';
-          fs.writeFileSync(marker, mode + '\n');
-        });
-        // Not covered, on purpose: two webpack processes writing this dist/ at
-        // once. They corrupt the bundles themselves, marker or not, so
-        // concurrent builds in one working tree are unsupported, and
-        // build_static.sh runs one build at a time.
-      },
-    },
     ...(shouldAnalyze ? [
       new BundleAnalyzerPlugin({
         analyzerMode: 'static',

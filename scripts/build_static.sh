@@ -54,18 +54,25 @@ if [ -d "${JS_PATH}" ]; then
     STORED_JS_CHECKSUM=$(cat "$JS_CHECKSUM_FILE")
   fi
 
-  # The checksum covers sources, not the build mode. A `npm run build:dev`
-  # in between leaves development output (unminified, console.log intact)
-  # under an unchanged checksum, so also require the BUILD_MODE marker that
-  # webpack writes into dist/ to name the mode this run wants (review).
+  # The source checksum says whether a rebuild is NEEDED. It says nothing
+  # about whether dist/ still holds what this script last built: anything run
+  # in between (`npm run build:dev`, a `--mode` or `--no-optimization-minimize`
+  # override, an interrupted build) rewrites bundles under an unchanged
+  # source checksum. A marker written by webpack is only a claim by whoever
+  # ran webpack, so the stored key instead carries the build mode this run
+  # wants and a fingerprint of the bundles as they were when this script
+  # last built them. The skip requires all three to match (review).
   EXPECTED_BUILD_MODE=production
   if [ "${NODE_ENV:-}" = "development" ]; then
     EXPECTED_BUILD_MODE=development
   fi
-  BUILT_MODE=$(cat "${JS_PATH}/dist/BUILD_MODE" 2>/dev/null || true)
+  dist_fingerprint() {
+    find "${JS_PATH}/dist" -maxdepth 1 -type f -name "*.bundle.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1
+  }
+  CURRENT_BUILD_KEY="${CURRENT_JS_CHECKSUM}:${EXPECTED_BUILD_MODE}:$(dist_fingerprint)"
 
-  if [ "$CURRENT_JS_CHECKSUM" = "$STORED_JS_CHECKSUM" ] && [ -d "${JS_PATH}/dist" ] && [ "$BUILT_MODE" = "$EXPECTED_BUILD_MODE" ]; then
-    echo "JavaScript source files unchanged and dist is a ${BUILT_MODE} build, skipping build..."
+  if [ "$CURRENT_BUILD_KEY" = "$STORED_JS_CHECKSUM" ] && [ -d "${JS_PATH}/dist" ]; then
+    echo "JavaScript sources unchanged and dist matches the last ${EXPECTED_BUILD_MODE} build, skipping build..."
     SKIP_JS_BUILD=true
   fi
 fi
@@ -83,9 +90,10 @@ if [ "$SKIP_JS_BUILD" = false ]; then
   npm run build
   popd
 
-  # Save the checksum after successful build
+  # Save the key after a successful build: sources, the mode built, and the
+  # fingerprint of the bundles that build produced.
   if [ -n "$CURRENT_JS_CHECKSUM" ]; then
-    echo "$CURRENT_JS_CHECKSUM" > "$JS_CHECKSUM_FILE"
+    echo "${CURRENT_JS_CHECKSUM}:${EXPECTED_BUILD_MODE}:$(dist_fingerprint)" > "$JS_CHECKSUM_FILE"
   fi
 else
   set -ex

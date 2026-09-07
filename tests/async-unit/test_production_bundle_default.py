@@ -99,45 +99,18 @@ def test_console_stripping_covers_exactly_the_chatty_levels():
     assert listed == {"console.log", "console.info", "console.debug"}, listed
 
 
-def test_build_marks_its_mode_and_the_cache_checks_it():
-    """build_static.sh must not reuse a dist built in a different mode.
+def test_cache_key_covers_mode_and_the_bundles_actually_in_dist():
+    """build_static.sh must not reuse bundles it did not produce.
 
-    webpack removes dist/BUILD_MODE before every compilation and writes it
-    back, with the real mode, only after an error-free emit, so an
-    interrupted or failed build leaves no marker. build_static.sh wants
-    production unless NODE_ENV=development, and skips only when the marker
-    says so (review). Regexes tolerate wrapping and quote style; they pin
-    the values and the wiring, not the formatting.
+    Any intervening build (`build:dev`, a CLI `--mode` or
+    `--no-optimization-minimize` override, an interrupted run) rewrites
+    bundles under an unchanged source checksum, and a marker written by
+    webpack is only a claim by whoever ran webpack. So the stored key is
+    source checksum + wanted mode + a fingerprint of dist/*.bundle.js, saved
+    after this script's own successful build, and the skip requires the
+    whole key to match (review). Regexes tolerate wrapping; they pin the
+    shape and the wiring, not the formatting.
     """
-    src = _webpack_config()
-    q = r"['\"]"
-    assert re.search(
-        r"path\.resolve\(\s*__dirname\s*,\s*" + q + r"dist" + q + r"\s*,\s*" + q + r"BUILD_MODE" + q + r"\s*\)",
-        src,
-        re.S,
-    ), "the marker is no longer dist/BUILD_MODE"
-    assert re.search(r"beforeCompile\.tap\(\s*" + q + r"BuildModeMarker", src, re.S) and re.search(
-        r"unlinkSync\(\s*marker\s*\)", src
-    ), "the marker is no longer removed before compilation"
-    assert re.search(
-        r"afterEmit\.tap\(\s*" + q + r"BuildModeMarker.*?compilation\.errors\.length\s*>\s*0\s*\)\s*return",
-        src,
-        re.S,
-    ), "the marker is written even when the compilation had errors"
-    # The marker must come from the compiler's EFFECTIVE mode, not from the
-    # isProduction flag: `webpack --mode development` overrides the configured
-    # mode after the config has run (review). A hardcoded value, or one
-    # derived from the flag, would let a development build pass as production.
-    assert re.search(
-        r"compiler\.options\.mode\s*===\s*" + q + r"production" + q
-        + r"\s*\?\s*" + q + r"production" + q + r"\s*:\s*" + q + r"development" + q,
-        src,
-        re.S,
-    ), "the marker no longer records the compiler's effective mode"
-    assert re.search(r"writeFileSync\(\s*marker\s*,\s*mode\s*\+", src, re.S), (
-        "the marker is no longer written from the effective mode"
-    )
-
     sh = (JS.parents[2] / "scripts" / "build_static.sh").read_text()
     assert re.search(r"^\s*EXPECTED_BUILD_MODE=production\s*$", sh, re.M), (
         "build_static.sh no longer expects production by default"
@@ -147,11 +120,26 @@ def test_build_marks_its_mode_and_the_cache_checks_it():
         sh,
         re.S,
     ), "build_static.sh no longer expects development only when NODE_ENV=development"
-    assert re.search(r"BUILT_MODE=\$\(cat\s+\"\$\{JS_PATH\}/dist/BUILD_MODE\"", sh), (
-        "build_static.sh no longer reads dist/BUILD_MODE"
-    )
     assert re.search(
-        r"\"\$CURRENT_JS_CHECKSUM\"\s*=\s*\"\$STORED_JS_CHECKSUM\".*?\"\$BUILT_MODE\"\s*=\s*\"\$EXPECTED_BUILD_MODE\"",
+        r"dist_fingerprint\(\)\s*\{.*?find\s+\"\$\{JS_PATH\}/dist\".*?-name\s+\"\*\.bundle\.js\".*?md5sum",
         sh,
         re.S,
-    ), "the cache skip no longer requires the built mode to match"
+    ), "the dist fingerprint no longer hashes the bundles in dist/"
+    assert re.search(
+        r"CURRENT_BUILD_KEY=\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"",
+        sh,
+    ), "the cache key no longer combines sources, mode and the dist fingerprint"
+    assert re.search(
+        r"\[\s*\"\$CURRENT_BUILD_KEY\"\s*=\s*\"\$STORED_JS_CHECKSUM\"\s*\].*?SKIP_JS_BUILD=true",
+        sh,
+        re.S,
+    ), "the skip no longer requires the whole key to match"
+    assert re.search(
+        r"echo\s+\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"\s*>\s*\"\$JS_CHECKSUM_FILE\"",
+        sh,
+    ), "the saved key no longer records the mode and fingerprint of the build just made"
+    src = _webpack_config()
+    assert "BUILD_MODE" not in src, (
+        "a webpack-written build-mode marker is back; it is only a claim by "
+        "whoever ran webpack, and the cache must validate output instead"
+    )
