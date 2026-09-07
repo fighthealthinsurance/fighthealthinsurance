@@ -53,26 +53,75 @@ def test_ranking_runs_live_and_once_more_at_the_real_end():
     assert "applyRanking" not in SRC[phase_done : phase_done + 2500]
 
 
-def test_nothing_moves_while_the_reader_is_typing():
+def _brace_block(src: str, open_at: int) -> str:
+    depth = 0
+    for i in range(open_at, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[open_at : i + 1]
+    raise AssertionError("unbalanced braces")
+
+
+def test_nothing_moves_while_the_reader_is_using_a_draft():
     body = _fn("applyRanking")
-    assert body.index("if (readerIsTyping()) {") < body.index('getElementById("appeal-ranking-note")?.remove()')
-    typing = _fn("readerIsTyping")
-    assert "document.activeElement" in typing and 'tagName === "TEXTAREA"' in typing
-    assert "outputContainer[0].contains(active)" in typing
+    guard = body.index("if (readerIsInteracting()) {")
+    assert guard < body.index('getElementById("appeal-ranking-note")?.remove()')
+    block = _brace_block(body, body.index("{", guard))
+    # The block must END by returning, and must touch nothing: delete that
+    # return and the pass runs under the reader's hands (review).
+    assert block.rstrip().endswith("return;\n  }"), block[-80:]
+    for mutation in ("outputContainer.append", ".remove()", "el.hidden", "finalApplied ="):
+        assert mutation not in block, mutation
+    interacting = _fn("readerIsInteracting")
+    assert "document.activeElement" in interacting
+    assert "active !== document.body" in interacting and "outputContainer[0].contains(active)" in interacting
     # ...and the pass is not lost: it runs once focus leaves the drafts, and
     # a deferred final pass stays final.
-    deferred = body[body.index("if (readerIsTyping()) {") : body.index('getElementById("appeal-ranking-note")?.remove()')]
-    assert 'addEventListener(\n        "focusout"' in deferred or 'addEventListener("focusout"' in deferred
-    assert "rankingPending = rankingPending === true || final;" in deferred
-    assert "setTimeout(() => applyRanking(pending), 0)" in deferred
+    assert "rankingPending = rankingPending === true || final;" in block
+    assert "setTimeout(() => applyRanking(pending), 0)" in block
+
+
+def test_after_the_final_pass_every_pass_is_final():
+    body = _fn("applyRanking")
+    assert body.index("final = final || finalApplied;") < body.index("if (readerIsInteracting()) {")
+    assert "if (final) finalApplied = true;" in body
+    assert body.index("if (final) finalApplied = true;") < body.index('getElementById("appeal-ranking-note")?.remove()')
+    assert "finalApplied = false;" not in SRC.split("export function doQuery", 1)[1]
+
+
+def test_coverage_is_decided_before_anything_moves_and_a_partial_end_never_reorders():
+    body = _fn("applyRanking")
+    move = body.index("outputContainer.append(el)")
+    assert body.index("const partialAtEnd = final && !complete;") < move
+    assert body.index("if (!anyScore) return;") < move, "no scores: the DOM is not touched"
+    assert body.index("if (!partialAtEnd) {") < move < body.index("const first = ")
+    assert "const changed = ordered.some((el, i) => el !== drafts[i]);" in body
+    assert "if (changed) for (const el of ordered) outputContainer.append(el);" in body
+
+
+def test_a_deduplicated_reserved_letter_with_a_score_still_reranks():
+    dup = SRC[SRC.index('console.log("Duplicate appeal found. Skipping.");') :].split("return;", 1)[0]
+    assert "if (parsedLine.quality_score !== undefined) applyRanking(false);" in dup
+
+
+def test_two_scorers_are_explained_at_the_end():
+    body = _fn("applyRanking")
+    start = body.index("if (!oneScale) {")
+    two = _brace_block(body, body.index("{", start))
+    assert "if (final) {" in two and "RANKING_CAPTION_UNRANKED" in two
+    assert two.rstrip().endswith("return;\n  }"), two[-60:]
 
 
 def test_caption_makes_no_promise_about_the_outcome():
-    for name in ("RANKING_CAPTION", "RANKING_CAPTION_PARTIAL"):
+    for name in ("RANKING_CAPTION", "RANKING_CAPTION_PARTIAL", "RANKING_CAPTION_UNRANKED"):
         caption = re.search(name + r' =\s*"([^"]+)"', SRC).group(1)
-        assert "not by a prediction of the outcome" in caption
         for banned in ("%", "chance", "likely", "success"):
             assert banned not in caption.lower()
+    for name in ("RANKING_CAPTION", "RANKING_CAPTION_PARTIAL"):
+        assert "not by a prediction of the outcome" in re.search(name + r' =\s*"([^"]+)"', SRC).group(1)
 
 
 def test_three_visible_then_a_show_more_button_not_a_delete():
@@ -93,7 +142,7 @@ def test_fresh_and_edited_drafts_are_never_hidden():
 def test_show_more_is_sticky_for_the_session():
     body = _fn("applyRanking")
     assert "showAllDrafts = true;" in body
-    assert "if (partialAtEnd || showAllDrafts) return;" in body
+    assert "if (showAllDrafts) return;" in body
     # doQuery also drives the automatic retries: resetting there would refold
     # what the reader chose to open.
     assert "showAllDrafts = false;" not in SRC.split("export function doQuery", 1)[1]
@@ -131,8 +180,8 @@ def test_one_scale_only_and_partial_coverage_at_the_end_drops_label_and_fold():
     # Partial at the end: the caption says so, no badge, no fold; the order
     # already on screen stays (no reshuffle back to arrival order).
     assert "partialAtEnd ? RANKING_CAPTION_PARTIAL : RANKING_CAPTION" in body
-    assert "if (!partialAtEnd) {" in body and body.index("if (!partialAtEnd) {") < body.index("top.prepend(badge)")
-    assert body.index("if (partialAtEnd || showAllDrafts) return;") < body.index("const hidden = scored.slice")
+    assert body.index("if (partialAtEnd) return;") < body.index("top.prepend(badge)")
+    assert body.index("if (partialAtEnd) return;") < body.index("const hidden = scored.slice")
 
 
 def test_an_edited_draft_never_carries_the_label():
