@@ -101,7 +101,9 @@ class TestWhichLawGoverns:
         wrong (review)."""
         block = _block("State Marketplace / Affordable Care Act")
         assert "small employer (SHOP) coverage" in block
-        assert "ERISA governs it as for any private employer plan" in block
+        assert "ERISA governs it when a private employer sponsors it" in block
+        # ...and SHOP does not make a church's or a city's plan ERISA (review).
+        assert "government or church employer's plan is exempt (29 U.S.C. § 1003(b))" in block
 
     @pytest.mark.parametrize(
         "source, marker",

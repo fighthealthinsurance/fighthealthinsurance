@@ -436,8 +436,9 @@ _ACA_MARKETPLACE = (
     "ACA (45 C.F.R. § 147.136), and it must cover the ten essential health "
     "benefit categories (42 U.S.C. § 18022), so if the service falls in one "
     "of them, say so. If it is small employer (SHOP) coverage, it is an "
-    "employer plan and ERISA governs it as for any private employer plan "
-    "(29 C.F.R. § 2560.503-1)."
+    "employer plan: ERISA governs it when a private employer sponsors it "
+    "(29 C.F.R. § 2560.503-1), and a government or church employer's plan "
+    "is exempt (29 U.S.C. § 1003(b))."
 )
 _GOVERNMENT_EMPLOYER = (
     "This is a state or local government employer plan, so ERISA does not "
