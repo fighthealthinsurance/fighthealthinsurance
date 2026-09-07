@@ -66,8 +66,12 @@ if [ -d "${JS_PATH}" ]; then
   if [ "${NODE_ENV:-}" = "development" ]; then
     EXPECTED_BUILD_MODE=development
   fi
+  # Every file under dist/, recursively: the bundles, but also the worker
+  # scripts, the wasm, the .mjs and the source maps that collectstatic ships
+  # and the pages load by URL. A missing worker with untouched bundles used
+  # to pass the check and then break PDF uploads (review).
   dist_fingerprint() {
-    find "${JS_PATH}/dist" -maxdepth 1 -type f -name "*.bundle.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1
+    find "${JS_PATH}/dist" -type f -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1
   }
   CURRENT_BUILD_KEY="${CURRENT_JS_CHECKSUM}:${EXPECTED_BUILD_MODE}:$(dist_fingerprint)"
 

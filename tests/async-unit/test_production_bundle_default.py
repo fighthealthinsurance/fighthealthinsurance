@@ -120,11 +120,19 @@ def test_cache_key_covers_mode_and_the_bundles_actually_in_dist():
         sh,
         re.S,
     ), "build_static.sh no longer expects development only when NODE_ENV=development"
-    assert re.search(
-        r"dist_fingerprint\(\)\s*\{.*?find\s+\"\$\{JS_PATH\}/dist\".*?-name\s+\"\*\.bundle\.js\".*?md5sum",
-        sh,
-        re.S,
-    ), "the dist fingerprint no longer hashes the bundles in dist/"
+    fp = re.search(r"dist_fingerprint\(\)\s*\{(.*?)\n\s*\}", sh, re.S)
+    assert fp is not None, "dist_fingerprint is gone from build_static.sh"
+    body = fp.group(1)
+    assert re.search(r"find\s+\"\$\{JS_PATH\}/dist\".*?-type\s+f.*?md5sum", body, re.S), (
+        "the dist fingerprint no longer hashes the files in dist/"
+    )
+    # Recursive and unfiltered: workers/, the wasm, .mjs and .map files ship
+    # too, and a missing worker with untouched bundles broke PDF uploads
+    # while the narrower fingerprint still matched (review).
+    assert "-maxdepth" not in body and "-name" not in body, (
+        "the dist fingerprint is restricted again; it must cover every file "
+        "under dist/, recursively"
+    )
     assert re.search(
         r"CURRENT_BUILD_KEY=\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"",
         sh,
