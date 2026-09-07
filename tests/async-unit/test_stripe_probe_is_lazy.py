@@ -146,7 +146,10 @@ if os.environ.get("%s") == "1":
         if _log:
             with open(_log, "a") as fh:
                 fh.write(repr(address) + "\\n")
-        raise RuntimeError("NETWORK ACCESS DURING PYTEST LIFECYCLE: %%r" %% (address,))
+        # OSError, not RuntimeError: the conftest's probe classifies OSError
+        # as "blocked" and skips, so the positive control below can prove the
+        # real skip path rather than a setup error (second reviewer).
+        raise OSError("NETWORK ACCESS DURING PYTEST LIFECYCLE: %%r" %% (address,))
 
     def _guard_method(real):
         # socket.socket.connect / connect_ex, called as (self, address, ...).
@@ -236,7 +239,9 @@ def test_a_marked_test_is_what_triggers_the_probe(tmp_path):
     attempts = tmp_path / "attempts.log"
     # The probe ran, inside a worker (a non-loopback attempt is on the
     # record) and, because the connect "failed", the marked test was
-    # skipped with the proxy reason rather than run. The hostname is not
-    # asserted: what matters is that an outbound attempt happened at all.
+    # SKIPPED with the proxy reason: a clean session, not a setup error.
+    # The hostname is not asserted: what matters is that an outbound
+    # attempt happened at all.
     assert attempts.exists() and attempts.read_text().strip(), out
-    assert "SSL-intercepting proxy" in out or "NETWORK ACCESS" in out, out
+    assert "SSL-intercepting proxy" in out, out
+    assert result.returncode == 0, out
