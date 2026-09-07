@@ -44,7 +44,18 @@ try {
 }
 
 // Determine if we're in production mode
-const isProduction = process.env.NODE_ENV === 'production';
+// Production unless a developer explicitly asks for a development build.
+//
+// This used to test for NODE_ENV === 'production', and nothing in the repo
+// ever set it: not `npm run build`, not scripts/ci_npm_build.sh,
+// build_static.sh or setup_templates.sh, not the CI workflow. So every build,
+// including the one collected into the deployed image, was a development
+// bundle: unminified, about 3.5x the size, and -- the part that matters --
+// skipping the optimization block below, whose Terser pure_funcs strip
+// console.log/info/debug as a defense against logging PHI to the browser
+// console. Defaulting the other way means the safe build is the one you get
+// by accident. `npm run build:dev` (or NODE_ENV=development) opts out.
+const isProduction = process.env.NODE_ENV !== 'development';
 
 module.exports = async (env, argv) => {
   // Load ESM-only plugins with dynamic import()
