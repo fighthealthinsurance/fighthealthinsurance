@@ -13,8 +13,9 @@ into the prompt (to avoid the model parroting URLs it cannot verify).
 """
 
 import datetime
+import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
 
 @dataclass(frozen=True)
@@ -373,3 +374,153 @@ def get_regulatory_citation_context(
         "section numbers, dates, or quotations beyond what is provided here."
     )
     return f"{header}\n{bullet_lines}\n{caveat}"
+
+
+# ---------------------------------------------------------------------------
+# Which appeal law governs the plan, from what intake collected.
+#
+# Intake asks "How do you get your insurance?" (PlanSource) and knows when the
+# carrier is a TPA for self-funded employer plans, and the denial text can
+# match the ERISA regulator. None of that used to reach the prompt, so a letter
+# cited ERISA or the ACA only when a clinical template or a state hook happened
+# to fire. This block names the governing law, says which law does NOT apply,
+# and invites the model to cite the applicable one where it helps (Melanie,
+# 2026-09-07: encourage, not order). Every citation here is a real statute or
+# rule cited by name and section; nothing is quoted.
+# ---------------------------------------------------------------------------
+
+PLAN_LAW_HEADER = "APPLICABLE APPEAL LAW"
+
+_ERISA = (
+    "This looks like a private employer or union plan, so ERISA governs the "
+    "appeal (ERISA section 503, 29 U.S.C. § 1133, and the claims-procedure "
+    "rule at 29 C.F.R. § 2560.503-1). The plan must give the specific reasons "
+    "for the denial and the plan provisions it relied on, must provide on "
+    "request the internal rule or clinical criteria it applied and identify "
+    "any medical expert it consulted, and must give a full and fair review by "
+    "someone who did not make the original decision. A non-grandfathered plan "
+    "also owes an independent external review (45 C.F.R. § 147.136, applied "
+    "to group plans by 29 C.F.R. § 2590.715-2719). ERISA does not apply to "
+    "government or church employer plans."
+)
+_ACA_MARKETPLACE = (
+    "This is a marketplace (Affordable Care Act) plan, so ERISA does not "
+    "apply. The plan owes an internal appeal and an independent external "
+    "review under the ACA (45 C.F.R. § 147.136), and it must cover the ten "
+    "essential health benefit categories (42 U.S.C. § 18022), so if the "
+    "service falls in one of them, say so."
+)
+_GOVERNMENT_EMPLOYER = (
+    "This is a state or local government employer plan, so ERISA does not "
+    "apply (29 U.S.C. § 1003(b)(1)). A non-grandfathered plan still owes the "
+    "ACA internal appeal and external review process (45 C.F.R. § 147.136), "
+    "and state insurance law may apply if the plan is fully insured."
+)
+_FEDERAL_EMPLOYER = (
+    "This is a federal employee (FEHB) plan under 5 U.S.C. chapter 89, so "
+    "ERISA does not apply. A disputed claim goes first to the carrier for "
+    "reconsideration and then to the Office of Personnel Management "
+    "(5 C.F.R. § 890.105)."
+)
+_MEDICARE_ADVANTAGE = (
+    "This is a Medicare Advantage plan. Neither ERISA nor the ACA appeal rules "
+    "apply; the appeal follows the Medicare Advantage organization "
+    "determination and reconsideration process (42 C.F.R. Part 422, Subpart "
+    "M), with automatic review by the independent review entity if the plan "
+    "upholds its denial."
+)
+_MEDICARE = (
+    "This is Original Medicare. Neither ERISA nor the ACA appeal rules apply; "
+    "the appeal follows the Medicare redetermination and reconsideration "
+    "process (42 C.F.R. Part 405, Subpart I)."
+)
+_MEDICAID = (
+    "This is a Medicaid plan. Neither ERISA nor the ACA appeal rules apply; a "
+    "managed care plan owes an internal appeal (42 C.F.R. Part 438, Subpart "
+    "F) and the patient has the right to a state fair hearing (42 C.F.R. "
+    "Part 431, Subpart E)."
+)
+_VA = (
+    "This is Veterans Affairs coverage. Neither ERISA nor the ACA appeal "
+    "rules apply; VA has its own clinical appeal process, so argue the "
+    "medical case and do not cite either law."
+)
+_UNKNOWN = (
+    "We do not know how the patient gets this coverage. If the denial letter "
+    "or the plan documents show it is a private employer or union plan, "
+    "ERISA's claims-procedure rule (29 C.F.R. § 2560.503-1) most likely "
+    "applies; if they show it is a marketplace or individual plan, the ACA "
+    "internal appeal and external review rules (45 C.F.R. § 147.136) apply. "
+    "Name one of them only when the letter itself supports it; otherwise ask "
+    "for the plan's internal appeal and independent external review in plain "
+    "words rather than naming a statute."
+)
+_TWO_SOURCES = (
+    "More than one coverage source was given. Use the one the denial letter "
+    "itself supports."
+)
+_INVITATION = (
+    "If citing the applicable law strengthens this appeal (for example to "
+    "demand the clinical criteria the plan relied on, or to insist on an "
+    "independent external review), cite it by name and section exactly as "
+    "given here; a reviewer takes a letter more seriously when it names the "
+    "rule the plan must follow. Cite it only where it applies and where it "
+    "helps the argument. Never cite a law that does not govern this plan, and "
+    "do not invent section numbers, deadlines, quotations, or case names "
+    "beyond what is listed here."
+)
+
+# (marker in the lower-cased plan source name, paragraph). First match wins,
+# so the more specific markers come first ("medicare advantage" before
+# "medicare", "federal government" before "government").
+_PLAN_SOURCE_LAW: tuple[tuple[str, str], ...] = (
+    ("medicare advantage", _MEDICARE_ADVANTAGE),
+    ("medicare", _MEDICARE),
+    ("medicaid", _MEDICAID),
+    ("veterans", _VA),
+    ("marketplace", _ACA_MARKETPLACE),
+    ("affordable care", _ACA_MARKETPLACE),
+    ("federal government", _FEDERAL_EMPLOYER),
+    ("government", _GOVERNMENT_EMPLOYER),
+    ("employer", _ERISA),
+    ("union", _ERISA),
+    ("other group", _ERISA),
+)
+
+
+def _law_for_plan_source(name: str) -> Optional[str]:
+    label = re.sub(r"\s+", " ", (name or "").strip().lower())
+    if not label:
+        return None
+    for marker, paragraph in _PLAN_SOURCE_LAW:
+        if marker in label:
+            return paragraph
+    return None  # "Other", "Don't know": nothing to say
+
+
+def get_plan_law_context(
+    plan_sources: Iterable[str],
+    is_tpa: bool = False,
+    regulator_alt_name: Optional[str] = None,
+) -> str:
+    """Return the APPLICABLE APPEAL LAW block for the appeal prompt.
+
+    ``plan_sources`` are the PlanSource names the person picked at intake;
+    ``is_tpa`` says the carrier administers self-funded employer plans; and
+    ``regulator_alt_name`` is "ERISA" when the denial text matched the ERISA
+    regulator. Always returns a block: an unknown plan gets the hedged
+    paragraph, so the model is never left to guess in silence.
+    """
+    paragraphs: list[str] = []
+    if is_tpa or (regulator_alt_name or "").strip().upper() == "ERISA":
+        paragraphs.append(_ERISA)
+    for name in plan_sources:
+        paragraph = _law_for_plan_source(name)
+        if paragraph is not None and paragraph not in paragraphs:
+            paragraphs.append(paragraph)
+    if not paragraphs:
+        paragraphs.append(_UNKNOWN)
+    elif len(paragraphs) > 1:
+        paragraphs.append(_TWO_SOURCES)
+    body = "\n".join(paragraphs)
+    return f"{PLAN_LAW_HEADER}: {body}\n{_INVITATION}"
