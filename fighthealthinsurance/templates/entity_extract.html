@@ -37,8 +37,8 @@ Analyzing Your Denial
     to { transform: rotate(360deg); }
 }
 </style>
-{# json_script HTML-escapes, so user-derived values can never break out of the
-   script context the way the old raw {{form_context}} interpolation could. #}
+{% comment %} json_script HTML-escapes, so user-derived values can never break out of the
+   script context the way the old raw {{form_context}} interpolation could. {% endcomment %}
 {{ form_context|json_script:"fhi-form-context" }}
 <script>
   // Call the typescript on load

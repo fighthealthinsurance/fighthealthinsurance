@@ -103,7 +103,7 @@ Upload your Health Insurance Denial
 		<small class="text-muted">Attach all insurance denial pages below:</small><br>
 		<small class="text-muted">Once uploaded, your file(s) will populate below in plain text.</small><br>
 	    <div class="col-md-4">
-			{# DELIBERATELY has no name= attribute. The browser only includes
+			{% comment %} DELIBERATELY has no name= attribute. The browser only includes
 			   a file input in the multipart body when it has a name, and this
 			   input sits inside the /process form. With a name, every denial
 			   document a user attached was uploaded and buffered server-side
@@ -112,7 +112,7 @@ Upload your Health Insurance Denial
 			   flow is built to keep in the browser. The OCR binds by
 			   getElementById("uploader"), so the id is all it needs. Do not
 			   add a name back without also changing what the copy below
-			   promises. #}
+			   promises. {% endcomment %}
 			<input id="uploader" type="file" multiple="true" class="form-control mt-2"><br>
 	    </div>
 	</div>
