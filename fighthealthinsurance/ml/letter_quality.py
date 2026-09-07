@@ -71,6 +71,10 @@ RUBRIC_VERSION = 1
 _RUBRIC_SUFFIX = f"/rubric-{RUBRIC_VERSION}"
 SCORER = f"typesafe/{MODEL}{_RUBRIC_SUFFIX}"
 
+# Key of the cross-pod health record (models.ExternalServiceHealth) that the
+# staff status page reads.
+SERVICE = "typesafe"
+
 
 def scorer_for(payload: typing.Any) -> str:
     """The provenance string for a row: the model TypeSafe says answered
@@ -171,6 +175,18 @@ class LetterScore:
 
 class LetterScoringError(Exception):
     """A response we could not turn into a score."""
+
+
+def failure_summary(e: BaseException) -> str:
+    """Why scoring failed, in a form safe for a status page: the HTTP status
+    when the API answered, "timeout", or the exception class name alone.
+    Never the message (a transport error's names the host) and never
+    anything from the document."""
+    if isinstance(e, typesafe.TypeSafeError) and e.status is not None:
+        return f"HTTP {e.status}"
+    if isinstance(e, (TimeoutError, asyncio.TimeoutError)):
+        return "timeout"
+    return type(e).__name__
 
 
 # Process-local request outcomes, exported by letter_quality_metrics.
@@ -485,12 +501,17 @@ async def score_letter(
     *,
     identifiers: typing.Iterable[Redaction] = (),
     timeout_seconds: typing.Optional[float] = None,
+    on_failure: typing.Optional[typing.Callable[[str], typing.Awaitable[None]]] = None,
 ) -> typing.Optional[LetterScore]:
     """Score one draft, or return None. Never raises, never logs the text.
 
     ``identifiers`` is everything we hold that could name the patient or the
     professional; see redact(). Pass it. An empty list only means we hold
     nothing, and the generic patterns still run.
+
+    ``on_failure`` is awaited with failure_summary(e) when the request or
+    the answer fails; it is how the call site records "why" somewhere the
+    status page can see. Its own errors are logged and swallowed.
     """
     if not enabled():
         _count("skipped")
@@ -513,6 +534,13 @@ async def score_letter(
         # status alone and aiohttp's own errors describe the connection.
         _count("failed")
         logger.warning(f"letter scoring unavailable: {type(e).__name__}: {e}")
+        if on_failure is not None:
+            try:
+                await on_failure(failure_summary(e))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.opt(exception=True).warning("letter scoring failure hook failed")
         return None
     _count("scored")
     return score

@@ -4033,6 +4033,59 @@ class ModelHealthAlertState(models.Model):
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
 
 
+class ExternalServiceHealth(models.Model):
+    """Last outcome of calls to one external service, shared across pods.
+
+    One row per service. The web pods and the Temporal worker each make
+    their own calls, and the staff status page is served by whichever pod
+    the browser is pinned to, so a process-local "last failure" would be
+    blind to most of the traffic. The call site writes here on success and
+    on failure; the status page reads it.
+
+    ``last_failure`` is a short allowlisted summary (an HTTP status,
+    "timeout", or an exception class name), never a response body, a URL,
+    or anything from the document that was sent.
+    """
+
+    service = models.CharField(max_length=64, unique=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_failure = models.CharField(max_length=80, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    async def anote_success(cls, service: str) -> None:
+        """Best effort: a health record must never break the call it watches."""
+        try:
+            await cls.objects.aupdate_or_create(
+                service=service, defaults={"last_success_at": timezone.now()}
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"could not record a success for external service {service}"
+            )
+
+    @classmethod
+    async def anote_failure(cls, service: str, summary: str) -> None:
+        """Best effort, see anote_success. ``summary`` must already be
+        allowlisted by the caller; it is stored as given, cut to the column."""
+        try:
+            await cls.objects.aupdate_or_create(
+                service=service,
+                defaults={
+                    "last_failure_at": timezone.now(),
+                    "last_failure": (summary or "")[:80],
+                },
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"could not record a failure for external service {service}"
+            )
+
+    def __str__(self) -> str:
+        return f"ExternalServiceHealth<{self.service}>"
+
+
 class ModelBackendHealthCheckResult(models.Model):
     """One row per model backend per health-check run.
 

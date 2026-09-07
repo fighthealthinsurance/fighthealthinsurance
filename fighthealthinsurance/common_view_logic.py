@@ -3512,12 +3512,21 @@ class AppealsBackendHelper:
                 )
                 scoring_active = False
 
+        async def _note_scoring_failure(summary: str) -> None:
+            # Cross-pod record for the status page: why the last call failed.
+            await ExternalServiceHealth.anote_failure(letter_quality.SERVICE, summary)
+
         async def _score_draft(proposed_id: str, draft_text: str) -> Optional[str]:
             score = await letter_quality.score_letter(
-                denial.denial_text, draft_text, identifiers=scoring_identifiers
+                denial.denial_text,
+                draft_text,
+                identifiers=scoring_identifiers,
+                on_failure=_note_scoring_failure,
             )
             if score is None:
                 return None
+            # Same record, the other way: TypeSafe answered. Best effort.
+            await ExternalServiceHealth.anote_success(letter_quality.SERVICE)
             # Only the row whose text is still the text that was scored: an
             # admin can edit a draft during the few seconds of scoring, and
             # a score for text nobody sees any more must not land on the

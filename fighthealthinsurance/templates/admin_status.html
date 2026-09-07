@@ -343,6 +343,42 @@
     {% endif %}
   </div>
 
+  {# ---------------- Letter scoring ---------------- #}
+  <div class="status-section">
+    <h2>&#127919; Letter scoring (TypeSafe, last {{ letter_scoring.window_hours }}h)</h2>
+    {% if letter_scoring.error %}
+      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ letter_scoring.error }}</span></p>
+    {% else %}
+      <p class="summary-line">
+        {% if letter_scoring.level == "off" %}<span class="badge unknown">OFF</span>
+        {% elif letter_scoring.level == "failing" %}<span class="badge bad">FAILING</span>
+        {% elif letter_scoring.level == "not_scoring" %}<span class="badge warn">NOT SCORING</span>
+        {% elif letter_scoring.level == "idle" %}<span class="badge ok">IDLE</span>
+        {% else %}<span class="badge ok">SCORING</span>{% endif %}
+        <span class="pill">API key: {% if letter_scoring.key_present %}present{% else %}missing{% endif %}</span>
+        <span class="pill">TYPESAFE_LETTER_RANKING_ENABLED: {% if letter_scoring.flag_on %}on{% else %}off{% endif %}</span>
+        {% if letter_scoring.timeout_seconds %}<span class="pill">timeout: {{ letter_scoring.timeout_seconds }}s</span>{% endif %}
+      </p>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="value">{{ letter_scoring.scored|default:0 }}</div>
+          <div class="label">Drafts scored</div>
+        </div>
+        <div class="stat-card {% if letter_scoring.unscored %}alert{% endif %}">
+          <div class="value">{{ letter_scoring.unscored|default:0 }}</div>
+          <div class="label">Eligible drafts left unscored</div>
+        </div>
+      </div>
+      <p class="summary-line">
+        Last score recorded: {% if letter_scoring.last_success_at %}{{ letter_scoring.last_success_at|timesince }} ago{% else %}never{% endif %}
+        &middot; Last failure: {% if letter_scoring.last_failure_at %}<span class="error-text">{{ letter_scoring.last_failure }}</span>{% if letter_scoring.last_failure_hint %} ({{ letter_scoring.last_failure_hint }}){% endif %}, {{ letter_scoring.last_failure_at|timesince }} ago{% if letter_scoring.recovered %}, recovered since{% endif %}{% else %}none recorded{% endif %}
+      </p>
+      <p class="summary-line">
+        <span class="pill">From the database, across every pod and the Temporal worker; counts and a status only, never letter text. Per-model quality: <a href="{% url 'model_usage_dashboard' %}">model usage dashboard</a>.</span>
+      </p>
+    {% endif %}
+  </div>
+
   {# ---------------- Storage ---------------- #}
   <div class="status-section">
     <h2>💾 External Storage</h2>

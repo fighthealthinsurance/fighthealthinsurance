@@ -15,8 +15,12 @@ from asgiref.sync import async_to_sync
 from django.test import TransactionTestCase, override_settings
 
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
-from fighthealthinsurance.ml import letter_quality
-from fighthealthinsurance.models import Denial, ProposedAppeal
+from fighthealthinsurance.ml import letter_quality, typesafe
+from fighthealthinsurance.models import (
+    Denial,
+    ExternalServiceHealth,
+    ProposedAppeal,
+)
 
 ENABLED = dict(TYPESAFE_API_KEY="test-key", TYPESAFE_LETTER_RANKING_ENABLED=True)
 
@@ -168,6 +172,38 @@ class TestAScoreLandsOnlyOnTheTextThatWasScored(_StreamBase):
         for row in ProposedAppeal.objects.filter(for_denial=self.denial):
             self.assertIsNone(row.quality_score)
             self.assertIsNone(row.quality_scored_at)
+
+
+class TestTheHealthRowFollowsTheCalls(_StreamBase):
+    """The status page reads one ExternalServiceHealth row, written here."""
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_success_is_recorded(self, mock_gen):
+        async def fake_post(document, timeout):
+            return _payload()
+
+        with override_settings(**ENABLED), patch.object(letter_quality, "_post", fake_post):
+            self._stream(mock_gen)
+
+        health = ExternalServiceHealth.objects.get(service=letter_quality.SERVICE)
+        self.assertIsNotNone(health.last_success_at)
+        self.assertIsNone(health.last_failure_at)
+        self.assertEqual(health.last_failure, "")
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_why_scoring_failed_is_recorded_and_the_stream_still_finishes(self, mock_gen):
+        async def fake_post(document, timeout):
+            raise typesafe.TypeSafeError("HTTP 402", status=402)
+
+        with override_settings(**ENABLED), patch.object(letter_quality, "_post", fake_post):
+            frames = self._stream(mock_gen)
+
+        self.assertFalse([f for f in frames if f.get("type") == "score"])
+        self.assertTrue([f for f in frames if f.get("phase") == "done"])
+        health = ExternalServiceHealth.objects.get(service=letter_quality.SERVICE)
+        self.assertEqual(health.last_failure, "HTTP 402")
+        self.assertIsNotNone(health.last_failure_at)
+        self.assertIsNone(health.last_success_at)
 
 
 class TestNothingIdentifyingLeaves(_StreamBase):

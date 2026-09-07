@@ -11,7 +11,10 @@ from unittest.mock import patch
 import pytest
 from django.test import override_settings
 
+import aiohttp
+
 from fighthealthinsurance.ml import letter_quality as lq
+from fighthealthinsurance.ml import typesafe
 
 ENABLED = dict(TYPESAFE_API_KEY="test-key", TYPESAFE_LETTER_RANKING_ENABLED=True)
 
@@ -159,6 +162,76 @@ class TestScoreLetter:
             with patch.object(lq.logger, "warning", side_effect=lambda m, *a, **k: seen.append(str(m))):
                 asyncio.run(lq.score_letter(secret, "letter mentioning " + secret))
         assert seen and all(secret not in m for m in seen)
+
+
+class TestFailureSummary:
+    """What the status page is allowed to know about a failure."""
+
+    def test_the_http_status_when_the_api_answered(self):
+        assert lq.failure_summary(typesafe.TypeSafeError("HTTP 402", status=402)) == "HTTP 402"
+
+    @pytest.mark.parametrize("failure", [TimeoutError(), asyncio.TimeoutError()])
+    def test_timeouts_read_as_timeout(self, failure):
+        assert lq.failure_summary(failure) == "timeout"
+
+    def test_anything_else_is_the_class_name_alone(self):
+        error = aiohttp.ClientConnectionError("Cannot connect to host secret-host.example:443")
+        summary = lq.failure_summary(error)
+        assert summary == "ClientConnectionError"
+        assert "secret-host" not in summary
+        assert lq.failure_summary(lq.LetterScoringError("HTTP 500")) == "LetterScoringError"
+        assert lq.failure_summary(typesafe.TypeSafeError("no status")) == "TypeSafeError"
+
+
+class TestFailureHook:
+    def test_a_failure_reaches_the_hook_as_a_summary_only(self):
+        secret = "PATIENT NAME JANE DOE MRN 998877"
+        seen = []
+
+        async def fake_post(document, timeout):
+            raise typesafe.TypeSafeError("HTTP 402", status=402)
+
+        async def hook(summary):
+            seen.append(summary)
+
+        with override_settings(**ENABLED), patch.object(lq, "_post", fake_post):
+            result = asyncio.run(lq.score_letter(secret, "letter " + secret, on_failure=hook))
+        assert result is None
+        assert seen == ["HTTP 402"]
+
+    def test_a_broken_hook_cannot_break_scoring(self):
+        async def fake_post(document, timeout):
+            raise TimeoutError()
+
+        async def hook(summary):
+            raise RuntimeError("db down")
+
+        with override_settings(**ENABLED), patch.object(lq, "_post", fake_post):
+            assert asyncio.run(lq.score_letter("d", "letter", on_failure=hook)) is None
+
+    def test_cancellation_inside_the_hook_still_propagates(self):
+        async def fake_post(document, timeout):
+            raise TimeoutError()
+
+        async def hook(summary):
+            raise asyncio.CancelledError()
+
+        with override_settings(**ENABLED), patch.object(lq, "_post", fake_post):
+            with pytest.raises(asyncio.CancelledError):
+                asyncio.run(lq.score_letter("d", "letter", on_failure=hook))
+
+    def test_success_does_not_call_the_hook(self):
+        calls = []
+
+        async def fake_post(document, timeout):
+            return _payload()
+
+        async def hook(summary):
+            calls.append(summary)
+
+        with override_settings(**ENABLED), patch.object(lq, "_post", fake_post):
+            assert asyncio.run(lq.score_letter("d", "letter", on_failure=hook)) is not None
+        assert calls == []
 
 
 class TestFrames:

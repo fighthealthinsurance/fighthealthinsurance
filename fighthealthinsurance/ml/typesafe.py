@@ -25,7 +25,16 @@ DOCUMENT_CHAR_CAP = 24_000
 
 
 class TypeSafeError(Exception):
-    """The API did not return a usable answer set."""
+    """The API did not return a usable answer set.
+
+    ``status`` is the HTTP status when the API answered at all, so a caller
+    can tell a rejected key (401, 403) or exhausted credits (402) from an
+    outage (5xx) without parsing the message.
+    """
+
+    def __init__(self, message: str, status: typing.Optional[int] = None):
+        super().__init__(message)
+        self.status = status
 
 
 def configured() -> bool:
@@ -66,5 +75,5 @@ async def ask(
             url, json=body, headers=headers, allow_redirects=False
         ) as response:
             if response.status != 200:
-                raise TypeSafeError(f"HTTP {response.status}")
+                raise TypeSafeError(f"HTTP {response.status}", status=response.status)
             return await response.json()
