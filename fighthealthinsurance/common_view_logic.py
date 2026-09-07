@@ -2896,6 +2896,21 @@ class AppealsBackendHelper:
     # sufficient result with weaker drafts adds no value.
     ENOUGH_APPEALS = 3
 
+    # How many previously-saved drafts to replay before this run's own drafts.
+    #
+    # Rows accumulate per denial across retries, reconnects and re-runs, and the
+    # replay had no cap at all, so a denial that had been through generation a
+    # few times opened with a wall of stored letters and put the fresh one at
+    # the bottom. Eighteen old drafts ahead of one new one is not a listing, it
+    # is a haystack.
+    #
+    # Newest first, because the most recent drafts were generated with the most
+    # context. This is deliberately independent of TypeSafe scoring: with the
+    # ranking flags off there are no scores to sort by, and the page still must
+    # not open with a haystack. Ranking sits on top of this rather than
+    # replacing it.
+    MAX_REPLAYED_APPEALS = 3
+
     # Deadlines, measured from the start of the generation flow, after which a
     # run starts serving the speculative reserve instead of holding it to the
     # very end. Research + make_appeals routinely run for minutes, and a reserve
@@ -3381,9 +3396,15 @@ class AppealsBackendHelper:
         # Exclude speculative rows: those are the background precompute held in
         # reserve and are served ONLY as a fallback below, not as normal
         # existing appeals.
-        existing_appeals = ProposedAppeal.objects.filter(
-            for_denial=denial, speculative=False
-        ).all()
+        # Newest first so the cap below keeps the most recent drafts rather than
+        # whatever the database happened to return. created_at is null on legacy
+        # rows, and Postgres sorts NULLs first on DESC, which would have handed
+        # those rows the whole budget; nulls_last puts them where they belong.
+        existing_appeals = (
+            ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+            .order_by(F("created_at").desc(nulls_last=True), "-id")
+            .all()
+        )
         # Everything already delivered to this client, by normalized raw text.
         # Grown by every path that ships an appeal (existing rows, streamed
         # drafts, the early reserve flush, synthesis, the end-of-flow
@@ -3423,6 +3444,17 @@ class AppealsBackendHelper:
                     {"id": str(appeal.id), "content": appeal.appeal_text}
                 )
                 yield await format_response(existing_appeal_dict)
+                # Count DELIVERED rows, not rows examined: duplicates and
+                # unusable drafts are skipped above and must not spend the
+                # budget, or a denial whose recent rows happen to be twins
+                # would replay nothing at all.
+                if old >= cls.MAX_REPLAYED_APPEALS:
+                    logger.info(
+                        f"[gen_id={generation_id}] replay cap reached for "
+                        f"denial {denial_id}: served {old} stored drafts "
+                        f"(newest first), holding back the rest"
+                    )
+                    break
             elif appeal.appeal_text is not None and str(appeal.appeal_text).strip():
                 warn_unusable_appeal(
                     appeal.appeal_text,
