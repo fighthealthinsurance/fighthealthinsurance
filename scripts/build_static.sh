@@ -70,12 +70,20 @@ if [ -d "${JS_PATH}" ]; then
   # scripts, the wasm, the .mjs and the source maps that collectstatic ships
   # and the pages load by URL. A missing worker with untouched bundles used
   # to pass the check and then break PDF uploads (review).
+  # -H: follow dist/ itself if it is a symlink. Without it, find examines the
+  # link rather than the directory, the fingerprint becomes the hash of
+  # nothing, and a stale key matches forever (review).
   dist_fingerprint() {
-    find "${JS_PATH}/dist" -type f -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1
+    find -H "${JS_PATH}/dist" -type f -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1
+  }
+  # A dist/ with no files in it (missing, empty, unreadable, a dangling
+  # link) is never something to skip a build for, whatever the key says.
+  dist_has_files() {
+    [ -n "$(find -H "${JS_PATH}/dist" -type f -print -quit 2>/dev/null)" ]
   }
   CURRENT_BUILD_KEY="${CURRENT_JS_CHECKSUM}:${EXPECTED_BUILD_MODE}:$(dist_fingerprint)"
 
-  if [ "$CURRENT_BUILD_KEY" = "$STORED_JS_CHECKSUM" ] && [ -d "${JS_PATH}/dist" ]; then
+  if [ "$CURRENT_BUILD_KEY" = "$STORED_JS_CHECKSUM" ] && dist_has_files; then
     echo "JavaScript sources unchanged and dist matches the last ${EXPECTED_BUILD_MODE} build, skipping build..."
     SKIP_JS_BUILD=true
   fi

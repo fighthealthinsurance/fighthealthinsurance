@@ -123,8 +123,13 @@ def test_cache_key_covers_mode_and_the_bundles_actually_in_dist():
     fp = re.search(r"dist_fingerprint\(\)\s*\{(.*?)\n\s*\}", sh, re.S)
     assert fp is not None, "dist_fingerprint is gone from build_static.sh"
     body = fp.group(1)
-    assert re.search(r"find\s+\"\$\{JS_PATH\}/dist\".*?-type\s+f.*?md5sum", body, re.S), (
-        "the dist fingerprint no longer hashes the files in dist/"
+    # -H so a symlinked dist/ is followed; without it the fingerprint is the
+    # hash of nothing and a stale key matches forever (review).
+    assert re.search(r"find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-type\s+f.*?md5sum", body, re.S), (
+        "the dist fingerprint no longer hashes the files in dist/ following a symlinked dist"
+    )
+    assert re.search(r"dist_has_files\(\)\s*\{.*?find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-print\s+-quit", sh, re.S), (
+        "the empty-dist guard is gone"
     )
     # Recursive and unfiltered: workers/, the wasm, .mjs and .map files ship
     # too, and a missing worker with untouched bundles broke PDF uploads
@@ -138,10 +143,10 @@ def test_cache_key_covers_mode_and_the_bundles_actually_in_dist():
         sh,
     ), "the cache key no longer combines sources, mode and the dist fingerprint"
     assert re.search(
-        r"\[\s*\"\$CURRENT_BUILD_KEY\"\s*=\s*\"\$STORED_JS_CHECKSUM\"\s*\].*?SKIP_JS_BUILD=true",
+        r"\[\s*\"\$CURRENT_BUILD_KEY\"\s*=\s*\"\$STORED_JS_CHECKSUM\"\s*\]\s*&&\s*dist_has_files.*?SKIP_JS_BUILD=true",
         sh,
         re.S,
-    ), "the skip no longer requires the whole key to match"
+    ), "the skip no longer requires the whole key to match AND a non-empty dist/"
     assert re.search(
         r"echo\s+\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"\s*>\s*\"\$JS_CHECKSUM_FILE\"",
         sh,
