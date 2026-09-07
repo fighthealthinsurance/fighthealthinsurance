@@ -614,13 +614,18 @@ function applyRanking(final: boolean): void {
   if (!anyScore) return;
 
   if (!oneScale) {
+    // Nothing is ranked, so the page must actually be in arrival order: an
+    // earlier single-scorer pass may have moved drafts (review). Same rule
+    // as below, the DOM is touched only if the order differs.
+    const byArrival = drafts.slice().sort((a, b) => draftArrival(a) - draftArrival(b));
+    if (byArrival.some((el, i) => el !== drafts[i])) for (const el of byArrival) outputContainer.append(el);
     if (final) {
       const note = document.createElement("p");
       note.id = "appeal-ranking-note";
       note.className = "text-muted";
       note.style.margin = "8px 20px";
       note.textContent = RANKING_CAPTION_UNRANKED;
-      drafts[0].before(note);
+      byArrival[0].before(note);
     }
     return;
   }
@@ -1183,6 +1188,12 @@ async function requestExternalModels(
     retries = 0;
     respBuffer = "";
     hasAutoScrolledToFirstAppeal = false;
+    // A fresh generation, not a retry: the ranking's terminal state ends
+    // with the run it belonged to. Scores and an opened fold are kept, the
+    // "every pass is final now" latch is not, or the new drafts would land
+    // under a partial caption with live ordering suppressed (review).
+    finalApplied = false;
+    rankingPending = null;
     // The wait for the next appeal starts now, not when the last pre-rerun
     // appeal arrived — otherwise the "Current appeal" clock would include
     // however long the user spent reading drafts before opting in. The

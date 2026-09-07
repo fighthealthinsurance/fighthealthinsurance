@@ -94,12 +94,16 @@ def test_after_the_final_pass_every_pass_is_final():
 
 def test_coverage_is_decided_before_anything_moves_and_a_partial_end_never_reorders():
     body = _fn("applyRanking")
-    move = body.index("outputContainer.append(el)")
+    # The ranked-order move specifically (the mixed-scorer branch has its
+    # own arrival-order move, earlier in the function).
+    ranked_move = "if (changed) for (const el of ordered) outputContainer.append(el);"
+    assert ranked_move in body
+    move = body.index(ranked_move)
     assert body.index("const partialAtEnd = final && !complete;") < move
-    assert body.index("if (!anyScore) return;") < move, "no scores: the DOM is not touched"
+    first_move = body.index("outputContainer.append(el)")
+    assert body.index("if (!anyScore) return;") < first_move, "no scores: the DOM is not touched"
     assert body.index("if (!partialAtEnd) {") < move < body.index("const first = ")
     assert "const changed = ordered.some((el, i) => el !== drafts[i]);" in body
-    assert "if (changed) for (const el of ordered) outputContainer.append(el);" in body
 
 
 def test_a_deduplicated_reserved_letter_with_a_score_still_reranks():
@@ -107,12 +111,26 @@ def test_a_deduplicated_reserved_letter_with_a_score_still_reranks():
     assert "if (parsedLine.quality_score !== undefined) applyRanking(false);" in dup
 
 
-def test_two_scorers_are_explained_at_the_end():
+def test_two_scorers_restore_arrival_order_and_say_so_at_the_end():
     body = _fn("applyRanking")
     start = body.index("if (!oneScale) {")
     two = _brace_block(body, body.index("{", start))
-    assert "if (final) {" in two and "RANKING_CAPTION_UNRANKED" in two
-    assert two.rstrip().endswith("return;\n  }"), two[-60:]
+    # The caption claims arrival order, so the block must produce it: an
+    # earlier single-scorer pass may have moved drafts (review).
+    assert "const byArrival = drafts.slice().sort((a, b) => draftArrival(a) - draftArrival(b));" in two
+    assert "if (byArrival.some((el, i) => el !== drafts[i])) for (const el of byArrival) outputContainer.append(el);" in two
+    assert two.index("outputContainer.append(el)") < two.index("RANKING_CAPTION_UNRANKED")
+    assert "if (final) {" in two and two.rstrip().endswith("return;\n  }"), two[-60:]
+
+
+def test_a_fresh_generation_drops_the_final_latch_but_keeps_scores_and_the_open_fold():
+    # The "external models enabled" handler is the one place a NEW generation
+    # starts on the same page (everything else is an automatic retry).
+    start = SRC.index("External models enabled. Generating additional appeals")
+    handler = SRC[start : SRC.index("doQuery(my_backend_url, my_data, my_rest_fallback_url);", start)]
+    assert "retries = 0;" in handler
+    assert "finalApplied = false;" in handler and "rankingPending = null;" in handler
+    assert "draftScores = new Map" not in handler and "showAllDrafts = false" not in handler
 
 
 def test_caption_makes_no_promise_about_the_outcome():
