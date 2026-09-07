@@ -59,10 +59,19 @@ export function hideErrorMessages(event: Event): void {
 // "denial_text: This field is required" while the page was visibly still
 // working. Track it so the submit gate can say "still reading your file"
 // instead.
-let ocrInFlight = 0;
+//
+// "In flight" means the LATEST file selection is being read, not "any batch is
+// still running". Reading a batch is slow enough that a user can pick again
+// while one is running, and scrub.ts drops every write from a superseded
+// batch, so its text is never going to land. A plain counter got both
+// directions wrong: a superseded batch finishing early hid the indicator for
+// its successor, and a superseded batch still running kept the indicator up
+// (and told the submit gate text was coming) after its successor had already
+// reported failure (review).
+let activeOcrSelection: number | null = null;
 
-export function beginOcr(): void {
-  ocrInFlight += 1;
+export function beginOcr(selection: number): void {
+  activeOcrSelection = selection;
   // Show it as soon as reading starts, not just when the user hits submit.
   // Reading one photographed page takes several seconds and nothing else on
   // screen says so, so the page looked idle and people retyped their denial by
@@ -72,18 +81,20 @@ export function beginOcr(): void {
   showHiddenMessage("ocr_in_progress");
 }
 
-export function endOcr(): void {
-  ocrInFlight = Math.max(0, ocrInFlight - 1);
-  if (ocrInFlight === 0) {
-    // The gate only re-evaluates on submit, so without this the "still
-    // reading your file" message stays on screen after the file has
-    // finished being read (external review).
-    rehideHiddenMessage("ocr_in_progress");
+export function endOcr(selection: number): void {
+  if (selection !== activeOcrSelection) {
+    // A superseded batch ending says nothing about the batch that replaced it.
+    return;
   }
+  activeOcrSelection = null;
+  // The gate only re-evaluates on submit, so without this the "still
+  // reading your file" message stays on screen after the file has
+  // finished being read (external review).
+  rehideHiddenMessage("ocr_in_progress");
 }
 
 export function isOcrInFlight(): boolean {
-  return ocrInFlight > 0;
+  return activeOcrSelection !== null;
 }
 
 // Reading the file can fail outright (every OCR engine erroring or timing
@@ -171,7 +182,10 @@ export function validateScrubForm(event: Event): void {
     // Distinguish "you have not given us the letter" from "we are still
     // reading the file you just gave us".
     showHiddenMessage("ocr_in_progress");
-  } else {
+  } else if (!isOcrInFlight()) {
+    // Only clear it once nothing is being read. With page one already in the
+    // box, a submit blocked on some other field used to hide the indicator
+    // while the remaining pages were still being read (review).
     rehideHiddenMessage("ocr_in_progress");
   }
   // Gate on exactly what the SERVER requires: forms/__init__.py marks pii,
