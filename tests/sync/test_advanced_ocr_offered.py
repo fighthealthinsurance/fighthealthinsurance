@@ -28,3 +28,14 @@ class AdvancedOcrOfferedTest(TestCase):
         self.assertNotIn("checked", tag)
         self.assertContains(response, "Better text recognition for photos and scans")
         self.assertNotContains(response, "huggingface")
+        # The status line and the remove-model control ship with the option,
+        # both hidden until there is something to say or remove.
+        self.assertContains(response, 'id="advanced_ocr_status"')
+        self.assertContains(response, 'id="advanced_ocr_remove_model"')
+        html = response.content.decode()
+        # Each element's OWN opening tag, so a `hidden` on the neighbour
+        # cannot stand in for a missing one (review).
+        for element_id in ("advanced_ocr_status", "advanced_ocr_remove_model"):
+            start = html.rindex("<", 0, html.index(f'id="{element_id}"'))
+            tag = html[start : html.index(">", start) + 1]
+            self.assertRegex(tag, r"\bhidden\b", f"{element_id} is visible before there is anything to say or remove")

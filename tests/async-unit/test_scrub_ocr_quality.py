@@ -159,13 +159,16 @@ class TestEngines:
         # Decoded pixels are released.
         assert "bitmap.close()" in fn, fn
 
-    def test_all_engines_race_together(self):
-        """Adding a third engine must not mean a third bespoke branch."""
-        src = _ocr_source()
-        fn = _js_function(src, "async function recognizeImageText")
-        for engine in ("tesseract", "qwen", "text-detector"):
-            assert engine in fn, fn
-        assert "runOCREnginesWithGrace(" in fn, fn
+    def test_the_standard_engines_race_and_the_on_device_model_waits(self):
+        """tesseract and the platform text detector race for the page; the
+        on-device model is queued for its own pass afterwards. It takes a
+        minute or more per page, so racing it meant it never won and its
+        work was thrown away (review)."""
+        body = _js_function(_ocr_source(), "async function recognizeImageText")
+        assert "tesseract" in body
+        assert "text-detector" in body
+        assert "onDeviceRead = () => recognizeWithQwenWebGPU(file)" in body
+        assert 'name: "qwen"' not in body, "the on-device model is racing again"
 
     def test_the_wait_starts_from_a_usable_result_not_the_first_to_settle(self):
         """An absent engine resolves "" INSTANTLY. Treating that as the first
