@@ -60,7 +60,11 @@ async def ask(
     }
     client_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     async with aiohttp.ClientSession(timeout=client_timeout) as session:
-        async with session.post(url, json=body, headers=headers) as response:
+        # No redirects: a 307 or 308 toward http would make aiohttp resend
+        # the document in the clear (review). A 3xx is just a non-200 here.
+        async with session.post(
+            url, json=body, headers=headers, allow_redirects=False
+        ) as response:
             if response.status != 200:
                 raise TypeSafeError(f"HTTP {response.status}")
             return await response.json()

@@ -50,8 +50,9 @@ class _FakeSession:
     async def __aexit__(self, *exc):
         return False
 
-    def post(self, url, json=None, headers=None):
+    def post(self, url, json=None, headers=None, **kwargs):
         self.posted.append((url, json, headers))
+        self.post_kwargs = kwargs
         return self.response
 
 
@@ -91,3 +92,12 @@ def test_https_in_any_case_is_accepted_and_the_json_comes_back():
 def test_a_non_200_raises():
     with pytest.raises(typesafe.TypeSafeError, match="HTTP 503"):
         _ask(_FakeSession(503))
+
+
+def test_redirects_are_never_followed():
+    """An https endpoint answering 307 toward http would otherwise make the
+    client resend the document in the clear (review)."""
+    session = _FakeSession(307)
+    with pytest.raises(typesafe.TypeSafeError, match="HTTP 307"):
+        _ask(session)
+    assert session.post_kwargs.get("allow_redirects") is False
