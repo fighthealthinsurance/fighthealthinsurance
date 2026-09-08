@@ -531,6 +531,16 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(status["scored"], 1)
         self.assertEqual(status["unscored"], 0)
 
+    def test_a_scored_draft_that_was_never_eligible_does_not_count(self):
+        """Speculative or unconsented drafts are outside both counts, so a
+        score on one of them cannot read as SCORING by itself (review)."""
+        self._draft(self._denial(), speculative=True, scored=True)
+        self._draft(self._denial(use_external=False), scored=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["scored"], 0)
+        self.assertEqual(status["level"], "idle")
+
     def test_not_scoring_when_eligible_drafts_have_no_score(self):
         self._draft(self._denial())
         with override_settings(**_SCORING_ON):

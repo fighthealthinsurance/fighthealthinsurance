@@ -601,8 +601,14 @@ class AdminStatusView(generic.TemplateView):
 
             now = timezone.now()
             since = now - WINDOW
+            # The same eligibility as the unscored count below, so the two
+            # numbers describe one population and a scored draft that is
+            # speculative or unconsented cannot make the level SCORING by
+            # itself (review).
             out["scored"] = ProposedAppeal.objects.filter(
-                quality_scored_at__gte=since
+                quality_scored_at__gte=since,
+                speculative=False,
+                for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
             # real (not speculative), old enough that a score in flight would
