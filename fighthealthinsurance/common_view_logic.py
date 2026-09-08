@@ -3502,8 +3502,16 @@ class AppealsBackendHelper:
             )
             if score is None:
                 return None
+            # Only the row whose text is still the text that was scored: an
+            # admin can edit a draft during the few seconds of scoring, and
+            # a score for text nobody sees any more must not land on the
+            # edited row or reach the page (review). Legacy rows have no
+            # fingerprint, so the guard is the text itself.
+            updated = 1
             try:
-                await ProposedAppeal.objects.filter(pk=proposed_id).aupdate(
+                updated = await ProposedAppeal.objects.filter(
+                    pk=proposed_id, appeal_text=draft_text
+                ).aupdate(
                     quality_score=score.quality,
                     grounding_score=score.grounding,
                     quality_scorer=score.scorer,
@@ -3516,6 +3524,12 @@ class AppealsBackendHelper:
                     f"[gen_id={generation_id}] could not record a draft score "
                     f"for denial {denial_id}"
                 )
+            if not updated:
+                logger.info(
+                    f"[gen_id={generation_id}] draft {proposed_id} changed while "
+                    "it was being scored; score dropped"
+                )
+                return None
             return json.dumps(letter_quality.score_frame(proposed_id, score)) + "\n"
 
         def _start_scoring(proposed_id: str, draft_text: str) -> None:

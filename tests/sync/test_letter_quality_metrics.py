@@ -10,6 +10,7 @@ from fighthealthinsurance.letter_quality_metrics import (
     quality_by_model,
 )
 from fighthealthinsurance.ml import letter_quality
+from fighthealthinsurance.ml.model_identity import legacy_unresolved_label
 from fighthealthinsurance.models import Denial, ProposedAppeal
 
 
@@ -42,6 +43,30 @@ class LetterQualityMetricsTest(TestCase):
         self.assertEqual(stats[key]["scored"], 2)
         self.assertEqual(stats[key]["ungrounded"], 1)
         self.assertEqual(stats[("m2", letter_quality.SCORER)]["ungrounded"], 0)
+
+    def test_two_stored_spellings_of_one_backend_are_one_series(self):
+        """Legacy rows hold object reprs with a memory address; every address
+        used to be its own Prometheus series (review). They collapse to the
+        class, and the merge is a scored-weighted mean with summed counts."""
+        cls = "fighthealthinsurance.ml.ml_models.RemoteFullOpenLike"
+        self._draft(f"<{cls} object at 0x7f0000000010>", 0.8, 2)
+        self._draft(f"<{cls} object at 0x7f0000000020>", 0.2, 0)
+        self._draft(f"<{cls} object at 0x7f0000000030>", 0.2, 0)
+        stats = quality_by_model(timezone.now())
+        key = (legacy_unresolved_label("RemoteFullOpenLike"), letter_quality.SCORER)
+        self.assertEqual(list(stats), [key])
+        self.assertAlmostEqual(stats[key]["avg"], (0.8 + 0.2 + 0.2) / 3)
+        self.assertEqual(stats[key]["scored"], 3)
+        self.assertEqual(stats[key]["ungrounded"], 2)
+
+    def test_padded_names_merge_and_blank_names_are_skipped(self):
+        self._draft(" m1 ", 1.0, 2)
+        self._draft("m1", 0.0, 2)
+        self._draft("   ", 0.5, 2)
+        stats = quality_by_model(timezone.now())
+        self.assertEqual(list(stats), [("m1", letter_quality.SCORER)])
+        self.assertAlmostEqual(stats[("m1", letter_quality.SCORER)]["avg"], 0.5)
+        self.assertEqual(stats[("m1", letter_quality.SCORER)]["scored"], 2)
 
     def test_each_scorer_is_its_own_series_and_old_rubrics_are_dropped(self):
         self._draft("m1", 0.8, 2)

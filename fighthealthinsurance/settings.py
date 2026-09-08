@@ -836,7 +836,7 @@ class Test(Dev):
     # denial text to a real endpoint. Scorer tests opt in with
     # override_settings and stub the transport.
     TYPESAFE_API_KEY = None
-    TYPESAFE_API_URL = "http://typesafe.invalid/v1/systemone"
+    TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_LETTER_RANKING_ENABLED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
 
@@ -901,7 +901,7 @@ class TestSync(Dev):
     # denial text to a real endpoint. Scorer tests opt in with
     # override_settings and stub the transport.
     TYPESAFE_API_KEY = None
-    TYPESAFE_API_URL = "http://typesafe.invalid/v1/systemone"
+    TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_LETTER_RANKING_ENABLED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
 
@@ -942,7 +942,7 @@ class TestActor(Dev):
     # denial text to a real endpoint. Scorer tests opt in with
     # override_settings and stub the transport.
     TYPESAFE_API_KEY = None
-    TYPESAFE_API_URL = "http://typesafe.invalid/v1/systemone"
+    TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_LETTER_RANKING_ENABLED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
 

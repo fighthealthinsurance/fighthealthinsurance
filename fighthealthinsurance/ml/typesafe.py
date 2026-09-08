@@ -5,10 +5,13 @@ status check, so a feature module only decides WHAT to ask.
 
 Never logs the document. A response body is never surfaced either: on a
 non-200 the error carries the status alone, because an error body could quote
-the document back.
+the document back. And the request, which carries the API key and the
+document, only ever goes over https: a URL with any other scheme is refused
+before a session exists.
 """
 
 import typing
+from urllib.parse import urlsplit
 
 import aiohttp
 from django.conf import settings
@@ -41,6 +44,11 @@ async def ask(
     Raises TypeSafeError on a non-200, and lets aiohttp/asyncio errors
     propagate: callers decide what a failure means for their feature.
     """
+    url = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
+    if urlsplit(url).scheme.lower() != "https":
+        # The bearer token and the document must never travel in the clear
+        # (review). Refused here, before anything is built or sent.
+        raise TypeSafeError("TYPESAFE_API_URL must use https")
     body = {
         "document": document[:DOCUMENT_CHAR_CAP],
         "model": model,
@@ -52,9 +60,7 @@ async def ask(
     }
     client_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     async with aiohttp.ClientSession(timeout=client_timeout) as session:
-        async with session.post(
-            settings.TYPESAFE_API_URL, json=body, headers=headers
-        ) as response:
+        async with session.post(url, json=body, headers=headers) as response:
             if response.status != 200:
                 raise TypeSafeError(f"HTTP {response.status}")
             return await response.json()

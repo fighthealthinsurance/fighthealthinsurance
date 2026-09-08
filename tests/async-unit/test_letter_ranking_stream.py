@@ -145,6 +145,31 @@ class TestScoresRideTheStream(_StreamBase):
             self.assertIsNotNone(row.quality_scored_at)
 
 
+class TestAScoreLandsOnlyOnTheTextThatWasScored(_StreamBase):
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_an_edit_during_scoring_drops_the_score_and_the_frame(self, mock_gen):
+        """An admin rewrites the draft in the few seconds it takes TypeSafe
+        to answer. The score describes text nobody sees now: it must not
+        land on the edited row, and no score frame may reach the page
+        (review)."""
+        denial_id = self.denial.denial_id
+
+        async def fake_post(document, timeout):
+            await ProposedAppeal.objects.filter(for_denial_id=denial_id).aupdate(
+                appeal_text="Rewritten by staff while the scorer was busy."
+            )
+            return _payload()
+
+        with override_settings(**ENABLED), patch.object(letter_quality, "_post", fake_post):
+            frames = self._stream(mock_gen)
+
+        self.assertFalse([f for f in frames if f.get("type") == "score"])
+        self.assertTrue([f for f in frames if f.get("phase") == "done"])
+        for row in ProposedAppeal.objects.filter(for_denial=self.denial):
+            self.assertIsNone(row.quality_score)
+            self.assertIsNone(row.quality_scored_at)
+
+
 class TestNothingIdentifyingLeaves(_StreamBase):
     """The prompt asks the model to write the patient and professional INTO
     the letter, so the redaction is the promise, not the placeholders."""

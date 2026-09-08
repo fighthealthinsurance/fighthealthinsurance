@@ -51,10 +51,18 @@ _REQUESTS = (
 
 def quality_by_model(now: datetime.datetime) -> Dict[Tuple[str, str], Dict[str, float]]:
     """{(model_name, scorer): {"avg", "scored", "ungrounded"}} for current-rubric
-    drafts in the window."""
+    drafts in the window.
+
+    The stored model name is normalized the way the staff dashboard does
+    it (a legacy object repr collapses to its class, whitespace is
+    stripped), and rows that land on one label are merged with a
+    scored-weighted mean and summed counts, so one backend is one
+    Prometheus series rather than one per stored spelling (review).
+    """
     from django.db.models import Avg, Count, Q
 
     from fighthealthinsurance.ml import letter_quality
+    from fighthealthinsurance.ml.model_identity import normalize_model_label
     from fighthealthinsurance.models import ProposedAppeal
 
     rows = (
@@ -77,15 +85,25 @@ def quality_by_model(now: datetime.datetime) -> Dict[Tuple[str, str], Dict[str, 
         )
         .values_list("model_name", "quality_scorer", "avg", "scored", "ungrounded")
     )
-    return {
-        (str(name), str(scorer)): {
-            "avg": float(avg or 0.0),
-            "scored": float(scored),
-            "ungrounded": float(ungrounded),
-        }
-        for name, scorer, avg, scored, ungrounded in rows
-        if letter_quality.same_rubric(scorer)
-    }
+    merged: Dict[Tuple[str, str], Dict[str, float]] = {}
+    for name, scorer, avg, scored, ungrounded in rows:
+        if not letter_quality.same_rubric(scorer):
+            continue
+        label = normalize_model_label(name)
+        if label is None:
+            continue  # a blank name labels nothing
+        entry = merged.setdefault(
+            (label, str(scorer)), {"avg": 0.0, "scored": 0.0, "ungrounded": 0.0}
+        )
+        count = float(scored)
+        total = entry["scored"] + count
+        if total:
+            entry["avg"] = (
+                entry["avg"] * entry["scored"] + float(avg or 0.0) * count
+            ) / total
+        entry["scored"] = total
+        entry["ungrounded"] += float(ungrounded)
+    return merged
 
 
 class LetterQualityCollector(Collector):
