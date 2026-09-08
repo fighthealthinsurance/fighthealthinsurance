@@ -5,6 +5,17 @@
 Fight Health Insurance Privacy Policy
 {% endblock title %}
 {% block content %}
+<style>
+  /* The downloadable PDF is printed from this page: only the policy itself,
+     none of the site furniture. */
+  @media print {
+    header, .navbar, .github-fork-ribbon, footer, #site-banner, .site-banner, .betaribbon { display: none !important; }
+    body { background: #fff; }
+    #privacy-policy { margin: 0; }
+    #privacy-policy .container { max-width: none; padding: 0; }
+    a[href]::after { content: none; }
+  }
+</style>
 <section id="privacy-policy">
     <div class="container mt-3">
         <div class="section-header text-align-center mb-3">
