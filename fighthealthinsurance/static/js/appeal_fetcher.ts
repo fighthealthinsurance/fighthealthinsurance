@@ -457,6 +457,156 @@ let handingOffToRest = false;
 let wsGaveUp = false;
 let hasAutoScrolledToFirstAppeal = false;
 
+// ---------------------------------------------------------------------------
+// Draft ordering. The server scores each saved draft on how well it addresses
+// THIS denial (fighthealthinsurance/ml/letter_quality.py) and sends the score
+// as a {"type": "score", "id": <proposed id>} frame after the letter, or on
+// the letter frame itself for a re-served draft. Nothing moves while letters
+// are still arriving: a list that reshuffles under someone reading it is
+// worse than a list in arrival order. Once the server says done, the drafts
+// are ordered once, the top one is labelled, and everything past
+// RANKED_VISIBLE_LIMIT is folded behind a button rather than dropped.
+//
+// The score is a criteria score, not a success probability, and the caption
+// says exactly that. Never render it as a percentage or a "chance".
+// ---------------------------------------------------------------------------
+const RANKED_VISIBLE_LIMIT = 3;
+const RANKING_CAPTION =
+  "Ordered by how well each letter addresses your denial, not by a prediction of the outcome.";
+const RECOMMENDED_LABEL = "Recommended";
+// Drafts that scored 0 on "no invented facts" sort below every grounded draft
+// whatever their other marks (matches letter_quality.sort_key).
+const GROUNDING_DEMOTE_BELOW = 1;
+
+interface DraftScore {
+  quality: number;
+  grounding: number | null;
+  scorer: string;
+}
+let draftScores = new Map<string, DraftScore>();
+
+function recordDraftScore(proposedId: unknown, quality: unknown, grounding: unknown, scorer: unknown): void {
+  if (proposedId === undefined || proposedId === null || proposedId === "unknown") return;
+  const q = Number(quality);
+  if (!Number.isFinite(q)) return;
+  const g = grounding === undefined || grounding === null ? null : Number(grounding);
+  draftScores.set(String(proposedId), {
+    quality: q,
+    grounding: Number.isFinite(g as number) ? (g as number) : null,
+    scorer: typeof scorer === "string" ? scorer : "",
+  });
+}
+
+// Higher sorts first. Unscored drafts keep arrival order at the bottom.
+function draftSortKey(el: HTMLElement): [number, number] {
+  const id = el.getAttribute("data-proposed-id");
+  const score = id ? draftScores.get(id) : undefined;
+  if (!score) return [0, 0];
+  const demoted = score.grounding !== null && score.grounding < GROUNDING_DEMOTE_BELOW;
+  return [demoted ? 1 : 2, score.quality];
+}
+
+function rankedDrafts(): HTMLElement[] {
+  const drafts = outputContainer.children('[id^="magic"]').toArray() as HTMLElement[];
+  const withIndex = drafts.map((el, index) => ({ el, index, key: draftSortKey(el) }));
+  withIndex.sort((a, b) => {
+    if (a.key[0] !== b.key[0]) return b.key[0] - a.key[0];
+    if (a.key[1] !== b.key[1]) return b.key[1] - a.key[1];
+    return a.index - b.index;
+  });
+  return withIndex.map((entry) => entry.el);
+}
+
+function finalizeRanking(): void {
+  if (draftScores.size === 0) return;
+  // Idempotent: a retry can reach done more than once. Rebuild from scratch
+  // so there is never a second "Recommended" or a stale fold.
+  document.getElementById("appeal-ranking-note")?.remove();
+  document.getElementById("appeal-show-more")?.remove();
+  for (const badge of Array.from(document.querySelectorAll(".appeal-recommended-badge"))) badge.remove();
+  const drafts = outputContainer.children('[id^="magic"]').toArray() as HTMLElement[];
+  for (const el of drafts) el.hidden = false;
+  // All or nothing. A scorer that answered for one draft and rate-limited
+  // the rest would put that one first and fold the unassessed ones away,
+  // which is an ordering by luck. Without full coverage the page is put
+  // BACK in arrival order (an earlier, fully scored pass may have sorted
+  // it), with no caption and no fold.
+  // A draft that never got a row id (its save failed) can never be scored,
+  // so it counts as uncovered too: ranking the rest around it would be the
+  // same partial ordering.
+  // ...and all on ONE scale: a score from a repointed model is not
+  // comparable with one from the previous model, whatever the dashboard
+  // does with them.
+  const scorers = new Set(
+    drafts.map((el) => draftScores.get(el.getAttribute("data-proposed-id") || "")?.scorer ?? ""),
+  );
+  const everyDraftScored =
+    scorers.size === 1 &&
+    drafts.every((el) => {
+      const id = el.getAttribute("data-proposed-id");
+      return !!id && draftScores.has(id);
+    });
+  if (!everyDraftScored) {
+    const byArrival = drafts.slice().sort(
+      (a, b) => Number(a.getAttribute("data-arrival-index") || 0) - Number(b.getAttribute("data-arrival-index") || 0),
+    );
+    for (const el of byArrival) outputContainer.append(el);
+    return;
+  }
+  const ordered = rankedDrafts();
+  if (ordered.length === 0) return;
+
+  // Re-appending moves the existing nodes, so anything the user has typed
+  // into a draft's textarea comes along with it.
+  for (const el of ordered) outputContainer.append(el);
+
+  if (!document.getElementById("appeal-ranking-note")) {
+    const note = document.createElement("p");
+    note.id = "appeal-ranking-note";
+    note.className = "text-muted";
+    note.style.margin = "8px 20px";
+    note.textContent = RANKING_CAPTION;
+    ordered[0].before(note);
+  }
+
+  const top = ordered[0];
+  // A draft the reader has already rewritten is not the draft that was
+  // scored: it keeps its place in the order but never gets the label.
+  const topIsDirty = top.getAttribute("data-dirty") === "1";
+  if (!topIsDirty && draftSortKey(top)[0] === 2 && !top.querySelector(".appeal-recommended-badge")) {
+    const badge = document.createElement("div");
+    badge.className = "appeal-recommended-badge";
+    badge.textContent = RECOMMENDED_LABEL;
+    badge.style.cssText =
+      "display:inline-block;padding:4px 10px;margin:0 0 8px;border-radius:4px;" +
+      "background:#2e7d32;color:#fff;font-weight:600;font-size:0.9em;";
+    top.prepend(badge);
+  }
+
+  const hidden = ordered.slice(RANKED_VISIBLE_LIMIT);
+  if (hidden.length > 0 && !document.getElementById("appeal-show-more")) {
+    for (const el of hidden) el.hidden = true;
+    const button = document.createElement("button");
+    button.id = "appeal-show-more";
+    button.type = "button";
+    button.className = "btn btn-outline-secondary";
+    button.style.margin = "8px 20px 24px";
+    button.textContent = `Show ${hidden.length} more draft${hidden.length === 1 ? "" : "s"}`;
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-controls", hidden.map((el) => el.id).join(" "));
+    button.addEventListener("click", () => {
+      for (const el of hidden) el.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      // Keep keyboard and screen-reader users where the new content is,
+      // instead of dropping focus on the body when the button goes away.
+      const first = hidden[0].querySelector("textarea") as HTMLElement | null;
+      (first ?? hidden[0]).focus();
+      button.remove();
+    });
+    ordered[RANKED_VISIBLE_LIMIT - 1].after(button);
+  }
+}
+
 // Diagnostic counters used in the client error report so server logs
 // can distinguish "we never reached the server" from "we reached the
 // server, got status frames, but never saw an appeal payload".
@@ -818,6 +968,10 @@ function done(): void {
     retries = retries + 1;
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } else {
+    // Generation is really over (no further automatic attempt): only now
+    // may the drafts be ordered, so a page never reshuffles under a reader
+    // while a retry is still adding letters.
+    finalizeRanking();
     if (appealsSoFar.length === 0) {
       const transport = usingRestFallback ? 'rest-fallback' : 'websocket';
       // Be explicit about *why* we ended with nothing. The common iOS case is
@@ -1243,12 +1397,26 @@ function processResponseChunk(chunk: string): void {
           return;
         }
 
+        // A draft's score, sent after the letter it belongs to (or never,
+        // when scoring is off or failed). Recorded now, applied at done.
+        if (parsedLine.type === 'score') {
+          recordDraftScore(parsedLine.id, parsedLine.quality_score, parsedLine.grounding_score, parsedLine.scorer);
+          return;
+        }
+
         // Handle regular appeal content
         const appealText = parsedLine.content;
         if (appealText === undefined || appealText === null) {
           // Frames come from the appeal stream; log field names only, not values.
           console.warn('Skipping non-appeal frame without content, keys:', Object.keys(parsedLine));
           return;
+        }
+
+        // A re-served draft carries its stored score on the frame. Record it
+        // BEFORE the duplicate check: on a retry the letter itself is a
+        // duplicate we skip, but its score is what keeps it ranked.
+        if (parsedLine.quality_score !== undefined) {
+          recordDraftScore(parsedLine.id, parsedLine.quality_score, parsedLine.grounding_score, parsedLine.scorer);
         }
 
         if (
@@ -1263,6 +1431,7 @@ function processResponseChunk(chunk: string): void {
 
         appealsSoFar.push(appealText);
         appealId++;
+        const arrivalIndex = appealId;
 
         // Record arrival timing for the wait-time indicators: freeze the
         // first-appeal clock on the first arrival, and reset the
@@ -1286,6 +1455,9 @@ function processResponseChunk(chunk: string): void {
           .clone()
           .prop("id", `magic${appealId}`);
         clonedForm.removeAttr("style");
+        // Arrival order is the fallback ordering; keep it on the node so a
+        // later pass can restore it after an earlier pass reordered.
+        clonedForm.attr("data-arrival-index", String(arrivalIndex));
 
         // Add padding/margin to the cloned form container
         clonedForm.css({
@@ -1324,6 +1496,12 @@ function processResponseChunk(chunk: string): void {
         submitButton.prop("id", `submit${appealId}`);
 
         const appealTextElem = clonedForm.find("textarea");
+        // The score was for the text as generated; once a person edits a
+        // draft the label no longer describes what they will send.
+        appealTextElem.on("input", () => {
+          clonedForm.attr("data-dirty", "1");
+          clonedForm.find(".appeal-recommended-badge").remove();
+        });
         appealTextElem.text(appealText);
         appealTextElem.val(appealText);
         appealTextElem.prop("form", `form_${appealId}`);
@@ -1335,6 +1513,7 @@ function processResponseChunk(chunk: string): void {
         const proposedId = parsedLine.id;
         if (proposedId !== undefined && proposedId !== null && proposedId !== "unknown") {
           clonedForm.find("input.proposed_appeal_id").val(String(proposedId));
+          clonedForm.attr("data-proposed-id", String(proposedId));
         }
 
         outputContainer.append(clonedForm);
@@ -1601,6 +1780,10 @@ export function doQuery(backend_url: string, data: AppealQueryData, rest_fallbac
   // accumulating it across attempts would inflate `accountedFor` and mask a
   // genuine partial delivery on attempts 2+.
   duplicatesSkipped = 0;
+  // draftScores is deliberately NOT reset here: doQuery also runs the
+  // automatic retries, whose re-served letters are deduped by content while
+  // their scores (keyed by stable row id) must survive. A new denial is a
+  // new page load.
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
   // entire user-visible wait, not just the latest retry.

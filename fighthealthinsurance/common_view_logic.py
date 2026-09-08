@@ -84,6 +84,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_icd10_codes,
     extract_procedure_codes,
 )
+from fighthealthinsurance.ml import letter_quality
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
@@ -2884,6 +2885,86 @@ def deliverable_candidates(qs: QuerySet) -> QuerySet:
     return narrowed
 
 
+def scoring_redactions(denial: Denial) -> list[tuple[str, str]]:
+    """The identifiers held in this denial's profile fields, as (value,
+    category) pairs for letter_quality.Redactor: the denial's email, claim
+    id, plan id, fax and employer; the patient's and each professional's
+    names, user names and emails; the professional's NPI and fax; each
+    user's contact phone and address lines; the practice address. Nothing
+    that lives only in the letter text itself.
+
+    Sync on purpose (it walks FK relations; call it through
+    database_sync_to_async). ALL or nothing: a relation that cannot be read
+    raises, and the caller turns scoring off for the run. A partial list
+    that quietly dropped the patient's name would be worse than no scoring.
+    """
+    out: list[tuple[str, str]] = []
+
+    def add(value: Any, category: str) -> None:
+        text = str(value).strip() if value is not None else ""
+        if text and text.upper() != "UNKNOWN":
+            out.append((text, category))
+
+    def add_contact(user: Any) -> None:
+        # The user's contact record: phone and address lines. Absent is
+        # fine; unreadable is not.
+        from django.core.exceptions import ObjectDoesNotExist
+
+        try:
+            contact = user.usercontactinfo
+        except ObjectDoesNotExist:
+            return
+        add(contact.phone_number, "PHONE")
+        add(contact.address1, "ADDRESS")
+        add(contact.address2, "ADDRESS")
+
+    def add_username(user: Any) -> None:
+        # An identifier, not a name: matched whole-word in any case, where a
+        # name only matches its capitalised spellings (review). A
+        # domain-scoped login is stored as raw🐼domain_id
+        # (fhi_users.auth.auth_utils.combine_domain_and_username); the raw
+        # login is the spelling a person would write, so both go in (review).
+        # A login spelled "unknown" falls to add()'s sentinel filter on
+        # purpose: it identifies nobody, and redacting that word would blank
+        # ordinary prose in most letters (review, accepted).
+        username = str(getattr(user, "username", "") or "")
+        add(username, "USERNAME")
+        if "🐼" in username:
+            add(username.split("🐼", 1)[0], "USERNAME")
+
+    add(denial.raw_email, "EMAIL")
+    add(denial.claim_id, "CLAIM_ID")
+    add(denial.plan_id, "PLAN_ID")
+    add(denial.appeal_fax_number, "PHONE")
+    add(denial.employer_name, "EMPLOYER")
+    patient = denial.patient_user
+    if patient is not None:
+        add(patient.get_legal_name(), "PATIENT#patient")
+        add(patient.get_display_name(), "PATIENT#patient")
+        add(patient.user.first_name, "PATIENT#patient")
+        add(patient.user.last_name, "PATIENT#patient")
+        add(patient.user.email, "EMAIL")
+        add_username(patient.user)
+        add_contact(patient.user)
+    for field in ("primary_professional", "creating_professional"):
+        professional = getattr(denial, field)
+        if professional is None:
+            continue
+        person = f"PROFESSIONAL#{professional.pk}"  # one token per person
+        add(professional.get_full_name(), person)
+        add(professional.display_name, person)
+        add(professional.user.first_name, person)
+        add(professional.user.last_name, person)
+        add(professional.user.email, "EMAIL")
+        add_username(professional.user)
+        add(professional.npi_number, "NPI")
+        add(professional.fax_number, "PHONE")
+        add_contact(professional.user)
+    if denial.domain is not None:
+        add(denial.domain.get_address(), "ADDRESS")
+    return out
+
+
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
@@ -3078,6 +3159,8 @@ class AppealsBackendHelper:
             "domain",
             "primary_professional",
             "primary_professional__user",
+            "creating_professional",
+            "creating_professional__user",
         )
         denial = await denial_query.aget()
         if not background:
@@ -3400,6 +3483,116 @@ class AppealsBackendHelper:
             return fingerprint_text(text) or str(text).strip()
 
         # Yield the existing appeals first
+        # Draft scoring for ORDERING (ml/letter_quality.py). One task per saved
+        # draft, never on the letter's own path: the letter streams the moment
+        # it is saved, and its score follows as a {"type": "score"} frame,
+        # drained between letters and once more (bounded) before the done
+        # frame. Whatever the client sees, the score lands on the row for the
+        # staff dashboard. Gated on the user's external-model consent, because
+        # TypeSafe is one more external processor of the denial text.
+        scoring_active = letter_quality.enabled() and bool(
+            getattr(denial, "use_external", False)
+        )
+        score_tasks: list["asyncio.Task[Optional[str]]"] = []
+        # Collected once, before any draft exists: the prompt asks the model
+        # to write the patient's and professional's details INTO the letter,
+        # so a draft is redacted against everything we hold before it leaves.
+        scoring_identifiers: list[tuple[str, str]] = []
+        if scoring_active:
+            try:
+                scoring_identifiers = await database_sync_to_async(scoring_redactions)(
+                    denial
+                )
+            except Exception:
+                # No identifier list means no scoring at all: the generic
+                # patterns alone are not a promise we can keep.
+                logger.opt(exception=True).warning(
+                    f"[gen_id={generation_id}] could not collect redactions for "
+                    f"denial {denial_id}; draft scoring off for this run"
+                )
+                scoring_active = False
+
+        async def _score_draft(proposed_id: str, draft_text: str) -> Optional[str]:
+            score = await letter_quality.score_letter(
+                denial.denial_text, draft_text, identifiers=scoring_identifiers
+            )
+            if score is None:
+                return None
+            # Only the row whose text is still the text that was scored: an
+            # admin can edit a draft during the few seconds of scoring, and
+            # a score for text nobody sees any more must not land on the
+            # edited row or reach the page (review). Legacy rows have no
+            # fingerprint, so the guard is the text itself.
+            updated = 1
+            try:
+                updated = await ProposedAppeal.objects.filter(
+                    pk=proposed_id, appeal_text=draft_text
+                ).aupdate(
+                    quality_score=score.quality,
+                    grounding_score=score.grounding,
+                    quality_scorer=score.scorer,
+                    quality_scored_at=timezone.now(),
+                )
+            except Exception:
+                # The frame still goes out: ordering this run matters more
+                # than the analytics row, and the failure is logged.
+                logger.opt(exception=True).warning(
+                    f"[gen_id={generation_id}] could not record a draft score "
+                    f"for denial {denial_id}"
+                )
+            if not updated:
+                logger.info(
+                    f"[gen_id={generation_id}] draft {proposed_id} changed while "
+                    "it was being scored; score dropped"
+                )
+                return None
+            return json.dumps(letter_quality.score_frame(proposed_id, score)) + "\n"
+
+        def _start_scoring(proposed_id: str, draft_text: str) -> None:
+            existing = letter_quality.in_flight_task(proposed_id)
+            if existing is not None:
+                # A sibling stream on this worker (a reconnect) already
+                # asked: share its answer instead of paying for it twice.
+                if existing not in score_tasks:
+                    score_tasks.append(existing)
+                return
+            task = asyncio.create_task(_score_draft(proposed_id, draft_text))
+            letter_quality.keep_alive(task, proposed_id)
+            score_tasks.append(task)
+
+        def _finished_score_frames() -> list[str]:
+            frames: list[str] = []
+            for task in list(score_tasks):
+                if not task.done():
+                    continue
+                score_tasks.remove(task)
+                if task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc is not None:
+                    logger.warning(
+                        f"[gen_id={generation_id}] draft scoring task failed: "
+                        f"{type(exc).__name__}"
+                    )
+                    continue
+                frame = task.result()
+                if frame:
+                    frames.append(frame)
+            return frames
+
+        # A drain waits, with its own budget, only on tasks no earlier drain
+        # has waited on: a task stalled at the first drain is not waited on
+        # again before done, while a draft saved later (synthesis, the
+        # reconciliation) still gets a full DRAIN_SECONDS of its own.
+        waited: set["asyncio.Task[Optional[str]]"] = set()
+
+        async def _drain_score_frames(timeout: float) -> list[str]:
+            fresh = [task for task in score_tasks if task not in waited]
+            if fresh and timeout > 0:
+                waited.update(fresh)
+                await asyncio.wait(fresh, timeout=timeout)
+            return _finished_score_frames()
+
         old = 0
         new = 0
         async for appeal in existing_appeals:
@@ -3419,8 +3612,14 @@ class AppealsBackendHelper:
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 served_keys.add(key)
+                if scoring_active and letter_quality.needs_scoring(appeal):
+                    # An unscored (or older-rubric) draft must not sort
+                    # below every fresh one just for being older.
+                    _start_scoring(str(appeal.id), appeal.appeal_text)
                 existing_appeal_dict = await sub_in_appeals(
-                    {"id": str(appeal.id), "content": appeal.appeal_text}
+                    letter_quality.with_score_fields(
+                        {"id": str(appeal.id), "content": appeal.appeal_text}, appeal
+                    )
                 )
                 yield await format_response(existing_appeal_dict)
             elif appeal.appeal_text is not None and str(appeal.appeal_text).strip():
@@ -3575,8 +3774,12 @@ class AppealsBackendHelper:
                                 ),
                             }
                         ) + "\n"
+                    if scoring_active and letter_quality.needs_scoring(row):
+                        _start_scoring(str(row.id), row.appeal_text)
                     row_dict = await sub_in_appeals(
-                        {"id": str(row.id), "content": row.appeal_text}
+                        letter_quality.with_score_fields(
+                            {"id": str(row.id), "content": row.appeal_text}, row
+                        )
                     )
                     yield await format_response(row_dict)
                     served_keys.add(_served_key(normalized))
@@ -4361,6 +4564,8 @@ class AppealsBackendHelper:
                     await database_sync_to_async(close_old_connections)()
                     await database_sync_to_async(_insert_fenced)()
                 id = str(pa.id)
+                if scoring_active and letter_quality.needs_scoring(pa):
+                    _start_scoring(id, appeal_text)
             except generation_lease.LeaseSuperseded as e:
                 # Superseded by a newer steal: the draft is NOT persisted and
                 # goes out flagged as unsaved (the existing contract for a
@@ -4751,6 +4956,8 @@ class AppealsBackendHelper:
             else:
                 logger.debug("Sending keep alive....")
             yield i
+            for score_json in _finished_score_frames():
+                yield score_json
             if superseded:
                 # A newer run owns this denial now (a second tab, a reconnect
                 # replacing this socket, a retry through a proxy): stop
@@ -4768,6 +4975,12 @@ class AppealsBackendHelper:
             # minutes still gets the reserve at the deadline.
             async for _spec in serve_reserve_if_stalled():
                 yield _spec
+        # Scores still in flight get a bounded wait so the client can rank
+        # before the done frame; a superseded run only collects what finished.
+        for score_json in await _drain_score_frames(
+            0.0 if superseded else letter_quality.DRAIN_SECONDS
+        ):
+            yield score_json
         logger.debug(
             f"Normal appeals sent {new} and {old} "
             f"(runt_count={runts}, dupe_count={dupes})"
@@ -4984,7 +5197,13 @@ class AppealsBackendHelper:
                     ).aupdate(speculative=False):
                         continue
                     row.speculative = False
-                row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
+                if scoring_active and letter_quality.needs_scoring(row):
+                    _start_scoring(str(row.id), text)
+                row_dict = await sub_in_appeals(
+                    letter_quality.with_score_fields(
+                        {"id": str(row.id), "content": text}, row
+                    )
+                )
                 yield await format_response(row_dict)
                 served_keys.add(_served_key(normalized))
                 new += 1
@@ -5091,6 +5310,14 @@ class AppealsBackendHelper:
         # (The form_completed intake event is recorded and delivered at the
         # START of generation, above; the generation lease is what keeps the
         # journey's child from racing this run, not signal timing.)
+
+        # Synthesis and the reconciliation above save drafts after the first
+        # drain, so drain once more, bounded, right before done: a score that
+        # arrives after this frame is telemetry only.
+        for score_json in await _drain_score_frames(
+            0.0 if superseded else letter_quality.DRAIN_SECONDS
+        ):
+            yield score_json
 
         # Explicit end-of-stream so the client knows exactly what was sent.
         # Carries the correlation id + generating-phase instrumentation so a

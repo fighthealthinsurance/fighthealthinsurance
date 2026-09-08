@@ -22,6 +22,14 @@ class FightHealthInsuranceConfig(AppConfig):
 
         register_intake_outbox_collector()
 
+        # Draft quality per backend from ml/letter_quality.py, same shape:
+        # DB read at scrape time, degrades to a log line before migration.
+        from fighthealthinsurance.letter_quality_metrics import (
+            register_letter_quality_collector,
+        )
+
+        register_letter_quality_collector()
+
         # Soft-fail visibility for IP geo lookups (chat state guessing +
         # ASN tracking): warn once, naming FHI_GEOIP_CITY_DB, when they are
         # disabled — otherwise the features silently return nothing.
