@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.utils import timezone
 from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
@@ -84,7 +85,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_icd10_codes,
     extract_procedure_codes,
 )
-from fighthealthinsurance.ml import letter_quality
+from fighthealthinsurance.ml import denial_triage, letter_quality
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
@@ -1134,9 +1135,57 @@ class FindNextStepsHelper:
             changed_fields.add("state")
         if denial_date is not None:
             denial.denial_date = denial_date
-            changed_fields.add("denial_date")
             if "denial date" not in existing_answers:
                 existing_answers["denial date"] = str(denial_date)
+            # The date goes on the row now, by its own statement, and is NOT
+            # part of the final save below. The triage resolves its window
+            # against the date it reads from the row and writes conditionally
+            # on that date; while the corrected date lived only in memory
+            # here, a triage in flight could read the old one, pass its
+            # predicate, and land a deadline anchored to it after the refresh
+            # below had found nothing to reconcile. And two overlapping
+            # submissions could have the first one's final save restore its
+            # older date under a deadline computed from the second's (review).
+            # Written once, here, the date and the deadline only ever change
+            # together with the predicate that keeps them consistent.
+            Denial.objects.filter(denial_id=denial.denial_id).update(
+                denial_date=denial_date
+            )
+            # Triage usually runs before the user confirms the denial date, so
+            # a window like "180 days from notice" was stored unresolved; and
+            # a corrected date moves the deadline with it. Only an anchored
+            # window follows the date (an absolute date the model chose does
+            # not), and only a triage of the CURRENT letter counts.
+            # The triage may have landed after this instance was loaded.
+            denial.refresh_from_db(
+                fields=[
+                    "appeal_deadline_label",
+                    "appeal_deadline",
+                    "triage_text_hash",
+                    "triage_source",
+                    "denial_text",
+                ]
+            )
+            if denial_triage.is_anchored_window(
+                denial.appeal_deadline_label
+            ) and denial_triage.is_current(denial):
+                resolved = denial_triage.resolve_window(
+                    denial.appeal_deadline_label, denial_date
+                )
+                if resolved != denial.appeal_deadline:
+                    # Conditional, like the triage's own write: only while
+                    # the row still carries this date, this letter's triage
+                    # AND the window we resolved (a second triage of the
+                    # same letter can land a different window in between).
+                    # A newer submission or a newer triage wins by making
+                    # the predicate fail (review).
+                    Denial.objects.filter(
+                        denial_id=denial.denial_id,
+                        denial_date=denial_date,
+                        triage_text_hash=denial.triage_text_hash,
+                        appeal_deadline_label=denial.appeal_deadline_label,
+                    ).update(appeal_deadline=resolved)
+                    denial.appeal_deadline = resolved
         if date_of_service is not None:
             denial.date_of_service = date_of_service
             changed_fields.add("date_of_service")
@@ -1483,11 +1532,17 @@ class DenialCreatorHelper:
         deleted, _ = ProposedAppeal.objects.filter(
             for_denial=denial, speculative=True
         ).delete()
+        # The triage was computed from the OLD letter; every column of it goes
+        # back to null so nothing downstream can read letter A's deadline
+        # against letter B.
+        cleared = denial_triage.cleared_values()
         Denial.objects.filter(denial_id=denial.denial_id).update(
-            denial_text_summary=None, candidate_denial_text_summary=None
+            denial_text_summary=None, candidate_denial_text_summary=None, **cleared
         )
         denial.denial_text_summary = None
         denial.candidate_denial_text_summary = None
+        for column, value in cleared.items():
+            setattr(denial, column, value)
         logger.info(
             f"Denial {denial.denial_id} text replaced; invalidated "
             f"{deleted} held-back speculative appeal(s) and both cached "
@@ -1786,6 +1841,15 @@ class DenialCreatorHelper:
                 logger.opt(exception=True).warning(
                     f"extract_set_regulator failed for denial {denial_id}"
                 )
+            # Triage is idempotent on the text hash, so retrying it here is
+            # free when it already ran, and it is the only retry a timed-out
+            # first attempt gets (a reconnect lands on this branch).
+            try:
+                await cls.extract_set_triage(denial_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"extract_set_triage failed for denial {denial_id}"
+                )
             return
         # Bound persistent extraction failures: extract_entity runs once per
         # WebSocket connection (websockets.StreamingEntityBackend.receive)
@@ -1812,6 +1876,15 @@ class DenialCreatorHelper:
                 logger.opt(exception=True).warning(
                     f"extract_set_regulator failed for denial {denial_id}"
                 )
+            # Same for triage: no LLM of ours in the loop, idempotent on the
+            # text hash, and this branch is the only retry it would get.
+            try:
+                await cls.extract_set_triage(denial_id)
+                yield "triage"
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"extract_set_triage failed for denial {denial_id}"
+                )
             yield "Extraction complete"
             return
 
@@ -1837,6 +1910,7 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_claim_id(denial_id), "claim id"),
             named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
             named_task(cls.extract_set_regulator(denial_id), "regulator"),
+            named_task(cls.extract_set_triage(denial_id), "triage"),
             named_task(
                 MLPlanDocHelper.generate_plan_documents_summary(denial_id),
                 "plan document summary",
@@ -2673,6 +2747,55 @@ class DenialCreatorHelper:
                 .afirst()
             )
         return None
+
+    @classmethod
+    async def extract_set_triage(cls, denial_id):
+        """Triage the denial with TypeSafe (ml/denial_triage.py) and store it.
+
+        Optional and fire-and-forget like the other extractors: a missing
+        key, a declined external-model consent, a timeout or a malformed
+        answer all leave the denial untriaged, never un-created. Idempotent
+        on the text hash, so a retry after the letter was triaged is free.
+        """
+        if not denial_triage.enabled():
+            return
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        if not denial.use_external:
+            return
+        if denial_triage.is_current(denial):
+            return
+        text = denial.denial_text
+        result = await denial_triage.triage(text, denial.denial_date)
+        if result is None:
+            return
+        values = denial_triage.row_values(result, timezone.now(), text)
+        # An anchored window is always resolved against the date on the row
+        # at WRITE time, and the write is conditional on that date (and on
+        # the letter and the consent) still being what we resolved against;
+        # a date corrected mid-call fails the predicate and we go round once
+        # more with the fresh date.
+        for _attempt in range(2):
+            latest_date = (
+                await Denial.objects.filter(denial_id=denial_id)
+                .values_list("denial_date", flat=True)
+                .afirst()
+            )
+            if denial_triage.is_anchored_window(values["appeal_deadline_label"]):
+                values["appeal_deadline"] = denial_triage.resolve_window(
+                    values["appeal_deadline_label"], latest_date
+                )
+            updated = await Denial.objects.filter(
+                denial_id=denial_id,
+                denial_text=text,
+                use_external=True,
+                denial_date=latest_date,
+            ).aupdate(**values)
+            if updated:
+                return
+        logger.info(
+            f"denial triage for {denial_id} discarded: letter, consent or date "
+            "changed while it was in flight"
+        )
 
     @classmethod
     async def extract_set_regulator(cls, denial_id):

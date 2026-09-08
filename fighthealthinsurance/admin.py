@@ -170,6 +170,86 @@ class PatientUserAdmin(admin.ModelAdmin):
 class DenialAdmin(admin.ModelAdmin):
     """Admin configuration for Denial model."""
 
+    # Triage is machine-written and only meaningful for the letter it was
+    # computed from (ml/denial_triage.is_current), so the raw columns are
+    # kept out of the change form entirely (nobody edits a model's answer by
+    # hand) and staff see one read-only, current-gated summary instead; a
+    # result that landed for a replaced letter reads as blank, never as
+    # letter B's.
+    exclude = tuple(
+        column
+        for column in (
+            "triage_category",
+            "triage_category_confidence",
+            "triage_regulation",
+            "triage_regulation_confidence",
+            "triage_pre_service",
+            "triage_urgent",
+            "appeal_deadline",
+            "appeal_deadline_label",
+            "appeal_deadline_confidence",
+            "triage_source",
+            "triage_text_hash",
+            "triaged_at",
+        )
+    )
+    readonly_fields = ("triage_summary",)
+
+    def save_model(self, request, obj, form, change):  # type: ignore[override]
+        # The triage columns are not on the form, but denial_date is, and an
+        # anchored window ("180 days from notice") is counted from it: keep
+        # the resolved date in step with the edited one, for a current
+        # triage only (same rule as FindNextStepsHelper.find_next_steps).
+        from fighthealthinsurance.ml import denial_triage
+
+        if (
+            change
+            and denial_triage.is_anchored_window(obj.appeal_deadline_label)
+            and denial_triage.is_current(obj)
+        ):
+            obj.appeal_deadline = denial_triage.resolve_window(
+                obj.appeal_deadline_label, obj.denial_date
+            )
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description="Triage (TypeSafe, current letter only)")
+    def triage_summary(self, obj: Denial) -> str:
+        from fighthealthinsurance.ml import denial_triage
+
+        if not denial_triage.is_current(obj):
+            return ""
+        parts = [
+            f"category={obj.triage_category} ({(obj.triage_category_confidence or 0):.2f})",
+            f"regulation={obj.triage_regulation} ({(obj.triage_regulation_confidence or 0):.2f})",
+            f"pre_service={(obj.triage_pre_service or 0):.2f}",
+            f"urgent={(obj.triage_urgent or 0):.2f}",
+            f"deadline={self.appeal_deadline_current(obj) or 'none'}",
+            f"triaged_at={obj.triaged_at:%Y-%m-%d %H:%M}" if obj.triaged_at else "",
+        ]
+        return "; ".join(part for part in parts if part)
+
+    @admin.display(description="Triage category")
+    def triage_category_current(self, obj: Denial) -> str:
+        from fighthealthinsurance.ml import denial_triage
+
+        if not denial_triage.is_current(obj):
+            return ""
+        return obj.triage_category or ""
+
+    @admin.display(description="Appeal deadline (triage)")
+    def appeal_deadline_current(self, obj: Denial) -> str:
+        from fighthealthinsurance.ml import denial_triage
+
+        if not denial_triage.is_current(obj) or not obj.appeal_deadline_label:
+            return ""
+        when = obj.appeal_deadline.isoformat() if obj.appeal_deadline else "unresolved"
+        confidence = (
+            f"{obj.appeal_deadline_confidence:.2f}"
+            if obj.appeal_deadline_confidence is not None
+            else "?"
+        )
+        return f"{when} ({obj.appeal_deadline_label}, conf {confidence})"
+
     list_display = (
         "denial_id",
         "date",
@@ -179,6 +259,8 @@ class DenialAdmin(admin.ModelAdmin):
         "patient_visible",
         "appeal_result",
         "referral_source",
+        "triage_category_current",
+        "appeal_deadline_current",
     )
     search_fields = (
         "raw_email",

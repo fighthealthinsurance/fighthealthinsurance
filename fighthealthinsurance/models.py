@@ -2343,6 +2343,26 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
     use_external = models.BooleanField(default=True)
+    # Triage from ml/denial_triage.py (TypeSafe System One): the stated denial
+    # reason, the kind of plan, pre-service and urgency probabilities, and the
+    # appeal deadline the letter names. Every value carries the model's
+    # confidence and consumers threshold on it; nothing here is shown to a
+    # reader as fact. Null until triaged; triage only runs with the user's
+    # external-model consent (use_external) and fails closed.
+    triage_category = models.CharField(max_length=40, null=True, blank=True)
+    triage_category_confidence = models.FloatField(null=True, blank=True)
+    triage_regulation = models.CharField(max_length=24, null=True, blank=True)
+    triage_regulation_confidence = models.FloatField(null=True, blank=True)
+    triage_pre_service = models.FloatField(null=True, blank=True)
+    triage_urgent = models.FloatField(null=True, blank=True)
+    appeal_deadline = models.DateField(null=True, blank=True)
+    appeal_deadline_label = models.CharField(max_length=32, null=True, blank=True)
+    appeal_deadline_confidence = models.FloatField(null=True, blank=True)
+    triage_source = models.CharField(max_length=80, null=True, blank=True)
+    # Hash of the denial text the triage was computed from: a result that
+    # lands after the letter was replaced is recognisable as stale.
+    triage_text_hash = models.CharField(max_length=16, null=True, blank=True)
+    triaged_at = models.DateTimeField(null=True, blank=True)
     health_history = models.TextField(null=True, blank=True)
     qa_context = models.TextField(null=True, blank=True)
     plan_context = models.TextField(null=True, blank=True)
