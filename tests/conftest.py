@@ -52,19 +52,49 @@ def _has_ssl_intercepting_proxy() -> bool:
         return True
 
 
-# Only probe when Stripe is actually configured. The E2E tests gated on this
-# need STRIPE_TEST_SECRET_KEY and can't run without it, so when it's unset we
-# skip them without paying ~5s for a network probe to api.stripe.com whose
-# result can't change the outcome (pure waste in firewalled CI that never
-# configures Stripe).
-_skip_stripe_ssl = (
-    _has_ssl_intercepting_proxy() if os.environ.get("STRIPE_TEST_SECRET_KEY") else True
-)
+# The Stripe end-to-end tests need STRIPE_TEST_SECRET_KEY and a reachable
+# api.stripe.com. Deciding that used to happen HERE, at import, with a real
+# HTTPS request whenever the key was in the environment: running any test at
+# all from a shell that happened to hold the key contacted Stripe before a
+# single test ran (review; the hermeticity rule in AGENTS.md). The decision is
+# now made lazily, once per process, the first time a test carrying the marker
+# is about to run. A test that never touches Stripe never triggers it.
+STRIPE_E2E_MARKER = "stripe_e2e"
+skip_if_stripe_ssl_blocked = pytest.mark.stripe_e2e
 
-skip_if_stripe_ssl_blocked = pytest.mark.skipif(
-    _skip_stripe_ssl,
-    reason="Stripe not configured (STRIPE_TEST_SECRET_KEY unset) or SSL-intercepting proxy blocks api.stripe.com",
-)
+_stripe_e2e_decided = False
+_stripe_e2e_skip_reason: str | None = None
+
+
+def _stripe_e2e_skip_reason_lazy() -> str | None:
+    """Why a Stripe E2E test should be skipped, or None to run it. Decided once."""
+    global _stripe_e2e_decided, _stripe_e2e_skip_reason
+    if not _stripe_e2e_decided:
+        if not os.environ.get("STRIPE_TEST_SECRET_KEY"):
+            _stripe_e2e_skip_reason = "Stripe not configured (STRIPE_TEST_SECRET_KEY unset)"
+        elif _has_ssl_intercepting_proxy():
+            _stripe_e2e_skip_reason = "SSL-intercepting proxy blocks api.stripe.com"
+        else:
+            _stripe_e2e_skip_reason = None
+        _stripe_e2e_decided = True
+    return _stripe_e2e_skip_reason
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        f"{STRIPE_E2E_MARKER}: end-to-end test against the live Stripe test API; "
+        "skipped unless STRIPE_TEST_SECRET_KEY is set and api.stripe.com is "
+        "reachable, decided lazily the first time such a test is about to run",
+    )
+
+
+def pytest_runtest_setup(item):
+    if item.get_closest_marker(STRIPE_E2E_MARKER) is None:
+        return
+    reason = _stripe_e2e_skip_reason_lazy()
+    if reason:
+        pytest.skip(reason)
 
 skip_if_no_pandoc = pytest.mark.skipif(
     shutil.which("pandoc") is None,
