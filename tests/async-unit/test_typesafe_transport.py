@@ -1,8 +1,9 @@
 """ml/typesafe.py: the shared TypeSafe transport.
 
 The request carries the API key and the redacted document, so it only ever
-goes over https; the body of a failed response is never read, because an
-error body could quote the document back.
+goes over https and never follows a redirect. The one thing a caller may
+learn from a failed call is the HTTP status: the body is never read, because
+an error body could quote the document back.
 """
 
 import asyncio
@@ -21,6 +22,7 @@ SETTINGS = dict(
 class _FakeResponse:
     def __init__(self, status):
         self.status = status
+        self.json_calls = 0
 
     async def __aenter__(self):
         return self
@@ -29,6 +31,7 @@ class _FakeResponse:
         return False
 
     async def json(self):
+        self.json_calls += 1
         return {"answers": {}}
 
 
@@ -39,6 +42,7 @@ class _FakeSession:
         self.response = _FakeResponse(status)
         self.posted = []
         self.opened = 0
+        self.post_kwargs = {}
 
     def __call__(self, *args, **kwargs):
         self.opened += 1
@@ -89,9 +93,18 @@ def test_https_in_any_case_is_accepted_and_the_json_comes_back():
     assert body["document"] == "doc"
 
 
-def test_a_non_200_raises():
-    with pytest.raises(typesafe.TypeSafeError, match="HTTP 503"):
-        _ask(_FakeSession(503))
+def test_a_non_200_raises_with_the_status_attached():
+    with pytest.raises(typesafe.TypeSafeError) as info:
+        _ask(_FakeSession(402))
+    assert info.value.status == 402
+    assert str(info.value) == "HTTP 402"
+
+
+def test_the_body_is_never_read_on_a_failure():
+    session = _FakeSession(503)
+    with pytest.raises(typesafe.TypeSafeError):
+        _ask(session)
+    assert session.response.json_calls == 0
 
 
 def test_redirects_are_never_followed():
@@ -101,3 +114,7 @@ def test_redirects_are_never_followed():
     with pytest.raises(typesafe.TypeSafeError, match="HTTP 307"):
         _ask(session)
     assert session.post_kwargs.get("allow_redirects") is False
+
+
+def test_the_status_is_optional_on_the_error():
+    assert typesafe.TypeSafeError("bad answer").status is None

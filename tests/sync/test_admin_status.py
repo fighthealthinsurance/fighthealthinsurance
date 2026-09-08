@@ -14,7 +14,12 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance.models import FaxesToSend
+from fighthealthinsurance.models import (
+    Denial,
+    ExternalServiceHealth,
+    FaxesToSend,
+    ProposedAppeal,
+)
 
 User = get_user_model()
 
@@ -93,6 +98,7 @@ class AdminStatusAccessTest(TestCase):
         self.assertContains(response, "Fax Backends")
         self.assertContains(response, "Fax Queue")
         self.assertContains(response, "External Storage")
+        self.assertContains(response, "Letter scoring")
         # Surfaced details from the mocked subsystems.
         self.assertContains(response, "fhi-2025")
         self.assertContains(response, "fax_polling_actor")
@@ -447,6 +453,229 @@ class AdminStatusStorageTest(TestCase):
         self.assertFalse(status["ok"])
         self.assertIn(missing, status["error"])
         self.assertEqual(status["location"], missing)
+
+
+_SCORING_ON = dict(TYPESAFE_API_KEY="test-key", TYPESAFE_LETTER_RANKING_ENABLED=True)
+
+
+class AdminStatusLetterScoringTest(TestCase):
+    """_letter_scoring_status: on or off, scoring or not, and if not, why.
+
+    Built on the database (draft rows and the ExternalServiceHealth row), not
+    on this process's counters: the page is served by whichever web pod the
+    browser is pinned to, and the Temporal worker scores drafts too.
+    """
+
+    @staticmethod
+    def _status():
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        return AdminStatusView._letter_scoring_status()
+
+    @staticmethod
+    def _denial(use_external=True):
+        return Denial.objects.create(
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email("scoring-status@example.com"),
+            use_external=use_external,
+        )
+
+    _drafts_made = 0
+
+    @classmethod
+    def _draft(cls, denial, *, minutes_ago=5, speculative=False, scored=False, now=None):
+        # Distinct text per row: (denial, text fingerprint) is unique.
+        cls._drafts_made += 1
+        row = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=f"Draft number {cls._drafts_made}, long enough to read as a letter.",
+            speculative=speculative,
+        )
+        stamp = (now or timezone.now()) - datetime.timedelta(minutes=minutes_ago)
+        fields = {"created_at": stamp}
+        if scored:
+            fields.update(
+                quality_score=0.8,
+                grounding_score=2.0,
+                quality_scorer="typesafe/speed_latest/rubric-1",
+                quality_scored_at=stamp,
+            )
+        # auto_now_add wins on create, so the clock is set afterwards.
+        ProposedAppeal.objects.filter(pk=row.pk).update(**fields)
+        return row
+
+    @staticmethod
+    def _health(**fields):
+        return ExternalServiceHealth.objects.create(service="typesafe", **fields)
+
+    def test_off_under_the_test_settings(self):
+        status = self._status()
+        self.assertTrue(status["ok"])
+        self.assertIsNone(status["error"])
+        self.assertEqual(status["level"], "off")
+        self.assertFalse(status["key_present"])
+        self.assertFalse(status["flag_on"])
+
+    def test_a_key_without_the_flag_is_off_and_says_which_half_is_missing(self):
+        with override_settings(TYPESAFE_API_KEY="k", TYPESAFE_LETTER_RANKING_ENABLED=False):
+            status = self._status()
+        self.assertEqual(status["level"], "off")
+        self.assertTrue(status["key_present"])
+        self.assertFalse(status["flag_on"])
+
+    def test_scoring_when_a_draft_was_scored_in_the_window(self):
+        self._draft(self._denial(), scored=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "scoring")
+        self.assertEqual(status["scored"], 1)
+        self.assertEqual(status["unscored"], 0)
+
+    def test_a_scored_draft_that_was_never_eligible_does_not_count(self):
+        """Speculative or unconsented drafts are outside both counts, so a
+        score on one of them cannot read as SCORING by itself (review)."""
+        self._draft(self._denial(), speculative=True, scored=True)
+        self._draft(self._denial(use_external=False), scored=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["scored"], 0)
+        self.assertEqual(status["level"], "idle")
+
+    def test_not_scoring_when_eligible_drafts_have_no_score(self):
+        self._draft(self._denial())
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "not_scoring")
+        self.assertEqual(status["unscored"], 1)
+
+    def test_drafts_that_were_never_eligible_do_not_count_as_unscored(self):
+        """Still in flight (younger than the drain window), speculative, or
+        from a denial that did not allow external models."""
+        # The clock is frozen for the helper: the in-flight draft is five
+        # seconds old at the instant the page reads it, however long the
+        # test takes to get there (review).
+        frozen = timezone.now()
+        denial = self._denial()
+        ProposedAppeal.objects.filter(pk=self._draft(denial, now=frozen).pk).update(
+            created_at=frozen - datetime.timedelta(seconds=5)
+        )
+        self._draft(denial, speculative=True, now=frozen)
+        self._draft(self._denial(use_external=False), now=frozen)
+        with override_settings(**_SCORING_ON), mock.patch(
+            "django.utils.timezone.now", return_value=frozen
+        ):
+            status = self._status()
+        self.assertEqual(status["unscored"], 0)
+        self.assertEqual(status["level"], "idle")
+
+    def test_unscored_drafts_newer_than_the_last_score_mean_not_scoring(self):
+        """One score in the morning must not keep the badge green all day
+        after scoring silently stopped (review)."""
+        now = timezone.now()
+        self._health(last_success_at=now - datetime.timedelta(hours=2))
+        denial = self._denial()
+        self._draft(denial, minutes_ago=120, scored=True)
+        self._draft(denial, minutes_ago=5)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["scored"], 1)
+        self.assertEqual(status["stalled"], 1)
+        self.assertEqual(status["level"], "not_scoring")
+
+    def test_unscored_drafts_older_than_the_last_score_do_not_stall(self):
+        """A miss followed by a success is scoring again."""
+        now = timezone.now()
+        self._health(last_success_at=now - datetime.timedelta(minutes=1))
+        denial = self._denial()
+        self._draft(denial, minutes_ago=30)
+        self._draft(denial, minutes_ago=1, scored=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["unscored"], 1)
+        self.assertEqual(status["stalled"], 0)
+        self.assertEqual(status["level"], "scoring")
+
+    def test_a_score_outside_the_window_does_not_count(self):
+        self._draft(self._denial(), minutes_ago=25 * 60, scored=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["scored"], 0)
+        self.assertEqual(status["level"], "idle")
+
+    def test_failing_when_the_last_failure_is_newer_than_the_last_success(self):
+        now = timezone.now()
+        self._health(
+            last_success_at=now - datetime.timedelta(hours=1),
+            last_failure_at=now - datetime.timedelta(minutes=2),
+            last_failure="HTTP 402",
+        )
+        # Even with a score in the window: the freshest signal wins.
+        self._draft(self._denial(), scored=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "failing")
+        self.assertEqual(status["last_failure"], "HTTP 402")
+        self.assertIn("credits", status["last_failure_hint"])
+        self.assertFalse(status["recovered"])
+
+    def test_a_failure_followed_by_a_success_reads_as_recovered(self):
+        now = timezone.now()
+        self._health(
+            last_success_at=now - datetime.timedelta(minutes=1),
+            last_failure_at=now - datetime.timedelta(minutes=30),
+            last_failure="HTTP 503",
+        )
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertNotEqual(status["level"], "failing")
+        self.assertTrue(status["recovered"])
+        self.assertIn("server error", status["last_failure_hint"])
+
+    def test_an_old_failure_does_not_fail_the_row_forever(self):
+        self._health(
+            last_failure_at=timezone.now() - datetime.timedelta(days=3),
+            last_failure="timeout",
+        )
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "idle")
+
+    def test_the_helper_degrades_to_an_error_row_instead_of_raising(self):
+        with mock.patch.object(
+            ProposedAppeal.objects, "filter", side_effect=RuntimeError("db down")
+        ):
+            status = self._status()
+        self.assertFalse(status["ok"])
+        self.assertEqual(status["error"], "db down")
+
+    def test_the_page_names_the_failure_and_what_it_means(self):
+        self._health(
+            last_failure_at=timezone.now() - datetime.timedelta(minutes=2),
+            last_failure="HTTP 402",
+        )
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        with override_settings(**_SCORING_ON), mock.patch(_MODELS, return_value=[]), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            response = self.client.get(reverse("admin_status"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "FAILING")
+        self.assertContains(response, "HTTP 402")
+        self.assertContains(response, "credits or billing")
+        self.assertNotContains(response, "test-key")
+
+    def test_the_page_counts_drafts_stalled_since_the_last_score(self):
+        self._health(last_success_at=timezone.now() - datetime.timedelta(hours=1))
+        self._draft(self._denial(), minutes_ago=5)
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        with override_settings(**_SCORING_ON), mock.patch(_MODELS, return_value=[]), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            response = self.client.get(reverse("admin_status"))
+        self.assertContains(response, "NOT SCORING")
+        self.assertContains(response, "1 eligible draft since the last score, none scored")
 
 
 class ComputeModelHealthDetailsTest(TestCase):

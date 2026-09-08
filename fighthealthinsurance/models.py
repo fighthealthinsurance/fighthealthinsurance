@@ -4053,6 +4053,85 @@ class ModelHealthAlertState(models.Model):
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
 
 
+class ExternalServiceHealth(models.Model):
+    """Last outcome of calls to one external service, shared across pods.
+
+    One row per service. The web pods and the Temporal worker each make
+    their own calls, and the staff status page is served by whichever pod
+    the browser is pinned to, so a process-local "last failure" would be
+    blind to most of the traffic. The call site writes here on success and
+    on failure; the status page reads it.
+
+    ``last_failure`` is a short allowlisted summary (an HTTP status,
+    "timeout", or an exception class name), never a response body, a URL,
+    or anything from the document that was sent.
+    """
+
+    service = models.CharField(max_length=64, unique=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_failure = models.CharField(max_length=80, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    async def _advance(cls, service: str, field: str, now, values: dict) -> None:
+        """Forward-only write of ``values`` (which set ``field`` to ``now``).
+
+        Calls overlap (several drafts score at once, on several pods), so a
+        slow write from an older call must not land on top of a newer
+        outcome and fake a recovery (review). A conditional UPDATE moves the
+        column only when it is empty or older; aget_or_create covers the
+        first-ever row; and if the row appeared between those two statements
+        (another pod's first write), the conditional UPDATE runs once more
+        against it, so the newer outcome still wins (review).
+        """
+        older = models.Q(**{f"{field}__isnull": True}) | models.Q(
+            **{f"{field}__lt": now}
+        )
+        if await cls.objects.filter(models.Q(service=service) & older).aupdate(
+            **values
+        ):
+            return
+        _, created = await cls.objects.aget_or_create(service=service, defaults=values)
+        if created:
+            return
+        await cls.objects.filter(models.Q(service=service) & older).aupdate(**values)
+
+    @classmethod
+    async def anote_success(cls, service: str) -> None:
+        """Best effort: a health record must never break the call it watches."""
+        try:
+            now = timezone.now()
+            await cls._advance(
+                service, "last_success_at", now, {"last_success_at": now}
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"could not record a success for external service {service}"
+            )
+
+    @classmethod
+    async def anote_failure(cls, service: str, summary: str) -> None:
+        """Best effort and forward-only, see anote_success. ``summary`` must
+        already be allowlisted by the caller; it is stored as given, cut to
+        the column, and travels with its timestamp in one statement."""
+        try:
+            now = timezone.now()
+            await cls._advance(
+                service,
+                "last_failure_at",
+                now,
+                {"last_failure_at": now, "last_failure": (summary or "")[:80]},
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"could not record a failure for external service {service}"
+            )
+
+    def __str__(self) -> str:
+        return f"ExternalServiceHealth<{self.service}>"
+
+
 class ModelBackendHealthCheckResult(models.Model):
     """One row per model backend per health-check run.
 

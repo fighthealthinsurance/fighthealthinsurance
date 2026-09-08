@@ -173,6 +173,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["temporal"] = self._temporal_status()
         ctx["fax_outcomes"] = self._fax_outcome_status()
         ctx["intake_funnel"] = self._intake_funnel_status()
+        ctx["letter_scoring"] = self._letter_scoring_status()
         ctx["storage"] = self._storage_status()
         return ctx
 
@@ -541,6 +542,131 @@ class AdminStatusView(generic.TemplateView):
             logger.opt(exception=True).warning("Temporal status check failed")
             out["ok"] = False
             out["error"] = AdminStatusView._temporal_error_message(e)
+        return out
+
+    @staticmethod
+    def _scoring_failure_hint(summary: str) -> str:
+        """What a recorded scoring failure most likely means, for on-call."""
+        if summary == "HTTP 402":
+            return "payment required: TypeSafe credits or billing"
+        if summary in ("HTTP 401", "HTTP 403"):
+            return "the API key was rejected"
+        if summary == "HTTP 429":
+            return "rate limited"
+        if summary.startswith("HTTP 5"):
+            return "TypeSafe server error"
+        if summary == "timeout":
+            return "no answer within TYPESAFE_TIMEOUT_SECONDS"
+        return ""
+
+    @staticmethod
+    def _letter_scoring_status() -> Dict[str, Any]:
+        """TypeSafe draft scoring (last 24h): on or off, scoring or not, and
+        if not, why. Counts and a short failure summary only, no letter text.
+
+        Built from the database, not from this process's counters: the page
+        is served by whichever web pod the browser is pinned to, and the
+        Temporal worker scores drafts too. The scoring call site keeps one
+        ExternalServiceHealth row current; the draft rows give the counts.
+        """
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "level": "off",
+            "key_present": False,
+            "flag_on": False,
+            "timeout_seconds": None,
+            "window_hours": 24,
+            "scored": 0,
+            "unscored": 0,
+            "stalled": 0,
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_failure": "",
+            "last_failure_hint": "",
+            "recovered": False,
+        }
+        try:
+            from django.conf import settings
+
+            from fighthealthinsurance.letter_quality_metrics import WINDOW
+            from fighthealthinsurance.models import ExternalServiceHealth
+
+            out["key_present"] = bool(getattr(settings, "TYPESAFE_API_KEY", None))
+            out["flag_on"] = bool(
+                getattr(settings, "TYPESAFE_LETTER_RANKING_ENABLED", False)
+            )
+            out["timeout_seconds"] = getattr(settings, "TYPESAFE_TIMEOUT_SECONDS", None)
+            out["window_hours"] = int(WINDOW.total_seconds() // 3600)
+
+            now = timezone.now()
+            since = now - WINDOW
+            # The same eligibility as the unscored count below, so the two
+            # numbers describe one population and a scored draft that is
+            # speculative or unconsented cannot make the level SCORING by
+            # itself (review).
+            out["scored"] = ProposedAppeal.objects.filter(
+                quality_scored_at__gte=since,
+                speculative=False,
+                for_denial__use_external=True,
+            ).count()
+            # Drafts that should have been scored and were not: consented,
+            # real (not speculative), old enough that a score in flight would
+            # have landed, and still without one.
+            settled = now - datetime.timedelta(seconds=letter_quality.DRAIN_SECONDS)
+            eligible_unscored = ProposedAppeal.objects.filter(
+                created_at__gte=since,
+                created_at__lt=settled,
+                speculative=False,
+                for_denial__use_external=True,
+                quality_score__isnull=True,
+            )
+            out["unscored"] = eligible_unscored.count()
+
+            health = ExternalServiceHealth.objects.filter(
+                service=letter_quality.SERVICE
+            ).first()
+            success_at = health.last_success_at if health else None
+            failure_at = health.last_failure_at if health else None
+            out["last_success_at"] = success_at
+            out["last_failure_at"] = failure_at
+            out["last_failure"] = health.last_failure if health else ""
+            out["last_failure_hint"] = AdminStatusView._scoring_failure_hint(
+                out["last_failure"]
+            )
+            out["recovered"] = bool(
+                failure_at and success_at and success_at > failure_at
+            )
+            fresh_failure = bool(
+                failure_at
+                and failure_at >= since
+                and (success_at is None or failure_at > success_at)
+            )
+            # Eligible drafts newer than the last recorded success that never
+            # got a score: scoring stopped in a way the failure hook cannot
+            # see (it never ran), and one older score must not keep the badge
+            # green all day (review).
+            stalled = eligible_unscored
+            if success_at is not None:
+                stalled = stalled.filter(created_at__gt=success_at)
+            out["stalled"] = stalled.count()
+
+            if not letter_quality.enabled():
+                out["level"] = "off"
+            elif fresh_failure:
+                out["level"] = "failing"
+            elif out["stalled"]:
+                out["level"] = "not_scoring"
+            elif out["scored"]:
+                out["level"] = "scoring"
+            elif out["unscored"]:
+                out["level"] = "not_scoring"
+            else:
+                out["level"] = "idle"
+        except Exception as e:
+            logger.opt(exception=True).warning("Letter scoring health check failed")
+            out["ok"] = False
+            out["error"] = str(e)
         return out
 
     @staticmethod
