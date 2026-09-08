@@ -23,7 +23,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@emotion/react": "^11.14.0",
-    "@huggingface/transformers": "4.0.0-next.5",
+    "@huggingface/transformers": "^4.2.0",
     "@mantine/core": "^8.0.1",
     "@mantine/hooks": "^8.0.1",
     "@mdx-js/loader": "^3.1.1",
