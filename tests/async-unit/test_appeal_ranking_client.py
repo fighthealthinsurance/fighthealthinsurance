@@ -24,8 +24,15 @@ SRC = (
 
 
 def _fn(name: str) -> str:
+    """The declaration and brace-matched body of ``name``, nothing after it.
+
+    Slicing to the next top-level declaration used to carry ninety lines of
+    module state along with applyRanking, so an assertion naming it could
+    pass on text outside it (review).
+    """
     start = SRC.index(f"function {name}(")
-    return SRC[start : SRC.index("\nfunction ", start + 10)]
+    open_at = SRC.index("{", start)
+    return SRC[start:open_at] + _brace_block(SRC, open_at)
 
 
 def test_score_frames_are_handled_before_the_no_content_skip():
