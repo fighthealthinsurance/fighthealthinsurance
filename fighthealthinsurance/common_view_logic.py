@@ -1138,6 +1138,17 @@ class FindNextStepsHelper:
             changed_fields.add("denial_date")
             if "denial date" not in existing_answers:
                 existing_answers["denial date"] = str(denial_date)
+            # The date goes on the row BEFORE the triage is looked at. The
+            # triage resolves its window against the date it reads from the
+            # row and writes conditionally on that date; while the corrected
+            # date lived only in memory here, a triage in flight could read
+            # the old one, pass its predicate, and land a deadline anchored
+            # to it after the refresh below had found nothing to reconcile
+            # (review). With the new date already on the row, that write
+            # fails and the triage goes round again with the right date.
+            Denial.objects.filter(denial_id=denial.denial_id).update(
+                denial_date=denial_date
+            )
             # Triage usually runs before the user confirms the denial date, so
             # a window like "180 days from notice" was stored unresolved; and
             # a corrected date moves the deadline with it. Only an anchored

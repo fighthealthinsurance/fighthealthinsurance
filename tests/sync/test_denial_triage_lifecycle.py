@@ -2,8 +2,10 @@
 date arrives, and the whole thing is cleared when the letter is replaced."""
 
 import datetime
+from unittest.mock import AsyncMock, patch
 
-from django.test import TestCase
+from asgiref.sync import async_to_sync
+from django.test import TestCase, override_settings
 
 from fighthealthinsurance.common_view_logic import (
     DenialCreatorHelper,
@@ -66,6 +68,62 @@ class TriageLifecycleTest(TestCase):
             denial_date=datetime.date(2026, 9, 12),
         )
         denial.refresh_from_db()
+        self.assertEqual(denial.appeal_deadline, datetime.date(2027, 3, 11))
+
+    def test_a_triage_landing_during_the_date_correction_anchors_to_the_new_date(self):
+        """The race (review): the review step holds the corrected date in
+        memory, its refresh finds no triage yet, and THEN the triage lands.
+        Run the real triage hook from inside that refresh; the deadline it
+        writes must be anchored to the corrected date, not the old one."""
+        text = "Denied as not medically necessary. Appeal within 180 days of this notice."
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("life@example.com"),
+            denial_text=text,
+            semi_sekret="sekret",
+            denial_date=datetime.date(2026, 9, 2),
+        )
+        result = dt.parse(
+            {
+                "answers": {
+                    "category": {"choice": "medical_necessity", "confidence": 0.9},
+                    "regulation": {"choice": "unknown", "confidence": 0.4},
+                    "pre_service": {"noul": 0.1},
+                    "urgent": {"noul": 0.02},
+                    "deadline": {"choice": "180 days from notice", "confidence": 0.95},
+                }
+            },
+            dt.date_candidates(text, datetime.date(2026, 9, 2)),
+        )
+        real_refresh = Denial.refresh_from_db
+        landed = []
+
+        def refresh_then_triage(instance, *args, **kwargs):
+            real_refresh(instance, *args, **kwargs)
+            if landed:
+                return
+            landed.append(True)
+            with override_settings(
+                TYPESAFE_API_KEY="test-key", TYPESAFE_DENIAL_TRIAGE_ENABLED=True
+            ), patch.object(dt, "triage", new=AsyncMock(return_value=result)):
+                async_to_sync(DenialCreatorHelper.extract_set_triage)(instance.denial_id)
+
+        with patch.object(Denial, "refresh_from_db", refresh_then_triage):
+            FindNextStepsHelper.find_next_steps(
+                denial_id=denial.denial_id,
+                email="life@example.com",
+                semi_sekret="sekret",
+                procedure="MRI",
+                diagnosis="back pain",
+                insurance_company=None,
+                plan_id=None,
+                claim_id=None,
+                denial_type=None,
+                denial_date=datetime.date(2026, 9, 12),
+            )
+        self.assertTrue(landed, "the triage never ran inside the refresh")
+        denial.refresh_from_db()
+        self.assertEqual(denial.denial_date, datetime.date(2026, 9, 12))
+        self.assertEqual(denial.appeal_deadline_label, "180 days from notice")
         self.assertEqual(denial.appeal_deadline, datetime.date(2027, 3, 11))
 
     def test_a_stale_triage_is_not_resolved_against_a_new_date(self):
