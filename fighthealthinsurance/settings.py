@@ -176,6 +176,11 @@ class Base(Configuration):
     TYPESAFE_LETTER_RANKING_ENABLED = (
         os.getenv("TYPESAFE_LETTER_RANKING_ENABLED", "false").lower() == "true"
     )
+    # Whether the upload page offers the on-device advanced OCR option at
+    # all. Off until the engine actually loads: a person uploading a letter
+    # must not be offered a broken option. Flip it with the environment when
+    # the engine works again; the checkbox itself still defaults to off.
+    ADVANCED_OCR_OFFERED = os.getenv("ADVANCED_OCR_OFFERED", "false").lower() == "true"
     TYPESAFE_TIMEOUT_SECONDS = _env_int(
         "TYPESAFE_TIMEOUT_SECONDS", 20, minimum=1, maximum=300
     )
@@ -454,6 +459,7 @@ class Base(Configuration):
                     "fighthealthinsurance.context_processors.form_persistence_context",
                     "fighthealthinsurance.context_processors.canonical_url_context",
                     "fighthealthinsurance.context_processors.site_banner_context",
+                    "fighthealthinsurance.context_processors.advanced_ocr_context",
                 ],
             },
         },
@@ -842,6 +848,7 @@ class Test(Dev):
     TYPESAFE_API_KEY = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_LETTER_RANKING_ENABLED = False
+    ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
 
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
@@ -907,6 +914,7 @@ class TestSync(Dev):
     TYPESAFE_API_KEY = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_LETTER_RANKING_ENABLED = False
+    ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
 
     DEBUG = True
@@ -948,6 +956,7 @@ class TestActor(Dev):
     TYPESAFE_API_KEY = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_LETTER_RANKING_ENABLED = False
+    ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
 
     DEBUG = True
