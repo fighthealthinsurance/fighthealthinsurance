@@ -833,6 +833,10 @@ _PROMPT_TIER1_NULLS: tuple[str, ...] = (
     "payer_policy_context",
     "medication_context",
 )
+# ``plan_law_context`` is deliberately NOT sheddable: a few hundred characters
+# naming which appeal law governs the plan, the one legal instruction every
+# letter gets (Melanie, 2026-09-07). Shedding it would drop the citation from
+# exactly the long, complicated denials where it helps most.
 
 # ``pa_context`` is the one tier-1 section ``make_open_prompt`` gates on
 # ``.strip()`` (line ~1661) rather than ``!= ""``: a whitespace-only value
@@ -2120,6 +2124,7 @@ class AppealGenerator(object):
         clinical_trials_context=None,
         medication_context=None,
         regulatory_citation_context=None,
+        plan_law_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -2266,6 +2271,11 @@ class AppealGenerator(object):
             # regulatory_citations.get_regulatory_citation_context, so just
             # append it as its own section.
             base = f"{base}\n\n{regulatory_citation_context}"
+        if plan_law_context:
+            # Which appeal law governs this plan (ERISA, the ACA appeal rules,
+            # Medicare, ...) and an invitation to cite it where it helps.
+            # Pre-framed by regulatory_citations.get_plan_law_context.
+            base = f"{base}\n\n{plan_law_context}"
         if (
             insurance_company is not None
             and insurance_company != ""
@@ -2329,29 +2339,91 @@ class AppealGenerator(object):
         """
         try:
             from fighthealthinsurance.regulatory_citations import (
+                classify_plan,
                 get_regulatory_citation_context,
+                self_insured_from,
             )
         except Exception as e:
             logger.opt(exception=True).debug(f"regulatory_citations unavailable: {e}")
             return None
 
         try:
-            # Best-effort self-insured/ERISA signal from the linked carrier; a
-            # TPA administers self-funded employer (ERISA) plans. None when we
-            # cannot tell, which selects the neutral caveat wording.
-            self_insured: Optional[bool] = None
-            ico = getattr(denial, "insurance_company_obj", None)
-            if ico is not None and getattr(ico, "is_tpa", False):
-                self_insured = True
+            names, is_tpa, alt_name = AppealGenerator._plan_signals(denial)
+            # Same classification as the plan-law block, so the two never
+            # contradict each other (review). The self-insured (ERISA) signal
+            # comes from the TPA flag, unless a source says the plan cannot
+            # be ERISA: a government plan is exempt whoever administers it.
+            programs = classify_plan(names, is_tpa=is_tpa, regulator_alt_name=alt_name)
             return get_regulatory_citation_context(
                 state=getattr(denial, "your_state", None),
                 denial_text=getattr(denial, "denial_text", None),
                 procedure=getattr(denial, "procedure", None),
                 diagnosis=getattr(denial, "diagnosis", None),
-                self_insured=self_insured,
+                self_insured=self_insured_from(programs),
+                programs=programs,
             )
         except Exception as e:
             logger.opt(exception=True).debug(f"_collect_regulatory_context failed: {e}")
+            return None
+
+    @staticmethod
+    def _plan_signals(denial) -> tuple[list[str], bool, Optional[str]]:
+        """What intake and the denial say about the plan: the plan source
+        names, the carrier's TPA flag, and the matched regulator's alt name.
+        Every read is defensive; a relation that fails reads as unknown, so
+        one bad lookup never costs the whole block."""
+        names: list[str] = []
+        try:
+            manager = getattr(denial, "plan_source", None)
+            if manager is not None and hasattr(manager, "all"):
+                names = [getattr(s, "name", "") or "" for s in manager.all()]
+        except Exception as e:
+            logger.opt(exception=True).debug(f"plan_source unavailable: {e}")
+            names = []
+        is_tpa = False
+        try:
+            ico = getattr(denial, "insurance_company_obj", None)
+            is_tpa = bool(ico is not None and getattr(ico, "is_tpa", False))
+        except Exception:
+            is_tpa = False
+        alt_name: Optional[str] = None
+        try:
+            regulator = getattr(denial, "regulator", None)
+            if regulator is not None:
+                alt_name = getattr(regulator, "alt_name", None)
+        except Exception:
+            alt_name = None
+        return names, is_tpa, alt_name
+
+    @staticmethod
+    def _collect_plan_law_context(denial) -> Optional[str]:
+        """Which appeal law governs this plan, for the prompt: ERISA for
+        private employer and union plans, the ACA appeal rules for
+        marketplace plans, the Medicare and Medicaid processes, and so on,
+        from what intake collected (plan sources, the carrier's TPA flag,
+        the ERISA regulator match).
+
+        Always returns a block when it can (an unknown plan gets hedged
+        guidance, and so does a plan whose lookup failed); None only when the
+        block itself cannot be built, so generation never depends on it. Runs
+        where make_appeals runs, in a sync context, like the sibling
+        collectors.
+        """
+        try:
+            from fighthealthinsurance.regulatory_citations import (
+                get_plan_law_context,
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(f"regulatory_citations unavailable: {e}")
+            return None
+
+        try:
+            names, is_tpa, alt_name = AppealGenerator._plan_signals(denial)
+            return get_plan_law_context(
+                names, is_tpa=is_tpa, regulator_alt_name=alt_name
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(f"_collect_plan_law_context failed: {e}")
             return None
 
     @staticmethod
@@ -2530,6 +2602,7 @@ class AppealGenerator(object):
 
         medication_context = self._collect_medication_context(denial)
         regulatory_citation_context = self._collect_regulatory_context(denial)
+        plan_law_context = self._collect_plan_law_context(denial)
 
         # Captured as a dict so the tier-shed retry path can re-render the
         # prompt with enrichment kwargs nulled or truncated — otherwise the
@@ -2566,6 +2639,7 @@ class AppealGenerator(object):
             clinical_trials_context=clinical_trials_context,
             medication_context=medication_context,
             regulatory_citation_context=regulatory_citation_context,
+            plan_law_context=plan_law_context,
         )
         open_prompt = self.make_open_prompt(**open_prompt_kwargs)
         open_medically_necessary_prompt = self.make_open_med_prompt(

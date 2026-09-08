@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from fighthealthinsurance.generate_appeal import AppealGenerator
 from fighthealthinsurance.regulatory_citations import (
     get_regulatory_citation_context,
+    self_insured_from,
 )
 
 
@@ -127,6 +128,124 @@ class TestGetRegulatoryCitationContext(unittest.TestCase):
         self.assertIn("147.136", block)
         # State insurance mandates are dropped for self-insured plans.
         self.assertNotIn("Massachusetts", block)
+
+
+class TestPublicProgramFiltering(unittest.TestCase):
+    """For Medicare, Medicaid, VA and FEHB coverage the block keeps only the
+    federal rules written for the program: the plan-law block tells the model
+    that state insurance law and the ACA appeal rules do not apply, and the
+    prompt must not say both (review)."""
+
+    def test_medicare_advantage_keeps_only_the_rules_written_for_it(self):
+        block = get_regulatory_citation_context("MA", programs=("medicare_advantage",))
+        assert block is not None
+        self.assertIn("CMS-0057-F", block)
+        self.assertIn("algorithms and artificial", block)
+        self.assertNotIn("147.136", block)
+        self.assertNotIn("Massachusetts", block)
+        self.assertIn("this is Medicare Advantage coverage", block)
+
+    def test_medicaid_keeps_cms_0057_f_only(self):
+        block = get_regulatory_citation_context("MA", programs=("medicaid",))
+        assert block is not None
+        self.assertIn("CMS-0057-F", block)
+        self.assertNotIn("algorithms and artificial", block)
+        self.assertNotIn("147.136", block)
+        self.assertNotIn("Massachusetts", block)
+
+    def test_original_medicare_va_and_fehb_get_no_block(self):
+        for program in ("medicare", "va", "fehb"):
+            with self.subTest(program=program):
+                self.assertIsNone(get_regulatory_citation_context("MA", programs=(program,)))
+
+    def test_a_government_employer_plan_keeps_state_and_aca_hooks(self):
+        block = get_regulatory_citation_context("MA", programs=("government",))
+        assert block is not None
+        self.assertIn("Massachusetts", block)
+        self.assertIn("147.136", block)
+
+    def test_private_coverage_is_unchanged_by_the_classification(self):
+        self.assertEqual(
+            get_regulatory_citation_context("MA", programs=("erisa", "tpa")),
+            get_regulatory_citation_context("MA"),
+        )
+
+    def test_public_and_private_coverage_together_keeps_the_private_rules(self):
+        """A Medicare Advantage member with an employer plan too: we do not
+        know which plan denied, so the state and ACA items stay, with a
+        sentence saying whom they reach (review)."""
+        block = get_regulatory_citation_context(
+            "MA", programs=("medicare_advantage", "erisa")
+        )
+        assert block is not None
+        self.assertIn("Massachusetts", block)
+        self.assertIn("147.136", block)
+        self.assertIn("More than one coverage source was given", block)
+        self.assertIn("not the Medicare Advantage coverage", block)
+        self.assertNotIn("this is Medicare Advantage coverage", block)
+
+    def test_a_tpa_carrier_is_not_a_second_plan(self):
+        """The flag says who administers the plan; beside a public program it
+        must not turn the coverage into "more than one source" (review)."""
+        self.assertIsNone(get_regulatory_citation_context("MA", programs=("medicare", "tpa")))
+        block = get_regulatory_citation_context("MA", programs=("medicare_advantage", "tpa"))
+        assert block is not None
+        self.assertIn("this is Medicare Advantage coverage", block)
+        self.assertNotIn("More than one coverage source", block)
+        self.assertNotIn("Massachusetts", block)
+
+    def test_the_self_insured_signal_defers_to_a_source_erisa_cannot_govern(self):
+        self.assertTrue(self_insured_from(("tpa",)))
+        self.assertTrue(self_insured_from(("erisa", "tpa")))
+        for source in (
+            "government",
+            "fehb",
+            "medicare_advantage",
+            "medicaid",
+            "marketplace",
+            "other_group",
+        ):
+            with self.subTest(source=source):
+                self.assertIsNone(self_insured_from((source, "tpa")))
+        self.assertIsNone(self_insured_from(("erisa",)))
+
+    def test_a_government_plan_with_a_tpa_gets_the_neutral_caveat(self):
+        denial = SimpleNamespace(
+            your_state="MA",
+            denial_text=None,
+            procedure=None,
+            diagnosis=None,
+            insurance_company_obj=SimpleNamespace(is_tpa=True),
+            plan_source=SimpleNamespace(
+                all=lambda: [SimpleNamespace(name="Employer -- State Government")]
+            ),
+        )
+        result = AppealGenerator._collect_regulatory_context(denial)
+        assert result is not None
+        # The neutral caveat, not the self-insured one (which opens with
+        # "this appears to be a self-insured (ERISA) employer plan").
+        self.assertNotIn("this appears to be a self-insured", result)
+        self.assertIn("confirm the plan type before relying on a state mandate", result)
+        self.assertIn("Massachusetts", result)
+
+    def test_cms_0057_f_says_it_excludes_drugs(self):
+        block = get_regulatory_citation_context("MA", programs=("medicaid",))
+        assert block is not None
+        self.assertIn("prescription drugs are outside this rule", block)
+
+    def test_the_collector_classifies_from_the_plan_source(self):
+        denial = SimpleNamespace(
+            your_state="MA",
+            denial_text=None,
+            procedure=None,
+            diagnosis=None,
+            plan_source=SimpleNamespace(all=lambda: [SimpleNamespace(name="Medicare Advantage")]),
+        )
+        result = AppealGenerator._collect_regulatory_context(denial)
+        assert result is not None
+        self.assertNotIn("147.136", result)
+        self.assertNotIn("Massachusetts", result)
+        self.assertIn("CMS-0057-F", result)
 
 
 class TestRegulatoryPromptInjection(unittest.TestCase):
