@@ -38,8 +38,9 @@ PUBLIC_PROGRAMS = frozenset({MEDICARE_ADVANTAGE, MEDICARE, MEDICAID, VA, FEHB})
 # does not override these; the block names the conflict instead.
 EXCLUSIVE_OF_ERISA = PUBLIC_PROGRAMS | {GOVERNMENT}
 # Sources that describe private or government-employer coverage, which state
-# insurance law and the ACA appeal rules can reach.
-PRIVATE_COVERAGE = frozenset({ERISA, OTHER_GROUP, MARKETPLACE, GOVERNMENT, TPA})
+# insurance law and the ACA appeal rules can reach. The TPA flag is not one:
+# it says who administers the plan, not that a second plan exists (review).
+PRIVATE_COVERAGE = frozenset({ERISA, OTHER_GROUP, MARKETPLACE, GOVERNMENT})
 
 
 def self_insured_from(programs: Iterable[str]) -> Optional[bool]:

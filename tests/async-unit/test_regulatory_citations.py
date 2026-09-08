@@ -184,6 +184,16 @@ class TestPublicProgramFiltering(unittest.TestCase):
         self.assertIn("not the Medicare Advantage coverage", block)
         self.assertNotIn("this is Medicare Advantage coverage", block)
 
+    def test_a_tpa_carrier_is_not_a_second_plan(self):
+        """The flag says who administers the plan; beside a public program it
+        must not turn the coverage into "more than one source" (review)."""
+        self.assertIsNone(get_regulatory_citation_context("MA", programs=("medicare", "tpa")))
+        block = get_regulatory_citation_context("MA", programs=("medicare_advantage", "tpa"))
+        assert block is not None
+        self.assertIn("this is Medicare Advantage coverage", block)
+        self.assertNotIn("More than one coverage source", block)
+        self.assertNotIn("Massachusetts", block)
+
     def test_the_self_insured_signal_defers_to_a_source_erisa_cannot_govern(self):
         self.assertTrue(self_insured_from(("tpa",)))
         self.assertTrue(self_insured_from(("erisa", "tpa")))
