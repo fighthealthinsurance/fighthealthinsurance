@@ -65,19 +65,21 @@ def _brace_block(src: str, open_at: int) -> str:
     raise AssertionError("unbalanced braces")
 
 
-def test_mode_and_optimization_are_wired_to_the_flag():
-    """A correct flag that nothing consumes is no fix (review).
+# A correct flag that nothing consumes is no fix (review): a hardcoded mode,
+# or an optimization block kept as text but no longer conditional on the
+# flag, would ship development output again with the default test above
+# still green. One contract per test (second reviewer).
 
-    A hardcoded mode, or an optimization block kept as text but no longer
-    conditional on the flag, would ship development output again with the
-    default test above still green.
-    """
-    src = _webpack_config()
+
+def test_mode_is_selected_by_the_flag():
     assert re.search(
         r"mode\s*:\s*isProduction\s*\?\s*['\"]production['\"]\s*:\s*['\"]development['\"]",
-        src,
+        _webpack_config(),
     ), "webpack mode is no longer selected by isProduction"
-    assert re.search(r"optimization\s*:\s*isProduction\s*\?\s*\{", src), (
+
+
+def test_the_optimization_block_is_conditional_on_the_flag():
+    assert re.search(r"optimization\s*:\s*isProduction\s*\?\s*\{", _webpack_config()), (
         "the optimization block is no longer conditional on isProduction"
     )
 
@@ -125,33 +127,43 @@ def test_cache_expects_production_unless_development_is_asked_for():
     ), "build_static.sh no longer expects development only when NODE_ENV=development"
 
 
-def test_dist_fingerprint_covers_every_file_recursively_following_a_linked_dist():
-    sh = _build_static_sh()
-    fp = re.search(r"dist_fingerprint\(\)\s*\{(.*?)\n\s*\}", sh, re.S)
+def _dist_fingerprint_body() -> str:
+    fp = re.search(r"dist_fingerprint\(\)\s*\{(.*?)\n\s*\}", _build_static_sh(), re.S)
     assert fp is not None, "dist_fingerprint is gone from build_static.sh"
-    body = fp.group(1)
+    return fp.group(1)
+
+
+def test_dist_fingerprint_follows_a_linked_dist():
     # -H so a symlinked dist/ is followed; without it the fingerprint is the
     # hash of nothing and a stale key matches forever.
-    assert re.search(r"find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-type\s+f.*?md5sum", body, re.S), (
-        "the dist fingerprint no longer hashes the files in dist/ following a symlinked dist"
-    )
-    # Recursive and unfiltered: workers/, the wasm, .mjs and .map files ship
-    # too, and a missing worker with untouched bundles broke PDF uploads
-    # while a narrower fingerprint still matched.
+    assert re.search(
+        r"find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-type\s+f.*?md5sum", _dist_fingerprint_body(), re.S
+    ), "the dist fingerprint no longer hashes the files in dist/ following a symlinked dist"
+
+
+def test_dist_fingerprint_is_recursive_and_unfiltered():
+    # workers/, the wasm, .mjs and .map files ship too, and a missing worker
+    # with untouched bundles broke PDF uploads while a narrower fingerprint
+    # still matched.
+    body = _dist_fingerprint_body()
     assert "-maxdepth" not in body and "-name" not in body, (
         "the dist fingerprint is restricted again; it must cover every file "
         "under dist/, recursively"
     )
 
 
-def test_an_empty_or_missing_dist_never_skips_the_build():
-    sh = _build_static_sh()
-    assert re.search(r"dist_has_files\(\)\s*\{.*?find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-print\s+-quit", sh, re.S), (
-        "the empty-dist guard is gone"
-    )
+def test_the_empty_dist_guard_looks_for_a_real_file():
+    assert re.search(
+        r"dist_has_files\(\)\s*\{.*?find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-print\s+-quit",
+        _build_static_sh(),
+        re.S,
+    ), "the empty-dist guard is gone"
+
+
+def test_the_skip_requires_the_whole_key_and_a_non_empty_dist():
     assert re.search(
         r"\[\s*\"\$CURRENT_BUILD_KEY\"\s*=\s*\"\$STORED_JS_CHECKSUM\"\s*\]\s*&&\s*dist_has_files.*?SKIP_JS_BUILD=true",
-        sh,
+        _build_static_sh(),
         re.S,
     ), "the skip no longer requires the whole key to match AND a non-empty dist/"
 
