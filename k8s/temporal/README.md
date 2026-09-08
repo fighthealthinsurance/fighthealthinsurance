@@ -11,7 +11,7 @@ The footprint is modest because we reuse infrastructure we already run:
 | Temporal needs | What we use | Notes |
 | --- | --- | --- |
 | A SQL datastore | **The existing PostgreSQL** | Add two databases: `temporal` and `temporal_visibility`. |
-| Advanced visibility (search/list workflows) | **PostgreSQL 12+** | No Elasticsearch needed — Postgres ≥ 12 provides advanced visibility natively. This is the big saving on a small cluster. |
+| Advanced visibility (search/list workflows) | **PostgreSQL 12+** | Postgres ≥ 12 provides advanced visibility natively, so no Elasticsearch. That covers filtering on custom search attributes, and it does **not** cover ordering: every SQL-backed visibility store rejects `ORDER BY` with "operation is not supported", and only Elasticsearch implements it. Write list queries without `ORDER BY` (see #990, where this row read as a licence to add one and took the fax panel down). Still the big saving on a small cluster. |
 | Server services (frontend/history/matching/worker) | One combined Deployment via Helm | Start at `replicaCount: 1`; split/scale later. |
 | Workers (our code) | `fhi-fax-worker` (`worker.yaml`) + `fhi-appeal-worker` (`appeal-worker.yaml`) Deployments | Both run `manage.py run_temporal_worker` on the existing app image; `TEMPORAL_WORKER_QUEUES` picks the role (`fax` / `appeal`), so the two queues share no failure domain. The appeal Deployment is safe to apply dark: with the journey flags off it idles and hosts nothing. (Named `fhi-*-worker` because the Helm chart itself owns a Deployment called `temporal-worker` — Temporal's internal worker service.) |
 | Web UI | Temporal Web (chart `web.enabled`) | Optional; expose through the existing nginx ingress. |
