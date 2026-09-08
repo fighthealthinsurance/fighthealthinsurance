@@ -54,8 +54,37 @@ if [ -d "${JS_PATH}" ]; then
     STORED_JS_CHECKSUM=$(cat "$JS_CHECKSUM_FILE")
   fi
 
-  if [ "$CURRENT_JS_CHECKSUM" = "$STORED_JS_CHECKSUM" ] && [ -d "${JS_PATH}/dist" ]; then
-    echo "JavaScript source files unchanged, skipping build..."
+  # The source checksum says whether a rebuild is NEEDED. It says nothing
+  # about whether dist/ still holds what this script last built: anything run
+  # in between (`npm run build:dev`, a `--mode` or `--no-optimization-minimize`
+  # override, an interrupted build) rewrites bundles under an unchanged
+  # source checksum. A marker written by webpack is only a claim by whoever
+  # ran webpack, so the stored key instead carries the build mode this run
+  # wants and a fingerprint of the bundles as they were when this script
+  # last built them. The skip requires all three to match (review).
+  EXPECTED_BUILD_MODE=production
+  if [ "${NODE_ENV:-}" = "development" ]; then
+    EXPECTED_BUILD_MODE=development
+  fi
+  # Every file under dist/, recursively: the bundles, but also the worker
+  # scripts, the wasm, the .mjs and the source maps that collectstatic ships
+  # and the pages load by URL. A missing worker with untouched bundles used
+  # to pass the check and then break PDF uploads (review).
+  # -H: follow dist/ itself if it is a symlink. Without it, find examines the
+  # link rather than the directory, the fingerprint becomes the hash of
+  # nothing, and a stale key matches forever (review).
+  dist_fingerprint() {
+    find -H "${JS_PATH}/dist" -type f -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1
+  }
+  # A dist/ with no files in it (missing, empty, unreadable, a dangling
+  # link) is never something to skip a build for, whatever the key says.
+  dist_has_files() {
+    [ -n "$(find -H "${JS_PATH}/dist" -type f -print -quit 2>/dev/null)" ]
+  }
+  CURRENT_BUILD_KEY="${CURRENT_JS_CHECKSUM}:${EXPECTED_BUILD_MODE}:$(dist_fingerprint)"
+
+  if [ "$CURRENT_BUILD_KEY" = "$STORED_JS_CHECKSUM" ] && dist_has_files; then
+    echo "JavaScript sources unchanged and dist matches the last ${EXPECTED_BUILD_MODE} build, skipping build..."
     SKIP_JS_BUILD=true
   fi
 fi
@@ -73,9 +102,10 @@ if [ "$SKIP_JS_BUILD" = false ]; then
   npm run build
   popd
 
-  # Save the checksum after successful build
+  # Save the key after a successful build: sources, the mode built, and the
+  # fingerprint of the bundles that build produced.
   if [ -n "$CURRENT_JS_CHECKSUM" ]; then
-    echo "$CURRENT_JS_CHECKSUM" > "$JS_CHECKSUM_FILE"
+    echo "${CURRENT_JS_CHECKSUM}:${EXPECTED_BUILD_MODE}:$(dist_fingerprint)" > "$JS_CHECKSUM_FILE"
   fi
 else
   set -ex

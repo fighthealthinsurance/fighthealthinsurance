@@ -1,0 +1,192 @@
+"""The webpack build must be a production build unless a developer opts out.
+
+For as long as the config tested ``NODE_ENV === 'production'``, nothing set it:
+not ``npm run build``, not any of the three build scripts, not CI. So every
+build, including the one collected into the deployed image, was a development
+bundle: unminified, about three times the size, and skipping the optimization
+block whose Terser ``pure_funcs`` strip ``console.log/info/debug`` as a defense
+against logging PHI to the browser console.
+
+The default is now production; ``npm run build:dev`` opts out. These pin both
+halves so the safe build stays the one you get by accident.
+"""
+
+import json
+import pathlib
+import re
+
+JS = pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "static" / "js"
+
+
+def _webpack_config() -> str:
+    return (JS / "webpack.config.js").read_text()
+
+
+def _scripts() -> dict:
+    return json.loads((JS / "package.json").read_text())["scripts"]
+
+
+def test_production_is_the_default_mode():
+    """Production unless NODE_ENV=development, with a CLI --mode taking precedence.
+
+    The CLI clause matters: `webpack --mode X` overrides the configured mode
+    after the config has run, so a flag derived only from NODE_ENV could
+    disagree with the mode actually built (review).
+    """
+    src = _webpack_config()
+    assert re.search(
+        r"const\s+isProduction\s*=\s*argv\s*&&\s*argv\.mode\s*\?\s*argv\.mode\s*===\s*['\"]production['\"]"
+        r"\s*:\s*process\.env\.NODE_ENV\s*!==\s*['\"]development['\"]\s*;",
+        src,
+        re.S,
+    ), "isProduction is no longer: CLI --mode if given, else production unless NODE_ENV=development"
+    assert not re.search(
+        r"isProduction\s*=\s*process\.env\.NODE_ENV\s*===\s*['\"]production['\"]",
+        src,
+    ), "the opt-in production test is back; nothing in the repo sets NODE_ENV=production"
+
+
+def test_developers_can_still_opt_out():
+    scripts = _scripts()
+    assert "build:dev" in scripts, "npm run build:dev is gone"
+    assert "NODE_ENV=development" in scripts["build:dev"], scripts["build:dev"]
+
+
+def _brace_block(src: str, open_at: int) -> str:
+    assert src[open_at] == "{", src[open_at : open_at + 20]
+    depth = 0
+    for i in range(open_at, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[open_at : i + 1]
+    raise AssertionError("unbalanced braces")
+
+
+# A correct flag that nothing consumes is no fix (review): a hardcoded mode,
+# or an optimization block kept as text but no longer conditional on the
+# flag, would ship development output again with the default test above
+# still green. One contract per test (second reviewer).
+
+
+def test_mode_is_selected_by_the_flag():
+    assert re.search(
+        r"mode\s*:\s*isProduction\s*\?\s*['\"]production['\"]\s*:\s*['\"]development['\"]",
+        _webpack_config(),
+    ), "webpack mode is no longer selected by isProduction"
+
+
+def test_the_optimization_block_is_conditional_on_the_flag():
+    assert re.search(r"optimization\s*:\s*isProduction\s*\?\s*\{", _webpack_config()), (
+        "the optimization block is no longer conditional on isProduction"
+    )
+
+
+def test_console_stripping_covers_exactly_the_chatty_levels():
+    """The PHI defense is the reason production mode matters; keep it intact.
+
+    Exactly log/info/debug: warn and error stay, on purpose, so production
+    issues remain debuggable. The list must live inside the optimization
+    block, where it is actually consumed.
+    """
+    src = _webpack_config()
+    opt = re.search(r"optimization\s*:\s*isProduction\s*\?\s*\{", src)
+    assert opt is not None
+    block = _brace_block(src, opt.end() - 1)
+    m = re.search(r"pure_funcs\s*:\s*\[([^\]]*)\]", block)
+    assert m is not None, "the Terser pure_funcs list is gone from the optimization block"
+    listed = set(re.findall(r"['\"]([\w.]+)['\"]", m.group(1)))
+    assert listed == {"console.log", "console.info", "console.debug"}, listed
+
+
+def _build_static_sh() -> str:
+    return (JS.parents[2] / "scripts" / "build_static.sh").read_text()
+
+
+# build_static.sh must not reuse bundles it did not produce. Any intervening
+# build (`build:dev`, a CLI `--mode` or `--no-optimization-minimize` override,
+# an interrupted run) rewrites bundles under an unchanged source checksum, and
+# a marker written by webpack is only a claim by whoever ran webpack. So the
+# stored key is source checksum + wanted mode + a fingerprint of every file
+# under dist/, saved after this script's own successful build, and the skip
+# requires the whole key to match. One contract per test below (second
+# reviewer); regexes tolerate wrapping and pin the wiring, not the formatting.
+
+
+def test_cache_expects_production_unless_development_is_asked_for():
+    sh = _build_static_sh()
+    assert re.search(r"^\s*EXPECTED_BUILD_MODE=production\s*$", sh, re.M), (
+        "build_static.sh no longer expects production by default"
+    )
+    assert re.search(
+        r"\[\s*\"\$\{NODE_ENV:-\}\"\s*=\s*\"development\"\s*\].*?EXPECTED_BUILD_MODE=development",
+        sh,
+        re.S,
+    ), "build_static.sh no longer expects development only when NODE_ENV=development"
+
+
+def _dist_fingerprint_body() -> str:
+    fp = re.search(r"dist_fingerprint\(\)\s*\{(.*?)\n\s*\}", _build_static_sh(), re.S)
+    assert fp is not None, "dist_fingerprint is gone from build_static.sh"
+    return fp.group(1)
+
+
+def test_dist_fingerprint_follows_a_linked_dist():
+    # -H so a symlinked dist/ is followed; without it the fingerprint is the
+    # hash of nothing and a stale key matches forever.
+    assert re.search(
+        r"find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-type\s+f.*?md5sum", _dist_fingerprint_body(), re.S
+    ), "the dist fingerprint no longer hashes the files in dist/ following a symlinked dist"
+
+
+def test_dist_fingerprint_is_recursive_and_unfiltered():
+    # workers/, the wasm, .mjs and .map files ship too, and a missing worker
+    # with untouched bundles broke PDF uploads while a narrower fingerprint
+    # still matched.
+    body = _dist_fingerprint_body()
+    assert "-maxdepth" not in body and "-name" not in body, (
+        "the dist fingerprint is restricted again; it must cover every file "
+        "under dist/, recursively"
+    )
+
+
+def test_the_empty_dist_guard_looks_for_a_real_file():
+    assert re.search(
+        r"dist_has_files\(\)\s*\{.*?find\s+-H\s+\"\$\{JS_PATH\}/dist\".*?-print\s+-quit",
+        _build_static_sh(),
+        re.S,
+    ), "the empty-dist guard is gone"
+
+
+def test_the_skip_requires_the_whole_key_and_a_non_empty_dist():
+    assert re.search(
+        r"\[\s*\"\$CURRENT_BUILD_KEY\"\s*=\s*\"\$STORED_JS_CHECKSUM\"\s*\]\s*&&\s*dist_has_files.*?SKIP_JS_BUILD=true",
+        _build_static_sh(),
+        re.S,
+    ), "the skip no longer requires the whole key to match AND a non-empty dist/"
+
+
+def test_cache_key_combines_sources_mode_and_the_dist_fingerprint():
+    sh = _build_static_sh()
+    assert re.search(
+        r"CURRENT_BUILD_KEY=\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"",
+        sh,
+    ), "the cache key no longer combines sources, mode and the dist fingerprint"
+
+
+def test_the_saved_key_records_the_build_just_made():
+    sh = _build_static_sh()
+    assert re.search(
+        r"echo\s+\"\$\{CURRENT_JS_CHECKSUM\}:\$\{EXPECTED_BUILD_MODE\}:\$\(dist_fingerprint\)\"\s*>\s*\"\$JS_CHECKSUM_FILE\"",
+        sh,
+    ), "the saved key no longer records the mode and fingerprint of the build just made"
+
+
+def test_no_webpack_written_build_mode_marker():
+    src = _webpack_config()
+    assert "BUILD_MODE" not in src, (
+        "a webpack-written build-mode marker is back; it is only a claim by "
+        "whoever ran webpack, and the cache must validate output instead"
+    )

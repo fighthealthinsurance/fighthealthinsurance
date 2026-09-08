@@ -6,12 +6,13 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "webpack",
+    "build:dev": "NODE_ENV=development webpack",
     "build:analyze": "ANALYZE=true webpack",
     "watch": "npm-watch",
     "auto-fix": "prettier --write *.ts *.tsx"
   },
   "watch": {
-    "build": {
+    "build:dev": {
       "patterns": [
         "src"
       ],

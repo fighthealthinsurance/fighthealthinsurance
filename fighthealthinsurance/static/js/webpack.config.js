@@ -44,9 +44,34 @@ try {
 }
 
 // Determine if we're in production mode
-const isProduction = process.env.NODE_ENV === 'production';
+// Production unless a developer explicitly asks for a development build.
+//
+// This used to test for NODE_ENV === 'production', and nothing in the repo
+// ever set it: not `npm run build`, not scripts/ci_npm_build.sh,
+// build_static.sh or setup_templates.sh, not the CI workflow. So every build,
+// including the one collected into the deployed image, was a development
+// bundle: unminified, about 3.5x the size, and -- the part that matters --
+// skipping the optimization block below, whose Terser pure_funcs strip
+// console.log/info/debug as a defense against logging PHI to the browser
+// console. Defaulting the other way means the safe build is the one you get
+// by accident. `npm run build:dev` (or NODE_ENV=development) opts out.
+// isProduction is decided INSIDE the exported function, from the CLI's --mode
+// when one is given, so see below.
 
 module.exports = async (env, argv) => {
+  // One source of truth for mode and optimization.
+  // `webpack --mode X` overrides the configured mode after this file has
+  // run, so if this flag came only from NODE_ENV the two could disagree:
+  // `NODE_ENV=development npm run build -- --mode production` produced
+  // production-mode bundles WITHOUT the pure_funcs console stripping, under
+  // a marker that said production (review). When the CLI passes a mode, it
+  // decides; otherwise production unless NODE_ENV=development.
+  // Whether dist/ still holds what the deploy build produced is not this
+  // file's problem: scripts/build_static.sh fingerprints its own output and
+  // rebuilds when the bundles changed underneath it, whoever changed them.
+  const isProduction = argv && argv.mode
+    ? argv.mode === 'production'
+    : process.env.NODE_ENV !== 'development';
   // Load ESM-only plugins with dynamic import()
   const [{ default: remarkGfm }, { default: rehypeHighlight }] = await Promise.all([
     import('remark-gfm'),
