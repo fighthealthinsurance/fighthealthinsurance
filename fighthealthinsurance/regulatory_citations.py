@@ -49,7 +49,9 @@ def self_insured_from(programs: Iterable[str]) -> Optional[bool]:
     exempt from ERISA whoever administers it, and marketplace coverage is
     insured). None when we cannot tell, which selects neutral wording."""
     keys = set(programs)
-    if TPA in keys and not keys & (EXCLUSIVE_OF_ERISA | {MARKETPLACE}):
+    # "Other Group" is group coverage that may not be an employer plan at
+    # all, so a TPA beside it is inconclusive too (review).
+    if TPA in keys and not keys & (EXCLUSIVE_OF_ERISA | {MARKETPLACE, OTHER_GROUP}):
         return True
     return None
 

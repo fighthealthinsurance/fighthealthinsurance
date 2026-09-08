@@ -197,7 +197,14 @@ class TestPublicProgramFiltering(unittest.TestCase):
     def test_the_self_insured_signal_defers_to_a_source_erisa_cannot_govern(self):
         self.assertTrue(self_insured_from(("tpa",)))
         self.assertTrue(self_insured_from(("erisa", "tpa")))
-        for source in ("government", "fehb", "medicare_advantage", "medicaid", "marketplace"):
+        for source in (
+            "government",
+            "fehb",
+            "medicare_advantage",
+            "medicaid",
+            "marketplace",
+            "other_group",
+        ):
             with self.subTest(source=source):
                 self.assertIsNone(self_insured_from((source, "tpa")))
         self.assertIsNone(self_insured_from(("erisa",)))
