@@ -1,5 +1,22 @@
 // Optional Qwen WebGPU OCR path.
 // This module must fail closed: if WebGPU/model init fails, callers keep using baseline OCR.
+//
+// KNOWN BROKEN, and that is why the checkbox now defaults to off. On prod this
+// engine has never once produced text: init throws
+// "Unsupported model type: qwen3_5" and every caller silently falls back to
+// tesseract. The cause is the pipeline task below, not the dependency version.
+// pipeline("image-to-text") resolves to AutoModelForVision2Seq, whose registry
+// holds only vision-encoder-decoder, idefics3 and smolvlm; qwen3_5 is
+// registered under image-text-to-text, which transformers.js does not expose as
+// a pipeline task at all. So there is no task string that makes this call work.
+//
+// Making it work means driving the model directly rather than through
+// pipeline(): AutoProcessor with the chat template, an explicit resize (a
+// 300 DPI letter page is ~33k vision patches, past what WebGPU will bind),
+// model.generate, then batch_decode with the prompt sliced off. That is a
+// rewrite, and it should not land before someone measures this model against
+// tesseract on real denial scans -- a fluent VLM misreading a claim number is
+// worse than tesseract garble, because garble is visibly garble.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const memoizeOne = require("async-memoize-one");
@@ -24,14 +41,6 @@ type ImageToTextCallable = (
 interface TransformersModule {
   env: {
     allowLocalModels: boolean;
-    backends?: {
-      onnx?: {
-        wasm?: {
-          // Ensure browser runtime backend paths are web-compatible.
-          wasmPaths?: string;
-        };
-      };
-    };
   };
   pipeline: (
     task: string,
@@ -85,11 +94,14 @@ async function loadQwenOCRPipelineRaw(): Promise<ImageToTextCallable | null> {
     const transformers = require("@huggingface/transformers") as TransformersModule;
     transformers.env.allowLocalModels = false;
 
-    // Explicitly target web ONNX runtime assets.
-    if (transformers.env.backends?.onnx?.wasm) {
-      transformers.env.backends.onnx.wasm.wasmPaths =
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
-    }
+    // No wasmPaths override here on purpose. This used to pin
+    // onnxruntime-web@1.22.0 on the CDN, which 404s: the ORT build webpack
+    // actually bundles (1.24.2) asks for ort-wasm-simd-threaded.asyncify.*,
+    // and 1.22.0's dist has no asyncify files at all. Left alone, the library
+    // derives the URL from the runtime it shipped with, so the version can
+    // never drift out of sync again. It also passes an object rather than a
+    // string, which is what re-enables the Cache API path for the multi-MB
+    // runtime instead of refetching it on every page load.
 
     const pipe = (await transformers.pipeline("image-to-text", QWEN_VL_MODEL_ID, {
       device: "webgpu",

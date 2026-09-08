@@ -88,12 +88,14 @@ Upload your Health Insurance Denial
 	</div>
 	{% if upload_more %}
 	<div class="form-check mt-2 mb-2" id="advanced_ocr_section">
-	    <input type="checkbox" id="advanced_ocr_enabled" class="form-check-input" checked>
+	    <input type="checkbox" id="advanced_ocr_enabled" class="form-check-input">
 	    <label for="advanced_ocr_enabled" class="form-check-label">
 		<b>Enable advanced OCR</b> – uses a WebGPU-accelerated AI model to improve text extraction accuracy.
-		<small class="text-muted d-block">Downloads a model to your device the first time. Unchecked by default when your
-		browser is set to save data, when a compatible GPU is not detected, or on a very low-memory device.
-		Uncheck to use standard OCR only.</small>
+		<small class="text-muted d-block">Off by default, and not working in this release: the model fails to
+		load, so standard OCR is used either way. Turning it on today still fetches about 20 MB of model
+		files from huggingface.co before that failure. Once it works, the full model is about 684 MB,
+		downloaded the first time and run on your own device. Standard OCR downloads a much smaller
+		language file the first time.</small>
 	    </label>
 	</div>
 	<div id="image_select_magic" style="visibility:visible">
