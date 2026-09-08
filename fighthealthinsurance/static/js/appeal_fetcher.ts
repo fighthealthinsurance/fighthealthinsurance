@@ -461,11 +461,16 @@ let hasAutoScrolledToFirstAppeal = false;
 // Draft ordering. The server scores each saved draft on how well it addresses
 // THIS denial (fighthealthinsurance/ml/letter_quality.py) and sends the score
 // as a {"type": "score", "id": <proposed id>} frame after the letter, or on
-// the letter frame itself for a re-served draft. Nothing moves while letters
-// are still arriving: a list that reshuffles under someone reading it is
-// worse than a list in arrival order. Once the server says done, the drafts
-// are ordered once, the top one is labelled, and everything past
-// RANKED_VISIBLE_LIMIT is folded behind a button rather than dropped.
+// the letter frame itself for a re-served draft.
+//
+// Ordering is LIVE: every landed draft and every score re-runs the pass.
+// Scored drafts sit first in rank order, the best one labelled, and scored
+// drafts past RANKED_VISIBLE_LIMIT fold behind a button rather than being
+// dropped. A draft that has just landed and has no score yet is appended at
+// the end and stays visible until its score arrives; it then takes its
+// place. Two rules keep the live reorder from being hostile: nothing moves
+// while the reader is typing in a draft (the pass waits for focus to leave),
+// and a draft the reader has edited is never hidden and never labelled.
 //
 // The score is a criteria score, not a success probability, and the caption
 // says exactly that. Never render it as a percentage or a "chance".
@@ -473,6 +478,16 @@ let hasAutoScrolledToFirstAppeal = false;
 const RANKED_VISIBLE_LIMIT = 3;
 const RANKING_CAPTION =
   "Ordered by how well each letter addresses your denial, not by a prediction of the outcome.";
+// At the end of generation with some drafts never scored (the scorer failed
+// or rate-limited, or a save never returned a row id): the order stays but is
+// only partly informed, so the caption says so and nothing is labelled or
+// folded. Same promise about the outcome as the full caption.
+const RANKING_CAPTION_PARTIAL =
+  "Scored letters are ordered by how well they address your denial, not by a prediction of the outcome. Some letters could not be scored and are listed in the order they arrived.";
+// Two scorers in play means nothing can be ranked on one scale; at the end
+// the page says so rather than silently showing arrival order.
+const RANKING_CAPTION_UNRANKED =
+  "Letters are listed in the order they arrived. They could not be scored on one scale, so none is ordered or recommended.";
 const RECOMMENDED_LABEL = "Recommended";
 // Drafts that scored 0 on "no invented facts" sort below every grounded draft
 // whatever their other marks (matches letter_quality.sort_key).
@@ -484,6 +499,22 @@ interface DraftScore {
   scorer: string;
 }
 let draftScores = new Map<string, DraftScore>();
+// The reader pressed "Show more": nothing folds again for the rest of the
+// session, whatever lands or is re-served (doQuery does not reset this, the
+// same way it keeps draftScores across a retry).
+let showAllDrafts = false;
+// A pass asked for while the reader was typing. `true` means the deferred
+// pass is the final one.
+let rankingPending: boolean | null = null;
+let focusListenerArmed = false;
+// Once the final pass has run, every later pass is final too: a live pass
+// queued behind a focusout must not undo the terminal state (review).
+let finalApplied = false;
+// Bumped when a fresh generation starts on the same page. A deferred pass
+// queued in the previous generation captured its own `pending` value, so
+// resetting rankingPending cannot reach it; it checks this instead and
+// does nothing if the page has moved on (review).
+let rankingGeneration = 0;
 
 function recordDraftScore(proposedId: unknown, quality: unknown, grounding: unknown, scorer: unknown): void {
   if (proposedId === undefined || proposedId === null || proposedId === "unknown") return;
@@ -497,114 +528,187 @@ function recordDraftScore(proposedId: unknown, quality: unknown, grounding: unkn
   });
 }
 
+function scoreOf(el: HTMLElement): DraftScore | undefined {
+  const id = el.getAttribute("data-proposed-id");
+  return id ? draftScores.get(id) : undefined;
+}
+
 // Higher sorts first. Unscored drafts keep arrival order at the bottom.
 function draftSortKey(el: HTMLElement): [number, number] {
-  const id = el.getAttribute("data-proposed-id");
-  const score = id ? draftScores.get(id) : undefined;
+  const score = scoreOf(el);
   if (!score) return [0, 0];
   const demoted = score.grounding !== null && score.grounding < GROUNDING_DEMOTE_BELOW;
   return [demoted ? 1 : 2, score.quality];
 }
 
-function rankedDrafts(): HTMLElement[] {
-  const drafts = outputContainer.children('[id^="magic"]').toArray() as HTMLElement[];
-  const withIndex = drafts.map((el, index) => ({ el, index, key: draftSortKey(el) }));
-  withIndex.sort((a, b) => {
-    if (a.key[0] !== b.key[0]) return b.key[0] - a.key[0];
-    if (a.key[1] !== b.key[1]) return b.key[1] - a.key[1];
-    return a.index - b.index;
-  });
-  return withIndex.map((entry) => entry.el);
+function draftArrival(el: HTMLElement): number {
+  return Number(el.getAttribute("data-arrival-index") || 0);
 }
 
-function finalizeRanking(): void {
-  if (draftScores.size === 0) return;
-  // Idempotent: a retry can reach done more than once. Rebuild from scratch
-  // so there is never a second "Recommended" or a stale fold.
+function readerIsInteracting(): boolean {
+  // Any focused element inside the drafts: a textarea being typed in, a
+  // "Choose this one" button reached by keyboard, the Show more button.
+  // Re-appending the node under it would drop that focus (review).
+  const active = document.activeElement as HTMLElement | null;
+  return !!active && active !== document.body && outputContainer[0].contains(active);
+}
+
+function applyRanking(final: boolean): void {
+  final = final || finalApplied;
+  // Never move a draft out from under someone using it. Remember the
+  // strongest pass that was asked for and run it once focus leaves the
+  // drafts. focusout bubbles from the element to the container; the timeout
+  // lets focus settle first, and if it settled on another element inside
+  // the drafts the pass simply defers again.
+  if (readerIsInteracting()) {
+    rankingPending = rankingPending === true || final;
+    if (!focusListenerArmed) {
+      focusListenerArmed = true;
+      outputContainer[0].addEventListener(
+        "focusout",
+        () => {
+          focusListenerArmed = false;
+          const pending = rankingPending;
+          const generation = rankingGeneration;
+          rankingPending = null;
+          if (pending !== null) {
+            setTimeout(() => {
+              if (generation === rankingGeneration) applyRanking(pending);
+            }, 0);
+          }
+        },
+        { once: true },
+      );
+    }
+    return;
+  }
+  if (final) finalApplied = true;
+
+  // Idempotent: rebuild the caption, the label and the fold from scratch on
+  // every pass so there is never a second "Recommended", a stale caption,
+  // or a fold that no longer fits.
   document.getElementById("appeal-ranking-note")?.remove();
   document.getElementById("appeal-show-more")?.remove();
   for (const badge of Array.from(document.querySelectorAll(".appeal-recommended-badge"))) badge.remove();
   const drafts = outputContainer.children('[id^="magic"]').toArray() as HTMLElement[];
   for (const el of drafts) el.hidden = false;
-  // All or nothing. A scorer that answered for one draft and rate-limited
-  // the rest would put that one first and fold the unassessed ones away,
-  // which is an ordering by luck. Without full coverage the page is put
-  // BACK in arrival order (an earlier, fully scored pass may have sorted
-  // it), with no caption and no fold.
-  // A draft that never got a row id (its save failed) can never be scored,
-  // so it counts as uncovered too: ranking the rest around it would be the
-  // same partial ordering.
-  // ...and all on ONE scale: a score from a repointed model is not
-  // comparable with one from the previous model, whatever the dashboard
-  // does with them.
-  const scorers = new Set(
-    drafts.map((el) => draftScores.get(el.getAttribute("data-proposed-id") || "")?.scorer ?? ""),
-  );
-  const everyDraftScored =
-    scorers.size === 1 &&
+  if (drafts.length === 0) return;
+
+  // One scale only: a score from a repointed model is not comparable with
+  // one from the previous model. With two scorers in play, rank nothing.
+  const scorers = new Set(drafts.map((el) => scoreOf(el)?.scorer).filter((x): x is string => x !== undefined));
+  const oneScale = scorers.size <= 1;
+  const anyScore = drafts.some((el) => scoreOf(el) !== undefined);
+  const scored = oneScale ? drafts.filter((el) => scoreOf(el) !== undefined) : [];
+  const unscored = drafts.filter((el) => !scored.includes(el));
+  scored.sort((a, b) => {
+    const ka = draftSortKey(a);
+    const kb = draftSortKey(b);
+    if (ka[0] !== kb[0]) return kb[0] - ka[0];
+    if (ka[1] !== kb[1]) return kb[1] - ka[1];
+    return draftArrival(a) - draftArrival(b);
+  });
+  unscored.sort((a, b) => draftArrival(a) - draftArrival(b));
+  // Coverage is decided BEFORE anything moves. A draft that never got a row
+  // id (its save failed) can never be scored, so it counts as unscored too.
+  const complete =
+    oneScale &&
     drafts.every((el) => {
       const id = el.getAttribute("data-proposed-id");
       return !!id && draftScores.has(id);
     });
-  if (!everyDraftScored) {
-    const byArrival = drafts.slice().sort(
-      (a, b) => Number(a.getAttribute("data-arrival-index") || 0) - Number(b.getAttribute("data-arrival-index") || 0),
-    );
-    for (const el of byArrival) outputContainer.append(el);
-    return;
-  }
-  const ordered = rankedDrafts();
-  if (ordered.length === 0) return;
+  const partialAtEnd = final && !complete;
 
-  // Re-appending moves the existing nodes, so anything the user has typed
-  // into a draft's textarea comes along with it.
-  for (const el of ordered) outputContainer.append(el);
+  // Scoring off, or nothing scored yet: live passes touch nothing, so the
+  // page is exactly as it was before ranking existed while drafts land. The
+  // final pass still folds past the limit in arrival order (owner's call:
+  // unranked is not the same as unfolded).
+  if (!anyScore && !final) return;
 
-  if (!document.getElementById("appeal-ranking-note")) {
+  if (anyScore && !oneScale) {
+    // Nothing is ranked, so the page must actually be in arrival order: an
+    // earlier single-scorer pass may have moved drafts (review). Same rule
+    // as below, the DOM is touched only if the order differs.
+    const byArrival = drafts.slice().sort((a, b) => draftArrival(a) - draftArrival(b));
+    if (byArrival.some((el, i) => el !== drafts[i])) for (const el of byArrival) outputContainer.append(el);
+    if (final) {
+      const note = document.createElement("p");
+      note.id = "appeal-ranking-note";
+      note.className = "text-muted";
+      note.style.margin = "8px 20px";
+      note.textContent = RANKING_CAPTION_UNRANKED;
+      byArrival[0].before(note);
+    }
+  } else if (anyScore) {
+    // Order: scored first in rank order, then unscored in arrival order. The
+    // DOM is touched only when that differs from what is on screen (moving a
+    // node drops its focus, and a no-op move still costs layout), and never
+    // at the partial end: the order the reader has been watching stays.
+    // Re-appending moves the existing nodes, so anything the user has typed
+    // into a draft's textarea comes along with it.
+    const ordered = [...scored, ...unscored];
+    if (!partialAtEnd) {
+      const changed = ordered.some((el, i) => el !== drafts[i]);
+      if (changed) for (const el of ordered) outputContainer.append(el);
+    }
+    const first = (outputContainer.children('[id^="magic"]').toArray() as HTMLElement[])[0];
+
     const note = document.createElement("p");
     note.id = "appeal-ranking-note";
     note.className = "text-muted";
     note.style.margin = "8px 20px";
-    note.textContent = RANKING_CAPTION;
-    ordered[0].before(note);
+    note.textContent = partialAtEnd ? RANKING_CAPTION_PARTIAL : RANKING_CAPTION;
+    first.before(note);
+
+    // At the partial end nothing is labelled over a draft that was never
+    // assessed.
+    if (!partialAtEnd) {
+      const top = scored[0];
+      // A draft the reader has already rewritten is not the draft that was
+      // scored: it keeps its place in the order but never gets the label.
+      const topIsDirty = top.getAttribute("data-dirty") === "1";
+      if (!topIsDirty && draftSortKey(top)[0] === 2) {
+        const badge = document.createElement("div");
+        badge.className = "appeal-recommended-badge";
+        badge.textContent = RECOMMENDED_LABEL;
+        badge.style.cssText =
+          "display:inline-block;padding:4px 10px;margin:0 0 8px;border-radius:4px;" +
+          "background:#2e7d32;color:#fff;font-weight:600;font-size:0.9em;";
+        top.prepend(badge);
+      }
+    }
   }
 
-  const top = ordered[0];
-  // A draft the reader has already rewritten is not the draft that was
-  // scored: it keeps its place in the order but never gets the label.
-  const topIsDirty = top.getAttribute("data-dirty") === "1";
-  if (!topIsDirty && draftSortKey(top)[0] === 2 && !top.querySelector(".appeal-recommended-badge")) {
-    const badge = document.createElement("div");
-    badge.className = "appeal-recommended-badge";
-    badge.textContent = RECOMMENDED_LABEL;
-    badge.style.cssText =
-      "display:inline-block;padding:4px 10px;margin:0 0 8px;border-radius:4px;" +
-      "background:#2e7d32;color:#fff;font-weight:600;font-size:0.9em;";
-    top.prepend(badge);
-  }
-
-  const hidden = ordered.slice(RANKED_VISIBLE_LIMIT);
-  if (hidden.length > 0 && !document.getElementById("appeal-show-more")) {
-    for (const el of hidden) el.hidden = true;
-    const button = document.createElement("button");
-    button.id = "appeal-show-more";
-    button.type = "button";
-    button.className = "btn btn-outline-secondary";
-    button.style.margin = "8px 20px 24px";
-    button.textContent = `Show ${hidden.length} more draft${hidden.length === 1 ? "" : "s"}`;
-    button.setAttribute("aria-expanded", "false");
-    button.setAttribute("aria-controls", hidden.map((el) => el.id).join(" "));
-    button.addEventListener("click", () => {
-      for (const el of hidden) el.hidden = false;
-      button.setAttribute("aria-expanded", "true");
-      // Keep keyboard and screen-reader users where the new content is,
-      // instead of dropping focus on the body when the button goes away.
-      const first = hidden[0].querySelector("textarea") as HTMLElement | null;
-      (first ?? hidden[0]).focus();
-      button.remove();
-    });
-    ordered[RANKED_VISIBLE_LIMIT - 1].after(button);
-  }
+  if (showAllDrafts) return;
+  // The fold. Live: only scored drafts past the limit fold, so a draft that
+  // has just landed stays revealed until its score arrives. At the end:
+  // whatever is past the limit in the DISPLAYED order folds, scored or not,
+  // because an unranked page still should not open with a wall of letters
+  // (owner's call). A draft the reader has edited is never hidden.
+  const displayed = outputContainer.children('[id^="magic"]').toArray() as HTMLElement[];
+  const foldable = final ? displayed : oneScale ? scored : [];
+  const hidden = foldable.slice(RANKED_VISIBLE_LIMIT).filter((el) => el.getAttribute("data-dirty") !== "1");
+  if (hidden.length === 0) return;
+  for (const el of hidden) el.hidden = true;
+  const button = document.createElement("button");
+  button.id = "appeal-show-more";
+  button.type = "button";
+  button.className = "btn btn-outline-secondary";
+  button.style.margin = "8px 20px 24px";
+  button.textContent = `Show ${hidden.length} more draft${hidden.length === 1 ? "" : "s"}`;
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-controls", hidden.map((el) => el.id).join(" "));
+  button.addEventListener("click", () => {
+    showAllDrafts = true;
+    for (const el of hidden) el.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    // Keep keyboard and screen-reader users where the new content is,
+    // instead of dropping focus on the body when the button goes away.
+    const first = hidden[0].querySelector("textarea") as HTMLElement | null;
+    (first ?? hidden[0]).focus();
+    button.remove();
+  });
+  foldable[RANKED_VISIBLE_LIMIT - 1].after(button);
 }
 
 // Diagnostic counters used in the client error report so server logs
@@ -968,10 +1072,9 @@ function done(): void {
     retries = retries + 1;
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } else {
-    // Generation is really over (no further automatic attempt): only now
-    // may the drafts be ordered, so a page never reshuffles under a reader
-    // while a retry is still adding letters.
-    finalizeRanking();
+    // Generation is really over (no further automatic attempt): the final
+    // pass decides the caption, the label and the fold for good.
+    applyRanking(true);
     if (appealsSoFar.length === 0) {
       const transport = usingRestFallback ? 'rest-fallback' : 'websocket';
       // Be explicit about *why* we ended with nothing. The common iOS case is
@@ -1100,6 +1203,13 @@ async function requestExternalModels(
     retries = 0;
     respBuffer = "";
     hasAutoScrolledToFirstAppeal = false;
+    // A fresh generation, not a retry: the ranking's terminal state ends
+    // with the run it belonged to. Scores and an opened fold are kept, the
+    // "every pass is final now" latch is not, or the new drafts would land
+    // under a partial caption with live ordering suppressed (review).
+    finalApplied = false;
+    rankingPending = null;
+    rankingGeneration += 1;
     // The wait for the next appeal starts now, not when the last pre-rerun
     // appeal arrived — otherwise the "Current appeal" clock would include
     // however long the user spent reading drafts before opting in. The
@@ -1398,9 +1508,11 @@ function processResponseChunk(chunk: string): void {
         }
 
         // A draft's score, sent after the letter it belongs to (or never,
-        // when scoring is off or failed). Recorded now, applied at done.
+        // when scoring is off or failed). Recorded, then the order is
+        // updated on the spot.
         if (parsedLine.type === 'score') {
           recordDraftScore(parsedLine.id, parsedLine.quality_score, parsedLine.grounding_score, parsedLine.scorer);
+          applyRanking(false);
           return;
         }
 
@@ -1426,6 +1538,10 @@ function processResponseChunk(chunk: string): void {
         ) {
           duplicatesSkipped++;
           console.log("Duplicate appeal found. Skipping.");
+          // The letter is not rendered again, but the score it carried was
+          // just recorded and may change the order of what is on screen
+          // (a REST re-serve after a WebSocket failure) (review).
+          if (parsedLine.quality_score !== undefined) applyRanking(false);
           return;
         }
 
@@ -1517,6 +1633,9 @@ function processResponseChunk(chunk: string): void {
         }
 
         outputContainer.append(clonedForm);
+        // Appended at the end and visible: an unscored draft is never folded.
+        // The pass puts already-scored drafts in rank order around it.
+        applyRanking(false);
 
         if (!hasAutoScrolledToFirstAppeal) {
           hasAutoScrolledToFirstAppeal = true;
