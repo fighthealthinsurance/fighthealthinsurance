@@ -2341,6 +2341,7 @@ class AppealGenerator(object):
             from fighthealthinsurance.regulatory_citations import (
                 classify_plan,
                 get_regulatory_citation_context,
+                self_insured_from,
             )
         except Exception as e:
             logger.opt(exception=True).debug(f"regulatory_citations unavailable: {e}")
@@ -2348,21 +2349,18 @@ class AppealGenerator(object):
 
         try:
             names, is_tpa, alt_name = AppealGenerator._plan_signals(denial)
-            # Best-effort self-insured/ERISA signal from the linked carrier; a
-            # TPA administers self-funded employer (ERISA) plans. None when we
-            # cannot tell, which selects the neutral caveat wording.
-            self_insured: Optional[bool] = True if is_tpa else None
+            # Same classification as the plan-law block, so the two never
+            # contradict each other (review). The self-insured (ERISA) signal
+            # comes from the TPA flag, unless a source says the plan cannot
+            # be ERISA: a government plan is exempt whoever administers it.
+            programs = classify_plan(names, is_tpa=is_tpa, regulator_alt_name=alt_name)
             return get_regulatory_citation_context(
                 state=getattr(denial, "your_state", None),
                 denial_text=getattr(denial, "denial_text", None),
                 procedure=getattr(denial, "procedure", None),
                 diagnosis=getattr(denial, "diagnosis", None),
-                self_insured=self_insured,
-                # Same classification as the plan-law block, so the two never
-                # contradict each other (review).
-                programs=classify_plan(
-                    names, is_tpa=is_tpa, regulator_alt_name=alt_name
-                ),
+                self_insured=self_insured_from(programs),
+                programs=programs,
             )
         except Exception as e:
             logger.opt(exception=True).debug(f"_collect_regulatory_context failed: {e}")

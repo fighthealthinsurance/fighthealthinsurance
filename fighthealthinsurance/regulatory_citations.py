@@ -37,6 +37,20 @@ PUBLIC_PROGRAMS = frozenset({MEDICARE_ADVANTAGE, MEDICARE, MEDICAID, VA, FEHB})
 # Coverage ERISA cannot govern. A denial letter that mentions ERISA rights
 # does not override these; the block names the conflict instead.
 EXCLUSIVE_OF_ERISA = PUBLIC_PROGRAMS | {GOVERNMENT}
+# Sources that describe private or government-employer coverage, which state
+# insurance law and the ACA appeal rules can reach.
+PRIVATE_COVERAGE = frozenset({ERISA, OTHER_GROUP, MARKETPLACE, GOVERNMENT, TPA})
+
+
+def self_insured_from(programs: Iterable[str]) -> Optional[bool]:
+    """True when the TPA flag stands for a self-funded ERISA employer plan:
+    the flag is set and no source says otherwise (a government plan is
+    exempt from ERISA whoever administers it, and marketplace coverage is
+    insured). None when we cannot tell, which selects neutral wording."""
+    keys = set(programs)
+    if TPA in keys and not keys & (EXCLUSIVE_OF_ERISA | {MARKETPLACE}):
+        return True
+    return None
 
 
 @dataclass(frozen=True)
@@ -71,7 +85,8 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         name="CMS Interoperability and Prior Authorization Final Rule (CMS-0057-F)",
         summary=(
             "Impacted payers must send a specific reason for every "
-            "prior-authorization denial and publicly report PA approval, "
+            "prior-authorization denial of an item or service (prescription "
+            "drugs are outside this rule) and publicly report PA approval, "
             "denial, and appeal metrics. Use it to demand the specific denial "
             "rationale and the exact criteria applied."
         ),
@@ -381,8 +396,15 @@ def get_regulatory_citation_context(
         return None
 
     hooks = [h for h in FEDERAL_HOOKS if _hook_in_effect(h, today)] + state_hooks
-    public = set(programs) & PUBLIC_PROGRAMS
-    if public:
+    keys = set(programs)
+    public = keys & PUBLIC_PROGRAMS
+    # Only public coverage: keep the rules written for the program. Public
+    # AND private coverage (a Medicare Advantage member with an employer
+    # plan too): we do not know which plan denied, so the private plan's
+    # rules stay, with a sentence saying whom they reach, the same
+    # tie-break the plan-law block uses (review).
+    public_only = bool(public) and not keys & PRIVATE_COVERAGE
+    if public_only:
         hooks = [h for h in hooks if h.public_programs & public]
     if self_insured is True:
         hooks = [h for h in hooks if h.applies_to_self_insured]
@@ -391,13 +413,26 @@ def get_regulatory_citation_context(
 
     bullet_lines = "\n".join(f"- {h.name} ({h.effective}): {h.summary}" for h in hooks)
 
-    if public:
-        label = next(_PROGRAM_LABELS[k] for k in _PROGRAM_ORDER if k in public)
+    label = (
+        next(_PROGRAM_LABELS[k] for k in _PROGRAM_ORDER if k in public)
+        if public
+        else None
+    )
+    if public_only:
         caveat = (
             f"Note: this is {label} coverage. State insurance mandates and the "
             "ACA appeal rules do not bind it; only the federal rules written "
             "for the program are listed, so rely on those and on the program's "
             "own appeal process."
+        )
+    elif public:
+        caveat = (
+            "Note: the state laws listed above generally apply to fully-insured "
+            "plans; self-insured (ERISA) employer plans are typically exempt, so "
+            "confirm the plan type before relying on a state mandate. More than "
+            f"one coverage source was given: the state and ACA items above reach "
+            f"the private plan, not the {label} coverage, so apply them only if "
+            "the denial concerns the private plan."
         )
     elif self_insured is True:
         caveat = (

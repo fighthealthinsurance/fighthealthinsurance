@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from fighthealthinsurance.generate_appeal import AppealGenerator
 from fighthealthinsurance.regulatory_citations import (
     get_regulatory_citation_context,
+    self_insured_from,
 )
 
 
@@ -168,6 +169,52 @@ class TestPublicProgramFiltering(unittest.TestCase):
             get_regulatory_citation_context("MA", programs=("erisa", "tpa")),
             get_regulatory_citation_context("MA"),
         )
+
+    def test_public_and_private_coverage_together_keeps_the_private_rules(self):
+        """A Medicare Advantage member with an employer plan too: we do not
+        know which plan denied, so the state and ACA items stay, with a
+        sentence saying whom they reach (review)."""
+        block = get_regulatory_citation_context(
+            "MA", programs=("medicare_advantage", "erisa")
+        )
+        assert block is not None
+        self.assertIn("Massachusetts", block)
+        self.assertIn("147.136", block)
+        self.assertIn("More than one coverage source was given", block)
+        self.assertIn("not the Medicare Advantage coverage", block)
+        self.assertNotIn("this is Medicare Advantage coverage", block)
+
+    def test_the_self_insured_signal_defers_to_a_source_erisa_cannot_govern(self):
+        self.assertTrue(self_insured_from(("tpa",)))
+        self.assertTrue(self_insured_from(("erisa", "tpa")))
+        for source in ("government", "fehb", "medicare_advantage", "medicaid", "marketplace"):
+            with self.subTest(source=source):
+                self.assertIsNone(self_insured_from((source, "tpa")))
+        self.assertIsNone(self_insured_from(("erisa",)))
+
+    def test_a_government_plan_with_a_tpa_gets_the_neutral_caveat(self):
+        denial = SimpleNamespace(
+            your_state="MA",
+            denial_text=None,
+            procedure=None,
+            diagnosis=None,
+            insurance_company_obj=SimpleNamespace(is_tpa=True),
+            plan_source=SimpleNamespace(
+                all=lambda: [SimpleNamespace(name="Employer -- State Government")]
+            ),
+        )
+        result = AppealGenerator._collect_regulatory_context(denial)
+        assert result is not None
+        # The neutral caveat, not the self-insured one (which opens with
+        # "this appears to be a self-insured (ERISA) employer plan").
+        self.assertNotIn("this appears to be a self-insured", result)
+        self.assertIn("confirm the plan type before relying on a state mandate", result)
+        self.assertIn("Massachusetts", result)
+
+    def test_cms_0057_f_says_it_excludes_drugs(self):
+        block = get_regulatory_citation_context("MA", programs=("medicaid",))
+        assert block is not None
+        self.assertIn("prescription drugs are outside this rule", block)
 
     def test_the_collector_classifies_from_the_plan_source(self):
         denial = SimpleNamespace(
