@@ -3100,6 +3100,29 @@ class AppealsBackendHelper:
     # sufficient result with weaker drafts adds no value.
     ENOUGH_APPEALS = 3
 
+    # How many previously-saved drafts to replay before this run's own drafts.
+    #
+    # Rows accumulate per denial across retries, reconnects and re-runs, and the
+    # replay had no cap at all, so a denial that had been through generation a
+    # few times opened with a wall of stored letters and put the fresh one at
+    # the bottom. Eighteen old drafts ahead of one new one is not a listing, it
+    # is a haystack.
+    #
+    # Newest first, because the most recent drafts were generated with the most
+    # context. This is deliberately independent of TypeSafe scoring: with the
+    # ranking flags off there are no scores to sort by, and the page still must
+    # not open with a haystack. Ranking sits on top of this rather than
+    # replacing it.
+    #
+    # The cap limits what is SHOWN at the start of a run. It does not fence the
+    # held-back rows off from the rest of the run, and that is deliberate:
+    # synthesis below still draws on every stored draft for the denial (it is
+    # choosing inputs, not showing them), and if the model regenerates text
+    # identical to a held-back row, the uniqueness handler streams that stored
+    # row -- a draft the user has not seen this session, which is the right
+    # outcome even though the done frame counts it as new (review).
+    MAX_REPLAYED_APPEALS = 3
+
     # Deadlines, measured from the start of the generation flow, after which a
     # run starts serving the speculative reserve instead of holding it to the
     # very end. Research + make_appeals routinely run for minutes, and a reserve
@@ -3587,9 +3610,15 @@ class AppealsBackendHelper:
         # Exclude speculative rows: those are the background precompute held in
         # reserve and are served ONLY as a fallback below, not as normal
         # existing appeals.
-        existing_appeals = ProposedAppeal.objects.filter(
-            for_denial=denial, speculative=False
-        ).all()
+        # Newest first so the cap below keeps the most recent drafts rather than
+        # whatever the database happened to return. created_at is null on legacy
+        # rows, and Postgres sorts NULLs first on DESC, which would have handed
+        # those rows the whole budget; nulls_last puts them where they belong.
+        existing_appeals = (
+            ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+            .order_by(F("created_at").desc(nulls_last=True), "-id")
+            .all()
+        )
         # Everything already delivered to this client, by normalized raw text.
         # Grown by every path that ships an appeal (existing rows, streamed
         # drafts, the early reserve flush, synthesis, the end-of-flow
@@ -3718,6 +3747,13 @@ class AppealsBackendHelper:
 
         old = 0
         new = 0
+        # Stored drafts the cap keeps off the screen, by normalized text. They
+        # are NOT served: a synthesis result or a live draft that lands on one
+        # of them is new to this user and must be delivered (the uniqueness
+        # handler streams the stored row). They ARE kept out of the
+        # end-of-flow reconciliation, or the cap would be undone at the end
+        # (review).
+        held_back_keys: set[str] = set()
         async for appeal in existing_appeals:
             # Enforce the deliverability rules on previously-saved appeals too:
             # the DB may hold short or wordless drafts saved before those
@@ -3725,12 +3761,20 @@ class AppealsBackendHelper:
             # not re-deliver them.
             if is_real_appeal(appeal.appeal_text):
                 key = _served_key(appeal.appeal_text)
-                if key in served_keys:
+                if key in served_keys or key in held_back_keys:
                     # Legacy duplicate rows (NULL fingerprints, equivalent
                     # normalized text) are one draft to the user: stream
                     # the first, skip its twins, and don't count them in
                     # `old` (review).
                     logger.debug(f"Skipping duplicate existing appeal {appeal}")
+                    continue
+                if old >= cls.MAX_REPLAYED_APPEALS:
+                    # Past the cap: remember it, don't show it. The cap counts
+                    # DELIVERED rows, not rows examined: duplicates and
+                    # unusable drafts are skipped above and must not spend the
+                    # budget, or a denial whose recent rows happen to be twins
+                    # would replay nothing at all.
+                    held_back_keys.add(key)
                     continue
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
@@ -3750,6 +3794,13 @@ class AppealsBackendHelper:
                     appeal.appeal_text,
                     f"saved appeal id={appeal.id} for denial {denial_id}",
                 )
+
+        if held_back_keys:
+            logger.info(
+                f"[gen_id={generation_id}] replay cap for denial {denial_id}: "
+                f"served {old} stored drafts (newest first), held back "
+                f"{len(held_back_keys)}"
+            )
 
         # --- Early speculative fallback ---
         # What the precompute had ready before this run started. Logged here so
@@ -5147,7 +5198,17 @@ class AppealsBackendHelper:
         # streams the draft; such a draft has no row here, but the streaming
         # path already recorded its text, so the reconciliation still won't
         # re-serve it.
-        served_keys.update({_served_key(s) for s in saved_appeal_texts if s})
+        # ...except the rows the replay cap held back. Those were never sent,
+        # and a synthesis result that lands on one of them is new to this user:
+        # marking it served here would make the guard below discard the only
+        # copy the user would ever see (review).
+        served_keys.update(
+            {
+                k
+                for k in (_served_key(s) for s in saved_appeal_texts if s)
+                if k not in held_back_keys
+            }
+        )
         # Synthesis requires >=2 drafts to be meaningful: with a single
         # input, models often regurgitate it verbatim. The client dedupes
         # by content, so a verbatim copy gets silently dropped, which then
@@ -5293,7 +5354,11 @@ class AppealsBackendHelper:
                 if not is_real_appeal(text):
                     continue
                 normalized = str(text).strip()
-                if _served_key(text) in served_keys:
+                key = _served_key(text)
+                # Held-back rows stay held back: the reconciliation exists to
+                # land drafts that no yield path saw, and these were skipped
+                # on purpose, not missed.
+                if key in served_keys or key in held_back_keys:
                     continue
                 is_mini = bool(row.speculative) or row.context_level in MINI_LEVELS
                 # Re-evaluate the threshold each iteration: serving increments new.

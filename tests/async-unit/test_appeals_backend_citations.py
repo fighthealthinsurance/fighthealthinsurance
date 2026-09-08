@@ -105,6 +105,9 @@ def _make_empty_proposed_appeal_query():
 
     mock_queryset = MagicMock()
     mock_queryset.all.return_value = empty_async_iter()
+    # The existing-appeals replay orders newest-first before it calls .all(),
+    # so the chain has to come back to this same mock.
+    mock_queryset.order_by.return_value = mock_queryset
     return mock_queryset
 
 
@@ -162,9 +165,13 @@ def _make_proposed_appeal_query_with_texts(texts, existing_texts=None):
         only = exclude
 
         def order_by(self, *args, **kwargs):
-            # Mock ignores the sort key; the reconciliation query uses
-            # order_by("id") for deterministic FIFO promotion in production.
-            return self._gen()
+            # Mock ignores the sort key. Two production callers order: the
+            # reconciliation query uses order_by("id") for deterministic FIFO
+            # promotion and then iterates, and the existing-appeals replay
+            # orders newest-first and then calls .all(). Returning self serves
+            # both, since __aiter__ yields the same rows the old
+            # generator-returning version did.
+            return self
 
         def __aiter__(self):
             return self._gen()
