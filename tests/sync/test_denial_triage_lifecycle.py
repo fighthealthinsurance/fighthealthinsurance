@@ -17,6 +17,12 @@ from fighthealthinsurance.models import Denial
 TEXT = "Denied. Appeal within 180 days of this notice."
 
 
+def _is_triage_refresh(kwargs) -> bool:
+    """The review step refreshes the triage columns by name; its other
+    refreshes (after generating questions) name other fields or none."""
+    return "appeal_deadline_label" in (kwargs.get("fields") or [])
+
+
 class TriageLifecycleTest(TestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
@@ -99,7 +105,7 @@ class TriageLifecycleTest(TestCase):
 
         def refresh_then_triage(instance, *args, **kwargs):
             real_refresh(instance, *args, **kwargs)
-            if landed:
+            if landed or not _is_triage_refresh(kwargs):
                 return
             landed.append(True)
             with override_settings(
@@ -125,6 +131,73 @@ class TriageLifecycleTest(TestCase):
         self.assertEqual(denial.denial_date, datetime.date(2026, 9, 12))
         self.assertEqual(denial.appeal_deadline_label, "180 days from notice")
         self.assertEqual(denial.appeal_deadline, datetime.date(2027, 3, 11))
+
+    def test_overlapping_submissions_cannot_restore_an_old_date_under_a_new_deadline(self):
+        """Two review submissions overlap: A confirms September 12, B corrects
+        to September 22 while A is still running, the triage lands after both
+        refreshes, and A finishes last. The row must hold B's date with the
+        deadline anchored to it; A's stale copy of the date must not win
+        (review)."""
+        text = "Denied as not medically necessary. Appeal within 180 days of this notice."
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("life@example.com"),
+            denial_text=text,
+            semi_sekret="sekret",
+            denial_date=datetime.date(2026, 9, 12),
+        )
+        result = dt.parse(
+            {
+                "answers": {
+                    "category": {"choice": "medical_necessity", "confidence": 0.9},
+                    "regulation": {"choice": "unknown", "confidence": 0.4},
+                    "pre_service": {"noul": 0.1},
+                    "urgent": {"noul": 0.02},
+                    "deadline": {"choice": "180 days from notice", "confidence": 0.95},
+                }
+            },
+            dt.date_candidates(text, datetime.date(2026, 9, 12)),
+        )
+
+        def submit(date):
+            FindNextStepsHelper.find_next_steps(
+                denial_id=denial.denial_id,
+                email="life@example.com",
+                semi_sekret="sekret",
+                procedure="MRI",
+                diagnosis="back pain",
+                insurance_company=None,
+                plan_id=None,
+                claim_id=None,
+                denial_type=None,
+                denial_date=date,
+            )
+
+        real_refresh = Denial.refresh_from_db
+        refreshes = []
+
+        def refresh_then(instance, *args, **kwargs):
+            real_refresh(instance, *args, **kwargs)
+            if not _is_triage_refresh(kwargs):
+                return
+            refreshes.append(instance.denial_date)
+            if len(refreshes) == 1:
+                # Inside A's refresh: B runs start to finish.
+                submit(datetime.date(2026, 9, 22))
+            elif len(refreshes) == 2:
+                # Inside B's refresh: the triage lands.
+                with override_settings(
+                    TYPESAFE_API_KEY="test-key", TYPESAFE_DENIAL_TRIAGE_ENABLED=True
+                ), patch.object(dt, "triage", new=AsyncMock(return_value=result)):
+                    async_to_sync(DenialCreatorHelper.extract_set_triage)(
+                        instance.denial_id
+                    )
+
+        with patch.object(Denial, "refresh_from_db", refresh_then):
+            submit(datetime.date(2026, 9, 12))
+        self.assertEqual(len(refreshes), 2)
+        denial.refresh_from_db()
+        self.assertEqual(denial.denial_date, datetime.date(2026, 9, 22))
+        self.assertEqual(denial.appeal_deadline, datetime.date(2027, 3, 21))
 
     def test_a_stale_triage_is_not_resolved_against_a_new_date(self):
         denial = self._triaged(triage_text_hash=dt.text_hash("some other letter"))
