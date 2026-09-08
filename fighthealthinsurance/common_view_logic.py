@@ -1174,13 +1174,16 @@ class FindNextStepsHelper:
                 )
                 if resolved != denial.appeal_deadline:
                     # Conditional, like the triage's own write: only while
-                    # the row still carries this date and this triage. A
-                    # newer submission or a newer triage wins by making the
-                    # predicate fail (review).
+                    # the row still carries this date, this letter's triage
+                    # AND the window we resolved (a second triage of the
+                    # same letter can land a different window in between).
+                    # A newer submission or a newer triage wins by making
+                    # the predicate fail (review).
                     Denial.objects.filter(
                         denial_id=denial.denial_id,
                         denial_date=denial_date,
                         triage_text_hash=denial.triage_text_hash,
+                        appeal_deadline_label=denial.appeal_deadline_label,
                     ).update(appeal_deadline=resolved)
                     denial.appeal_deadline = resolved
         if date_of_service is not None:

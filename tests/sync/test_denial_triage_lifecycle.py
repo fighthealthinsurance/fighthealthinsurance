@@ -199,6 +199,43 @@ class TriageLifecycleTest(TestCase):
         self.assertEqual(denial.denial_date, datetime.date(2026, 9, 22))
         self.assertEqual(denial.appeal_deadline, datetime.date(2027, 3, 21))
 
+    def test_a_newer_triage_window_is_not_overwritten_by_the_reconciliation(self):
+        """The review step refreshed a triage saying 180 days; before its
+        reconciliation wrote, a second triage of the same letter landed 60
+        days with its own deadline. The reconciliation must not put a
+        180-day deadline under the 60-day label (review)."""
+        denial = self._triaged()  # "180 days from notice", unresolved
+        real_refresh = Denial.refresh_from_db
+        landed = []
+
+        def refresh_then_newer_triage(instance, *args, **kwargs):
+            real_refresh(instance, *args, **kwargs)
+            if landed or not _is_triage_refresh(kwargs):
+                return
+            landed.append(True)
+            Denial.objects.filter(denial_id=instance.denial_id).update(
+                appeal_deadline_label="60 days from notice",
+                appeal_deadline=datetime.date(2026, 11, 11),
+            )
+
+        with patch.object(Denial, "refresh_from_db", refresh_then_newer_triage):
+            FindNextStepsHelper.find_next_steps(
+                denial_id=denial.denial_id,
+                email="life@example.com",
+                semi_sekret="sekret",
+                procedure="MRI",
+                diagnosis="back pain",
+                insurance_company=None,
+                plan_id=None,
+                claim_id=None,
+                denial_type=None,
+                denial_date=datetime.date(2026, 9, 12),
+            )
+        self.assertTrue(landed)
+        denial.refresh_from_db()
+        self.assertEqual(denial.appeal_deadline_label, "60 days from notice")
+        self.assertEqual(denial.appeal_deadline, datetime.date(2026, 11, 11))
+
     def test_a_stale_triage_is_not_resolved_against_a_new_date(self):
         denial = self._triaged(triage_text_hash=dt.text_hash("some other letter"))
         FindNextStepsHelper.find_next_steps(
