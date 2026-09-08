@@ -216,14 +216,15 @@ def test_every_pass_rebuilds_from_scratch():
     assert "for (const el of drafts) el.hidden = false;" in body
 
 
-def test_one_scale_only_and_partial_coverage_at_the_end_drops_label_and_fold():
+def test_partial_coverage_at_the_end_drops_the_label_but_still_folds_the_displayed_order():
     body = _fn("applyRanking")
     assert "const oneScale = scorers.size <= 1;" in body
     assert "const scored = oneScale ? drafts.filter" in body
     assert "return !!id && draftScores.has(id);" in body, "an unsaved draft is uncovered"
     assert "const partialAtEnd = final && !complete;" in body
-    # Partial at the end: the caption says so, no badge, no fold; the order
-    # already on screen stays (no reshuffle back to arrival order).
+    # Partial at the end: the caption says so and there is no badge; the
+    # order already on screen stays (no reshuffle back to arrival order) and
+    # the fold still applies to it.
     assert "partialAtEnd ? RANKING_CAPTION_PARTIAL : RANKING_CAPTION" in body
     # Partial end: no label, but the fold still applies to the displayed order.
     assert body.index("if (!partialAtEnd) {\n      const top = scored[0];") < body.index("top.prepend(badge)")
