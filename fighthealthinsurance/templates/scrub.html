@@ -118,6 +118,16 @@ Upload your Health Insurance Denial
 			<input id="uploader" type="file" multiple="true" class="form-control mt-2"><br>
 	    </div>
 	</div>
+	{% comment %} Sits right under the uploader, where the read is triggered: on a
+	   phone the message boxes at the bottom of the form are a full screen away
+	   from the file picker, and an indicator nobody can see is no indicator
+	   (review). Same element the submit gate toggles. {% endcomment %}
+	    <div class="hidden-error-message hidden-progress-message" id="ocr_in_progress" role="alert" aria-live="polite">
+	      We're reading the file you uploaded. A scanned PDF is processed a page at
+	      a time, so this can take a little while. The text will appear in "Your
+	      Insurance Denial" below when it's done. You can also type or paste the
+	      denial text yourself instead of waiting.
+	    </div>
 	{% endif %}
 	<div class="form-group">
 	    <label for="denial_text" id="denial_text_label" class="form-label">
@@ -216,12 +226,6 @@ Upload your Health Insurance Denial
 	      We need your denial in the box below. If you never got one, say so and
 	      describe what was denied (for example: the pharmacy said my PrEP was
 	      denied).
-	    </div>
-	    <div class="hidden-error-message" id="ocr_in_progress" role="alert" aria-live="polite">
-	      We're still reading the file you uploaded &mdash; a scanned PDF has to be
-	      processed a page at a time, which can take a little while. The text will
-	      appear in "Your Insurance Denial" below when it's done. You can also type
-	      or paste the denial text yourself instead of waiting.
 	    </div>
 	    <div class="hidden-error-message" id="ocr_partial" role="alert" aria-live="polite">
 	      We read some of what you uploaded but not all of it, so check the box

@@ -646,6 +646,14 @@ a.link:hover::after {
   padding: initial; /* Restores padding */
 }
 
+/* Same show/hide machinery, but for messages that are NOT errors. Progress
+   ("we are reading your file") shares the markup and the .visible toggle with
+   the validation errors, and inheriting their red made a normal wait look like
+   something had gone wrong. */
+.hidden-error-message.hidden-progress-message {
+    color: #2c3e50;
+}
+
 .appeal_text {
     width: 100%;
     height: 20em;

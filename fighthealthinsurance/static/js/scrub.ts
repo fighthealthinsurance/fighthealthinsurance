@@ -133,7 +133,7 @@ const recognizeEvent = async function (evt: Event) {
     addText(text);
   };
 
-  beginOcr();
+  beginOcr(selection);
   try {
     for (const file of filesArray) {
       // Catch PER FILE, not around the loop. The uploader is multiple="true"
@@ -149,7 +149,7 @@ const recognizeEvent = async function (evt: Event) {
       }
     }
   } finally {
-    endOcr();
+    endOcr(selection);
   }
 
   // A superseded batch says nothing about what the user is looking at.

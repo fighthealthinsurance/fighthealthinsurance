@@ -109,7 +109,12 @@ def test_ocr_progress_message_is_cleared_when_the_last_run_finishes():
     """The gate only re-evaluates on submit, so endOcr must clear the message
     itself or it stays on screen after the file has been read."""
     end_ocr = _js_function(_form_source(), "export function endOcr")
-    assert "ocrInFlight === 0" in end_ocr, end_ocr
+    # Only the batch that is still current may clear it; a superseded batch
+    # ending must not hide the indicator for the batch that replaced it.
+    assert re.search(
+        r"selection\s*!==\s*activeOcrSelection|activeOcrSelection\s*!==\s*selection",
+        end_ocr,
+    ), end_ocr
     assert 'rehideHiddenMessage("ocr_in_progress")' in end_ocr, end_ocr
 
 
@@ -118,12 +123,14 @@ def test_the_uploader_releases_ocr_state_even_on_error():
     recognize() loop and release in a finally, or a failed parse leaves the
     form permanently unsubmittable."""
     fn = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
-    assert "beginOcr();" in fn, fn
+    assert "beginOcr(selection);" in fn, fn
     assert "await recognize(" in fn, fn
-    assert re.search(r"finally\s*\{\s*endOcr\(\);", fn), fn
+    assert re.search(r"finally\s*\{\s*endOcr\(selection\);", fn), fn
     # ...and the release is inside the same function, after the loop.
     assert (
-        fn.index("beginOcr();") < fn.index("await recognize(") < fn.index("endOcr();")
+        fn.index("beginOcr(selection);")
+        < fn.index("await recognize(")
+        < fn.index("endOcr(selection);")
     )
 
 
@@ -308,7 +315,7 @@ def test_a_superseded_batch_cannot_append_its_text():
     assert re.search(r"recognize\(\s*file\s*,\s*addTextForThisSelection\s*\)", fn), fn
     # ...and that wrapper drops writes once it is no longer the current pick.
     wrapper = fn[fn.index("addTextForThisSelection = ") :]
-    wrapper = wrapper[: wrapper.index("beginOcr()")]
+    wrapper = wrapper[: wrapper.index("beginOcr(")]
     assert "selection !== latestOcrSelection" in wrapper, wrapper
     assert wrapper.index("selection !== latestOcrSelection") < wrapper.index(
         "addText(text)"
