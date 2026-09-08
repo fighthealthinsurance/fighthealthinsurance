@@ -2918,6 +2918,20 @@ def scoring_redactions(denial: Denial) -> list[tuple[str, str]]:
         add(contact.address1, "ADDRESS")
         add(contact.address2, "ADDRESS")
 
+    def add_username(user: Any) -> None:
+        # An identifier, not a name: matched whole-word in any case, where a
+        # name only matches its capitalised spellings (review). A
+        # domain-scoped login is stored as raw🐼domain_id
+        # (fhi_users.auth.auth_utils.combine_domain_and_username); the raw
+        # login is the spelling a person would write, so both go in (review).
+        # A login spelled "unknown" falls to add()'s sentinel filter on
+        # purpose: it identifies nobody, and redacting that word would blank
+        # ordinary prose in most letters (review, accepted).
+        username = str(getattr(user, "username", "") or "")
+        add(username, "USERNAME")
+        if "🐼" in username:
+            add(username.split("🐼", 1)[0], "USERNAME")
+
     add(denial.raw_email, "EMAIL")
     add(denial.claim_id, "CLAIM_ID")
     add(denial.plan_id, "PLAN_ID")
@@ -2930,6 +2944,7 @@ def scoring_redactions(denial: Denial) -> list[tuple[str, str]]:
         add(patient.user.first_name, "PATIENT#patient")
         add(patient.user.last_name, "PATIENT#patient")
         add(patient.user.email, "EMAIL")
+        add_username(patient.user)
         add_contact(patient.user)
     for field in ("primary_professional", "creating_professional"):
         professional = getattr(denial, field)
@@ -2941,6 +2956,7 @@ def scoring_redactions(denial: Denial) -> list[tuple[str, str]]:
         add(professional.user.first_name, person)
         add(professional.user.last_name, person)
         add(professional.user.email, "EMAIL")
+        add_username(professional.user)
         add(professional.npi_number, "NPI")
         add(professional.fax_number, "PHONE")
         add_contact(professional.user)

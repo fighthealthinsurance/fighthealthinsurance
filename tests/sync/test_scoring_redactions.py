@@ -21,7 +21,8 @@ class ScoringRedactionsTest(TestCase):
         )
         professional = ProfessionalUser.objects.create(
             user=User.objects.create_user(
-                username="sam", email="sam@clinic.example", first_name="Sam", last_name="Smith"
+                # A domain-scoped login, stored the way auth_utils stores it.
+                username="sam🐼12", email="sam@clinic.example", first_name="Sam", last_name="Smith"
             ),
             active=True,
             npi_number="1234567890",
@@ -48,9 +49,12 @@ class ScoringRedactionsTest(TestCase):
             "Jane Doe": "PATIENT#patient",
             "Doe": "PATIENT#patient",
             "jane@example.org": "EMAIL",
+            "jane": "USERNAME",  # the login, an identifier rather than a name
             "Sam Smith": f"PROFESSIONAL#{professional.pk}",
             "Sam Smith MD": f"PROFESSIONAL#{professional.pk}",
             "sam@clinic.example": "EMAIL",
+            "sam🐼12": "USERNAME",  # as stored
+            "sam": "USERNAME",  # the raw login the person actually writes
             "1234567890": "NPI",
             "415-555-0100": "PHONE",  # fax numbers share the phone namespace
             "TLH-1": "CLAIM_ID",

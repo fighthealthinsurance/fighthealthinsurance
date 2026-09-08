@@ -181,12 +181,16 @@ class TestNothingIdentifyingLeaves(_StreamBase):
         from fhi_users.models import PatientUser, ProfessionalUser
 
         User = get_user_model()
+        # Handles that look nothing like the names, so only the username
+        # entries can catch them (review).
         patient_user = User.objects.create_user(
-            username="jane", email="jane.doe@example.org", first_name="Jane", last_name="Doe"
+            username="jqd1984", email="jane.doe@example.org", first_name="Jane", last_name="Doe"
         )
         patient = PatientUser.objects.create(user=patient_user, display_name="Jane Q. Doe")
+        # The professional's login is domain-scoped (raw🐼domain_id, as
+        # auth_utils stores it); the draft carries the raw spelling.
         prof_user = User.objects.create_user(
-            username="drsam", email="sam@clinic.example", first_name="Sam", last_name="Smith"
+            username="clinic-user-77🐼12", email="sam@clinic.example", first_name="Sam", last_name="Smith"
         )
         professional = ProfessionalUser.objects.create(
             user=prof_user, active=True, npi_number="1234567890", fax_number="(415) 555-0100",
@@ -203,7 +207,8 @@ class TestNothingIdentifyingLeaves(_StreamBase):
             "TLH-2026-0091827. Her physician, Sam Smith MD (NPI 1234567890, fax (415) 555-0100), "
             "documented months of conservative treatment without improvement before this imaging.",
             "To the appeals board: Ms. Doe's plan states imaging is covered after failed conservative "
-            "care, which the records from Dr. Smith demonstrate; reply to jane.doe@example.org.",
+            "care, which the records from Dr. Smith demonstrate; reply to jane.doe@example.org. "
+            "Portal login JQD1984; submitted by clinic-user-77.",
         ]
         mock_gen.make_appeals.side_effect = lambda *a, **k: iter(
             [GeneratedAppeal(text=t, model_name="fhi-internal", context_level="full") for t in leaky]
@@ -229,8 +234,11 @@ class TestNothingIdentifyingLeaves(_StreamBase):
         for doc in seen:
             for secret in ("Jane", "Doe", "Smith", "1234567890", "555-0100", "jane.doe@", "sam@", "TLH-2026-0091827"):
                 self.assertNotIn(secret, doc)
+            self.assertNotIn("jqd1984", doc.lower())
+            self.assertNotIn("clinic-user-77", doc)
             self.assertIn("[PATIENT_", doc)
             self.assertIn("[CLAIM_ID_", doc)
+        self.assertIn("[USERNAME_", seen[1])
 
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_redaction_failure_turns_scoring_off_for_the_run(self, mock_gen):
