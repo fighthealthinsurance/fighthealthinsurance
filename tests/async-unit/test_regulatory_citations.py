@@ -129,6 +129,61 @@ class TestGetRegulatoryCitationContext(unittest.TestCase):
         self.assertNotIn("Massachusetts", block)
 
 
+class TestPublicProgramFiltering(unittest.TestCase):
+    """For Medicare, Medicaid, VA and FEHB coverage the block keeps only the
+    federal rules written for the program: the plan-law block tells the model
+    that state insurance law and the ACA appeal rules do not apply, and the
+    prompt must not say both (review)."""
+
+    def test_medicare_advantage_keeps_only_the_rules_written_for_it(self):
+        block = get_regulatory_citation_context("MA", programs=("medicare_advantage",))
+        assert block is not None
+        self.assertIn("CMS-0057-F", block)
+        self.assertIn("algorithms and artificial", block)
+        self.assertNotIn("147.136", block)
+        self.assertNotIn("Massachusetts", block)
+        self.assertIn("this is Medicare Advantage coverage", block)
+
+    def test_medicaid_keeps_cms_0057_f_only(self):
+        block = get_regulatory_citation_context("MA", programs=("medicaid",))
+        assert block is not None
+        self.assertIn("CMS-0057-F", block)
+        self.assertNotIn("algorithms and artificial", block)
+        self.assertNotIn("147.136", block)
+        self.assertNotIn("Massachusetts", block)
+
+    def test_original_medicare_va_and_fehb_get_no_block(self):
+        for program in ("medicare", "va", "fehb"):
+            with self.subTest(program=program):
+                self.assertIsNone(get_regulatory_citation_context("MA", programs=(program,)))
+
+    def test_a_government_employer_plan_keeps_state_and_aca_hooks(self):
+        block = get_regulatory_citation_context("MA", programs=("government",))
+        assert block is not None
+        self.assertIn("Massachusetts", block)
+        self.assertIn("147.136", block)
+
+    def test_private_coverage_is_unchanged_by_the_classification(self):
+        self.assertEqual(
+            get_regulatory_citation_context("MA", programs=("erisa", "tpa")),
+            get_regulatory_citation_context("MA"),
+        )
+
+    def test_the_collector_classifies_from_the_plan_source(self):
+        denial = SimpleNamespace(
+            your_state="MA",
+            denial_text=None,
+            procedure=None,
+            diagnosis=None,
+            plan_source=SimpleNamespace(all=lambda: [SimpleNamespace(name="Medicare Advantage")]),
+        )
+        result = AppealGenerator._collect_regulatory_context(denial)
+        assert result is not None
+        self.assertNotIn("147.136", result)
+        self.assertNotIn("Massachusetts", result)
+        self.assertIn("CMS-0057-F", result)
+
+
 class TestRegulatoryPromptInjection(unittest.TestCase):
     def setUp(self):
         self.gen = AppealGenerator()

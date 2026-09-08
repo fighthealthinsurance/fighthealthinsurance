@@ -17,6 +17,27 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
+# Plan programs, as far as intake and the denial tell us: the plan source
+# ("How do you get your insurance?"), the carrier's TPA flag, and whether the
+# denial letter matched the ERISA regulator. One classification shared by
+# both prompt blocks below, so they cannot contradict each other (review).
+ERISA = "erisa"  # private employer or union plan
+TPA = "tpa"  # carrier administers self-funded employer plans
+ERISA_LETTER = "erisa_letter"  # the denial letter itself named ERISA rights
+OTHER_GROUP = "other_group"
+MARKETPLACE = "marketplace"
+GOVERNMENT = "government"  # state or local government employer
+FEHB = "fehb"  # federal employee
+MEDICARE_ADVANTAGE = "medicare_advantage"
+MEDICARE = "medicare"
+MEDICAID = "medicaid"
+VA = "va"
+
+PUBLIC_PROGRAMS = frozenset({MEDICARE_ADVANTAGE, MEDICARE, MEDICAID, VA, FEHB})
+# Coverage ERISA cannot govern. A denial letter that mentions ERISA rights
+# does not override these; the block names the conflict instead.
+EXCLUSIVE_OF_ERISA = PUBLIC_PROGRAMS | {GOVERNMENT}
+
 
 @dataclass(frozen=True)
 class RegulatoryHook:
@@ -36,6 +57,11 @@ class RegulatoryHook:
     # before it applies (the ``effective`` string above is the human-readable
     # companion). ``None`` means "already in force / no gate".
     effective_date: Optional[datetime.date] = None
+    # The public programs (PUBLIC_PROGRAMS keys) this hook still reaches. Empty
+    # means commercial and government-employer coverage only: state insurance
+    # law and the ACA appeal rules do not bind Medicare, Medicaid, VA or FEHB
+    # coverage, so for those only hooks written for the program are listed.
+    public_programs: frozenset[str] = frozenset()
 
 
 # Federal hooks apply broadly (subject to plan type); included alongside any
@@ -59,6 +85,7 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         # CMS limits impacted payers to MA orgs, Medicaid/CHIP, and FFE QHP
         # issuers — not self-funded employer (ERISA) plans.
         applies_to_self_insured=False,
+        public_programs=frozenset({MEDICARE_ADVANTAGE, MEDICAID}),
     ),
     RegulatoryHook(
         name=(
@@ -81,6 +108,7 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         # This is a Medicare Advantage rule; it does not bind self-funded
         # commercial employer plans.
         applies_to_self_insured=False,
+        public_programs=frozenset({MEDICARE_ADVANTAGE}),
     ),
     RegulatoryHook(
         name="ACA internal appeal and external review rights (45 C.F.R. § 147.136)",
@@ -319,8 +347,16 @@ def get_regulatory_citation_context(
     diagnosis: Optional[str] = None,
     self_insured: Optional[bool] = None,
     as_of: Optional[datetime.date] = None,
+    programs: Iterable[str] = (),
 ) -> Optional[str]:
     """Return a conservatively-framed regulatory block for the denial's state.
+
+    ``programs`` is classify_plan()'s result. For a public program (Medicare
+    Advantage, Original Medicare, Medicaid, VA, FEHB) only hooks that declare
+    they reach it are kept, because state insurance law and the ACA appeal
+    rules do not bind such coverage and the plan-law block says so; listing
+    them here too would put two contradicting instructions in one prompt
+    (review). With nothing left, no block.
 
     Returns ``None`` unless the state has at least one verified hook, so the
     overwhelming majority of appeals are unaffected. ``denial_text`` /
@@ -345,12 +381,25 @@ def get_regulatory_citation_context(
         return None
 
     hooks = [h for h in FEDERAL_HOOKS if _hook_in_effect(h, today)] + state_hooks
+    public = set(programs) & PUBLIC_PROGRAMS
+    if public:
+        hooks = [h for h in hooks if h.public_programs & public]
     if self_insured is True:
         hooks = [h for h in hooks if h.applies_to_self_insured]
+    if not hooks:
+        return None
 
     bullet_lines = "\n".join(f"- {h.name} ({h.effective}): {h.summary}" for h in hooks)
 
-    if self_insured is True:
+    if public:
+        label = next(_PROGRAM_LABELS[k] for k in _PROGRAM_ORDER if k in public)
+        caveat = (
+            f"Note: this is {label} coverage. State insurance mandates and the "
+            "ACA appeal rules do not bind it; only the federal rules written "
+            "for the program are listed, so rely on those and on the program's "
+            "own appeal process."
+        )
+    elif self_insured is True:
         caveat = (
             "Note: this appears to be a self-insured (ERISA) employer plan. "
             "State insurance mandates and Medicare/Medicaid/Marketplace-specific "
@@ -512,32 +561,80 @@ _INVITATION = (
     "deadlines, quotations, or case names beyond what is listed here."
 )
 
-# (marker in the lower-cased plan source name, paragraph). First match wins,
-# so the more specific markers come first ("medicare advantage" before
-# "medicare", "federal government" before "government").
-_PLAN_SOURCE_LAW: tuple[tuple[str, str], ...] = (
-    ("medicare advantage", _MEDICARE_ADVANTAGE),
-    ("medicare", _MEDICARE),
-    ("medicaid", _MEDICAID),
-    ("veterans", _VA),
-    ("marketplace", _ACA_MARKETPLACE),
-    ("affordable care", _ACA_MARKETPLACE),
-    ("federal government", _FEDERAL_EMPLOYER),
-    ("government", _GOVERNMENT_EMPLOYER),
-    ("employer", _ERISA),
-    ("union", _ERISA),
-    ("other group", _OTHER_GROUP),
+_LETTER_CONFLICT = (
+    "The denial letter mentions ERISA appeal rights, but the coverage source "
+    "given is one that ERISA does not govern. Follow the letter only if the "
+    "plan documents confirm a private employer or union plan; otherwise rely "
+    "on the process described above and do not cite ERISA."
 )
 
+# (marker in the lower-cased plan source name, program). First match wins, so
+# the more specific markers come first ("medicare advantage" before
+# "medicare", "federal government" before "government").
+_PLAN_SOURCE_PROGRAM: tuple[tuple[str, str], ...] = (
+    ("medicare advantage", MEDICARE_ADVANTAGE),
+    ("medicare", MEDICARE),
+    ("medicaid", MEDICAID),
+    ("veterans", VA),
+    ("marketplace", MARKETPLACE),
+    ("affordable care", MARKETPLACE),
+    ("federal government", FEHB),
+    ("government", GOVERNMENT),
+    ("employer", ERISA),
+    ("union", ERISA),
+    ("other group", OTHER_GROUP),
+)
 
-def _law_for_plan_source(name: str) -> Optional[str]:
+_PARAGRAPHS: dict[str, str] = {
+    ERISA: _ERISA,
+    OTHER_GROUP: _OTHER_GROUP,
+    MARKETPLACE: _ACA_MARKETPLACE,
+    GOVERNMENT: _GOVERNMENT_EMPLOYER,
+    FEHB: _FEDERAL_EMPLOYER,
+    MEDICARE_ADVANTAGE: _MEDICARE_ADVANTAGE,
+    MEDICARE: _MEDICARE,
+    MEDICAID: _MEDICAID,
+    VA: _VA,
+}
+
+_PROGRAM_ORDER: tuple[str, ...] = (MEDICARE_ADVANTAGE, MEDICARE, MEDICAID, VA, FEHB)
+_PROGRAM_LABELS: dict[str, str] = {
+    MEDICARE_ADVANTAGE: "Medicare Advantage",
+    MEDICARE: "Original Medicare",
+    MEDICAID: "Medicaid",
+    VA: "Veterans Affairs",
+    FEHB: "federal employee (FEHB)",
+}
+
+
+def _program_for_plan_source(name: str) -> Optional[str]:
     label = re.sub(r"\s+", " ", (name or "").strip().lower())
     if not label:
         return None
-    for marker, paragraph in _PLAN_SOURCE_LAW:
+    for marker, program in _PLAN_SOURCE_PROGRAM:
         if marker in label:
-            return paragraph
+            return program
     return None  # "Other", "Don't know": nothing to say
+
+
+def classify_plan(
+    plan_sources: Iterable[str],
+    is_tpa: bool = False,
+    regulator_alt_name: Optional[str] = None,
+) -> tuple[str, ...]:
+    """Program keys for this denial, in the order the signals were given:
+    the plan sources' programs first, then TPA, then ERISA_LETTER. Empty when
+    nothing is known."""
+    programs: list[str] = []
+    for name in plan_sources:
+        program = _program_for_plan_source(name)
+        if program is not None and program not in programs:
+            programs.append(program)
+    if is_tpa:
+        programs.append(TPA)
+    if (regulator_alt_name or "").strip().upper() == "ERISA":
+        programs.append(ERISA_LETTER)
+    return tuple(programs)
 
 
 def get_plan_law_context(
@@ -553,23 +650,34 @@ def get_plan_law_context(
     regulator. Always returns a block: an unknown plan gets the hedged
     paragraph, so the model is never left to guess in silence.
     """
+    programs = classify_plan(
+        plan_sources, is_tpa=is_tpa, regulator_alt_name=regulator_alt_name
+    )
+    sources = [k for k in programs if k in _PARAGRAPHS]
     paragraphs: list[str] = []
-    # The denial letter naming ERISA rights is the strongest signal we have.
-    if (regulator_alt_name or "").strip().upper() == "ERISA":
-        paragraphs.append(_ERISA)
-    for name in plan_sources:
-        paragraph = _law_for_plan_source(name)
-        if paragraph is not None and paragraph not in paragraphs:
-            paragraphs.append(paragraph)
+    conflict: Optional[str] = None
+    # The denial letter naming ERISA rights is the strongest signal we have,
+    # except against coverage ERISA cannot govern: there the source wins and
+    # the conflict is named (review).
+    if ERISA_LETTER in programs:
+        if any(k in EXCLUSIVE_OF_ERISA for k in sources):
+            conflict = _LETTER_CONFLICT
+        elif ERISA not in sources:
+            paragraphs.append(_ERISA)
+    for k in sources:
+        if _PARAGRAPHS[k] not in paragraphs:
+            paragraphs.append(_PARAGRAPHS[k])
     # A TPA administers self-funded plans, and a self-funded plan can belong
     # to a city as easily as to a company, so the flag alone does not make it
     # ERISA (review). With a plan source, the source decides; without one,
     # the hedged self-funded paragraph.
-    if is_tpa and not paragraphs:
+    if TPA in programs and not paragraphs:
         paragraphs.append(_TPA_ONLY)
     if not paragraphs:
         paragraphs.append(_UNKNOWN)
     elif len(paragraphs) > 1:
         paragraphs.append(_TWO_SOURCES)
+    if conflict is not None:
+        paragraphs.append(conflict)
     body = "\n".join(paragraphs)
     return f"{PLAN_LAW_HEADER}: {body}\n{_INVITATION}"

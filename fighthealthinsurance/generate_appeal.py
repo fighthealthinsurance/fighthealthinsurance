@@ -2339,6 +2339,7 @@ class AppealGenerator(object):
         """
         try:
             from fighthealthinsurance.regulatory_citations import (
+                classify_plan,
                 get_regulatory_citation_context,
             )
         except Exception as e:
@@ -2346,23 +2347,55 @@ class AppealGenerator(object):
             return None
 
         try:
+            names, is_tpa, alt_name = AppealGenerator._plan_signals(denial)
             # Best-effort self-insured/ERISA signal from the linked carrier; a
             # TPA administers self-funded employer (ERISA) plans. None when we
             # cannot tell, which selects the neutral caveat wording.
-            self_insured: Optional[bool] = None
-            ico = getattr(denial, "insurance_company_obj", None)
-            if ico is not None and getattr(ico, "is_tpa", False):
-                self_insured = True
+            self_insured: Optional[bool] = True if is_tpa else None
             return get_regulatory_citation_context(
                 state=getattr(denial, "your_state", None),
                 denial_text=getattr(denial, "denial_text", None),
                 procedure=getattr(denial, "procedure", None),
                 diagnosis=getattr(denial, "diagnosis", None),
                 self_insured=self_insured,
+                # Same classification as the plan-law block, so the two never
+                # contradict each other (review).
+                programs=classify_plan(
+                    names, is_tpa=is_tpa, regulator_alt_name=alt_name
+                ),
             )
         except Exception as e:
             logger.opt(exception=True).debug(f"_collect_regulatory_context failed: {e}")
             return None
+
+    @staticmethod
+    def _plan_signals(denial) -> tuple[list[str], bool, Optional[str]]:
+        """What intake and the denial say about the plan: the plan source
+        names, the carrier's TPA flag, and the matched regulator's alt name.
+        Every read is defensive; a relation that fails reads as unknown, so
+        one bad lookup never costs the whole block."""
+        names: list[str] = []
+        try:
+            manager = getattr(denial, "plan_source", None)
+            if manager is not None and hasattr(manager, "all"):
+                names = [getattr(s, "name", "") or "" for s in manager.all()]
+        except Exception as e:
+            logger.opt(exception=True).debug(f"plan_source unavailable: {e}")
+            names = []
+        is_tpa = False
+        try:
+            ico = getattr(denial, "insurance_company_obj", None)
+            is_tpa = bool(ico is not None and getattr(ico, "is_tpa", False))
+        except Exception:
+            is_tpa = False
+        alt_name: Optional[str] = None
+        try:
+            regulator = getattr(denial, "regulator", None)
+            if regulator is not None:
+                alt_name = getattr(regulator, "alt_name", None)
+        except Exception:
+            alt_name = None
+        return names, is_tpa, alt_name
 
     @staticmethod
     def _collect_plan_law_context(denial) -> Optional[str]:
@@ -2373,9 +2406,10 @@ class AppealGenerator(object):
         the ERISA regulator match).
 
         Always returns a block when it can (an unknown plan gets hedged
-        guidance); None only when the lookup itself fails, so generation
-        never depends on it. Runs where make_appeals runs, in a sync
-        context, like the sibling collectors.
+        guidance, and so does a plan whose lookup failed); None only when the
+        block itself cannot be built, so generation never depends on it. Runs
+        where make_appeals runs, in a sync context, like the sibling
+        collectors.
         """
         try:
             from fighthealthinsurance.regulatory_citations import (
@@ -2386,21 +2420,7 @@ class AppealGenerator(object):
             return None
 
         try:
-            names: list[str] = []
-            manager = getattr(denial, "plan_source", None)
-            if manager is not None and hasattr(manager, "all"):
-                names = [getattr(s, "name", "") or "" for s in manager.all()]
-            ico = getattr(denial, "insurance_company_obj", None)
-            is_tpa = bool(ico is not None and getattr(ico, "is_tpa", False))
-            alt_name: Optional[str] = None
-            try:
-                regulator = getattr(denial, "regulator", None)
-                if regulator is not None:
-                    alt_name = getattr(regulator, "alt_name", None)
-            except Exception:
-                # The regulator is a lazy FK; losing it must not lose the
-                # block, the plan sources still say what governs.
-                alt_name = None
+            names, is_tpa, alt_name = AppealGenerator._plan_signals(denial)
             return get_plan_law_context(
                 names, is_tpa=is_tpa, regulator_alt_name=alt_name
             )

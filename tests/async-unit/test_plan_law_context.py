@@ -16,6 +16,7 @@ from fighthealthinsurance import generate_appeal
 from fighthealthinsurance.generate_appeal import AppealGenerator
 from fighthealthinsurance.regulatory_citations import (
     PLAN_LAW_HEADER,
+    classify_plan,
     get_plan_law_context,
 )
 
@@ -171,6 +172,45 @@ class TestWhichLawGoverns:
         block = _block("Don't know", regulator_alt_name="erisa")
         assert "ERISA governs the appeal" in block
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "Employer -- State Government",
+            "Employer -- Federal Government",
+            "Medicare Advantage",
+            "Medicare Regular",
+            "Medicaid",
+            "Veterans Affairs",
+        ],
+    )
+    def test_a_source_erisa_cannot_govern_outranks_the_letter_and_names_the_conflict(self, source):
+        block = _block(source, regulator_alt_name="ERISA")
+        assert "ERISA governs the appeal" not in block
+        assert "The denial letter mentions ERISA appeal rights" in block
+        assert "do not cite ERISA" in block
+        assert "More than one coverage source" not in block
+
+    def test_the_letter_still_counts_beside_a_compatible_source(self):
+        # Marketplace coverage can be SHOP employer coverage, so a letter
+        # naming ERISA rights is not a contradiction there.
+        block = _block("State Marketplace / Affordable Care Act", regulator_alt_name="ERISA")
+        assert "ERISA governs the appeal" in block
+        assert "More than one coverage source" in block
+        assert "The denial letter mentions ERISA appeal rights" not in block
+
+
+class TestClassifyPlan:
+    def test_keys_follow_the_sources_then_the_flags(self):
+        assert classify_plan(
+            ["Medicare Advantage", "Employer -- Private"], is_tpa=True, regulator_alt_name="ERISA"
+        ) == ("medicare_advantage", "erisa", "tpa", "erisa_letter")
+
+    def test_unknown_sources_give_nothing(self):
+        assert classify_plan(["Other", "Don't know", ""]) == ()
+
+    def test_one_program_once(self):
+        assert classify_plan(["Employer -- Private", "Union"]) == ("erisa",)
+
     def test_two_sources_both_appear_with_a_tie_break(self):
         block = _block("Medicare Advantage", "Employer -- Private")
         assert "Medicare Advantage plan" in block
@@ -204,6 +244,7 @@ class TestTheBlockItself:
         _block("Medicare Advantage", "Employer -- Private"),
         _block(is_tpa=True),
         _block("Other Group"),
+        _block("Medicare Advantage", regulator_alt_name="ERISA"),
     ]
 
     @pytest.mark.parametrize("block", ALL)
@@ -286,9 +327,10 @@ class TestCollector:
         block = AppealGenerator._collect_plan_law_context(SimpleNamespace())
         assert block is not None and "We do not know" in block
 
-    def test_a_failing_lookup_returns_none_instead_of_raising(self):
+    def test_a_failing_lookup_degrades_to_the_hedged_block_instead_of_raising(self):
         denial = SimpleNamespace(plan_source=_Sources(raise_=RuntimeError("db down")))
-        assert AppealGenerator._collect_plan_law_context(denial) is None
+        block = AppealGenerator._collect_plan_law_context(denial)
+        assert block is not None and "We do not know" in block
 
     def test_a_lazy_regulator_that_raises_does_not_lose_the_block(self):
         class Denial:
