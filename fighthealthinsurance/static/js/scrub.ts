@@ -224,7 +224,7 @@ const ON_DEVICE_MODEL_CACHE = "transformers-cache";
 // dialog: what goes, what stays, and that it comes back if wanted.
 const REMOVE_MODEL_CONFIRM =
   "Remove the downloaded model (about 760 MB) from this device? Your text and uploaded files are not touched. " +
-  "If you turn the option on again later, the model downloads again.";
+  "If you scan with the option on again later, the model downloads again.";
 
 // The most one page may take, first download included: a 760 MB download on
 // a slow connection plus a read on a modest GPU. Past this the page is given
@@ -520,7 +520,7 @@ function initRemoveModelControl(): void {
         button.textContent =
           "Removed. A download that was already under way, here or in another tab, may leave files behind until those tabs are reloaded.";
       } else if (gone) {
-        button.textContent = "Removed. It downloads again the next time you turn this option on.";
+        button.textContent = "Removed. It downloads again the next time you scan with this option on.";
       } else {
         button.textContent = "Could not remove it; try again when the model is not in use.";
         button.disabled = false;
