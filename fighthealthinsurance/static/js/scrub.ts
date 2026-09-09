@@ -220,6 +220,12 @@ const recognizeEvent = async function (evt: Event) {
 // download. Named here only so the person can remove them.
 const ON_DEVICE_MODEL_CACHE = "transformers-cache";
 
+// Asked before the stored model is deleted, in the browser's plain OK/Cancel
+// dialog: what goes, what stays, and that it comes back if wanted.
+const REMOVE_MODEL_CONFIRM =
+  "Remove the downloaded model (about 760 MB) from this device? Your text and uploaded files are not touched. " +
+  "If you turn the option on again later, the model downloads again.";
+
 // The most one page may take, first download included: a 760 MB download on
 // a slow connection plus a read on a modest GPU. Past this the page is given
 // up and the model switched off for the rest of the visit, because a
@@ -487,6 +493,11 @@ function initRemoveModelControl(): void {
   button.addEventListener("click", async () => {
     if (onDevicePassesActive > 0) {
       button.textContent = "The model is reading right now; remove it when that finishes.";
+      return;
+    }
+    // Their call, made with the facts in front of them; Cancel changes
+    // nothing.
+    if (!window.confirm(REMOVE_MODEL_CONFIRM)) {
       return;
     }
     button.disabled = true;
