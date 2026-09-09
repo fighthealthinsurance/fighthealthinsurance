@@ -27,7 +27,10 @@ class AdvancedOcrOfferedTest(TestCase):
         tag = tag[: tag.index(">") + 1]
         self.assertNotIn("checked", tag)
         self.assertContains(response, "Better text recognition for photos and scans")
-        self.assertNotContains(response, "huggingface")
+        # Hugging Face by its plain name, as the place the download comes
+        # from; never the host name or anything a reviewer needs.
+        self.assertContains(response, "from Hugging Face")
+        self.assertNotContains(response, "huggingface.co")
         # The status line and the remove-model control ship with the option,
         # both hidden until there is something to say or remove.
         self.assertContains(response, 'id="advanced_ocr_status"')

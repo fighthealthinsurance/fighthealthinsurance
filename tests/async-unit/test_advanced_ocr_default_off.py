@@ -387,20 +387,25 @@ def test_the_option_is_offered_only_behind_the_setting():
 
 def test_the_label_speaks_to_a_person():
     """When the option is shown, the label says what a person needs and
-    nothing a reviewer needs: what it is, that it is experimental, the
-    download size with its unit, that the file stays on the device, and
-    what standard recognition is like. No hosting site, no failure
-    narrative, no partial-download figure, no engine names.
+    nothing a reviewer needs: what it is (a small AI model), that it is
+    experimental, what it downloads and from where (Hugging Face, by its
+    plain name, never a host name), the size with its unit, that the file
+    stays on the device, what standard recognition is like, and that the
+    download can be removed. No failure narrative, no partial-download
+    figure, no engine names.
     """
     html = _scrub_template()
     start = html.index('id="advanced_ocr_section"')
     label = html_lib.unescape(html[start : html.index("</label>", start)])
     label = re.sub(r"\s+", " ", label)
     assert "experimental" in label.lower()
+    assert "AI model" in label, "the label no longer says what the model is"
+    assert "from Hugging Face" in label, "the label no longer says where the download comes from"
     assert re.search(r"\babout \d{3} MB\b", label), "the label no longer states the download size in MB"
-    assert "stays on your device" in label
+    assert "your file never leaves it" in label
     assert "Standard recognition" in label
-    for leak in ("huggingface", "not working", "fails to load", "20 MB", "19 MB", "WebGPU", "wasm", "Qwen", "model files"):
+    assert "remove the downloaded model" in label, "the label no longer says the download can be removed"
+    for leak in ("huggingface.co", "not working", "fails to load", "20 MB", "19 MB", "WebGPU", "wasm", "Qwen", "model files"):
         assert leak.lower() not in label.lower(), f"the label still says {leak!r}"
     assert not re.search(r"needs\s+no\s+download", label, re.I), (
         "the label claims standard OCR needs no download; tesseract downloads "
@@ -627,6 +632,15 @@ def test_passes_and_removal_share_one_lock():
         "removal no longer refuses while a pass is queued or reading; it would queue behind it instead"
     )
     assert "const held = await tryWithOnDeviceModel(async () => {" in init, "removal is not under the passes' lock"
+    # Asked first, in the browser's own dialog, and Cancel changes nothing:
+    # the confirm comes after the busy check and before anything is deleted.
+    confirm = re.search(r"if \(!window\.confirm\(REMOVE_MODEL_CONFIRM\)\) \{\s*return;\s*\}", init)
+    assert confirm is not None, "the model is removed without asking"
+    assert init.index("if (onDevicePassesActive > 0)") < confirm.start() < init.index("button.disabled = true;")
+    assert re.search(r"const REMOVE_MODEL_CONFIRM =\s*\"Remove the downloaded model \(about 760 MB\) from this device\? ", src), (
+        "the confirm no longer opens with what it removes"
+    )
+    assert "the model downloads again." in src and "are not touched" in src, "the confirm no longer says what stays and what comes back"
     assert "in use in another tab" in init
     # Cross-tab where the browser has Web Locks: the bucket is shared by
     # every tab of the origin.
