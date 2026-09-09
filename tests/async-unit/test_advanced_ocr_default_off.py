@@ -399,14 +399,23 @@ def test_the_label_speaks_to_a_person():
     label = html_lib.unescape(html[start : html.index("</label>", start)])
     label = re.sub(r"\s+", " ", label)
     assert "experimental" in label.lower()
-    assert "AI model" in label, "the label no longer says what the model is"
-    assert "from Hugging Face" in label, "the label no longer says where the download comes from"
-    assert re.search(r"\babout \d{3} MB\b", label), "the label no longer states the download size in MB"
-    assert "your file never leaves it" in label
-    assert "Standard recognition" in label
-    assert "remove the downloaded model" in label, "the label no longer says the download can be removed"
+    # Each fact a person needs, by the phrase that carries it (review: the
+    # facts could go missing one by one with the old, looser pins).
+    for fact in (
+        "A small AI model",
+        "The first time you scan with this on",
+        "downloads it from Hugging Face (about 760 MB)",
+        "keeps it on this device",
+        "It runs on your device",
+        "your file never leaves it",
+        "Standard recognition is faster and fine for clear scans",
+        "You can remove the downloaded model later",
+    ):
+        assert fact in label, f"the label lost: {fact!r}"
     for leak in ("huggingface.co", "not working", "fails to load", "20 MB", "19 MB", "WebGPU", "wasm", "Qwen", "model files"):
         assert leak.lower() not in label.lower(), f"the label still says {leak!r}"
+    # No host name of any kind, not only the one that used to be there.
+    assert not re.search(r"\b[a-z0-9-]+\.(?:co|com|net|org|io|ai)\b", label, re.I), "a host name is in the label"
     assert not re.search(r"needs\s+no\s+download", label, re.I), (
         "the label claims standard OCR needs no download; tesseract downloads "
         "a language file on first use"
@@ -640,7 +649,11 @@ def test_passes_and_removal_share_one_lock():
     assert re.search(r"const REMOVE_MODEL_CONFIRM =\s*\"Remove the downloaded model \(about 760 MB\) from this device\? ", src), (
         "the confirm no longer opens with what it removes"
     )
-    assert "the model downloads again." in src and "are not touched" in src, "the confirm no longer says what stays and what comes back"
+    assert "If you scan with the option on again later, the model downloads again." in src, (
+        "the confirm no longer says when the model comes back, or says it comes back on turning the option on (it comes back on the next scan)"
+    )
+    assert "Your text and uploaded files are not touched." in src, "the confirm no longer says what stays"
+    assert "turn this option on" not in src and "turn the option on" not in src, "copy says the download happens on turning the option on; it happens on the next scan"
     assert "in use in another tab" in init
     # Cross-tab where the browser has Web Locks: the bucket is shared by
     # every tab of the origin.

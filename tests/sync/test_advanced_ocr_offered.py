@@ -31,6 +31,8 @@ class AdvancedOcrOfferedTest(TestCase):
         # from; never the host name or anything a reviewer needs.
         self.assertContains(response, "from Hugging Face")
         self.assertNotContains(response, "huggingface.co")
+        section = html[html.index('id="advanced_ocr_section"') : html.index("</label>", html.index('id="advanced_ocr_section"'))]
+        self.assertNotRegex(section, r"\b[a-z0-9-]+\.(?:co|com|net|org|io|ai)\b", "a host name is in the option's copy")
         # The status line and the remove-model control ship with the option,
         # both hidden until there is something to say or remove.
         self.assertContains(response, 'id="advanced_ocr_status"')
