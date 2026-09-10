@@ -80,10 +80,7 @@ The app needs an ML backend to generate appeals. Options:
    # A full model name might look like: gemma-4-12b-it-GGUF-UD-Q5_K_XL
    ```
 
-3. **Hosted generative models (Azure, Anthropic, …)**: Set the relevant
-
-   API keys (see below). These external models are used when `use_external=True`
-   (e.g. premium/chooser workflows).
+3. **Hosted generative models (Azure, Anthropic, …)**: Set the relevant API keys (see below). These external models are used when `use_external=True` (e.g. premium/chooser workflows).
 
 ### External & Azure Generative Models
 
@@ -458,18 +455,18 @@ md5sum requirements.txt requirements-dev.txt | sort | md5sum | cut -d ' ' -f 1 >
 ### Copy DB Info to local SQLite
 
 ```bash
-python manage.py migrate
+python manage.py setup_local_db
 ```
 
-- GeoIP may initially fail.  See main README.md for full instructions
+- GeoIP may initially fail.  See GeoIP section above for full instructions
 - Abridged Instructions:
   - Download City + ASN + IPV4 + IPV6 version from here: https://github.com/rabuchaim/geoip2fast 
   - `export FHI_GEOIP_CITY_DB=/path/to/geoip2fast-city-asn-ipv6.dat.gz`
 
 - Creating your cert/key pair at this stage will prevent a scripting error later:
 ```bash
-mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1
 mkcert -install
+mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1
 ```
 
 ### You can now launch the local instance
@@ -478,7 +475,16 @@ mkcert -install
 - The local FHI webpage will then be live in your browser at https://localhost:8000
 
 ### Testing Notes for DNF/RPM-based systems
+Testing is conducted through `tox`.  Install with `pip install tox`; the full testing suite can be executed with the `tox` command.
 
-- The full test suite can be ran through Django's interface: `python manage.py run_test`
-- Testing with **tox** has not been fully verified, but can be attempted by running `pip install tox` and executing the `tox` command.
+# Run specific test suites
+```bash
+tox -e py313-django52-sync       # Synchronous tests
+tox -e py313-django52-async      # Async tests (parallelized)
+tox -e py313-django52-sync-actor # Ray actor tests
+```
+
+# Run single test file
+Example command that executes via Django: `python manage.py run_test --test-file tests/async/test_appeal_file_view.py`
+- Testing with **tox** has not been fully verified on DNF systems, but is the testing used by the CI path.
 - Due to zombie processes, python-dotenv behavior, and pycache, it is usually best to start a new terminal tab on each subsequent run.  Keep in mind that any values you've changed via `export` (instead of via the .env file) will be lost when the terminal is relaunched.
