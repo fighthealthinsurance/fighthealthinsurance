@@ -12,8 +12,29 @@ from tests.conftest import skip_if_no_pandoc
 class FaxSendBaseTest(unittest.TestCase):
     def test_parse_phone_number(self):
         f = FaxSenderBase()
-        bad_numbers = ["911", "211", "+0", "+0123", "+1911", "+19002335555"]
-        ok_numbers = ["14255555555", "4255555555", "+1-425-555-5555", "+1 425 555 5555"]
+        bad_numbers = [
+            "911",
+            "211",
+            "+0",
+            "+0123",
+            "+1911",
+            "+19002335555",
+            # N11 is not an assignable exchange in a geographic area code.
+            "4152113699",
+            "+1 (415) 911-3699",
+        ]
+        ok_numbers = [
+            "14255555555",
+            "4255555555",
+            "+1-425-555-5555",
+            "+1 425 555 5555",
+            # Toll-free blocks legitimately carry N11-shaped middle digits
+            # (fax 658, 2026-09-11: an insurer's 855-211 line was refused).
+            "(855) 211-3699",
+            "8552113699",
+            "1-800-411-1234",
+            "+1 888 911 0000",
+        ]
         for number in bad_numbers:
             with pytest.raises(Exception):
                 f.parse_phone_number(number)

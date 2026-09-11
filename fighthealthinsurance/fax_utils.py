@@ -24,8 +24,17 @@ FROM_VOICE = os.getenv("FROM_VOICE", "2029383266")
 class FaxSenderBase(object):
     base_cost = 0
     cost_per_page = 0
-    # Avoid calling 211/etc.
+    # Avoid calling 211/etc.: the N11 service codes (211, 311, ..., 911),
+    # either dialed bare or sitting where a geographic number's exchange
+    # would be. N11 is never an assignable central-office code inside a
+    # geographic area code, so "415-211-xxxx" can only be a typo or a trap.
     special_naps = re.compile(r"^1?(\d11|\d\d\d\d11)")
+    # Toll-free numbers are handed out as flat 7-digit blocks, and their
+    # middle three digits routinely look like a service code: 855-211-3699
+    # is a real insurer fax line (fax 658, 2026-09-11, refused by both
+    # backends and never dialed). The exchange half of the rule above does
+    # not apply to them.
+    toll_free_area_codes = ("800", "833", "844", "855", "866", "877", "888")
     professional = False
 
     def estimate_cost(self, destination: str, pages: int) -> int:
@@ -44,9 +53,13 @@ class FaxSenderBase(object):
             raise Exception("No trying to call 911 this is for faxes.")
         if number_str.startswith("10"):
             raise Exception("No trying to call the operator")
-        if self.special_naps.match(number_str):
+        if self.special_naps.match(number_str) and not self._is_toll_free(number_str):
             raise Exception("No calling special svc numbers")
         return number_str
+
+    def _is_toll_free(self, number_str: str) -> bool:
+        """True for a normalized 1NPANXXXXXX number whose area code is toll-free."""
+        return len(number_str) == 11 and number_str[1:4] in self.toll_free_area_codes
 
     async def send_fax(
         self,
