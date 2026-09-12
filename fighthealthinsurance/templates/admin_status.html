@@ -281,7 +281,7 @@
         </div>
         <div class="stat-card {% if fax_outcomes.delivered_all_time is None %}alert{% endif %}">
           <div class="value">{% if fax_outcomes.delivered_all_time is None %}<span class="badge bad">unavailable</span>{% else %}{{ fax_outcomes.delivered_all_time }}{% endif %}</div>
-          <div class="label">Delivered, all time (present plus removed){% if fax_outcomes.oldest_delivered_created %}; oldest present was created {{ fax_outcomes.oldest_delivered_created|date:"Y-m-d" }}{% endif %}</div>
+          <div class="label">Delivered, all time (counter; deletions do not lower it)</div>
         </div>
         <div class="stat-card {% if fax_outcomes.failed %}alert{% endif %}">
           <div class="value">{{ fax_outcomes.failed|default:0 }}</div>
@@ -329,30 +329,38 @@
     {% if all_time.error %}
       <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ all_time.error }}</span></p>
     {% else %}
-      <p class="summary-line">Ever created comes from the id sequences and survives deletion. People and delivered faxes add back what delete-my-data requests removed{% if all_time.removal_requests is None %} (removal totals unavailable right now){% elif all_time.removals_since %}, recorded since {{ all_time.removals_since|date:"Y-m-d" }} ({{ all_time.removal_requests }} request{{ all_time.removal_requests|pluralize }}){% else %} (none recorded yet){% endif %}; deletions before that are not recoverable.</p>
+      <p class="summary-line">Counters that only go up: a generated draft, a person's first generated draft and a delivered fax each add one at the moment they happen, and deleting someone's data changes none of them. {% if all_time.counting_since %}Counting since {{ all_time.counting_since|date:"Y-m-d" }}, seeded from the rows present that day; deletions before then are not recoverable.{% elif all_time.appeals_generated is None %}<span class="badge bad">counters unavailable right now</span>{% else %}Not seeded yet.{% endif %}</p>
       <div class="stat-grid">
-        <div class="stat-card">
-          <div class="value">{% if all_time.denials_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.denials_ever }}{% endif %}</div>
-          <div class="label">Denials ever created{% if all_time.first_denial %} (oldest present from {{ all_time.first_denial|date:"Y-m-d" }}){% endif %}</div>
+        <div class="stat-card {% if all_time.appeals_generated is None %}alert{% endif %}">
+          <div class="value">{% if all_time.appeals_generated is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.appeals_generated }}{% endif %}</div>
+          <div class="label">Appeal drafts generated</div>
         </div>
-        <div class="stat-card">
-          <div class="value">{% if all_time.drafts_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.drafts_ever }}{% endif %}</div>
-          <div class="label">Appeal drafts ever created</div>
+        <div class="stat-card {% if all_time.people_with_draft_lifetime is None %}alert{% endif %}">
+          <div class="value">{% if all_time.people_with_draft_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.people_with_draft_lifetime }}{% endif %}</div>
+          <div class="label">People with a generated draft (distinct email hashes)</div>
         </div>
         <div class="stat-card">
           <div class="value">{% if all_time.faxes_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.faxes_ever }}{% endif %}</div>
-          <div class="label">Faxes ever created</div>
+          <div class="label">Fax requests (rows ever created; a row exists before the user confirms)</div>
         </div>
-        <div class="stat-card">
-          <div class="value">{% if all_time.people_with_draft_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.people_with_draft_lifetime }}{% endif %}</div>
-          <div class="label">People who got a draft (distinct email hashes, plus removed)</div>
+        <div class="stat-card {% if all_time.faxes_sent_lifetime is None %}alert{% endif %}">
+          <div class="value">{% if all_time.faxes_sent_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.faxes_sent_lifetime }}{% endif %}</div>
+          <div class="label">Faxes sent (an attempt was made)</div>
         </div>
         <div class="stat-card {% if all_time.faxes_delivered_lifetime is None %}alert{% endif %}">
           <div class="value">{% if all_time.faxes_delivered_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.faxes_delivered_lifetime }}{% endif %}</div>
-          <div class="label">Faxes delivered (present, plus removed)</div>
+          <div class="label">Faxes confirmed delivered</div>
+        </div>
+        <div class="stat-card {% if all_time.removal_requests is None %}alert{% endif %}">
+          <div class="value">{% if all_time.removal_requests is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.removal_requests }}{% endif %}</div>
+          <div class="label">Delete-my-data requests{% if all_time.removals_since %} (since {{ all_time.removals_since|date:"Y-m-d" }}, {{ all_time.removed_denials }} denial{{ all_time.removed_denials|pluralize }} removed){% endif %}</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{% if all_time.denials_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.denials_ever }}{% endif %}</div>
+          <div class="label">Denials ever created (id sequence; includes rolled-back inserts)</div>
         </div>
       </div>
-      <p class="summary-line">Still present: {{ all_time.denials|default:0 }} denials, {{ all_time.drafts|default:0 }} drafts, {{ all_time.denials_with_draft|default:0 }} denials with a draft, {% if all_time.people_with_draft is None %}an unavailable number of{% else %}{{ all_time.people_with_draft }}{% endif %} people with a draft.</p>
+      <p class="summary-line">Still present today: {{ all_time.denials|default:0 }} denials{% if all_time.first_denial %} (oldest from {{ all_time.first_denial|date:"Y-m-d" }}){% endif %}, {{ all_time.drafts|default:0 }} generated drafts on {{ all_time.denials_with_draft|default:0 }} denials for {{ all_time.people_with_draft|default:0 }} people, {{ all_time.faxes_sent|default:0 }} sent faxes of which {{ all_time.faxes_delivered|default:0 }} confirmed delivered. Draft ids ever issued: {{ all_time.drafts_ever|default:"n/a" }}.</p>
     {% endif %}
   </div>
 

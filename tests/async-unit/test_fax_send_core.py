@@ -133,6 +133,20 @@ class TestVendorSendAtomicClaim:
         assert fax.vendor_send_completed is False
 
 
+class _Both:
+    def __init__(self, *cms):
+        self._cms = cms
+
+    def __enter__(self):
+        return [cm.__enter__() for cm in self._cms]
+
+    def __exit__(self, *exc):
+        for cm in reversed(self._cms):
+            cm.__exit__(*exc)
+        return False
+
+
+@pytest.mark.django_db
 class TestFinalizeOrdering:
     """finalize must persist durable state before any notification, so an
     unlimited retry on a failing appeal.save() can't re-flood support."""
@@ -147,13 +161,24 @@ class TestFinalizeOrdering:
         return fax
 
     @staticmethod
-    def _row_present():
-        """finalize now marks the fax with a filtered UPDATE (never save(),
-        which could re-create a deleted row); one matching row means the
-        fax still exists and finalize proceeds to the appeal write."""
+    def _rows(transition: int, present: int):
+        """finalize marks the fax with filtered UPDATEs (never save(), which
+        could re-create a deleted row): the latest-attempt write
+        (``filter(pk).update``, whose row count says whether the fax still
+        exists), then the once-only counted markers
+        (``filter(pk).filter(..._counted=False).update``). Model both, and
+        keep the lifetime counter out of these ordering tests."""
         manager = MagicMock()
-        manager.filter.return_value.update.return_value = 1
-        return patch("fighthealthinsurance.models.FaxesToSend.objects", manager)
+        manager.filter.return_value.filter.return_value.update.return_value = transition
+        manager.filter.return_value.update.return_value = present
+        return (
+            patch("fighthealthinsurance.models.FaxesToSend.objects", manager),
+            patch("fighthealthinsurance.lifetime_counters.note_fax_events"),
+        )
+
+    def _row_present(self):
+        rows, counter = self._rows(transition=1, present=1)
+        return _Both(rows, counter)
 
     def test_appeal_persisted_before_notification(self):
         fax = self._pro_fax()
@@ -182,14 +207,23 @@ class TestFinalizeOrdering:
 
     def test_gone_row_skips_the_appeal_write_and_notifications(self):
         fax = self._pro_fax()
-        manager = MagicMock()
-        manager.filter.return_value.update.return_value = 0
-        with patch("fighthealthinsurance.models.FaxesToSend.objects", manager), patch(
+        rows, counter = self._rows(transition=0, present=0)
+        with rows, counter as bump, patch(
             "fighthealthinsurance.fax_send_core.send_fax_status_notification"
         ) as notify:
             fax_send_core.finalize_fax(fax, True, False)
         fax.for_appeal.save.assert_not_called()
         notify.assert_not_called()
+        bump.assert_not_called()
+
+    def test_already_delivered_row_is_not_counted_again(self):
+        fax = self._pro_fax()
+        rows, counter = self._rows(transition=0, present=1)
+        with rows, counter as bump, patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification"
+        ):
+            fax_send_core.finalize_fax(fax, True, False)
+        bump.assert_called_once_with(newly_sent=False, newly_delivered=False)
 
 
 @pytest.mark.django_db

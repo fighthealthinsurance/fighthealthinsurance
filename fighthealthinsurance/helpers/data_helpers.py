@@ -26,86 +26,32 @@ class RemoveDataHelper:
     """Helper class for removing user data for privacy compliance."""
 
     @classmethod
-    def _record_removal(cls, email: str, hashed_email: str) -> None:
-        """Add what is about to be removed to the running totals.
+    def _record_removal(cls, hashed_email: str) -> None:
+        """Count this request and the denials it takes, in the running totals.
 
         Runs inside the deletion's transaction (see remove_data_for_email)
-        so the counts and the deletion commit or roll back together: a
-        deletion that fails halfway and is retried is counted once. The
-        totals row is locked for the rest of that transaction, which
-        serializes two overlapping requests for the same person. Best
-        effort by design: everything sits in its own savepoint, so a
-        bookkeeping failure (the table missing mid-rollout, a database
-        error) rolls back only the bookkeeping and never blocks or poisons
-        the deletion, which is an obligation (review).
+        so the count and the deletion commit or roll back together, and the
+        totals row is locked so overlapping requests serialize. Best effort
+        by design: its own savepoint, so a bookkeeping failure rolls back
+        only itself and never blocks a deletion, which is an obligation.
+        The lifetime numbers themselves are NOT touched here: they are
+        counters that only go up (lifetime_counters.py), which is what makes
+        them deletion-proof.
         """
         try:
             with transaction.atomic():
-                from django.db.models import F, Q, Value
+                from django.db.models import F, Value
                 from django.db.models.functions import Coalesce
 
-                from fighthealthinsurance.models import (
-                    DataRemovalTotals,
-                    FaxesToSend,
-                    ProposedAppeal,
-                )
+                from fighthealthinsurance.models import DataRemovalTotals
 
-                DataRemovalTotals.objects.get_or_create(
-                    pk=DataRemovalTotals.SINGLETON_ID
-                )
-                DataRemovalTotals.objects.select_for_update().get(
-                    pk=DataRemovalTotals.SINGLETON_ID
-                )
-                # The person's denials and EVERY draft on them (speculative
-                # included), locked for the rest of the transaction: the
-                # generator promotes a speculative draft to a real one with
-                # a plain UPDATE, and a promotion landing between this count
-                # and the cascade delete would lose the person from the
-                # lifetime total for good; FOR UPDATE makes that promotion
-                # wait until the rows are gone (no-op on sqlite) (review).
-                denial_ids = list(
-                    Denial.objects.select_for_update(of=("self",))
-                    .filter(hashed_email=hashed_email)
-                    .values_list("denial_id", flat=True)
-                )
-                draft_is_speculative = list(
-                    ProposedAppeal.objects.select_for_update(of=("self",))
-                    .filter(for_denial_id__in=denial_ids)
-                    .values_list("speculative", flat=True)
-                )
-                real_drafts = sum(1 for spec in draft_is_speculative if not spec)
-                # Everything the deletes below take: rows keyed by this
-                # person's hash or email, AND rows that go by cascade
-                # through their denial -- a professional's fax staged for a
-                # patient's denial carries the professional's email (review).
-                # Locked, all of them, not just the delivered ones: the fax
-                # worker commits fax_success=True on its own connection, and
-                # a delivery landing between this count and the delete
-                # would be gone from the lifetime total for good. FOR UPDATE
-                # makes that finalize wait for this transaction (no-op on
-                # sqlite). ``of=("self",)``: the OR reaches the denial through
-                # a nullable FK, an outer join, and Postgres refuses to lock
-                # the nullable side of an outer join; lock only the fax rows
-                # (review).
-                candidates = list(
-                    FaxesToSend.objects.select_for_update(of=("self",))
-                    .filter(
-                        Q(hashed_email=hashed_email)
-                        | Q(email__iexact=email)
-                        | Q(denial_id__hashed_email=hashed_email)
-                    )
-                    .values_list("fax_success", flat=True)
-                )
-                delivered_count = sum(1 for ok in candidates if ok)
-                DataRemovalTotals.objects.filter(
-                    pk=DataRemovalTotals.SINGLETON_ID
-                ).update(
+                pk = DataRemovalTotals.SINGLETON_ID
+                DataRemovalTotals.objects.get_or_create(pk=pk)
+                DataRemovalTotals.objects.select_for_update().get(pk=pk)
+                DataRemovalTotals.objects.filter(pk=pk).update(
                     requests=F("requests") + 1,
-                    denials=F("denials") + len(denial_ids),
-                    drafts=F("drafts") + real_drafts,
-                    faxes_delivered=F("faxes_delivered") + delivered_count,
-                    people_with_draft=F("people_with_draft")
-                    + (1 if real_drafts else 0),
+                    denials=F("denials")
+                    + Denial.objects.filter(hashed_email=hashed_email).count(),
                     since=Coalesce(F("since"), Value(timezone.now())),
                 )
         except Exception:
@@ -126,12 +72,13 @@ class RemoveDataHelper:
         email = email.strip().lower()
         hashed_email: str = Denial.get_hashed_email(email)
         with transaction.atomic():
-            cls._record_removal(email, hashed_email)
+            cls._record_removal(hashed_email)
             cls._delete_rows(email, hashed_email)
 
     @classmethod
     def _delete_rows(cls, email: str, hashed_email: str) -> None:
-        # Core denial/appeal data
+        # Core denial/appeal data (the person_counted flag goes with the
+        # denials; the lifetime counter it fed stays, which is the point).
         Denial.objects.filter(hashed_email=hashed_email).delete()
         Appeal.objects.filter(hashed_email=hashed_email).delete()
         # Follow-up related — use __iexact for plaintext email fields so

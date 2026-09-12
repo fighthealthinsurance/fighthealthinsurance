@@ -202,14 +202,18 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertNotContains(response, "not actionable")
         # The all-time delivered count lives in the delivery panel: F only.
         outcomes = response.context["fax_outcomes"]
-        self.assertEqual(outcomes["delivered_all_time"], 1)
-        self.assertIsNotNone(outcomes["oldest_delivered_created"])
-        self.assertContains(response, "Delivered, all time (present plus removed)")
-        # Lifetime panel: only faxes exist in this fixture; the denial-side
-        # numbers are zero here and covered below.
+        # Lifetime delivered is a counter bumped at finalize, not a row count:
+        # fixture rows created with fax_success=True never went through
+        # finalize, so it is 0 here and untouched by them.
+        self.assertEqual(outcomes["delivered_all_time"], 0)
+        self.assertContains(response, "Delivered, all time (counter")
         all_time = response.context["all_time"]
         self.assertTrue(all_time["ok"])
-        self.assertEqual(all_time["faxes_delivered"], 1)
+        self.assertEqual(all_time["faxes_delivered"], 1)  # present rows
+        self.assertEqual(all_time["faxes_delivered_lifetime"], 0)  # counter
+        self.assertEqual(all_time["faxes_sent_lifetime"], 0)  # counter
+        self.assertEqual(all_time["faxes_sent"], 2)  # present rows: E, F
+        self.assertContains(response, "Faxes sent (an attempt was made)")
         self.assertContains(response, "All time")
 
     @mock.patch(_FAX)
@@ -247,13 +251,13 @@ class AdminStatusFaxQueueTest(TestCase):
         t = response.context["all_time"]
         self.assertEqual(t["denials"], 6)
         self.assertEqual(t["drafts"], 6)
-        self.assertEqual(t["denials_with_draft"], 4)  # a1, a2, b1, blank
-        self.assertEqual(t["people_with_draft"], 2)  # a, b
+        self.assertEqual(t["denials_with_draft"], 5)  # a1, a2, b1, blank, spec
+        self.assertEqual(t["people_with_draft"], 3)  # a, b, d; blank is not a person
         self.assertIsNotNone(t["first_denial"])
-        # Both panels read the same delivered aggregate, computed once.
-        self.assertEqual(
-            t["faxes_delivered"], response.context["fax_outcomes"]["delivered_all_time"]
-        )
+        # The counters moved with each generated draft: six drafts, three
+        # people (a counted once across two denials, blank excluded).
+        self.assertEqual(t["appeals_generated"], 6)
+        self.assertEqual(t["people_with_draft_lifetime"], 3)
         # Ever-created comes from the id sequences: never below the live
         # count, and it does not drop when the NEWEST rows are deleted.
         self.assertGreaterEqual(t["denials_ever"], t["denials"])
@@ -265,40 +269,17 @@ class AdminStatusFaxQueueTest(TestCase):
         t2 = self.client.get(reverse("admin_status")).context["all_time"]
         self.assertEqual((t2["denials_ever"], t2["drafts_ever"]), ever_before)
         self.assertEqual(t2["denials"], t["denials"] - 1)
+        # And the counters did not move on deletion.
+        self.assertEqual(t2["appeals_generated"], 6)
+        self.assertEqual(t2["people_with_draft_lifetime"], 3)
 
     @mock.patch(_FAX)
     @mock.patch(_ACTORS)
     @mock.patch(_MODELS)
-    def test_delivered_aggregate_is_computed_once_per_page(
+    def test_unreadable_counters_are_unavailable_not_zero(
         self, mock_models, mock_actors, mock_fax
     ):
-        mock_models.return_value = []
-        mock_actors.return_value = {"alive_actors": 0, "total_actors": 0, "details": []}
-        mock_fax.return_value = _ok_fax_backends()
-        from fighthealthinsurance import staff_views
-
-        real = staff_views._lifetime_snapshot
-        with mock.patch.object(
-            staff_views, "_lifetime_snapshot", side_effect=real
-        ) as agg:
-            self.client.get(reverse("admin_status"))
-        self.assertEqual(agg.call_count, 1)
-        # And that one call is ONE SQL statement: one snapshot (review).
-        from django.db import connection
-        from django.test.utils import CaptureQueriesContext
-
-        with CaptureQueriesContext(connection) as queries:
-            real()
-        self.assertEqual(len(queries), 1, [q["sql"] for q in queries])
-
-    @mock.patch(_FAX)
-    @mock.patch(_ACTORS)
-    @mock.patch(_MODELS)
-    def test_failed_delivered_aggregate_is_unavailable_not_zero(
-        self, mock_models, mock_actors, mock_fax
-    ):
-        """A statement timeout on the lifetime aggregate must not render as
-        "0 delivered" in either panel (review)."""
+        """A failed read of the counters must not render as zero anywhere."""
         mock_models.return_value = []
         mock_actors.return_value = {"alive_actors": 0, "total_actors": 0, "details": []}
         mock_fax.return_value = _ok_fax_backends()
@@ -306,16 +287,25 @@ class AdminStatusFaxQueueTest(TestCase):
         from fighthealthinsurance import staff_views
 
         with mock.patch.object(
-            staff_views, "_lifetime_snapshot", side_effect=RuntimeError("timeout")
+            staff_views, "_lifetime_counters", side_effect=RuntimeError("timeout")
         ):
             response = self.client.get(reverse("admin_status"))
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.context["fax_outcomes"]["delivered_all_time"])
-        self.assertIsNone(response.context["all_time"]["faxes_delivered_lifetime"])
-        self.assertContains(response, "unavailable")
-        self.assertContains(response, "removal totals unavailable")
-        self.assertContains(response, "an unavailable number of people")
-        self.assertNotContains(response, "none recorded yet")
+        t = response.context["all_time"]
+        for key in (
+            "appeals_generated",
+            "people_with_draft_lifetime",
+            "faxes_sent_lifetime",
+            "faxes_delivered_lifetime",
+            "removal_requests",
+        ):
+            self.assertIsNone(t[key], key)
+        self.assertContains(response, "counters unavailable right now")
+        self.assertNotContains(response, "Not seeded yet")
+        # one badge per counter-backed card (appeals, people, faxes sent,
+        # faxes delivered, removals, removed denials) plus the summary line
+        self.assertEqual(response.content.decode().count("unavailable"), 7)
 
     def _person_with_data(self, email, delivered=True, professional_fax_for=None):
         from fighthealthinsurance.models import Denial, ProposedAppeal
@@ -349,16 +339,16 @@ class AdminStatusFaxQueueTest(TestCase):
     @mock.patch(_FAX)
     @mock.patch(_ACTORS)
     @mock.patch(_MODELS)
-    def test_deletion_totals_keep_lifetime_numbers(
+    def test_deletion_changes_no_lifetime_counter(
         self, mock_models, mock_actors, mock_fax
     ):
-        """delete-my-data removes the rows; the totals updated in that same
-        transaction keep the person and the delivered faxes in the lifetime
-        figures, including a fax removed by cascade through the denial."""
+        """delete-my-data removes the rows and counts itself; the lifetime
+        counters, which moved when the drafts were generated, do not move."""
         from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
         from fighthealthinsurance.models import (
             DataRemovalTotals,
             Denial,
+            LifetimeCounters,
             ProposedAppeal,
         )
 
@@ -371,32 +361,30 @@ class AdminStatusFaxQueueTest(TestCase):
         )
         staying = Denial.objects.create(semi_sekret="s", hashed_email="stays")
         ProposedAppeal.objects.create(for_denial=staying, appeal_text="stays too")
-        before = self.client.get(reverse("admin_status")).context["all_time"]
-        self.assertEqual(before["people_with_draft_lifetime"], 2)
-        self.assertEqual(before["faxes_delivered_lifetime"], 2)
+        before = LifetimeCounters.objects.get(pk=LifetimeCounters.SINGLETON_ID)
+        self.assertEqual((before.appeals_generated, before.people_with_draft), (3, 2))
 
         RemoveDataHelper.remove_data_for_email(email)
 
         self.assertFalse(Denial.objects.filter(hashed_email=hashed).exists())
-        totals = DataRemovalTotals.objects.get(pk=DataRemovalTotals.SINGLETON_ID)
+        after = LifetimeCounters.objects.get(pk=LifetimeCounters.SINGLETON_ID)
         self.assertEqual(
+            (after.appeals_generated, after.people_with_draft, after.faxes_delivered),
             (
-                totals.requests,
-                totals.denials,
-                totals.drafts,
-                totals.faxes_delivered,
-                totals.people_with_draft,
+                before.appeals_generated,
+                before.people_with_draft,
+                before.faxes_delivered,
             ),
-            (1, 2, 1, 2, 1),
         )
+        totals = DataRemovalTotals.objects.get(pk=DataRemovalTotals.SINGLETON_ID)
+        self.assertEqual((totals.requests, totals.denials), (1, 2))
         self.assertIsNotNone(totals.since)
         t = self.client.get(reverse("admin_status")).context["all_time"]
-        self.assertEqual(t["people_with_draft"], 1)  # only "stays" is present
-        self.assertEqual(t["people_with_draft_lifetime"], 2)  # plus the removed person
-        self.assertEqual(t["faxes_delivered"], 0)
-        self.assertEqual(t["faxes_delivered_lifetime"], 2)  # both delivered faxes
-        self.assertEqual(t["denials_ever"], before["denials_ever"])  # sequence survives
+        self.assertEqual(t["people_with_draft"], 1)  # present: only "stays"
+        self.assertEqual(t["people_with_draft_lifetime"], 2)  # counter: unchanged
+        self.assertEqual(t["appeals_generated"], 3)
         self.assertEqual(t["removal_requests"], 1)
+        self.assertEqual(t["removed_denials"], 2)
 
     def test_failed_deletion_rolls_the_totals_back_and_a_retry_counts_once(self):
         from django.db import DatabaseError
@@ -419,10 +407,7 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertFalse(DataRemovalTotals.objects.exists())
         RemoveDataHelper.remove_data_for_email(email)
         totals = DataRemovalTotals.objects.get()
-        self.assertEqual(
-            (totals.requests, totals.people_with_draft, totals.faxes_delivered),
-            (1, 1, 1),
-        )
+        self.assertEqual((totals.requests, totals.denials), (1, 2))
 
     def test_totals_failure_never_blocks_deletion(self):
         """A database error while counting (e.g. the totals table missing

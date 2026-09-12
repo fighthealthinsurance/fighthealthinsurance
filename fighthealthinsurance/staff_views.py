@@ -8,7 +8,6 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db import connection
 from django.db.models import Avg, Count, F, Max, Min, QuerySet
-from django.utils.dateparse import parse_datetime
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
@@ -140,61 +139,26 @@ class StaffDashboardView(generic.TemplateView):
     template_name = "staff_dashboard.html"
 
 
-def _lifetime_snapshot() -> Dict[str, Any]:
-    """The lifetime figures that must agree with each other, in ONE statement.
+def _lifetime_counters() -> Dict[str, Any]:
+    """The lifetime numbers: counters that only go up (lifetime_counters.py)
+    plus the running deletion count. Raises on failure; the caller renders
+    "unavailable" rather than a fabricated zero."""
+    from fighthealthinsurance.models import DataRemovalTotals, LifetimeCounters
 
-    Live delivered faxes, the oldest such row's creation date, live distinct
-    people with a real draft, and the running totals removed by delete-my-
-    data requests. One statement is one snapshot on Postgres, so a deletion
-    committing mid-page cannot be counted both as live and as removed
-    (review). Plain SQL that sqlite (tests) and Postgres (prod) both accept.
-    """
-    from fighthealthinsurance.models import (
-        DataRemovalTotals,
-        Denial,
-        FaxesToSend,
-        ProposedAppeal,
-    )
-
-    fax = FaxesToSend._meta.db_table
-    denial = Denial._meta.db_table
-    draft = ProposedAppeal._meta.db_table
-    totals = DataRemovalTotals._meta.db_table
-    sql = f"""
-        SELECT
-          (SELECT COUNT(*) FROM {fax} WHERE fax_success) AS live_delivered,
-          (SELECT MIN(date) FROM {fax} WHERE fax_success) AS oldest_delivered_created,
-          (SELECT COUNT(DISTINCT d.hashed_email) FROM {denial} d
-             WHERE d.hashed_email <> ''
-               AND EXISTS (SELECT 1 FROM {draft} p
-                           WHERE p.for_denial_id = d.denial_id AND NOT p.speculative)
-          ) AS live_people,
-          (SELECT COALESCE(SUM(t.faxes_delivered), 0) FROM {totals} t) AS removed_delivered,
-          (SELECT COALESCE(SUM(t.people_with_draft), 0) FROM {totals} t) AS removed_people,
-          (SELECT COALESCE(SUM(t.requests), 0) FROM {totals} t) AS removal_requests,
-          (SELECT MIN(t.since) FROM {totals} t) AS removals_since
-    """
-    with connection.cursor() as cursor:
-        cursor.execute(sql)
-        row = cursor.fetchone()
-    keys = (
-        "live_delivered",
-        "oldest_delivered_created",
-        "live_people",
-        "removed_delivered",
-        "removed_people",
-        "removal_requests",
-        "removals_since",
-    )
-    out = dict(zip(keys, row))
-    for key in ("oldest_delivered_created", "removals_since"):
-        # sqlite hands datetimes back as strings; Postgres as datetimes.
-        val = out[key]
-        if isinstance(val, str):
-            out[key] = parse_datetime(val)
-    out["delivered_all_time"] = out["live_delivered"] + out["removed_delivered"]
-    out["people_with_draft_lifetime"] = out["live_people"] + out["removed_people"]
-    return out
+    counters = LifetimeCounters.objects.filter(pk=LifetimeCounters.SINGLETON_ID).first()
+    removals = DataRemovalTotals.objects.filter(
+        pk=DataRemovalTotals.SINGLETON_ID
+    ).first()
+    return {
+        "appeals_generated": counters.appeals_generated if counters else 0,
+        "people_with_draft_lifetime": counters.people_with_draft if counters else 0,
+        "faxes_sent_lifetime": counters.faxes_sent if counters else 0,
+        "faxes_delivered_lifetime": counters.faxes_delivered if counters else 0,
+        "counting_since": counters.since if counters else None,
+        "removal_requests": removals.requests if removals else 0,
+        "removed_denials": removals.denials if removals else 0,
+        "removals_since": removals.since if removals else None,
+    }
 
 
 def _sequence_value(model, column: str) -> Optional[int]:
@@ -254,11 +218,10 @@ class AdminStatusView(generic.TemplateView):
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
         ctx["temporal"] = self._temporal_status()
-        # One lifetime snapshot (one statement) feeds both panels so they can
-        # never disagree within a page load (review).
-        snapshot = self._lifetime()
-        ctx["fax_outcomes"] = self._fax_outcome_status(snapshot)
-        ctx["all_time"] = self._all_time_status(snapshot)
+        # The lifetime counters are read once and feed both panels.
+        counters = self._lifetime()
+        ctx["fax_outcomes"] = self._fax_outcome_status(counters)
+        ctx["all_time"] = self._all_time_status(counters)
         ctx["intake_funnel"] = self._intake_funnel_status()
         ctx["letter_scoring"] = self._letter_scoring_status()
         ctx["storage"] = self._storage_status()
@@ -433,25 +396,21 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _lifetime() -> Optional[Dict[str, Any]]:
-        """None when the snapshot failed: the panels then say "unavailable"
-        rather than render a fabricated zero, and neither retries on its own
-        (a retry would reopen the two-panels-disagree problem) (review)."""
+        """None when the counters could not be read: the panels then say
+        "unavailable" rather than render a fabricated zero."""
         try:
-            return _lifetime_snapshot()
+            return _lifetime_counters()
         except Exception:
-            logger.opt(exception=True).error("Error computing the lifetime snapshot")
+            logger.opt(exception=True).error("Error reading the lifetime counters")
             return None
 
     @staticmethod
-    def _all_time_status(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """Lifetime totals (Melanie, 2026-09-11).
-
-        "Ever created" comes from the id sequences and survives deletion.
-        People who got a real draft and faxes delivered are the two facts a
-        sequence cannot give; they are live counts plus what delete-my-data
-        requests removed (DataRemovalTotals), from the day that counter
-        shipped onwards. "Got a draft" excludes speculative precomputes
-        held in reserve (matches the intake funnel) and blank email hashes.
+    def _all_time_status(counters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Lifetime totals (Melanie, 2026-09-11): counters that only go up
+        (appeals generated, people with a generated draft, faxes delivered,
+        deletion requests), which deleting a person's data cannot change;
+        "ever created" from the id sequences as a cross-check; and what is
+        still present today.
         """
         out: Dict[str, Any] = {"ok": True, "error": None}
         try:
@@ -462,35 +421,39 @@ class AdminStatusView(generic.TemplateView):
             )
             out["denials"] = live["denials"]
             out["first_denial"] = live["first"]
-            out["drafts"] = ProposedAppeal.objects.count()
+            out["drafts"] = ProposedAppeal.objects.filter(chosen=False).count()
             out["denials_with_draft"] = (
-                Denial.objects.filter(proposedappeal__speculative=False)
+                Denial.objects.filter(proposedappeal__chosen=False)
                 .values("pk")
                 .distinct()
                 .count()
             )
+            out["people_with_draft"] = (
+                Denial.objects.filter(proposedappeal__chosen=False)
+                .exclude(hashed_email="")
+                .values("hashed_email")
+                .distinct()
+                .count()
+            )
+            out["faxes_sent"] = FaxesToSend.objects.filter(sent=True).count()
+            out["faxes_delivered"] = FaxesToSend.objects.filter(
+                fax_success=True
+            ).count()
             out["denials_ever"] = _sequence_value(Denial, "denial_id")
             out["drafts_ever"] = _sequence_value(ProposedAppeal, "id")
             out["faxes_ever"] = _sequence_value(FaxesToSend, "fax_id")
-            if snapshot is None:
-                for key in (
-                    "people_with_draft",
-                    "faxes_delivered",
-                    "people_with_draft_lifetime",
-                    "faxes_delivered_lifetime",
-                    "removal_requests",
-                    "removals_since",
-                ):
-                    out[key] = None
-            else:
-                out["people_with_draft"] = snapshot["live_people"]
-                out["faxes_delivered"] = snapshot["live_delivered"]
-                out["people_with_draft_lifetime"] = snapshot[
-                    "people_with_draft_lifetime"
-                ]
-                out["faxes_delivered_lifetime"] = snapshot["delivered_all_time"]
-                out["removal_requests"] = snapshot["removal_requests"]
-                out["removals_since"] = snapshot["removals_since"]
+            keys = (
+                "appeals_generated",
+                "people_with_draft_lifetime",
+                "faxes_sent_lifetime",
+                "faxes_delivered_lifetime",
+                "counting_since",
+                "removal_requests",
+                "removed_denials",
+                "removals_since",
+            )
+            for key in keys:
+                out[key] = None if counters is None else counters[key]
         except Exception as e:
             logger.opt(exception=True).error("Error computing all-time status")
             out["ok"] = False
@@ -499,7 +462,7 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _fax_outcome_status(
-        snapshot: Optional[Dict[str, Any]] = None,
+        counters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Fax delivery outcomes (last 7 days) from the database.
 
@@ -541,13 +504,10 @@ class AdminStatusView(generic.TemplateView):
                 # aggregate, so the count and the date come from one snapshot
                 # (review). `date` is the row's creation time; nothing records
                 # the delivery time, so the label says "oldest ... created".
-                # Lifetime delivered = rows present + removed by deletion
-                # requests, from the one-statement snapshot (review).
+                # Lifetime delivered: a counter bumped at each successful
+                # finalize, untouched by deletion (lifetime_counters.py).
                 "delivered_all_time": (
-                    None if snapshot is None else snapshot["delivered_all_time"]
-                ),
-                "oldest_delivered_created": (
-                    None if snapshot is None else snapshot["oldest_delivered_created"]
+                    None if counters is None else counters["faxes_delivered_lifetime"]
                 ),
                 "failed": failed_qs.count(),
                 "stuck_claims": failed_qs.filter(vendor_send_completed=True).count(),
