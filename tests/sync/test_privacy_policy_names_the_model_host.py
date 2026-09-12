@@ -35,8 +35,20 @@ class PrivacyPolicyNamesTheModelHostTest(TestCase):
         self.assertIn("better text recognition for photos and scans on the scan page", self.text)
 
     def test_the_date_moved_with_the_change(self):
-        self.assertIn("Last updated: September 9, 2026", self.text)
+        self.assertIn("Last updated: September 12, 2026", self.text)
         self.assertNotIn("September 7, 2026", self.text)
+
+    def test_the_deletion_right_says_anonymous_totals_survive(self):
+        # Since the status counters (#1017) a deletion request leaves
+        # count-only totals behind; the right says so, in one plain sentence,
+        # right after the request link.
+        deletion = next(li for li in self.page.find_all("li") if "Deletion" in li.get_text() and "remove_data" in li.decode())
+        text = " ".join(deletion.get_text(" ").split())
+        self.assertIn(
+            "We keep anonymous totals of how much work the service has done, such as how many appeals it has generated; "
+            "they contain no information about you and are not affected by your request.",
+            text,
+        )
 
     def test_no_em_dash_entered_with_the_change(self):
         bullet = next(li for li in self.page.find_all("li") if "Content Delivery" in li.get_text())
