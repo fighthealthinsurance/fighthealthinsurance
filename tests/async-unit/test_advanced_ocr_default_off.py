@@ -404,7 +404,7 @@ def test_the_label_speaks_to_a_person():
     for fact in (
         "A small AI model",
         "The first time you scan with this on",
-        "downloads it from Hugging Face (about 760 MB)",
+        "downloads it from Hugging Face (about 1 GB)",
         "keeps it on this device",
         "It runs on your device",
         "your file never leaves it",
@@ -646,7 +646,7 @@ def test_passes_and_removal_share_one_lock():
     confirm = re.search(r"if \(!window\.confirm\(REMOVE_MODEL_CONFIRM\)\) \{\s*return;\s*\}", init)
     assert confirm is not None, "the model is removed without asking"
     assert init.index("if (onDevicePassesActive > 0)") < confirm.start() < init.index("button.disabled = true;")
-    assert re.search(r"const REMOVE_MODEL_CONFIRM =\s*\"Remove the downloaded model \(about 760 MB\) from this device\? ", src), (
+    assert re.search(r"const REMOVE_MODEL_CONFIRM =\s*\"Remove the downloaded model \(about 1 GB\) from this device\? ", src), (
         "the confirm no longer opens with what it removes"
     )
     assert "If you scan with the option on again later, the model downloads again." in src, (
