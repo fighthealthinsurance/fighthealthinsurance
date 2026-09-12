@@ -188,10 +188,11 @@ class DraftCounterTest(TestCase):
         # person-a was locked but never flagged: the denial had left them
         self.assertFalse(Denial.objects.get(pk=sibling.pk).person_counted)
 
-    def test_retry_never_waits_for_the_new_persons_lock(self):
-        """The retry holds the previous person's locks, so it must take the
-        new person's lock with the try variant and give up if it is busy;
-        waiting there deadlocks against a re-key going the other way."""
+    def test_counting_never_waits_for_a_persons_lock(self):
+        """Counting runs inside somebody else's transaction, which may hold
+        a row a delete-my-data cascade is about to take, so it takes the
+        lock with the try variant on every attempt and gives up if busy;
+        waiting there is what lets the two abort each other (review)."""
         x = self._denial()
         Denial.objects.filter(pk=x.pk).update(hashed_email="person-b")
         reads, read = self._stale_then_real("person-a")
@@ -206,7 +207,7 @@ class DraftCounterTest(TestCase):
             lifetime_counters, "_persisted_hash", new=read
         ), mock.patch.object(lifetime_counters, "person_lock", new=lock):
             self.assertTrue(lifetime_counters._mark_person(x.pk))
-        self.assertEqual(blocking, [True, False])  # first blocks, retry does not
+        self.assertEqual(blocking, [False, False])  # neither attempt waits
 
     def test_busy_lock_after_a_rekey_counts_the_draft_but_not_the_person(self):
         x = self._denial()
@@ -244,7 +245,9 @@ class DraftCounterTest(TestCase):
             lock.assert_not_called()
             ProposedAppeal.objects.create(for_denial=d, appeal_text="draft")
             self.assertEqual(locked(lock), ["person-a"])
-            self.assertEqual(lock.call_args.kwargs, {"blocking": True})
+            # Counting runs inside whatever transaction saved the draft, so
+            # it never waits for the lock (review).
+            self.assertEqual(lock.call_args.kwargs, {"blocking": False})
             lock.reset_mock()
             d = Denial.objects.get(pk=d.pk)
             d.denial_text = "edited"
@@ -308,14 +311,19 @@ class DraftCounterTest(TestCase):
         self.assertEqual(_counters()[:3], (1, 1, 0))
 
     def test_counter_failure_never_blocks_the_draft_save(self):
+        d = self._denial()
         with mock.patch.object(
             lifetime_counters, "_add", side_effect=DatabaseError("no table")
         ):
-            row = ProposedAppeal.objects.create(
-                for_denial=self._denial(), appeal_text="still saved"
-            )
+            row = ProposedAppeal.objects.create(for_denial=d, appeal_text="still saved")
         self.assertTrue(ProposedAppeal.objects.filter(pk=row.pk).exists())
         self.assertEqual(_counters()[:3], (0, 0, 0))
+        # The flag and the count move together or not at all: the savepoint
+        # took the flag back with the failed bump, so the person is counted
+        # on their next draft instead of being lost for good (review).
+        self.assertFalse(Denial.objects.get(pk=d.pk).person_counted)
+        ProposedAppeal.objects.create(for_denial=d, appeal_text="second")
+        self.assertEqual(_counters()[:2], (1, 1))
 
     def test_chosen_only_history_does_not_hide_a_first_generation(self):
         """Someone who only ever submitted their own text (a chosen copy via
@@ -586,7 +594,7 @@ class DeletionTotalsTest(TestCase):
         with mock.patch.object(
             lifetime_counters,
             "person_lock",
-            side_effect=lambda h, **kw: order.append(("lock", h)) or True,
+            side_effect=lambda h, **kw: order.append(("lock", h, kw)) or True,
         ), mock.patch.object(
             RemoveDataHelper,
             "_delete_rows",
@@ -595,7 +603,13 @@ class DeletionTotalsTest(TestCase):
             ),
         ):
             RemoveDataHelper.remove_data_for_email(self.EMAIL)
-        self.assertEqual(order, [("lock", d.hashed_email), ("delete", d.hashed_email)])
+        # Deletion is the one caller that WAITS for the lock: it takes it as
+        # the first statement of its transaction, holding nothing, and it
+        # must not lose a coin flip to a staff counter (review).
+        self.assertEqual(
+            order,
+            [("lock", d.hashed_email, {}), ("delete", d.hashed_email)],
+        )
 
     def test_bookkeeping_failure_never_blocks_a_deletion(self):
         from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper

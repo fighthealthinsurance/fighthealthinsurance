@@ -384,7 +384,16 @@ class AdminStatusView(generic.TemplateView):
                 stale_attempts=Count("fax_id", filter=unsent & stale_attempt),
                 failures_recent=Count(
                     "fax_id",
-                    filter=Q(sent=True, fax_success=False, date__gte=week_ago),
+                    # Recent by ATTEMPT, falling back to creation for rows
+                    # never stamped: the same window the Fax delivery panel
+                    # uses, so the two cards cannot disagree. Keyed on
+                    # creation alone, a resend of an old fax that failed
+                    # again could never appear here (review).
+                    filter=Q(sent=True, fax_success=False)
+                    & (
+                        Q(attempting_to_send_as_of__gte=week_ago)
+                        | Q(date__gte=week_ago)
+                    ),
                 ),
             )
             out.update(counts)

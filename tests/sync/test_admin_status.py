@@ -149,6 +149,16 @@ class AdminStatusFaxQueueTest(TestCase):
         self._make_fax(should_send=True, sent=False, attempting_to_send_as_of=now)
         # E: a recent failure.
         self._make_fax(should_send=True, sent=True, fax_success=False)
+        # K: staged long ago, resent from the status page this week, failed
+        # again. Recent by attempt, not by creation: the queue card and the
+        # delivery panel must agree about it (review).
+        self._make_fax(
+            date=now - datetime.timedelta(days=30),
+            should_send=True,
+            sent=True,
+            fax_success=False,
+            attempting_to_send_as_of=now - datetime.timedelta(days=1),
+        )
         # F: a success (must be ignored everywhere).
         self._make_fax(should_send=True, sent=True, fax_success=True)
         # G: an attempt from days ago that was never cleared. Not in flight
@@ -192,7 +202,7 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertEqual(q["requested_unpicked"], 1)  # J
         self.assertEqual(q["in_flight"], 2)  # D, H; G and I are hours old
         self.assertEqual(q["stale_attempts"], 2)  # G, I
-        self.assertEqual(q["failures_recent"], 1)  # E
+        self.assertEqual(q["failures_recent"], 2)  # E, K
         # The page headlines what is actionable, not the unsent total.
         self.assertNotContains(response, "Unsent (total)")
         self.assertContains(response, "Stuck (queued")
@@ -212,7 +222,7 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertEqual(all_time["faxes_delivered"], 1)  # present rows
         self.assertEqual(all_time["faxes_delivered_lifetime"], 0)  # counter
         self.assertEqual(all_time["faxes_sent_lifetime"], 0)  # counter
-        self.assertEqual(all_time["faxes_sent"], 2)  # present rows: E, F
+        self.assertEqual(all_time["faxes_sent"], 3)  # present rows: E, F, K
         self.assertContains(response, "Faxes sent (an attempt was made)")
         self.assertContains(response, "All time")
 

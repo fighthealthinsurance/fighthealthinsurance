@@ -24,10 +24,14 @@ back. So:
   churn (the precompute's rows are deleted on a text change), and leaves
   with the person's data on deletion, so nothing is retained beyond what
   the denials already are. Deleting a person's data takes the same lock
-  first, because a cascade locks their denial rows one at a time and the
-  opposite order would deadlock against a count. The one ordering caveat:
-  an outer transaction that writes denials of two different people would
-  hold both people's locks until it commits; no caller does that today.
+  first, because a cascade locks their denial rows one at a time, and it
+  is the only caller allowed to WAIT for the lock: it takes it as the
+  first statement of its transaction, so it holds nothing that another
+  holder could be waiting for. Every other writer takes the lock with the
+  try variant and carries on without it, because each of them runs inside
+  a transaction that may already hold a row the holder wants. That is the
+  whole deadlock argument: a cycle needs two waiters, and only lock-free
+  transactions ever wait here.
 * ``faxes_sent`` moves in finalize_fax the first time a row is finalized
   (an attempt was made, whatever its result), and ``faxes_delivered`` the
   first time it is finalized as delivered; each once per fax, recorded by
@@ -96,9 +100,18 @@ def person_lock(hashed_email: str, *, blocking: bool = True) -> bool:
     so every writer acquires locks in the same order.
 
     Returns whether the lock is held. ``blocking=False`` uses the try
-    variant and returns False rather than waiting: a caller that already
-    holds another person's locks must never wait, or a re-key going the
-    other way completes a deadlock cycle (review).
+    variant and returns False rather than waiting.
+
+    THE RULE, and the whole reason no writer here can deadlock: **only a
+    transaction that holds no locks yet may wait for this lock.** Exactly
+    one caller qualifies, delete-my-data, which takes it as the first
+    statement of its transaction and must not lose a coin flip. Every
+    other caller may already hold something the lock's holder will want --
+    a generation lease row, a KEY SHARE from an inserted child row, the
+    previous person's rows in a re-key retry -- so they pass
+    ``blocking=False`` and degrade: a counter is a staff number, and a
+    missed one is cheaper than a deadlock that aborts somebody's real
+    work (review).
     """
     if not hashed_email or connection.vendor != "postgresql":
         return True
@@ -142,28 +155,31 @@ def _mark_person(denial_id: int) -> bool:
     ``person_counted`` on every one that lacks it; the person counts only
     if none had it.
 
+    The lock is always taken with the try variant, never waited for: this
+    runs inside whatever transaction saved the draft, which may already
+    hold the generation lease row that a delete-my-data cascade is about
+    to delete, and waiting there would let the two abort each other
+    (review). A busy lock means another writer is working on this person
+    right now -- most often the one counting them -- so the draft is
+    counted and the person is left to whoever holds it.
+
     If the denial is not among the locked rows it was re-keyed between the
     read and the lock. That attempt's savepoint is rolled back, releasing
-    its row locks, and the next attempt reads the new hash -- but it takes
-    the new person's lock with the try variant and gives up rather than
-    waiting. Waiting there, while possibly still holding the previous
-    person's advisory lock, is exactly the cycle a re-key going the other
-    way completes (review); only the first attempt, which holds no other
-    person's lock, may block. If the row is gone (the person was deleted
-    between the draft insert and this call) or has no hash, nothing is
-    counted.
+    its row locks, and the next attempt reads the new hash. If the row is
+    gone (the person was deleted between the draft insert and this call)
+    or has no hash, nothing is counted.
     """
     from fighthealthinsurance.models import Denial
 
-    for attempt in range(3):
+    for _attempt in range(3):
         hashed = _persisted_hash(denial_id)
         if not hashed:
             return False
         try:
             with transaction.atomic():  # savepoint: row locks go on rollback
-                if not person_lock(hashed, blocking=attempt == 0):
+                if not person_lock(hashed, blocking=False):
                     logger.warning(
-                        "Lifetime counters: person lock busy after a re-key; "
+                        "Lifetime counters: person busy elsewhere; "
                         "draft counted, person not"
                     )
                     return False
@@ -226,7 +242,16 @@ def _present_people(Denial):
 
 def seed_from_present_rows(apps, schema_editor) -> None:
     """Migration seed: start the counters from the rows present today, and
-    flag every present person's denials as counted. Reversible as a no-op."""
+    flag every present person's denials as counted. Reversible as a no-op.
+
+    This runs inside the migration's transaction, so the lock the AddFields
+    took on the denial and fax tables is held until the seed finishes.
+    That is seconds at this data size, which Melanie judged not worth
+    splitting up (2026-09-12). If those tables ever grow enough for the
+    pause to be felt during a deploy, move this into its own
+    ``atomic = False`` migration that walks the rows in bounded batches and
+    writes the counters row last.
+    """
     LifetimeCounters = apps.get_model("fighthealthinsurance", "LifetimeCounters")
     ProposedAppeal = apps.get_model("fighthealthinsurance", "ProposedAppeal")
     Denial = apps.get_model("fighthealthinsurance", "Denial")

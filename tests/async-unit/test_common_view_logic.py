@@ -141,7 +141,12 @@ class TestCommonViewLogic(TestCase):
     @patch("fighthealthinsurance.common_view_logic.Denial.objects")
     def test_remove_data_for_email(self, mock_denial_objects):
         mock_denial = Mock()
-        mock_denial_objects.filter.return_value.delete.return_value = 1
+        # delete() returns (total, {label: count}); the removal totals read
+        # the denial count out of it, so the mock has to be that shape.
+        mock_denial_objects.filter.return_value.delete.return_value = (
+            1,
+            {"fighthealthinsurance.Denial": 1},
+        )
         RemoveDataHelper.remove_data_for_email("test@example.com")
         mock_denial_objects.filter.assert_called()
         mock_denial_objects.filter.return_value.delete.assert_called()
