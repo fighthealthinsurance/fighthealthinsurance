@@ -66,7 +66,7 @@ class RemoveDataHelper:
         """
         Remove all data associated with an email address.
 
-        Used for GDPR/privacy compliance data deletion requests.
+        Used for data protection deletion requests.
 
         Args:
             email: Email address to remove data for
