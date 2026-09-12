@@ -10,6 +10,30 @@ const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 // ignore + nginx deny, PR #936) -- so they are copied into dist/workers/,
 // which ships with the bundles. Nothing at runtime may reference a
 // node_modules URL; tests/async-unit/test_worker_assets.py pins that.
+// The ONNX runtime inside the on-device OCR library, resolved the way the
+// library resolves it (its own nested copy while npm keeps one, the hoisted
+// one otherwise) so the files always match the build inside the library.
+// Left to itself the library fetches them from a public CDN: executable code
+// and a 27 MB wasm from a third party on every cold load. Published as .js
+// for the same nginx reason as the workers below; qwen_webgpu_ocr.ts points
+// the library here. One build, asyncify: the one with WebGPU support, which
+// the model asks for (Safari, where the library would pick the plain build,
+// is not offered the option; see qwen_webgpu_ocr.ts).
+const transformersDir = path.join(__dirname, 'node_modules', '@huggingface', 'transformers');
+const ortEntry = require.resolve('onnxruntime-web', { paths: [transformersDir] });
+const ortDist = path.join(
+  ortEntry.slice(0, ortEntry.lastIndexOf(path.join(path.sep, 'onnxruntime-web', path.sep))),
+  'onnxruntime-web',
+  'dist',
+);
+// `minimized` because the module is already a minified ES module with
+// import.meta inside; run through the minimizer as a plain script it fails
+// to parse and the build errors.
+const ortRuntimeAssets = ['ort-wasm-simd-threaded.asyncify'].flatMap((build) => [
+  { from: path.join(ortDist, `${build}.mjs`), to: `vendor/onnxruntime-web/${build}.js`, info: { minimized: true } },
+  { from: path.join(ortDist, `${build}.wasm`), to: `vendor/onnxruntime-web/${build}.wasm` },
+]);
+
 const workerAssets = [
   // Published as .js on purpose. nginx in the web image (Debian bookworm's
   // mime.types) has no entry for .mjs, so the worker went out as
@@ -22,6 +46,11 @@ const workerAssets = [
   { from: 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs', to: 'workers/pdf.worker.min.js' },
   { from: 'node_modules/tesseract.js/dist/worker.min.js', to: 'workers/tesseract.js/worker.min.js' },
   { from: 'node_modules/tesseract.js-core/*.{js,wasm}', to: 'workers/tesseract.js-core/[name][ext]' },
+  // The on-device OCR model's library, loaded by the page as a real ES module
+  // from this origin rather than bundled: bundled, the ONNX runtime inside it
+  // cannot locate its own worker and wasm (see qwen_webgpu_ocr.ts).
+  { from: 'node_modules/@huggingface/transformers/dist/transformers.min.js', to: 'vendor/transformers/transformers.min.js' },
+  ...ortRuntimeAssets,
 ];
 
 // Check if bundle analysis is requested

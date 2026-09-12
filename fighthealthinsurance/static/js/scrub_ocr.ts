@@ -102,6 +102,9 @@ interface EngineText {
 
 interface OCRResults {
   results: EngineText[];
+  // The on-device model's read of this page, when the option is on: a thunk,
+  // run later by scrub.ts after the standard pass, never in the race.
+  onDeviceRead?: () => Promise<string>;
 }
 
 type SettledState<T> =
@@ -430,7 +433,7 @@ const ENGINE_PRECEDENCE: Record<string, number> = {
  * match must end on a token boundary -- if the haystack continues the token,
  * these are different values and the exact one is kept.
  */
-function containsNormalised(haystack: string, needle: string): boolean {
+export function containsNormalised(haystack: string, needle: string): boolean {
   const flatten = (t: string) => t.replace(/\s+/g, " ").trim();
   const flatNeedle = flatten(needle);
   if (flatNeedle.length === 0) {
@@ -496,7 +499,35 @@ function mergeOCRTexts({ results }: OCRResults): string {
   return best.text;
 }
 
-function isAdvancedOCREnabled(): boolean {
+// The on-device model's read of one page, handed to the caller together
+// with the text the standard pass put in the box for that page, so the later
+// swap replaces exactly that text. The caller owns the order and the
+// positions; nothing is kept here between calls, so a page can never cross
+// from one selection into another (review).
+export interface OnDeviceRead {
+  standard: string;
+  run: () => Promise<string>;
+  // The page's own text layer, when it has one: exact where OCR guesses,
+  // and on a denial the sparse bits are often the ones that matter (a
+  // stamped deadline, a claim number). The swap keeps it next to the
+  // model's reading if the reading did not reproduce it (review).
+  exact?: string;
+}
+
+export type AddText = (text: string, read?: OnDeviceRead) => void;
+
+function onDeviceReadFor(
+  standard: string,
+  run: (() => Promise<string>) | undefined,
+  exact?: string,
+): OnDeviceRead | undefined {
+  if (!run || standard.trim().length === 0) {
+    return undefined;
+  }
+  return exact && exact.length > 0 ? { standard, run, exact } : { standard, run };
+}
+
+export function isAdvancedOCREnabled(): boolean {
   const checkbox = document.getElementById(
     "advanced_ocr_enabled",
   ) as HTMLInputElement | null;
@@ -539,8 +570,15 @@ async function recognizeImageText(
     }),
   });
 
+  let onDeviceRead: (() => Promise<string>) | undefined;
   if (isAdvancedOCREnabled()) {
-    engines.push({ name: "qwen", promise: recognizeWithQwenWebGPU(file) });
+    // Not in the race: the on-device model takes a minute or more per page,
+    // far past the grace window, so it reads AFTER the standard engines have
+    // filled the box, one page at a time, and offers its reading then (see
+    // improveWithOnDeviceModel in scrub.ts). A thunk, so nothing starts
+    // until the standard pass is done; the caller queues it together with
+    // this page's standard text.
+    onDeviceRead = () => recognizeWithQwenWebGPU(file);
   }
 
   // Free where the platform provides it; contributes "" and drops out of the
@@ -551,7 +589,7 @@ async function recognizeImageText(
   });
 
   try {
-    return await runOCREnginesWithGrace(engines);
+    return { ...(await runOCREnginesWithGrace(engines)), onDeviceRead };
   } finally {
     page.abandoned = true;
   }
@@ -559,7 +597,7 @@ async function recognizeImageText(
 
 const recognizePDF = async function (
   file: File,
-  addText: (str: string) => void,
+  addText: AddText,
 ) {
   const typedarray = await getFileAsArrayBuffer(file);
   const loadingTask = pdfjsLib.getDocument(typedarray);
@@ -623,7 +661,7 @@ const recognizePDF = async function (
 async function recognizePDFPage(
   doc: PDFDocumentProxy,
   pageNo: number,
-  addText: (str: string) => void,
+  addText: AddText,
 ): Promise<boolean> {
   const page = await doc.getPage(pageNo);
   try {
@@ -653,11 +691,12 @@ async function recognizePDFPage(
 
     let ocrText = "";
     let ocrFailed = false;
+    let pageRead: (() => Promise<string>) | undefined;
     try {
       await page.render({ canvasContext: context, viewport, canvas }).promise;
-      ocrText = mergeOCRTexts(
-        await recognizeImageText(canvas.toDataURL("image/png")),
-      ).trim();
+      const pageResults = await recognizeImageText(canvas.toDataURL("image/png"));
+      ocrText = mergeOCRTexts(pageResults).trim();
+      pageRead = pageResults.onDeviceRead;
     } catch (error) {
       // Caught PER PAGE so one unreadable page cannot abandon the rest, and
       // so this page's own text layer is still available as a fallback.
@@ -688,7 +727,9 @@ async function recognizePDFPage(
       parts.push(pageText);
     }
     if (parts.length > 0) {
-      addText(parts.join("\n") + "\n");
+      // The model's later reading replaces exactly the OCR part of what went
+      // out, which comes first; a sparse text layer appended after it stays.
+      addText(parts.join("\n") + "\n", onDeviceReadFor(ocrText, pageRead, pageText));
     }
 
     // Emitting the sparse layer is NOT the same as having read the page. A
@@ -703,25 +744,29 @@ async function recognizePDFPage(
 
 const recognizeImage = async function (
   file: File,
-  addText: (str: string) => void,
+  addText: AddText,
 ) {
-  const text = mergeOCRTexts(await recognizeImageText(file));
-  addText(text);
+  const results = await recognizeImageText(file);
+  const text = mergeOCRTexts(results);
+  addText(text, onDeviceReadFor(text, results.onDeviceRead));
 };
 
 export const recognize = async function (
   file: File,
-  addText: (str: string) => void,
+  addText: AddText,
 ) {
   // Track whether anything reached the page before falling back. Re-running a
   // different decoder over a document we have already partly emitted either
   // duplicates that text or reports failure after a usable read.
   let emitted = false;
-  const emit = (text: string): void => {
+  // Forwards the page's read too: this wrapper sits between every emit site
+  // and the caller, and a one-argument version silently dropped the model's
+  // reads on the floor, so the model never ran (page check).
+  const emit: AddText = (text, read): void => {
     if (text.trim().length > 0) {
       emitted = true;
     }
-    addText(text);
+    addText(text, read);
   };
 
   if (isPDF(file)) {
