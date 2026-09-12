@@ -102,6 +102,68 @@ class DraftCounterTest(TestCase):
         stray.save(update_fields=["hashed_email"])
         self.assertFalse(Denial.objects.get(pk=stray.pk).person_counted)
 
+    def test_second_stale_rekey_keeps_the_counted_flag(self):
+        """Two instances hold the same denial under A. The first moves it
+        to B and B is counted. The second then saves its own A->B edit:
+        the row already belongs to B, so that is not a move and B's flag
+        must survive, or B's next draft counts B again (review)."""
+        first = self._denial()
+        second = Denial.objects.get(pk=first.pk)
+        first.hashed_email = "person-b"
+        first.save()
+        ProposedAppeal.objects.create(for_denial=first, appeal_text="b first")
+        self.assertEqual(_counters()[:2], (1, 1))
+        second.hashed_email = "person-b"
+        second.save()
+        self.assertTrue(Denial.objects.get(pk=first.pk).person_counted)
+        ProposedAppeal.objects.create(for_denial=first, appeal_text="b again")
+        self.assertEqual(_counters()[:2], (2, 1))
+
+    def test_partial_save_does_not_move_the_baseline(self):
+        """Assigning a new hash and saving other fields first must not make
+        the later hash save look like a no-op (review)."""
+        a = self._denial()
+        ProposedAppeal.objects.create(for_denial=a, appeal_text="first")
+        a = Denial.objects.get(pk=a.pk)
+        a.hashed_email = "person-b"
+        a.denial_text = "edited"
+        a.save(update_fields=["denial_text"])
+        row = Denial.objects.get(pk=a.pk)
+        self.assertEqual((row.hashed_email, row.person_counted), ("person-a", True))
+        a.save(update_fields=["hashed_email"])
+        row = Denial.objects.get(pk=a.pk)
+        self.assertEqual((row.hashed_email, row.person_counted), ("person-b", False))
+        ProposedAppeal.objects.create(for_denial=a, appeal_text="b first")
+        self.assertEqual(_counters()[:2], (2, 2))
+
+    def test_refreshed_instance_does_not_undo_a_move(self):
+        original = self._denial()
+        mover = Denial.objects.get(pk=original.pk)
+        mover.hashed_email = "person-b"
+        mover.save()
+        ProposedAppeal.objects.create(for_denial=mover, appeal_text="b first")
+        original.refresh_from_db()
+        self.assertEqual(original.hashed_email, "person-b")
+        original.denial_text = "edited later"
+        original.save()  # persisted hash == instance hash: not a move
+        self.assertTrue(Denial.objects.get(pk=original.pk).person_counted)
+        ProposedAppeal.objects.create(for_denial=original, appeal_text="b again")
+        self.assertEqual(_counters()[:2], (2, 1))
+
+    def test_draft_counts_the_denials_persisted_person_not_a_cached_one(self):
+        """The speculative precompute holds a denial instance; if another
+        request changed its email meanwhile, the draft belongs to the new
+        person and must count them, not the old hash (review)."""
+        cached = self._denial()
+        mover = Denial.objects.get(pk=cached.pk)
+        mover.hashed_email = "person-b"
+        mover.save()
+        ProposedAppeal.objects.create(for_denial=cached, appeal_text="from cache")
+        self.assertEqual(_counters()[:2], (1, 1))
+        self.assertTrue(Denial.objects.get(pk=cached.pk).person_counted)
+        ProposedAppeal.objects.create(for_denial=mover, appeal_text="b again")
+        self.assertEqual(_counters()[:2], (2, 1))
+
     def test_deferred_load_still_detects_a_hash_change(self):
         a = self._denial()
         ProposedAppeal.objects.create(for_denial=a, appeal_text="first")
@@ -122,7 +184,10 @@ class DraftCounterTest(TestCase):
             lock.reset_mock()
             d = Denial.objects.get(pk=d.pk)
             d.denial_text = "edited"
-            d.save()  # hash unchanged: no lock, flag untouched
+            d.save()  # a full save writes the hash: same lock, flag untouched
+            lock.assert_called_once_with("person-a")
+            lock.reset_mock()
+            d.save(update_fields=["denial_text"])  # hash not written: no lock
             lock.assert_not_called()
             d.hashed_email = "person-q"
             d.save()

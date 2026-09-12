@@ -11,17 +11,21 @@ back. So:
   does not count).
 * ``people_with_draft`` moves when a person's first generated draft is
   counted, which sets ``person_counted`` on every Denial row of theirs.
-  The decision is made under the person's lock (``person_lock``: a
-  per-hash advisory lock on PostgreSQL, plus FOR UPDATE on the rows), so
-  two racing first drafts serialize and exactly one counts. The hash is
-  the person: a denial created later, or one whose hash changes, adopts
-  the counted state of the person it belongs to under the same lock
-  (Denial.save), and any row that is still unflagged is flagged on the
-  person's next draft, so the flag never depends on one particular denial
+  The person is the hash the denial carries in the database at the time,
+  read under the person's lock (``person_lock``: a per-hash advisory lock
+  on PostgreSQL, taken before any row lock by every writer of the flag,
+  plus FOR UPDATE on the rows), so two racing first drafts serialize and
+  exactly one counts. A denial created later, or one whose hash changes,
+  adopts the counted state of the person it belongs to under the same
+  lock (Denial.save, deciding against the locked row, never against a
+  cached hash), and any row still unflagged is flagged on the person's
+  next draft, so the flag never depends on one particular denial
   surviving. It lives on rows that already carry the hash, survives draft
   churn (the precompute's rows are deleted on a text change), and leaves
   with the person's data on deletion, so nothing is retained beyond what
-  the denials already are.
+  the denials already are. The one ordering caveat: an outer transaction
+  that writes denials of two different people holds both people's locks
+  until it commits; no caller does that today.
 * ``faxes_sent`` moves in finalize_fax the first time a row is finalized
   (an attempt was made, whatever its result), and ``faxes_delivered`` the
   first time it is finalized as delivered; each once per fax, recorded by
@@ -96,30 +100,43 @@ def person_lock(hashed_email: str) -> None:
         )
 
 
-def _mark_person(hashed_email: str) -> bool:
+def _mark_person(denial_id: int) -> bool:
     """True exactly once per person, however many writers race.
 
-    Locks the person's denial rows and flips ``person_counted`` on every one
-    that lacks it; the person counts only if none had it. A second writer
-    waits on the lock and sees the flag. A denial that slipped in unflagged
-    is flagged here too, so the flag never depends on one particular row
-    surviving. If the rows are gone (the person was deleted between the
-    draft insert and this call), nothing is created and nothing is counted.
+    The person is the hash the draft's denial carries IN THE DATABASE, not
+    whatever instance the writer held: a precompute can hold a denial whose
+    email was changed by another request meanwhile (review). Takes the
+    person's lock, then FOR UPDATE on their denial rows, and flips
+    ``person_counted`` on every one that lacks it; the person counts only
+    if none had it. If the denial is not among the locked rows it was
+    re-keyed between the read and the lock: read again and go round with
+    the new hash. If the row is gone (the person was deleted between the
+    draft insert and this call) or has no hash, nothing is counted.
     """
     from fighthealthinsurance.models import Denial
 
-    person_lock(hashed_email)
-    flags = list(
-        Denial.objects.select_for_update(of=("self",))
-        .filter(hashed_email=hashed_email)
-        .values_list("person_counted", flat=True)
-    )
-    if not flags:
-        return False
-    Denial.objects.filter(hashed_email=hashed_email, person_counted=False).update(
-        person_counted=True
-    )
-    return not any(flags)
+    for _attempt in range(3):
+        hashed = (
+            Denial.objects.filter(pk=denial_id)
+            .values_list("hashed_email", flat=True)
+            .first()
+        )
+        if not hashed:
+            return False
+        person_lock(hashed)
+        rows = list(
+            Denial.objects.select_for_update(of=("self",))
+            .filter(hashed_email=hashed)
+            .values_list("pk", "person_counted")
+        )
+        if denial_id not in {pk for pk, _flag in rows}:
+            continue
+        Denial.objects.filter(hashed_email=hashed, person_counted=False).update(
+            person_counted=True
+        )
+        return not any(flag for _pk, flag in rows)
+    logger.warning("Lifetime counters: denial re-keyed repeatedly; not counted")
+    return False
 
 
 @receiver(
@@ -130,10 +147,9 @@ def _mark_person(hashed_email: str) -> bool:
 def _on_draft_saved(sender, instance, created, raw=False, **kwargs) -> None:
     if not created or raw or instance.chosen:
         return
-    hashed = getattr(instance.for_denial, "hashed_email", "") or ""
     try:
         with transaction.atomic():
-            first = _mark_person(hashed) if hashed else False
+            first = _mark_person(instance.for_denial_id)
             _add(appeals_generated=1, people_with_draft=1 if first else 0)
     except Exception:
         logger.opt(exception=True).warning("Lifetime counters: draft bump failed")
