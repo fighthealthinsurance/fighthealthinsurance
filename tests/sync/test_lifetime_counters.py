@@ -210,6 +210,42 @@ class FaxCounterTest(TestCase):
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
     @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    def test_stale_full_save_keeps_the_markers(self, *_):
+        """resend/precheck/remote_send_fax load the row, then save() it in
+        full. If that save interleaves with a finalize on another worker
+        the stale False markers must not be written back (review)."""
+        fax = self._fax()
+        stale = FaxesToSend.objects.get(pk=fax.pk)  # loaded before finalize
+        self._finalize(fax, True)
+        self.assertEqual(_counters()[2:], (1, 1))
+        stale.destination = "(555) 555-0102"
+        stale.sent = False  # what SendFaxHelper.resend writes
+        stale.save()
+        fresh = FaxesToSend.objects.get(pk=fax.pk)
+        self.assertEqual(fresh.destination, "(555) 555-0102")
+        self.assertFalse(fresh.sent)
+        self.assertTrue(fresh.attempt_counted and fresh.delivery_counted)
+        self._finalize(fresh, True)
+        self.assertEqual(_counters()[2:], (1, 1))
+
+    def test_markers_are_not_on_the_admin_form(self):
+        from django.contrib import admin
+        from django.test import RequestFactory
+
+        from django.contrib.auth import get_user_model
+
+        request = RequestFactory().get("/")
+        request.user = get_user_model().objects.create_superuser(
+            "staff", "s@example.com", "pw"
+        )
+        fax_form = admin.site._registry[FaxesToSend].get_form(request)
+        for name in FaxesToSend.LIFETIME_MARKERS:
+            self.assertNotIn(name, fax_form.base_fields)
+        denial_form = admin.site._registry[Denial].get_form(request)
+        self.assertNotIn("person_counted", denial_form.base_fields)
+
+    @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
+    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
     def test_failure_after_delivery_cannot_count_delivery_again(self, *_):
         fax = self._finalize(self._fax(), True)
         self.assertEqual(_counters()[2:], (1, 1))
@@ -294,4 +330,13 @@ class SeedTest(TestCase):
         )
         self.assertEqual(list(flagged), ["p"])
         lifetime_counters.seed_from_present_rows(apps, None)  # idempotent
+        self.assertEqual(_counters(), (2, 1, 1, 1))
+        # The seed marked the present fax as it counted it, so a resend of
+        # that fax after the migration counts nothing again.
+        seeded = FaxesToSend.objects.get(hashed_email="p")
+        self.assertTrue(seeded.attempt_counted and seeded.delivery_counted)
+        with mock.patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification"
+        ), mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives"):
+            fax_send_core.finalize_fax(seeded, True, False)
         self.assertEqual(_counters(), (2, 1, 1, 1))

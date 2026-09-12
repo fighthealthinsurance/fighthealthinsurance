@@ -1875,8 +1875,13 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     # row's first attempt and first confirmed delivery (lifetime_counters.py).
     # `sent` and `fax_success` describe the LATEST attempt and are reset by a
     # resend; these two are never reset, so a resend cannot count again.
-    attempt_counted = models.BooleanField(default=False, db_default=False)
-    delivery_counted = models.BooleanField(default=False, db_default=False)
+    # editable=False keeps them off every ModelForm, the admin included.
+    attempt_counted = models.BooleanField(
+        default=False, db_default=False, editable=False
+    )
+    delivery_counted = models.BooleanField(
+        default=False, db_default=False, editable=False
+    )
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
     for_appeal = models.ForeignKey(
@@ -2263,6 +2268,31 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     def __str__(self):
         return f"{self.fax_id} -- {self.email} -- {self.paid} -- {self.fax_success} -- {self.name}"
 
+    LIFETIME_MARKERS = ("attempt_counted", "delivery_counted")
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        # attempt_counted / delivery_counted are owned by finalize_fax and
+        # set with direct UPDATEs. A full save of an instance loaded before
+        # that (resend, precheck, remote_send_fax, admin) must not write the
+        # stale False back, or the next finalize counts the fax again
+        # (review). Existing rows saved without update_fields get one that
+        # excludes the markers and deferred fields, as Denial.save does.
+        if (
+            kwargs.get("update_fields") is None
+            and self.pk is not None
+            and not self._state.adding
+            and not kwargs.get("force_insert")
+        ):
+            deferred = self.get_deferred_fields()
+            kwargs["update_fields"] = [
+                f.name
+                for f in self._meta.concrete_fields
+                if not f.primary_key
+                and f.name not in self.LIFETIME_MARKERS
+                and f.attname not in deferred
+            ]
+        super().save(*args, **kwargs)
+
 
 class DenialTypesRelation(models.Model):
     """Many-to-many through table linking denials to their denial types with source tracking."""
@@ -2304,7 +2334,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # Lives on rows that already carry the hash and go with them on deletion,
     # so no separate identifier is retained; a person who deletes and returns
     # starts unflagged and is counted again.
-    person_counted = models.BooleanField(default=False, db_default=False)
+    person_counted = models.BooleanField(
+        default=False, db_default=False, editable=False
+    )
     denial_text = models.TextField(primary_key=False)
     date_of_service_text = models.TextField(primary_key=False, null=True, blank=True)
     denial_type_text = models.TextField(max_length=200, null=True, blank=True)

@@ -60,17 +60,17 @@ class Migration(migrations.Migration):
             name="person_counted",
             # db_default too: pods still on the previous image keep inserting
             # denials without this column until the rollout replaces them.
-            field=models.BooleanField(db_default=False, default=False),
+            field=models.BooleanField(db_default=False, default=False, editable=False),
         ),
         migrations.AddField(
             model_name="faxestosend",
             name="attempt_counted",
-            field=models.BooleanField(db_default=False, default=False),
+            field=models.BooleanField(db_default=False, default=False, editable=False),
         ),
         migrations.AddField(
             model_name="faxestosend",
             name="delivery_counted",
-            field=models.BooleanField(db_default=False, default=False),
+            field=models.BooleanField(db_default=False, default=False, editable=False),
         ),
         migrations.RunPython(seed_from_present_rows, migrations.RunPython.noop),
     ]

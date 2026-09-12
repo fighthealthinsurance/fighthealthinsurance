@@ -360,7 +360,7 @@
           <div class="label">Denials ever created (id sequence; includes rolled-back inserts)</div>
         </div>
       </div>
-      <p class="summary-line">Still present today: {{ all_time.denials|default:0 }} denials{% if all_time.first_denial %} (oldest from {{ all_time.first_denial|date:"Y-m-d" }}){% endif %}, {{ all_time.drafts|default:0 }} generated drafts on {{ all_time.denials_with_draft|default:0 }} denials for {{ all_time.people_with_draft|default:0 }} people, {{ all_time.faxes_sent|default:0 }} sent faxes of which {{ all_time.faxes_delivered|default:0 }} confirmed delivered. Draft ids ever issued: {{ all_time.drafts_ever|default:"n/a" }}.</p>
+      <p class="summary-line">Still present today: {{ all_time.denials|default:0 }} denials{% if all_time.first_denial %} (oldest from {{ all_time.first_denial|date:"Y-m-d" }}){% endif %}, {{ all_time.drafts|default:0 }} generated drafts on {{ all_time.denials_with_draft|default:0 }} denials for {{ all_time.people_with_draft|default:0 }} people, {{ all_time.faxes_sent|default:0 }} faxes whose latest attempt went out and {{ all_time.faxes_delivered|default:0 }} whose latest attempt was confirmed delivered. Draft ids ever issued: {{ all_time.drafts_ever|default:"n/a" }}.</p>
     {% endif %}
   </div>
 
