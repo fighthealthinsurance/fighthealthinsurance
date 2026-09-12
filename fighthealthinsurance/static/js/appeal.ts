@@ -44,7 +44,28 @@ function getPiiValue(inputId: string, storageKey: string, defaultVal: string): s
 // Sentinel that marks the start of the appended PII block so we can strip & re-add
 const PII_BLOCK_MARKER = "\n\n---\nPatient Information:";
 
-function descrub() {
+// True once the person has typed in the finished letter themselves. Their
+// words win from then on: the letter is rebuilt from the draft and the
+// details panel only when they ask for it with the rebuild button, never
+// silently underneath them, and never on the way to the fax.
+let completedLetterEdited = false;
+let rebuildingCompletedLetter = false;
+
+function noteCompletedLetterEdit(): void {
+  if (!rebuildingCompletedLetter) {
+    completedLetterEdited = true;
+  }
+}
+
+// `force` is the rebuild button and the panel edits the person just made:
+// an explicit ask. Everything else leaves a hand-edited letter alone.
+function descrub(force = false) {
+  const completed = document.getElementById(
+    "id_completed_appeal_text",
+  ) as HTMLTextAreaElement | null;
+  if (completedLetterEdited && !force && completed && completed.value.trim() !== "") {
+    return;
+  }
   const appeal_text = document.getElementById("scrubbed_appeal_text");
   const target = document.getElementById(
     "id_completed_appeal_text",
@@ -162,7 +183,15 @@ function descrub() {
   }
 
   if (target) {
-    target.value = text;
+    rebuildingCompletedLetter = true;
+    try {
+      target.value = text;
+    } finally {
+      rebuildingCompletedLetter = false;
+    }
+    // A rebuild is the letter the person asked for, so it is no longer
+    // an edit of theirs waiting to be protected.
+    completedLetterEdited = false;
   } else {
     console.error(
       "Element with id 'id_completed_appeal_text' not found or not html text area",
@@ -178,10 +207,22 @@ function printAppeal() {
       ?.value || "";
 
   if (childWindow) {
-    childWindow.document.open();
-    childWindow.document.write("<html><head></head><body>");
-    childWindow.document.write(completedAppealText.replace(/\n/gi, "<br>"));
-    childWindow.document.write("</body></html>");
+    // The letter is typed by the person and written by a model, so it is
+    // text, not markup: it goes in through textContent, and the only thing
+    // written as HTML is this fixed shell. A pre with wrapping keeps the
+    // line breaks a letter needs while printing in the page's own font.
+    const doc = childWindow.document;
+    doc.open();
+    doc.write(
+      "<!doctype html><html><head><title>Your appeal</title>" +
+        "<style>body{margin:1in;font-family:inherit}" +
+        "pre{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0}</style>" +
+        "</head><body></body></html>",
+    );
+    doc.close();
+    const letter = doc.createElement("pre");
+    letter.textContent = completedAppealText;
+    doc.body.appendChild(letter);
     // Wait 1 second for chrome.
     setTimeout(function () {
       console.log("Executed after 1 second");
@@ -296,8 +337,9 @@ function setupPiiPanelListeners() {
     if (!el) continue;
     el.addEventListener("input", () => {
       setLocalStorageItemWithTTL(storageKey, el.value);
-      // Re-run descrub so the completed appeal textarea reflects the new value
-      descrub();
+      // Re-run descrub so the completed appeal textarea reflects the new value.
+      // The person is editing their own details here, so this is an ask.
+      descrub(true);
     });
   }
 }
@@ -323,11 +365,18 @@ function setupAppeal() {
 
   const appeal_text = document.getElementById("scrubbed_appeal_text");
   if (appeal_text != null) {
-    appeal_text.oninput = descrub;
+    // Wrapped, not assigned: as a handler the event object would arrive as
+    // `force` and rebuild the letter on every keystroke in the draft.
+    appeal_text.oninput = () => descrub();
   }
   const descrub_button = document.getElementById("descrub");
   if (descrub_button != null) {
-    descrub_button.onclick = descrub;
+    // The one control whose whole purpose is to rebuild the letter.
+    descrub_button.onclick = () => descrub(true);
+  }
+  const completed_text = document.getElementById("id_completed_appeal_text");
+  if (completed_text != null) {
+    completed_text.addEventListener("input", noteCompletedLetterEdit);
   }
   descrub();
 
@@ -341,7 +390,9 @@ function setupAppeal() {
         skipCheck = false;
         return;
       }
-      // Regenerate appeal text from current PII panel values before checking
+      // Pick up the details panel for a letter the person has not touched,
+      // and leave a hand-edited letter exactly as they left it: this runs
+      // one line before the text is read and posted.
       descrub();
       const appealText =
         (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
