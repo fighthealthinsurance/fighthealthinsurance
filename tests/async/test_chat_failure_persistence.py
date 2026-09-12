@@ -10,78 +10,20 @@ Also covers the transactional persistence helper directly: two interleaved
 writers over the same chat row must not lose each other's messages.
 """
 
-import contextlib
-import typing
-from unittest.mock import AsyncMock, patch
-
-from asgiref.sync import sync_to_async
-from django.contrib.auth import get_user_model
 from loguru import logger
 from rest_framework.test import APITestCase
 
 from fighthealthinsurance.chat.chat_persistence import apersist_chat_turn
 from fighthealthinsurance.chat_interface import ChatInterface
-from fighthealthinsurance.models import OngoingChat, ProfessionalUser
-from tests.sync.mock_chat_model import MockChatModel
+from fighthealthinsurance.models import OngoingChat
 
-if typing.TYPE_CHECKING:
-    from django.contrib.auth.models import User
-else:
-    User = get_user_model()
-
-
-@contextlib.contextmanager
-def _llm_call_fails(side_effect):
-    """Route model selection to a mock backend and make the LLM call fail."""
-    mock_model = MockChatModel()
-    with contextlib.ExitStack() as stack:
-        get_backends = stack.enter_context(
-            patch("fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends")
-        )
-        get_backends.return_value = [mock_model]
-        get_fallback = stack.enter_context(
-            patch(
-                "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
-            )
-        )
-        get_fallback.return_value = ([mock_model], [])
-        stack.enter_context(
-            patch(
-                "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-                new_callable=AsyncMock,
-            )
-        )
-        stack.enter_context(
-            patch.object(
-                ChatInterface,
-                "_call_llm_with_actions",
-                new=AsyncMock(side_effect=side_effect),
-            )
-        )
-        yield
-
-
-async def _make_professional_chat(username, npi):
-    user = await sync_to_async(User.objects.create_user)(
-        username=username, password="testpass", email=f"{username}@example.com"
-    )
-    professional = await sync_to_async(ProfessionalUser.objects.create)(
-        user=user, active=True, npi_number=npi
-    )
-    chat = await sync_to_async(OngoingChat.objects.create)(
-        professional_user=professional,
-        chat_history=[],
-        summary_for_next_call=[],
-    )
-    return user, chat
-
-
-class _FrameRecorder:
-    def __init__(self):
-        self.frames = []
-
-    async def __call__(self, frame):
-        self.frames.append(frame)
+# Shared with the letter-fallback tests via chat_fixtures (tests/async is not
+# an importable package name, so the helpers cannot live in this module).
+from tests.chat_fixtures import (
+    FrameRecorder as _FrameRecorder,
+    llm_call_fails as _llm_call_fails,
+    make_professional_chat as _make_professional_chat,
+)
 
 
 class ChatFailurePersistenceTest(APITestCase):

@@ -63,3 +63,21 @@ cleaner_executor = ThreadPoolExecutor(
     max_workers=_pool_size("FHI_CLEANER_EXECUTOR_WORKERS", 8),
     thread_name_prefix="fhi-cleaner",
 )
+
+# Chat-driven appeal-letter drains (chat/appeal_letter_generator): each one
+# can hold a thread for up to its generation deadline (~75s), and a
+# degraded-model period -- exactly when the letter fallback fires -- can
+# start many at once. A dedicated pool caps that concurrency so the drains
+# can't crowd the shared bridge_executor's short hops (websocket consumers'
+# DB bridges included), and doubles as backpressure on the ML backends.
+# Sized for burst headroom rather than the minimum, because the cap is also
+# a QUEUE: the callers' deadlines are absolute and include time spent
+# waiting here (see generate_letter_for_denial), so a queued drain that is
+# already past its deadline exits at once instead of holding a thread --
+# but a too-small pool would still make live requests wait behind
+# abandoned ones. Same deadlock posture as bridge_executor: these tasks
+# block ON model futures, and nothing a model call depends on runs here.
+letter_executor = ThreadPoolExecutor(
+    max_workers=_pool_size("FHI_LETTER_EXECUTOR_WORKERS", 8),
+    thread_name_prefix="fhi-letter",
+)

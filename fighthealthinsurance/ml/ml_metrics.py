@@ -43,7 +43,12 @@ ML_CALL_SECONDS = Histogram(
 
 CHAT_TURNS_TOTAL = Counter(
     "fhi_chat_turns_total",
-    "Chat turns by outcome (ok, failed, timeout).",
+    "Chat turns by outcome (ok, failed, timeout, letter_fallback -- a "
+    "failed turn rescued by the appeal-generator letter fallback). The "
+    "labels partition turns: a timed-out turn counts only as timeout even "
+    "when the fallback then rescued it (rescues, timed-out ones included, "
+    "are reported via the chat_turn_letter_fallback_rescue reliability "
+    "event).",
     labelnames=("outcome",),
 )
 
@@ -101,7 +106,8 @@ def record_ml_failure(model: object, reason: str) -> None:
 
 
 def record_chat_turn(outcome: str) -> None:
-    """Record a chat turn outcome (ok / failed / timeout). Never raises."""
+    """Record a chat turn outcome (ok / failed / timeout / letter_fallback).
+    Never raises."""
     try:
         CHAT_TURNS_TOTAL.labels(outcome=outcome).inc()
     except Exception:  # pragma: no cover
@@ -150,6 +156,10 @@ class ExecutorQueueCollector(Collector):
                 "interactive": fhi_exec.executor,
                 "background": fhi_exec.background_executor,
                 "pubmed": fhi_exec.pubmed_executor,
+                # Sampled because this pool exists to CAP concurrency: a
+                # standing queue here is the signal that chat letter drains
+                # are waiting on each other (see exec.letter_executor).
+                "letter": fhi_exec.letter_executor,
             }
             queued = GaugeMetricFamily(
                 "fhi_executor_queued_tasks",
