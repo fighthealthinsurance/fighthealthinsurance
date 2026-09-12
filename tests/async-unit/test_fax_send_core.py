@@ -116,8 +116,7 @@ class TestVendorSendAtomicClaim:
             racer, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
         ):
             assert (
-                fax_send_core.send_fax_via_vendor(racer)
-                == fax_send_core.SEND_NOT_OWNER
+                fax_send_core.send_fax_via_vendor(racer) == fax_send_core.SEND_NOT_OWNER
             )
         assert mock_send.call_count == 1
 
@@ -140,17 +139,27 @@ class TestFinalizeOrdering:
 
     def _pro_fax(self):
         fax = Mock()
+        fax.pk = 1
         fax.professional = True
         fax.email = "pro@example.com"
         fax.uuid = "u"
         fax.for_appeal = Mock()
         return fax
 
+    @staticmethod
+    def _row_present():
+        """finalize now marks the fax with a filtered UPDATE (never save(),
+        which could re-create a deleted row); one matching row means the
+        fax still exists and finalize proceeds to the appeal write."""
+        manager = MagicMock()
+        manager.filter.return_value.update.return_value = 1
+        return patch("fighthealthinsurance.models.FaxesToSend.objects", manager)
+
     def test_appeal_persisted_before_notification(self):
         fax = self._pro_fax()
         order: list = []
         fax.for_appeal.save.side_effect = lambda: order.append("appeal_save")
-        with patch(
+        with self._row_present(), patch(
             "fighthealthinsurance.fax_send_core.send_fax_status_notification",
             side_effect=lambda *a, **k: order.append("notify"),
         ):
@@ -159,14 +168,27 @@ class TestFinalizeOrdering:
 
     def test_no_notification_when_appeal_save_fails(self):
         fax = self._pro_fax()
-        fax.for_appeal.save.side_effect = Exception("locked appeal row")
-        with patch(
+        fax.for_appeal.save.side_effect = RuntimeError("locked appeal row")
+        with self._row_present(), patch(
             "fighthealthinsurance.fax_send_core.send_fax_status_notification"
         ) as notify:
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError, match="locked appeal row"):
                 fax_send_core.finalize_fax(fax, True, False)
-        # Notification comes after the durable writes, so a failed appeal.save()
-        # (which the workflow will retry) never re-sends the support email.
+        # The appeal write was attempted and it is what failed; notification
+        # comes after the durable writes, so a failed appeal.save() (which
+        # the workflow will retry) never re-sends the support email.
+        fax.for_appeal.save.assert_called_once()
+        notify.assert_not_called()
+
+    def test_gone_row_skips_the_appeal_write_and_notifications(self):
+        fax = self._pro_fax()
+        manager = MagicMock()
+        manager.filter.return_value.update.return_value = 0
+        with patch("fighthealthinsurance.models.FaxesToSend.objects", manager), patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification"
+        ) as notify:
+            fax_send_core.finalize_fax(fax, True, False)
+        fax.for_appeal.save.assert_not_called()
         notify.assert_not_called()
 
 

@@ -265,7 +265,18 @@ def finalize_fax(
     # support on every retry.)
     fax.sent = True
     fax.fax_success = fax_success
-    fax.save()
+    # UPDATE only, never save(): with the pk set, save() falls back to an
+    # INSERT when the UPDATE matches no row, which would re-create a fax
+    # that a delete-my-data request removed while this send was in flight,
+    # appeal text and email included (review). Zero rows means the person
+    # is gone: stop here, and send no notifications about their fax.
+    from fighthealthinsurance.models import FaxesToSend
+
+    if not FaxesToSend.objects.filter(pk=fax.pk).update(
+        sent=True, fax_success=fax_success
+    ):
+        logger.info(f"Fax uuid={fax.uuid} no longer exists at finalize; stopping")
+        return True
     if fax.professional:
         appeal = fax.for_appeal
         if appeal is not None:

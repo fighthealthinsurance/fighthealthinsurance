@@ -6,7 +6,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Avg, Count, F, Max, QuerySet
+from django.db import connection
+from django.db.models import Avg, Count, F, Max, Min, QuerySet
+from django.utils.dateparse import parse_datetime
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
@@ -138,6 +140,87 @@ class StaffDashboardView(generic.TemplateView):
     template_name = "staff_dashboard.html"
 
 
+def _lifetime_snapshot() -> Dict[str, Any]:
+    """The lifetime figures that must agree with each other, in ONE statement.
+
+    Live delivered faxes, the oldest such row's creation date, live distinct
+    people with a real draft, and the running totals removed by delete-my-
+    data requests. One statement is one snapshot on Postgres, so a deletion
+    committing mid-page cannot be counted both as live and as removed
+    (review). Plain SQL that sqlite (tests) and Postgres (prod) both accept.
+    """
+    from fighthealthinsurance.models import (
+        DataRemovalTotals,
+        Denial,
+        FaxesToSend,
+        ProposedAppeal,
+    )
+
+    fax = FaxesToSend._meta.db_table
+    denial = Denial._meta.db_table
+    draft = ProposedAppeal._meta.db_table
+    totals = DataRemovalTotals._meta.db_table
+    sql = f"""
+        SELECT
+          (SELECT COUNT(*) FROM {fax} WHERE fax_success) AS live_delivered,
+          (SELECT MIN(date) FROM {fax} WHERE fax_success) AS oldest_delivered_created,
+          (SELECT COUNT(DISTINCT d.hashed_email) FROM {denial} d
+             WHERE d.hashed_email <> ''
+               AND EXISTS (SELECT 1 FROM {draft} p
+                           WHERE p.for_denial_id = d.denial_id AND NOT p.speculative)
+          ) AS live_people,
+          (SELECT COALESCE(SUM(t.faxes_delivered), 0) FROM {totals} t) AS removed_delivered,
+          (SELECT COALESCE(SUM(t.people_with_draft), 0) FROM {totals} t) AS removed_people,
+          (SELECT COALESCE(SUM(t.requests), 0) FROM {totals} t) AS removal_requests,
+          (SELECT MIN(t.since) FROM {totals} t) AS removals_since
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        row = cursor.fetchone()
+    keys = (
+        "live_delivered",
+        "oldest_delivered_created",
+        "live_people",
+        "removed_delivered",
+        "removed_people",
+        "removal_requests",
+        "removals_since",
+    )
+    out = dict(zip(keys, row))
+    for key in ("oldest_delivered_created", "removals_since"):
+        # sqlite hands datetimes back as strings; Postgres as datetimes.
+        val = out[key]
+        if isinstance(val, str):
+            out[key] = parse_datetime(val)
+    out["delivered_all_time"] = out["live_delivered"] + out["removed_delivered"]
+    out["people_with_draft_lifetime"] = out["live_people"] + out["removed_people"]
+    return out
+
+
+def _sequence_value(model, column: str) -> Optional[int]:
+    """The id sequence's current value: how many rows were EVER created,
+    which deletion cannot lower (Melanie, 2026-09-11). Not Max(id) of the
+    remaining rows, which drops the moment the newest row is deleted
+    (review). Postgres and sqlite both keep such a counter; anything else
+    gets None and the page says so. A rolled-back insert consumes an id, so
+    this is a ceiling by a hair."""
+    table = model._meta.db_table
+    with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            cursor.execute("SELECT pg_get_serial_sequence(%s, %s)", [table, column])
+            seq = cursor.fetchone()[0]
+            if not seq:
+                return None
+            cursor.execute(f"SELECT last_value, is_called FROM {seq}")
+            last_value, is_called = cursor.fetchone()
+            return int(last_value) if is_called else 0
+        if connection.vendor == "sqlite":
+            cursor.execute("SELECT seq FROM sqlite_sequence WHERE name = %s", [table])
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+    return None
+
+
 class AdminStatusView(generic.TemplateView):
     """Staff system-status dashboard.
 
@@ -171,7 +254,11 @@ class AdminStatusView(generic.TemplateView):
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
         ctx["temporal"] = self._temporal_status()
-        ctx["fax_outcomes"] = self._fax_outcome_status()
+        # One lifetime snapshot (one statement) feeds both panels so they can
+        # never disagree within a page load (review).
+        snapshot = self._lifetime()
+        ctx["fax_outcomes"] = self._fax_outcome_status(snapshot)
+        ctx["all_time"] = self._all_time_status(snapshot)
         ctx["intake_funnel"] = self._intake_funnel_status()
         ctx["letter_scoring"] = self._letter_scoring_status()
         ctx["storage"] = self._storage_status()
@@ -258,10 +345,43 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _fax_queue_status() -> Dict[str, Any]:
-        """Counts of queued / pending / failed faxes from FaxesToSend.
+        """Counts of queued / stuck / abandoned / failed faxes from FaxesToSend.
 
-        Mirrors what the fax actor acts on: it sends faxes that are
-        ``should_send=True, sent=False`` and at least an hour old.
+        The buckets staff act on:
+
+        * ``ready_queued``: confirmed by the user (``should_send=True``) and
+          not yet sent. The sender picks these up.
+        * ``due_now``: the subset older than an hour. A non-zero value here is
+          a STUCK fax -- the sender should already have taken it.
+        * ``awaiting_confirmation``: consumer rows never confirmed and never
+          attempted. Mostly drafts whose user never clicked send in the
+          confirmation email (they accumulate for months), but the consumer
+          appeal-staging path also creates paid rows before dispatching, so
+          a dispatch that fails there lands here too; the label does not
+          call this bucket "not actionable" (review). Telling those two apart
+          needs a send-intent flag on the row: follow-up, not this change.
+        * ``in_flight``: an attempt started in the last two hours that has not
+          finished. Unbounded, this counter showed rows from January whose
+          ``attempting_to_send_as_of`` was never cleared (2026-09-11).
+        * ``stale_attempts``: an attempt started MORE than two hours ago that
+          never finished: a worker died mid-send, or a row that nothing will
+          ever clear. These are the actionable leftovers, kept visible on
+          purpose (review): the professional path dispatches without
+          ``should_send``, so a stranded send there is not "queued" either.
+        * ``failures_recent``: sent in the last week and not delivered.
+
+        * ``requested_unpicked``: a professional's fax. That path dispatches
+          without ``should_send`` (fax_helpers.stage_appeal_as_fax), so a
+          requested, paid send that never reached precheck would otherwise
+          sit in the "never confirmed" bucket and be called not actionable
+          (review). Non-zero here is a stranded send.
+
+        ``due_now`` counts only rows the sender never touched (no attempt
+        timestamp): an attempted leftover is a stale attempt, not "not
+        taken", so one fax never lights two red cards. ``awaiting_confirmation``
+        excludes anything ever attempted and anything professional. All the
+        buckets come from ONE aggregate query so a row that moves bucket
+        mid-refresh cannot be counted in two (review).
         """
         out: Dict[str, Any] = {"ok": True, "error": None}
         try:
@@ -269,21 +389,42 @@ class AdminStatusView(generic.TemplateView):
 
             now = timezone.now()
             one_hour_ago = now - datetime.timedelta(hours=1)
+            two_hours_ago = now - datetime.timedelta(hours=2)
             week_ago = now - datetime.timedelta(days=7)
 
-            unsent = FaxesToSend.objects.filter(sent=False)
-            out["unsent_total"] = unsent.count()
-            out["ready_queued"] = unsent.filter(should_send=True).count()
-            out["due_now"] = unsent.filter(
-                should_send=True, date__lt=one_hour_ago
-            ).count()
-            out["awaiting_confirmation"] = unsent.filter(should_send=False).count()
-            out["in_flight"] = unsent.filter(
-                attempting_to_send_as_of__isnull=False
-            ).count()
-            out["failures_recent"] = FaxesToSend.objects.filter(
-                sent=True, fax_success=False, date__gte=week_ago
-            ).count()
+            unsent = Q(sent=False)
+            never_attempted = Q(attempting_to_send_as_of__isnull=True)
+            live_attempt = Q(attempting_to_send_as_of__gte=two_hours_ago)
+            stale_attempt = Q(attempting_to_send_as_of__lt=two_hours_ago)
+            counts = FaxesToSend.objects.aggregate(
+                unsent_total=Count("fax_id", filter=unsent),
+                ready_queued=Count("fax_id", filter=unsent & Q(should_send=True)),
+                due_now=Count(
+                    "fax_id",
+                    filter=unsent
+                    & never_attempted
+                    & Q(should_send=True, date__lt=one_hour_ago),
+                ),
+                awaiting_confirmation=Count(
+                    "fax_id",
+                    filter=unsent
+                    & never_attempted
+                    & Q(should_send=False, professional=False),
+                ),
+                requested_unpicked=Count(
+                    "fax_id",
+                    filter=unsent
+                    & never_attempted
+                    & Q(should_send=False, professional=True),
+                ),
+                in_flight=Count("fax_id", filter=unsent & live_attempt),
+                stale_attempts=Count("fax_id", filter=unsent & stale_attempt),
+                failures_recent=Count(
+                    "fax_id",
+                    filter=Q(sent=True, fax_success=False, date__gte=week_ago),
+                ),
+            )
+            out.update(counts)
         except Exception as e:
             logger.opt(exception=True).error("Error computing fax queue status")
             out["ok"] = False
@@ -291,7 +432,75 @@ class AdminStatusView(generic.TemplateView):
         return out
 
     @staticmethod
-    def _fax_outcome_status() -> Dict[str, Any]:
+    def _lifetime() -> Optional[Dict[str, Any]]:
+        """None when the snapshot failed: the panels then say "unavailable"
+        rather than render a fabricated zero, and neither retries on its own
+        (a retry would reopen the two-panels-disagree problem) (review)."""
+        try:
+            return _lifetime_snapshot()
+        except Exception:
+            logger.opt(exception=True).error("Error computing the lifetime snapshot")
+            return None
+
+    @staticmethod
+    def _all_time_status(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Lifetime totals (Melanie, 2026-09-11).
+
+        "Ever created" comes from the id sequences and survives deletion.
+        People who got a real draft and faxes delivered are the two facts a
+        sequence cannot give; they are live counts plus what delete-my-data
+        requests removed (DataRemovalTotals), from the day that counter
+        shipped onwards. "Got a draft" excludes speculative precomputes
+        held in reserve (matches the intake funnel) and blank email hashes.
+        """
+        out: Dict[str, Any] = {"ok": True, "error": None}
+        try:
+            from fighthealthinsurance.models import Denial, FaxesToSend, ProposedAppeal
+
+            live = Denial.objects.aggregate(
+                denials=Count("denial_id"), first=Min("date")
+            )
+            out["denials"] = live["denials"]
+            out["first_denial"] = live["first"]
+            out["drafts"] = ProposedAppeal.objects.count()
+            out["denials_with_draft"] = (
+                Denial.objects.filter(proposedappeal__speculative=False)
+                .values("pk")
+                .distinct()
+                .count()
+            )
+            out["denials_ever"] = _sequence_value(Denial, "denial_id")
+            out["drafts_ever"] = _sequence_value(ProposedAppeal, "id")
+            out["faxes_ever"] = _sequence_value(FaxesToSend, "fax_id")
+            if snapshot is None:
+                for key in (
+                    "people_with_draft",
+                    "faxes_delivered",
+                    "people_with_draft_lifetime",
+                    "faxes_delivered_lifetime",
+                    "removal_requests",
+                    "removals_since",
+                ):
+                    out[key] = None
+            else:
+                out["people_with_draft"] = snapshot["live_people"]
+                out["faxes_delivered"] = snapshot["live_delivered"]
+                out["people_with_draft_lifetime"] = snapshot[
+                    "people_with_draft_lifetime"
+                ]
+                out["faxes_delivered_lifetime"] = snapshot["delivered_all_time"]
+                out["removal_requests"] = snapshot["removal_requests"]
+                out["removals_since"] = snapshot["removals_since"]
+        except Exception as e:
+            logger.opt(exception=True).error("Error computing all-time status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _fax_outcome_status(
+        snapshot: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Fax delivery outcomes (last 7 days) from the database.
 
         The Temporal panel above shows workflow *status*, where "Completed"
@@ -328,6 +537,18 @@ class AdminStatusView(generic.TemplateView):
             return {
                 "sent": recent.count(),
                 "delivered": recent.filter(fax_success=True).count(),
+                # Melanie (2026-09-11): the number that matters over time. One
+                # aggregate, so the count and the date come from one snapshot
+                # (review). `date` is the row's creation time; nothing records
+                # the delivery time, so the label says "oldest ... created".
+                # Lifetime delivered = rows present + removed by deletion
+                # requests, from the one-statement snapshot (review).
+                "delivered_all_time": (
+                    None if snapshot is None else snapshot["delivered_all_time"]
+                ),
+                "oldest_delivered_created": (
+                    None if snapshot is None else snapshot["oldest_delivered_created"]
+                ),
                 "failed": failed_qs.count(),
                 "stuck_claims": failed_qs.filter(vendor_send_completed=True).count(),
                 "recent_failures": failed,

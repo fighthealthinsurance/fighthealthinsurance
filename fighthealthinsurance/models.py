@@ -4053,6 +4053,40 @@ class ModelHealthAlertState(models.Model):
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
 
 
+class DataRemovalTotals(models.Model):
+    """Running totals of what delete-my-data requests removed, as counts.
+
+    The delete flow removes a person's denials, drafts and faxes outright,
+    which silently lowers every lifetime total on the staff status page.
+    Ids come from sequences, so "ever created" survives deletion on its
+    own; what does not survive is whether a deleted fax had been delivered
+    and whether a deleted person had ever received a real draft. Those two
+    facts are added to this ONE row at deletion time and added back by the
+    status page.
+
+    One row, not one per request: a per-request row carried a timestamp
+    that a database reader could line up with UsedDeleteToken.used_at and
+    so tie the counts to a hashed email (review). ``since`` is set once,
+    for the whole counter. The row is updated inside the deletion's own
+    transaction and locked for its duration, so counts and deletion commit
+    together and two overlapping requests for one person cannot count the
+    same rows twice. A person who deletes and later returns is counted
+    again; nothing here says who they were.
+    """
+
+    SINGLETON_ID = 1
+
+    requests = models.PositiveIntegerField(default=0)
+    denials = models.PositiveIntegerField(default=0)
+    drafts = models.PositiveIntegerField(default=0)
+    faxes_delivered = models.PositiveIntegerField(default=0)
+    people_with_draft = models.PositiveIntegerField(default=0)
+    since = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"DataRemovalTotals<{self.requests} requests>"
+
+
 class ExternalServiceHealth(models.Model):
     """Last outcome of calls to one external service, shared across pods.
 
