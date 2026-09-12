@@ -6,8 +6,12 @@ SECRET_NAME="faxymcfaxface-ssh"
 KEY_NAME="faxy-id_ed25519"
 KEY_PATH="$HOME/.ssh/$KEY_NAME"
 PUB_PATH="${KEY_PATH}.pub"
-FAXY_HOST="faxymcfaxface"
-FAXY_USER="ray"
+FAXY_HOST="turo.local.pigscanfly.ca"
+# Both fax identities need this key: the Ray fax actor connects as "ray"
+# (secret mounted at /home/ray/.ssh, see k8s/ray/cluster.yaml) and the
+# Temporal worker connects as "root" (mounted at /root/.ssh, see
+# k8s/temporal/worker.yaml).
+FAXY_USERS=("ray" "root")
 
 echo "==> Generating SSH keypair (if missing)"
 if [[ ! -f "$KEY_PATH" ]]; then
@@ -35,23 +39,32 @@ kubectl create secret generic "$SECRET_NAME" \
 
 echo "==> Secret created."
 
-echo "==> Installing public key on $FAXY_HOST for user $FAXY_USER"
+echo "==> Installing public key on $FAXY_HOST for users: ${FAXY_USERS[*]}"
 
 # Copy pubkey to temp location on remote
 scp "$PUB_PATH" "$FAXY_HOST:/tmp/faxy_tmp_key.pub"
 
-# Append pubkey into authorized_keys for ray with sudo
-# shellcheck disable=SC2029
-ssh "$FAXY_HOST" "sudo -S mkdir -p /home/$FAXY_USER/.ssh && sudo -S touch \"/home/$FAXY_USER/.ssh/authorized_keys\" && sudo -S chmod 700 \"/home/$FAXY_USER/.ssh\""
-# shellcheck disable=SC2029
-ssh "$FAXY_HOST" "sudo -S sh -c 'cat /tmp/faxy_tmp_key.pub >> /home/$FAXY_USER/.ssh/authorized_keys'"
-# shellcheck disable=SC2029
-ssh "$FAXY_HOST" "sudo -S chmod 600 /home/$FAXY_USER/.ssh/authorized_keys"
-# shellcheck disable=SC2029
-ssh "$FAXY_HOST" "sudo -S chown -R $FAXY_USER:$FAXY_USER /home/$FAXY_USER/.ssh"
+for FAXY_USER in "${FAXY_USERS[@]}"; do
+    # Resolve the user's home remotely (root is /root, not /home/root).
+    # shellcheck disable=SC2029
+    FAXY_HOME=$(ssh "$FAXY_HOST" "getent passwd '$FAXY_USER' | cut -d: -f6")
+    if [[ -z "$FAXY_HOME" ]]; then
+        echo "ERROR: user $FAXY_USER does not exist on $FAXY_HOST (run the fax-setup playbook first?)"
+        exit 1
+    fi
+    # shellcheck disable=SC2029
+    ssh "$FAXY_HOST" "sudo -S mkdir -p \"$FAXY_HOME/.ssh\" && sudo -S touch \"$FAXY_HOME/.ssh/authorized_keys\" && sudo -S chmod 700 \"$FAXY_HOME/.ssh\""
+    # Append the pubkey only if absent so re-runs stay idempotent
+    # shellcheck disable=SC2029
+    ssh "$FAXY_HOST" "sudo -S sh -c 'grep -qxF -f /tmp/faxy_tmp_key.pub \"$FAXY_HOME/.ssh/authorized_keys\" || cat /tmp/faxy_tmp_key.pub >> \"$FAXY_HOME/.ssh/authorized_keys\"'"
+    # shellcheck disable=SC2029
+    ssh "$FAXY_HOST" "sudo -S chmod 600 \"$FAXY_HOME/.ssh/authorized_keys\""
+    # shellcheck disable=SC2029
+    ssh "$FAXY_HOST" "sudo -S chown -R \"$FAXY_USER:$FAXY_USER\" \"$FAXY_HOME/.ssh\""
+    echo "==> Public key installed for user $FAXY_USER on $FAXY_HOST."
+done
 
 # Cleanup temp
 ssh "$FAXY_HOST" "rm -f /tmp/faxy_tmp_key.pub"
 
-echo "==> Public key installed for user $FAXY_USER on $FAXY_HOST."
 echo "==> Done!"
