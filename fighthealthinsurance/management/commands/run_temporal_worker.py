@@ -19,12 +19,16 @@ installs.
 
 import asyncio
 import os
+import signal
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+
+from fighthealthinsurance.worker_signals import early_stop
 
 QUEUE_ROLES = ("fax", "appeal", "all")
 
@@ -56,6 +60,67 @@ def metrics_runtime() -> Any:
     )
 
 
+def install_shutdown_handlers(workers, stop, log, tasks=None) -> None:
+    """Make SIGTERM/SIGINT stop polling and drain, instead of being dropped.
+
+    In the container this process is PID 1. A PID 1 with no handler for a
+    signal never gets the kernel's default action, so Kubernetes' SIGTERM at
+    rollout did nothing at all: the old worker kept polling its task queue at
+    full rate for the whole terminationGracePeriodSeconds (verified
+    2026-09-11: both old fax-worker pods were still listed as pollers fifteen
+    minutes after SIGTERM, and a resend of fax 658 ran on the old image after
+    the fix for it had been deployed). SIGINT was never affected, which is why
+    Ctrl-C always looked fine locally.
+
+    ``Worker.shutdown()`` stops polling and lets in-flight activities run
+    for ``graceful_shutdown_timeout`` before asking them to cancel, then
+    waits for them to actually finish. That is a healthy-path bound, not a
+    hard one: a synchronous activity blocked in native or database I/O can
+    ignore the cancellation and hold the process past the pod's grace
+    period, at which point Kubernetes SIGKILLs it as before (review).
+    ``stop`` is set first so the two phases that have no worker to shut
+    down -- the client connect and the idle (no-worker) branch -- exit
+    instead of sleeping through the grace period. Install this BEFORE the
+    connect: ``workers`` is appended to later and is read at signal time.
+    ``tasks`` keeps the shutdown task references alive (a bare
+    ``create_task`` result can be garbage-collected mid-flight).
+
+    Signal-driven shutdown is supported only when the command runs on the
+    main thread of its process, which is how the container runs it (PID 1).
+    Off the main thread neither this nor the bootstrap guard can install a
+    handler; the command then runs, but only a loop cancellation stops it.
+    """
+    loop = asyncio.get_running_loop()
+
+    def _request(signame: str) -> None:
+        if stop.is_set():
+            return
+        stop.set()
+        # Shutdown first, logging second: a log write can fail (BrokenPipe
+        # once stdout's reader is gone) and must not stand between the
+        # signal and the drain; a second signal is a no-op (review).
+        for w in workers:
+            task = loop.create_task(w.shutdown())
+            if tasks is not None:
+                tasks.append(task)
+        try:
+            log(f"{signame} received: stopping polling, draining in-flight activities")
+        except Exception:
+            pass
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        if signal.getsignal(sig) is None:
+            # Installed outside Python (embedded interpreter): the loop's
+            # close could only put SIG_DFL back, so leave it alone (review).
+            continue
+        try:
+            loop.add_signal_handler(sig, _request, sig.name)
+        except (NotImplementedError, RuntimeError):
+            # Not a Unix main-thread loop: unsupported for signal-driven
+            # shutdown (see the docstring); leave the default disposition.
+            pass
+
+
 class Command(BaseCommand):
     help = "Run the Temporal worker for FHI workflows and activities."
 
@@ -85,9 +150,50 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        asyncio.run(self._run(options))
+        # Belt and braces with manage.py: idempotent, shares the same flag.
+        # The loop in _run replaces BOTH SIGTERM and SIGINT and asyncio puts
+        # back the defaults on close, not what a library caller had, so save
+        # and restore both here (review). Signal ownership is only possible
+        # on the main thread; elsewhere there is nothing to restore.
+        on_main_thread = threading.current_thread() is threading.main_thread()
+        previous = (
+            {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+            if on_main_thread
+            else {}
+        )
+        # The guard is only acquired and released on the main thread: a
+        # guard preinstalled by manage.py must not be released (or fail to
+        # be released, raising) from a worker thread (review).
+        event = early_stop.install() if on_main_thread else early_stop.event
+        try:
+            asyncio.run(self._run(options, early_stop=event))
+        finally:
+            if on_main_thread:
+                # Hands SIGTERM back to whatever preceded the bootstrap guard.
+                early_stop.restore()
+            for sig, handler in previous.items():
+                if handler is None or handler == early_stop._handler:
+                    # None: native, never ours. The guard's own handler: the
+                    # restore() above already released it; reinstalling it
+                    # here would resurrect a guard nobody owns (review).
+                    continue
+                try:
+                    signal.signal(sig, handler)
+                except (ValueError, OSError):
+                    pass
 
-    async def _run(self, options: dict) -> None:
+    async def _run(self, options: dict, early_stop=None) -> None:
+        # Handlers first, before the lazy imports below: a SIGTERM that lands
+        # during those imports would otherwise be discarded (PID 1), and the
+        # process would go on to connect and poll on a stale image.
+        workers: list = []
+        shutdown_tasks: list = []
+        stop = asyncio.Event()
+        install_shutdown_handlers(workers, stop, self.stdout.write, shutdown_tasks)
+        if early_stop is not None and early_stop.is_set():
+            # Caught by the bootstrap-time handler before the loop existed.
+            stop.set()
+
         from temporalio.worker import Worker
 
         from fighthealthinsurance.activities import (
@@ -144,8 +250,19 @@ class Command(BaseCommand):
             settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False
         )
 
+        # The connect is raced against stop: a SIGTERM that lands while the
+        # connection is still pending must not be discarded (review), and a
+        # terminating pod must not start polling afterwards.
         runtime = metrics_runtime()
-        client = await get_temporal_client(runtime=runtime)
+        connect = asyncio.ensure_future(get_temporal_client(runtime=runtime))
+        stopped = asyncio.ensure_future(stop.wait())
+        await asyncio.wait({connect, stopped}, return_when=asyncio.FIRST_COMPLETED)
+        if stop.is_set():
+            connect.cancel()
+            self.stdout.write("Stop requested during startup; not hosting a worker.")
+            return
+        stopped.cancel()
+        client = connect.result()
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
@@ -181,6 +298,7 @@ class Command(BaseCommand):
                     graceful_shutdown_timeout=timedelta(minutes=30),
                 )
                 runs.append(fax_worker.run())
+                workers.append(fax_worker)
                 queues.append(task_queue)
             if role in ("appeal", "all") and journey_enabled:
                 # The journey runs on its OWN task queue and worker: several
@@ -217,6 +335,7 @@ class Command(BaseCommand):
                     graceful_shutdown_timeout=timedelta(seconds=300),
                 )
                 runs.append(appeal_worker.run())
+                workers.append(appeal_worker)
                 queues.append(appeal_queue)
             if not runs:
                 # role=appeal with the journey flags dark. Idle instead of
@@ -229,11 +348,22 @@ class Command(BaseCommand):
                     "TEMPORAL_ENABLED and TEMPORAL_APPEAL_JOURNEY_ENABLED are "
                     "set and the process restarts)."
                 )
-                await asyncio.Event().wait()
+                await stop.wait()
                 return
             self.stdout.write(
                 f"Starting Temporal worker(s) on task queue(s) "
                 f"{', '.join(repr(q) for q in queues)} "
                 f"({max_workers} fax activity threads). Ctrl-C to stop."
             )
+            if stop.is_set():
+                # Signalled at an await between the connect and here: nothing
+                # has polled yet, so exit without starting the run loops. A
+                # signal queued during the synchronous construction above is
+                # delivered inside gather instead; polling may already have
+                # started and accepted work by then (the SDK runs several
+                # pollers), which the graceful drain is sized to finish.
+                self.stdout.write(
+                    "Stop requested during startup; not hosting a worker."
+                )
+                return
             await asyncio.gather(*runs)
