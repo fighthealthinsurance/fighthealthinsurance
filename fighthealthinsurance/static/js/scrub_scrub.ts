@@ -1,4 +1,11 @@
-type ScrubRegex = [RegExp, string, string];
+import {
+  setLocalStorageItemWithTTL,
+  type ScrubberStorageKey,
+} from "./shared";
+
+// The middle column is the storage key, typed so a new rule cannot store
+// under a key that clearFormData does not clear.
+type ScrubRegex = [RegExp, ScrubberStorageKey, string];
 var scrubRegex: ScrubRegex[] = [
   [
     new RegExp("patents?:?\\s+(?<token>\\w+)", "gmi"),
@@ -118,7 +125,11 @@ function scrubText(text: string): string {
       // I want to use the groups syntax here but it is not working so just index in I guess.
       // Don't log the match itself -- it is the patient name/ID being scrubbed.
       console.debug("scrub: rule matched, storing under", scrubRegex[i][1]);
-      window.localStorage.setItem(scrubRegex[i][1], match[1]);
+      // Through the same helper as every other field on the page, so this
+      // respects the "Remember form data" setting and carries the same
+      // expiry. A bare setItem here wrote the name or the member id to the
+      // browser whatever the person had chosen.
+      setLocalStorageItemWithTTL(scrubRegex[i][1], match[1]);
     }
     text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
   }

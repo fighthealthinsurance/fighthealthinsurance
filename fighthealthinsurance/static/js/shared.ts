@@ -29,13 +29,28 @@ function setPersistenceEnabled(enabled: boolean): void {
 }
 
 // Clear all stored form data (but keep the persistence preference)
+// The keys the scrubber writes when it recognises something in a denial
+// letter. They live here, next to the clear, so a new scrubbing rule cannot
+// introduce a key that the clear does not know about: the rule table's key
+// column is typed as this union, so adding one without adding it here fails
+// the type check.
+type ScrubberStorageKey = "name" | "subscriber_id" | "group_id";
+const SCRUBBER_STORAGE_KEYS: ScrubberStorageKey[] = [
+  "name",
+  "subscriber_id",
+  "group_id",
+];
+
 function clearFormData(): void {
   const keysToRemove: string[] = [];
   for (let i = 0; i < window.localStorage.length; i++) {
     const key = window.localStorage.key(i);
     if (
       key &&
-      (key.startsWith("store_") || key === "email" || key === "denial_text")
+      (key.startsWith("store_") ||
+        key === "email" ||
+        key === "denial_text" ||
+        (SCRUBBER_STORAGE_KEYS as string[]).includes(key))
     ) {
       keysToRemove.push(key);
     }
@@ -156,7 +171,9 @@ export function getCSRFToken(): string {
   return cookieValue;
 }
 
+export type { ScrubberStorageKey };
 export {
+  SCRUBBER_STORAGE_KEYS,
   storeLocal,
   storeTextareaLocal,
   pdfjsLib,
