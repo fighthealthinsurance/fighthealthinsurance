@@ -10,7 +10,10 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from fighthealthinsurance.chat.message_preprocessor import MessageVariant
+from fighthealthinsurance.chat.message_preprocessor import (
+    MessageVariant,
+    is_stored_message_marker,
+)
 from fighthealthinsurance.chat.safety_filters import (
     detect_eligibility_verdict,
     detect_false_promises,
@@ -160,8 +163,20 @@ def find_repeated_reply(
     # the requested output.
     if current_message and user_requested_transformation(current_message):
         return None
+    # The stored-content markers ("You pasted a long message (~N chars)...",
+    # "I've uploaded a document: ...") are system-generated stand-ins, not
+    # user prose: a reply acknowledging the stored paste/document naturally
+    # reuses their wording, so echoing them is not a loop. Without this
+    # exemption a long-paste turn could have EVERY candidate hard-rejected,
+    # failing the whole turn. A reply that IS the bare marker adds nothing,
+    # though -- reject that one so it can't be delivered as the answer (when
+    # every candidate is a bare echo, the stored-content acknowledgment
+    # fallback takes over with something actually useful).
     if current_message and is_mostly_repeated(response_text, current_message):
-        return "echoes_user_message"
+        if not is_stored_message_marker(current_message):
+            return "echoes_user_message"
+        if normalize_text(response_text) == normalize_text(current_message):
+            return "echoes_user_message"
     if not chat_history:
         return None
     checked = 0
@@ -220,8 +235,10 @@ def compute_repetition_penalty(
     # check runs BEFORE bag-of-words equality so a long reply sharing the
     # exact word set (which IS a near-verbatim reorder) gets the stronger
     # penalty; short reorders never trip the similarity path and still land
-    # in the mild bag-of-words bucket.
-    if current_message:
+    # in the mild bag-of-words bucket. Stored-content markers are exempt for
+    # the same reason as in find_repeated_reply: they are system-written, so
+    # a reply that acknowledges them in similar words is not an echo.
+    if current_message and not is_stored_message_marker(current_message):
         normalized_current = normalize_text(current_message)
         if normalized_response == normalized_current:
             penalty += EXACT_REPEAT_PENALTY

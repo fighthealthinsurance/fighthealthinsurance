@@ -21,8 +21,9 @@ from asgiref.sync import sync_to_async
 
 from fighthealthinsurance.chat.message_preprocessor import (
     DIRECT_CHAT_HARD_LIMIT_CHARS,
+    DIRECT_CHAT_SOFT_LIMIT_CHARS,
 )
-from fighthealthinsurance.models import OngoingChat, ProfessionalUser
+from fighthealthinsurance.models import ChatDocument, OngoingChat, ProfessionalUser
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from tests.sync.mock_chat_model import MockChatModel
 
@@ -46,6 +47,32 @@ class RecordingMockModel(MockChatModel):
     async def generate_chat_response(self, message, **kwargs):
         self.received_messages.append(message)
         return await super().generate_chat_response(message, **kwargs)
+
+
+class FailingMockModel(MockChatModel):
+    """Mock model whose every generation attempt fails (returns nothing)."""
+
+    async def generate_chat_response(self, message, **kwargs):
+        return (None, None)
+
+
+class VaryingMockModel(MockChatModel):
+    """Mock model that answers something different every call, so multi-turn
+    tests don't trip the repeated-reply rejection ladder. Records every
+    message it was asked to generate against."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+        self.received_messages: list[str] = []
+
+    async def generate_chat_response(self, message, **kwargs):
+        self.calls += 1
+        self.received_messages.append(message)
+        return (
+            f"Reply number {self.calls} with fresh guidance about the denial.",
+            f"Summary: turn {self.calls}.",
+        )
 
 
 async def _make_professional_chat(username, npi):
@@ -177,6 +204,251 @@ class LongPasteChatTest(APITestCase):
                 for prev, nxt in pairwise(roles):
                     self.assertNotEqual(prev, nxt)
                 self.assertEqual(roles[-1], "assistant")
+
+
+class LongPasteAllModelsFailTest(APITestCase):
+    """When every model fails on a long-paste turn, the user must get a
+    useful acknowledgment (content stored, how to proceed) instead of the
+    generic all-models-down error frame -- the paste IS stored and queued
+    for analysis, so 'try again' would only duplicate the failure."""
+
+    async def test_total_model_failure_yields_acknowledgment_not_error(self):
+        big = "Coverage denied: intensive outpatient program not authorized. " * 400
+        mock_model = FailingMockModel()
+        with _patched_backends(mock_model):
+            # Real document storage (the acknowledgment must only ever claim
+            # "stored" when content truly is); only the summarization fan-out
+            # is mocked so no background ML work runs.
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ):
+                user, chat = await _make_professional_chat("longpaste3", "9999900004")
+                communicator = WebsocketCommunicator(
+                    OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                )
+                communicator.scope["user"] = user
+                connected, _ = await communicator.connect()
+                self.assertTrue(connected)
+                try:
+                    await communicator.send_json_to(
+                        {"chat_id": str(chat.id), "content": big}
+                    )
+                    response = await _drain_to_content(communicator)
+                finally:
+                    await communicator.disconnect()
+
+                # An assistant message, not an error frame.
+                self.assertNotIn("error", response)
+                self.assertIn("content", response)
+                ack = response["content"]
+                self.assertIn("paste it again", ack)
+
+                # The content really was stored, and the acknowledgment names
+                # the document that actually exists.
+                docs = [
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                ]
+                self.assertEqual(len(docs), 1)
+                self.assertEqual(docs[0].full_text, big)
+                self.assertIn(docs[0].document_name, ack)
+
+                # History shows a coherent, alternating exchange: the compact
+                # marker followed by the acknowledgment.
+                await chat.arefresh_from_db()
+                roles = [m.get("role") for m in chat.chat_history]
+                self.assertEqual(roles, ["user", "assistant"])
+                self.assertIn("stored for reference", chat.chat_history[0]["content"])
+                self.assertEqual(chat.chat_history[1]["content"], ack)
+
+    async def test_setup_failure_after_storage_still_arms_summarization(self):
+        # A raise between storage and the LLM pass (here: history prep) exits
+        # the turn before the deferred kickoff in its finally block. The
+        # document must survive as PENDING with the storage-time watchdog
+        # armed to rescue it -- not be stranded unanalyzed.
+        big = "Denial letter contents pasted just before a setup crash. " * 400
+        mock_model = RecordingMockModel()
+        with _patched_backends(mock_model):
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ) as mock_fire:
+                with patch(
+                    "fighthealthinsurance.chat_interface.prepare_history_for_llm",
+                    side_effect=RuntimeError("boom after storage"),
+                ):
+                    user, chat = await _make_professional_chat(
+                        "longpaste5", "9999900007"
+                    )
+                    communicator = WebsocketCommunicator(
+                        OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                    )
+                    communicator.scope["user"] = user
+                    connected, _ = await communicator.connect()
+                    self.assertTrue(connected)
+                    try:
+                        await communicator.send_json_to(
+                            {"chat_id": str(chat.id), "content": big}
+                        )
+                        response = await _drain_to_content(communicator)
+                    finally:
+                        await communicator.disconnect()
+
+                # The turn itself failed (consumer-level error frame)...
+                self.assertIn("error", response)
+
+                # ...but the document was stored, is still PENDING, and the
+                # watchdog was armed at storage time to start summarization.
+                docs = [
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                ]
+                self.assertEqual(len(docs), 1)
+                self.assertEqual(docs[0].processing_status, ChatDocument.Status.PENDING)
+                fired_names = [
+                    call.args[0].__name__ for call in mock_fire.call_args_list
+                ]
+                self.assertIn("_deferred_summarization_watchdog", fired_names)
+                # No summarization worker was dispatched mid-crash.
+                self.assertNotIn("summarize_chunks", fired_names)
+
+    async def test_total_model_failure_on_short_message_still_errors(self):
+        # The acknowledgment fallback is only for turns whose content was
+        # diverted to storage; an ordinary failed turn keeps the error frame.
+        mock_model = FailingMockModel()
+        with _patched_backends(mock_model):
+            user, chat = await _make_professional_chat("shortfail1", "9999900005")
+            communicator = WebsocketCommunicator(
+                OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+            )
+            communicator.scope["user"] = user
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+            try:
+                await communicator.send_json_to(
+                    {"chat_id": str(chat.id), "content": "Why was my claim denied?"}
+                )
+                response = await _drain_to_content(communicator)
+            finally:
+                await communicator.disconnect()
+
+            self.assertIn("error", response)
+
+
+class LongPasteDedupTest(APITestCase):
+    """Re-pasting the same long message (say, after a failed turn) must not
+    create a second stored document, and the marker in history must keep
+    referencing the document that actually exists."""
+
+    async def test_repaste_reuses_document_and_marker_names_it(self):
+        # ~20k chars: over the soft limit that triggers long-paste storage
+        # (like the ~19k production failure) though under the hard cap.
+        big = "Denied for lack of prior authorization on imaging. " * 400
+        self.assertGreater(len(big), DIRECT_CHAT_SOFT_LIMIT_CHARS)
+
+        mock_model = VaryingMockModel()
+        with _patched_backends(mock_model):
+            # Real document storage; only the summarization fan-out is mocked
+            # (both the deferred kick in document_processor and any direct
+            # fire) so no ML work runs.
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ) as mock_fire:
+                user, chat = await _make_professional_chat("longpaste4", "9999900006")
+                communicator = WebsocketCommunicator(
+                    OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                )
+                communicator.scope["user"] = user
+                connected, _ = await communicator.connect()
+                self.assertTrue(connected)
+                try:
+                    for _ in range(2):
+                        await communicator.send_json_to(
+                            {"chat_id": str(chat.id), "content": big}
+                        )
+                        await _drain_to_content(communicator)
+                finally:
+                    await communicator.disconnect()
+
+                # One stored document, summarization kicked off (deferred to
+                # after the turn, but still kicked).
+                docs = [
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                ]
+                self.assertEqual(len(docs), 1)
+                self.assertTrue(mock_fire.called)
+
+                # Every marker in history references the document that exists.
+                await chat.arefresh_from_db()
+                user_msgs = [
+                    m["content"] for m in chat.chat_history if m.get("role") == "user"
+                ]
+                self.assertEqual(len(user_msgs), 2)
+                for msg in user_msgs:
+                    self.assertIn(docs[0].document_name, msg)
+
+
+class LongPasteNameAdoptionDoesNotCorruptContentTest(APITestCase):
+    """Adopting a deduped document's name must not rewrite the user's own
+    words. document_name is client-supplied and the truncated variant's text
+    IS the raw paste, so a name that occurs in the pasted content (here the
+    word "denied") must never be substituted inside the message we send to
+    the model."""
+
+    async def test_repaste_with_content_word_as_document_name(self):
+        big = "The claim was denied because it was denied again. " * 500
+        self.assertGreater(len(big), DIRECT_CHAT_SOFT_LIMIT_CHARS)
+
+        mock_model = VaryingMockModel()
+        with _patched_backends(mock_model):
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ):
+                user, chat = await _make_professional_chat("longpaste6", "9999900008")
+                communicator = WebsocketCommunicator(
+                    OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                )
+                communicator.scope["user"] = user
+                connected, _ = await communicator.connect()
+                self.assertTrue(connected)
+                try:
+                    # First paste stores the document under its own name.
+                    await communicator.send_json_to(
+                        {
+                            "chat_id": str(chat.id),
+                            "content": big,
+                            "document_name": "first_doc.txt",
+                        }
+                    )
+                    await _drain_to_content(communicator)
+
+                    # Re-paste of the SAME content, this time naming it with a
+                    # word that appears throughout that content. It dedupes
+                    # onto "first_doc.txt", triggering name adoption.
+                    await communicator.send_json_to(
+                        {
+                            "chat_id": str(chat.id),
+                            "content": big,
+                            "document_name": "denied",
+                        }
+                    )
+                    await _drain_to_content(communicator)
+                finally:
+                    await communicator.disconnect()
+
+                docs = [
+                    d async for d in ChatDocument.objects.filter(chat_id=chat.id).all()
+                ]
+                self.assertEqual(len(docs), 1)
+                self.assertEqual(docs[0].document_name, "first_doc.txt")
+
+                # The user's words survived intact: no message sent to the
+                # model contains the substitution "first_doc.txt" where the
+                # user wrote "denied".
+                self.assertTrue(mock_model.received_messages)
+                for msg in mock_model.received_messages:
+                    self.assertNotIn("was first_doc.txt because", msg)
 
 
 class NormalMessagePrimaryPathTest(APITestCase):

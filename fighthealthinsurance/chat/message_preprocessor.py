@@ -11,6 +11,7 @@ This module depends only on the stdlib plus loguru (the project's standard
 logger) and must never log full message contents (PHI).
 """
 
+import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -84,6 +85,64 @@ _TRAILING_JOINERS = frozenset({chr(0x200D), chr(0x200C)})
 
 # Whitespace we always preserve, even when stripping control characters.
 _KEPT_WHITESPACE = "\t\n\r"
+
+
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def sanitize_document_name(name: Optional[str]) -> str:
+    """Collapse whitespace runs (newlines included) in a document name.
+
+    Upload names arrive from the client. The stored-content markers built
+    around a name are single-line by design, and ``is_stored_message_marker``
+    matches them as single lines -- a newline smuggled into a filename would
+    silently break that recognition and with it the marker-echo exemption.
+    Returns "" for None/blank input so callers can apply their own fallback.
+    """
+    return _WHITESPACE_RUN_RE.sub(" ", name or "").strip()
+
+
+def build_long_paste_marker(char_count: int, doc_name: str) -> str:
+    """The compact text stored in chat history in place of a long paste.
+
+    Kept in one place so ``is_stored_message_marker`` below can recognize it
+    reliably wherever it needs rebuilding (e.g. after document-storage dedupe
+    resolves to an earlier document name).
+    """
+    return (
+        f"You pasted a long message (~{char_count:,} chars). "
+        f"It has been stored for reference as {doc_name}."
+    )
+
+
+# The system-generated stand-ins that replace stored content in chat history:
+# the long-paste marker above and the document-upload marker built in
+# chat_interface.handle_chat_message. Matched in full so a user message that
+# merely quotes one is not mistaken for the marker itself.
+_STORED_MESSAGE_MARKER_RES = (
+    re.compile(
+        r"You pasted a long message \(~[\d,]+ chars\)\. "
+        r"It has been stored for reference as \S.*\."
+    ),
+    re.compile(
+        r"I've uploaded a document: .+ \([\d,]+ characters\)\. "
+        r"The document is being analyzed and its contents are available "
+        r"for reference\."
+    ),
+)
+
+
+def is_stored_message_marker(text: Optional[str]) -> bool:
+    """Whether ``text`` is one of the system-generated stored-content markers.
+
+    These markers are written by us, not the user, so a reply that reuses
+    their wording (acknowledging the stored paste/document by name) is
+    legitimate -- repeat-rejection layers use this to stand down on the
+    echoes-the-user-message rung for such turns.
+    """
+    if not text:
+        return False
+    return any(r.fullmatch(text.strip()) for r in _STORED_MESSAGE_MARKER_RES)
 
 
 @dataclass
@@ -208,13 +267,13 @@ def _build_long_variants(
     caller (in document storage); these variants stay compact -- a preferred
     head+tail reference and a truncated last resort.
     """
-    doc_name = document_name or f"pasted_message_{int(time.time())}.txt"
+    doc_name = (
+        sanitize_document_name(document_name)
+        or f"pasted_message_{int(time.time())}.txt"
+    )
     head = safe_display_truncate(safe, DISPLAY_PREVIEW_CHARS)
     tail = _safe_tail(safe, TAIL_PREVIEW_CHARS)
-    marker = (
-        f"You pasted a long message (~{char_count:,} chars). "
-        f"It has been stored for reference as {doc_name}."
-    )
+    marker = build_long_paste_marker(char_count, doc_name)
     common_meta: Dict[str, Any] = {
         "document_name": doc_name,
         "char_count": char_count,

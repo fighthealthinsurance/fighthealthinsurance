@@ -8,6 +8,7 @@ Tests cover:
 4. ChatDocument model creation and processing
 """
 
+import asyncio
 import typing
 from unittest.mock import patch, AsyncMock
 
@@ -17,8 +18,13 @@ from rest_framework.test import APITestCase
 
 from fighthealthinsurance.chat.document_processor import (
     DEFAULT_CHUNK_SIZE,
+    DEFERRED_SUMMARY_WATCHDOG_SECONDS,
+    STUCK_PROCESSING_RESCUE_SECONDS,
+    _claim_document_for_processing,
+    _deferred_summarization_watchdog,
     chunk_document,
     process_uploaded_document,
+    start_document_summarization,
 )
 from fighthealthinsurance.chat.document_search import (
     _extract_search_terms,
@@ -31,6 +37,11 @@ if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+def _fired_coroutine_names(mock_fire) -> list[str]:
+    """Names of the coroutines handed to the mocked fire-and-forget helper."""
+    return [call.args[0].__name__ for call in mock_fire.call_args_list]
 
 
 class TestChunkDocument(TestCase):
@@ -267,7 +278,9 @@ class TestProcessUploadedDocument(APITestCase):
         assert doc.id is not None
         assert doc.document_name == "test.pdf"
         assert doc.char_count == len(full_text)
-        assert doc.processing_status == ChatDocument.Status.PENDING
+        # The immediate (non-deferred) path dispatches a worker, which claims
+        # the row atomically -- so it leaves storage already PROCESSING.
+        assert doc.processing_status == ChatDocument.Status.PROCESSING
         assert doc.full_text == full_text
 
         exists = await ChatDocument.objects.filter(id=doc.id).aexists()
@@ -286,3 +299,402 @@ class TestProcessUploadedDocument(APITestCase):
                 full_text="Some text",
             )
             mock_fire.assert_called_once()
+
+    async def test_defer_summarization_arms_watchdog_but_no_worker(self):
+        chat = await OngoingChat.objects.acreate()
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ) as mock_fire:
+            doc = await process_uploaded_document(
+                chat=chat,
+                document_name="test.pdf",
+                full_text="Some text",
+                defer_summarization=True,
+            )
+            # Deferred: no summarization worker yet -- only the stranded-doc
+            # watchdog is armed at storage time.
+            assert _fired_coroutine_names(mock_fire) == [
+                "_deferred_summarization_watchdog"
+            ]
+            assert doc.processing_status == ChatDocument.Status.PENDING
+
+            # The caller kicks the worker off later; a PENDING doc fires.
+            fired = await start_document_summarization(doc)
+            assert fired
+            assert _fired_coroutine_names(mock_fire) == [
+                "_deferred_summarization_watchdog",
+                "summarize_chunks",
+            ]
+
+            # A second kickoff loses the (already-spent) claim: no double fire.
+            fired_again = await start_document_summarization(doc)
+            assert not fired_again
+            assert len(mock_fire.call_args_list) == 2
+
+    async def test_start_summarization_claims_atomically_under_concurrency(self):
+        chat = await OngoingChat.objects.acreate()
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ) as mock_fire:
+            doc = await process_uploaded_document(
+                chat=chat,
+                document_name="test.pdf",
+                full_text="Some text",
+                defer_summarization=True,
+            )
+            # Two concurrent kickoffs (the turn's deferred start racing a
+            # resubmission): the conditional-UPDATE claim lets exactly one
+            # dispatch a worker.
+            results = await asyncio.gather(
+                start_document_summarization(doc),
+                start_document_summarization(doc),
+            )
+            assert sorted(results) == [False, True]
+            assert _fired_coroutine_names(mock_fire).count("summarize_chunks") == 1
+
+    async def test_watchdog_rescues_stranded_pending_document(self):
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stranded.txt",
+            full_text="Text stored by a turn that died before its kickoff.",
+            char_count=51,
+            processing_status=ChatDocument.Status.PENDING,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await _deferred_summarization_watchdog(doc.id, None, delay=0.01)
+
+        mock_summarize.assert_awaited_once_with(doc.id, denial_context=None)
+        await doc.arefresh_from_db()
+        assert doc.processing_status == ChatDocument.Status.PROCESSING
+
+    async def test_watchdog_leaves_started_and_failed_documents_alone(self):
+        chat = await OngoingChat.objects.acreate()
+        # PROCESSING/COMPLETED were started normally; FAILED is deliberately
+        # not retried by the watchdog (retries stay a resubmission decision).
+        for status in (
+            ChatDocument.Status.PROCESSING,
+            ChatDocument.Status.COMPLETED,
+            ChatDocument.Status.FAILED,
+        ):
+            doc = await ChatDocument.objects.acreate(
+                chat=chat,
+                document_name=f"{status}.txt",
+                full_text=f"text in state {status}",
+                char_count=10,
+                processing_status=status,
+            )
+            with patch(
+                "fighthealthinsurance.chat.document_processor.summarize_chunks",
+                new_callable=AsyncMock,
+            ) as mock_summarize:
+                await _deferred_summarization_watchdog(doc.id, None, delay=0.01)
+            mock_summarize.assert_not_awaited()
+            await doc.arefresh_from_db()
+            assert doc.processing_status == status
+
+    async def test_watchdog_rescues_resubmitted_failed_document(self):
+        # A FAILED doc the user resubmitted arms a watchdog claiming FAILED,
+        # so the retry still happens even if the resubmitting turn dies.
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="failed_retry.txt",
+            full_text="content whose first analysis failed",
+            char_count=35,
+            processing_status=ChatDocument.Status.FAILED,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await _deferred_summarization_watchdog(
+                doc.id,
+                None,
+                delay=0.01,
+                claim_statuses=[ChatDocument.Status.FAILED],
+            )
+
+        mock_summarize.assert_awaited_once_with(doc.id, denial_context=None)
+        await doc.arefresh_from_db()
+        assert doc.processing_status == ChatDocument.Status.PROCESSING
+
+    async def test_deferred_resubmission_arms_watchdog_for_failed_status(self):
+        chat = await OngoingChat.objects.acreate()
+        full_text = "identical content resubmitted after a failed analysis"
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            first = await process_uploaded_document(
+                chat=chat, document_name="a.txt", full_text=full_text
+            )
+            first.processing_status = ChatDocument.Status.FAILED
+            await first.asave(update_fields=["processing_status"])
+
+            with patch(
+                "fighthealthinsurance.chat.document_processor._deferred_summarization_watchdog"
+            ) as mock_watchdog:
+                second = await process_uploaded_document(
+                    chat=chat,
+                    document_name="b.txt",
+                    full_text=full_text,
+                    defer_summarization=True,
+                )
+
+        assert second.id == first.id
+        # The watchdog is armed to claim from the status observed at arming
+        # time, so it can rescue this FAILED doc (not just PENDING ones).
+        mock_watchdog.assert_called_once_with(
+            first.id,
+            None,
+            DEFERRED_SUMMARY_WATCHDOG_SECONDS,
+            claim_statuses=[ChatDocument.Status.FAILED],
+        )
+
+    async def test_resubmission_onto_processing_row_arms_stuck_rescue(self):
+        # A worker can die without persisting a terminal status (pod restart,
+        # OOM), leaving the row PROCESSING forever. Dedupe pins every future
+        # resubmission to that row, so the resubmission must arm a rescue
+        # watchdog that may claim PROCESSING after a generous delay.
+        chat = await OngoingChat.objects.acreate()
+        full_text = "content whose worker died mid-run without a terminal status"
+        await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck.txt",
+            full_text=full_text,
+            char_count=len(full_text),
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "fighthealthinsurance.chat.document_processor._deferred_summarization_watchdog"
+            ) as mock_watchdog:
+                doc = await process_uploaded_document(
+                    chat=chat, document_name="retry.txt", full_text=full_text
+                )
+
+        mock_watchdog.assert_called_once_with(
+            doc.id,
+            None,
+            STUCK_PROCESSING_RESCUE_SECONDS,
+            claim_statuses=[ChatDocument.Status.PROCESSING],
+        )
+
+    async def test_fresh_document_does_not_arm_stuck_rescue(self):
+        chat = await OngoingChat.objects.acreate()
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "fighthealthinsurance.chat.document_processor._deferred_summarization_watchdog"
+            ) as mock_watchdog:
+                await process_uploaded_document(
+                    chat=chat, document_name="fresh.txt", full_text="brand new"
+                )
+        # The fresh doc dispatched its own worker; no rescue is needed.
+        mock_watchdog.assert_not_called()
+
+    async def test_stuck_processing_claim_is_exclusive(self):
+        # A PROCESSING -> PROCESSING conditional UPDATE changes nothing but
+        # still matches, so the database would report a successful claim to
+        # every caller: N resubmissions onto one stuck row would each start a
+        # full summarization fan-out. Exactly one caller may win.
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck_exclusive.txt",
+            full_text="text whose worker died",
+            char_count=22,
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        results = await asyncio.gather(
+            _claim_document_for_processing(doc.id, [ChatDocument.Status.PROCESSING]),
+            _claim_document_for_processing(doc.id, [ChatDocument.Status.PROCESSING]),
+            _claim_document_for_processing(doc.id, [ChatDocument.Status.PROCESSING]),
+        )
+        assert sorted(results) == [False, False, True]
+        await doc.arefresh_from_db()
+        assert doc.processing_status == ChatDocument.Status.PROCESSING
+
+    async def test_concurrent_stuck_rescues_dispatch_one_worker(self):
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck_race.txt",
+            full_text="text whose worker died",
+            char_count=22,
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await asyncio.gather(
+                *(
+                    _deferred_summarization_watchdog(
+                        doc.id,
+                        None,
+                        delay=0.01,
+                        claim_statuses=[ChatDocument.Status.PROCESSING],
+                    )
+                    for _ in range(3)
+                )
+            )
+
+        assert mock_summarize.await_count == 1
+
+    async def test_watchdog_can_rescue_stuck_processing_when_told_to(self):
+        chat = await OngoingChat.objects.acreate()
+        doc = await ChatDocument.objects.acreate(
+            chat=chat,
+            document_name="stuck2.txt",
+            full_text="text from a dead worker",
+            char_count=23,
+            processing_status=ChatDocument.Status.PROCESSING,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await _deferred_summarization_watchdog(
+                doc.id,
+                None,
+                delay=0.01,
+                claim_statuses=[ChatDocument.Status.PROCESSING],
+            )
+
+        mock_summarize.assert_awaited_once_with(doc.id, denial_context=None)
+
+    async def test_watchdog_handles_deleted_document(self):
+        with patch(
+            "fighthealthinsurance.chat.document_processor.summarize_chunks",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await _deferred_summarization_watchdog(999999999, None, delay=0.01)
+        mock_summarize.assert_not_awaited()
+
+    async def test_start_summarization_skips_docs_already_processed(self):
+        chat = await OngoingChat.objects.acreate()
+        for status in (
+            ChatDocument.Status.PROCESSING,
+            ChatDocument.Status.COMPLETED,
+        ):
+            doc = await ChatDocument.objects.acreate(
+                chat=chat,
+                document_name=f"{status}.pdf",
+                full_text="Text",
+                char_count=4,
+                processing_status=status,
+            )
+            with patch(
+                "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+                new_callable=AsyncMock,
+            ) as mock_fire:
+                fired = await start_document_summarization(doc)
+                assert not fired
+                mock_fire.assert_not_called()
+
+    async def test_identical_resubmission_reuses_existing_document(self):
+        chat = await OngoingChat.objects.acreate()
+        full_text = "The same long pasted denial letter, resubmitted after a failure."
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            first = await process_uploaded_document(
+                chat=chat,
+                document_name="pasted_message_100.txt",
+                full_text=full_text,
+            )
+            second = await process_uploaded_document(
+                chat=chat,
+                document_name="pasted_message_200.txt",
+                full_text=full_text,
+            )
+
+        assert second.id == first.id
+        # The original name wins so history references a real document.
+        assert second.document_name == "pasted_message_100.txt"
+        count = await ChatDocument.objects.filter(chat=chat).acount()
+        assert count == 1
+
+    async def test_different_content_is_not_deduped(self):
+        chat = await OngoingChat.objects.acreate()
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            first = await process_uploaded_document(
+                chat=chat,
+                document_name="a.txt",
+                full_text="first document text",
+            )
+            second = await process_uploaded_document(
+                chat=chat,
+                document_name="b.txt",
+                full_text="second, different text",
+            )
+
+        assert second.id != first.id
+        count = await ChatDocument.objects.filter(chat=chat).acount()
+        assert count == 2
+
+    async def test_same_content_in_a_different_chat_is_not_deduped(self):
+        chat_a = await OngoingChat.objects.acreate()
+        chat_b = await OngoingChat.objects.acreate()
+        full_text = "shared text pasted into two unrelated chats"
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ):
+            doc_a = await process_uploaded_document(
+                chat=chat_a, document_name="a.txt", full_text=full_text
+            )
+            doc_b = await process_uploaded_document(
+                chat=chat_b, document_name="b.txt", full_text=full_text
+            )
+
+        assert doc_a.id != doc_b.id
+
+    async def test_resubmission_of_failed_document_refires_summarization(self):
+        chat = await OngoingChat.objects.acreate()
+        full_text = "content whose first summarization attempt failed"
+
+        with patch(
+            "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ) as mock_fire:
+            first = await process_uploaded_document(
+                chat=chat, document_name="a.txt", full_text=full_text
+            )
+            first.processing_status = ChatDocument.Status.FAILED
+            await first.asave(update_fields=["processing_status"])
+
+            second = await process_uploaded_document(
+                chat=chat, document_name="b.txt", full_text=full_text
+            )
+            assert second.id == first.id
+            # Once for the initial store, once for the FAILED retry.
+            assert mock_fire.call_count == 2
