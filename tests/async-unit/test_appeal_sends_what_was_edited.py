@@ -69,10 +69,9 @@ def test_a_hand_edited_letter_is_not_rebuilt_underneath_the_person():
         "nothing listens for the person typing in the finished letter"
     )
     body = _function(src, "descrub")
-    assert re.search(
-        r"if \(completedLetterEdited && !force && completed && completed\.value\.trim\(\) !== \"\"\) \{\s*return;",
-        body,
-    ), "descrub no longer leaves a hand-edited letter alone"
+    assert re.search(r"if \(completedLetterEdited && !force\) \{\s*return;", body), (
+        "descrub no longer leaves a hand-edited letter alone"
+    )
     assert "rebuildingCompletedLetter = true;" in body and "rebuildingCompletedLetter = false;" in body, (
         "descrub's own write would be counted as the person typing"
     )
@@ -90,11 +89,66 @@ def test_only_the_rebuild_button_and_the_details_panel_force_a_rebuild():
     assert len(forced) == 2, f"exactly two explicit rebuilds are expected, found {len(forced)}"
 
 
+def test_the_page_does_not_rebuild_over_a_letter_the_server_sent_back():
+    """A rejected fax re-renders with the submitted letter already in the box.
+
+    Rebuilding on load would strip everything the person added after the
+    details block, so the first build only fills an empty box (review).
+    """
+    setup = _function(_appeal_source(), "setupAppeal")
+    assert 'const completedOnLoad = (completed_text as HTMLTextAreaElement | null)?.value ?? "";' in setup
+    assert re.search(
+        r'if \(completedOnLoad\.trim\(\) === ""\) \{\s*descrub\(\);\s*\} else \{\s*completedLetterEdited = true;',
+        setup,
+    ), "the page rebuilds on load over a letter that came back from the server"
+
+
+def test_the_guard_does_not_lapse_when_the_letter_is_emptied():
+    body = _function(_appeal_source(), "descrub")
+    assert re.search(r"if \(completedLetterEdited && !force\) \{\s*return;", body), (
+        "emptying or blanking the letter lets a rebuild back in"
+    )
+    assert "value.trim() !== \"\"" not in body, "the emptiness escape is back"
+
+
+def test_confirming_the_placeholder_warning_actually_sends_and_the_next_try_is_checked():
+    """requestSubmit() called inside a submit event does nothing, so pressing
+    OK sent no fax at all, and the flag it set waved the next attempt past
+    the check entirely (review)."""
+    src = _appeal_source()
+    assert "skipCheck" not in src, "the skip flag is back; a later click would bypass the check"
+    # The name may appear in the comment that explains why it is gone; what
+    # must not come back is the call.
+    assert "faxForm.requestSubmit(" not in src, "the submit is re-entered from inside its own event again"
+    submit = src.index('faxForm.addEventListener("submit"')
+    handler = src[submit:]
+    assert re.search(r"if \(!proceed\) \{\s*e\.preventDefault\(\);", handler), (
+        "confirming no longer lets this submission through"
+    )
+    # An empty letter is stopped before it becomes an empty fax.
+    assert re.search(r'if \(appealText\.trim\(\) === ""\) \{\s*.*e\.preventDefault\(\);', handler, re.S)
+
+
+def test_an_amount_is_not_reported_as_an_unfilled_placeholder():
+    src = _appeal_source()
+    assert re.search(r"text\.match\(/\\\$\[A-Za-z_\]\[A-Za-z0-9_\]\*/g\)", src) or (
+        "/\\$[A-Za-z_][A-Za-z0-9_]*/g" in src
+    ), "the dollar-placeholder pattern accepts a bare amount again"
+
+
+def test_the_setup_actually_runs():
+    src = _appeal_source()
+    assert re.search(r"^setupAppeal\(\);", src, re.M), (
+        "nothing calls setupAppeal, so none of these handlers would be installed"
+    )
+
+
 def test_the_fax_reads_the_letter_after_deciding_not_to_rebuild_it():
     src = _appeal_source()
     submit = src.index('faxForm.addEventListener("submit"')
     handler = src[submit : src.index("checkForUnfilledPlaceholders(appealText)", submit)]
     assert "descrub();" in handler, "the details panel is no longer applied for an untouched letter"
+    assert handler.count("descrub()") == 1, "the fax handler rebuilds more than once"
     assert "descrub(true)" not in handler, (
         "the fax handler forces a rebuild, which is what discarded the person's corrections"
     )

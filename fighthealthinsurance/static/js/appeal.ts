@@ -60,10 +60,7 @@ function noteCompletedLetterEdit(): void {
 // `force` is the rebuild button and the panel edits the person just made:
 // an explicit ask. Everything else leaves a hand-edited letter alone.
 function descrub(force = false) {
-  const completed = document.getElementById(
-    "id_completed_appeal_text",
-  ) as HTMLTextAreaElement | null;
-  if (completedLetterEdited && !force && completed && completed.value.trim() !== "") {
+  if (completedLetterEdited && !force) {
     return;
   }
   const appeal_text = document.getElementById("scrubbed_appeal_text");
@@ -277,8 +274,11 @@ function checkForUnfilledPlaceholders(text: string): string[] {
     found.push(singleMatch[0]);
   }
 
-  // Dollar-prefixed template variables like $diagnosis, $DATE, $CASEID
-  const dollarMatches = text.match(/\$[A-Za-z0-9_]+/g);
+  // Dollar-prefixed template variables like $diagnosis, $DATE, $CASEID.
+  // A leading letter or underscore is required so an ordinary amount ("the
+  // treatment costs $500") is not reported as an unfilled placeholder and
+  // does not send a finished letter into the warning (review).
+  const dollarMatches = text.match(/\$[A-Za-z_][A-Za-z0-9_]*/g);
   if (dollarMatches) {
     found.push(...dollarMatches);
   }
@@ -378,18 +378,23 @@ function setupAppeal() {
   if (completed_text != null) {
     completed_text.addEventListener("input", noteCompletedLetterEdit);
   }
-  descrub();
+  // On a server rejection the page comes back with the letter the person
+  // submitted already in the box (fax_views puts the posted text in the
+  // context). Rebuilding on load would strip everything they had added
+  // after the details block, so the first build only fills an empty box
+  // (review).
+  const completedOnLoad = (completed_text as HTMLTextAreaElement | null)?.value ?? "";
+  if (completedOnLoad.trim() === "") {
+    descrub();
+  } else {
+    completedLetterEdited = true;
+  }
 
   // Warn before fax submission if PHI placeholders remain unfilled
   const faxButton = document.getElementById("fax_appeal");
   const faxForm = faxButton?.closest("form") as HTMLFormElement | null;
   if (faxForm) {
-    let skipCheck = false;
     faxForm.addEventListener("submit", (e) => {
-      if (skipCheck) {
-        skipCheck = false;
-        return;
-      }
       // Pick up the details panel for a letter the person has not touched,
       // and leave a hand-edited letter exactly as they left it: this runs
       // one line before the text is read and posted.
@@ -397,9 +402,14 @@ function setupAppeal() {
       const appealText =
         (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
           ?.value || "";
+      if (appealText.trim() === "") {
+        // An empty letter would go out as an empty fax.
+        e.preventDefault();
+        alert("There is no letter to send. Write or rebuild your letter first.");
+        return;
+      }
       const placeholders = checkForUnfilledPlaceholders(appealText);
       if (placeholders.length > 0) {
-        e.preventDefault();
         const listing = placeholders.join(", ");
         const proceed = confirm(
           "Your appeal still contains placeholder text that should be replaced with your personal information:\n\n" +
@@ -407,12 +417,14 @@ function setupAppeal() {
           "\n\nYou may need to fill in your PII/PHI manually — please double-check the letter before submission.\n\n" +
           "Press OK to send the fax anyway, or Cancel to go back and fill in your information first."
         );
-        if (proceed) {
-          skipCheck = true;
-          // Use requestSubmit() so other submit handlers (e.g. pwyw tracking)
-          // still fire and HTML5 constraint validation runs. skipCheck prevents
-          // this handler from re-triggering the placeholder check.
-          faxForm.requestSubmit();
+        // Decided before the submit is stopped: confirming lets this very
+        // submission through, so every other submit handler and the
+        // browser's own validation still run. Calling requestSubmit() from
+        // inside the submit event did nothing at all, so pressing OK
+        // silently sent no fax, and the skip flag it set then waved the
+        // next attempt past this check (review).
+        if (!proceed) {
+          e.preventDefault();
         }
       }
     });
