@@ -17,7 +17,9 @@ def _ai_providers(text: str) -> list[str]:
     the first provider in the policy's own sentence."""
     m = re.search(r"(?:such as|including) (Anthropic[^.<]*?)\.", text)
     assert m, "no AI provider sentence found"
-    return [p.strip() for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1)) if p.strip()]
+    # The consent line ends its list with "etc." so the sentence stays open;
+    # that is not a provider.
+    return [p.strip() for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1)) if p.strip() and p.strip().lower() != "etc"]
 
 
 class ConsentCopyTest(TestCase):
@@ -28,3 +30,9 @@ class ConsentCopyTest(TestCase):
         self.assertEqual(len(_ai_providers(policy)), 5)
         for gone in ("OctoAI", "TogetherAI"):
             self.assertNotIn(gone, scrub)
+
+    def test_upload_consent_stays_open_ended(self):
+        # The named providers are the ones in use today; "etc." keeps the
+        # consent honest if another is added before the copy is (Melanie).
+        scrub = (TEMPLATES / "scrub.html").read_text()
+        self.assertIn("Perplexity, TypeSafe, etc.", scrub)
