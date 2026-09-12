@@ -82,7 +82,7 @@ def _advisory_key(hashed_email: str) -> int:
     return int.from_bytes(digest, "big", signed=True)
 
 
-def person_lock(hashed_email: str) -> None:
+def person_lock(hashed_email: str, *, blocking: bool = True) -> bool:
     """Serialize every writer of ``person_counted`` for one person.
 
     On PostgreSQL this is a transaction-scoped advisory lock keyed on the
@@ -90,14 +90,44 @@ def person_lock(hashed_email: str) -> None:
     created for the same person and a denial moving to that person cannot
     interleave, even while the person has no rows yet to lock. Other
     backends (sqlite in tests) have no equivalent and run single-writer
-    here. Call it inside transaction.atomic(), before touching the rows.
+    here. Call it inside transaction.atomic(), before taking any row lock,
+    so every writer acquires locks in the same order.
+
+    Returns whether the lock is held. ``blocking=False`` uses the try
+    variant and returns False rather than waiting: a caller that already
+    holds another person's locks must never wait, or a re-key going the
+    other way completes a deadlock cycle (review).
     """
     if not hashed_email or connection.vendor != "postgresql":
-        return
+        return True
+    key = _advisory_key(hashed_email)
     with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT pg_advisory_xact_lock(%s)", [_advisory_key(hashed_email)]
-        )
+        if blocking:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+            return True
+        cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [key])
+        row = cursor.fetchone()
+        return bool(row and row[0])
+
+
+def _persisted_hash(denial_id: int) -> str:
+    """The hash the denial carries in the database right now.
+
+    Blank when the denial is gone or has no email: either way there is no
+    person to count.
+    """
+    from fighthealthinsurance.models import Denial
+
+    return (
+        Denial.objects.filter(pk=denial_id)
+        .values_list("hashed_email", flat=True)
+        .first()
+        or ""
+    )
+
+
+class _ReKeyed(Exception):
+    """The denial left the locked person between the read and the lock."""
 
 
 def _mark_person(denial_id: int) -> bool:
@@ -108,33 +138,45 @@ def _mark_person(denial_id: int) -> bool:
     email was changed by another request meanwhile (review). Takes the
     person's lock, then FOR UPDATE on their denial rows, and flips
     ``person_counted`` on every one that lacks it; the person counts only
-    if none had it. If the denial is not among the locked rows it was
-    re-keyed between the read and the lock: read again and go round with
-    the new hash. If the row is gone (the person was deleted between the
+    if none had it.
+
+    If the denial is not among the locked rows it was re-keyed between the
+    read and the lock. That attempt's savepoint is rolled back, releasing
+    its row locks, and the next attempt reads the new hash -- but it takes
+    the new person's lock with the try variant and gives up rather than
+    waiting. Waiting there, while possibly still holding the previous
+    person's advisory lock, is exactly the cycle a re-key going the other
+    way completes (review); only the first attempt, which holds nothing,
+    may block. If the row is gone (the person was deleted between the
     draft insert and this call) or has no hash, nothing is counted.
     """
     from fighthealthinsurance.models import Denial
 
-    for _attempt in range(3):
-        hashed = (
-            Denial.objects.filter(pk=denial_id)
-            .values_list("hashed_email", flat=True)
-            .first()
-        )
+    for attempt in range(3):
+        hashed = _persisted_hash(denial_id)
         if not hashed:
             return False
-        person_lock(hashed)
-        rows = list(
-            Denial.objects.select_for_update(of=("self",))
-            .filter(hashed_email=hashed)
-            .values_list("pk", "person_counted")
-        )
-        if denial_id not in {pk for pk, _flag in rows}:
+        try:
+            with transaction.atomic():  # savepoint: row locks go on rollback
+                if not person_lock(hashed, blocking=attempt == 0):
+                    logger.warning(
+                        "Lifetime counters: person lock busy after a re-key; "
+                        "draft counted, person not"
+                    )
+                    return False
+                rows = list(
+                    Denial.objects.select_for_update(of=("self",))
+                    .filter(hashed_email=hashed)
+                    .values_list("pk", "person_counted")
+                )
+                if denial_id not in {pk for pk, _flag in rows}:
+                    raise _ReKeyed
+                Denial.objects.filter(hashed_email=hashed, person_counted=False).update(
+                    person_counted=True
+                )
+                return not any(flag for _pk, flag in rows)
+        except _ReKeyed:
             continue
-        Denial.objects.filter(hashed_email=hashed, person_counted=False).update(
-            person_counted=True
-        )
-        return not any(flag for _pk, flag in rows)
     logger.warning("Lifetime counters: denial re-keyed repeatedly; not counted")
     return False
 

@@ -164,6 +164,62 @@ class DraftCounterTest(TestCase):
         ProposedAppeal.objects.create(for_denial=mover, appeal_text="b again")
         self.assertEqual(_counters()[:2], (2, 1))
 
+    def _stale_then_real(self, stale):
+        """_persisted_hash that lies once, the way a read can be overtaken
+        by another request's re-key before this writer takes the lock."""
+        real = lifetime_counters._persisted_hash
+        reads = []
+
+        def read(denial_id):
+            reads.append(denial_id)
+            return stale if len(reads) == 1 else real(denial_id)
+
+        return reads, read
+
+    def test_rekey_between_read_and_lock_goes_round_to_the_new_person(self):
+        x = self._denial()
+        sibling = self._denial()  # stays with person-a, gets locked first
+        Denial.objects.filter(pk=x.pk).update(hashed_email="person-b")
+        reads, read = self._stale_then_real("person-a")
+        with mock.patch.object(lifetime_counters, "_persisted_hash", new=read):
+            self.assertTrue(lifetime_counters._mark_person(x.pk))
+        self.assertEqual(len(reads), 2)  # read again after the mismatch
+        self.assertTrue(Denial.objects.get(pk=x.pk).person_counted)
+        # person-a was locked but never flagged: the denial had left them
+        self.assertFalse(Denial.objects.get(pk=sibling.pk).person_counted)
+
+    def test_retry_never_waits_for_the_new_persons_lock(self):
+        """The retry holds the previous person's locks, so it must take the
+        new person's lock with the try variant and give up if it is busy;
+        waiting there deadlocks against a re-key going the other way."""
+        x = self._denial()
+        Denial.objects.filter(pk=x.pk).update(hashed_email="person-b")
+        reads, read = self._stale_then_real("person-a")
+        blocking = []
+        real_lock = lifetime_counters.person_lock
+
+        def lock(hashed, *, blocking_flag=None, **kwargs):
+            blocking.append(kwargs.get("blocking", True))
+            return real_lock(hashed, **kwargs)
+
+        with mock.patch.object(
+            lifetime_counters, "_persisted_hash", new=read
+        ), mock.patch.object(lifetime_counters, "person_lock", new=lock):
+            self.assertTrue(lifetime_counters._mark_person(x.pk))
+        self.assertEqual(blocking, [True, False])  # first blocks, retry does not
+
+    def test_busy_lock_after_a_rekey_counts_the_draft_but_not_the_person(self):
+        x = self._denial()
+        Denial.objects.filter(pk=x.pk).update(hashed_email="person-b")
+        reads, read = self._stale_then_real("person-a")
+        with mock.patch.object(
+            lifetime_counters, "_persisted_hash", new=read
+        ), mock.patch.object(
+            lifetime_counters, "person_lock", side_effect=[True, False]
+        ):
+            self.assertFalse(lifetime_counters._mark_person(x.pk))
+        self.assertFalse(Denial.objects.get(pk=x.pk).person_counted)
+
     def test_deferred_load_still_detects_a_hash_change(self):
         a = self._denial()
         ProposedAppeal.objects.create(for_denial=a, appeal_text="first")
@@ -173,25 +229,31 @@ class DraftCounterTest(TestCase):
         self.assertFalse(Denial.objects.get(pk=a.pk).person_counted)
 
     def test_every_flag_writer_takes_the_person_lock(self):
-        with mock.patch.object(lifetime_counters, "person_lock") as lock:
+        def locked(lock):
+            return [call.args[0] for call in lock.call_args_list]
+
+        with mock.patch.object(
+            lifetime_counters, "person_lock", return_value=True
+        ) as lock:
             d = self._denial()
-            lock.assert_called_once_with("person-a")
+            self.assertEqual(locked(lock), ["person-a"])
             lock.reset_mock()
             self._denial("")  # no person, nothing to serialize
             lock.assert_not_called()
             ProposedAppeal.objects.create(for_denial=d, appeal_text="draft")
-            lock.assert_called_once_with("person-a")
+            self.assertEqual(locked(lock), ["person-a"])
+            self.assertEqual(lock.call_args.kwargs, {"blocking": True})
             lock.reset_mock()
             d = Denial.objects.get(pk=d.pk)
             d.denial_text = "edited"
             d.save()  # a full save writes the hash: same lock, flag untouched
-            lock.assert_called_once_with("person-a")
+            self.assertEqual(locked(lock), ["person-a"])
             lock.reset_mock()
             d.save(update_fields=["denial_text"])  # hash not written: no lock
             lock.assert_not_called()
             d.hashed_email = "person-q"
             d.save()
-            lock.assert_called_once_with("person-q")
+            self.assertEqual(locked(lock), ["person-q"])
 
     def test_person_lock_is_a_postgres_advisory_lock(self):
         key = lifetime_counters._advisory_key("person-a")
