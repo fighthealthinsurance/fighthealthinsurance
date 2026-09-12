@@ -59,11 +59,14 @@ def assert_letter_like(content: str) -> None:
     salutation / "Re:" line near the top, instead of pinning the exact
     first word of live LLM output.
     """
+    # Case-insensitive, and tolerant of a bracketed placeholder: models write
+    # "RE:" in capitals and "[Appeals Department Address]" as a letterhead
+    # line, both perfectly good letters that a case-sensitive prefix match
+    # failed on.
     stripped = content.lstrip()
-    head_lines = [line.strip().lstrip("*_# ") for line in stripped.splitlines()[:15]]
-    assert stripped.startswith("Dear") or any(
-        line.startswith(("Dear", "Re:", "Appeals Department"))
-        for line in head_lines
+    head_lines = [line.strip().lstrip("*_# [").casefold() for line in stripped.splitlines()[:15]]
+    assert stripped.casefold().startswith("dear") or any(
+        line.startswith(("dear", "re:", "appeals department")) for line in head_lines
     ), f"Appeal should open like a letter (salutation or letterhead): {stripped[:200]!r}"
 
 
