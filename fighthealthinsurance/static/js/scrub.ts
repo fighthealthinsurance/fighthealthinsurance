@@ -223,10 +223,10 @@ const ON_DEVICE_MODEL_CACHE = "transformers-cache";
 // Asked before the stored model is deleted, in the browser's plain OK/Cancel
 // dialog: what goes, what stays, and that it comes back if wanted.
 const REMOVE_MODEL_CONFIRM =
-  "Remove the downloaded model (about 760 MB) from this device? Your text and uploaded files are not touched. " +
+  "Remove the downloaded model (about 1 GB) from this device? Your text and uploaded files are not touched. " +
   "If you scan with the option on again later, the model downloads again.";
 
-// The most one page may take, first download included: a 760 MB download on
+// The most one page may take, first download included: a 1 GB download on
 // a slow connection plus a read on a modest GPU. Past this the page is given
 // up and the model switched off for the rest of the visit, because a
 // download interrupted by a network change left the library's load pending
