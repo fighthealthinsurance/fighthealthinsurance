@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Worst Health Insurance Company in {{ state.name }} - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Worst Health Insurance Company in {{ state.name }} - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Which health insurance company behaves worst in {{ state.name }}? Monthly rankings from public regulator data: denial rates, confirmed complaints, overturned appeals, and enforcement actions, normalized by insured population.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="worst-insurance-state-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">{{ state.name }} &middot; {{ report.period }}</h3>
+                    {% if status == 'ok' %}
+                    <h1 class="hero-headline">{{ rankings.0.issuer_name }} ranks worst in {{ state.name }}</h1>
+                    {% with top=table.rows.0 %}
+                    {% if top.cells.0 %}
+                    <p class="hero-subcopy">We estimate {{ rankings.0.issuer_name }}'s denials cost {{ state.name }} patients and providers <strong>{{ top.cells.0.display }} hours</strong> in this period ({{ top.cells.0.detail }}). It's an estimate from public data &mdash; <a href="{% url 'worst_insurance_methodology' %}" class="text-white text-decoration-underline">how we calculate it</a>. Every underlying number is below.</p>
+                    {% else %}
+                    <p class="hero-subcopy">Based on public regulator data. Full rankings and every underlying number below.</p>
+                    {% endif %}
+                    {% endwith %}
+                    {% else %}
+                    <h1 class="hero-headline">Not enough public data to rank {{ state.name }} insurers</h1>
+                    <p class="hero-subcopy">{{ state.name }} regulators don't publish enough machine-readable data on insurer conduct for a fair ranking &mdash; a transparency gap in itself.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="rankings" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                {% if status == 'ok' %}
+                <h2 class="mb-1">{{ state.name }} rankings &mdash; worst first</h2>
+                <p class="text-muted mb-4">Higher score = worse performance on the public metrics available for {{ state.name }}. Scores are only comparable within this state.</p>
+                <div class="table-responsive">
+                    <table class="table table-striped align-middle">
+                        <thead>
+                            <tr>
+                                <th scope="col">#</th>
+                                <th scope="col">Insurer</th>
+                                <th scope="col">Score</th>
+                                {% for col in table.columns %}
+                                <th scope="col">{{ col.label }}<br><small class="text-muted fw-normal">{{ col.hint }}</small></th>
+                                {% endfor %}
+                                <th scope="col">Covered member-months</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in table.rows %}
+                            <tr>
+                                <td>{{ row.ranking.rank }}</td>
+                                <td>
+                                    <strong>{{ row.ranking.issuer_name }}</strong>
+                                    {% if row.ranking.group_affiliation %}<br><small class="text-muted">{{ row.ranking.group_affiliation }}</small>{% endif %}
+                                </td>
+                                <td><span class="{% if row.ranking.rank == 1 %}text-danger fw-bold{% endif %}">{{ row.ranking.composite_score|floatformat:1 }}</span></td>
+                                {% for cell in row.cells %}
+                                <td>
+                                    {% if cell %}
+                                    {{ cell.display }}<br><small class="text-muted">{{ cell.detail }}</small>
+                                    {% else %}
+                                    <span class="text-muted" title="Not measured for this insurer">&mdash;*</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td>{% if row.ranking.member_months %}{{ row.ranking.member_months|floatformat:0 }}{% else %}<span class="text-muted">&mdash;</span>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-muted"><small>* &mdash; means the metric isn't measured for that insurer (e.g. it doesn't sell marketplace plans, or its volume is below our
+                <a href="{% url 'worst_insurance_methodology' %}">reliability thresholds</a>). Scores are discounted for missing metrics rather than treating unmeasured as bad.</small></p>
+                {% else %}
+                <div class="alert alert-secondary">
+                    <h5 class="mb-2">Why isn't {{ state.name }} ranked?</h5>
+                    <p class="mb-1">
+                        {% if reason == 'no_behavior_data' or reason == 'no_data' %}
+                        No public, machine-readable dataset we use covers insurer conduct in {{ state.name }} right now.
+                        {% elif reason == 'too_few_measurable_issuers' %}
+                        Fewer than two insurers in {{ state.name }} meet our data-volume thresholds, so crowning a &ldquo;worst&rdquo; wouldn't be meaningful.
+                        {% else %}
+                        The public data available for {{ state.name }} fell below our reliability thresholds this month.
+                        {% endif %}
+                    </p>
+                    <p class="mb-0"><small>See the <a href="{% url 'worst_insurance_methodology' %}">methodology</a> for the sources we check and the thresholds we apply.</small></p>
+                </div>
+                {% endif %}
+
+                {% if notes %}
+                <div class="text-muted"><small>Notes: {% for note in notes %}{{ note }}{% if not forloop.last %}; {% endif %}{% endfor %}</small></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Data sources -->
+<section id="sources" class="py-4 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h4>Data sources for this report</h4>
+                <ul class="list-unstyled mb-2">
+                    {% for source in report.sources %}
+                    <li class="mb-1">
+                        {% if source.status == 'ok' %}<span class="badge bg-success">ok</span>{% else %}<span class="badge bg-secondary">{{ source.status }}</span>{% endif %}
+                        {{ source.name }} <small class="text-muted">({{ source.vintage }})</small>
+                    </li>
+                    {% endfor %}
+                </ul>
+                <small class="text-muted">Rankings describe performance on these public metrics among insurers with sufficient data; they are not statements about any company's legal compliance. Full details in the <a href="{% url 'worst_insurance_methodology' %}">methodology</a>.</small>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Complaint pointer -->
+<section id="take-action" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h4>Had a bad experience with an insurer in {{ state.name }}?</h4>
+                <p>
+                    Complaints to your state regulator are how this data gets built &mdash; and they often get results.
+                    <a href="{% url 'state_help' state.slug %}">Find {{ state.name }}'s insurance department contacts and consumer help here.</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2>Fighting a denial{% if status == 'ok' %} from {{ rankings.0.issuer_name }} or anyone else{% endif %}?</h2>
+                <p class="lead">Most denials can be appealed. We help you generate a strong appeal letter in minutes, for free.</p>
+                <a href="{% url 'scan' %}" class="btn btn-green btn-lg">Start Your Appeal</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}

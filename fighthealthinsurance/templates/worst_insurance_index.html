@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Worst Health Insurance Company by State - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Worst Health Insurance Company by State - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Monthly rankings of the worst-behaving health insurance company in each state, computed from public regulator data (claim denial rates, confirmed complaints, overturned appeals, enforcement actions) normalized by insured population.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="worst-insurance-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Public Regulator Data, Ranked</h3>
+                    <h1 class="hero-headline">The Worst Health Insurance Company in Each State</h1>
+                    <p class="hero-subcopy">Updated monthly from government data. We estimate the <strong>hours of patients' and providers' time</strong> each insurer's denials cost people &mdash; from claim denial rates, overturned appeals, confirmed complaints, and enforcement actions. Every number is an estimate from public data; <a href="{% url 'worst_insurance_methodology' %}" class="text-white text-decoration-underline">see how we calculate it</a>.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Report meta -->
+<section id="report-meta" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto text-center">
+                <p class="lead mb-1">
+                    Rankings as of <strong>{{ report.period }}</strong>
+                    {% if report.window_start %}(data window {{ report.window_start }} to {{ report.window_end }}){% endif %}
+                    &mdash; {{ ranked_count }} states ranked.
+                </p>
+                <p class="text-muted">
+                    Where a state publishes no usable data, we say so &mdash; that lack of transparency is part of the story.
+                    Read the full <a href="{% url 'worst_insurance_methodology' %}">methodology</a>.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- State grid -->
+<section id="worst-by-state" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">Select Your State</h2>
+                <div class="row">
+                    {% for row in state_rows %}
+                    <div class="col-md-4 col-sm-6 mb-3">
+                        <div class="card h-100 {% if row.status == 'ok' %}border-danger{% else %}border-secondary{% endif %}">
+                            <div class="card-body">
+                                <h5 class="card-title mb-1">
+                                    {% if row.status == 'ok' %}
+                                    <a href="{% url 'worst_insurance_state' row.slug %}">{{ row.name }}</a>
+                                    {% else %}
+                                    {{ row.name }}
+                                    {% endif %}
+                                </h5>
+                                {% if row.status == 'ok' %}
+                                <p class="card-text mb-1">
+                                    <span class="text-danger fw-bold">{{ row.worst.issuer_name }}</span>
+                                </p>
+                                {% if row.worst_est_hours %}
+                                <small class="d-block text-muted mb-1">est. ~{{ row.worst_est_hours|floatformat:0 }} hrs/yr of people's time</small>
+                                {% endif %}
+                                <small class="text-muted">
+                                    Score {{ row.worst.composite_score|floatformat:0 }}/100
+                                    &middot; <a href="{% url 'worst_insurance_state' row.slug %}">full rankings</a>
+                                </small>
+                                {% else %}
+                                <p class="card-text mb-1"><span class="badge bg-secondary">Insufficient public data</span></p>
+                                <small class="text-muted">This state doesn't publish enough machine-readable regulator data to rank insurers.</small>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <div class="alert alert-light border" role="note">
+                    <strong>About these rankings:</strong> scores are computed from public regulator data
+                    (CMS transparency and MLR files, state insurance department complaint and enforcement records)
+                    and describe performance on those public metrics among insurers with sufficient data
+                    &mdash; see the <a href="{% url 'worst_insurance_methodology' %}">methodology</a>, including
+                    per-source data vintages. They are not statements about any company's legal compliance,
+                    and every underlying number is shown on the state pages.
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2>Denied by your insurance company?</h2>
+                <p class="lead">Whoever your insurer is, you can fight back. Most denials can be appealed &mdash; and we make it easy, for free.</p>
+                <a href="{% url 'scan' %}" class="btn btn-green btn-lg">Start Your Appeal</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
