@@ -1,7 +1,7 @@
 """Tests for fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.
 
-`RemoveDataHelper.remove_data_for_email` is the GDPR / privacy-compliance
-deletion entry point invoked by the data-removal views. It is mocked in every
+`RemoveDataHelper.remove_data_for_email` is the data protection deletion
+entry point invoked by the data-removal views. It is mocked in every
 caller-side test but never directly exercised. These tests create real rows
 across every model touched by the helper and verify that matching rows are
 deleted while rows for unrelated emails are untouched.
