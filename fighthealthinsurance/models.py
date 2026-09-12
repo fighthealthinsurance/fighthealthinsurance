@@ -2554,35 +2554,44 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
             models.Index(fields=["created"], name="denial_created_idx"),
         ]
 
+    # The hash this instance was loaded with (from_db), so a save can tell
+    # whether the row is moving to another person. _UNLOADED = deferred or
+    # built in memory: the old value is fetched when it matters.
+    _UNLOADED: typing.Any = object()
+    _loaded_hashed_email: typing.Any = _UNLOADED
+
+    @classmethod
+    def from_db(
+        cls,
+        db: typing.Optional[str],
+        field_names: typing.Collection[str],
+        values: typing.Collection[typing.Any],
+        **kwargs: typing.Any,  # newer Django adds fetch_mode
+    ) -> typing.Self:
+        instance = super().from_db(db, field_names, values, **kwargs)
+        instance._loaded_hashed_email = instance.__dict__.get(
+            "hashed_email", cls._UNLOADED
+        )
+        return instance
+
+    def _hash_changed(self) -> bool:
+        loaded = self._loaded_hashed_email
+        if loaded is self._UNLOADED:
+            loaded = (
+                Denial.objects.filter(pk=self.pk)
+                .values_list("hashed_email", flat=True)
+                .first()
+            )
+        return bool(loaded != self.hashed_email)
+
     def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
         # Defensive guard: latest_ucr_lookup must point at a UCRLookup whose
         # own denial FK matches this row. Without this, a bad assignment could
         # surface another denial's snapshot/context to UCREnrichmentHelper.
         # Skip the lookup query when this field isn't being touched.
         update_fields = kwargs.get("update_fields")
-        if self._state.adding and self.hashed_email and not self.person_counted:
-            # A person counted in LifetimeCounters.people_with_draft carries
-            # person_counted on every denial of theirs. A denial created later
-            # inherits it, under the same row lock lifetime_counters takes to
-            # count, so the two serialize: whichever commits first, the new
-            # row ends up flagged and the person cannot be counted again once
-            # the older denials are gone (review).
-            with transaction.atomic():
-                siblings = (
-                    Denial.objects.select_for_update(of=("self",))
-                    .filter(hashed_email=self.hashed_email)
-                    .values_list("person_counted", flat=True)
-                )
-                if any(siblings):
-                    self.person_counted = True
-                super().save(*args, **kwargs)
-            return
-        if (
-            update_fields is None
-            and self.pk is not None
-            and not self._state.adding
-            and not kwargs.get("force_insert")
-        ):
+        inserting = self._state.adding or bool(kwargs.get("force_insert"))
+        if update_fields is None and self.pk is not None and not inserting:
             # person_counted is owned by lifetime_counters and flipped with a
             # direct UPDATE: a full save of an instance loaded before that
             # flip must not write the stale False back (review). Existing
@@ -2611,7 +2620,34 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
                         owner_denial_id, self.denial_id
                     )
                 )
-        super().save(*args, **kwargs)
+        # person_counted bookkeeping (lifetime_counters): the hash is the
+        # person, so a new row, or a row whose hash changed, adopts the
+        # counted state of the person it now belongs to. Decided under that
+        # person's lock, so it serializes with the first-draft count and with
+        # another creation for the same hash, even one that has no rows yet
+        # (review). Every other save leaves the flag alone.
+        if inserting:
+            adopt = bool(self.hashed_email)
+        else:
+            adopt = "hashed_email" in (update_fields or ()) and self._hash_changed()
+        if not adopt:
+            super().save(*args, **kwargs)
+            self._loaded_hashed_email = self.hashed_email
+            return
+        from fighthealthinsurance.lifetime_counters import person_lock
+
+        with transaction.atomic():
+            person_lock(self.hashed_email)
+            counted = Denial.objects.filter(
+                hashed_email=self.hashed_email, person_counted=True
+            )
+            if self.pk is not None:
+                counted = counted.exclude(pk=self.pk)
+            self.person_counted = bool(self.hashed_email) and counted.exists()
+            if update_fields is not None and "person_counted" not in update_fields:
+                kwargs["update_fields"] = [*update_fields, "person_counted"]
+            super().save(*args, **kwargs)
+        self._loaded_hashed_email = self.hashed_email
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):

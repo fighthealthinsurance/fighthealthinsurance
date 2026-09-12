@@ -11,14 +11,17 @@ back. So:
   does not count).
 * ``people_with_draft`` moves when a person's first generated draft is
   counted, which sets ``person_counted`` on every Denial row of theirs.
-  The decision is made under a row lock on those denials, so two racing
-  first drafts serialize and exactly one counts; a denial created later
-  inherits the flag (Denial.save, same lock) and any unflagged row is
-  flagged on the person's next draft, so the flag never depends on one
-  particular denial surviving. The flag lives on rows that already carry
-  the hash, survives draft churn (the precompute's rows are deleted on a
-  text change), and leaves with the person's data on deletion, so nothing
-  is retained beyond what the denials already are.
+  The decision is made under the person's lock (``person_lock``: a
+  per-hash advisory lock on PostgreSQL, plus FOR UPDATE on the rows), so
+  two racing first drafts serialize and exactly one counts. The hash is
+  the person: a denial created later, or one whose hash changes, adopts
+  the counted state of the person it belongs to under the same lock
+  (Denial.save), and any row that is still unflagged is flagged on the
+  person's next draft, so the flag never depends on one particular denial
+  surviving. It lives on rows that already carry the hash, survives draft
+  churn (the precompute's rows are deleted on a text change), and leaves
+  with the person's data on deletion, so nothing is retained beyond what
+  the denials already are.
 * ``faxes_sent`` moves in finalize_fax the first time a row is finalized
   (an attempt was made, whatever its result), and ``faxes_delivered`` the
   first time it is finalized as delivered; each once per fax, recorded by
@@ -46,9 +49,10 @@ the seed are unrecoverable, and a person who deletes and returns is counted
 again (their new denials start unflagged).
 """
 
+import hashlib
 from typing import Any, Dict
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F, Value
 from django.db.models.functions import Coalesce
 from django.db.models.signals import post_save
@@ -68,6 +72,30 @@ def _add(**deltas: int) -> None:
     LifetimeCounters.objects.filter(pk=pk).update(**changes)
 
 
+def _advisory_key(hashed_email: str) -> int:
+    """Stable signed 64-bit key for pg_advisory_xact_lock."""
+    digest = hashlib.blake2b(hashed_email.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
+def person_lock(hashed_email: str) -> None:
+    """Serialize every writer of ``person_counted`` for one person.
+
+    On PostgreSQL this is a transaction-scoped advisory lock keyed on the
+    hash, released at commit or rollback, so a first-draft count, a denial
+    created for the same person and a denial moving to that person cannot
+    interleave, even while the person has no rows yet to lock. Other
+    backends (sqlite in tests) have no equivalent and run single-writer
+    here. Call it inside transaction.atomic(), before touching the rows.
+    """
+    if not hashed_email or connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(%s)", [_advisory_key(hashed_email)]
+        )
+
+
 def _mark_person(hashed_email: str) -> bool:
     """True exactly once per person, however many writers race.
 
@@ -80,6 +108,7 @@ def _mark_person(hashed_email: str) -> bool:
     """
     from fighthealthinsurance.models import Denial
 
+    person_lock(hashed_email)
     flags = list(
         Denial.objects.select_for_update(of=("self",))
         .filter(hashed_email=hashed_email)

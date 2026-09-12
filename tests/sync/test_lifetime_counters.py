@@ -12,6 +12,9 @@ from fighthealthinsurance.models import (
     FaxesToSend,
     LifetimeCounters,
     ProposedAppeal,
+    UCRAreaKind,
+    UCRGeographicArea,
+    UCRLookup,
 )
 
 
@@ -72,6 +75,85 @@ class DraftCounterTest(TestCase):
         Denial.objects.filter(pk=a.pk).delete()
         ProposedAppeal.objects.create(for_denial=b, appeal_text="again")
         self.assertEqual(_counters()[:2], (2, 0))
+
+    def test_row_moving_to_another_hash_adopts_that_persons_state(self):
+        """The hash is the person. A flagged row re-keyed to an uncounted
+        person must not suppress that person's first count, and an
+        unflagged row re-keyed into a counted person must be flagged, or
+        deleting that person's older denial lets them count again (review)."""
+        a = self._denial()
+        ProposedAppeal.objects.create(for_denial=a, appeal_text="first")
+        self.assertEqual(_counters()[:2], (1, 1))
+        a = Denial.objects.get(pk=a.pk)
+        a.hashed_email = "person-q"  # the edit form can change the email
+        a.save()
+        self.assertFalse(Denial.objects.get(pk=a.pk).person_counted)
+        ProposedAppeal.objects.create(for_denial=a, appeal_text="q first")
+        self.assertEqual(_counters()[:2], (2, 2))
+        stray = self._denial("person-r")  # unflagged, no draft yet
+        stray = Denial.objects.get(pk=stray.pk)
+        stray.hashed_email = "person-q"
+        stray.save()
+        self.assertTrue(Denial.objects.get(pk=stray.pk).person_counted)
+        Denial.objects.filter(pk=a.pk).delete()
+        ProposedAppeal.objects.create(for_denial=stray, appeal_text="q again")
+        self.assertEqual(_counters()[:2], (3, 2))
+        stray.hashed_email = ""
+        stray.save(update_fields=["hashed_email"])
+        self.assertFalse(Denial.objects.get(pk=stray.pk).person_counted)
+
+    def test_deferred_load_still_detects_a_hash_change(self):
+        a = self._denial()
+        ProposedAppeal.objects.create(for_denial=a, appeal_text="first")
+        thin = Denial.objects.only("denial_text").get(pk=a.pk)
+        thin.hashed_email = "person-q"
+        thin.save()
+        self.assertFalse(Denial.objects.get(pk=a.pk).person_counted)
+
+    def test_every_flag_writer_takes_the_person_lock(self):
+        with mock.patch.object(lifetime_counters, "person_lock") as lock:
+            d = self._denial()
+            lock.assert_called_once_with("person-a")
+            lock.reset_mock()
+            self._denial("")  # no person, nothing to serialize
+            lock.assert_not_called()
+            ProposedAppeal.objects.create(for_denial=d, appeal_text="draft")
+            lock.assert_called_once_with("person-a")
+            lock.reset_mock()
+            d = Denial.objects.get(pk=d.pk)
+            d.denial_text = "edited"
+            d.save()  # hash unchanged: no lock, flag untouched
+            lock.assert_not_called()
+            d.hashed_email = "person-q"
+            d.save()
+            lock.assert_called_once_with("person-q")
+
+    def test_person_lock_is_a_postgres_advisory_lock(self):
+        key = lifetime_counters._advisory_key("person-a")
+        self.assertEqual(key, lifetime_counters._advisory_key("person-a"))
+        self.assertNotEqual(key, lifetime_counters._advisory_key("person-b"))
+        self.assertTrue(-(2**63) <= key < 2**63)
+        conn = mock.MagicMock(vendor="postgresql")
+        cursor = conn.cursor.return_value.__enter__.return_value
+        with mock.patch.object(lifetime_counters, "connection", conn):
+            lifetime_counters.person_lock("person-a")
+        cursor.execute.assert_called_once_with(
+            "SELECT pg_advisory_xact_lock(%s)", [key]
+        )
+        with mock.patch.object(lifetime_counters, "connection", conn):
+            lifetime_counters.person_lock("")
+        cursor.execute.assert_called_once()  # blank hash: no lock
+
+    def test_creation_still_enforces_the_ucr_owner_guard(self):
+        owner = self._denial()
+        area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
+        lookup = UCRLookup.objects.create(
+            denial=owner, procedure_code="99213", matched_area=area, rates_snapshot=[]
+        )
+        with self.assertRaises(ValueError):
+            Denial(
+                semi_sekret="s", hashed_email="person-a", latest_ucr_lookup=lookup
+            ).save()
 
     def test_speculative_precompute_counts_as_generated(self):
         ProposedAppeal.objects.create(
