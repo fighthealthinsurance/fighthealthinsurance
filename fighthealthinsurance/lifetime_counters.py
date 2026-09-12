@@ -12,10 +12,13 @@ back. So:
 * ``people_with_draft`` moves when a person's first generated draft is
   counted, which sets ``person_counted`` on every Denial row of theirs.
   The decision is made under a row lock on those denials, so two racing
-  first drafts serialize and exactly one counts; the flag lives on rows
-  that already carry the hash, survives draft churn (the precompute's rows
-  are deleted on a text change), and leaves with the person's data on
-  deletion, so nothing is retained beyond what the denials already are.
+  first drafts serialize and exactly one counts; a denial created later
+  inherits the flag (Denial.save, same lock) and any unflagged row is
+  flagged on the person's next draft, so the flag never depends on one
+  particular denial surviving. The flag lives on rows that already carry
+  the hash, survives draft churn (the precompute's rows are deleted on a
+  text change), and leaves with the person's data on deletion, so nothing
+  is retained beyond what the denials already are.
 * ``faxes_sent`` moves in finalize_fax the first time a row is finalized
   (an attempt was made, whatever its result), and ``faxes_delivered`` the
   first time it is finalized as delivered; each once per fax, recorded by
@@ -68,10 +71,12 @@ def _add(**deltas: int) -> None:
 def _mark_person(hashed_email: str) -> bool:
     """True exactly once per person, however many writers race.
 
-    Locks the person's denial rows, then flips ``person_counted`` on all of
-    them if none was set. A second writer waits on the lock and sees the
-    flag. If the rows are gone (the person was deleted between the draft
-    insert and this call), nothing is created and nothing is counted.
+    Locks the person's denial rows and flips ``person_counted`` on every one
+    that lacks it; the person counts only if none had it. A second writer
+    waits on the lock and sees the flag. A denial that slipped in unflagged
+    is flagged here too, so the flag never depends on one particular row
+    surviving. If the rows are gone (the person was deleted between the
+    draft insert and this call), nothing is created and nothing is counted.
     """
     from fighthealthinsurance.models import Denial
 
@@ -80,10 +85,12 @@ def _mark_person(hashed_email: str) -> bool:
         .filter(hashed_email=hashed_email)
         .values_list("person_counted", flat=True)
     )
-    if not flags or any(flags):
+    if not flags:
         return False
-    Denial.objects.filter(hashed_email=hashed_email).update(person_counted=True)
-    return True
+    Denial.objects.filter(hashed_email=hashed_email, person_counted=False).update(
+        person_counted=True
+    )
+    return not any(flags)
 
 
 @receiver(

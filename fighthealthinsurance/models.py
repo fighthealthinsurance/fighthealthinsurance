@@ -2560,6 +2560,23 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         # surface another denial's snapshot/context to UCREnrichmentHelper.
         # Skip the lookup query when this field isn't being touched.
         update_fields = kwargs.get("update_fields")
+        if self._state.adding and self.hashed_email and not self.person_counted:
+            # A person counted in LifetimeCounters.people_with_draft carries
+            # person_counted on every denial of theirs. A denial created later
+            # inherits it, under the same row lock lifetime_counters takes to
+            # count, so the two serialize: whichever commits first, the new
+            # row ends up flagged and the person cannot be counted again once
+            # the older denials are gone (review).
+            with transaction.atomic():
+                siblings = (
+                    Denial.objects.select_for_update(of=("self",))
+                    .filter(hashed_email=self.hashed_email)
+                    .values_list("person_counted", flat=True)
+                )
+                if any(siblings):
+                    self.person_counted = True
+                super().save(*args, **kwargs)
+            return
         if (
             update_fields is None
             and self.pk is not None

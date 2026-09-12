@@ -45,6 +45,34 @@ class DraftCounterTest(TestCase):
         )
         self.assertEqual(_counters()[:3], (4, 2, 0))
 
+    def test_later_denial_inherits_the_flag_so_deleting_the_first_is_safe(self):
+        """A denial created after the person was counted must carry the
+        flag: otherwise deleting the older denial by hand (admin) leaves the
+        person present but unflagged, and their next draft counts them
+        again (review)."""
+        a = self._denial()
+        ProposedAppeal.objects.create(for_denial=a, appeal_text="first")
+        self.assertEqual(_counters()[:2], (1, 1))
+        b = self._denial()  # same person, created after the count
+        self.assertTrue(Denial.objects.get(pk=b.pk).person_counted)
+        Denial.objects.filter(pk=a.pk).delete()
+        ProposedAppeal.objects.create(for_denial=b, appeal_text="later")
+        self.assertEqual(_counters()[:2], (2, 1))
+
+    def test_unflagged_sibling_is_flagged_on_the_next_draft(self):
+        """The race the row lock serializes can still leave one row
+        unflagged if the two commits interleave the other way; the next
+        draft repairs it without counting the person again."""
+        a = self._denial()
+        b = self._denial()
+        Denial.objects.filter(pk=a.pk).update(person_counted=True)  # as if raced
+        ProposedAppeal.objects.create(for_denial=b, appeal_text="draft")
+        self.assertEqual(_counters()[:2], (1, 0))
+        self.assertTrue(Denial.objects.get(pk=b.pk).person_counted)
+        Denial.objects.filter(pk=a.pk).delete()
+        ProposedAppeal.objects.create(for_denial=b, appeal_text="again")
+        self.assertEqual(_counters()[:2], (2, 0))
+
     def test_speculative_precompute_counts_as_generated(self):
         ProposedAppeal.objects.create(
             for_denial=self._denial(), appeal_text="held back", speculative=True
