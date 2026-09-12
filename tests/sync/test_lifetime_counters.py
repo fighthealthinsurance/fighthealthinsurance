@@ -217,7 +217,9 @@ class DraftCounterTest(TestCase):
         ), mock.patch.object(
             lifetime_counters, "person_lock", side_effect=[True, False]
         ):
-            self.assertFalse(lifetime_counters._mark_person(x.pk))
+            ProposedAppeal.objects.create(for_denial=x, appeal_text="draft")
+        # The draft still counts; only the person is given up on, logged.
+        self.assertEqual(_counters()[:2], (1, 0))
         self.assertFalse(Denial.objects.get(pk=x.pk).person_counted)
 
     def test_deferred_load_still_detects_a_hash_change(self):
@@ -528,6 +530,85 @@ class FaxCounterTest(TestCase):
             fax_send_core.finalize_fax(fax, True, False)
         fax.refresh_from_db()
         self.assertTrue(fax.sent and fax.fax_success)
+
+
+class DeletionTotalsTest(TestCase):
+    """RemoveDataHelper's own bookkeeping, which is not a lifetime counter:
+    it counts what deletion took, and must never block a deletion."""
+
+    EMAIL = "person@example.com"
+
+    def _denial(self):
+        return Denial.objects.create(
+            semi_sekret="s", hashed_email=Denial.get_hashed_email(self.EMAIL)
+        )
+
+    def _totals(self):
+        from fighthealthinsurance.models import DataRemovalTotals
+
+        row = DataRemovalTotals.objects.filter(
+            pk=DataRemovalTotals.SINGLETON_ID
+        ).first()
+        return (row.requests, row.denials) if row else (0, 0)
+
+    def test_totals_count_the_denials_the_delete_actually_removed(self):
+        """A denial created after a pre-delete count would be deleted and
+        never counted; the number comes from the delete itself (review)."""
+        from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+
+        self._denial()
+        late = None
+
+        real_delete = RemoveDataHelper._delete_rows.__func__
+
+        def delete_rows(cls, email, hashed_email):
+            nonlocal late
+            late = Denial.objects.create(  # lands after any pre-count
+                semi_sekret="s", hashed_email=hashed_email
+            )
+            return real_delete(cls, email, hashed_email)
+
+        with mock.patch.object(
+            RemoveDataHelper, "_delete_rows", classmethod(delete_rows)
+        ):
+            RemoveDataHelper.remove_data_for_email(self.EMAIL)
+        self.assertIsNotNone(late)
+        self.assertEqual(self._totals(), (1, 2))
+        self.assertFalse(Denial.objects.exists())
+
+    def test_deletion_locks_the_person_before_touching_their_rows(self):
+        """The cascade locks denial rows one at a time; taking the person's
+        lock first is what keeps it from deadlocking a count (review)."""
+        from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+
+        d = self._denial()
+        order = []
+        with mock.patch.object(
+            lifetime_counters,
+            "person_lock",
+            side_effect=lambda h, **kw: order.append(("lock", h)) or True,
+        ), mock.patch.object(
+            RemoveDataHelper,
+            "_delete_rows",
+            classmethod(
+                lambda cls, email, hashed: order.append(("delete", hashed)) or 0
+            ),
+        ):
+            RemoveDataHelper.remove_data_for_email(self.EMAIL)
+        self.assertEqual(order, [("lock", d.hashed_email), ("delete", d.hashed_email)])
+
+    def test_bookkeeping_failure_never_blocks_a_deletion(self):
+        from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+        from fighthealthinsurance.models import DataRemovalTotals
+
+        self._denial()
+        with mock.patch.object(
+            DataRemovalTotals.objects,
+            "get_or_create",
+            side_effect=DatabaseError("no table"),
+        ):
+            RemoveDataHelper.remove_data_for_email(self.EMAIL)
+        self.assertFalse(Denial.objects.exists())
 
 
 class SeedTest(TestCase):

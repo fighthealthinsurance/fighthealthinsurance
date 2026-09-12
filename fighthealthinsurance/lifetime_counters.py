@@ -23,9 +23,11 @@ back. So:
   surviving. It lives on rows that already carry the hash, survives draft
   churn (the precompute's rows are deleted on a text change), and leaves
   with the person's data on deletion, so nothing is retained beyond what
-  the denials already are. The one ordering caveat: an outer transaction
-  that writes denials of two different people holds both people's locks
-  until it commits; no caller does that today.
+  the denials already are. Deleting a person's data takes the same lock
+  first, because a cascade locks their denial rows one at a time and the
+  opposite order would deadlock against a count. The one ordering caveat:
+  an outer transaction that writes denials of two different people would
+  hold both people's locks until it commits; no caller does that today.
 * ``faxes_sent`` moves in finalize_fax the first time a row is finalized
   (an attempt was made, whatever its result), and ``faxes_delivered`` the
   first time it is finalized as delivered; each once per fax, recorded by
@@ -146,9 +148,10 @@ def _mark_person(denial_id: int) -> bool:
     the new person's lock with the try variant and gives up rather than
     waiting. Waiting there, while possibly still holding the previous
     person's advisory lock, is exactly the cycle a re-key going the other
-    way completes (review); only the first attempt, which holds nothing,
-    may block. If the row is gone (the person was deleted between the
-    draft insert and this call) or has no hash, nothing is counted.
+    way completes (review); only the first attempt, which holds no other
+    person's lock, may block. If the row is gone (the person was deleted
+    between the draft insert and this call) or has no hash, nothing is
+    counted.
     """
     from fighthealthinsurance.models import Denial
 
