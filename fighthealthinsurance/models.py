@@ -1871,6 +1871,17 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     # Idempotency guard so a retried send (e.g. Temporal's at-least-once activity
     # execution) never faxes the recipient twice.
     vendor_send_completed = models.BooleanField(default=False)
+    # Set once, ever, by finalize_fax when the lifetime counters count this
+    # row's first attempt and first confirmed delivery (lifetime_counters.py).
+    # `sent` and `fax_success` describe the LATEST attempt and are reset by a
+    # resend; these two are never reset, so a resend cannot count again.
+    # editable=False keeps them off every ModelForm, the admin included.
+    attempt_counted = models.BooleanField(
+        default=False, db_default=False, editable=False
+    )
+    delivery_counted = models.BooleanField(
+        default=False, db_default=False, editable=False
+    )
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
     for_appeal = models.ForeignKey(
@@ -2257,6 +2268,31 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     def __str__(self):
         return f"{self.fax_id} -- {self.email} -- {self.paid} -- {self.fax_success} -- {self.name}"
 
+    LIFETIME_MARKERS = ("attempt_counted", "delivery_counted")
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        # attempt_counted / delivery_counted are owned by finalize_fax and
+        # set with direct UPDATEs. A full save of an instance loaded before
+        # that (resend, precheck, remote_send_fax, admin) must not write the
+        # stale False back, or the next finalize counts the fax again
+        # (review). Existing rows saved without update_fields get one that
+        # excludes the markers and deferred fields, as Denial.save does.
+        if (
+            kwargs.get("update_fields") is None
+            and self.pk is not None
+            and not self._state.adding
+            and not kwargs.get("force_insert")
+        ):
+            deferred = self.get_deferred_fields()
+            kwargs["update_fields"] = [
+                f.name
+                for f in self._meta.concrete_fields
+                if not f.primary_key
+                and f.name not in self.LIFETIME_MARKERS
+                and f.attname not in deferred
+            ]
+        super().save(*args, **kwargs)
+
 
 class DenialTypesRelation(models.Model):
     """Many-to-many through table linking denials to their denial types with source tracking."""
@@ -2293,6 +2329,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     denial_id = models.AutoField(primary_key=True, null=False)
     uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     hashed_email = models.CharField(max_length=300, primary_key=False)
+    # Set on every denial of a person the moment their first generated draft
+    # is counted in LifetimeCounters.people_with_draft (lifetime_counters.py).
+    # Lives on rows that already carry the hash and go with them on deletion,
+    # so no separate identifier is retained; a person who deletes and returns
+    # starts unflagged and is counted again.
+    person_counted = models.BooleanField(
+        default=False, db_default=False, editable=False
+    )
     denial_text = models.TextField(primary_key=False)
     date_of_service_text = models.TextField(primary_key=False, null=True, blank=True)
     denial_type_text = models.TextField(max_length=200, null=True, blank=True)
@@ -2516,6 +2560,22 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         # surface another denial's snapshot/context to UCREnrichmentHelper.
         # Skip the lookup query when this field isn't being touched.
         update_fields = kwargs.get("update_fields")
+        inserting = self._state.adding or bool(kwargs.get("force_insert"))
+        if update_fields is None and self.pk is not None and not inserting:
+            # person_counted is owned by lifetime_counters and flipped with a
+            # direct UPDATE: a full save of an instance loaded before that
+            # flip must not write the stale False back (review). Existing
+            # rows saved without update_fields get one that excludes it, and
+            # excludes deferred fields the way Django itself would.
+            deferred = self.get_deferred_fields()
+            kwargs["update_fields"] = [
+                f.name
+                for f in self._meta.concrete_fields
+                if not f.primary_key
+                and f.name != "person_counted"
+                and f.attname not in deferred  # deferred names are attnames
+            ]
+            update_fields = kwargs["update_fields"]
         check_lookup = update_fields is None or "latest_ucr_lookup" in update_fields
         if check_lookup and self.latest_ucr_lookup_id:
             owner_denial_id = (
@@ -2530,7 +2590,42 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
                         owner_denial_id, self.denial_id
                     )
                 )
-        super().save(*args, **kwargs)
+        if not (inserting or "hashed_email" in (update_fields or ())):
+            super().save(*args, **kwargs)
+            return
+        # person_counted bookkeeping (lifetime_counters): the hash is the
+        # person, so a new row, or a row whose hash changes, adopts the
+        # counted state of the person it now belongs to. Whether the hash
+        # changes is decided against the ROW, locked, never against what
+        # this instance remembers: a stale instance re-saving a move that
+        # already happened is not a move (review). The person's lock comes
+        # first, before any row lock, the same order the first-draft count
+        # uses, so the writers for one person serialize without a cycle.
+        from fighthealthinsurance.lifetime_counters import person_lock
+
+        with transaction.atomic():
+            if self.hashed_email:  # no person, nothing to serialize with
+                person_lock(self.hashed_email)
+            if inserting:
+                moved = True
+            else:
+                persisted = (
+                    Denial.objects.select_for_update(of=("self",))
+                    .filter(pk=self.pk)
+                    .values_list("hashed_email", flat=True)
+                    .first()
+                )
+                moved = persisted is not None and persisted != self.hashed_email
+            if moved:
+                counted = Denial.objects.filter(
+                    hashed_email=self.hashed_email, person_counted=True
+                )
+                if self.pk is not None:
+                    counted = counted.exclude(pk=self.pk)
+                self.person_counted = bool(self.hashed_email) and counted.exists()
+                if update_fields is not None and "person_counted" not in update_fields:
+                    kwargs["update_fields"] = [*update_fields, "person_counted"]
+            super().save(*args, **kwargs)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -4051,6 +4146,47 @@ class ModelHealthAlertState(models.Model):
 
     def __str__(self) -> str:
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
+
+
+class LifetimeCounters(models.Model):
+    """Lifetime totals that only ever go up (see lifetime_counters.py).
+
+    One row, no identifiers. ``appeals_generated`` and ``people_with_draft``
+    are bumped when a generated draft row is saved, ``faxes_delivered`` when
+    a fax send succeeds. Deleting a person's data changes none of them:
+    that is the point. Seeded once, at migration time, from the rows
+    present then (``since``).
+    """
+
+    SINGLETON_ID = 1
+
+    appeals_generated = models.PositiveIntegerField(default=0)
+    people_with_draft = models.PositiveIntegerField(default=0)
+    faxes_sent = models.PositiveIntegerField(default=0)
+    faxes_delivered = models.PositiveIntegerField(default=0)
+    since = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"LifetimeCounters<{self.appeals_generated} drafts>"
+
+
+class DataRemovalTotals(models.Model):
+    """Running count of delete-my-data requests, and the denials they took.
+
+    One row, counts only, no per-request timestamps (a timestamped row per
+    request could be lined up with UsedDeleteToken.used_at and tied to a
+    hashed email). Updated inside the deletion's own transaction so the
+    count and the deletion commit or roll back together.
+    """
+
+    SINGLETON_ID = 1
+
+    requests = models.PositiveIntegerField(default=0)
+    denials = models.PositiveIntegerField(default=0)
+    since = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"DataRemovalTotals<{self.requests} requests>"
 
 
 class ExternalServiceHealth(models.Model):

@@ -116,8 +116,7 @@ class TestVendorSendAtomicClaim:
             racer, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
         ):
             assert (
-                fax_send_core.send_fax_via_vendor(racer)
-                == fax_send_core.SEND_NOT_OWNER
+                fax_send_core.send_fax_via_vendor(racer) == fax_send_core.SEND_NOT_OWNER
             )
         assert mock_send.call_count == 1
 
@@ -134,23 +133,58 @@ class TestVendorSendAtomicClaim:
         assert fax.vendor_send_completed is False
 
 
+class _Both:
+    def __init__(self, *cms):
+        self._cms = cms
+
+    def __enter__(self):
+        return [cm.__enter__() for cm in self._cms]
+
+    def __exit__(self, *exc):
+        for cm in reversed(self._cms):
+            cm.__exit__(*exc)
+        return False
+
+
+@pytest.mark.django_db
 class TestFinalizeOrdering:
     """finalize must persist durable state before any notification, so an
     unlimited retry on a failing appeal.save() can't re-flood support."""
 
     def _pro_fax(self):
         fax = Mock()
+        fax.pk = 1
         fax.professional = True
         fax.email = "pro@example.com"
         fax.uuid = "u"
         fax.for_appeal = Mock()
         return fax
 
+    @staticmethod
+    def _rows(transition: int, present: int):
+        """finalize marks the fax with filtered UPDATEs (never save(), which
+        could re-create a deleted row): the latest-attempt write
+        (``filter(pk).update``, whose row count says whether the fax still
+        exists), then the once-only counted markers
+        (``filter(pk).filter(..._counted=False).update``). Model both, and
+        keep the lifetime counter out of these ordering tests."""
+        manager = MagicMock()
+        manager.filter.return_value.filter.return_value.update.return_value = transition
+        manager.filter.return_value.update.return_value = present
+        return (
+            patch("fighthealthinsurance.models.FaxesToSend.objects", manager),
+            patch("fighthealthinsurance.lifetime_counters.note_fax_events"),
+        )
+
+    def _row_present(self):
+        rows, counter = self._rows(transition=1, present=1)
+        return _Both(rows, counter)
+
     def test_appeal_persisted_before_notification(self):
         fax = self._pro_fax()
         order: list = []
         fax.for_appeal.save.side_effect = lambda: order.append("appeal_save")
-        with patch(
+        with self._row_present(), patch(
             "fighthealthinsurance.fax_send_core.send_fax_status_notification",
             side_effect=lambda *a, **k: order.append("notify"),
         ):
@@ -159,15 +193,37 @@ class TestFinalizeOrdering:
 
     def test_no_notification_when_appeal_save_fails(self):
         fax = self._pro_fax()
-        fax.for_appeal.save.side_effect = Exception("locked appeal row")
-        with patch(
+        fax.for_appeal.save.side_effect = RuntimeError("locked appeal row")
+        with self._row_present(), patch(
             "fighthealthinsurance.fax_send_core.send_fax_status_notification"
         ) as notify:
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError, match="locked appeal row"):
                 fax_send_core.finalize_fax(fax, True, False)
-        # Notification comes after the durable writes, so a failed appeal.save()
-        # (which the workflow will retry) never re-sends the support email.
+        # The appeal write was attempted and it is what failed; notification
+        # comes after the durable writes, so a failed appeal.save() (which
+        # the workflow will retry) never re-sends the support email.
+        fax.for_appeal.save.assert_called_once()
         notify.assert_not_called()
+
+    def test_gone_row_skips_the_appeal_write_and_notifications(self):
+        fax = self._pro_fax()
+        rows, counter = self._rows(transition=0, present=0)
+        with rows, counter as bump, patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification"
+        ) as notify:
+            fax_send_core.finalize_fax(fax, True, False)
+        fax.for_appeal.save.assert_not_called()
+        notify.assert_not_called()
+        bump.assert_not_called()
+
+    def test_already_delivered_row_is_not_counted_again(self):
+        fax = self._pro_fax()
+        rows, counter = self._rows(transition=0, present=1)
+        with rows, counter as bump, patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification"
+        ):
+            fax_send_core.finalize_fax(fax, True, False)
+        bump.assert_called_once_with(newly_sent=False, newly_delivered=False)
 
 
 @pytest.mark.django_db

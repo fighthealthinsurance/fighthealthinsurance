@@ -9,6 +9,9 @@ class FightHealthInsuranceConfig(AppConfig):
         # /metrics endpoint. Emits sample-less families unless pooling is
         # enabled (Prod's PG_USE_POOL), so it is safe in every
         # configuration.
+        # Registers the post_save receiver that keeps the lifetime counters.
+        import fighthealthinsurance.lifetime_counters  # noqa: F401
+
         from fighthealthinsurance.db_pool_metrics import register_pool_stats_collector
 
         register_pool_stats_collector()

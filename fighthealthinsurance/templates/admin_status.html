@@ -165,24 +165,28 @@
     {% else %}
       <div class="stat-grid">
         <div class="stat-card">
-          <div class="value">{{ fax_queue.unsent_total }}</div>
-          <div class="label">Unsent (total)</div>
-        </div>
-        <div class="stat-card">
           <div class="value">{{ fax_queue.ready_queued }}</div>
-          <div class="label">Queued (should send)</div>
+          <div class="label">Queued (user confirmed, not yet sent)</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card {% if fax_queue.due_now %}alert{% endif %}">
           <div class="value">{{ fax_queue.due_now }}</div>
-          <div class="label">Due now (&gt;1h old)</div>
+          <div class="label">Stuck (queued &gt;1h, never picked up)</div>
         </div>
-        <div class="stat-card">
-          <div class="value">{{ fax_queue.awaiting_confirmation }}</div>
-          <div class="label">Awaiting confirmation</div>
+        <div class="stat-card {% if fax_queue.requested_unpicked %}alert{% endif %}">
+          <div class="value">{{ fax_queue.requested_unpicked }}</div>
+          <div class="label">Professional send never picked up</div>
         </div>
         <div class="stat-card {% if fax_queue.in_flight %}alert{% endif %}">
           <div class="value">{{ fax_queue.in_flight }}</div>
-          <div class="label">In-flight / attempting</div>
+          <div class="label">Attempting now (started &lt;2h ago)</div>
+        </div>
+        <div class="stat-card {% if fax_queue.stale_attempts %}alert{% endif %}">
+          <div class="value">{{ fax_queue.stale_attempts }}</div>
+          <div class="label">Stale attempt (started &gt;2h ago, never finished)</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ fax_queue.awaiting_confirmation }}</div>
+          <div class="label">Never confirmed by the user</div>
         </div>
         <div class="stat-card {% if fax_queue.failures_recent %}alert{% endif %}">
           <div class="value">{{ fax_queue.failures_recent }}</div>
@@ -259,34 +263,6 @@
     {% endif %}
   </div>
 
-  {# ---------------- Intake funnel ---------------- #}
-  <div class="status-section">
-    <h2>&#128203; Intake funnel (last 7 days)</h2>
-    {% if intake_funnel.error %}
-      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ intake_funnel.error }}</span></p>
-    {% else %}
-      <p class="summary-line"><span class="pill">Stage tallies only; where do people stop between starting a submission and holding drafts?</span></p>
-      <div class="stat-grid">
-        <div class="stat-card">
-          <div class="value">{{ intake_funnel.started|default:0 }}</div>
-          <div class="label">Started a denial</div>
-        </div>
-        <div class="stat-card">
-          <div class="value">{{ intake_funnel.attempted_generation|default:0 }}</div>
-          <div class="label">Reached generation</div>
-        </div>
-        <div class="stat-card">
-          <div class="value">{{ intake_funnel.with_drafts|default:0 }}</div>
-          <div class="label">Have drafts</div>
-        </div>
-        <div class="stat-card">
-          <div class="value">{{ intake_funnel.chose_appeal|default:0 }}</div>
-          <div class="label">Chose an appeal</div>
-        </div>
-      </div>
-    {% endif %}
-  </div>
-
   {# ---------------- Fax delivery outcomes ---------------- #}
   <div class="status-section">
     <h2>📠 Fax delivery (last 7 days)</h2>
@@ -302,6 +278,10 @@
         <div class="stat-card">
           <div class="value">{{ fax_outcomes.delivered|default:0 }}</div>
           <div class="label">Delivered</div>
+        </div>
+        <div class="stat-card {% if fax_outcomes.delivered_all_time is None %}alert{% endif %}">
+          <div class="value">{% if fax_outcomes.delivered_all_time is None %}<span class="badge bad">unavailable</span>{% else %}{{ fax_outcomes.delivered_all_time }}{% endif %}</div>
+          <div class="label">Delivered, all time (counter; deletions do not lower it)</div>
         </div>
         <div class="stat-card {% if fax_outcomes.failed %}alert{% endif %}">
           <div class="value">{{ fax_outcomes.failed|default:0 }}</div>
@@ -340,6 +320,75 @@
         </tbody>
       </table>
       {% endif %}
+    {% endif %}
+  </div>
+
+  {# ---------------- All time ---------------- #}
+  <div class="status-section">
+    <h2>&#127942; All time</h2>
+    {% if all_time.error %}
+      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ all_time.error }}</span></p>
+    {% else %}
+      <p class="summary-line">Counters that only go up: a generated draft, a person's first generated draft and a delivered fax each add one at the moment they happen, and deleting someone's data changes none of them. {% if all_time.counting_since %}Counting since {{ all_time.counting_since|date:"Y-m-d" }}, seeded from the rows present that day; deletions before then are not recoverable.{% elif all_time.appeals_generated is None %}<span class="badge bad">counters unavailable right now</span>{% else %}Not seeded yet.{% endif %}</p>
+      <div class="stat-grid">
+        <div class="stat-card {% if all_time.appeals_generated is None %}alert{% endif %}">
+          <div class="value">{% if all_time.appeals_generated is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.appeals_generated }}{% endif %}</div>
+          <div class="label">Appeal drafts generated</div>
+        </div>
+        <div class="stat-card {% if all_time.people_with_draft_lifetime is None %}alert{% endif %}">
+          <div class="value">{% if all_time.people_with_draft_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.people_with_draft_lifetime }}{% endif %}</div>
+          <div class="label">People with a generated draft (distinct email hashes)</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{% if all_time.faxes_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.faxes_ever }}{% endif %}</div>
+          <div class="label">Fax requests (rows ever created; a row exists before the user confirms)</div>
+        </div>
+        <div class="stat-card {% if all_time.faxes_sent_lifetime is None %}alert{% endif %}">
+          <div class="value">{% if all_time.faxes_sent_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.faxes_sent_lifetime }}{% endif %}</div>
+          <div class="label">Faxes sent (an attempt was made)</div>
+        </div>
+        <div class="stat-card {% if all_time.faxes_delivered_lifetime is None %}alert{% endif %}">
+          <div class="value">{% if all_time.faxes_delivered_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.faxes_delivered_lifetime }}{% endif %}</div>
+          <div class="label">Faxes confirmed delivered</div>
+        </div>
+        <div class="stat-card {% if all_time.removal_requests is None %}alert{% endif %}">
+          <div class="value">{% if all_time.removal_requests is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.removal_requests }}{% endif %}</div>
+          <div class="label">Delete-my-data requests{% if all_time.removals_since %} (since {{ all_time.removals_since|date:"Y-m-d" }}, {{ all_time.removed_denials }} denial{{ all_time.removed_denials|pluralize }} removed){% endif %}</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{% if all_time.denials_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.denials_ever }}{% endif %}</div>
+          <div class="label">Denials ever created (id sequence; includes rolled-back inserts)</div>
+        </div>
+      </div>
+      <p class="summary-line">Still present today: {{ all_time.denials|default:0 }} denials{% if all_time.first_denial %} (oldest from {{ all_time.first_denial|date:"Y-m-d" }}){% endif %}, {{ all_time.drafts|default:0 }} generated drafts on {{ all_time.denials_with_draft|default:0 }} denials for {{ all_time.people_with_draft|default:0 }} people, {{ all_time.faxes_sent|default:0 }} faxes whose latest attempt went out and {{ all_time.faxes_delivered|default:0 }} whose latest attempt was confirmed delivered. Draft ids ever issued: {{ all_time.drafts_ever|default:"n/a" }}.</p>
+    {% endif %}
+  </div>
+
+  {# ---------------- Intake funnel ---------------- #}
+  <div class="status-section">
+    <h2>&#128203; Intake funnel (last 7 days)</h2>
+    {% if intake_funnel.error %}
+      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ intake_funnel.error }}</span></p>
+    {% else %}
+      <p class="summary-line"><span class="pill">Stage tallies only; where do people stop between starting a submission and holding drafts?</span></p>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.started|default:0 }}</div>
+          <div class="label">Started a denial</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.attempted_generation|default:0 }}</div>
+          <div class="label">Reached generation</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.with_drafts|default:0 }}</div>
+          <div class="label">Have drafts</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ intake_funnel.chose_appeal|default:0 }}</div>
+          <div class="label">Chose an appeal</div>
+        </div>
+      </div>
     {% endif %}
   </div>
 

@@ -6,7 +6,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Avg, Count, F, Max, QuerySet
+from django.db import connection
+from django.db.models import Avg, Count, F, Max, Min, QuerySet
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
@@ -138,6 +139,52 @@ class StaffDashboardView(generic.TemplateView):
     template_name = "staff_dashboard.html"
 
 
+def _lifetime_counters() -> Dict[str, Any]:
+    """The lifetime numbers: counters that only go up (lifetime_counters.py)
+    plus the running deletion count. Raises on failure; the caller renders
+    "unavailable" rather than a fabricated zero."""
+    from fighthealthinsurance.models import DataRemovalTotals, LifetimeCounters
+
+    counters = LifetimeCounters.objects.filter(pk=LifetimeCounters.SINGLETON_ID).first()
+    removals = DataRemovalTotals.objects.filter(
+        pk=DataRemovalTotals.SINGLETON_ID
+    ).first()
+    return {
+        "appeals_generated": counters.appeals_generated if counters else 0,
+        "people_with_draft_lifetime": counters.people_with_draft if counters else 0,
+        "faxes_sent_lifetime": counters.faxes_sent if counters else 0,
+        "faxes_delivered_lifetime": counters.faxes_delivered if counters else 0,
+        "counting_since": counters.since if counters else None,
+        "removal_requests": removals.requests if removals else 0,
+        "removed_denials": removals.denials if removals else 0,
+        "removals_since": removals.since if removals else None,
+    }
+
+
+def _sequence_value(model, column: str) -> Optional[int]:
+    """The id sequence's current value: how many rows were EVER created,
+    which deletion cannot lower (Melanie, 2026-09-11). Not Max(id) of the
+    remaining rows, which drops the moment the newest row is deleted
+    (review). Postgres and sqlite both keep such a counter; anything else
+    gets None and the page says so. A rolled-back insert consumes an id, so
+    this is a ceiling by a hair."""
+    table = model._meta.db_table
+    with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            cursor.execute("SELECT pg_get_serial_sequence(%s, %s)", [table, column])
+            seq = cursor.fetchone()[0]
+            if not seq:
+                return None
+            cursor.execute(f"SELECT last_value, is_called FROM {seq}")
+            last_value, is_called = cursor.fetchone()
+            return int(last_value) if is_called else 0
+        if connection.vendor == "sqlite":
+            cursor.execute("SELECT seq FROM sqlite_sequence WHERE name = %s", [table])
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+    return None
+
+
 class AdminStatusView(generic.TemplateView):
     """Staff system-status dashboard.
 
@@ -171,7 +218,10 @@ class AdminStatusView(generic.TemplateView):
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
         ctx["temporal"] = self._temporal_status()
-        ctx["fax_outcomes"] = self._fax_outcome_status()
+        # The lifetime counters are read once and feed both panels.
+        counters = self._lifetime()
+        ctx["fax_outcomes"] = self._fax_outcome_status(counters)
+        ctx["all_time"] = self._all_time_status(counters)
         ctx["intake_funnel"] = self._intake_funnel_status()
         ctx["letter_scoring"] = self._letter_scoring_status()
         ctx["storage"] = self._storage_status()
@@ -258,10 +308,43 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _fax_queue_status() -> Dict[str, Any]:
-        """Counts of queued / pending / failed faxes from FaxesToSend.
+        """Counts of queued / stuck / abandoned / failed faxes from FaxesToSend.
 
-        Mirrors what the fax actor acts on: it sends faxes that are
-        ``should_send=True, sent=False`` and at least an hour old.
+        The buckets staff act on:
+
+        * ``ready_queued``: confirmed by the user (``should_send=True``) and
+          not yet sent. The sender picks these up.
+        * ``due_now``: the subset older than an hour. A non-zero value here is
+          a STUCK fax -- the sender should already have taken it.
+        * ``awaiting_confirmation``: consumer rows never confirmed and never
+          attempted. Mostly drafts whose user never clicked send in the
+          confirmation email (they accumulate for months), but the consumer
+          appeal-staging path also creates paid rows before dispatching, so
+          a dispatch that fails there lands here too; the label does not
+          call this bucket "not actionable" (review). Telling those two apart
+          needs a send-intent flag on the row: follow-up, not this change.
+        * ``in_flight``: an attempt started in the last two hours that has not
+          finished. Unbounded, this counter showed rows from January whose
+          ``attempting_to_send_as_of`` was never cleared (2026-09-11).
+        * ``stale_attempts``: an attempt started MORE than two hours ago that
+          never finished: a worker died mid-send, or a row that nothing will
+          ever clear. These are the actionable leftovers, kept visible on
+          purpose (review): the professional path dispatches without
+          ``should_send``, so a stranded send there is not "queued" either.
+        * ``failures_recent``: sent in the last week and not delivered.
+
+        * ``requested_unpicked``: a professional's fax. That path dispatches
+          without ``should_send`` (fax_helpers.stage_appeal_as_fax), so a
+          requested, paid send that never reached precheck would otherwise
+          sit in the "never confirmed" bucket and be called not actionable
+          (review). Non-zero here is a stranded send.
+
+        ``due_now`` counts only rows the sender never touched (no attempt
+        timestamp): an attempted leftover is a stale attempt, not "not
+        taken", so one fax never lights two red cards. ``awaiting_confirmation``
+        excludes anything ever attempted and anything professional. All the
+        buckets come from ONE aggregate query so a row that moves bucket
+        mid-refresh cannot be counted in two (review).
         """
         out: Dict[str, Any] = {"ok": True, "error": None}
         try:
@@ -269,21 +352,51 @@ class AdminStatusView(generic.TemplateView):
 
             now = timezone.now()
             one_hour_ago = now - datetime.timedelta(hours=1)
+            two_hours_ago = now - datetime.timedelta(hours=2)
             week_ago = now - datetime.timedelta(days=7)
 
-            unsent = FaxesToSend.objects.filter(sent=False)
-            out["unsent_total"] = unsent.count()
-            out["ready_queued"] = unsent.filter(should_send=True).count()
-            out["due_now"] = unsent.filter(
-                should_send=True, date__lt=one_hour_ago
-            ).count()
-            out["awaiting_confirmation"] = unsent.filter(should_send=False).count()
-            out["in_flight"] = unsent.filter(
-                attempting_to_send_as_of__isnull=False
-            ).count()
-            out["failures_recent"] = FaxesToSend.objects.filter(
-                sent=True, fax_success=False, date__gte=week_ago
-            ).count()
+            unsent = Q(sent=False)
+            never_attempted = Q(attempting_to_send_as_of__isnull=True)
+            live_attempt = Q(attempting_to_send_as_of__gte=two_hours_ago)
+            stale_attempt = Q(attempting_to_send_as_of__lt=two_hours_ago)
+            counts = FaxesToSend.objects.aggregate(
+                unsent_total=Count("fax_id", filter=unsent),
+                ready_queued=Count("fax_id", filter=unsent & Q(should_send=True)),
+                due_now=Count(
+                    "fax_id",
+                    filter=unsent
+                    & never_attempted
+                    & Q(should_send=True, date__lt=one_hour_ago),
+                ),
+                awaiting_confirmation=Count(
+                    "fax_id",
+                    filter=unsent
+                    & never_attempted
+                    & Q(should_send=False, professional=False),
+                ),
+                requested_unpicked=Count(
+                    "fax_id",
+                    filter=unsent
+                    & never_attempted
+                    & Q(should_send=False, professional=True),
+                ),
+                in_flight=Count("fax_id", filter=unsent & live_attempt),
+                stale_attempts=Count("fax_id", filter=unsent & stale_attempt),
+                failures_recent=Count(
+                    "fax_id",
+                    # Recent by ATTEMPT, falling back to creation for rows
+                    # never stamped: the same window the Fax delivery panel
+                    # uses, so the two cards cannot disagree. Keyed on
+                    # creation alone, a resend of an old fax that failed
+                    # again could never appear here (review).
+                    filter=Q(sent=True, fax_success=False)
+                    & (
+                        Q(attempting_to_send_as_of__gte=week_ago)
+                        | Q(date__gte=week_ago)
+                    ),
+                ),
+            )
+            out.update(counts)
         except Exception as e:
             logger.opt(exception=True).error("Error computing fax queue status")
             out["ok"] = False
@@ -291,7 +404,75 @@ class AdminStatusView(generic.TemplateView):
         return out
 
     @staticmethod
-    def _fax_outcome_status() -> Dict[str, Any]:
+    def _lifetime() -> Optional[Dict[str, Any]]:
+        """None when the counters could not be read: the panels then say
+        "unavailable" rather than render a fabricated zero."""
+        try:
+            return _lifetime_counters()
+        except Exception:
+            logger.opt(exception=True).error("Error reading the lifetime counters")
+            return None
+
+    @staticmethod
+    def _all_time_status(counters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Lifetime totals (Melanie, 2026-09-11): counters that only go up
+        (appeals generated, people with a generated draft, faxes delivered,
+        deletion requests), which deleting a person's data cannot change;
+        "ever created" from the id sequences as a cross-check; and what is
+        still present today.
+        """
+        out: Dict[str, Any] = {"ok": True, "error": None}
+        try:
+            from fighthealthinsurance.models import Denial, FaxesToSend, ProposedAppeal
+
+            live = Denial.objects.aggregate(
+                denials=Count("denial_id"), first=Min("date")
+            )
+            out["denials"] = live["denials"]
+            out["first_denial"] = live["first"]
+            out["drafts"] = ProposedAppeal.objects.filter(chosen=False).count()
+            out["denials_with_draft"] = (
+                Denial.objects.filter(proposedappeal__chosen=False)
+                .values("pk")
+                .distinct()
+                .count()
+            )
+            out["people_with_draft"] = (
+                Denial.objects.filter(proposedappeal__chosen=False)
+                .exclude(hashed_email="")
+                .values("hashed_email")
+                .distinct()
+                .count()
+            )
+            out["faxes_sent"] = FaxesToSend.objects.filter(sent=True).count()
+            out["faxes_delivered"] = FaxesToSend.objects.filter(
+                fax_success=True
+            ).count()
+            out["denials_ever"] = _sequence_value(Denial, "denial_id")
+            out["drafts_ever"] = _sequence_value(ProposedAppeal, "id")
+            out["faxes_ever"] = _sequence_value(FaxesToSend, "fax_id")
+            keys = (
+                "appeals_generated",
+                "people_with_draft_lifetime",
+                "faxes_sent_lifetime",
+                "faxes_delivered_lifetime",
+                "counting_since",
+                "removal_requests",
+                "removed_denials",
+                "removals_since",
+            )
+            for key in keys:
+                out[key] = None if counters is None else counters[key]
+        except Exception as e:
+            logger.opt(exception=True).error("Error computing all-time status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _fax_outcome_status(
+        counters: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Fax delivery outcomes (last 7 days) from the database.
 
         The Temporal panel above shows workflow *status*, where "Completed"
@@ -328,6 +509,15 @@ class AdminStatusView(generic.TemplateView):
             return {
                 "sent": recent.count(),
                 "delivered": recent.filter(fax_success=True).count(),
+                # Melanie (2026-09-11): the number that matters over time. One
+                # aggregate, so the count and the date come from one snapshot
+                # (review). `date` is the row's creation time; nothing records
+                # the delivery time, so the label says "oldest ... created".
+                # Lifetime delivered: a counter bumped at each successful
+                # finalize, untouched by deletion (lifetime_counters.py).
+                "delivered_all_time": (
+                    None if counters is None else counters["faxes_delivered_lifetime"]
+                ),
                 "failed": failed_qs.count(),
                 "stuck_claims": failed_qs.filter(vendor_send_completed=True).count(),
                 "recent_failures": failed,

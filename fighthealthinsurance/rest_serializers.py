@@ -264,7 +264,8 @@ class DenialModelSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Denial
-        exclude: list[str] = []
+        # Staff-page bookkeeping (lifetime_counters), not denial data.
+        exclude: list[str] = ["person_counted"]
 
 
 class AppealDetailSerializer(serializers.ModelSerializer):

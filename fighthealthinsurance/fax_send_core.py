@@ -265,7 +265,39 @@ def finalize_fax(
     # support on every retry.)
     fax.sent = True
     fax.fax_success = fax_success
-    fax.save()
+    # UPDATE only, never save(): with the pk set, save() falls back to an
+    # INSERT when the UPDATE matches no row, which would re-create a fax
+    # that a delete-my-data request removed while this send was in flight,
+    # appeal text and email included (review). Zero rows means the person
+    # is gone: stop here, and send no notifications about their fax.
+    # The lifetime sent/delivered counters move inside this same
+    # transaction, keyed on two once-only markers on the row: finalize runs
+    # under an unlimited retry policy, and a resend resets sent/fax_success,
+    # so neither a retry nor a resend may count the same fax again (review).
+    from django.db import transaction
+
+    from fighthealthinsurance.models import FaxesToSend
+
+    with transaction.atomic():
+        rows = FaxesToSend.objects.filter(pk=fax.pk)
+        # sent / fax_success describe the latest attempt, as they always
+        # have (a resend resets them). The lifetime counters key off two
+        # once-only markers instead, so a resend after a failure, or a
+        # failure after a delivery, cannot count the same fax twice.
+        present = bool(rows.update(sent=True, fax_success=fax_success))
+        if present:
+            newly_sent = bool(
+                rows.filter(attempt_counted=False).update(attempt_counted=True)
+            )
+            newly_delivered = fax_success and bool(
+                rows.filter(delivery_counted=False).update(delivery_counted=True)
+            )
+            from fighthealthinsurance.lifetime_counters import note_fax_events
+
+            note_fax_events(newly_sent=newly_sent, newly_delivered=newly_delivered)
+    if not present:
+        logger.info(f"Fax uuid={fax.uuid} no longer exists at finalize; stopping")
+        return True
     if fax.professional:
         appeal = fax.for_appeal
         if appeal is not None:

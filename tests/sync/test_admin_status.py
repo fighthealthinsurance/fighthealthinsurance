@@ -149,19 +149,323 @@ class AdminStatusFaxQueueTest(TestCase):
         self._make_fax(should_send=True, sent=False, attempting_to_send_as_of=now)
         # E: a recent failure.
         self._make_fax(should_send=True, sent=True, fax_success=False)
+        # K: staged long ago, resent from the status page this week, failed
+        # again. Recent by attempt, not by creation: the queue card and the
+        # delivery panel must agree about it (review).
+        self._make_fax(
+            date=now - datetime.timedelta(days=30),
+            should_send=True,
+            sent=True,
+            fax_success=False,
+            attempting_to_send_as_of=now - datetime.timedelta(days=1),
+        )
         # F: a success (must be ignored everywhere).
         self._make_fax(should_send=True, sent=True, fax_success=True)
+        # G: an attempt from days ago that was never cleared. Not in flight
+        # (bounded to two hours), not an abandoned draft either: it is a
+        # stale attempt, the one bucket staff must still see (review).
+        self._make_fax(
+            should_send=False,
+            sent=False,
+            attempting_to_send_as_of=now - datetime.timedelta(days=3),
+        )
+        # H: queued two hours ago and picked up five minutes ago. Attempting,
+        # and therefore NOT stuck, even though it is older than an hour.
+        self._make_fax(
+            should_send=True,
+            sent=False,
+            date=two_hours_ago,
+            attempting_to_send_as_of=now - datetime.timedelta(minutes=5),
+        )
+        # I: confirmed yesterday, attempted three hours ago, worker died. One
+        # stale attempt; NOT also "stuck", which is for rows never picked up.
+        self._make_fax(
+            should_send=True,
+            sent=False,
+            date=now - datetime.timedelta(days=1),
+            attempting_to_send_as_of=now - datetime.timedelta(hours=3),
+        )
+        # J: a professional's fax. That path dispatches without should_send;
+        # unattempted, it is a stranded request, not an abandoned draft.
+        self._make_fax(should_send=False, sent=False, professional=True)
 
         response = self.client.get(reverse("admin_status"))
         self.assertEqual(response.status_code, 200)
         q = response.context["fax_queue"]
         self.assertTrue(q["ok"])
-        self.assertEqual(q["unsent_total"], 4)  # A, B, C, D
-        self.assertEqual(q["ready_queued"], 3)  # A, B, D
-        self.assertEqual(q["due_now"], 1)  # A only
-        self.assertEqual(q["awaiting_confirmation"], 1)  # C
-        self.assertEqual(q["in_flight"], 1)  # D
-        self.assertEqual(q["failures_recent"], 1)  # E
+        self.assertEqual(q["unsent_total"], 8)  # A, B, C, D, G, H, I, J
+        self.assertEqual(q["ready_queued"], 5)  # A, B, D, H, I
+        self.assertEqual(q["due_now"], 1)  # A only: H and I were picked up
+        self.assertEqual(
+            q["awaiting_confirmation"], 1
+        )  # C only: G attempted, J professional
+        self.assertEqual(q["requested_unpicked"], 1)  # J
+        self.assertEqual(q["in_flight"], 2)  # D, H; G and I are hours old
+        self.assertEqual(q["stale_attempts"], 2)  # G, I
+        self.assertEqual(q["failures_recent"], 2)  # E, K
+        # The page headlines what is actionable, not the unsent total.
+        self.assertNotContains(response, "Unsent (total)")
+        self.assertContains(response, "Stuck (queued")
+        self.assertContains(response, "Attempting now")
+        self.assertContains(response, "Stale attempt")
+        self.assertContains(response, "Professional send never picked up")
+        self.assertNotContains(response, "not actionable")
+        # The all-time delivered count lives in the delivery panel: F only.
+        outcomes = response.context["fax_outcomes"]
+        # Lifetime delivered is a counter bumped at finalize, not a row count:
+        # fixture rows created with fax_success=True never went through
+        # finalize, so it is 0 here and untouched by them.
+        self.assertEqual(outcomes["delivered_all_time"], 0)
+        self.assertContains(response, "Delivered, all time (counter")
+        all_time = response.context["all_time"]
+        self.assertTrue(all_time["ok"])
+        self.assertEqual(all_time["faxes_delivered"], 1)  # present rows
+        self.assertEqual(all_time["faxes_delivered_lifetime"], 0)  # counter
+        self.assertEqual(all_time["faxes_sent_lifetime"], 0)  # counter
+        self.assertEqual(all_time["faxes_sent"], 3)  # present rows: E, F, K
+        self.assertContains(response, "Faxes sent (an attempt was made)")
+        self.assertContains(response, "All time")
+
+    @mock.patch(_FAX)
+    @mock.patch(_ACTORS)
+    @mock.patch(_MODELS)
+    def test_all_time_counts_denials_drafts_and_people(
+        self, mock_models, mock_actors, mock_fax
+    ):
+        from fighthealthinsurance.models import Denial, ProposedAppeal
+
+        mock_models.return_value = []
+        mock_actors.return_value = {"alive_actors": 0, "total_actors": 0, "details": []}
+        mock_fax.return_value = _ok_fax_backends()
+        # Person a: two denials, both drafted (one of them twice) -- one
+        # person, two denials. Person b: one drafted denial. Person c: never
+        # drafted. A blank email hash with a draft: a denial, not a person.
+        # A speculative-only denial: precompute held in reserve, never
+        # served, so not "got a draft" (review).
+        a1 = Denial.objects.create(semi_sekret="s", hashed_email="person-a")
+        a2 = Denial.objects.create(semi_sekret="s", hashed_email="person-a")
+        b1 = Denial.objects.create(semi_sekret="s", hashed_email="person-b")
+        Denial.objects.create(semi_sekret="s", hashed_email="person-c")
+        blank = Denial.objects.create(semi_sekret="s", hashed_email="")
+        spec = Denial.objects.create(semi_sekret="s", hashed_email="person-d")
+        ProposedAppeal.objects.create(for_denial=a1, appeal_text="draft one for a1")
+        ProposedAppeal.objects.create(for_denial=a1, appeal_text="draft two for a1")
+        ProposedAppeal.objects.create(for_denial=a2, appeal_text="draft one for a2")
+        ProposedAppeal.objects.create(for_denial=b1, appeal_text="draft one for b1")
+        ProposedAppeal.objects.create(for_denial=blank, appeal_text="draft, no hash")
+        ProposedAppeal.objects.create(
+            for_denial=spec, appeal_text="speculative only", speculative=True
+        )
+        response = self.client.get(reverse("admin_status"))
+        self.assertEqual(response.status_code, 200)
+        t = response.context["all_time"]
+        self.assertEqual(t["denials"], 6)
+        self.assertEqual(t["drafts"], 6)
+        self.assertEqual(t["denials_with_draft"], 5)  # a1, a2, b1, blank, spec
+        self.assertEqual(t["people_with_draft"], 3)  # a, b, d; blank is not a person
+        self.assertIsNotNone(t["first_denial"])
+        # The counters moved with each generated draft: six drafts, three
+        # people (a counted once across two denials, blank excluded).
+        self.assertEqual(t["appeals_generated"], 6)
+        self.assertEqual(t["people_with_draft_lifetime"], 3)
+        # Ever-created comes from the id sequences: never below the live
+        # count, and it does not drop when the NEWEST rows are deleted.
+        self.assertGreaterEqual(t["denials_ever"], t["denials"])
+        newest_denial = Denial.objects.latest("denial_id")
+        newest_draft = ProposedAppeal.objects.latest("id")
+        ever_before = (t["denials_ever"], t["drafts_ever"])
+        newest_draft.delete()
+        newest_denial.delete()
+        t2 = self.client.get(reverse("admin_status")).context["all_time"]
+        self.assertEqual((t2["denials_ever"], t2["drafts_ever"]), ever_before)
+        self.assertEqual(t2["denials"], t["denials"] - 1)
+        # And the counters did not move on deletion.
+        self.assertEqual(t2["appeals_generated"], 6)
+        self.assertEqual(t2["people_with_draft_lifetime"], 3)
+
+    @mock.patch(_FAX)
+    @mock.patch(_ACTORS)
+    @mock.patch(_MODELS)
+    def test_unreadable_counters_are_unavailable_not_zero(
+        self, mock_models, mock_actors, mock_fax
+    ):
+        """A failed read of the counters must not render as zero anywhere."""
+        mock_models.return_value = []
+        mock_actors.return_value = {"alive_actors": 0, "total_actors": 0, "details": []}
+        mock_fax.return_value = _ok_fax_backends()
+        self._make_fax(should_send=True, sent=True, fax_success=True)
+        from fighthealthinsurance import staff_views
+
+        with mock.patch.object(
+            staff_views, "_lifetime_counters", side_effect=RuntimeError("timeout")
+        ):
+            response = self.client.get(reverse("admin_status"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context["fax_outcomes"]["delivered_all_time"])
+        t = response.context["all_time"]
+        for key in (
+            "appeals_generated",
+            "people_with_draft_lifetime",
+            "faxes_sent_lifetime",
+            "faxes_delivered_lifetime",
+            "removal_requests",
+        ):
+            self.assertIsNone(t[key], key)
+        self.assertContains(response, "counters unavailable right now")
+        self.assertNotContains(response, "Not seeded yet")
+        # one badge per counter-backed card (appeals, people, faxes sent,
+        # faxes delivered, removals, removed denials) plus the summary line
+        self.assertEqual(response.content.decode().count("unavailable"), 7)
+
+    def _person_with_data(self, email, delivered=True, professional_fax_for=None):
+        from fighthealthinsurance.models import Denial, ProposedAppeal
+
+        hashed = Denial.get_hashed_email(email)
+        d1 = Denial.objects.create(semi_sekret="s", hashed_email=hashed)
+        d2 = Denial.objects.create(semi_sekret="s", hashed_email=hashed)
+        ProposedAppeal.objects.create(for_denial=d1, appeal_text=f"real draft {email}")
+        ProposedAppeal.objects.create(
+            for_denial=d2, appeal_text=f"reserve {email}", speculative=True
+        )
+        if delivered:
+            self._make_fax(
+                hashed_email=hashed, email=email, sent=True, fax_success=True
+            )
+        self._make_fax(hashed_email=hashed, email=email, sent=True, fax_success=False)
+        if professional_fax_for is not None:
+            # A professional's fax staged for THIS person's denial: keyed by
+            # the professional's email and hash, removed by cascade through
+            # the denial (review).
+            self._make_fax(
+                hashed_email=Denial.get_hashed_email(professional_fax_for),
+                email=professional_fax_for,
+                denial_id=d1,
+                professional=True,
+                sent=True,
+                fax_success=True,
+            )
+        return hashed
+
+    @mock.patch(_FAX)
+    @mock.patch(_ACTORS)
+    @mock.patch(_MODELS)
+    def test_deletion_changes_no_lifetime_counter(
+        self, mock_models, mock_actors, mock_fax
+    ):
+        """delete-my-data removes the rows and counts itself; the lifetime
+        counters, which moved when the drafts were generated, do not move."""
+        from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+        from fighthealthinsurance.models import (
+            DataRemovalTotals,
+            Denial,
+            LifetimeCounters,
+            ProposedAppeal,
+        )
+
+        mock_models.return_value = []
+        mock_actors.return_value = {"alive_actors": 0, "total_actors": 0, "details": []}
+        mock_fax.return_value = _ok_fax_backends()
+        email = "leaving@example.com"
+        hashed = self._person_with_data(
+            email, professional_fax_for="pro@clinic.example"
+        )
+        staying = Denial.objects.create(semi_sekret="s", hashed_email="stays")
+        ProposedAppeal.objects.create(for_denial=staying, appeal_text="stays too")
+        before = LifetimeCounters.objects.get(pk=LifetimeCounters.SINGLETON_ID)
+        self.assertEqual((before.appeals_generated, before.people_with_draft), (3, 2))
+
+        RemoveDataHelper.remove_data_for_email(email)
+
+        self.assertFalse(Denial.objects.filter(hashed_email=hashed).exists())
+        after = LifetimeCounters.objects.get(pk=LifetimeCounters.SINGLETON_ID)
+        self.assertEqual(
+            (after.appeals_generated, after.people_with_draft, after.faxes_delivered),
+            (
+                before.appeals_generated,
+                before.people_with_draft,
+                before.faxes_delivered,
+            ),
+        )
+        totals = DataRemovalTotals.objects.get(pk=DataRemovalTotals.SINGLETON_ID)
+        self.assertEqual((totals.requests, totals.denials), (1, 2))
+        self.assertIsNotNone(totals.since)
+        t = self.client.get(reverse("admin_status")).context["all_time"]
+        self.assertEqual(t["people_with_draft"], 1)  # present: only "stays"
+        self.assertEqual(t["people_with_draft_lifetime"], 2)  # counter: unchanged
+        self.assertEqual(t["appeals_generated"], 3)
+        self.assertEqual(t["removal_requests"], 1)
+        self.assertEqual(t["removed_denials"], 2)
+
+    def test_failed_deletion_rolls_the_totals_back_and_a_retry_counts_once(self):
+        from django.db import DatabaseError
+
+        from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+        from fighthealthinsurance.models import DataRemovalTotals, Denial
+
+        email = "retry@example.com"
+        hashed = self._person_with_data(email)
+        # Fail AFTER the Denial delete has executed inside the transaction:
+        # the FollowUp delete comes later in _delete_rows.
+        with mock.patch(
+            "fighthealthinsurance.helpers.data_helpers.FollowUp.objects.filter",
+            side_effect=DatabaseError("halfway"),
+        ):
+            with self.assertRaises(DatabaseError):
+                RemoveDataHelper.remove_data_for_email(email)
+        # Nothing committed: the denials are back, nothing counted.
+        self.assertTrue(Denial.objects.filter(hashed_email=hashed).exists())
+        self.assertFalse(DataRemovalTotals.objects.exists())
+        RemoveDataHelper.remove_data_for_email(email)
+        totals = DataRemovalTotals.objects.get()
+        self.assertEqual((totals.requests, totals.denials), (1, 2))
+
+    def test_totals_failure_never_blocks_deletion(self):
+        """A database error while counting (e.g. the totals table missing
+        mid-rollout) rolls back only its savepoint; the deletion proceeds."""
+        from django.db import DatabaseError
+
+        from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+        from fighthealthinsurance.models import DataRemovalTotals, Denial
+
+        from django.db import connection
+
+        email = "blocked@example.com"
+        hashed = self._person_with_data(email)
+
+        def real_db_error(*args, **kwargs):
+            # A statement that actually fails at the database, inside the
+            # bookkeeping savepoint (on Postgres this would poison the
+            # enclosing transaction without the savepoint; sqlite forgives
+            # it, so this pins the code path, not the Postgres semantics).
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM table_that_does_not_exist")
+
+        with mock.patch.object(
+            DataRemovalTotals.objects, "get_or_create", side_effect=real_db_error
+        ):
+            RemoveDataHelper.remove_data_for_email(email)
+        self.assertFalse(Denial.objects.filter(hashed_email=hashed).exists())
+        self.assertFalse(DataRemovalTotals.objects.exists())
+
+    @mock.patch(_FAX)
+    @mock.patch(_ACTORS)
+    @mock.patch(_MODELS)
+    def test_fax_sections_sit_together(self, mock_models, mock_actors, mock_fax):
+        """Fax backends, queue, Temporal (fax workflows) and delivery are one
+        story; the intake funnel must not split them."""
+        mock_models.return_value = []
+        mock_actors.return_value = {"alive_actors": 0, "total_actors": 0, "details": []}
+        mock_fax.return_value = _ok_fax_backends()
+        response = self.client.get(reverse("admin_status"))
+        body = response.content.decode()
+        order = [
+            body.index("Fax Backends"),
+            body.index("Fax Queue"),
+            body.index("Temporal (fax workflows)"),
+            body.index("Fax delivery (last 7 days)"),
+            body.index("Intake funnel"),
+        ]
+        self.assertEqual(order, sorted(order), "fax sections are not contiguous")
 
 
 class FaxOutcomeStatusOrderingTest(TestCase):
@@ -483,7 +787,9 @@ class AdminStatusLetterScoringTest(TestCase):
     _drafts_made = 0
 
     @classmethod
-    def _draft(cls, denial, *, minutes_ago=5, speculative=False, scored=False, now=None):
+    def _draft(
+        cls, denial, *, minutes_ago=5, speculative=False, scored=False, now=None
+    ):
         # Distinct text per row: (denial, text fingerprint) is unique.
         cls._drafts_made += 1
         row = ProposedAppeal.objects.create(
@@ -517,7 +823,9 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertFalse(status["flag_on"])
 
     def test_a_key_without_the_flag_is_off_and_says_which_half_is_missing(self):
-        with override_settings(TYPESAFE_API_KEY="k", TYPESAFE_LETTER_RANKING_ENABLED=False):
+        with override_settings(
+            TYPESAFE_API_KEY="k", TYPESAFE_LETTER_RANKING_ENABLED=False
+        ):
             status = self._status()
         self.assertEqual(status["level"], "off")
         self.assertTrue(status["key_present"])
@@ -655,9 +963,13 @@ class AdminStatusLetterScoringTest(TestCase):
         )
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
         self.client.login(username="staff", password="pw123")
-        with override_settings(**_SCORING_ON), mock.patch(_MODELS, return_value=[]), mock.patch(
+        with override_settings(**_SCORING_ON), mock.patch(
+            _MODELS, return_value=[]
+        ), mock.patch(
             _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+        ), mock.patch(
+            _FAX, return_value=_ok_fax_backends()
+        ):
             response = self.client.get(reverse("admin_status"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "FAILING")
@@ -670,12 +982,18 @@ class AdminStatusLetterScoringTest(TestCase):
         self._draft(self._denial(), minutes_ago=5)
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
         self.client.login(username="staff", password="pw123")
-        with override_settings(**_SCORING_ON), mock.patch(_MODELS, return_value=[]), mock.patch(
+        with override_settings(**_SCORING_ON), mock.patch(
+            _MODELS, return_value=[]
+        ), mock.patch(
             _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+        ), mock.patch(
+            _FAX, return_value=_ok_fax_backends()
+        ):
             response = self.client.get(reverse("admin_status"))
         self.assertContains(response, "NOT SCORING")
-        self.assertContains(response, "1 eligible draft since the last score, none scored")
+        self.assertContains(
+            response, "1 eligible draft since the last score, none scored"
+        )
 
 
 class ComputeModelHealthDetailsTest(TestCase):
