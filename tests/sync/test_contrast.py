@@ -2229,15 +2229,21 @@ BOUNDARY_RATIO = 3.0
 HERO_BUTTONS = ("primary-cta", "pwyw-submit")
 
 
-def test_a_button_on_an_unreadable_ground_draws_its_own_edge() -> None:
-    """WCAG 1.4.11: a control needs 3:1 against what is behind it.
+def test_a_button_on_an_unreadable_ground_separates_itself_from_it() -> None:
+    """WCAG 1.4.11: a control needs to be findable against what is behind it.
 
     The hero's buttons sit on a photograph and on a dark panel over that
     photograph, and no stylesheet can say what colour either of those is. The
-    darkened fill is 8:1 against white and under 3:1 against the dark panel, so
-    the label became readable while the button itself stopped having a shape.
-    A border at 3:1 against the button's own fill gives it an edge that shows
-    whatever the picture behind it turns out to be.
+    fill alone cannot carry the shape, so each of these has to do something
+    about its own edge.
+
+    A border is one way and it is not the way this site uses. Drawn around a
+    gradient button it reads as a box on the page rather than as a raised
+    control, which is the product owner's call of 2026-09-13. A shadow that
+    spreads past the edge does the same separating without the line, so that
+    is what is required here: some declared separation, not one specific
+    implementation of it. A border still counts, and is still measured at 3:1
+    against the fill if one is used.
     """
     rules = load_rules()
     dom = template_dom()
@@ -2246,10 +2252,11 @@ def test_a_button_on_an_unreadable_ground_draws_its_own_edge() -> None:
         nodes = dom.by_class.get(name, [])
         assert nodes, "no template carries .%s any more" % name
         borders = _border_colours(rules, painter.variables, name)
-        assert borders, (
+        shadows = _spreading_shadows(rules, name)
+        assert borders or shadows, (
             ".%s sits on the hero, where no stylesheet can say what is behind "
-            "it, and declares no border. Its fill alone cannot carry the "
-            "button's edge." % name
+            "it, and declares neither a border nor a shadow that spreads past "
+            "its edge. Its fill alone cannot carry the button's shape." % name
         )
         fills = [
             ground
@@ -2435,3 +2442,33 @@ def test_the_template_baseline_has_no_stale_entries() -> None:
         "to what is there so the backlog cannot quietly grow back:\n  %s"
         % "\n  ".join(stale)
     )
+
+
+_SHADOW_LENGTHS = re.compile(r"(-?[\d.]+)px")
+
+
+def _spreading_shadows(rules: Sequence[Rule], name: str) -> list[tuple[str, str]]:
+    """Rules giving .<name> a box-shadow that reaches past its own edge.
+
+    `inset` does not separate a button from its ground, and a shadow with no
+    blur and no spread and no offset is not visible at all, so neither counts.
+
+    Neither does a shadow that only exists on hover: the button has to have a
+    shape before anyone points at it, and a keyboard user never hovers.
+    """
+    found: list[tuple[str, str]] = []
+    for rule in rules:
+        if any(state in rule.selector for state in STATE_PSEUDO):
+            continue
+        if not any(
+            name in step[1].classes for selector in rule.selectors
+            for step in split_selector(selector)[-1:]
+        ):
+            continue
+        for prop, value, _ in rule.declarations:
+            if prop != "box-shadow" or "inset" in value or value.strip() == "none":
+                continue
+            lengths = [abs(float(n)) for n in _SHADOW_LENGTHS.findall(value)]
+            if lengths and max(lengths) > 0:
+                found.append((rule.selector, value.strip()))
+    return found

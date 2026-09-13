@@ -399,7 +399,7 @@ a.link:hover::after {
    the stylesheets cannot read, so the fill alone cannot say where the button
    ends. 6.17:1 against the bright stop of that fill, 3.48:1 against the dark
    one, over the 3:1 WCAG 1.4.11 asks of a control's boundary. */
-.primary-cta {font-size: var(--fhi-btn-font-lg) !important; font-weight:700 !important; border: 2px solid var(--fhi-green-deep) !important; padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important; min-height: var(--fhi-btn-height-lg) !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
+.primary-cta {font-size: var(--fhi-btn-font-lg) !important; font-weight:700 !important; padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important; min-height: var(--fhi-btn-height-lg) !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
 .secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size: var(--fhi-btn-font-md) !important; padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md) !important; min-height: var(--fhi-btn-height-md) !important; line-height: 1.5 !important;}
 .secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green-ink) !important; color:#fff !important; border-color: var(--fhi-green-ink) !important;}
@@ -629,12 +629,13 @@ a.link:hover::after {
 .pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 /* The hero panel is dark and the photograph behind it is anything, so the
-   fill alone does not tell the reader where the button ends. The border
-   does, in the deep end of the button's own ramp, the same edge the call to
-   action above it wears. */
+   fill alone does not tell the reader where the button ends. The glow does:
+   a lime shadow spreading off the edge separates the button from whatever
+   the picture turns out to be, without drawing a line around it. A border
+   was tried here and read as a box on the page. */
 .pwyw-submit {min-width:180px;}
 #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
-    border: 2px solid var(--fhi-green-deep) !important;
+    box-shadow: 0 4px 16px rgba(165, 196, 34, 0.45) !important;
 }
 /* The hero's panel is a dark purple veil over the photograph (see
    #home .hero-inner .payment-card-wrapper .pwyw-panel above), so this
