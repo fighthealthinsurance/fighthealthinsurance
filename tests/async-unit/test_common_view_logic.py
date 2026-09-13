@@ -2211,3 +2211,207 @@ class RegulatorContactInfoTest(TestCase):
                 "1-800-368-1019",
             },
         )
+
+
+class _FixedZipEngine:
+    """Offline stand-in for the uszipcode search engine.
+
+    The real lookup needs a downloaded database and would tie these tests to
+    whatever it thinks a zip means today. A fixed table keeps the guessed
+    state deliberately different from the state the person types, which is
+    the whole point of the round trip below.
+    """
+
+    def __init__(self, mapping: dict):
+        self.mapping = mapping
+
+    def by_zipcode(self, zip_code):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(state=self.mapping[zip_code])
+
+
+class ConfirmedStateTest(TestCase):
+    """A state the person corrects on the review page has to reach the appeal,
+    and it has to survive them going back and submitting the upload page
+    again. ``your_state`` is the column of record; ``state`` is the mirror the
+    external review, chat RAG, plan matching and CA-question readers still use,
+    and its presence is what marks the state as confirmed.
+    """
+
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    EMAIL = "state-correction@example.com"
+    DENIAL_TEXT = "Your claim for gender affirming surgery was denied."
+    NY_ZIP = "10001"
+    CA_ZIP = "94103"
+    ZIP_STATES = {"10001": "NY", "94103": "CA"}
+    _DISPATCH = (
+        "fighthealthinsurance.ml.ml_speculative_appeals_helper."
+        "dispatch_speculative_appeals"
+    )
+
+    def _submit_upload_page(self, zip_code, denial=None):
+        """Page one: the intake path that guesses a state from the zip."""
+        with patch.object(
+            common_view_logic.DenialCreatorHelper,
+            "zip_engine",
+            _FixedZipEngine(self.ZIP_STATES),
+        ), patch(self._DISPATCH):
+            response = DenialCreatorHelper.create_or_update_denial(
+                email=self.EMAIL,
+                denial_text=self.DENIAL_TEXT,
+                zip=zip_code,
+                denial=denial,
+            )
+        return Denial.objects.get(denial_id=response.denial_id)
+
+    def _submit_review_page(self, denial, **overrides):
+        """The review POST, where the person confirms or corrects the state."""
+        params = dict(
+            denial_id=denial.denial_id,
+            email=self.EMAIL,
+            semi_sekret=denial.semi_sekret,
+            procedure="top surgery",
+            diagnosis="gender dysphoria",
+            insurance_company="evilco",
+            plan_id="1",
+            claim_id="7",
+            denial_type=None,
+            denial_date=None,
+        )
+        params.update(overrides)
+        FindNextStepsHelper.find_next_steps(**params)
+        denial.refresh_from_db()
+        return denial
+
+    def test_the_confirmed_state_lands_on_both_columns(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        self.assertEqual(denial.your_state, "NY")
+
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+
+    def test_a_resubmitted_upload_page_keeps_the_confirmed_state(self):
+        """The round trip: correct the state, go back a page, submit the same
+        letter and the same zip again. The guess must not come back."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        denial = self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+        self.assertEqual(denial.service_zip, "100")
+
+    def test_a_resubmission_heals_a_row_left_in_the_old_shape(self):
+        """Before this change the review POST wrote the correction to `state`
+        only, so rows exist with the correction in `state` and the zip's guess
+        still in `your_state`. Migration 0209 backfills the ones present when
+        it runs; a row that reaches intake still in that shape (an older
+        process wrote it while the deploy was rolling) is healed from the
+        confirmed value rather than having the guess locked in."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            state="CA", your_state="NY"
+        )
+        stale = Denial.objects.get(denial_id=denial.denial_id)
+
+        denial = self._submit_upload_page(self.NY_ZIP, denial=stale)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+        self.assertEqual(denial.service_zip, "100")
+
+    def test_a_first_submission_still_infers_the_state_from_the_zip(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+
+        self.assertEqual(denial.your_state, "NY")
+        self.assertEqual(denial.service_zip, "100")
+        self.assertFalse(denial.state)
+
+    def test_a_changed_zip_re_infers_while_no_state_is_confirmed(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.service_zip, "941")
+
+    def test_the_review_page_renders_the_corrected_state(self):
+        from django.urls import reverse
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        response = self.client.get(
+            reverse("categorize_review"),
+            {
+                "denial_id": denial.denial_id,
+                "email": self.EMAIL,
+                "semi_sekret": denial.semi_sekret,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        self.assertIn('value="CA"', body)
+        self.assertNotIn('value="NY"', body)
+
+    def test_the_california_question_branch_fires_for_a_corrected_state(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        denial_type = DenialTypes.objects.get(name="Gender Affirming Care")
+        form_class = denial_type.get_form()
+        self.assertIsNotNone(form_class)
+        plan_context = form_class().plan_context(denial)
+
+        self.assertIn("CDI-Gender-Nondiscrimination-Regulations", plan_context)
+
+    def test_the_external_review_packet_uses_the_corrected_state(self):
+        from fighthealthinsurance.external_review import (
+            generate_external_review_packet,
+        )
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        packet = generate_external_review_packet(denial, {})
+
+        self.assertEqual(packet["regulator"]["state"], "CA")
+        self.assertNotIn(
+            "State missing; cannot confidently select regulator.",
+            packet["eligibility"]["rationale"],
+        )
+
+    def test_the_appeal_context_cites_the_corrected_states_regulator(self):
+        from fighthealthinsurance.generate_appeal import AppealGenerator
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        regulatory_context = AppealGenerator._collect_regulatory_context(denial)
+
+        self.assertIsNotNone(regulatory_context)
+        assert regulatory_context is not None
+        self.assertIn("California", regulatory_context)
+
+        # And it reaches the text the appeal is actually written from.
+        prompt = AppealGenerator().make_open_prompt(
+            denial_text=denial.denial_text,
+            regulatory_citation_context=regulatory_context,
+        )
+        assert prompt is not None
+        self.assertIn("California", prompt)
+
+    def test_a_blank_date_of_service_leaves_the_stored_one_alone(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, date_of_service="01/15/2024")
+        self.assertEqual(denial.date_of_service, "01/15/2024")
+
+        denial = self._submit_review_page(denial, date_of_service="")
+
+        self.assertEqual(denial.date_of_service, "01/15/2024")

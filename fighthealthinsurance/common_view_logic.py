@@ -1131,7 +1131,17 @@ class FindNextStepsHelper:
         existing_answers: dict[str, str] = load_qa(denial)
 
         if your_state:
+            # your_state is the column of record: every render and every
+            # appeal consumer reads it. state is the mirror kept in step for
+            # the five readers still on the short column (external review
+            # eligibility, the chat RAG lookup, structured plan matching, the
+            # generation-time RAG context and the CA branch in
+            # forms/questions.py), and a value there also marks a state this
+            # person named, which the intake path checks before inferring one
+            # from the zip again.
+            denial.your_state = your_state
             denial.state = your_state
+            changed_fields.add("your_state")
             changed_fields.add("state")
         if denial_date is not None:
             denial.denial_date = denial_date
@@ -1186,7 +1196,11 @@ class FindNextStepsHelper:
                         appeal_deadline_label=denial.appeal_deadline_label,
                     ).update(appeal_deadline=resolved)
                     denial.appeal_deadline = resolved
-        if date_of_service is not None:
+        # Truthy, not "is not None": this form posts every field on every
+        # submit, so a person who left the box empty (or cleared it by
+        # accident) used to overwrite a date they already gave or the
+        # extractor already found. A blank means "nothing new to say".
+        if date_of_service:
             denial.date_of_service = date_of_service
             changed_fields.add("date_of_service")
             if "date of service" not in existing_answers:
@@ -1734,15 +1748,32 @@ class DenialCreatorHelper:
 
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)
-        your_state = None
         if zip is not None and zip != "":
-            try:
-                your_state = cls.zip_engine.by_zipcode(zip).state
-                denial.your_state = your_state
-            except Exception as e:
-                # Default to no state - zip lookup can fail for invalid/unknown zips
-                logger.debug(f"Zip code lookup failed for {zip}: {e}")
-                your_state = None
+            # A value in denial.state is a state a person named. The review
+            # POST is its only writer in application code, and it writes only
+            # what the person typed; the one other way it gets set is a staff
+            # member editing the row in the Django admin, which DenialAdmin
+            # does not exclude (admin.py) and which is also a person naming a
+            # state. Either way it beats a guess from the zip. Without this
+            # check a resubmission of the upload page (a back button, a
+            # re-uploaded letter) put the guess back over the correction, and
+            # the appeal was written from the guess again.
+            confirmed_state = (denial.state or "").strip()
+            if confirmed_state:
+                # Rows written before the review POST wrote both columns hold
+                # the correction in `state` and the zip's guess in
+                # `your_state`. Migration 0209 backfills the ones that exist
+                # when it runs; healing here as well catches any row an older
+                # process wrote while a deploy was still rolling, so the guess
+                # is never locked in by the check above.
+                if (denial.your_state or "").strip() != confirmed_state:
+                    denial.your_state = confirmed_state
+            else:
+                try:
+                    denial.your_state = cls.zip_engine.by_zipcode(zip).state
+                except Exception as e:
+                    # Default to no state - zip lookup can fail for invalid/unknown zips
+                    logger.debug(f"Zip code lookup failed for {zip}: {e}")
             # ZIP3 is HIPAA Safe Harbor de-identified, so it's safe to keep on
             # the row; UCREnrichmentHelper.resolve_geographic_area uses it.
             # Persist alongside `your_state` so neither field is silently
