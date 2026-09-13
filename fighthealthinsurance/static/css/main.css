@@ -120,13 +120,11 @@ h5 {
 h1 {
     color: #252525;
     font-size: var(--fhi-text-hero);
-    line-height: var(--fhi-line-heading);
 }
 
 h2 {
     color: #272727;
     font-size: var(--fhi-text-page);
-    line-height: var(--fhi-line-heading);
     padding-bottom: 10px;
 }
 
@@ -139,7 +137,6 @@ h3 {
 h4 {
     color: #454545;
     font-size: var(--fhi-text-title);
-    line-height: var(--fhi-line-heading);
     padding-bottom: 2px;
 }
 
@@ -1141,11 +1138,20 @@ footer a:hover {
 
 /* Mobile */
 @media only screen and (max-width: 768px) {
-    /* Same: the phone end of each heading is the low end of its token. */
+    /* Same: the phone end of each heading is the low end of its token. The
+       one thing the tokens cannot carry is this line-height, which main.css
+       set here and nowhere else: without it a 48px title on a phone takes a
+       72px line box instead of a 57.6px one, and the hero grows by 43px. */
+    h1 {
+	line-height: 1.2;
+    }
 
-    /* This is the line under the hero title, not a label: it was 11px on
-       a phone, which is the smallest readable thing on the site and the
-       first sentence a patient meets. It keeps the body size now. */
+
+    /* This is the line under the hero title, not a label: it was 11px on a
+       phone, the smallest readable thing on the site and the first sentence
+       a patient meets. It takes the small size at every width now, which is
+       14px: it is set in caps with letter-spacing, where 14px reads as well
+       as 16px does in a sentence. */
     #home h3 {
 	letter-spacing: 1px;
     }

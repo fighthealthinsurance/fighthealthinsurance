@@ -22,6 +22,8 @@ from typing import Optional
 
 from tests.sync.test_contrast import (
     CSS_DIR,
+    TEMPLATE_DIR,
+    resolve_vars,
     Rule,
     custom_properties,
     load_rules,
@@ -29,8 +31,14 @@ from tests.sync.test_contrast import (
 )
 
 BODY_PX = 16.0
+INPUT_TOKEN = "--fhi-text-input"
 INPUT_FLOOR_PX = 16.0
 MICRO_FLOOR_PX = 12.0
+
+# A bingo cell is a fixed square in a five-by-five grid and the words have to
+# fit inside it. That is a layout constraint, not a choice about readability,
+# and it is the only one on the site. Nothing in the appeal flow is here.
+BELOW_FLOOR_BY_DESIGN = {("custom.css", ".bingo-cell")}
 
 HEADING_TOKENS = {
     "h1": "--fhi-text-hero",
@@ -100,7 +108,7 @@ def test_no_heading_is_sized_in_em() -> None:
     than 80px, and nothing in the rule said so.
     """
     offenders = []
-    for rule in load_rules():
+    for rule in load_rules() + load_template_rules():
         value = _font_size(rule)
         if value is None or "var(" in value:
             continue
@@ -195,6 +203,24 @@ def hero_sizes_by_media() -> dict:
     return found
 
 
+def test_the_hero_title_keeps_its_phone_line_height() -> None:
+    """Size is not the only thing that has to match.
+
+    main.css set line-height 1.2 on h1 at the phone breakpoint and nowhere
+    else. Dropping it left a 48px title in a 72px line box rather than a
+    57.6px one, which grows the hero by 43px on the width where there is
+    least room for it. The font sizes matched the whole time, so nothing that
+    only checks font-size would have seen this.
+    """
+    text = (CSS_DIR / "main.css").read_text()
+    phone = text[text.index("max-width: 768px") :]
+    phone = phone[: phone.index("\n}\n")]
+    assert re.search(r"h1\s*\{[^}]*line-height:\s*1\.2", phone), (
+        "h1 has no line-height at the phone breakpoint, so it inherits 1.5 "
+        "and the hero title takes a taller line box than it did on main"
+    )
+
+
 def test_the_hero_title_is_no_larger_than_it_ever_was() -> None:
     """One token, three widths, the same sizes the breakpoints gave."""
     sizes = hero_sizes_by_media()
@@ -217,6 +243,12 @@ def test_the_hero_title_is_no_larger_than_it_ever_was() -> None:
 
 def test_running_text_is_sixteen_pixels() -> None:
     """The body rule sets what most of the words on the site are set in."""
+    variables = custom_properties(load_rules())
+    body = _px(variables.get("--fhi-text-body", ""))
+    assert body == BODY_PX, (
+        "--fhi-text-body is %s, not %.0fpx. The p rule reading the token means "
+        "nothing if the token is small." % (variables.get("--fhi-text-body"), BODY_PX)
+    )
     for rule in load_rules():
         if rule.selector.strip() == "p":
             value = _font_size(rule)
@@ -233,48 +265,158 @@ def test_no_text_field_is_small_enough_to_make_ios_zoom() -> None:
 
     The patient is left panning a page sideways in the middle of typing an
     appeal. Nothing about a field's size is worth that.
+
+    The first version of this test was worthless: it skipped every value
+    containing var(), which is every value the fix writes, so the whole rule
+    could be deleted or the token set to 0.5rem and it still passed. It
+    resolves the token now, and requires the rule that sets the floor to
+    exist, because a floor nothing declares is not a floor.
     """
+    rules = load_rules()
+    variables = custom_properties(rules)
+    declared = variables.get(INPUT_TOKEN)
+    assert declared is not None, "%s is gone from :root" % INPUT_TOKEN
+    floor = _px(declared)
+    assert floor is not None and floor >= INPUT_FLOOR_PX, (
+        "%s is %s, under the %.0fpx a text field needs to stop iOS zooming "
+        "the page on focus" % (INPUT_TOKEN, declared, INPUT_FLOOR_PX)
+    )
+
+    reached = []
     offenders = []
-    for rule in load_rules() + load_template_rules():
+    for rule in rules + load_template_rules():
         value = _font_size(rule)
-        if value is None or "var(" in value:
+        if value is None or not TEXT_INPUT_SELECTOR.search(rule.selector):
             continue
-        if not TEXT_INPUT_SELECTOR.search(rule.selector):
+        resolved = _px(resolve_vars(value, variables))
+        if resolved is None:
             continue
-        size = _px(value)
-        if size is not None and size < INPUT_FLOOR_PX:
+        reached.append(rule.selector)
+        if resolved < INPUT_FLOOR_PX:
             offenders.append(
-                "%s:%d  %s  font-size: %s"
-                % (rule.stylesheet, rule.line, rule.selector, value)
+                "%s:%d  %s  font-size: %s (%.1fpx)"
+                % (rule.stylesheet, rule.line, rule.selector, value.strip(), resolved)
             )
+    assert reached, (
+        "no rule sizes a text field any more, so the floor is not applied to "
+        "anything and this test is measuring nothing"
+    )
     assert not offenders, (
         "these set a text field under %.0fpx:\n  %s"
         % (INPUT_FLOOR_PX, "\n  ".join(offenders))
     )
 
 
-# A bingo cell is a fixed square in a five-by-five grid and the words have to
-# fit inside it. That is a layout constraint, not a choice about readability,
-# and it is the only one on the site. Nothing in the appeal flow is here.
-BELOW_FLOOR_BY_DESIGN = {("custom.css", ".bingo-cell")}
+def test_nothing_is_set_below_the_floor() -> None:
+    """--fhi-text-micro is the floor, on every surface that carries type.
 
-
-def test_nothing_in_the_stylesheets_is_set_below_the_floor() -> None:
-    """--fhi-text-micro is the floor. Nothing is set smaller than it."""
+    Reading only the two stylesheets let the appeal flow keep two sizes under
+    it: the step names in partials/flow_progress.html at 11px, and the wait
+    times appeal_fetcher.ts writes inline at 0.72rem. Both are in front of a
+    patient while they wait for a letter.
+    """
+    variables = custom_properties(load_rules())
     offenders = []
-    for rule in load_rules():
+    for rule in load_rules() + load_template_rules():
         if (rule.stylesheet, rule.selector.strip()) in BELOW_FLOOR_BY_DESIGN:
             continue
         value = _font_size(rule)
-        if value is None or "var(" in value:
+        if value is None:
             continue
-        size = _px(value)
+        size = _px(resolve_vars(value, variables))
         if size is not None and size < MICRO_FLOOR_PX:
             offenders.append(
                 "%s:%d  %s  font-size: %s (%.1fpx)"
                 % (rule.stylesheet, rule.line, rule.selector, value, size)
             )
+    for path, size, snippet in _inline_font_sizes(variables):
+        if size < MICRO_FLOOR_PX:
+            offenders.append("%s  %s (%.1fpx)" % (path, snippet, size))
     assert not offenders, (
         "these are set below the %.0fpx floor:\n  %s"
         % (MICRO_FLOOR_PX, "\n  ".join(offenders))
+    )
+
+
+_INLINE_SIZE = re.compile(r"font-size:\s*([^;\"'}]+)")
+_SCANNED_FOR_INLINE = ("fighthealthinsurance/templates", "fighthealthinsurance/static/js")
+
+
+def _inline_font_sizes(variables: dict):
+    """Sizes written straight into markup or into a JS template string.
+
+    appeal_fetcher.ts builds the progress list as HTML in a string, so its
+    sizes never appear in a stylesheet or in a style block. That is where the
+    wait-time text sat at 0.72rem, in front of a patient waiting for a letter.
+    """
+    root = TEMPLATE_DIR.parent.parent
+    for folder in _SCANNED_FOR_INLINE:
+        base = root / folder
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if path.suffix not in (".html", ".ts", ".js") or "node_modules" in path.parts:
+                continue
+            text = path.read_text(errors="replace")
+            for match in _INLINE_SIZE.finditer(text):
+                raw = match.group(1).strip()
+                # a <style> block is parsed properly elsewhere; only take the
+                # ones inside an attribute or a string
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                line = text[line_start : text.find("\n", match.start())]
+                if "style=" not in line and "`" not in line and "'" not in line and '"' not in line:
+                    continue
+                size = _px(resolve_vars(raw, variables))
+                if size is None:
+                    continue
+                yield (
+                    "%s:%d" % (path.relative_to(root).as_posix(), text[: match.start()].count("\n") + 1),
+                    size,
+                    "font-size: %s" % raw,
+                )
+
+
+_TOKEN_REF = re.compile(r"var\(\s*(--fhi-[a-z0-9-]+)")
+
+
+def test_a_standalone_page_declares_every_token_it_uses() -> None:
+    """A page that loads no stylesheet cannot read a token from one.
+
+    This has now bitten twice. The error pages wrote their button label as
+    var(--fhi-btn-ink) while loading nothing that defines it, and three more
+    pages picked up var(--fhi-text-input) the same way. In both cases the
+    property is invalid at computed-value time and the element quietly
+    inherits instead, which looks fine until the inherited value is wrong.
+
+    A template is allowed to use a token if it extends a base that loads the
+    stylesheets, or if it declares the token itself.
+    """
+    included = set()
+    for path in TEMPLATE_DIR.rglob("*.html"):
+        for name in re.findall(
+            r"{%\s*include\s+[\"']([^\"']+)", path.read_text(errors="replace")
+        ):
+            included.add(name)
+    offenders = []
+    for path in sorted(TEMPLATE_DIR.rglob("*.html")):
+        text = path.read_text(errors="replace")
+        referenced = set(_TOKEN_REF.findall(text))
+        if not referenced:
+            continue
+        # A page that extends a base, loads the stylesheet itself, or is only
+        # ever rendered inside one of those, can see the token block.
+        if "{% extends" in text or "custom.css" in text:
+            continue
+        if path.relative_to(TEMPLATE_DIR).as_posix() in included:
+            continue
+        for token in sorted(referenced):
+            if re.search(re.escape(token) + r"\s*:", text):
+                continue
+            offenders.append(
+                "%s uses %s and loads nothing that defines it"
+                % (path.relative_to(TEMPLATE_DIR).as_posix(), token)
+            )
+    assert not offenders, (
+        "these pages reference a token they cannot see, so the declaration is "
+        "dropped and the element inherits instead:\n  %s" % "\n  ".join(offenders)
     )

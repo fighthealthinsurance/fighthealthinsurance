@@ -46,7 +46,11 @@
       border: 1px solid #ccc;
       border-radius: 4px;
       font-family: inherit;
-      font-size: var(--fhi-text-input);
+      /* This page loads no stylesheet, so it cannot read --fhi-text-input.
+           16px is that token's value, written out, because a field under it
+           makes iOS Safari zoom on focus and not zoom back. Kept in step by
+           test_a_standalone_page_declares_every_token_it_uses. */
+      font-size: 1rem;
     }
     textarea { min-height: 360px; white-space: pre-wrap; }
     .disclosure {

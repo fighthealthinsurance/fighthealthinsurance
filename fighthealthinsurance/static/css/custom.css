@@ -69,7 +69,7 @@
     --fhi-text-lead: 1.125rem;
     --fhi-text-title: clamp(1.4rem, 1.2vw + 1rem, 1.8rem);
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
-    --fhi-text-page: clamp(2.125rem, 2.5vw + 1.2rem, 3rem);
+    --fhi-text-page: clamp(2.1rem, 2.5vw + 1.2rem, 3rem);
     --fhi-text-hero: 5rem;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
