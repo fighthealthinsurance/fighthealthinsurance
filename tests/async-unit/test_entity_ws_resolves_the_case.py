@@ -90,6 +90,10 @@ async def test_a_request_that_does_not_resolve_never_reaches_the_extractor(monke
         # does not match (review).
         {"denial_id": denial.denial_id, "email": 123, "semi_sekret": "the-real-secret"},
         {"denial_id": "not-an-id", "email": "someone@example.com", "semi_sekret": "the-real-secret"},
+        # A case id is a whole number. Left to the lookup's int(), 1.9 and
+        # true both become 1 (CodeRabbit).
+        {"denial_id": 1.9, "email": "someone@example.com", "semi_sekret": "the-real-secret"},
+        {"denial_id": True, "email": "someone@example.com", "semi_sekret": "the-real-secret"},
         {"denial_id": denial.denial_id, "email": "someone@example.com"},
         {"denial_id": denial.denial_id, "email": "wrong@example.com", "semi_sekret": "the-real-secret"},
         {"denial_id": denial.denial_id, "email": "someone@example.com", "semi_sekret": "wrong"},

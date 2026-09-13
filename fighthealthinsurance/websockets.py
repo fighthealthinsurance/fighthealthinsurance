@@ -954,6 +954,16 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
         if data is None:
             return
         denial_id = data.get("denial_id")
+        # A case id is a whole number or the digits of one. Anything else is
+        # not a case id, and passing it on would let the lookup's int()
+        # quietly turn 1.9, or true, into 1 (CodeRabbit). Checked here rather
+        # than in the shared helper, which the form flows also call with
+        # values of their own.
+        if isinstance(denial_id, bool) or not (
+            isinstance(denial_id, int)
+            or (isinstance(denial_id, str) and denial_id.strip().isdigit())
+        ):
+            denial_id = None
         # Resolve the (denial_id, email, semi_sekret) triple before doing any
         # work, the same gate the appeals consumer above applies and the same
         # helper. Extraction is not a read: it writes the row and spends one
