@@ -431,7 +431,7 @@ a.link:hover::after {
     width: 80px !important;
     flex: 0 0 80px !important;
     padding: 0.2rem 0.3rem !important;
-    font-size: 0.75rem !important;
+    font-size: 1rem !important;
     line-height: 1.2 !important;
     box-sizing: border-box !important;
     margin: 0 !important;
@@ -479,7 +479,7 @@ a.link:hover::after {
 .pwyw-option small {display:block; font-size:.72rem; opacity:.9; color: #fff;}
 .pwyw-option.custom {flex:1 1 165px;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
-.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
+.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 .pwyw-submit {min-width:180px;}
 .pwyw-thanks {font-size:.7rem; color:#a5c422;}
@@ -503,7 +503,7 @@ a.link:hover::after {
 .fax-pwyw-group {display:flex; flex-wrap:wrap; gap:.6rem; margin:.75rem 0 1rem;}
 .fax-pwyw-group label {background:#f7f7f7; padding:.5rem .75rem; border-radius:8px; border:1px solid #ddd; font-size:.75rem; flex:1 1 120px; cursor:pointer; position:relative;}
 .fax-pwyw-group input[type=radio] {margin-right:.35rem; accent-color:#a5c422;}
-.fax-custom-input {width:100%; margin-top:.4rem; padding:.35rem .5rem; font-size:.7rem; border:1px solid #ccc; border-radius:6px;}
+.fax-custom-input {width:100%; margin-top:.4rem; padding:.35rem .5rem; font-size:1rem; border:1px solid #ccc; border-radius:6px;}
 
 /* Mobile adjustments */
 @media (max-width: 768px) {
@@ -878,7 +878,7 @@ a.link:hover::after {
     .together-form-group {
 	/* Switch to vertical layout on mobile */
 	flex-direction: column;
-	align-items: center;
+	align-items: stretch;
 	display: flex;
 	flex-wrap: wrap;
     }
@@ -886,6 +886,7 @@ a.link:hover::after {
     .together-form-group > div {
 	/* Individual prompt container on mobile */
 	margin: 10px 0;
+	width: 100%;
     }
 }
 
@@ -1360,7 +1361,10 @@ section:not(.slider) .share-subcopy {
 
 /* Container utilities */
 .container-narrow {
-    width: 80%;
+    width: 100%;
+    max-width: 760px;
+    padding-left: 16px;
+    padding-right: 16px;
     margin-top: 2.5rem !important;
 }
 

@@ -6,13 +6,20 @@ http://www.tooplate.com/view/2098-health
 
 */
 
-@import url('https://fonts.googleapis.com/css?family=Poppins:400,500,600');
-
 body {
     background: #ffffff;
-    font-family: 'Poppins', sans-serif;
-    overflow-x: hidden;
+    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+	'Helvetica Neue', Arial, sans-serif;
     position: relative; /* For skip link positioning */
+}
+
+/* Anything wider than the viewport should be reachable by scrolling it,
+   not silently cut off. Wrap the wide thing in this rather than putting
+   overflow-x:hidden back on body. */
+.scroll-x {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 /*---
@@ -256,60 +263,6 @@ a:focus {
 
 
 /*---------------------------------------
-       PRE LOADER
-  -----------------------------------------*/
-
-.preloader {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 99999;
-    display: flex;
-    flex-flow: row nowrap;
-    justify-content: center;
-    align-items: center;
-    background: none repeat scroll 0 0 #ffffff;
-}
-
-.spinner {
-    border: 1px solid transparent;
-    border-radius: 3px;
-    position: relative;
-}
-
-.spinner:before {
-    content: '';
-    box-sizing: border-box;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 45px;
-    height: 45px;
-    margin-top: -10px;
-    margin-left: -10px;
-    border-radius: 50%;
-    border: 1px solid #575757;
-    border-top-color: #ffffff;
-    animation: spinner .9s linear infinite;
-}
-
-@-webkit-@keyframes spinner {
-    to {
-	transform: rotate(360deg);
-    }
-}
-
-@keyframes spinner {
-    to {
-	transform: rotate(360deg);
-    }
-}
-
-
-
-/*---------------------------------------
       MENU
   -----------------------------------------*/
 
@@ -397,10 +350,22 @@ header span i {
 
 .navbar-default .navbar-nav li a {
     color: #555555 !important;
-    font-size: 12px !important;
+    font-size: 15px !important;
     font-weight: 500 !important;
     padding-right: 20px !important;
     padding-left: 20px !important;
+    /* 44px is the smallest target a thumb hits reliably, and one of these
+       rows is Remove Your Data. min-height is what makes the row 44px;
+       display is here because min-height does not apply to a plain inline
+       box, and the Generate Appeal anchor (li.appointment-btn a) carries no
+       Bootstrap class, so it is inline unless we say otherwise. inline-block
+       rather than flex on purpose: the phone breakpoint further down this
+       file forces display:inline-block !important on this same selector, so
+       a flex box here would be dead on exactly the screens this is for, and
+       it would also turn Bootstrap's .dropdown-toggle::after caret into a
+       flex item on desktop. */
+    display: inline-block;
+    min-height: 44px;
     -webkit-transition: all ease-in-out 0.4s !important;
     transition: all ease-in-out 0.4s !important;
 }
@@ -942,13 +907,15 @@ footer a:hover {
 .copyright-text p,
 .footer-link a {
     color: #858585 !important;
-    font-size: 12px !important;
+    font-size: 14px !important;
     font-weight: 500 !important;
 }
 
 .footer-link a {
-    font-size: 12px;
-    display: inline-block;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     padding: 0 10px;
     margin-top: 4px;
 }
@@ -1152,6 +1119,8 @@ footer a:hover {
     }
     .slider .item-first {
 	height: auto;
-	min-height: 650px;
+	min-height: auto;
+	padding-top: 2.5rem;
+	padding-bottom: 2.5rem;
     }
 }
