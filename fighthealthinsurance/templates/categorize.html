@@ -25,9 +25,11 @@ Categorize Your Denial
 
   <form action="{% url 'find_next_steps_loading' %}" method="post">
     {% csrf_token %}
-    <table class="post-infered-table">
-      {{ post_infered_form.as_table }}
-    </table>
+    <div class="scroll-x">
+      <table class="post-infered-table">
+        {{ post_infered_form.as_table }}
+      </table>
+    </div>
     <br>
     <div class="form-nav-row">
       {% if back_url %}
