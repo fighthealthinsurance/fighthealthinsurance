@@ -46,11 +46,13 @@ their reference; only one nobody has touched for twelve hours goes stale.
 import base64
 import json
 import os
+import pathlib
 import re
 import time
 import types
 from unittest.mock import patch
 
+from django.conf import settings
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
@@ -941,3 +943,87 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "plan_documents.html")
+
+
+class RetentionClaimTest(TestCase):
+    """The retention sentence an owner signs off on, pinned to the repo.
+
+    An earlier draft of this change told the owner the stored copy of the
+    triple lived twelve hours. It does not. Twelve hours
+    (``DENIAL_REF_IDLE_TTL_SECONDS``) decides only whether a reference still
+    resolves; the plaintext email and the permanent ``semi_sekret`` sit in
+    ``django_session``, whose row lifetime comes from ``SESSION_COOKIE_AGE``
+    and whose deletion comes from ``manage.py clearsessions``. This repo sets
+    neither, so the honest sentence is "until the session row is purged, and
+    nothing purges it".
+
+    That sentence is prose, in ``docs/back-link-references.md`` and in
+    ``views.issue_denial_ref_token``, and prose rots quietly. If somebody
+    later sets a cookie age or wires up a purge, the sentence becomes wrong
+    while still reading fine, and the next owner signs off on a stale claim.
+    So fail here and name the files to fix.
+    """
+
+    # Django's own default, from django/conf/global_settings.py. Spelled out
+    # rather than imported so that this test keeps meaning something if the
+    # default ever moves.
+    DJANGO_DEFAULT_SESSION_COOKIE_AGE = 60 * 60 * 24 * 7 * 2
+
+    DOC = "docs/back-link-references.md"
+
+    def test_the_reference_lifetime_is_not_the_retention_period(self):
+        """The two numbers are different, which is the whole point."""
+        self.assertLess(
+            views.DENIAL_REF_IDLE_TTL_SECONDS,
+            settings.SESSION_COOKIE_AGE,
+            msg=(
+                "the stored triple outlives the reference that points at it; "
+                f"if that stops being true, rewrite {self.DOC}"
+            ),
+        )
+
+    def test_the_repo_still_sets_no_session_cookie_age(self):
+        self.assertEqual(
+            settings.SESSION_COOKIE_AGE,
+            self.DJANGO_DEFAULT_SESSION_COOKIE_AGE,
+            msg=(
+                "SESSION_COOKIE_AGE is no longer Django's two week default, so "
+                f"the retention paragraph in {self.DOC} and the privacy note in "
+                "views.issue_denial_ref_token are out of date"
+            ),
+        )
+
+    def test_nothing_in_the_repo_purges_expired_sessions(self):
+        """No ``clearsessions`` anywhere, so an abandoned row stays.
+
+        Searched over the places a scheduled purge could live: the k8s
+        manifests, the helm charts, the scripts directory and the Makefile.
+        Documentation is excluded, because saying that nothing runs it is
+        exactly what the documentation does.
+        """
+        root = pathlib.Path(__file__).resolve().parents[2]
+        searched = [
+            path
+            for directory in ("k8s", "charts", "scripts", "conf")
+            for path in (root / directory).rglob("*")
+            if path.is_file() and path.suffix != ".md"
+        ]
+        searched.append(root / "Makefile")
+        runs_it = []
+        for path in searched:
+            try:
+                text = path.read_text(errors="ignore")
+            except OSError:
+                continue
+            if "clearsessions" in text:
+                runs_it.append(str(path.relative_to(root)))
+        self.assertEqual(
+            runs_it,
+            [],
+            msg=(
+                "something purges expired sessions now, so the retention "
+                f"paragraph in {self.DOC} and the privacy note in "
+                "views.issue_denial_ref_token understate what is cleaned up: "
+                + ", ".join(runs_it)
+            ),
+        )
