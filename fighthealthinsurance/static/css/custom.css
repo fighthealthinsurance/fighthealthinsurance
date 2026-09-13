@@ -49,6 +49,34 @@
        the 44px a touch target needs. Small is the nav call to action, medium
        is what a button gets when nothing says otherwise, large is a page's
        primary action. */
+    /* Type. The site had 50 different font sizes across two stylesheets and
+       no relationship between them, headings set in em so they compounded
+       inside any container that set a size of its own, and running text at
+       14px. These are the sizes measured on the rendered pages, kept, and
+       given names.
+
+       The headings are one fluid value each instead of the same heading
+       redeclared at three breakpoints. clamp() reproduces what the
+       breakpoints produced at the ends: the hero title is 48px on a 390px
+       phone and 80px on a 1280px desktop, as it was, and moves smoothly in
+       between instead of stepping twice.
+
+       --fhi-text-micro is a floor, not a size to reach for. Nothing a
+       patient has to read should be set in it. */
+    --fhi-text-micro: 0.75rem;
+    --fhi-text-small: 0.875rem;
+    --fhi-text-body: 1rem;
+    --fhi-text-lead: 1.125rem;
+    --fhi-text-title: clamp(1.4rem, 1.2vw + 1rem, 1.8rem);
+    --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
+    --fhi-text-page: clamp(2.125rem, 2.5vw + 1.2rem, 3rem);
+    --fhi-text-hero: clamp(3rem, 6vw + 1rem, 5rem);
+    /* A form control under 16px makes iOS Safari zoom the page when it takes
+       focus, and it does not zoom back out. Measured on the upload page:
+       inputs were rendering at 12px and 13.6px. */
+    --fhi-text-input: 1rem;
+    --fhi-line-body: 1.6;
+    --fhi-line-heading: 1.2;
     --fhi-btn-font-sm: 0.95rem;
     --fhi-btn-pad-y-sm: 0.7rem;
     --fhi-btn-pad-x-sm: 1.1rem;
@@ -623,7 +651,7 @@ a.link:hover::after {
 .pwyw-options {display:flex; flex-wrap:wrap; gap:.8rem;}
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
 .pwyw-option input[type=radio] {margin:0; accent-color:#a5c422;}
-.pwyw-option small {display:block; font-size:.72rem; opacity:.9; color: #fff;}
+.pwyw-option small {display:block; font-size:var(--fhi-text-micro); opacity:.9; color: #fff;}
 .pwyw-option.custom {flex:1 1 165px;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
 .pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
@@ -642,7 +670,7 @@ a.link:hover::after {
    confirmation keeps the brand green rather than the ink: green-ink reads at
    1.8:1 to 3.0:1 there. The white panel on the appeal pages overrides it with
    the ink further down. */
-.pwyw-thanks {font-size:.7rem; color:var(--fhi-green);}
+.pwyw-thanks {font-size:var(--fhi-text-micro); color:var(--fhi-green);}
 
 /* Outline variant for chat/pro buttons */
 .btn-outline-green {background:transparent; border:2px solid var(--fhi-green); color:var(--fhi-green-ink); transition:.3s;}
@@ -2134,11 +2162,11 @@ section:not(.slider) .share-subcopy {
 }
 .media-reference-kind {
     flex-shrink: 0;
-    font-size: 0.7rem;
+    font-size: var(--fhi-text-micro);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    /* Darker than the site's usual green: this is small (0.7rem) text on a pale
+    /* Darker than the site's usual green: this is small (var(--fhi-text-micro)) text on a pale
        green chip, so it needs the 4.5:1 body-text ratio (this pair is ~5.4:1). */
     color: var(--fhi-green-ink);
     background: rgba(165, 196, 34, 0.15);
@@ -2226,4 +2254,27 @@ section:not(.slider) .share-subcopy {
     .media-references-grid {
         grid-template-columns: 1fr;
     }
+}
+
+
+/* ------------------------------------------------------------------ type
+   A form control set under 16px makes iOS Safari zoom the page when the
+   field takes focus, and it does not zoom back out afterwards. The patient
+   is left on a page they now have to pan sideways to read, in the middle of
+   typing an appeal. Measured on the upload page before this rule: text
+   inputs rendering at 12px and 13.6px.
+
+   This sits at the end of the stylesheet so it beats the per-form sizes
+   above it on source order without needing !important. */
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="number"],
+input[type="search"],
+input[type="password"],
+input[type="date"],
+select,
+textarea,
+.form-control {
+    font-size: var(--fhi-text-input);
 }
