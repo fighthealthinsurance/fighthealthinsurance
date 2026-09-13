@@ -48,22 +48,27 @@ async def _fields(denial: Denial) -> dict:
 
 
 async def _send(payload: dict) -> tuple[list, bool]:
-    """Drive the consumer with one payload; return (frames, still_open)."""
+    """Drive the consumer with one payload; return (text frames, closed)."""
     communicator = WebsocketCommunicator(StreamingEntityBackend.as_asgi(), "/ws/streaming-entity-backend/")
     connected, _ = await communicator.connect()
     assert connected
-    frames = []
+    frames: list[str] = []
+    closed = False
     try:
         await communicator.send_to(text_data=json.dumps(payload))
         while True:
             try:
-                frames.append(await communicator.receive_from(timeout=3))
+                output = await communicator.receive_output(timeout=3)
             except Exception:
                 break
-        still_open = not await communicator.receive_nothing(timeout=0.1)
+            if output.get("type") == "websocket.close":
+                closed = True
+                break
+            if "text" in output:
+                frames.append(output["text"])
     finally:
         await communicator.disconnect()
-    return frames, still_open
+    return frames, closed
 
 
 @pytest.mark.asyncio
@@ -80,6 +85,11 @@ async def test_a_request_that_does_not_resolve_never_reaches_the_extractor(monke
 
     rejected = [
         {"denial_id": denial.denial_id},
+        # The values come from a client and need not be strings; a reference
+        # the lookup cannot read must leave by the same door as one that
+        # does not match (review).
+        {"denial_id": denial.denial_id, "email": 123, "semi_sekret": "the-real-secret"},
+        {"denial_id": "not-an-id", "email": "someone@example.com", "semi_sekret": "the-real-secret"},
         {"denial_id": denial.denial_id, "email": "someone@example.com"},
         {"denial_id": denial.denial_id, "email": "wrong@example.com", "semi_sekret": "the-real-secret"},
         {"denial_id": denial.denial_id, "email": "someone@example.com", "semi_sekret": "wrong"},
@@ -87,7 +97,11 @@ async def test_a_request_that_does_not_resolve_never_reaches_the_extractor(monke
     ]
     replies = []
     for payload in rejected:
-        frames, _ = await _send(payload)
+        frames, closed = await _send(payload)
+        # One reply and a close: not two frames, not a silent hang, and not
+        # a socket left open (review).
+        assert len(frames) == 1, f"expected exactly one reply for {payload!r}, got {frames!r}"
+        assert closed, f"the socket stayed open after rejecting {payload!r}"
         replies.append(frames)
         # The row is untouched, field by field, including the attempt counter.
         assert await _fields(denial) == before, f"the row changed for {payload!r}"
@@ -113,7 +127,7 @@ async def test_the_matching_triple_still_runs_the_extractor(monkeypatch):
     monkeypatch.setattr(
         common_view_logic.DenialCreatorHelper, "extract_entity", _fake_extract
     )
-    frames, _ = await _send(
+    frames, closed = await _send(
         {
             "denial_id": denial.denial_id,
             "email": "someone@example.com",

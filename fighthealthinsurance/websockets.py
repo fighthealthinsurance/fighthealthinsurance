@@ -680,11 +680,21 @@ class StreamingAppealsBackend(
         # ML cycles and then surface as an in-band error frame mid-stream;
         # with it the client gets a deterministic error frame up front.
         # Uniform message so we don't leak which field was wrong.
-        denial = await database_sync_to_async(common_view_logic.get_denial_for_action)(
-            denial_id=denial_id,
-            email=data.get("email") or "",
-            semi_sekret=data.get("semi_sekret") or "",
-        )
+        try:
+            denial = await database_sync_to_async(
+                common_view_logic.get_denial_for_action
+            )(
+                denial_id=denial_id,
+                email=str(data.get("email") or ""),
+                semi_sekret=str(data.get("semi_sekret") or ""),
+            )
+        except Exception:
+            # These values come from a client and need not be strings. A
+            # reference the lookup cannot even read is a reference that does
+            # not resolve, and it leaves by the same door as one that simply
+            # does not match, rather than raising out of the consumer
+            # (review).
+            denial = None
         if denial is None:
             logger.warning(f"appeals ws: auth failure for denial {denial_id!r}")
             try:
@@ -955,11 +965,21 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
         # One uniform reply for every failure, including a case that does not
         # exist: the response says nothing about which part did not match, or
         # whether the case is there at all.
-        denial = await database_sync_to_async(common_view_logic.get_denial_for_action)(
-            denial_id=denial_id,
-            email=data.get("email") or "",
-            semi_sekret=data.get("semi_sekret") or "",
-        )
+        try:
+            denial = await database_sync_to_async(
+                common_view_logic.get_denial_for_action
+            )(
+                denial_id=denial_id,
+                email=str(data.get("email") or ""),
+                semi_sekret=str(data.get("semi_sekret") or ""),
+            )
+        except Exception:
+            # These values come from a client and need not be strings. A
+            # reference the lookup cannot even read is a reference that does
+            # not resolve, and it leaves by the same door as one that simply
+            # does not match, rather than raising out of the consumer
+            # (review).
+            denial = None
         if denial is None:
             # The id only: an email does not belong in a log line.
             logger.warning(f"entity ws: could not resolve denial {denial_id!r}")
