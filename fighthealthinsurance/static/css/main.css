@@ -314,14 +314,14 @@ header {
 }
 
 header .col-md-8 {
-    padding-right: 0;
+    padding-right:0;
 }
 
 header p,
 header span {
     font-size: 12px;
     line-height: 24px;
-    padding-top: 12px;
+    padding-top: var(--fhi-space-3);
 }
 
 header a,
@@ -332,19 +332,19 @@ header span {
 header span {
     font-weight: 500;
     display: inline-block;
-    padding: 11px 15px;
+    padding: var(--fhi-space-3) var(--fhi-space-4);
 }
 
 header span.date-icon {
     border-left: 1px solid #f2f2f2;
     border-right: 1px solid #f2f2f2;
-    padding-right: 19px;
-    padding-left: 19px;
+    padding-right: var(--fhi-space-5);
+    padding-left: var(--fhi-space-5);
 }
 
 header span i {
     color: #a5c422;
-    margin-right: 5px;
+    margin-right: var(--fhi-space-1);
 }
 
 
@@ -357,8 +357,8 @@ header span i {
     background: #ffffff;
     box-shadow: 0 2px 8px rgba(0, 0, 0, .075);
     border: none;
-    margin-bottom: 0;
-    padding: 10px;
+    margin-bottom:0;
+    padding: var(--fhi-space-2);
 }
 
 .navbar-default .navbar-brand {
@@ -371,7 +371,7 @@ header span i {
 }
 
 .navbar-default .navbar-nav li.appointment-btn {
-    margin: 3px 0 0 20px;
+    margin: var(--fhi-space-1) 0 0 var(--fhi-space-5);
 }
 
 /* The nav call to action is the small size: it sits in a row of links, not in
@@ -396,7 +396,7 @@ header span i {
     font-size: var(--fhi-btn-font-sm) !important;
     line-height: 1.5;
     min-height: var(--fhi-btn-height-sm);
-    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm) !important;
+    padding:var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm)!important;
 }
 
 /* The sweep is twice the width of the button, so moving it is what draws the
@@ -418,8 +418,8 @@ header span i {
     color: #555555 !important;
     font-size: 15px !important;
     font-weight: 500 !important;
-    padding-right: 20px !important;
-    padding-left: 20px !important;
+    padding-right: var(--fhi-space-5) !important;
+    padding-left: var(--fhi-space-5) !important;
     /* 44px is the smallest target a thumb hits reliably, and one of these
        rows is Remove Your Data. min-height is what makes the row 44px;
        display is here because min-height does not apply to a plain inline
@@ -455,7 +455,7 @@ header span i {
 
 .navbar-default .navbar-toggle {
     border: none;
-    padding-top: 10px;
+    padding-top: var(--fhi-space-2);
 }
 
 .navbar-default .navbar-toggle .icon-bar {
@@ -982,8 +982,8 @@ footer a:hover {
     display: inline-flex;
     align-items: center;
     min-height: 44px;
-    padding: 0 10px;
-    margin-top: 4px;
+    padding:0 var(--fhi-space-2);
+    margin-top: var(--fhi-space-1);
 }
 
 .angle-up-btn {
@@ -1063,17 +1063,17 @@ footer a:hover {
 
     header span.date-icon {
 	border: 0;
-	padding-right: 0;
-	padding-left: 0;
+	padding-right:0;
+	padding-left:0;
     }
 
     header span.email-icon {
-	padding-top: 0;
+	padding-top:0;
     }
 
     .navbar-default .navbar-nav li a {
-	padding-right: 15px !important;
-	padding-left: 15px !important;
+	padding-right: var(--fhi-space-4) !important;
+	padding-left: var(--fhi-space-4) !important;
     }
 }
 
@@ -1083,7 +1083,7 @@ footer a:hover {
     }
 
     header {
-	padding-bottom: 10px;
+	padding-bottom: var(--fhi-space-2);
     }
 
     header .text-align-right {
@@ -1091,9 +1091,9 @@ footer a:hover {
     }
 
     header span {
-	padding-top: 0;
-	padding-left: 0;
-	padding-bottom: 0;
+	padding-top:0;
+	padding-left:0;
+	padding-bottom:0;
     }
 }
 
@@ -1105,13 +1105,13 @@ footer a:hover {
     }
 
     .navbar-default .navbar-nav li.appointment-btn {
-	margin-left: 15px;
+	margin-left: var(--fhi-space-4);
     }
 
     .navbar-default .navbar-nav li a {
 	display: inline-block !important;
-	padding-top: 8px !important;
-	padding-bottom: 8px !important;
+	padding-top: var(--fhi-space-2) !important;
+	padding-bottom: var(--fhi-space-2) !important;
     }
 
     .news-sidebar {
@@ -1129,7 +1129,7 @@ footer a:hover {
     }
 
     .footer-thumb {
-	padding-bottom: 10px;
+	padding-bottom: var(--fhi-space-2);
     }
 
     .border-top {
@@ -1137,7 +1137,7 @@ footer a:hover {
     }
 
     .copyright-text {
-	margin-top: 10px;
+	margin-top: var(--fhi-space-2);
     }
 
     .angle-up-btn {
