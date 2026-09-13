@@ -159,11 +159,15 @@ a:focus {
     margin-top: 0;
 }
 
+/* The `background` shorthand here used to clear custom.css's gradient, so a
+   section button outside the hero rendered as a flat panel of lime. It is a
+   background-color now: the sweep paints over it, and it is the dark stop, so
+   a button whose gradient does not paint is the readable end of the ramp. */
 .section-btn {
-    background: var(--fhi-btn-fill-a);
+    background-color: var(--fhi-btn-fill-b);
     border: 0;
     border-radius: 3px;
-    color: #ffffff;
+    color: var(--fhi-btn-ink);
     font-size: inherit;
     font-weight: 500;
     padding: 14px 20px;

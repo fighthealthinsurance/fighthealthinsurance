@@ -1215,6 +1215,17 @@ FACEBOOK_BLUE = (
     "platform's colour to be recognised, and the rule that keeps every share "
     "button's label white on focus inherits the same measurement."
 )
+WHITE_ON_BRAND_LIME = (
+    "White label on the brand lime sweep: 1.57:1 at #b8dd00, 2.78:1 at "
+    "#8aa618, against the 4.5:1 this gate asks for. Product owner decision of "
+    "2026-09-13, made on rendered options with the measurement in hand: the "
+    "lime stays and the label stays white, because it matches the white of "
+    "the hero title. Pending a swap of --fhi-btn-ink to a dark ink, which is "
+    "one value in custom.css: hero plum #2b0f3d at 10.80:1 to 6.10:1, or "
+    "near-black #1a1a1a at 11.09:1 to 6.26:1. Excused, not unmeasured: these "
+    "rules still come out of the gate as failures, and the day the ink moves "
+    "this list gets shorter."
+)
 
 EXCEPTIONS: tuple[Exempt, ...] = (
     Exempt(
@@ -1259,6 +1270,29 @@ EXCEPTIONS: tuple[Exempt, ...] = (
         ".media-reference-link:hover, .media-reference-link:focus",
         BRAND_PINK,
     ),
+    Exempt("custom.css", ".btn-green, .btn-green:focus", WHITE_ON_BRAND_LIME),
+    Exempt("custom.css", ".btn-green:hover", WHITE_ON_BRAND_LIME),
+    Exempt(
+        "custom.css",
+        ".btn-green:hover, .btn-green:focus, .btn-green:active, "
+        ".section-btn:hover, .section-btn:focus, .section-btn:active",
+        WHITE_ON_BRAND_LIME,
+    ),
+    Exempt("custom.css", ".btn-delete, .pro-submit-btn", WHITE_ON_BRAND_LIME),
+    Exempt(
+        "custom.css", ".btn-delete:hover, .pro-submit-btn:hover", WHITE_ON_BRAND_LIME
+    ),
+    Exempt(
+        "custom.css",
+        ".section-btn, .section-btn.btn.btn-default.smoothScroll",
+        WHITE_ON_BRAND_LIME,
+    ),
+    Exempt(
+        "custom.css",
+        ".section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover",
+        WHITE_ON_BRAND_LIME,
+    ),
+    Exempt("main.css", ".section-btn", WHITE_ON_BRAND_LIME),
 )
 
 
@@ -1572,18 +1606,158 @@ def test_every_excuse_carries_a_reason() -> None:
     )
 
 
-def test_the_button_fill_carries_white_labels() -> None:
-    """Submit, Next, Continue, Generate My Appeal and Choose This One."""
+# ---------------------------------------------------- the brand button itself
+
+# The one token every label on the lime reads, the classes that wear the lime,
+# and the two inks recorded beside the token as the candidates for a swap.
+INK_TOKEN = "--fhi-btn-ink"
+BRAND_BUTTON_CLASSES = frozenset(
+    ("btn-green", "section-btn", "btn-delete", "pro-submit-btn", "pwyw-pill")
+)
+DARK_INK_CANDIDATES = ("#2b0f3d", "#1a1a1a")
+DECISION_DATE = "2026-09-13"
+def brand_button_labels(rules: Sequence[Rule]) -> list[tuple[Rule, str, str]]:
+    """Every rule that writes a label onto a button wearing the brand lime."""
+    found: list[tuple[Rule, str, str]] = []
+    for rule in rules:
+        raw = None
+        for prop, value, _ in rule.declarations:
+            if prop == "color":
+                raw = value
+        if raw is None:
+            continue
+        for selector in rule.selectors:
+            steps = split_selector(selector)
+            if steps and steps[-1][1].classes & BRAND_BUTTON_CLASSES:
+                found.append((rule, selector, raw))
+                break
+    return found
+
+
+def test_a_brand_buttons_label_comes_from_one_token() -> None:
+    """Keeping the white label has to stay cheap to reverse.
+
+    Every label on the lime reads --fhi-btn-ink, so moving the whole site to a
+    dark ink is one value in :root rather than a hunt through two stylesheets
+    for the literals that used to be there.
+    """
+    labelled = brand_button_labels(load_rules())
+    assert len(labelled) >= 6, (
+        "only %d rules were found writing a label on a brand button, so the "
+        "classes this check looks for have been renamed and it is no longer "
+        "checking anything" % len(labelled)
+    )
+    literals = [
+        "%s:%d  %s  color: %s" % (rule.stylesheet, rule.line, selector, raw.strip())
+        for rule, selector, raw in labelled
+        if "var(%s)" % INK_TOKEN not in raw
+    ]
+    assert not literals, (
+        "these rules write a brand button's label as a literal, so a swap of "
+        "%s would miss them:\n  %s" % (INK_TOKEN, "\n  ".join(literals))
+    )
+
+
+_RECORDED_INK = re.compile(r"(#[0-9a-fA-F]{3,6})\s+([\d.]+):1\s+([\d.]+):1")
+
+
+def test_the_inks_recorded_beside_the_token_measure_what_they_claim() -> None:
+    """The table beside the token names the candidates and their ratios.
+
+    A number in a comment rots. These are re-measured against the fill the
+    stylesheet actually carries, so the table is either right or this says so.
+    """
+    text = (CSS_DIR / "custom.css").read_text()
     variables = custom_properties(load_rules())
+    stops = []
     for token in ("--fhi-btn-fill-a", "--fhi-btn-fill-b"):
-        colour = parse_colour(variables[token])
-        assert colour is not None, token
-        ratio = contrast_ratio(WHITE, colour[:3])
-        assert ratio >= MINIMUM_RATIO, "white on %s (%s) is only %.2f:1" % (
-            token,
-            variables[token],
-            ratio,
+        stop = parse_colour(variables[token])
+        assert stop is not None, token
+        stops.append(stop[:3])
+    recorded = _RECORDED_INK.findall(text)
+    assert len(recorded) >= 3, (
+        "the ink table beside %s is gone. It is what saves the next person "
+        "from deriving these ratios again." % INK_TOKEN
+    )
+    for ink, on_bright, on_dark in recorded:
+        colour = parse_colour(ink)
+        assert colour is not None, ink
+        for claimed, stop in zip((on_bright, on_dark), stops):
+            actual = contrast_ratio(colour[:3], stop)
+            assert round(actual, 2) == float(claimed), (
+                "the table says %s is %s:1 on #%02x%02x%02x; it is %.2f:1"
+                % ((ink, claimed) + stop + (actual,))
+            )
+    named = {ink.lower() for ink, _, _ in recorded}
+    for candidate in DARK_INK_CANDIDATES:
+        assert candidate in named, (
+            "%s is one of the two inks the owner named as the way out, and it "
+            "is not in the table" % candidate
         )
+        assert "/* %s: %s; */" % (INK_TOKEN, candidate) in text, (
+            "%s is in the table but is not sitting under the token commented "
+            "out, ready to be swapped in" % candidate
+        )
+
+
+def test_the_white_label_is_excused_by_a_dated_decision() -> None:
+    """White on the lime fails, and the gate says whose call that was.
+
+    An exception carrying a reason is honest. A gate that quietly stops
+    measuring is not, so these rules stay in the failing set and stay listed,
+    and every other failing pair on the site still fails the build.
+    """
+    rules = load_rules()
+    brand = {
+        (rule.stylesheet, _normalise(rule.selector))
+        for rule, _, _ in brand_button_labels(rules)
+    }
+    failing = {
+        (pair.rule.stylesheet, _normalise(pair.rule.selector))
+        for pair in failing_pairs(rules)
+    }
+    excused = {
+        (entry.stylesheet, _normalise(entry.selector)): entry for entry in EXCEPTIONS
+    }
+    brand_failing = sorted(brand & failing)
+    assert brand_failing, (
+        "no brand button measures as failing any more. If %s was swapped to a "
+        "dark ink, take these entries out of EXCEPTIONS rather than leaving a "
+        "stale excuse behind." % INK_TOKEN
+    )
+    for key in brand_failing:
+        entry = excused.get(key)
+        assert entry is not None, "%s  %s fails and is not excused" % key
+        for wanted in (DECISION_DATE, INK_TOKEN) + DARK_INK_CANDIDATES:
+            assert wanted in entry.reason, (
+                "the excuse for %s  %s does not name %s. An exception has to "
+                "say whose decision it was, when, and what reverses it."
+                % (key + (wanted,))
+            )
+        assert "product owner" in entry.reason.lower(), (
+            "the excuse for %s  %s does not say who decided" % key
+        )
+
+
+def test_the_button_fill_is_the_brand_lime_as_a_sweep() -> None:
+    """The identity: lime, and a gradient rather than a flat panel."""
+    variables = custom_properties(load_rules())
+    stops = []
+    for token in ("--fhi-btn-fill-a", "--fhi-btn-fill-b"):
+        stop = parse_colour(variables[token])
+        assert stop is not None, token
+        red, green, blue = stop[:3]
+        assert green > red > blue, "%s (%s) is not a lime" % (token, variables[token])
+        stops.append(stop[:3])
+    bright, dark = stops
+    assert relative_luminance(bright) > relative_luminance(dark), (
+        "--fhi-btn-fill-a is meant to be the bright end of the sweep and "
+        "--fhi-btn-fill-b the dark one"
+    )
+    assert contrast_ratio(bright, dark) >= 1.5, (
+        "the two stops are %.2f:1 apart, which reads as a flat fill rather "
+        "than a sweep" % contrast_ratio(bright, dark)
+    )
 
 
 def test_the_decorative_greens_keep_their_colour() -> None:

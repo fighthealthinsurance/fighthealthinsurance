@@ -12,12 +12,34 @@
     --fhi-surface: #f9f9f9;
     --fhi-radius: 10px;
     --fhi-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-    /* Button fill, held apart from the palette on purpose: the words on a
-       button sit on this pair, so it has to carry text contrast, while
-       --fhi-lime and --fhi-olive stay the decorative surfaces (panel borders,
-       underlines, the bingo grid) and keep their colour. */
-    --fhi-btn-fill-a: #5f7608;
-    --fhi-btn-fill-b: #44560a;
+    /* Button fill: the brand lime, as a sweep from a bright stop down to a
+       dark one rather than a flat panel of colour. Held apart from the
+       palette so a button's fill can move without dragging the decorative
+       surfaces (panel borders, underlines, the bingo grid) with it. */
+    --fhi-btn-fill-a: #b8dd00;
+    --fhi-btn-fill-b: #8aa618;
+    /* The deep end of the same ramp. It draws the edge a button needs when it
+       sits on the hero photograph, the ring around a focused button, and the
+       colour the green things darken to on hover. The sweep's own dark stop
+       cannot do that job: #8aa618 is 1.77:1 against #b8dd00, too close to
+       read as an edge. This is 6.17:1 against the bright stop, 3.48:1
+       against the dark one and 9.69:1 on a white page. */
+    --fhi-green-deep: #3b4a05;
+    /* The words on a brand button, in one token on purpose: moving every
+       button on the site to a dark ink is this one line.
+       Measured on the fill above, bright stop then dark stop:
+         #fff     1.57:1   2.78:1   in use
+         #2b0f3d  10.80:1  6.10:1   hero plum, 8.49:1 on flat --fhi-green
+         #1a1a1a  11.09:1  6.26:1   near-black
+       White is under the 4.5:1 WCAG AA asks for and is kept by the product
+       owner's decision of 2026-09-13, because it matches the white in the
+       hero title. The gate in tests/sync/test_contrast.py still measures
+       these rules and still fails them; the exception there names the
+       decision and the date. To swap the site, comment out the line in use
+       and uncomment one of the two under it. */
+    --fhi-btn-ink: #fff;
+    /* --fhi-btn-ink: #2b0f3d; */
+    /* --fhi-btn-ink: #1a1a1a; */
 }
 
 /* Skip link for keyboard navigation (accessibility) */
@@ -64,18 +86,25 @@
 
 /* A button's label keeps its colour while it is being hovered, focused or
    pressed. main.css recolours every a:hover, a:active and a:focus on the site,
-   and that beats a button's own `.btn-green {color: #fff}` on specificity, so
-   without this the skip link, the share buttons and the hero call to action
-   write dark olive on their own dark fill the moment you tab to them. */
-.skip-link:hover,
-.skip-link:focus,
-.skip-link:active,
+   and that beats a button's own `.btn-green {color: var(--fhi-btn-ink)}` on
+   specificity, so without this the hero call to action writes dark olive on
+   its own lime fill the moment you tab to it. Every brand button reads the
+   one ink token here too, so the swap stays a single value. */
 .btn-green:hover,
 .btn-green:focus,
 .btn-green:active,
 .section-btn:hover,
 .section-btn:focus,
-.section-btn:active,
+.section-btn:active {
+    color: var(--fhi-btn-ink);
+}
+
+/* Same reason, kept apart because neither of these wears the brand lime: the
+   skip link is white on black and the secondary button is white on grey, and
+   both stay white whatever the brand button's ink becomes. */
+.skip-link:hover,
+.skip-link:focus,
+.skip-link:active,
 .btn-secondary-custom:hover,
 .btn-secondary-custom:focus,
 .btn-secondary-custom:active {
@@ -218,7 +247,7 @@ a.link:hover::after {
 .btn-green, .btn-green:focus {
     background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
     background-size: 200% auto;
-    color: #fff;
+    color: var(--fhi-btn-ink);
     transition: all 0.3s;
     padding: 0.65rem 1.4rem;
     border-radius: 4px;
@@ -229,7 +258,7 @@ a.link:hover::after {
 }
 .btn-green:hover {
     background-position: right center;
-    color: #fff;
+    color: var(--fhi-btn-ink);
     box-shadow: 0 4px 16px rgba(165, 196, 34, 0.5);
 }
 
@@ -240,7 +269,7 @@ a.link:hover::after {
    text-align: center;
    transition: 0.5s;
    background-size: 200% auto;
-   color: white;
+   color: var(--fhi-btn-ink);
    box-shadow: 0 0 20px #eee;
    border-radius: 5px;
    display: block;
@@ -249,7 +278,7 @@ a.link:hover::after {
 
 .btn-delete:hover, .pro-submit-btn:hover{
    background-position: right center;
-   color: #fff;
+   color: var(--fhi-btn-ink);
    text-decoration: none;
 }
 
@@ -304,7 +333,7 @@ a.link:hover::after {
 .pwyw-pill {
     display: inline-block;
     background: linear-gradient(90deg, var(--fhi-btn-fill-a), var(--fhi-btn-fill-b));
-    color:#fff;
+    color: var(--fhi-btn-ink);
     padding:.4rem 1rem;
     font-size:.95rem;
     border-radius: 999px;
@@ -326,7 +355,12 @@ a.link:hover::after {
 .hero-cta-group.hero-cta-secondary {margin-top: 0.5rem; margin-bottom: 1.5rem; display: flex !important;}
 .hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 3.5rem; min-height: 3.5rem; max-height: 3.5rem; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
-.primary-cta {font-size:1.15rem !important; font-weight:700 !important; border: 2px solid rgba(255,255,255,0.85) !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
+/* A page's primary action, in the hero and in the body of the state pages.
+   Edged in the deep end of its own ramp: it sits on a photograph
+   the stylesheets cannot read, so the fill alone cannot say where the button
+   ends. 6.17:1 against the bright stop of that fill, 3.48:1 against the dark
+   one, over the 3:1 WCAG 1.4.11 asks of a control's boundary. */
+.primary-cta {font-size:1.15rem !important; font-weight:700 !important; border: 2px solid var(--fhi-green-deep) !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
 .secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size:1.15rem !important; padding: 0 1.8rem !important; line-height: 1.5 !important;}
 .secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green-ink) !important; color:#fff !important; border-color: var(--fhi-green-ink) !important;}
@@ -556,12 +590,12 @@ a.link:hover::after {
 .pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 /* The hero panel is dark and the photograph behind it is anything, so the
-   darkened fill no longer tells the reader where the button ends. The border
-   does, and it matches the white edge the secondary hero buttons already
-   wear. */
+   fill alone does not tell the reader where the button ends. The border
+   does, in the deep end of the button's own ramp, the same edge the call to
+   action above it wears. */
 .pwyw-submit {min-width:180px;}
 #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
-    border: 2px solid rgba(255, 255, 255, 0.85) !important;
+    border: 2px solid var(--fhi-green-deep) !important;
 }
 /* The hero's panel is a dark purple veil over the photograph (see
    #home .hero-inner .payment-card-wrapper .pwyw-panel above), so this
@@ -644,7 +678,7 @@ a.link:hover::after {
    text-align: center;
    transition: 0.5s;
    background-size: 200% auto;
-   color: white;
+   color: var(--fhi-btn-ink);
    box-shadow: 0 0 20px #eee;
    border-radius: 4px;
    border:none;
@@ -652,7 +686,7 @@ a.link:hover::after {
 
 .section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover {
    background-position: right center;
-   color: #fff;
+   color: var(--fhi-btn-ink);
    text-decoration: none;
 }
 
@@ -1064,7 +1098,7 @@ a.link:hover::after {
     color: #fff;
 }
 .share-btn-email:hover {
-    background: var(--fhi-btn-fill-b);
+    background: var(--fhi-green-deep);
     color: #fff;
 }
 
@@ -1352,7 +1386,7 @@ section:not(.slider) .share-subcopy {
 }
 
 .bingo-free-space:hover {
-    background: var(--fhi-btn-fill-b) !important;
+    background: var(--fhi-green-deep) !important;
     transform: scale(1.05);
 }
 
@@ -1595,7 +1629,7 @@ section:not(.slider) .share-subcopy {
     transition: color 0.2s;
 }
 .start-card:hover .start-card-link {
-    color: var(--fhi-btn-fill-b);
+    color: var(--fhi-green-deep);
 }
 
 /* ===== About Section Refresh ===== */
