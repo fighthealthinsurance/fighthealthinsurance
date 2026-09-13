@@ -1,3 +1,25 @@
+:root {
+    /* Palette already in use across this file, named once. */
+    --fhi-green: #a5c422;
+    --fhi-lime: #ADD100;
+    --fhi-olive: #7B920A;
+    --fhi-green-ink: #566b07;
+    --fhi-pink: #f02eaa;
+    --fhi-ink: #333;
+    --fhi-ink-2: #555;
+    --fhi-muted: #666;
+    --fhi-line: #e0e0e0;
+    --fhi-surface: #f9f9f9;
+    --fhi-radius: 10px;
+    --fhi-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    /* Button fill, held apart from the palette on purpose: the words on a
+       button sit on this pair, so it has to carry text contrast, while
+       --fhi-lime and --fhi-olive stay the decorative surfaces (panel borders,
+       underlines, the bingo grid) and keep their colour. */
+    --fhi-btn-fill-a: #ADD100;
+    --fhi-btn-fill-b: #7B920A;
+}
+
 /* Skip link for keyboard navigation (accessibility) */
 .skip-link {
     position: absolute;
@@ -113,7 +135,7 @@ header {
 }
 
 a.link {
-    color: #a5c422 !important;
+    color: var(--fhi-green) !important;
     transition: all 1s !important;
     display: inline-block;
     position: relative;
@@ -127,7 +149,7 @@ a.link::after {
     height: 2px;
     bottom: 0;
     left: 0;
-    background-color: #a5c422;
+    background-color: var(--fhi-green);
     transform-origin: bottom right;
     transition: transform 0.25s ease-out;
 }
@@ -142,7 +164,7 @@ a.link:hover::after {
 }
 
 .btn-green, .btn-green:focus {
-    background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%);
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
     background-size: 200% auto;
     color: #fff;
     transition: all 0.3s;
@@ -159,7 +181,7 @@ a.link:hover::after {
     box-shadow: 0 4px 16px rgba(165, 196, 34, 0.5);
 }
 
-.btn-delete, .pro-submit-btn{background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
+.btn-delete, .pro-submit-btn{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
 .btn-delete, .pro-submit-btn {
    margin: 10px;
    padding: 5px 25px;
@@ -229,7 +251,7 @@ a.link:hover::after {
 
 .pwyw-pill {
     display: inline-block;
-    background: linear-gradient(90deg,#ADD100,#7B920A);
+    background: linear-gradient(90deg, var(--fhi-btn-fill-a), var(--fhi-btn-fill-b));
     color:#fff;
     padding:.4rem 1rem;
     font-size:.95rem;
@@ -255,7 +277,7 @@ a.link:hover::after {
 .primary-cta {font-size:1.15rem !important; font-weight:700 !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
 .secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size:1.15rem !important; padding: 0 1.8rem !important; line-height: 1.5 !important;}
-.secondary-cta:hover, .tertiary-cta:hover {background:#a5c422 !important; color:#fff !important; border-color: #a5c422 !important;}
+.secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green) !important; color:#fff !important; border-color: var(--fhi-green) !important;}
 
 /* Value Proposition Two-Column Layout */
 #home .hero-inner .value-prop-container {
@@ -269,7 +291,7 @@ a.link:hover::after {
     background: rgba(30, 20, 60, 0.85) !important;
     backdrop-filter: blur(8px) !important;
     -webkit-backdrop-filter: blur(8px) !important;
-    border-radius: 10px;
+    border-radius: var(--fhi-radius);
     padding: 0.6rem 0.75rem;
     box-shadow: 0 4px 14px rgba(0,0,0,.3) !important;
     border: 1px solid rgba(165, 196, 34, 0.3) !important;
@@ -482,10 +504,10 @@ a.link:hover::after {
 .pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 .pwyw-submit {min-width:180px;}
-.pwyw-thanks {font-size:.7rem; color:#a5c422;}
+.pwyw-thanks {font-size:.7rem; color:var(--fhi-green);}
 
 /* Outline variant for chat/pro buttons */
-.btn-outline-green {background:transparent; border:2px solid #a5c422; color:#a5c422; transition:.3s;}
+.btn-outline-green {background:transparent; border:2px solid var(--fhi-green); color:var(--fhi-green); transition:.3s;}
 .btn-outline-green:hover {background:#000; color:#fff;}
 
 /* Pro version text container */
@@ -493,7 +515,7 @@ a.link:hover::after {
 
 /* Appeal page reuse */
 .appeal-donate-wrapper {margin:1.25rem 0;}
-.appeal-donate-wrapper .pwyw-panel {background: #fff; color: #333; border: 2px solid #ADD100;}
+.appeal-donate-wrapper .pwyw-panel {background: #fff; color: #333; border: 2px solid var(--fhi-lime);}
 .appeal-donate-wrapper .pwyw-title {color: #333; text-shadow: none;}
 .appeal-donate-wrapper .pwyw-subcopy {color: #555; text-shadow: none;}
 .appeal-donate-wrapper .pwyw-option {background: #f8f9fa; color: #333; border: 1px solid #ddd;}
@@ -533,7 +555,7 @@ a.link:hover::after {
 }
 
 
-.section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
+.section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
 .section-btn, .section-btn.btn.btn-default.smoothScroll {
    margin: 10px;
    padding: 0.85rem 1.8rem;
@@ -745,7 +767,7 @@ a.link:hover::after {
     background: white;
     border-radius: 12px;
     padding: 1.5rem 1rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--fhi-shadow);
     flex-wrap: wrap;
     display: flex;
     border-bottom: 4px solid #f02eaa;
@@ -819,8 +841,8 @@ a.link:hover::after {
     background: #fff;
     padding: 1.5rem;
     border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-    border-left: 4px solid #a5c422;
+    box-shadow: var(--fhi-shadow);
+    border-left: 4px solid var(--fhi-green);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .testimonial-card:hover {
@@ -900,7 +922,7 @@ a.link:hover::after {
     box-shadow: 0 4px 14px rgba(0,0,0,.25);
     max-width: 680px;
     border: 1px solid rgba(255, 255, 255, 0.3);
-    border-top: 4px solid #a5c422;
+    border-top: 4px solid var(--fhi-green);
 }
 .share-title {
     margin: 0 0 .5rem;
@@ -965,7 +987,7 @@ a.link:hover::after {
     color: #fff;
 }
 .share-btn-email {
-    background: #a5c422;
+    background: var(--fhi-green);
     color: #fff;
 }
 .share-btn-email:hover {
@@ -978,9 +1000,9 @@ a.link:hover::after {
 section:not(.slider) .share-panel {
     background: #fff;
     color: #333;
-    border: 1px solid #e0e0e0;
-    border-top: 4px solid #a5c422;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    border: 1px solid var(--fhi-line);
+    border-top: 4px solid var(--fhi-green);
+    box-shadow: var(--fhi-shadow);
 }
 .container .share-title,
 section:not(.slider) .share-title {
@@ -1014,9 +1036,9 @@ section:not(.slider) .share-subcopy {
 .appeal-share-wrapper .share-panel {
     background: #fff !important;
     color: #333 !important;
-    border: 1px solid #e0e0e0;
-    border-top: 4px solid #a5c422;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    border: 1px solid var(--fhi-line);
+    border-top: 4px solid var(--fhi-green);
+    box-shadow: var(--fhi-shadow);
     width: 100%;
     max-width: 680px;
     margin: 0 auto;
@@ -1040,8 +1062,8 @@ section:not(.slider) .share-subcopy {
 .appeal-donate-wrapper .pwyw-panel {
     background: #fff;
     color: #333;
-    border: 2px solid #ADD100;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    border: 2px solid var(--fhi-lime);
+    box-shadow: var(--fhi-shadow);
 }
 .appeal-donate-wrapper .pwyw-title {
     color: #333;
@@ -1063,7 +1085,7 @@ section:not(.slider) .share-subcopy {
     color: #333;
 }
 .appeal-donate-wrapper .pwyw-thanks {
-    color: #a5c422;
+    color: var(--fhi-green);
 }
 
 /* Centered content on desktop for appeal pages */
@@ -1101,25 +1123,6 @@ section:not(.slider) .share-subcopy {
     color: #1565c0;
 }
 
-/* Button styles - Extracted from inline */
-.btn-secondary-custom {
-    background: #6c757d;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 3px;
-    text-decoration: none;
-}
-.btn-secondary-custom:hover {
-    background: #5a6268;
-    color: white;
-    text-decoration: none;
-}
-.btn-link-muted {
-    color: #6c757d;
-    text-decoration: underline;
-    font-size: 0.9rem;
-}
-
 /* Navigation/Form actions row */
 .form-nav-row {
     margin-top: 1.5rem;
@@ -1153,7 +1156,7 @@ section:not(.slider) .share-subcopy {
 }
 .status-code {
     font-size: 6rem;
-    color: #a5c422;
+    color: var(--fhi-green);
     margin-bottom: 1rem;
 }
 .status-title {
@@ -1250,7 +1253,7 @@ section:not(.slider) .share-subcopy {
     align-items: center;
     justify-content: center;
     background: #fff;
-    border: 2px solid #a5c422;
+    border: 2px solid var(--fhi-green);
     border-radius: 8px;
     padding: 0.5rem;
     font-size: 0.85rem;
@@ -1269,7 +1272,7 @@ section:not(.slider) .share-subcopy {
 }
 
 .bingo-free-space {
-    background: #a5c422 !important;
+    background: var(--fhi-green) !important;
     color: white !important;
     font-weight: bold;
     font-size: 1rem;
@@ -1385,6 +1388,7 @@ section:not(.slider) .share-subcopy {
 .btn-secondary-custom:hover {
     background: #5a6268;
     color: white;
+    text-decoration: none;
 }
 
 /* External link icon (small) - extracted from microsite.html */
@@ -1479,11 +1483,11 @@ section:not(.slider) .share-subcopy {
 .start-card {
     display: flex;
     flex-direction: column;
-    background: #f9f9f9;
+    background: var(--fhi-surface);
     padding: 1.75rem;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-    border-top: 4px solid #a5c422;
+    border-top: 4px solid var(--fhi-green);
     text-decoration: none;
     color: inherit;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -1514,11 +1518,11 @@ section:not(.slider) .share-subcopy {
 .start-card-link {
     font-size: 0.9rem;
     font-weight: 600;
-    color: #a5c422;
+    color: var(--fhi-green);
     transition: color 0.2s;
 }
 .start-card:hover .start-card-link {
-    color: #7B920A;
+    color: var(--fhi-olive);
 }
 
 /* ===== About Section Refresh ===== */
@@ -1552,12 +1556,12 @@ section:not(.slider) .share-subcopy {
 .about-step {
     background: #fff;
     padding: 1rem 1.25rem;
-    border-radius: 10px;
+    border-radius: var(--fhi-radius);
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
-    border-left: 4px solid #e0e0e0;
+    border-left: 4px solid var(--fhi-line);
 }
 .about-step-highlight {
-    border-left-color: #a5c422;
+    border-left-color: var(--fhi-green);
     background: #f8fbe8;
 }
 .about-step-number {
@@ -1567,7 +1571,7 @@ section:not(.slider) .share-subcopy {
     width: 1.75rem;
     height: 1.75rem;
     border-radius: 50%;
-    background: #a5c422;
+    background: var(--fhi-green);
     color: #fff;
     font-weight: 700;
     font-size: 0.85rem;
@@ -1595,7 +1599,7 @@ section:not(.slider) .share-subcopy {
     display: block;
     width: 60px;
     height: 3px;
-    background: linear-gradient(90deg, #ADD100, #7B920A);
+    background: linear-gradient(90deg, var(--fhi-lime), var(--fhi-olive));
     margin: 0.75rem auto 0;
     border-radius: 2px;
 }
@@ -1837,7 +1841,7 @@ section:not(.slider) .share-subcopy {
 }
 .featured-title-link:hover,
 .featured-title-link:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
 }
 .featured-see-all {
@@ -1847,13 +1851,13 @@ section:not(.slider) .share-subcopy {
 .featured-see-all-link {
     display: inline-block;
     font-weight: 600;
-    color: #7b920a;
+    color: var(--fhi-olive);
     text-decoration: none;
     transition: color 0.2s ease, transform 0.2s ease;
 }
 .featured-see-all-link:hover,
 .featured-see-all-link:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
     transform: translateX(2px);
 }
@@ -1901,7 +1905,7 @@ section:not(.slider) .share-subcopy {
     background: #fff;
     border-radius: 12px;
     padding: 1.5rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--fhi-shadow);
     border-bottom: 4px solid #f02eaa;
     transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
@@ -1936,7 +1940,7 @@ section:not(.slider) .share-subcopy {
     letter-spacing: 0.04em;
     /* Darker than the site's usual green: this is small (0.7rem) text on a pale
        green chip, so it needs the 4.5:1 body-text ratio (this pair is ~5.4:1). */
-    color: #566b07;
+    color: var(--fhi-green-ink);
     background: rgba(165, 196, 34, 0.15);
     border-radius: 999px;
     padding: 0.2rem 0.6rem;
@@ -1965,7 +1969,7 @@ section:not(.slider) .share-subcopy {
 }
 .media-reference-headline a:hover,
 .media-reference-headline a:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
 }
 .media-reference-desc {
@@ -1983,13 +1987,13 @@ section:not(.slider) .share-subcopy {
 }
 .media-reference-link {
     font-weight: 600;
-    color: #7b920a;
+    color: var(--fhi-olive);
     text-decoration: none;
     transition: color 0.2s ease;
 }
 .media-reference-link:hover,
 .media-reference-link:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
 }
 .media-reference-link-internal {
