@@ -1694,6 +1694,11 @@ BRAND_BUTTON_CLASSES = frozenset(
     ("btn-green", "section-btn", "btn-delete", "pro-submit-btn", "pwyw-pill")
 )
 GRADIENT_BUTTON_CLASSES = ("btn-green", "section-btn", "btn-delete", "pro-submit-btn")
+# Same family, drawn as an edge rather than a fill. They carry the size scale
+# but not the white-on-lime measurement, because their fill is not the lime.
+OUTLINE_BUTTON_CLASSES = frozenset(
+    ("btn-outline-green", "secondary-cta", "tertiary-cta")
+)
 DARK_INK_CANDIDATES = ("#2b0f3d", "#1a1a1a")
 DECISION_DATE = "2026-09-13"
 # WCAG 1.4.11: a control, and the indicator that says which control has focus,
@@ -2153,8 +2158,11 @@ def test_the_primary_action_on_a_page_is_marked_large() -> None:
             "and it is not marked large" % template
         )
     for node in carried:
-        assert node.classes & BRAND_BUTTON_CLASSES, (
-            "%s in %s is marked large but is not a brand button"
+        # The outline buttons wear the brand too: white or transparent fill
+        # with a lime edge, so they are measured differently from the filled
+        # ones but take their size from the same scale.
+        assert node.classes & (BRAND_BUTTON_CLASSES | OUTLINE_BUTTON_CLASSES), (
+            "%s in %s is marked large but is not one of our buttons"
             % (node.ident or node.tag, node.template)
         )
 
@@ -2535,3 +2543,48 @@ def test_a_standalone_page_declares_the_ink_it_uses() -> None:
             "have been left behind by an ink swap."
             % (name, INK_TOKEN, declared.group(1).strip(), canonical.strip())
         )
+
+
+# Bootstrap's own size classes. They set padding and type but no minimum
+# height, and they are single classes exactly like ours, so which one wins is
+# decided by whichever stylesheet happens to be later.
+BOOTSTRAP_SIZE_CLASSES = ("btn-lg", "btn-sm")
+BRAND_BUTTON_MARKUP_CLASSES = (
+    "btn-green",
+    "btn-outline-green",
+    "section-btn",
+    "btn-delete",
+    "pro-submit-btn",
+    "primary-cta",
+    "secondary-cta",
+    "tertiary-cta",
+)
+_CLASS_ATTR = re.compile(r'class="([^"]*)"')
+
+
+def test_no_brand_button_takes_its_size_from_bootstrap() -> None:
+    """A brand button is sized by the scale, not by whichever sheet loads last.
+
+    Sixteen of them carried Bootstrap's .btn-lg. It sets 1.25rem type like
+    ours does, so they looked close enough to miss, but it also sets its own
+    padding and no minimum height at all, which is what the 44px touch target
+    on these buttons depends on. And .btn-lg and .fhi-btn-lg are both single
+    classes, so nothing but stylesheet order decides which one applies.
+    """
+    offenders = []
+    for path in sorted(TEMPLATE_DIR.rglob("*.html")):
+        for match in _CLASS_ATTR.finditer(path.read_text(errors="replace")):
+            classes = match.group(1).split()
+            if not any(c in BRAND_BUTTON_MARKUP_CLASSES for c in classes):
+                continue
+            for size in BOOTSTRAP_SIZE_CLASSES:
+                if size in classes:
+                    line = path.read_text(errors="replace")[: match.start()].count("\n") + 1
+                    offenders.append(
+                        "%s:%d  %s"
+                        % (path.relative_to(TEMPLATE_DIR).as_posix(), line, match.group(1)[:70])
+                    )
+    assert not offenders, (
+        "these brand buttons are sized by Bootstrap rather than by the scale. "
+        "Use fhi-btn-sm, fhi-btn-md or fhi-btn-lg:\n  %s" % "\n  ".join(offenders)
+    )
