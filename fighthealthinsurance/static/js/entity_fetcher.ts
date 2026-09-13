@@ -1,18 +1,77 @@
 declare const $: any;
 import * as Sentry from '@sentry/browser';
 
-// DOM Elements for WebSocket auto-advance
-const nextButton = document.getElementById("next");
+// Every frame the extraction socket sends is a JSON object carrying a task and
+// an outcome. `label` is present only for the steps that have words meant for
+// the person reading the page; a frame without one is never rendered, which is
+// how internal step names stay off the page without a fallback that prints
+// them.
+interface ExtractionFrame {
+  type?: string;
+  task?: string;
+  outcome?: string;
+  label?: string;
+  message?: string;
+}
+
+// A run that goes quiet is a run that failed. The socket closing used to be
+// read as success, so a dead connection painted a green all-done banner and
+// clicked Next; now silence lands on the could-not-read state instead.
+const INACTIVITY_MS = 60000;
+const HARD_CAP_MS = 120000;
+// Transient connection blips are worth one or two reconnects, but only while
+// nothing at all has arrived.
+const MAX_CONNECT_RETRIES = 2;
+
+// The client's own words for the states no server frame can describe, because
+// the server never got to send one.
+const COULD_NOT_READ =
+  'We could not finish reading your letter. You can have us try again, or type the details in yourself.';
+
+const OUTCOME_SUFFIX: {[key: string]: string} = {
+  found: 'found',
+  nothing_found: 'not in this letter',
+  failed: 'we could not read this',
+  cached: 'already saved',
+  timed_out: 'ran out of time',
+  kept_existing: 'we kept what was already there',
+};
+
+const OUTCOME_COLOR: {[key: string]: string} = {
+  found: '#28a745',
+  nothing_found: '#555555',
+  failed: '#dc3545',
+  cached: '#555555',
+  timed_out: '#b8860b',
+  kept_existing: '#555555',
+};
+
+// Run-level outcomes that are not bad news. Everything else paints red.
+const CALM_RUN_OUTCOMES = [
+  'run_finished',
+  'run_already_have_details',
+  'run_kept_your_details',
+];
+
 let startTime: number | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
-let statusMessages: Set<string> = new Set();
-// Set when the server streamed an error frame: done() must not paint
-// "Complete!" and auto-advance past a failed extraction.
-let serverErrorSeen = false;
+let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+let hardCapTimer: ReturnType<typeof setTimeout> | null = null;
+let renderedTasks: Set<string> = new Set();
+// True once a terminal state has been painted. Nothing may paint over it: a
+// close arriving after the run-level frame is just the socket hanging up.
+let settled = false;
+let activeSocket: WebSocket | null = null;
+let currentUrl = '';
+let currentData: Record<string, unknown> = {};
 
 function createStatusIndicator(): HTMLElement {
   const statusDiv = document.createElement('div');
   statusDiv.id = 'entity-status-indicator';
+  // The panel is the live region: a screen reader hears each step as it is
+  // added and hears the final state when it lands.
+  statusDiv.setAttribute('role', 'status');
+  statusDiv.setAttribute('aria-live', 'polite');
   statusDiv.style.cssText = `
     background: #f8f9fa;
     border: 2px solid #ADD100;
@@ -22,15 +81,16 @@ function createStatusIndicator(): HTMLElement {
     text-align: center;
   `;
   statusDiv.innerHTML = `
-    <div style="font-size: 1.1rem; font-weight: 600; color: #333; margin-bottom: 8px;">
-      🔍 Extracting Information from Your Denial
+    <div id="entity-status-title" style="font-size: 1.1rem; font-weight: 600; color: #333; margin-bottom: 8px;">
+      Reading your denial letter
     </div>
-    <div id="entity-timer" style="font-size: 0.9rem; color: #666; margin-bottom: 8px;">
+    <div id="entity-timer" aria-hidden="true" style="font-size: 0.9rem; color: #666; margin-bottom: 8px;">
       Time elapsed: 0s
     </div>
     <div id="entity-status-list" style="font-size: 0.85rem; color: #555; line-height: 1.6;">
-      <div>⏳ Starting extraction...</div>
+      <div>Starting to read your letter...</div>
     </div>
+    <div id="entity-status-actions" style="margin-top: 12px; display: none; gap: 0.75rem; justify-content: center; flex-wrap: wrap;"></div>
   `;
   return statusDiv;
 }
@@ -40,221 +100,269 @@ function updateTimer(): void {
   const elapsed = Math.floor((Date.now() - startTime) / 1000);
   const timerEl = document.getElementById('entity-timer');
   if (timerEl) {
+    // aria-hidden on this element: a counter that ticks once a second inside a
+    // polite live region would talk over everything else in it.
     timerEl.textContent = `Time elapsed: ${elapsed}s`;
   }
 }
 
-function updateStatusList(taskName: string): void {
-  const taskDisplayNames: {[key: string]: string} = {
-    'fax': 'Looking for fax information',
-    'insurance company': 'Looking for insurance company',
-    'plan id': 'Looking for plan ID',
-    'claim id': 'Looking for the claim ID',
-    'date of service': 'Looking for service date (if applicable)',
-    'diagnosis': 'Looking up diagnosis',
-    'type of denial': 'Identifying denial type (oh so many ways they try not to pay)'
-  };
-
-  const displayName = taskDisplayNames[taskName] || `✓ Processed ${taskName}`;
-
-  if (!statusMessages.has(taskName)) {
-    statusMessages.add(taskName);
-    const statusList = document.getElementById('entity-status-list');
-    if (statusList) {
-      const item = document.createElement('div');
-      item.style.cssText = 'color: #28a745; margin: 4px 0;';
-      item.textContent = displayName;
-      statusList.appendChild(item);
-
-      // If diagnosis was extracted, add pubmed note
-      if (taskName === 'diagnosis') {
-        const pubmedNote = document.createElement('div');
-        pubmedNote.style.cssText = 'color: #0066cc; margin: 8px 0; font-weight: 500;';
-        pubmedNote.textContent = '📚 Looking up medical research in PubMed...';
-        statusList.appendChild(pubmedNote);
-      }
-    }
-  }
-}
-
-function processResponseChunk(chunk: string): void {
-  // Chunks can carry extracted denial entities (PHI) -- log only the size.
-  console.debug("Processing chunk, length", chunk.length);
-  const trimmed = (chunk || "").trim();
-  if (!trimmed) {
-    return;
-  }
-  // Server error frames are JSON ({"type": "error", ...} or {"error": ...});
-  // they used to pass the short-string filter below and be painted as GREEN
-  // completed steps. Surface them as errors instead.
-  if (trimmed.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && (parsed.type === "error" || parsed.error)) {
-        serverErrorSeen = true;
-        const statusList = document.getElementById("entity-status-list");
-        if (statusList) {
-          const item = document.createElement("div");
-          item.style.cssText = "color: #dc3545; margin: 4px 0;";
-          item.textContent =
-            "⚠️ " +
-            (parsed.message || parsed.error || "Extraction hit a server error");
-        statusList.appendChild(item);
-        }
-        return;
-      }
-    } catch {
-      // Not JSON after all; fall through to the task-name path.
-    }
-  }
-  // Try to parse as task name
-  if (trimmed.length < 50) {
-    updateStatusList(trimmed);
-  }
-}
-
-function done(): void {
-  // Stop the timer
+function stopTimers(): void {
   if (timerInterval) {
     clearInterval(timerInterval);
+    timerInterval = null;
+  }
+  if (inactivityTimer) {
+    clearTimeout(inactivityTimer);
+    inactivityTimer = null;
+  }
+  if (hardCapTimer) {
+    clearTimeout(hardCapTimer);
+    hardCapTimer = null;
+  }
+}
+
+function armInactivityTimer(): void {
+  if (inactivityTimer) {
+    clearTimeout(inactivityTimer);
+  }
+  inactivityTimer = setTimeout(() => {
+    finish({outcome: 'run_failed', label: COULD_NOT_READ});
+  }, INACTIVITY_MS);
+}
+
+// One step's line. Only a frame the server gave words for is rendered, so
+// there is no branch here that could put a wire name in front of a person.
+function renderStep(frame: ExtractionFrame): void {
+  const label = frame.label;
+  const outcome = frame.outcome || '';
+  if (!label) {
+    return;
+  }
+  const key = label + '|' + outcome;
+  if (renderedTasks.has(key)) {
+    return;
+  }
+  renderedTasks.add(key);
+  const statusList = document.getElementById('entity-status-list');
+  if (!statusList) {
+    return;
+  }
+  const suffix = OUTCOME_SUFFIX[outcome];
+  const item = document.createElement('div');
+  item.style.cssText =
+    'color: ' + (OUTCOME_COLOR[outcome] || '#555555') + '; margin: 4px 0;';
+  item.textContent = suffix ? label + ': ' + suffix : label;
+  statusList.appendChild(item);
+}
+
+function actionButton(text: string, submits: boolean): HTMLButtonElement {
+  const button = document.createElement('button');
+  // The continue control is a plain submit button inside the flow's own form,
+  // so continuing is the person pressing a button and the page never navigates
+  // on their behalf.
+  button.type = submits ? 'submit' : 'button';
+  button.textContent = text;
+  button.className = submits ? 'btn btn-green' : 'btn btn-secondary';
+  button.style.cssText = 'margin: 0 0.25rem;';
+  return button;
+}
+
+// Paint the terminal state and offer the two ways out of it. Every outcome
+// gets both: continuing was the only thing on offer before and retrying was
+// the only thing missing.
+function finish(frame: ExtractionFrame): void {
+  if (settled) {
+    return;
+  }
+  settled = true;
+  stopTimers();
+  if (activeSocket) {
+    try {
+      activeSocket.close();
+    } catch (e) {
+      console.debug('entity_fetcher: socket already closed');
+    }
+    activeSocket = null;
+  }
+
+  const outcome = frame.outcome || 'run_failed';
+  const label = frame.label || COULD_NOT_READ;
+  const calm = CALM_RUN_OUTCOMES.indexOf(outcome) >= 0;
+
+  // The yellow block above this panel says "Analyzing your denial..." behind a
+  // spinner with no end, and it is only true while a run is in flight. The
+  // deleted auto-advance used to whisk it off screen about a second after a
+  // successful run; with the auto-advance gone it would sit there under every
+  // terminal state, telling the person we are still reading a letter the panel
+  // below has just finished reporting on. Two answers on one page is worse
+  // than the one false answer this work removes, so the run's own words are
+  // the only ones left standing.
+  const waitingMsg = document.getElementById('waiting-msg');
+  if (waitingMsg) {
+    waitingMsg.style.display = 'none';
   }
 
   const statusIndicator = document.getElementById('entity-status-indicator');
-
-  // A server error frame arrived: the socket closing cleanly afterwards is
-  // NOT success. Auto-advancing here landed the user on the review form
-  // with nothing extracted, looking exactly like a successful run -- the
-  // drop-off the server-side error frame exists to prevent. Leave the page
-  // up with a clear failure state; the Next button still works for a
-  // deliberate manual continue.
-  if (serverErrorSeen) {
-    console.warn("Extraction reported a server error; not auto-advancing.");
-    if (statusIndicator) {
-      statusIndicator.style.borderColor = '#dc3545';
-      const titleEl = statusIndicator.querySelector('div');
-      if (titleEl) {
-        titleEl.innerHTML =
-          '⚠️ Extraction failed — you can continue and enter the details manually.';
-      }
-    }
-    return;
-  }
-
-  console.log("Moving to the next step :)");
-
-  // Update status to complete
   if (statusIndicator) {
-    statusIndicator.style.borderColor = '#28a745';
-    const titleEl = statusIndicator.querySelector('div');
-    if (titleEl) {
-      titleEl.innerHTML = '✅ Extraction Complete!';
-    }
+    statusIndicator.style.borderColor = calm ? '#28a745' : '#dc3545';
+  }
+  const titleEl = document.getElementById('entity-status-title');
+  if (titleEl) {
+    titleEl.textContent = label;
+  }
+  const timerEl = document.getElementById('entity-timer');
+  if (timerEl) {
+    timerEl.textContent = '';
   }
 
-  // Auto-advance after a brief delay
-  setTimeout(() => {
-    if (nextButton) {
-      (nextButton as HTMLButtonElement).click();
-    } else {
-      const warningMsg = 'entity_fetcher.ts:done() - nextButton (id "next") not found; cannot auto-click to proceed.';
-      console.warn(warningMsg);
-      Sentry.captureMessage(warningMsg, 'warning');
-    }
-  }, 1000);
+  const actions = document.getElementById('entity-status-actions');
+  if (actions) {
+    actions.innerHTML = '';
+    const retry = actionButton('Try reading the letter again', false);
+    retry.addEventListener('click', () => {
+      startRun(true);
+    });
+    actions.appendChild(retry);
+    // Both ways out on every state, and the same two controls: only the words
+    // on the green one change. "Continue and type it in myself" under "we read
+    // your letter and filled in what we found" told the person their good run
+    // had left them with the typing to do.
+    actions.appendChild(
+      actionButton(
+        calm ? 'Continue to the next page' : 'Continue and type it in myself',
+        true,
+      ),
+    );
+    actions.style.display = 'flex';
+  }
 }
 
-function connectWebSocket(
-  websocketUrl: string,
-  data: object,
-  processResponseChunk: (chunk: string) => void,
-  done: () => void,
-  retries = 0,
-  maxRetries = 5,
-) {
-  const ws = new WebSocket(websocketUrl);
-  // Set when onerror has scheduled a replacement socket: the failed socket's
-  // onclose still fires, and calling done() there would complete the workflow
-  // (auto-advancing the user) before the retry even starts.
-  let retryScheduled = false;
+function handleFrame(raw: string): void {
+  if (settled) {
+    // A terminal state is already on the page. A frame arriving after it (a
+    // socket opened by a reconnect that was scheduled in the second before a
+    // timer fired, say) must not append a step line under the final words:
+    // renderStep has no opinion about what is already painted, so the guard
+    // belongs here, in front of it.
+    return;
+  }
+  // Frames can carry extracted denial entities (PHI) -- log only the size.
+  console.debug('entity_fetcher: frame length', (raw || '').length);
+  const trimmed = (raw || '').trim();
+  if (!trimmed) {
+    return;
+  }
+  let frame: ExtractionFrame;
+  try {
+    frame = JSON.parse(trimmed);
+  } catch (e) {
+    console.warn('entity_fetcher: unparseable frame');
+    return;
+  }
+  if (!frame || typeof frame !== 'object' || !frame.outcome) {
+    return;
+  }
+  if (frame.type === 'run' || frame.type === 'error') {
+    finish(frame);
+    return;
+  }
+  renderStep(frame);
+}
 
-  // Open the connection and send data
+function connect(retries: number): void {
+  const ws = new WebSocket(currentUrl);
+  activeSocket = ws;
+  let receivedAnything = false;
+  let resolved = false;
+
+  const settleConnection = () => {
+    if (resolved || settled) {
+      return;
+    }
+    resolved = true;
+    if (!receivedAnything && retries < MAX_CONNECT_RETRIES) {
+      // Nothing arrived at all: a blip worth one more try. The inactivity and
+      // hard-cap timers keep running across reconnects, so this can never
+      // loop past the point where the page owes the person an answer.
+      setTimeout(() => connect(retries + 1), 1000);
+      return;
+    }
+    // The socket ended without a run-level frame. That is not success, and it
+    // used to be read as one.
+    finish({outcome: 'run_failed', label: COULD_NOT_READ});
+  };
+
   ws.onopen = () => {
-    console.log("WebSocket connection opened");
-    ws.send(JSON.stringify(data));
+    ws.send(JSON.stringify(currentData));
   };
-
-  // Handle incoming messages
   ws.onmessage = (event) => {
-    const chunk = event.data;
-    processResponseChunk(chunk);
+    receivedAnything = true;
+    armInactivityTimer();
+    handleFrame(event.data);
   };
+  ws.onclose = () => settleConnection();
+  ws.onerror = () => settleConnection();
+}
 
-  // Handle connection closure
-  ws.onclose = (event) => {
-    console.log("WebSocket connection closed:", event.reason);
-    if (!retryScheduled) {
-      done();
-    }
-  };
+function startRun(retry: boolean): void {
+  settled = false;
+  renderedTasks = new Set();
+  stopTimers();
 
-  // Handle errors
-  ws.onerror = (error) => {
-    console.error("WebSocket error:", error);
-    if (retries < maxRetries) {
-      console.log(
-        `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
-      );
-      retryScheduled = true;
-      setTimeout(
-        () =>
-          connectWebSocket(
-            websocketUrl,
-            data,
-            processResponseChunk,
-            done,
-            retries + 1,
-            maxRetries,
-          ),
-        1000,
-      );
-    } else {
-      console.error("Max retries reached. Closing connection.");
-      // done() runs from onclose (retryScheduled stays false here).
-    }
-  };
+  const statusList = document.getElementById('entity-status-list');
+  if (statusList) {
+    statusList.innerHTML = '';
+    const item = document.createElement('div');
+    item.textContent = retry
+      ? 'Reading your letter again...'
+      : 'Starting to read your letter...';
+    statusList.appendChild(item);
+  }
+  const titleEl = document.getElementById('entity-status-title');
+  if (titleEl) {
+    titleEl.textContent = 'Reading your denial letter';
+  }
+  const statusIndicator = document.getElementById('entity-status-indicator');
+  if (statusIndicator) {
+    statusIndicator.style.borderColor = '#ADD100';
+  }
+  const actions = document.getElementById('entity-status-actions');
+  if (actions) {
+    actions.innerHTML = '';
+    actions.style.display = 'none';
+  }
+
+  currentData = {...currentData, retry: retry};
+
+  startTime = Date.now();
+  timerInterval = setInterval(updateTimer, 1000);
+  armInactivityTimer();
+  hardCapTimer = setTimeout(() => {
+    finish({outcome: 'run_failed', label: COULD_NOT_READ});
+  }, HARD_CAP_MS);
+
+  connect(0);
 }
 
 export function doQuery(
   backend_url: string,
-  data: Map<string, string>,
+  data: Record<string, unknown>,
   retries: number,
 ) {
-  // Fresh run, fresh error state: a stale flag from a previous run on this
-  // page would block auto-advance after a later successful extraction.
-  serverErrorSeen = false;
-  // Initialize status indicator
+  currentUrl = backend_url;
+  currentData = {...data};
+
   const waitingMsg = document.getElementById('waiting-msg');
   if (waitingMsg) {
     const statusIndicator = createStatusIndicator();
     waitingMsg.parentNode?.insertBefore(statusIndicator, waitingMsg.nextSibling);
+  } else {
+    const warningMsg = 'entity_fetcher.ts: waiting-msg not found; no status panel rendered.';
+    console.warn(warningMsg);
+    Sentry.captureMessage(warningMsg, 'warning');
   }
 
-  // Start timer
-  startTime = Date.now();
-  timerInterval = setInterval(updateTimer, 1000);
-
-  // The template passes retries=0, and this used to be forwarded as
-  // MAX retries -- so the very first ws.onerror gave up (0 < 0), silently
-  // auto-advancing the user with nothing extracted. Floor the retry budget
-  // so a transient blip actually gets retried.
-  return connectWebSocket(
-    backend_url,
-    data,
-    processResponseChunk,
-    done,
-    0,
-    Math.max(retries, 2),
-  );
+  startRun(false);
 }
 
 // Expose for invocation

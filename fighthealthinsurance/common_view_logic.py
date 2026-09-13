@@ -1421,6 +1421,124 @@ class ProfessionalNotificationHelper:
         )
 
 
+# The vocabulary the extraction socket speaks.
+#
+# Every frame the extraction stream sends is a JSON object carrying a ``task``
+# and an ``outcome``. Before this, ``extract_entity`` yielded bare task-name
+# strings and the consumer put them on the wire with a newline after each, so
+# the page had no way to tell "we found this" from "this step ran and found
+# nothing" from "this step blew up" -- and a run that yielded nothing at all
+# (the already-done early exit) looked exactly like a successful one.
+#
+# Per-step outcomes:
+EXTRACTION_OUTCOME_FOUND = "found"
+EXTRACTION_OUTCOME_NOTHING_FOUND = "nothing_found"
+EXTRACTION_OUTCOME_FAILED = "failed"
+EXTRACTION_OUTCOME_CACHED = "cached"
+EXTRACTION_OUTCOME_TIMED_OUT = "timed_out"
+# The model found something and we wrote none of it down, because every column
+# it answered already held a value. Separate from ``found`` because the page's
+# words for ``found`` say we filled something in, and on this run we did not.
+EXTRACTION_OUTCOME_KEPT_EXISTING = "kept_existing"
+
+EXTRACTION_OUTCOMES = frozenset(
+    {
+        EXTRACTION_OUTCOME_FOUND,
+        EXTRACTION_OUTCOME_NOTHING_FOUND,
+        EXTRACTION_OUTCOME_FAILED,
+        EXTRACTION_OUTCOME_CACHED,
+        EXTRACTION_OUTCOME_TIMED_OUT,
+        EXTRACTION_OUTCOME_KEPT_EXISTING,
+    }
+)
+
+# Exactly one run-level outcome is sent per run. ``already_have_details`` and
+# ``read_and_found_nothing`` are deliberately separate: the early-exit gate is
+# an OR that includes ``extract_procedure_diagnosis_finished``, and that flag
+# is set whenever the model call returned without raising -- including a
+# return of (None, None). Collapsing the two would congratulate someone on
+# details that are not on their row, which is the same defect as the green
+# "Extraction Complete" this work removes, pointing the other way.
+EXTRACTION_RUN_FINISHED = "run_finished"
+EXTRACTION_RUN_ALREADY_HAVE_DETAILS = "run_already_have_details"
+EXTRACTION_RUN_KEPT_YOUR_DETAILS = "run_kept_your_details"
+EXTRACTION_RUN_READ_AND_FOUND_NOTHING = "run_read_and_found_nothing"
+EXTRACTION_RUN_OUT_OF_ATTEMPTS = "run_out_of_attempts"
+EXTRACTION_RUN_FAILED = "run_failed"
+
+EXTRACTION_RUN_OUTCOMES = frozenset(
+    {
+        EXTRACTION_RUN_FINISHED,
+        EXTRACTION_RUN_ALREADY_HAVE_DETAILS,
+        EXTRACTION_RUN_KEPT_YOUR_DETAILS,
+        EXTRACTION_RUN_READ_AND_FOUND_NOTHING,
+        EXTRACTION_RUN_OUT_OF_ATTEMPTS,
+        EXTRACTION_RUN_FAILED,
+    }
+)
+
+# Wire names for the steps. These are keys, not copy: nothing here is shown to
+# anyone. A step is only ever named on the page through
+# ``EXTRACTION_TASK_LABELS`` below, and a step with no entry there is sent but
+# never rendered -- which is how internal step names stay off the page without
+# the client needing a fallback that prints them.
+EXTRACTION_TASK_FAX = "fax_number"
+EXTRACTION_TASK_INSURANCE_COMPANY = "insurance_company"
+EXTRACTION_TASK_INSURANCE_PLAN = "insurance_plan"
+EXTRACTION_TASK_PLAN_ID = "plan_id"
+EXTRACTION_TASK_CLAIM_ID = "claim_id"
+EXTRACTION_TASK_DATE_OF_SERVICE = "date_of_service"
+EXTRACTION_TASK_REGULATOR = "regulator"
+EXTRACTION_TASK_TRIAGE = "triage"
+EXTRACTION_TASK_PLAN_DOCUMENTS = "plan_documents"
+EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS = "procedure_and_diagnosis"
+EXTRACTION_TASK_DENIAL_TYPE = "denial_type"
+
+# The run-level frame's task name, so every frame carries a task.
+EXTRACTION_TASK_RUN = "run"
+
+# The words for the steps a patient should see. Written for the person
+# reading them, in the past tense the outcome makes true.
+EXTRACTION_TASK_LABELS: dict[str, str] = {
+    EXTRACTION_TASK_FAX: "Fax number to send the appeal to",
+    EXTRACTION_TASK_INSURANCE_COMPANY: "Insurance company",
+    EXTRACTION_TASK_PLAN_ID: "Plan ID",
+    EXTRACTION_TASK_CLAIM_ID: "Claim ID",
+    EXTRACTION_TASK_DATE_OF_SERVICE: "Date of service",
+    EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS: "Procedure and diagnosis",
+    EXTRACTION_TASK_DENIAL_TYPE: "Reason they gave for the denial",
+}
+
+# One sentence per run-level outcome, in the person's words. None of them
+# says the extraction completed unless something was actually read.
+EXTRACTION_RUN_LABELS: dict[str, str] = {
+    EXTRACTION_RUN_FINISHED: (
+        "We read your letter and filled in what we found. " "Check it on the next page."
+    ),
+    EXTRACTION_RUN_ALREADY_HAVE_DETAILS: (
+        "The details for this case are already here, so we did not read the "
+        "letter again."
+    ),
+    EXTRACTION_RUN_KEPT_YOUR_DETAILS: (
+        "We read your letter and did not change the details already on your "
+        "case. Check them on the next page."
+    ),
+    EXTRACTION_RUN_READ_AND_FOUND_NOTHING: (
+        "We read your letter and did not find the procedure or the diagnosis "
+        "in it. You can have us try again, or type them in yourself."
+    ),
+    EXTRACTION_RUN_OUT_OF_ATTEMPTS: (
+        "We have used up the tries we give one letter and still could not "
+        "find the procedure or the diagnosis. Typing them in yourself is the "
+        "way forward from here."
+    ),
+    EXTRACTION_RUN_FAILED: (
+        "We could not finish reading your letter. You can have us try again, "
+        "or type the details in yourself."
+    ),
+}
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -1524,6 +1642,18 @@ class DenialCreatorHelper:
         * both cached summaries, which are substituted into the prompt in place
           of the raw text for oversized denials -- a summary of the old letter
           would silently misdescribe the claim.
+        * the two candidate mirrors of the extracted procedure and diagnosis,
+          plus the extraction flags. The triage columns already went back to
+          null here while ``candidate_procedure`` and ``candidate_diagnosis``
+          stayed, so letter B could be described to the person using letter
+          A's extraction. ``extract_procedure_diagnosis_finished`` goes back
+          to False and ``extract_attempts`` back to zero with them: the flag
+          is a statement about a letter that no longer exists, and the attempt
+          budget is a per-letter failure budget, not a per-case one.
+
+        The live ``procedure`` and ``diagnosis`` columns are deliberately NOT
+        cleared: those may be what the person typed, and a new letter is not a
+        reason to throw their answers away.
 
         Best-effort: a failure here must not break denial creation/update, so
         the caller wraps this. The in-memory instance is cleared too, since it
@@ -1536,17 +1666,29 @@ class DenialCreatorHelper:
         # back to null so nothing downstream can read letter A's deadline
         # against letter B.
         cleared = denial_triage.cleared_values()
+        extraction_cleared: dict[str, Any] = {
+            "candidate_procedure": None,
+            "candidate_diagnosis": None,
+            "extract_procedure_diagnosis_finished": False,
+            "extract_attempts": 0,
+        }
         Denial.objects.filter(denial_id=denial.denial_id).update(
-            denial_text_summary=None, candidate_denial_text_summary=None, **cleared
+            denial_text_summary=None,
+            candidate_denial_text_summary=None,
+            **cleared,
+            **extraction_cleared,
         )
         denial.denial_text_summary = None
         denial.candidate_denial_text_summary = None
         for column, value in cleared.items():
             setattr(denial, column, value)
+        for column, value in extraction_cleared.items():
+            setattr(denial, column, value)
         logger.info(
             f"Denial {denial.denial_id} text replaced; invalidated "
-            f"{deleted} held-back speculative appeal(s) and both cached "
-            f"denial-text summaries"
+            f"{deleted} held-back speculative appeal(s), both cached "
+            f"denial-text summaries, the triage columns and the candidate "
+            f"procedure/diagnosis mirrors"
         )
 
     @classmethod
@@ -1817,14 +1959,122 @@ class DenialCreatorHelper:
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
 
-    @classmethod
-    async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
+    @staticmethod
+    def _extraction_record(task: str, outcome: str) -> dict:
+        """One step's frame: what ran, how it came out, and the words for it.
+
+        ``label`` is only present for the steps a patient should see. A step
+        with no label is still sent (so the stream stays auditable) and the
+        page renders nothing for it, which is why no internal step name can
+        reach the DOM without the client needing a print-the-key fallback.
         """
-        Perform entity extraction on a given denial id
+        record: dict = {"type": "task", "task": task, "outcome": outcome}
+        label = EXTRACTION_TASK_LABELS.get(task)
+        if label is not None:
+            record["label"] = label
+        return record
+
+    @staticmethod
+    def _extraction_run_record(outcome: str) -> dict:
+        """The one run-level frame. Exactly one of these is sent per run."""
+        return {
+            "type": "run",
+            "task": EXTRACTION_TASK_RUN,
+            "outcome": outcome,
+            "label": EXTRACTION_RUN_LABELS[outcome],
+        }
+
+    @staticmethod
+    def _outcome_for_result(result: Any) -> str:
+        """Read a step's return value as an outcome.
+
+        An extractor that knows its own outcome returns one of the outcome
+        strings and is believed. The rest return the value they extracted (or
+        ``None``), which is a truthful found/nothing-found signal.
+        """
+        if isinstance(result, str) and result in EXTRACTION_OUTCOMES:
+            return result
+        if result:
+            return EXTRACTION_OUTCOME_FOUND
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
+
+    @classmethod
+    async def _run_extraction_step(cls, awaitable: Awaitable[Any], task: str) -> dict:
+        """Await one step and turn it into exactly one frame.
+
+        This replaces ``named_task``, which returned ``(name, None)`` on an
+        exception -- indistinguishable on the wire from a step that ran and
+        found nothing.
+        """
+        try:
+            result = await awaitable
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.opt(exception=True).warning(f"Failed in task {task}: {e}")
+            return cls._extraction_record(task, EXTRACTION_OUTCOME_FAILED)
+        return cls._extraction_record(task, cls._outcome_for_result(result))
+
+    @classmethod
+    async def clear_extraction_for_retry(cls, denial_id: int) -> None:
+        """Spend one of the letter's attempts and make it readable again.
+
+        Returning to the extraction URL re-runs nothing: the already-done gate
+        in ``extract_entity`` is an OR over ``diagnosis``,
+        ``extract_procedure_diagnosis_finished`` and ``procedure``, so a run
+        that read the letter and found nothing can never be asked to look
+        again. This clears the finished flag and the two candidate mirrors,
+        which are ours, and leaves ``procedure`` and ``diagnosis`` alone,
+        which may be what the person typed.
+
+        ``extract_attempts`` is bumped rather than reset, in the same UPDATE so
+        the increment is race-safe. It has to be: the counter is otherwise only
+        bumped by ``extract_set_denial_and_diagnosis``'s except path, so on a
+        letter the model reads cleanly and finds nothing in, it never moves.
+        Without this the retry button would be an unbounded invitation to
+        re-run eleven steps and the PubMed/ClinicalTrials/speculative-context
+        fan-out behind them, once per press. The caller checks the cap BEFORE
+        calling this, so a retry that is already out of attempts is refused
+        instead of being handed a clean slate it cannot use.
+        """
+        await Denial.objects.filter(denial_id=denial_id).aupdate(
+            extract_procedure_diagnosis_finished=False,
+            candidate_procedure=None,
+            candidate_diagnosis=None,
+            extract_attempts=F("extract_attempts") + 1,
+        )
+        logger.debug(
+            f"extract_entity({denial_id}): cleared for an authorized retry, "
+            "one attempt spent"
+        )
+
+    @classmethod
+    async def extract_entity(
+        cls, denial_id: int, retry: bool = False
+    ) -> AsyncIterator[dict]:
+        """
+        Perform entity extraction on a given denial id.
+
+        Yields one JSON-serialisable record per finished step and exactly one
+        run-level record per run. The consumer is a ``json.dumps`` and a send;
+        it makes no decisions about what any of this means.
+
+        ``retry=True`` is the authorized retry: it clears what the gate below
+        reads before the gate reads it, so the letter is actually read again,
+        and it spends one of the letter's attempts so the button cannot be
+        pressed forever.
         """
 
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        if (
+        # Read the budget before anything clears it. A retry that is already
+        # over the cap must reach the out-of-attempts branch below, not be
+        # handed a clean slate and an extra increment it cannot use.
+        attempts = denial.extract_attempts or 0
+        out_of_attempts = attempts >= 3
+        if retry and not out_of_attempts:
+            await cls.clear_extraction_for_retry(denial_id)
+
+        if not retry and (
             denial.diagnosis
             or denial.extract_procedure_diagnosis_finished
             or denial.procedure
@@ -1832,107 +2082,131 @@ class DenialCreatorHelper:
             logger.debug(f"extract_entity({denial_id}): skipping, already done")
             # Regulator matching is cheap (a handful of regexes), idempotent,
             # and independent of the procedure/diagnosis extraction this gate
-            # protects — run it even when the denial was manually populated or
+            # protects: run it even when the denial was manually populated or
             # extraction already finished, so those denials still get
             # regulator contact info.
-            try:
-                await cls.extract_set_regulator(denial_id)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_regulator failed for denial {denial_id}"
-                )
+            yield await cls._run_extraction_step(
+                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+            )
             # Triage is idempotent on the text hash, so retrying it here is
             # free when it already ran, and it is the only retry a timed-out
             # first attempt gets (a reconnect lands on this branch).
-            try:
-                await cls.extract_set_triage(denial_id)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_triage failed for denial {denial_id}"
-                )
+            yield await cls._run_extraction_step(
+                cls.extract_set_triage(denial_id), EXTRACTION_TASK_TRIAGE
+            )
+            # Two different rows reach this branch and they must not be told
+            # the same thing. A row with a procedure or a diagnosis on it
+            # really does already have the details. A row that only has
+            # extract_procedure_diagnosis_finished set got that flag from a
+            # model call that returned (None, None) -- we read the letter and
+            # did not find these, which is the opposite news.
+            if denial.procedure or denial.diagnosis:
+                yield cls._extraction_run_record(EXTRACTION_RUN_ALREADY_HAVE_DETAILS)
+            else:
+                yield cls._extraction_run_record(EXTRACTION_RUN_READ_AND_FOUND_NOTHING)
             return
         # Bound persistent extraction failures: extract_entity runs once per
         # WebSocket connection (websockets.StreamingEntityBackend.receive)
         # with no upstream rate-limit, so without a cap a denial whose LLM
         # extraction reliably fails would re-run extraction (and re-fire
-        # the PubMed/citation cache warmers) on every reconnect. The
-        # counter is bumped in extract_set_denial_and_diagnosis's except
-        # path via F() so the increment is race-safe.
-        if (denial.extract_attempts or 0) >= 3:
+        # the PubMed/citation cache warmers) on every reconnect. The counter
+        # is bumped by extract_set_denial_and_diagnosis's except path and by
+        # an authorized retry, both via F() so the increments are race-safe.
+        if out_of_attempts:
             logger.warning(
                 f"extract_entity({denial_id}): skipping LLM extraction, "
-                f"extract_attempts={denial.extract_attempts} exhausted"
+                f"extract_attempts={attempts} exhausted"
             )
-            # The counter measures procedure/diagnosis LLM failures only;
-            # regulator matching is a handful of regexes with no LLM in the
-            # loop, so run it anyway -- same reasoning as the already-done
-            # early exit above. Also yield a completion frame so the client's
-            # status list doesn't present an instant, empty close as success
-            # with no output at all.
-            try:
-                await cls.extract_set_regulator(denial_id)
-                yield "regulator"
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_regulator failed for denial {denial_id}"
-                )
+            # The counter measures the procedure/diagnosis extraction only
+            # (a model failure, or a retry asking for another read of the
+            # letter); regulator matching is a handful of regexes with no LLM
+            # in the loop, so run it anyway -- same reasoning as the
+            # already-done early exit above.
+            yield await cls._run_extraction_step(
+                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+            )
             # Same for triage: no LLM of ours in the loop, idempotent on the
             # text hash, and this branch is the only retry it would get.
-            try:
-                await cls.extract_set_triage(denial_id)
-                yield "triage"
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_triage failed for denial {denial_id}"
-                )
-            yield "Extraction complete"
+            yield await cls._run_extraction_step(
+                cls.extract_set_triage(denial_id), EXTRACTION_TASK_TRIAGE
+            )
+            yield cls._extraction_run_record(EXTRACTION_RUN_OUT_OF_ATTEMPTS)
             return
 
-        # Define a wrapper function that returns both the name and result
-        async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
-            try:
-                result = await awaitable
-                return name, result
-            except Exception as e:
-                logger.opt(exception=True).warning(f"Failed in task {name}: {e}")
-                return name, None
-
         # Best effort extractions
-        optional_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
-            named_task(cls.extract_set_fax_number(denial_id), "fax"),
-            named_task(
-                cls.extract_set_insurance_company(denial_id), "insurance company"
+        optional_awaitables: list[Coroutine[Any, Any, dict]] = [
+            cls._run_extraction_step(
+                cls.extract_set_fax_number(denial_id), EXTRACTION_TASK_FAX
             ),
-            named_task(
-                cls.match_insurance_plan_from_regex(denial_id), "insurance plan"
+            cls._run_extraction_step(
+                cls.extract_set_insurance_company(denial_id),
+                EXTRACTION_TASK_INSURANCE_COMPANY,
             ),
-            named_task(cls.extract_set_plan_id(denial_id), "plan id"),
-            named_task(cls.extract_set_claim_id(denial_id), "claim id"),
-            named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
-            named_task(cls.extract_set_regulator(denial_id), "regulator"),
-            named_task(cls.extract_set_triage(denial_id), "triage"),
-            named_task(
+            cls._run_extraction_step(
+                cls.match_insurance_plan_from_regex(denial_id),
+                EXTRACTION_TASK_INSURANCE_PLAN,
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_plan_id(denial_id), EXTRACTION_TASK_PLAN_ID
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_claim_id(denial_id), EXTRACTION_TASK_CLAIM_ID
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_date_of_service(denial_id),
+                EXTRACTION_TASK_DATE_OF_SERVICE,
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_triage(denial_id), EXTRACTION_TASK_TRIAGE
+            ),
+            cls._run_extraction_step(
                 MLPlanDocHelper.generate_plan_documents_summary(denial_id),
-                "plan document summary",
+                EXTRACTION_TASK_PLAN_DOCUMENTS,
             ),
         ]
 
-        required_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
+        required_awaitables: list[Coroutine[Any, Any, dict]] = [
             # Denial type depends on denial and diagnosis
-            named_task(cls.extract_set_denial_and_diagnosis(denial_id), "diagnosis"),
-            named_task(cls.extract_set_denialtype(denial_id), "type of denial"),
+            cls._run_extraction_step(
+                cls.extract_set_denial_and_diagnosis(denial_id),
+                EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_denialtype(denial_id), EXTRACTION_TASK_DENIAL_TYPE
+            ),
+        ]
+
+        expected_tasks = [
+            EXTRACTION_TASK_FAX,
+            EXTRACTION_TASK_INSURANCE_COMPANY,
+            EXTRACTION_TASK_INSURANCE_PLAN,
+            EXTRACTION_TASK_PLAN_ID,
+            EXTRACTION_TASK_CLAIM_ID,
+            EXTRACTION_TASK_DATE_OF_SERVICE,
+            EXTRACTION_TASK_REGULATOR,
+            EXTRACTION_TASK_TRIAGE,
+            EXTRACTION_TASK_PLAN_DOCUMENTS,
+            EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
+            EXTRACTION_TASK_DENIAL_TYPE,
         ]
 
         logger.debug(
             f"extract_entity({denial_id}): {len(optional_awaitables)} optional + "
             f"{len(required_awaitables)} required tasks"
         )
+        reported: dict[str, str] = {}
         try:
             async for item in execute_critical_optional_fireandforget(
                 optional=optional_awaitables,
                 required=required_awaitables,
                 fire_and_forget=[cls._maybe_dispatch_ucr(denial_id)],
-                done_record=("Extraction complete", None),
+                # No done_record: the run-level frame is decided below, from
+                # what the steps actually reported, not from the fact that the
+                # loop reached its end.
+                done_record=None,
                 timeout=90,
                 # The optional tasks (fax number, insurer, plan/claim id, date
                 # of service) are LLM roundtrips just like the required ones;
@@ -1944,12 +2218,41 @@ class DenialCreatorHelper:
                 # real window (the overall 90s cap above still bounds it).
                 max_extra_time_for_optional=45,
             ):
-                if item:
-                    yield item[0]
+                if not item:
+                    continue
+                reported[item["task"]] = item["outcome"]
+                yield item
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error during extraction for denial {denial_id}: {e}"
             )
+            yield cls._extraction_run_record(EXTRACTION_RUN_FAILED)
+            return
+
+        # A step that never reported was cancelled by the timeout or the
+        # optional-task grace window. Saying so is the whole point: silence
+        # used to be indistinguishable from success.
+        for task in expected_tasks:
+            if task not in reported:
+                yield cls._extraction_record(task, EXTRACTION_OUTCOME_TIMED_OUT)
+                reported[task] = EXTRACTION_OUTCOME_TIMED_OUT
+
+        main_outcome = reported.get(EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS)
+        if main_outcome == EXTRACTION_OUTCOME_FOUND:
+            yield cls._extraction_run_record(EXTRACTION_RUN_FINISHED)
+        elif main_outcome == EXTRACTION_OUTCOME_KEPT_EXISTING:
+            # The model read the letter and every column it answered already
+            # held something, so the write declined and nothing was filled in.
+            # Saying "we filled in what we found" here would be the branch's
+            # own defect, on the path the branch added.
+            yield cls._extraction_run_record(EXTRACTION_RUN_KEPT_YOUR_DETAILS)
+        elif main_outcome == EXTRACTION_OUTCOME_NOTHING_FOUND:
+            yield cls._extraction_run_record(EXTRACTION_RUN_READ_AND_FOUND_NOTHING)
+        else:
+            # failed, timed out, or never reported at all: we did not finish
+            # reading the letter, which is not the same as having read it and
+            # found nothing.
+            yield cls._extraction_run_record(EXTRACTION_RUN_FAILED)
 
     @classmethod
     async def _maybe_dispatch_ucr(cls, denial_id: int) -> None:
@@ -1995,11 +2298,18 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_denial_and_diagnosis(cls, denial_id: int):
+    async def extract_set_denial_and_diagnosis(cls, denial_id: int) -> str:
         """
         Asynchronously extracts procedure and diagnosis from a denial's text and updates the denial record.
 
         Attempts to extract the procedure and diagnosis fields using the appeal generator. Updates the denial with the extracted values and marks extraction as finished, regardless of success. If extraction is successful or existing values are present, triggers background tasks to search for related PubMed articles, prefetch ClinicalTrials.gov matches, and build speculative context. All background searches are fire-and-forget with their own timeouts and never block the caller.
+
+        Returns one of the extraction outcomes rather than ``None``. This
+        method swallows every exception out of ``get_procedure_and_diagnosis``
+        (it has to: a model outage must not break denial creation), so a
+        caller watching for an exception sees a clean return from a run where
+        nothing worked. The returned outcome is the only way a real model
+        failure is visible to the page.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         procedure = None
@@ -2040,13 +2350,20 @@ class DenialCreatorHelper:
                 if field in update_fields:
                     user_facing[field] = update_fields.pop(field)
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
+            # Which of the model's answers actually landed on the row. The page
+            # is told we filled something in only where one of these writes did.
+            filled_in = False
+            kept_existing = False
             for field, value in user_facing.items():
                 updated = await (
                     Denial.objects.filter(denial_id=denial_id)
                     .filter(Q(**{f"{field}__isnull": True}) | Q(**{field: ""}))
                     .aupdate(**{field: value})
                 )
-                if not updated:
+                if updated:
+                    filled_in = True
+                else:
+                    kept_existing = True
                     logger.debug(
                         f"extract_set_denial_and_diagnosis({denial_id}): "
                         f"{field} already set (user or earlier run); keeping it"
@@ -2137,6 +2454,28 @@ class DenialCreatorHelper:
                     f"for denial {denial_id}"
                 )
 
+            # Two separate questions, and the page needs both answered.
+            #
+            # Did the MODEL produce anything? That is the candidate mirrors,
+            # not what the row now holds: the row may hold a procedure the
+            # person typed while this call was in flight, and reading that back
+            # as a find would credit us with their work.
+            #
+            # Did any of it get written down? The writes above decline on a
+            # column that already has something in it, so a run can find a
+            # procedure and change nothing. "found" is the outcome the page
+            # turns into "we filled in what we found", so it is only true when
+            # one of those writes landed; a find we could not write down says
+            # so in its own word instead.
+            if update_fields.get("candidate_procedure") or update_fields.get(
+                "candidate_diagnosis"
+            ):
+                if filled_in:
+                    return EXTRACTION_OUTCOME_FOUND
+                if kept_existing:
+                    return EXTRACTION_OUTCOME_KEPT_EXISTING
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
@@ -2154,6 +2493,7 @@ class DenialCreatorHelper:
                 logger.opt(exception=True).debug(
                     f"Failed to bump extract_attempts for denial {denial_id}: {inner}"
                 )
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def _match_insurance_company(
@@ -2749,25 +3089,31 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_triage(cls, denial_id):
+    async def extract_set_triage(cls, denial_id) -> str:
         """Triage the denial with TypeSafe (ml/denial_triage.py) and store it.
 
         Optional and fire-and-forget like the other extractors: a missing
         key, a declined external-model consent, a timeout or a malformed
         answer all leave the denial untriaged, never un-created. Idempotent
         on the text hash, so a retry after the letter was triaged is free.
+
+        Returns an extraction outcome. Every path that leaves the row
+        untriaged returns ``nothing_found`` rather than a bare ``None`` the
+        caller would have to guess at; the already-current path is reported as
+        ``cached`` because it is the one path where the work is genuinely
+        already done.
         """
         if not denial_triage.enabled():
-            return
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if not denial.use_external:
-            return
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         if denial_triage.is_current(denial):
-            return
+            return EXTRACTION_OUTCOME_CACHED
         text = denial.denial_text
         result = await denial_triage.triage(text, denial.denial_date)
         if result is None:
-            return
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         values = denial_triage.row_values(result, timezone.now(), text)
         # An anchored window is always resolved against the date on the row
         # at WRITE time, and the write is conditional on that date (and on
@@ -2791,23 +3137,28 @@ class DenialCreatorHelper:
                 denial_date=latest_date,
             ).aupdate(**values)
             if updated:
-                return
+                return EXTRACTION_OUTCOME_FOUND
         logger.info(
             f"denial triage for {denial_id} discarded: letter, consent or date "
             "changed while it was in flight"
         )
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
-    async def extract_set_regulator(cls, denial_id):
+    async def extract_set_regulator(cls, denial_id) -> str:
         """Match the denial text against known regulators and store the match.
 
         Populates ``Denial.regulator`` so downstream flows (outside help,
         the escalation packet's ERISA detection) can surface the right
         regulator along with its complaint phone number.
+
+        Returns an extraction outcome so the stream can say which of the three
+        things happened here: the row already had one, we matched one, or the
+        letter matched nothing.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if denial.regulator_id is not None:
-            return
+            return EXTRACTION_OUTCOME_CACHED
         regulators = await cls.regex_denial_processor.get_regulator(
             denial.denial_text or ""
         )
@@ -2816,6 +3167,8 @@ class DenialCreatorHelper:
             await Denial.objects.filter(
                 denial_id=denial_id, regulator__isnull=True
             ).aupdate(regulator=regulators[0])
+            return EXTRACTION_OUTCOME_FOUND
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id):
@@ -5651,6 +6004,11 @@ class EscalationPacketHelper:
             r for r in recipients if r.recipient_type not in existing_by_type
         ]
 
+        # ``total`` covers every recipient the packet is meant to contain, not
+        # just the ones that still need an ML call. It used to count only
+        # ``needing_generation``, so a run that reused three cached letters and
+        # generated one reported a total of one and the page could not tell
+        # whether anything was missing.
         yield json.dumps(
             {
                 "type": "status",
@@ -5658,7 +6016,9 @@ class EscalationPacketHelper:
                 "message": (
                     f"Generating {len(needing_generation)} regulator letter(s)..."
                 ),
-                "total": len(needing_generation),
+                "total": len(recipients),
+                "cached": len(existing_by_type),
+                "generating": len(needing_generation),
             }
         ) + "\n"
 
@@ -5691,10 +6051,13 @@ class EscalationPacketHelper:
             return recipient, text
 
         tasks = [asyncio.create_task(_draft(r)) for r in needing_generation]
+        generated = 0
+        failed_names: list[str] = []
         try:
             for fut in asyncio.as_completed(tasks):
                 recipient, letter_text = await fut
                 if not letter_text:
+                    failed_names.append(recipient.name)
                     yield json.dumps(
                         {
                             "type": "status",
@@ -5733,6 +6096,7 @@ class EscalationPacketHelper:
                         "content": letter_text,
                     }
                 ) + "\n"
+                generated += 1
         finally:
             # If the consumer disconnected mid-stream, cancel any unfinished
             # drafting tasks so we don't keep paying for ML calls nobody is
@@ -5741,11 +6105,30 @@ class EscalationPacketHelper:
                 if not t.done():
                     t.cancel()
 
+        # The done frame used to say "All regulator letters generated." even
+        # when recipients had been skipped with an error substep above. It now
+        # carries the counts and the names, so the page can tell a full packet
+        # from a partial one without having to add up the substeps itself.
+        delivered = generated + len(existing_by_type)
+        complete = delivered == len(recipients) and not failed_names
         yield json.dumps(
             {
                 "type": "status",
                 "phase": "done",
-                "message": "All regulator letters generated.",
+                "total": len(recipients),
+                "generated": generated,
+                "cached": len(existing_by_type),
+                "failed": len(failed_names),
+                "failed_names": failed_names,
+                "complete": complete,
+                "message": (
+                    f"All {len(recipients)} regulator letter(s) are ready."
+                    if complete
+                    else (
+                        f"{delivered} of {len(recipients)} regulator letters are "
+                        f"ready. We could not write the rest."
+                    )
+                ),
             }
         ) + "\n"
 
