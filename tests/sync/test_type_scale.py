@@ -42,7 +42,6 @@ HEADING_TOKENS = {
 # What each fluid heading has to come out at on a 390px phone and a 1280px
 # desktop. These are the sizes the breakpoints produced before the change.
 FLUID_ENDS = {
-    "--fhi-text-hero": (48.0, 80.0),
     "--fhi-text-page": (34.0, 48.0),
     "--fhi-text-section": (24.0, 28.8),
     "--fhi-text-title": (22.4, 28.8),
@@ -152,6 +151,67 @@ def test_the_fluid_headings_land_where_the_breakpoints_did() -> None:
         assert abs(at_desktop - desktop) < 0.6, (
             "%s comes out at %.1fpx on a 1280px desktop; it was %.1fpx"
             % (token, at_desktop, desktop)
+        )
+
+
+# The hero title is the one heading that keeps discrete steps, and these are
+# the sizes main.css stepped through before the scale existed. Fluid put it at
+# about 79px in the middle of the range where it had always been 64px; it does
+# not need to be larger than it was (product owner, 2026-09-13).
+HERO_STEPS = ((None, 80.0), (1200, 64.0), (768, 48.0))
+
+
+def hero_sizes_by_media() -> dict:
+    """Every --fhi-text-hero declaration, keyed by the @media it sits inside.
+
+    None is the key for the one declared at the top level. The condition has
+    to come from the raw text: the rule parser flattens media queries away,
+    which is exactly the information this test is about.
+    """
+    text = (CSS_DIR / "custom.css").read_text()
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    found: dict = {}
+    stack: list = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "{":
+            head = text[max(0, text.rfind("}", 0, index)) : index]
+            head = head[head.rfind(";") + 1 :]
+            condition = None
+            if "@media" in head:
+                match = re.search(r"max-width:\s*(\d+)px", head)
+                condition = int(match.group(1)) if match else -1
+            stack.append(condition)
+        elif char == "}":
+            if stack:
+                stack.pop()
+        elif text.startswith("--fhi-text-hero:", index):
+            value = text[index + len("--fhi-text-hero:") :]
+            value = value[: value.index(";")]
+            media = next((c for c in reversed(stack) if c is not None), None)
+            found[media] = _px(value)
+        index += 1
+    return found
+
+
+def test_the_hero_title_is_no_larger_than_it_ever_was() -> None:
+    """One token, three widths, the same sizes the breakpoints gave."""
+    sizes = hero_sizes_by_media()
+    for width, expected in HERO_STEPS:
+        assert width in sizes, (
+            "the hero title has no size for the %s case, so it is whatever the "
+            "next rule up says there"
+            % ("widest" if width is None else "%dpx and below" % width)
+        )
+        assert sizes[width] == expected, (
+            "the hero title is %.0fpx at %s; it was %.0fpx, and it does not "
+            "need to be larger"
+            % (
+                sizes[width],
+                "full width" if width is None else "%dpx and below" % width,
+                expected,
+            )
         )
 
 

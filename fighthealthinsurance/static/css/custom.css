@@ -70,7 +70,7 @@
     --fhi-text-title: clamp(1.4rem, 1.2vw + 1rem, 1.8rem);
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
     --fhi-text-page: clamp(2.125rem, 2.5vw + 1.2rem, 3rem);
-    --fhi-text-hero: clamp(3rem, 6vw + 1rem, 5rem);
+    --fhi-text-hero: 5rem;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
@@ -2256,6 +2256,25 @@ section:not(.slider) .share-subcopy {
     }
 }
 
+
+/* The hero title keeps its steps rather than going fluid. The other three
+   headings are smooth because nobody had an opinion about their mid-range;
+   this one someone does. Fluid would have put it at about 79px on a 1000px
+   laptop where it had always been 64px, which is bigger than it needs to be
+   (product owner, 2026-09-13). These are the exact sizes main.css stepped
+   through, at the exact widths it stepped at, so the title is unchanged at
+   every width and the value still lives in one place. */
+@media only screen and (max-width: 1200px) {
+    :root {
+        --fhi-text-hero: 4rem;
+    }
+}
+
+@media only screen and (max-width: 768px) {
+    :root {
+        --fhi-text-hero: 3rem;
+    }
+}
 
 /* ------------------------------------------------------------------ type
    A form control set under 16px makes iOS Safari zoom the page when the
