@@ -345,42 +345,47 @@ def test_no_hardcoded_onnxruntime_version_pin():
     ), "a hardcoded onnxruntime-web version is back in qwen_webgpu_ocr.ts"
 
 
-def test_label_states_the_download_cost_truthfully():
-    """Off-by-default is only honest if the label tells the truth in both directions.
+def test_the_option_is_offered_only_behind_the_setting():
+    """A person uploading a letter must not be offered a broken option.
 
-    While the engine is broken the label must say so, and must disclose that
-    turning it on still fetches model files (the tokenizer alone is ~19 MB)
-    before the load fails. It must state the eventual size in MB with the unit.
-    It must not claim standard OCR needs no download or no model: tesseract
-    fetches English trained data, an LSTM model, from a CDN on first use.
-
-    When the engine works, drop the "not working" assertion together with the
-    label sentence it pins; keep the rest.
+    The whole section sits behind ADVANCED_OCR_OFFERED, which defaults to
+    off; when the engine works again the environment flips it, and the
+    checkbox still starts unchecked (the test above).
     """
     html = _scrub_template()
     start = html.index('id="advanced_ocr_section"')
-    # Rendered text: a line wrap inside a phrase, or an &nbsp; used to stop
-    # one, is the same text to a browser and must be the same text to this
-    # test (review). Entities are decoded, then whitespace normalized.
+    gate = html.rfind("{% if advanced_ocr_offered %}", 0, start)
+    assert gate != -1, "the advanced OCR section is no longer gated by advanced_ocr_offered"
+    assert "{% endif %}" in html[start : html.index("</div>", html.index("</label>", start)) + 60]
+    settings_src = (REPO / "settings.py").read_text()
+    assert re.search(
+        r'ADVANCED_OCR_OFFERED\s*=\s*os\.getenv\("ADVANCED_OCR_OFFERED",\s*"false"\)',
+        settings_src,
+    ), "ADVANCED_OCR_OFFERED no longer defaults to off"
+    assert "fighthealthinsurance.context_processors.advanced_ocr_context" in settings_src, (
+        "the context processor that exposes advanced_ocr_offered is not registered"
+    )
+
+
+def test_the_label_speaks_to_a_person():
+    """When the option is shown, the label says what a person needs and
+    nothing a reviewer needs: what it is, that it is experimental, the
+    download size with its unit, that the file stays on the device, and
+    what standard recognition is like. No hosting site, no failure
+    narrative, no partial-download figure, no engine names.
+    """
+    html = _scrub_template()
+    start = html.index('id="advanced_ocr_section"')
     label = html_lib.unescape(html[start : html.index("</label>", start)])
     label = re.sub(r"\s+", " ", label)
-    assert re.search(r"not working|does not work|fails to load", label, re.I), (
-        "the label no longer says the engine is broken, but it still is"
-    )
-    assert re.search(r"\b(19|20)\s*MB\b", label), (
-        "the label no longer discloses the ~20 MB fetched before the load fails"
-    )
-    assert re.search(r"\b684\s*MB\b", label), (
-        "the advanced OCR label no longer states the eventual download size in MB"
-    )
-    assert (
-        "huggingface.co" in label
-    ), "the advanced OCR label no longer says where the model is downloaded from"
+    assert "experimental" in label.lower()
+    assert re.search(r"\babout \d{3} MB\b", label), "the label no longer states the download size in MB"
+    assert "stays on your device" in label
+    assert "Standard recognition" in label
+    for leak in ("huggingface", "not working", "fails to load", "20 MB", "19 MB", "WebGPU", "wasm", "Qwen", "model files"):
+        assert leak.lower() not in label.lower(), f"the label still says {leak!r}"
     assert not re.search(r"needs\s+no\s+download", label, re.I), (
         "the label claims standard OCR needs no download; tesseract downloads "
-        "its language file from a CDN on first use"
+        "a language file on first use"
     )
-    assert not re.search(r"\bno\s+model\b", label, re.I), (
-        "the label claims standard OCR uses no model; tesseract's trained data "
-        "is an LSTM model"
-    )
+

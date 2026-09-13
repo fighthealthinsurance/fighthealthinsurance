@@ -1,5 +1,7 @@
 """Custom context processors for Fight Health Insurance."""
 
+from django.conf import settings
+
 from django.urls import reverse
 
 from loguru import logger
@@ -113,3 +115,14 @@ def agent_docs_context(request):
     if not agent_docs.twin_eligible(url_name):
         return {}
     return {"markdown_twin_url": agent_docs.twin_path_for(request.path)}
+
+
+def advanced_ocr_context(request):
+    """Whether the upload page offers the on-device advanced OCR option.
+
+    One flag, read from settings, so the template shows nothing at all
+    while the engine is broken instead of a checkbox with an apology.
+    """
+    return {
+        "advanced_ocr_offered": bool(getattr(settings, "ADVANCED_OCR_OFFERED", False))
+    }
