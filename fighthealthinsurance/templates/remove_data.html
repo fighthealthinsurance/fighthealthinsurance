@@ -6,6 +6,10 @@ Delete Your Data
 
 <!-- HOME -->
 <section id="delete-data" data-stellar-background-ratio="0.5">
+    {% comment %} .row carries a negative side margin that only cancels
+    against a container's padding. Without one it hung 12px off each edge and
+    the page scrolled sideways on a phone. {% endcomment %}
+    <div class="container-fluid">
     <div class="row mt-5 mb-5">
         <div class="caption d-flex flex-column align-items-center justify-content-center">
             <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center">
@@ -19,16 +23,19 @@ Delete Your Data
                 {% endif %}
                 <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
                   {% csrf_token %}
-		  <table>
-		    {{ form.as_table }}
-		  </table>
+		  <div class="scroll-x">
+		    <table>
+		      {{ form.as_table }}
+		    </table>
+		  </div>
                     <div class="form-group mt-2">
-                        <button type="submit" id="submit" class="btn btn-delete">Send Confirmation Email</button>
+                        <button type="submit" id="submit" class="btn btn-delete fhi-btn-lg">Send Confirmation Email</button>
                     </div>
                 </form>
                 <p class="mt-3"><small>If you've lost access to your email, please contact <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> for assistance with data deletion.</small></p>
             </div>
         </div>
+    </div>
     </div>
 </section>
 

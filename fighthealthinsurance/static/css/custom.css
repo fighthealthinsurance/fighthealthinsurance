@@ -1,3 +1,68 @@
+:root {
+    /* Palette already in use across this file, named once. */
+    --fhi-green: #a5c422;
+    --fhi-lime: #ADD100;
+    --fhi-olive: #7B920A;
+    --fhi-green-ink: #566b07;
+    --fhi-pink: #f02eaa;
+    --fhi-ink: #333;
+    --fhi-ink-2: #555;
+    --fhi-muted: #666;
+    /* The appeal progress checklist. #28a745 measured 3.13:1 on white and
+       #999 measured 2.85:1, both under the 4.5:1 body text needs; these are
+       5.08:1 and 5.74:1. */
+    --fhi-ok: #1a7f37;
+    --fhi-line: #e0e0e0;
+    --fhi-surface: #f9f9f9;
+    --fhi-radius: 10px;
+    --fhi-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    /* Button fill: the brand lime, as a sweep from a bright stop down to a
+       dark one rather than a flat panel of colour. Held apart from the
+       palette so a button's fill can move without dragging the decorative
+       surfaces (panel borders, underlines, the bingo grid) with it. */
+    --fhi-btn-fill-a: #b8dd00;
+    --fhi-btn-fill-b: #8aa618;
+    /* The deep end of the same ramp. It draws the edge a button needs when it
+       sits on the hero photograph, the ring around a focused button, and the
+       colour the green things darken to on hover. The sweep's own dark stop
+       cannot do that job: #8aa618 is 1.77:1 against #b8dd00, too close to
+       read as an edge. This is 6.17:1 against the bright stop, 3.48:1
+       against the dark one and 9.69:1 on a white page. */
+    --fhi-green-deep: #3b4a05;
+    /* The words on a brand button, in one token on purpose: moving every
+       button on the site to a dark ink is this one line.
+       Measured on the fill above, bright stop then dark stop:
+         #fff     1.57:1   2.78:1   in use
+         #2b0f3d  10.80:1  6.10:1   hero plum, 8.49:1 on flat --fhi-green
+         #1a1a1a  11.09:1  6.26:1   near-black
+       White is under the 4.5:1 WCAG AA asks for and is kept by the product
+       owner's decision of 2026-09-13, because it matches the white in the
+       hero title. The gate in tests/sync/test_contrast.py still measures
+       these rules and still fails them; the exception there names the
+       decision and the date. To swap the site, comment out the line in use
+       and uncomment one of the two under it. */
+    --fhi-btn-ink: #fff;
+    /* --fhi-btn-ink: #2b0f3d; */
+    /* --fhi-btn-ink: #1a1a1a; */
+    /* Button size by role rather than one size for every button. Each size
+       carries its own padding and type size, and a height no smaller than
+       the 44px a touch target needs. Small is the nav call to action, medium
+       is what a button gets when nothing says otherwise, large is a page's
+       primary action. */
+    --fhi-btn-font-sm: 0.95rem;
+    --fhi-btn-pad-y-sm: 0.7rem;
+    --fhi-btn-pad-x-sm: 1.1rem;
+    --fhi-btn-height-sm: 44px;
+    --fhi-btn-font-md: 1rem;
+    --fhi-btn-pad-y-md: 0.75rem;
+    --fhi-btn-pad-x-md: 1.5rem;
+    --fhi-btn-height-md: 48px;
+    --fhi-btn-font-lg: 1.25rem;
+    --fhi-btn-pad-y-lg: 0.85rem;
+    --fhi-btn-pad-x-lg: 2.2rem;
+    --fhi-btn-height-lg: 56px;
+}
+
 /* Skip link for keyboard navigation (accessibility) */
 .skip-link {
     position: absolute;
@@ -12,8 +77,67 @@
 }
 .skip-link:focus {
     top: 0;
-    outline: 2px solid #a5c422;
+    outline: 2px solid var(--fhi-green);
     outline-offset: 2px;
+}
+
+/* One focus ring for the whole site. Nothing but the skip link above had one,
+   on a form that runs eight steps. */
+:focus-visible {
+    outline: 2px solid var(--fhi-green-ink);
+    outline-offset: 2px;
+}
+
+/* Bootstrap clears the outline on its own controls with `.btn:focus-visible
+   {outline: 0}` and `.form-control:focus {outline: 0}`, and those beat a bare
+   `:focus-visible` on specificity whatever order the sheets load in. Its
+   replacement glow resolves through --bs-btn-focus-shadow-rgb, which a plain
+   .btn never defines, so on Next, Continue, Generate My Appeal and Confirm
+   Deletion the reset lands and nothing takes its place. These selectors match
+   Bootstrap's weight so the ring survives on the buttons the eight-step form
+   is actually made of. */
+.btn:focus-visible,
+.btn-check:focus-visible + .btn,
+.form-control:focus-visible,
+.form-select:focus-visible,
+.form-check-input:focus-visible {
+    outline: 2px solid var(--fhi-green-ink);
+    outline-offset: 2px;
+}
+
+/* A button's label keeps its colour while it is being hovered, focused or
+   pressed. main.css recolours every a:hover, a:active and a:focus on the site,
+   and that beats a button's own `.btn-green {color: var(--fhi-btn-ink)}` on
+   specificity, so without this the hero call to action writes dark olive on
+   its own lime fill the moment you tab to it. Every brand button reads the
+   one ink token here too, so the swap stays a single value. */
+.btn-green:hover,
+.btn-green:focus,
+.btn-green:active,
+.section-btn:hover,
+.section-btn:focus,
+.section-btn:active {
+    color: var(--fhi-btn-ink);
+}
+
+/* Same reason, kept apart because neither of these wears the brand lime: the
+   skip link is white on black and the secondary button is white on grey, and
+   both stay white whatever the brand button's ink becomes. */
+.skip-link:hover,
+.skip-link:focus,
+.skip-link:active,
+.btn-secondary-custom:hover,
+.btn-secondary-custom:focus,
+.btn-secondary-custom:active {
+    color: #fff;
+}
+
+/* Same reason, kept apart because one of the four share buttons wears
+   Facebook's blue and is excused in the gate by name. */
+.share-btn:hover,
+.share-btn:focus,
+.share-btn:active {
+    color: #fff;
 }
 
 /* Alert/callout box styles - extracted from inline styles */
@@ -113,7 +237,7 @@ header {
 }
 
 a.link {
-    color: #a5c422 !important;
+    color: var(--fhi-green-ink) !important;
     transition: all 1s !important;
     display: inline-block;
     position: relative;
@@ -127,7 +251,7 @@ a.link::after {
     height: 2px;
     bottom: 0;
     left: 0;
-    background-color: #a5c422;
+    background-color: var(--fhi-green);
     transform-origin: bottom right;
     transition: transform 0.25s ease-out;
 }
@@ -142,31 +266,45 @@ a.link:hover::after {
 }
 
 .btn-green, .btn-green:focus {
-    background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%);
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
     background-size: 200% auto;
-    color: #fff;
+    color: var(--fhi-btn-ink);
     transition: all 0.3s;
-    padding: 0.65rem 1.4rem;
     border-radius: 4px;
     border: none;
-    font-size: 1rem;
+    line-height: 1.5;
     font-weight: 600;
     box-shadow: 0 3px 12px rgba(165, 196, 34, 0.35);
 }
+/* The default size, on a selector that names no state. Size on a state
+   selector outranks the size classes below on specificity, so a large
+   button would shrink back to medium the moment it took keyboard focus.
+   This rule ties with .fhi-btn-lg and loses to it on source order, which
+   is what lets a button keep its size through every state. */
+.btn-green {
+    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+    min-height: var(--fhi-btn-height-md);
+    font-size: var(--fhi-btn-font-md);
+}
+/* The fill slides in from the right on hover. The gradient is twice the width
+   of the button, so moving the background is what draws it across. */
 .btn-green:hover {
     background-position: right center;
-    color: #fff;
+    color: var(--fhi-btn-ink);
     box-shadow: 0 4px 16px rgba(165, 196, 34, 0.5);
 }
 
-.btn-delete, .pro-submit-btn{background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
+.btn-delete, .pro-submit-btn{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
 .btn-delete, .pro-submit-btn {
    margin: 10px;
-   padding: 5px 25px;
+   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+   min-height: var(--fhi-btn-height-md);
+   font-size: var(--fhi-btn-font-md);
+   line-height: 1.5;
    text-align: center;
    transition: 0.5s;
    background-size: 200% auto;
-   color: white;
+   color: var(--fhi-btn-ink);
    box-shadow: 0 0 20px #eee;
    border-radius: 5px;
    display: block;
@@ -175,7 +313,7 @@ a.link:hover::after {
 
 .btn-delete:hover, .pro-submit-btn:hover{
    background-position: right center;
-   color: #fff;
+   color: var(--fhi-btn-ink);
    text-decoration: none;
 }
 
@@ -213,9 +351,10 @@ a.link:hover::after {
 
 /* Hero Primary CTA - Large button above other CTAs */
 .hero-primary-cta {
-    font-size: 1.3rem !important;
+    font-size: var(--fhi-btn-font-lg) !important;
     font-weight: 700 !important;
-    padding: 1rem 2.5rem !important;
+    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important;
+    min-height: var(--fhi-btn-height-lg) !important;
     margin: 1rem 0 !important;
     box-shadow: 0 6px 20px rgba(165, 196, 34, 0.4) !important;
     border: none !important;
@@ -229,8 +368,8 @@ a.link:hover::after {
 
 .pwyw-pill {
     display: inline-block;
-    background: linear-gradient(90deg,#ADD100,#7B920A);
-    color:#fff;
+    background: linear-gradient(90deg, var(--fhi-btn-fill-a), var(--fhi-btn-fill-b));
+    color: var(--fhi-btn-ink);
     padding:.4rem 1rem;
     font-size:.95rem;
     border-radius: 999px;
@@ -245,17 +384,25 @@ a.link:hover::after {
 .pwyw-pill:hover {
     transform: translateY(-2px);
     box-shadow:0 6px 16px rgba(0,0,0,.3);
-    background: linear-gradient(90deg,#b8dd00,#8aa20b);
+    background: linear-gradient(90deg, var(--fhi-btn-fill-b), var(--fhi-btn-fill-a));
 }
 
 .hero-cta-group {display: flex; flex-wrap: wrap; gap: .85rem; margin: .5rem auto 1rem; align-items: center; justify-content: center; width: 100%; box-sizing: border-box;}
 .hero-cta-group.hero-cta-secondary {margin-top: 0.5rem; margin-bottom: 1.5rem; display: flex !important;}
-.hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 3.5rem; min-height: 3.5rem; max-height: 3.5rem; margin: 0; max-width: 400px;}
+/* The hero buttons used to be locked to one height, which made the call to
+   action the same size as the four links under it. The row no longer sets a
+   size: each button brings its own, so the primary reads as the primary. */
+.hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
-.primary-cta {font-size:1.15rem !important; font-weight:700 !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
+/* A page's primary action, in the hero and in the body of the state pages.
+   Large, and edged in the deep end of its own ramp: it sits on a photograph
+   the stylesheets cannot read, so the fill alone cannot say where the button
+   ends. 6.17:1 against the bright stop of that fill, 3.48:1 against the dark
+   one, over the 3:1 WCAG 1.4.11 asks of a control's boundary. */
+.primary-cta {font-size: var(--fhi-btn-font-lg) !important; font-weight:700 !important; padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important; min-height: var(--fhi-btn-height-lg) !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
-.secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size:1.15rem !important; padding: 0 1.8rem !important; line-height: 1.5 !important;}
-.secondary-cta:hover, .tertiary-cta:hover {background:#a5c422 !important; color:#fff !important; border-color: #a5c422 !important;}
+.secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size: var(--fhi-btn-font-md) !important; padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md) !important; min-height: var(--fhi-btn-height-md) !important; line-height: 1.5 !important;}
+.secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green-ink) !important; color:#fff !important; border-color: var(--fhi-green-ink) !important;}
 
 /* Value Proposition Two-Column Layout */
 #home .hero-inner .value-prop-container {
@@ -269,7 +416,7 @@ a.link:hover::after {
     background: rgba(30, 20, 60, 0.85) !important;
     backdrop-filter: blur(8px) !important;
     -webkit-backdrop-filter: blur(8px) !important;
-    border-radius: 10px;
+    border-radius: var(--fhi-radius);
     padding: 0.6rem 0.75rem;
     box-shadow: 0 4px 14px rgba(0,0,0,.3) !important;
     border: 1px solid rgba(165, 196, 34, 0.3) !important;
@@ -431,7 +578,7 @@ a.link:hover::after {
     width: 80px !important;
     flex: 0 0 80px !important;
     padding: 0.2rem 0.3rem !important;
-    font-size: 0.75rem !important;
+    font-size: 1rem !important;
     line-height: 1.2 !important;
     box-sizing: border-box !important;
     margin: 0 !important;
@@ -479,21 +626,52 @@ a.link:hover::after {
 .pwyw-option small {display:block; font-size:.72rem; opacity:.9; color: #fff;}
 .pwyw-option.custom {flex:1 1 165px;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
-.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
+.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
+/* The hero panel is dark and the photograph behind it is anything, so the
+   fill alone does not tell the reader where the button ends. The glow does:
+   a lime shadow spreading off the edge separates the button from whatever
+   the picture turns out to be, without drawing a line around it. A border
+   was tried here and read as a box on the page. */
 .pwyw-submit {min-width:180px;}
-.pwyw-thanks {font-size:.7rem; color:#a5c422;}
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
+    box-shadow: 0 4px 16px rgba(165, 196, 34, 0.45) !important;
+}
+/* The hero's panel is a dark purple veil over the photograph (see
+   #home .hero-inner .payment-card-wrapper .pwyw-panel above), so this
+   confirmation keeps the brand green rather than the ink: green-ink reads at
+   1.8:1 to 3.0:1 there. The white panel on the appeal pages overrides it with
+   the ink further down. */
+.pwyw-thanks {font-size:.7rem; color:var(--fhi-green);}
 
 /* Outline variant for chat/pro buttons */
-.btn-outline-green {background:transparent; border:2px solid #a5c422; color:#a5c422; transition:.3s;}
+.btn-outline-green {background:transparent; border:2px solid var(--fhi-green); color:var(--fhi-green-ink); transition:.3s;}
 .btn-outline-green:hover {background:#000; color:#fff;}
+
+/* Drafts page phase list. These four states used to be colour literals the
+   appeal fetcher wrote into a style attribute at runtime, where no
+   stylesheet gate could see them. */
+.appeal-phase-label-active {
+    font-weight: 600;
+    color: var(--fhi-ink);
+}
+.appeal-phase-label-done {
+    color: #2e7d32;
+}
+.appeal-phase-label-skipped {
+    color: var(--fhi-muted);
+    text-decoration: line-through;
+}
+.appeal-phase-label-pending {
+    color: var(--fhi-muted);
+}
 
 /* Pro version text container */
 .pro-version-text {margin-top: 1.5rem; margin-bottom: 0.5rem; text-align: center; width: 100%;}
 
 /* Appeal page reuse */
 .appeal-donate-wrapper {margin:1.25rem 0;}
-.appeal-donate-wrapper .pwyw-panel {background: #fff; color: #333; border: 2px solid #ADD100;}
+.appeal-donate-wrapper .pwyw-panel {background: #fff; color: #333; border: 2px solid var(--fhi-lime);}
 .appeal-donate-wrapper .pwyw-title {color: #333; text-shadow: none;}
 .appeal-donate-wrapper .pwyw-subcopy {color: #555; text-shadow: none;}
 .appeal-donate-wrapper .pwyw-option {background: #f8f9fa; color: #333; border: 1px solid #ddd;}
@@ -503,7 +681,7 @@ a.link:hover::after {
 .fax-pwyw-group {display:flex; flex-wrap:wrap; gap:.6rem; margin:.75rem 0 1rem;}
 .fax-pwyw-group label {background:#f7f7f7; padding:.5rem .75rem; border-radius:8px; border:1px solid #ddd; font-size:.75rem; flex:1 1 120px; cursor:pointer; position:relative;}
 .fax-pwyw-group input[type=radio] {margin-right:.35rem; accent-color:#a5c422;}
-.fax-custom-input {width:100%; margin-top:.4rem; padding:.35rem .5rem; font-size:.7rem; border:1px solid #ccc; border-radius:6px;}
+.fax-custom-input {width:100%; margin-top:.4rem; padding:.35rem .5rem; font-size:1rem; border:1px solid #ccc; border-radius:6px;}
 
 /* Mobile adjustments */
 @media (max-width: 768px) {
@@ -533,14 +711,17 @@ a.link:hover::after {
 }
 
 
-.section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
+.section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
 .section-btn, .section-btn.btn.btn-default.smoothScroll {
    margin: 10px;
-   padding: 0.85rem 1.8rem;
+   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+   min-height: var(--fhi-btn-height-md);
+   font-size: var(--fhi-btn-font-md);
+   line-height: 1.5;
    text-align: center;
    transition: 0.5s;
    background-size: 200% auto;
-   color: white;
+   color: var(--fhi-btn-ink);
    box-shadow: 0 0 20px #eee;
    border-radius: 4px;
    border:none;
@@ -548,8 +729,55 @@ a.link:hover::after {
 
 .section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover {
    background-position: right center;
-   color: #fff;
+   color: var(--fhi-btn-ink);
    text-decoration: none;
+}
+
+/* Focus on a button that carries the sweep flips the gradient: the dark stop
+   comes to both ends and the bright one to the middle, the reverse of the
+   resting fill.
+   The flip cannot carry focus on its own. The fill is twice the button's
+   width, so hover's slide to `right center` already shows dark on the left
+   running to bright on the right, and that is the same sequence of colours
+   the flipped gradient draws at rest. A reader cannot tell the two apart by
+   the fill, and a focus state that looks like a hover state is not an
+   indicator. So focus also draws a ring, outside the button, in the deep end
+   of the button's own ramp: 6.17:1 against the bright stop, 3.48:1 against
+   the dark one and 9.69:1 against a white page. Hover never draws it, which
+   is the difference the reader can see. On the hero the ring sits on the
+   photograph, where no stylesheet can say what is behind it, the same limit
+   the gate names for everything else in that band. */
+.btn-green:focus-visible,
+.btn-delete:focus-visible,
+.pro-submit-btn:focus-visible,
+.section-btn:focus-visible,
+.section-btn.btn.btn-default.smoothScroll:focus-visible {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
+    background-position: left center;
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 3px;
+}
+
+/* The three sizes, as classes that read the size tokens. A button's size is
+   its role: large on a page's primary action, small in the nav, and nothing
+   at all on the rest, which leaves them medium. */
+.fhi-btn-sm {
+    font-size: var(--fhi-btn-font-sm);
+    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm);
+    min-height: var(--fhi-btn-height-sm);
+    line-height: 1.5;
+}
+.fhi-btn-md {
+    font-size: var(--fhi-btn-font-md);
+    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+    min-height: var(--fhi-btn-height-md);
+    line-height: 1.5;
+}
+.fhi-btn-lg {
+    font-size: var(--fhi-btn-font-lg);
+    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg);
+    min-height: var(--fhi-btn-height-lg);
+    line-height: 1.5;
 }
 
 .custom-angle-up {
@@ -621,15 +849,6 @@ a.link:hover::after {
     margin: 0 auto;
 }
 
-.cat-submit-button {
-    background: #a5c422;
-    text-align: center;
-    color:#ffffff !important;
-    border: none;
-    border-radius: 3px;
-    padding: 10px 20px;
-    font-size: 14px;
-}
 
 .hidden-error-message {
     visibility: hidden; /* Hides the element but keeps its space occupied */
@@ -745,7 +964,7 @@ a.link:hover::after {
     background: white;
     border-radius: 12px;
     padding: 1.5rem 1rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--fhi-shadow);
     flex-wrap: wrap;
     display: flex;
     border-bottom: 4px solid #f02eaa;
@@ -819,8 +1038,8 @@ a.link:hover::after {
     background: #fff;
     padding: 1.5rem;
     border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-    border-left: 4px solid #a5c422;
+    box-shadow: var(--fhi-shadow);
+    border-left: 4px solid var(--fhi-green);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .testimonial-card:hover {
@@ -878,7 +1097,7 @@ a.link:hover::after {
     .together-form-group {
 	/* Switch to vertical layout on mobile */
 	flex-direction: column;
-	align-items: center;
+	align-items: stretch;
 	display: flex;
 	flex-wrap: wrap;
     }
@@ -886,6 +1105,7 @@ a.link:hover::after {
     .together-form-group > div {
 	/* Individual prompt container on mobile */
 	margin: 10px 0;
+	width: 100%;
     }
 }
 
@@ -900,7 +1120,7 @@ a.link:hover::after {
     box-shadow: 0 4px 14px rgba(0,0,0,.25);
     max-width: 680px;
     border: 1px solid rgba(255, 255, 255, 0.3);
-    border-top: 4px solid #a5c422;
+    border-top: 4px solid var(--fhi-green);
 }
 .share-title {
     margin: 0 0 .5rem;
@@ -965,11 +1185,11 @@ a.link:hover::after {
     color: #fff;
 }
 .share-btn-email {
-    background: #a5c422;
+    background: var(--fhi-green-ink);
     color: #fff;
 }
 .share-btn-email:hover {
-    background: #8aa618;
+    background: var(--fhi-green-deep);
     color: #fff;
 }
 
@@ -978,9 +1198,9 @@ a.link:hover::after {
 section:not(.slider) .share-panel {
     background: #fff;
     color: #333;
-    border: 1px solid #e0e0e0;
-    border-top: 4px solid #a5c422;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    border: 1px solid var(--fhi-line);
+    border-top: 4px solid var(--fhi-green);
+    box-shadow: var(--fhi-shadow);
 }
 .container .share-title,
 section:not(.slider) .share-title {
@@ -1014,9 +1234,9 @@ section:not(.slider) .share-subcopy {
 .appeal-share-wrapper .share-panel {
     background: #fff !important;
     color: #333 !important;
-    border: 1px solid #e0e0e0;
-    border-top: 4px solid #a5c422;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    border: 1px solid var(--fhi-line);
+    border-top: 4px solid var(--fhi-green);
+    box-shadow: var(--fhi-shadow);
     width: 100%;
     max-width: 680px;
     margin: 0 auto;
@@ -1040,8 +1260,8 @@ section:not(.slider) .share-subcopy {
 .appeal-donate-wrapper .pwyw-panel {
     background: #fff;
     color: #333;
-    border: 2px solid #ADD100;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    border: 2px solid var(--fhi-lime);
+    box-shadow: var(--fhi-shadow);
 }
 .appeal-donate-wrapper .pwyw-title {
     color: #333;
@@ -1063,7 +1283,7 @@ section:not(.slider) .share-subcopy {
     color: #333;
 }
 .appeal-donate-wrapper .pwyw-thanks {
-    color: #a5c422;
+    color: var(--fhi-green-ink);
 }
 
 /* Centered content on desktop for appeal pages */
@@ -1101,25 +1321,6 @@ section:not(.slider) .share-subcopy {
     color: #1565c0;
 }
 
-/* Button styles - Extracted from inline */
-.btn-secondary-custom {
-    background: #6c757d;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 3px;
-    text-decoration: none;
-}
-.btn-secondary-custom:hover {
-    background: #5a6268;
-    color: white;
-    text-decoration: none;
-}
-.btn-link-muted {
-    color: #6c757d;
-    text-decoration: underline;
-    font-size: 0.9rem;
-}
-
 /* Navigation/Form actions row */
 .form-nav-row {
     margin-top: 1.5rem;
@@ -1153,7 +1354,7 @@ section:not(.slider) .share-subcopy {
 }
 .status-code {
     font-size: 6rem;
-    color: #a5c422;
+    color: var(--fhi-green-ink);
     margin-bottom: 1rem;
 }
 .status-title {
@@ -1250,7 +1451,7 @@ section:not(.slider) .share-subcopy {
     align-items: center;
     justify-content: center;
     background: #fff;
-    border: 2px solid #a5c422;
+    border: 2px solid var(--fhi-green);
     border-radius: 8px;
     padding: 0.5rem;
     font-size: 0.85rem;
@@ -1269,14 +1470,14 @@ section:not(.slider) .share-subcopy {
 }
 
 .bingo-free-space {
-    background: #a5c422 !important;
+    background: var(--fhi-green-ink) !important;
     color: white !important;
     font-weight: bold;
     font-size: 1rem;
 }
 
 .bingo-free-space:hover {
-    background: #8ba81c !important;
+    background: var(--fhi-green-deep) !important;
     transform: scale(1.05);
 }
 
@@ -1284,7 +1485,7 @@ section:not(.slider) .share-subcopy {
     text-align: center;
     margin-top: 1.5rem;
     font-size: 0.95rem;
-    color: #666;
+    color: var(--fhi-ink-2);
     font-style: italic;
 }
 
@@ -1360,7 +1561,10 @@ section:not(.slider) .share-subcopy {
 
 /* Container utilities */
 .container-narrow {
-    width: 80%;
+    width: 100%;
+    max-width: 760px;
+    padding-left: 16px;
+    padding-right: 16px;
     margin-top: 2.5rem !important;
 }
 
@@ -1385,6 +1589,7 @@ section:not(.slider) .share-subcopy {
 .btn-secondary-custom:hover {
     background: #5a6268;
     color: white;
+    text-decoration: none;
 }
 
 /* External link icon (small) - extracted from microsite.html */
@@ -1479,11 +1684,11 @@ section:not(.slider) .share-subcopy {
 .start-card {
     display: flex;
     flex-direction: column;
-    background: #f9f9f9;
+    background: var(--fhi-surface);
     padding: 1.75rem;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-    border-top: 4px solid #a5c422;
+    border-top: 4px solid var(--fhi-green);
     text-decoration: none;
     color: inherit;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -1514,11 +1719,11 @@ section:not(.slider) .share-subcopy {
 .start-card-link {
     font-size: 0.9rem;
     font-weight: 600;
-    color: #a5c422;
+    color: var(--fhi-green-ink);
     transition: color 0.2s;
 }
 .start-card:hover .start-card-link {
-    color: #7B920A;
+    color: var(--fhi-green-deep);
 }
 
 /* ===== About Section Refresh ===== */
@@ -1552,12 +1757,12 @@ section:not(.slider) .share-subcopy {
 .about-step {
     background: #fff;
     padding: 1rem 1.25rem;
-    border-radius: 10px;
+    border-radius: var(--fhi-radius);
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
-    border-left: 4px solid #e0e0e0;
+    border-left: 4px solid var(--fhi-line);
 }
 .about-step-highlight {
-    border-left-color: #a5c422;
+    border-left-color: var(--fhi-green);
     background: #f8fbe8;
 }
 .about-step-number {
@@ -1567,7 +1772,7 @@ section:not(.slider) .share-subcopy {
     width: 1.75rem;
     height: 1.75rem;
     border-radius: 50%;
-    background: #a5c422;
+    background: var(--fhi-green-ink);
     color: #fff;
     font-weight: 700;
     font-size: 0.85rem;
@@ -1595,7 +1800,7 @@ section:not(.slider) .share-subcopy {
     display: block;
     width: 60px;
     height: 3px;
-    background: linear-gradient(90deg, #ADD100, #7B920A);
+    background: linear-gradient(90deg, var(--fhi-lime), var(--fhi-olive));
     margin: 0.75rem auto 0;
     border-radius: 2px;
 }
@@ -1755,8 +1960,7 @@ section:not(.slider) .share-subcopy {
 
 .pro-interest-form input:focus,
 .pro-interest-form textarea:focus {
-    outline: none;
-    border-color: #a5c422;
+    border-color: var(--fhi-green-ink);
     box-shadow: 0 0 0 3px rgba(165, 196, 34, 0.18);
 }
 
@@ -1837,7 +2041,7 @@ section:not(.slider) .share-subcopy {
 }
 .featured-title-link:hover,
 .featured-title-link:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
 }
 .featured-see-all {
@@ -1847,13 +2051,13 @@ section:not(.slider) .share-subcopy {
 .featured-see-all-link {
     display: inline-block;
     font-weight: 600;
-    color: #7b920a;
+    color: var(--fhi-green-ink);
     text-decoration: none;
     transition: color 0.2s ease, transform 0.2s ease;
 }
 .featured-see-all-link:hover,
 .featured-see-all-link:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
     transform: translateX(2px);
 }
@@ -1901,7 +2105,7 @@ section:not(.slider) .share-subcopy {
     background: #fff;
     border-radius: 12px;
     padding: 1.5rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--fhi-shadow);
     border-bottom: 4px solid #f02eaa;
     transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
@@ -1936,7 +2140,7 @@ section:not(.slider) .share-subcopy {
     letter-spacing: 0.04em;
     /* Darker than the site's usual green: this is small (0.7rem) text on a pale
        green chip, so it needs the 4.5:1 body-text ratio (this pair is ~5.4:1). */
-    color: #566b07;
+    color: var(--fhi-green-ink);
     background: rgba(165, 196, 34, 0.15);
     border-radius: 999px;
     padding: 0.2rem 0.6rem;
@@ -1946,7 +2150,7 @@ section:not(.slider) .share-subcopy {
 }
 .media-reference-outlet {
     font-size: 0.85rem;
-    color: #888;
+    color: var(--fhi-muted);
     margin-bottom: 0.4rem;
 }
 .media-reference-date {
@@ -1965,7 +2169,7 @@ section:not(.slider) .share-subcopy {
 }
 .media-reference-headline a:hover,
 .media-reference-headline a:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
 }
 .media-reference-desc {
@@ -1983,13 +2187,13 @@ section:not(.slider) .share-subcopy {
 }
 .media-reference-link {
     font-weight: 600;
-    color: #7b920a;
+    color: var(--fhi-green-ink);
     text-decoration: none;
     transition: color 0.2s ease;
 }
 .media-reference-link:hover,
 .media-reference-link:focus {
-    color: #f02eaa;
+    color: var(--fhi-pink);
     text-decoration: none;
 }
 .media-reference-link-internal {
@@ -2008,7 +2212,7 @@ section:not(.slider) .share-subcopy {
 }
 .media-references-contact {
     text-align: center;
-    color: #888;
+    color: var(--fhi-muted);
     font-size: 0.9rem;
     margin-top: 2.5rem;
 }

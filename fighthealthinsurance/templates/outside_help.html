@@ -44,9 +44,11 @@ Additional Resources & Questions
   {{ denial_form }}
   {# combined.fields is the real emptiness test; the form itself is not. #}
   {% if combined.fields %}
-  <table class="simple-table">
-    {{ combined.as_table }}
-  </table>
+  <div class="scroll-x">
+    <table class="simple-table">
+      {{ combined.as_table }}
+    </table>
+  </div>
   {% endif %}
   <div class="form-nav-row">
     {% if back_url %}
@@ -58,16 +60,7 @@ Additional Resources & Questions
       Start over with a new denial
     </a>
     {% endif %}
-    <input type="submit" value="Generate My Appeal &rarr;" id="submit" style="
-      background: #a5c422;
-      text-align: center;
-      color:#ffffff !important;
-      border: none;
-      border-radius: 3px;
-      padding: 12px 30px;
-      font-size: 16px;
-      cursor: pointer;
-      font-weight: bold;">
+    <input type="submit" value="Generate My Appeal &rarr;" id="submit" class="btn-green">
   </div>
   </form>
 
@@ -76,6 +69,7 @@ Additional Resources & Questions
     <p>Here are some other options you may want to consider for your specific situation:</p>
   </div>
 
+<div class="scroll-x">
 <table class="simple-table outside-help-options-table">
   <tr>
     <th>Option</th>
@@ -94,6 +88,7 @@ Additional Resources & Questions
   {% endautoescape %}
   {% endfor %}
 </table>
+</div>
 
 {# Pharmacy discount options when the denial concerns a recognizable medication. #}
 {# Renders nothing when pharmacy_suggestion is None. #}

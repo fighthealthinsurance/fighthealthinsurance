@@ -99,7 +99,7 @@
                 <p class="lead">{{ microsite.how_we_help }}</p>
                 <div class="mt-4">
                     <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-                       class="btn btn-green btn-lg">
+                       class="btn btn-green fhi-btn-lg">
                         {{ microsite.cta }}
                     </a>
                 </div>
@@ -278,12 +278,12 @@
                 <div class="d-flex justify-content-center gap-3 flex-wrap">
                     {% if not microsite.medicare %}
                     <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-                       class="btn btn-green btn-lg">
+                       class="btn btn-green fhi-btn-lg">
                         Start Your Appeal
                     </a>
                     {% endif %}
                     <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
-                       class="btn {% if microsite.medicare %}btn-green{% else %}btn-outline-green{% endif %} btn-lg">
+                       class="btn {% if microsite.medicare %}btn-green{% else %}btn-outline-green{% endif %} fhi-btn-lg">
                         Chat with AI Assistant
                     </a>
                     {% if microsite.blog_post_url %}
