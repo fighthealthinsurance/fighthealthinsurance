@@ -40,6 +40,23 @@
     --fhi-btn-ink: #fff;
     /* --fhi-btn-ink: #2b0f3d; */
     /* --fhi-btn-ink: #1a1a1a; */
+    /* Button size by role rather than one size for every button. Each size
+       carries its own padding and type size, and a height no smaller than
+       the 44px a touch target needs. Small is the nav call to action, medium
+       is what a button gets when nothing says otherwise, large is a page's
+       primary action. */
+    --fhi-btn-font-sm: 0.95rem;
+    --fhi-btn-pad-y-sm: 0.7rem;
+    --fhi-btn-pad-x-sm: 1.1rem;
+    --fhi-btn-height-sm: 44px;
+    --fhi-btn-font-md: 1rem;
+    --fhi-btn-pad-y-md: 0.75rem;
+    --fhi-btn-pad-x-md: 1.5rem;
+    --fhi-btn-height-md: 48px;
+    --fhi-btn-font-lg: 1.25rem;
+    --fhi-btn-pad-y-lg: 0.85rem;
+    --fhi-btn-pad-x-lg: 2.2rem;
+    --fhi-btn-height-lg: 56px;
 }
 
 /* Skip link for keyboard navigation (accessibility) */
@@ -249,10 +266,12 @@ a.link:hover::after {
     background-size: 200% auto;
     color: var(--fhi-btn-ink);
     transition: all 0.3s;
-    padding: 0.65rem 1.4rem;
+    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+    min-height: var(--fhi-btn-height-md);
     border-radius: 4px;
     border: none;
-    font-size: 1rem;
+    font-size: var(--fhi-btn-font-md);
+    line-height: 1.5;
     font-weight: 600;
     box-shadow: 0 3px 12px rgba(165, 196, 34, 0.35);
 }
@@ -267,7 +286,10 @@ a.link:hover::after {
 .btn-delete, .pro-submit-btn{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
 .btn-delete, .pro-submit-btn {
    margin: 10px;
-   padding: 5px 25px;
+   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+   min-height: var(--fhi-btn-height-md);
+   font-size: var(--fhi-btn-font-md);
+   line-height: 1.5;
    text-align: center;
    transition: 0.5s;
    background-size: 200% auto;
@@ -318,9 +340,10 @@ a.link:hover::after {
 
 /* Hero Primary CTA - Large button above other CTAs */
 .hero-primary-cta {
-    font-size: 1.3rem !important;
+    font-size: var(--fhi-btn-font-lg) !important;
     font-weight: 700 !important;
-    padding: 1rem 2.5rem !important;
+    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important;
+    min-height: var(--fhi-btn-height-lg) !important;
     margin: 1rem 0 !important;
     box-shadow: 0 6px 20px rgba(165, 196, 34, 0.4) !important;
     border: none !important;
@@ -355,16 +378,19 @@ a.link:hover::after {
 
 .hero-cta-group {display: flex; flex-wrap: wrap; gap: .85rem; margin: .5rem auto 1rem; align-items: center; justify-content: center; width: 100%; box-sizing: border-box;}
 .hero-cta-group.hero-cta-secondary {margin-top: 0.5rem; margin-bottom: 1.5rem; display: flex !important;}
-.hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 3.5rem; min-height: 3.5rem; max-height: 3.5rem; margin: 0; max-width: 400px;}
+/* The hero buttons used to be locked to one height, which made the call to
+   action the same size as the four links under it. The row no longer sets a
+   size: each button brings its own, so the primary reads as the primary. */
+.hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
 /* A page's primary action, in the hero and in the body of the state pages.
-   Edged in the deep end of its own ramp: it sits on a photograph
+   Large, and edged in the deep end of its own ramp: it sits on a photograph
    the stylesheets cannot read, so the fill alone cannot say where the button
    ends. 6.17:1 against the bright stop of that fill, 3.48:1 against the dark
    one, over the 3:1 WCAG 1.4.11 asks of a control's boundary. */
-.primary-cta {font-size:1.15rem !important; font-weight:700 !important; border: 2px solid var(--fhi-green-deep) !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
+.primary-cta {font-size: var(--fhi-btn-font-lg) !important; font-weight:700 !important; border: 2px solid var(--fhi-green-deep) !important; padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important; min-height: var(--fhi-btn-height-lg) !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
-.secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size:1.15rem !important; padding: 0 1.8rem !important; line-height: 1.5 !important;}
+.secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size: var(--fhi-btn-font-md) !important; padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md) !important; min-height: var(--fhi-btn-height-md) !important; line-height: 1.5 !important;}
 .secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green-ink) !important; color:#fff !important; border-color: var(--fhi-green-ink) !important;}
 
 /* Value Proposition Two-Column Layout */
@@ -676,7 +702,10 @@ a.link:hover::after {
 .section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
 .section-btn, .section-btn.btn.btn-default.smoothScroll {
    margin: 10px;
-   padding: 0.85rem 1.8rem;
+   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+   min-height: var(--fhi-btn-height-md);
+   font-size: var(--fhi-btn-font-md);
+   line-height: 1.5;
    text-align: center;
    transition: 0.5s;
    background-size: 200% auto;
@@ -715,6 +744,28 @@ a.link:hover::after {
     background-position: left center;
     outline: 3px solid var(--fhi-green-deep);
     outline-offset: 3px;
+}
+
+/* The three sizes, as classes that read the size tokens. A button's size is
+   its role: large on a page's primary action, small in the nav, and nothing
+   at all on the rest, which leaves them medium. */
+.fhi-btn-sm {
+    font-size: var(--fhi-btn-font-sm);
+    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm);
+    min-height: var(--fhi-btn-height-sm);
+    line-height: 1.5;
+}
+.fhi-btn-md {
+    font-size: var(--fhi-btn-font-md);
+    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+    min-height: var(--fhi-btn-height-md);
+    line-height: 1.5;
+}
+.fhi-btn-lg {
+    font-size: var(--fhi-btn-font-lg);
+    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg);
+    min-height: var(--fhi-btn-height-lg);
+    line-height: 1.5;
 }
 
 .custom-angle-up {

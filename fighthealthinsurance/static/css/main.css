@@ -168,9 +168,11 @@ a:focus {
     border: 0;
     border-radius: 3px;
     color: var(--fhi-btn-ink);
-    font-size: inherit;
+    font-size: var(--fhi-btn-font-md);
     font-weight: 500;
-    padding: 14px 20px;
+    line-height: 1.5;
+    min-height: var(--fhi-btn-height-md);
+    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
 }
 
 .text-align-right {
@@ -384,13 +386,23 @@ header span i {
     margin: 3px 0 0 20px;
 }
 
+/* The nav call to action is the small size: it sits in a row of links, not in
+   the page. The !important flags are not decoration, they are what it takes
+   to beat `.navbar-default .navbar-nav li a`, which sets 12px type and 20px
+   side padding with !important of its own. inline-flex is what lets the
+   height apply at all, since the anchor is otherwise an inline box. */
 .navbar-default .navbar-nav li.appointment-btn a {
     background: var(--fhi-green);
     border-radius: 3px;
     color: var(--fhi-ink) !important;
     font-weight: 600;
-    padding-top: 12px;
-    padding-bottom: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--fhi-btn-font-sm) !important;
+    line-height: 1.5;
+    min-height: var(--fhi-btn-height-sm);
+    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm) !important;
 }
 
 .navbar-default .navbar-nav li.appointment-btn a:hover {

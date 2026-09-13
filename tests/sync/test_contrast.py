@@ -1949,6 +1949,123 @@ def test_the_controls_that_carry_no_gradient_keep_a_ring() -> None:
     )
 
 
+# ------------------------------------------------------------- the size scale
+
+# A touch target is 44px on its shortest side, and a button that reaches that
+# only through a min-height would still be a 30px button with a floor under it,
+# so both the token and the real box are checked.
+TOUCH_TARGET = 44.0
+LINE_HEIGHT = 1.5
+ROOT_FONT_PX = 16.0
+BUTTON_SIZES = ("sm", "md", "lg")
+# Where each size is applied, and the role that decides it.
+SIZE_ROLES = (
+    ("main.css", ".navbar-default .navbar-nav li.appointment-btn a", "sm"),
+    ("custom.css", ".primary-cta", "lg"),
+    ("custom.css", ".hero-primary-cta", "lg"),
+    ("custom.css", ".fhi-btn-sm", "sm"),
+    ("custom.css", ".fhi-btn-md", "md"),
+    ("custom.css", ".fhi-btn-lg", "lg"),
+    ("custom.css", ".btn-green, .btn-green:focus", "md"),
+    ("custom.css", ".btn-delete, .pro-submit-btn", "md"),
+    ("custom.css", ".section-btn, .section-btn.btn.btn-default.smoothScroll", "md"),
+    ("custom.css", ".secondary-cta, .tertiary-cta", "md"),
+    ("main.css", ".section-btn", "md"),
+)
+
+
+def _length_px(value: str) -> float:
+    value = value.strip()
+    if value.endswith("px"):
+        return float(value[:-2])
+    if value.endswith("rem"):
+        return float(value[:-3]) * ROOT_FONT_PX
+    raise AssertionError("%r is not a length this check can measure" % value)
+
+
+def test_the_three_button_sizes_are_tokens_and_clear_a_touch_target() -> None:
+    variables = custom_properties(load_rules())
+    measured = []
+    for size in BUTTON_SIZES:
+        found = {}
+        for part in ("font", "pad-y", "pad-x", "height"):
+            token = "--fhi-btn-%s-%s" % (part, size)
+            assert token in variables, "%s is not declared" % token
+            found[part] = _length_px(variables[token])
+        assert found["height"] >= TOUCH_TARGET, (
+            "--fhi-btn-height-%s is %.0fpx, under the %.0fpx a touch target "
+            "needs" % (size, found["height"], TOUCH_TARGET)
+        )
+        real = found["pad-y"] * 2 + found["font"] * LINE_HEIGHT
+        assert real >= TOUCH_TARGET, (
+            "the %s button's own padding and type come to %.1fpx, so it only "
+            "reaches %.0fpx through its min-height" % (size, real, TOUCH_TARGET)
+        )
+        measured.append((size, found))
+    for (smaller, one), (larger, other) in zip(measured, measured[1:]):
+        for part in ("font", "pad-x", "height"):
+            assert one[part] < other[part], (
+                "%s is not smaller than %s: --fhi-btn-%s-%s is %.1fpx and "
+                "--fhi-btn-%s-%s is %.1fpx"
+                % (smaller, larger, part, smaller, one[part], part, larger, other[part])
+            )
+
+
+def test_a_buttons_size_comes_from_its_role_not_from_a_literal() -> None:
+    """Small in the nav, large for a page's primary action, medium for the rest."""
+    rules = load_rules()
+    by_selector: dict[tuple[str, str], list[Rule]] = {}
+    for rule in rules:
+        for selector in (rule.selector,) + tuple(rule.selectors):
+            by_selector.setdefault(
+                (rule.stylesheet, _normalise(selector)), []
+            ).append(rule)
+    for stylesheet, selector, size in SIZE_ROLES:
+        found = by_selector.get((stylesheet, _normalise(selector)))
+        assert found, "%s  %s is not in the stylesheet any more" % (
+            stylesheet,
+            selector,
+        )
+        declarations = {}
+        for rule in found:
+            for prop in ("font-size", "padding"):
+                value = _last_declaration(rule, prop)
+                if value:
+                    declarations[prop] = value
+        for prop, token in (
+            ("font-size", "--fhi-btn-font-%s" % size),
+            ("padding", "--fhi-btn-pad-y-%s" % size),
+        ):
+            value = declarations.get(prop)
+            assert value is not None, "%s  %s declares no %s" % (
+                stylesheet,
+                selector,
+                prop,
+            )
+            assert "var(%s)" % token in value, (
+                "%s  %s writes %s: %s. The size is a role, so it has to come "
+                "from %s." % (stylesheet, selector, prop, value, token)
+            )
+
+
+def test_the_primary_action_on_a_page_is_marked_large() -> None:
+    """The role is in the markup where the template is what knows it."""
+    dom = template_dom()
+    carried = dom.by_class.get("fhi-btn-lg", [])
+    assert carried, "no template marks its primary action with .fhi-btn-lg"
+    where = {node.template for node in carried}
+    for template in ("scrub.html", "remove_data.html"):
+        assert template in where, (
+            "%s is a page whose main action is the only thing to do on it, "
+            "and it is not marked large" % template
+        )
+    for node in carried:
+        assert node.classes & BRAND_BUTTON_CLASSES, (
+            "%s in %s is marked large but is not a brand button"
+            % (node.ident or node.tag, node.template)
+        )
+
+
 def test_the_decorative_greens_keep_their_colour() -> None:
     """The lime surfaces are the visual identity and do not move with the fill."""
     variables = custom_properties(load_rules())
