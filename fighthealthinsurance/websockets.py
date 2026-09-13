@@ -680,11 +680,21 @@ class StreamingAppealsBackend(
         # ML cycles and then surface as an in-band error frame mid-stream;
         # with it the client gets a deterministic error frame up front.
         # Uniform message so we don't leak which field was wrong.
-        denial = await database_sync_to_async(common_view_logic.get_denial_for_action)(
-            denial_id=denial_id,
-            email=data.get("email") or "",
-            semi_sekret=data.get("semi_sekret") or "",
-        )
+        try:
+            denial = await database_sync_to_async(
+                common_view_logic.get_denial_for_action
+            )(
+                denial_id=denial_id,
+                email=str(data.get("email") or ""),
+                semi_sekret=str(data.get("semi_sekret") or ""),
+            )
+        except Exception:
+            # These values come from a client and need not be strings. A
+            # reference the lookup cannot even read is a reference that does
+            # not resolve, and it leaves by the same door as one that simply
+            # does not match, rather than raising out of the consumer
+            # (review).
+            denial = None
         if denial is None:
             logger.warning(f"appeals ws: auth failure for denial {denial_id!r}")
             try:
@@ -943,12 +953,57 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
         )
         if data is None:
             return
-        if "denial_id" not in data:
-            logger.warning("Missing denial_id in entity extraction request")
-            await self.send(json.dumps({"error": "Missing denial_id"}))
+        denial_id = data.get("denial_id")
+        # A case id is a whole number or the digits of one. Anything else is
+        # not a case id, and passing it on would let the lookup's int()
+        # quietly turn 1.9, or true, into 1 (CodeRabbit). Checked here rather
+        # than in the shared helper, which the form flows also call with
+        # values of their own.
+        if isinstance(denial_id, bool) or not (
+            isinstance(denial_id, int)
+            or (isinstance(denial_id, str) and denial_id.strip().isdigit())
+        ):
+            denial_id = None
+        # Resolve the (denial_id, email, semi_sekret) triple before doing any
+        # work, the same gate the appeals consumer above applies and the same
+        # helper. Extraction is not a read: it writes the row and spends one
+        # of the three automatic-read attempts a case gets, so it should only
+        # ever run for a request that can name the case it belongs to. The
+        # page already sends all three (entity_extract.html spreads
+        # form_context into the payload), so nothing changes for the client.
+        #
+        # One uniform reply for every failure, including a case that does not
+        # exist: the response says nothing about which part did not match, or
+        # whether the case is there at all.
+        try:
+            denial = await database_sync_to_async(
+                common_view_logic.get_denial_for_action
+            )(
+                denial_id=denial_id,
+                email=str(data.get("email") or ""),
+                semi_sekret=str(data.get("semi_sekret") or ""),
+            )
+        except Exception:
+            # These values come from a client and need not be strings. A
+            # reference the lookup cannot even read is a reference that does
+            # not resolve, and it leaves by the same door as one that simply
+            # does not match, rather than raising out of the consumer
+            # (review).
+            denial = None
+        if denial is None:
+            # The id only: an email does not belong in a log line.
+            logger.warning(f"entity ws: could not resolve denial {denial_id!r}")
+            try:
+                await self.send(
+                    json.dumps({"type": "error", "message": "Not found"}) + "\n"
+                )
+            except Exception:
+                logger.debug("entity ws: could not send the error frame")
             await self.close()
             return
-        aitr = common_view_logic.DenialCreatorHelper.extract_entity(data["denial_id"])
+        # The id off the resolved row, not the one the client sent: it is
+        # typed, and it is the case this request proved it may act on.
+        aitr = common_view_logic.DenialCreatorHelper.extract_entity(denial.denial_id)
 
         try:
             async for record in aitr:
