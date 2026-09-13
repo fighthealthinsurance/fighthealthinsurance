@@ -7,7 +7,7 @@ from django.urls import reverse
 
 
 class AboutUsAcknowledgementsTest(TestCase):
-    SUPPORTERS = ("Microsoft Azure", "GitHub", "Anthropic", "OpenAI", "TypeSafe")
+    SUPPORTERS = ("Microsoft Azure", "GitHub", "Anthropic", "OpenAI", "TypeSafe", "Hugging Face")
 
     def setUp(self):
         body = Client().get(reverse("about")).content.decode("utf-8")
@@ -19,6 +19,15 @@ class AboutUsAcknowledgementsTest(TestCase):
         text = self.section.get_text(" ")
         for name in self.SUPPORTERS:
             self.assertIn(name, text)
+
+    def test_hugging_face_is_thanked_for_hosting_the_model_files(self):
+        # It hosts the files behind the better text recognition option; the
+        # thanks say so and link to it, like the others.
+        text = self.section.get_text(" ")
+        self.assertIn("hosts the model files behind the better text recognition option", text)
+        link = self.section.find("a", href="https://huggingface.co/")
+        self.assertIsNotNone(link, "Hugging Face is named without a link")
+        self.assertEqual(link.get_text(strip=True), "Hugging Face")
 
     def test_the_section_ends_with_a_real_link_to_how_to_help(self):
         paragraphs = self.section.find_all("p")

@@ -5,6 +5,16 @@
 Fight Health Insurance Consumer Health Data Privacy Notice
 {% endblock title %}
 {% block content %}
+<style>
+  /* The downloadable PDF is printed from this page: only the notice itself,
+     none of the site furniture. */
+  @media print {
+    header, .navbar, .github-fork-ribbon, footer, #site-banner, .site-banner, .betaribbon, .preloader { display: none !important; }
+    body { background: #fff; }
+    a[href]::after { content: none; }
+  }
+</style>
+
 <section id="mhmda">
     <div class="container" style="margin-top: 20px;">
         <div class="section-header text-align-center" style="margin-bottom: 20px;">
@@ -139,7 +149,7 @@ Fight Health Insurance Consumer Health Data Privacy Notice
         <p>
             If you have any questions or comments about our privacy practices or this Notice, or if you would like to receive a copy of this Notice in an alternate format or language, please contact us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>. 
         </p>
-        <p><em>Last updated: March 31, 2025</em></p>
+        <p><em>Last updated: September 8, 2026</em></p>
     </div>
 </section>
 {% endblock content %}

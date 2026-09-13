@@ -5,6 +5,17 @@
 Fight Health Insurance Privacy Policy
 {% endblock title %}
 {% block content %}
+<style>
+  /* The downloadable PDF is printed from this page: only the policy itself,
+     none of the site furniture. */
+  @media print {
+    header, .navbar, .github-fork-ribbon, footer, #site-banner, .site-banner, .betaribbon, .preloader { display: none !important; }
+    body { background: #fff; }
+    #privacy-policy { margin: 0; }
+    #privacy-policy .container { max-width: none; padding: 0; }
+    a[href]::after { content: none; }
+  }
+</style>
 <section id="privacy-policy">
     <div class="container mt-3">
         <div class="section-header text-align-center mb-3">
@@ -83,9 +94,12 @@ Fight Health Insurance Privacy Policy
 	<p>
 		<strong>Website Delivery and Appearance</strong> – We may use third party providers to enable certain customer interaction opportunities, content delivery (like audio or video), or other service capabilities. Examples include, but are not limited to, the following functionality:
 		<ul>
-			<li><p><strong>Content Delivery:</strong> We partner with service providers to host our Site and deliver specific content in support of our Services. For example, we use Google Fonts to serve fonts on our Site and Google Analtyics for site metrics, which are governed by
+			<li><p><strong>Content Delivery:</strong> We partner with service providers to host our Site and deliver specific content in support of our Services. For example, we use Google Fonts to serve fonts on our Site and Google Analytics for site metrics, which are governed by
 				<a href="https://policies.google.com/privacy">
 				  Google’s Privacy Policy
+				</a>. If you turn on better text recognition for photos and scans on the scan page, your browser downloads the AI model files from Hugging Face. Hugging Face sees the download request, including things like your IP address and browser, but not your documents or your text. That download is governed by
+				<a href="https://huggingface.co/privacy">
+				  Hugging Face’s Privacy Policy
 				</a>.</p></li>
 		</ul>
 	</p>
@@ -162,7 +176,7 @@ Fight Health Insurance Privacy Policy
 			<strong>Deletion</strong> – The right to delete your Personal Information that we have collected or obtained, subject to certain exceptions. To request that we delete your Personal Information, please go to 
 			<a href="https://fighthealthinsurance.com/remove_data">
 			  https://fighthealthinsurance.com/remove_data
-			</a>. 
+			</a>. We keep anonymous totals of how much work the service has done, such as how many appeals it has generated; they contain no information about you and are not affected by your request.
 		</p></li>
 	    <li><p>
 			<strong>Correction</strong> – The right to request that we correct any inaccuracies in your Personal Information, subject to certain exceptions.
@@ -215,7 +229,7 @@ Fight Health Insurance Privacy Policy
 	<p>
 		If you have any questions about our practices or this Policy, please contact us at: <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>
 	</p>
-	<p><em>Last updated: September 7, 2026</em></p>    
+	<p><em>Last updated: September 12, 2026</em></p>    
 </div>
 </section>
 
