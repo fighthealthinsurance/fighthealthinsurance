@@ -45,6 +45,51 @@
     outline-offset: 2px;
 }
 
+/* Bootstrap clears the outline on its own controls with `.btn:focus-visible
+   {outline: 0}` and `.form-control:focus {outline: 0}`, and those beat a bare
+   `:focus-visible` on specificity whatever order the sheets load in. Its
+   replacement glow resolves through --bs-btn-focus-shadow-rgb, which a plain
+   .btn never defines, so on Next, Continue, Generate My Appeal and Confirm
+   Deletion the reset lands and nothing takes its place. These selectors match
+   Bootstrap's weight so the ring survives on the buttons the eight-step form
+   is actually made of. */
+.btn:focus-visible,
+.btn-check:focus-visible + .btn,
+.form-control:focus-visible,
+.form-select:focus-visible,
+.form-check-input:focus-visible {
+    outline: 2px solid var(--fhi-green-ink);
+    outline-offset: 2px;
+}
+
+/* A button's label keeps its colour while it is being hovered, focused or
+   pressed. main.css recolours every a:hover, a:active and a:focus on the site,
+   and that beats a button's own `.btn-green {color: #fff}` on specificity, so
+   without this the skip link, the share buttons and the hero call to action
+   write dark olive on their own dark fill the moment you tab to them. */
+.skip-link:hover,
+.skip-link:focus,
+.skip-link:active,
+.btn-green:hover,
+.btn-green:focus,
+.btn-green:active,
+.section-btn:hover,
+.section-btn:focus,
+.section-btn:active,
+.btn-secondary-custom:hover,
+.btn-secondary-custom:focus,
+.btn-secondary-custom:active {
+    color: #fff;
+}
+
+/* Same reason, kept apart because one of the four share buttons wears
+   Facebook's blue and is excused in the gate by name. */
+.share-btn:hover,
+.share-btn:focus,
+.share-btn:active {
+    color: #fff;
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;
@@ -281,7 +326,7 @@ a.link:hover::after {
 .hero-cta-group.hero-cta-secondary {margin-top: 0.5rem; margin-bottom: 1.5rem; display: flex !important;}
 .hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 3.5rem; min-height: 3.5rem; max-height: 3.5rem; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
-.primary-cta {font-size:1.15rem !important; font-weight:700 !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
+.primary-cta {font-size:1.15rem !important; font-weight:700 !important; border: 2px solid rgba(255,255,255,0.85) !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
 .secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size:1.15rem !important; padding: 0 1.8rem !important; line-height: 1.5 !important;}
 .secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green-ink) !important; color:#fff !important; border-color: var(--fhi-green-ink) !important;}
@@ -510,8 +555,20 @@ a.link:hover::after {
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
 .pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
+/* The hero panel is dark and the photograph behind it is anything, so the
+   darkened fill no longer tells the reader where the button ends. The border
+   does, and it matches the white edge the secondary hero buttons already
+   wear. */
 .pwyw-submit {min-width:180px;}
-.pwyw-thanks {font-size:.7rem; color:var(--fhi-green-ink);}
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
+    border: 2px solid rgba(255, 255, 255, 0.85) !important;
+}
+/* The hero's panel is a dark purple veil over the photograph (see
+   #home .hero-inner .payment-card-wrapper .pwyw-panel above), so this
+   confirmation keeps the brand green rather than the ink: green-ink reads at
+   1.8:1 to 3.0:1 there. The white panel on the appeal pages overrides it with
+   the ink further down. */
+.pwyw-thanks {font-size:.7rem; color:var(--fhi-green);}
 
 /* Outline variant for chat/pro buttons */
 .btn-outline-green {background:transparent; border:2px solid var(--fhi-green); color:var(--fhi-green-ink); transition:.3s;}
@@ -1295,7 +1352,7 @@ section:not(.slider) .share-subcopy {
 }
 
 .bingo-free-space:hover {
-    background: #8ba81c !important;
+    background: var(--fhi-btn-fill-b) !important;
     transform: scale(1.05);
 }
 
@@ -1303,7 +1360,7 @@ section:not(.slider) .share-subcopy {
     text-align: center;
     margin-top: 1.5rem;
     font-size: 0.95rem;
-    color: #666;
+    color: var(--fhi-ink-2);
     font-style: italic;
 }
 
@@ -1775,8 +1832,7 @@ section:not(.slider) .share-subcopy {
 
 .pro-interest-form input:focus,
 .pro-interest-form textarea:focus {
-    outline: none;
-    border-color: #a5c422;
+    border-color: var(--fhi-green-ink);
     box-shadow: 0 0 0 3px rgba(165, 196, 34, 0.18);
 }
 
