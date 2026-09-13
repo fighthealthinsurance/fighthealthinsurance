@@ -3,3 +3,8 @@ fighthealthinsurance/static/images/quartzlogo.png filter=lfs diff=lfs merge=lfs 
 fighthealthinsurance/static/images/slashdotlogo.png filter=lfs diff=lfs merge=lfs -text
 fighthealthinsurance/static/images/kjzzlogo.png filter=lfs diff=lfs merge=lfs -text
 fighthealthinsurance/static/images/bgrlogo.png filter=lfs diff=lfs merge=lfs -text
+
+# Screenshots kept for review, not shipped to anyone. Marked so a pull request
+# collapses them instead of pasting image blobs into the code diff: the files
+# are still there to click, they are just not part of what gets read as code.
+docs/ux-evidence/** -diff linguist-generated=true
