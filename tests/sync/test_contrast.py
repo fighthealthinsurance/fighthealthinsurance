@@ -1331,6 +1331,16 @@ EXCEPTIONS: tuple[Exempt, ...] = (
         WHITE_ON_BRAND_LIME,
     ),
     Exempt("main.css", ".section-btn", WHITE_ON_BRAND_LIME),
+    Exempt(
+        "main.css",
+        ".navbar-default .navbar-nav li.appointment-btn a",
+        WHITE_ON_BRAND_LIME,
+    ),
+    Exempt(
+        "main.css",
+        ".navbar-default .navbar-nav li.appointment-btn a:hover",
+        WHITE_ON_BRAND_LIME,
+    ),
 )
 
 
