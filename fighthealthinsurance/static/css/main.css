@@ -138,8 +138,7 @@ a {
 a:hover,
 a:active,
 a:focus {
-    color: #a5c422;
-    outline: none;
+    color: var(--fhi-green-ink);
 }
 
 ::-webkit-scrollbar {
@@ -161,7 +160,7 @@ a:focus {
 }
 
 .section-btn {
-    background: #a5c422;
+    background: var(--fhi-btn-fill-a);
     border: 0;
     border-radius: 3px;
     color: #ffffff;
@@ -382,9 +381,9 @@ header span i {
 }
 
 .navbar-default .navbar-nav li.appointment-btn a {
-    background: #a5c422;
+    background: var(--fhi-green);
     border-radius: 3px;
-    color: #ffffff !important;
+    color: var(--fhi-ink) !important;
     font-weight: 600;
     padding-top: 12px;
     padding-bottom: 12px;
@@ -941,7 +940,7 @@ footer a:hover {
 
 .copyright-text p,
 .footer-link a {
-    color: #858585 !important;
+    color: var(--fhi-muted) !important;
     font-size: 12px !important;
     font-weight: 500 !important;
 }

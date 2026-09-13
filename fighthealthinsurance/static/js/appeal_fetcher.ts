@@ -92,16 +92,17 @@ function renderChecklist(): void {
   for (const phase of phases) {
     if (phase.hidden) continue;
     const icon = getPhaseIcon(phase.state);
-    const labelStyle = phase.state === 'active' ? 'font-weight: 600; color: #333;' :
-                       phase.state === 'done' ? 'color: #28a745;' :
-                       phase.state === 'skipped' ? 'color: #999; text-decoration: line-through;' : 'color: #999;';
+    const labelClass = phase.state === 'active' ? 'appeal-phase-label-active' :
+                       phase.state === 'done' ? 'appeal-phase-label-done' :
+                       phase.state === 'skipped' ? 'appeal-phase-label-skipped' : 'appeal-phase-label-pending';
     let labelText = phase.label;
     if (phase.id === 'generating') {
       labelText = `${phase.label} (${appealsSoFar.length}/3)`;
     }
 
     const row = document.createElement('div');
-    row.setAttribute('style', `display: flex; align-items: center; gap: 8px; margin: 6px 0; ${labelStyle}`);
+    row.setAttribute('style', 'display: flex; align-items: center; gap: 8px; margin: 6px 0;');
+    row.className = labelClass;
     const iconSpan = document.createElement('span');
     iconSpan.setAttribute('style', 'width: 20px; text-align: center; flex-shrink: 0;');
     iconSpan.textContent = icon.char;
