@@ -991,7 +991,9 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
                 logger.debug("entity ws: could not send the error frame")
             await self.close()
             return
-        aitr = common_view_logic.DenialCreatorHelper.extract_entity(denial_id)
+        # The id off the resolved row, not the one the client sent: it is
+        # typed, and it is the case this request proved it may act on.
+        aitr = common_view_logic.DenialCreatorHelper.extract_entity(denial.denial_id)
 
         try:
             async for record in aitr:
