@@ -40,6 +40,30 @@ Getting Your Questions Ready
       </div>
     </noscript>
   </form>
+
+  {# Shown at 8 seconds. Outside the form and carrying no submit control on #}
+  {# purpose: the auto-submitted POST is still in flight at 8 seconds and   #}
+  {# find_next_steps is not idempotent, so a second control here would      #}
+  {# invite a duplicate submission of the same payload. An explanation and  #}
+  {# a way back are what a person needs at that point.                      #}
+  {#                                                                        #}
+  {# The Continue button below still waits until 20 seconds, and it IS a    #}
+  {# second submission of that same payload -- it was already, and the      #}
+  {# question-generation deadline being 130 seconds widens the window in    #}
+  {# which it can fire while the first POST is still running. That is why   #}
+  {# generate_appeal_questions refuses to overwrite a stored question list  #}
+  {# with an empty one: two runs for one denial are reachable here, and     #}
+  {# the one that finishes with nothing must not erase the other one.       #}
+  <div id="slow-explanation" style="display:none; text-align:center; margin-top:1rem;">
+    <p style="margin-bottom:0.75rem; color:#4f5b67;">
+      This one is taking longer than usual. We ask a couple of models what is worth
+      asking you about this denial, and they are still thinking. The page moves on by
+      itself as soon as one of them answers.
+    </p>
+    {% if back_url %}
+    <a href="{{ back_url }}" class="btn btn-secondary-custom">← {{ back_label|default:"Back to review" }}</a>
+    {% endif %}
+  </div>
 </div>
 
 <script>
@@ -75,6 +99,20 @@ Getting Your Questions Ready
       window.setTimeout(function () {
         form.submit();
       }, 250);
+
+      // At 8s: say what is happening and offer the way back. No submit
+      // control here -- the POST above is still in flight and
+      // find_next_steps is not idempotent, so a second one would be a
+      // duplicate submission of the same payload. The 20s button below is
+      // that duplicate; it is kept because being stuck on a spinner with no
+      // control at all is worse, and the server side is what was made safe
+      // against a second run.
+      window.setTimeout(function () {
+        const slowExplanation = document.getElementById('slow-explanation');
+        if (slowExplanation) {
+          slowExplanation.style.display = 'block';
+        }
+      }, 8000);
 
       // Failure path for the auto-submit: if the POST is slow or errors, the
       // user used to be stuck on the spinner with no visible control at all.

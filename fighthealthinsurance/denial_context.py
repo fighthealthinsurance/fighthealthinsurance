@@ -14,8 +14,9 @@ matches its context (sync ``.save``, async ``.asave``, atomic
 
 from __future__ import annotations
 
+import hashlib
 import json
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from loguru import logger
 
@@ -25,6 +26,139 @@ from loguru import logger
 # substantive answers to questions like "Other treatments tried (if
 # any)?" or "Comorbidities (if any)?" and must not be dropped.
 _DROPPED_VALUES = {"", "UNKNOWN", None}
+
+
+# Form-field prefix for the questions a model generated for one denial.
+GENERATED_QUESTION_PREFIX = "appeal_generated_question_"
+
+# Keys ``FindNextStepsHelper.find_next_steps`` writes into ``qa_context``
+# that are not answers to a question on the questions page.  They stay in
+# the dict -- the appeal prompt and the regulator letter read the whole
+# dict as prose -- but the questions page must never take one for a stored
+# answer to a GENERATED question: those are keyed by question text, and a
+# model that happened to ask "date of service" would otherwise be handed
+# the review step's date as the person's answer.
+#
+# This is not a "nothing on the page may write these" list.  ``in_network``
+# is both written here (professional flow only) and a real checkbox every
+# patient sees, and whoever can see the box owns what is in it --
+# ``InsuranceQuestions.__init__`` removes the field exactly when the review
+# step owns it.  See ``GenerateAppeal._unticked_checkbox_answers``.
+RESERVED_QA_KEYS = frozenset(
+    {"denial date", "date of service", "date_of_service", "in_network"}
+)
+
+
+def _question_text(row: Any) -> Optional[str]:
+    """The question out of one ``generated_questions`` row.
+
+    Rows are written as ``(question, suggested_answer)`` tuples and come
+    back from the JSONField as two-element lists, so index rather than
+    unpack.  Anything else on the row is ignored rather than raised over:
+    these rows are model output.
+    """
+    if isinstance(row, str):
+        question = row
+    elif isinstance(row, (list, tuple)) and row:
+        question = row[0]
+    else:
+        return None
+    if not isinstance(question, str):
+        return None
+    question = question.strip()
+    return question or None
+
+
+def _question_default(row: Any) -> str:
+    """The suggested answer out of one ``generated_questions`` row, if any."""
+    if isinstance(row, (list, tuple)) and len(row) > 1 and isinstance(row[1], str):
+        return row[1]
+    return ""
+
+
+def question_field_name(question: str) -> str:
+    """The form-field name for one generated question.
+
+    Derived from the question text, so the identity survives the list being
+    regenerated or reordered between the page being rendered and the answers
+    being submitted.  The old name was the question's 1-based position, which
+    silently moved an answer onto a different question whenever the list
+    changed under it.
+    """
+    digest = hashlib.sha256(question.strip().encode("utf-8")).hexdigest()[:16]
+    return f"{GENERATED_QUESTION_PREFIX}{digest}"
+
+
+def generated_question_fields(
+    generated_questions: Optional[Sequence[Any]],
+) -> dict[str, tuple[str, str]]:
+    """Map field name -> (question text, suggested answer).
+
+    Insertion order is the stored order, so the page asks the questions in
+    the order they were generated.  Two rows carrying the same question
+    collapse onto one field, which is what keeps the same sentence from
+    being asked twice.
+    """
+    fields: dict[str, tuple[str, str]] = {}
+    for row in generated_questions or []:
+        question = _question_text(row)
+        if question is None:
+            continue
+        fields.setdefault(
+            question_field_name(question), (question, _question_default(row))
+        )
+    return fields
+
+
+def question_text_for_field(
+    field_name: str, generated_questions: Optional[Sequence[Any]]
+) -> Optional[str]:
+    """The question text a posted generated-question field belongs to.
+
+    Returns None when the field cannot be resolved, which is the caller's
+    signal to keep the answer under its raw posted name rather than file it
+    against the wrong question.
+
+    Reads both shapes: the current content-derived name, and the 1-based
+    positional name that pages rendered before this change still post.
+    """
+    if not field_name.startswith(GENERATED_QUESTION_PREFIX):
+        return None
+    fields = generated_question_fields(generated_questions)
+    if field_name in fields:
+        return fields[field_name][0]
+    suffix = field_name[len(GENERATED_QUESTION_PREFIX) :]
+    if suffix.isdigit():
+        rows = list(generated_questions or [])
+        index = int(suffix)
+        # 1-based; reject 0/negative so a malformed key cannot alias
+        # Python's negative indexing onto the wrong question.
+        if 1 <= index <= len(rows):
+            return _question_text(rows[index - 1])
+    return None
+
+
+def stored_answer_for_question(
+    question: str, existing_answers: Mapping[str, str]
+) -> Optional[str]:
+    """The answer already stored for one generated question, if any.
+
+    Answers are stored under the QUESTION TEXT, because the appeal prompt
+    (``generate_appeal``) and the regulator letter read ``qa_context`` as
+    prose and an identifier there would read as noise.  The field they
+    belong to is named after the question's stable identity, so the answer
+    has to be looked up here rather than by field name -- which is why
+    pressing Back used to show blank boxes.
+
+    A reserved key is never an answer to a question, and an answer that a
+    failed mapping left filed under the raw field name is still read back.
+    """
+    if question in RESERVED_QA_KEYS:
+        return None
+    value = existing_answers.get(question)
+    if value is None:
+        value = existing_answers.get(question_field_name(question))
+    return value
 
 
 def load_qa(denial: Any) -> dict[str, str]:

@@ -43,7 +43,12 @@ from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
-from fighthealthinsurance.denial_context import merge_qa
+from fighthealthinsurance.denial_context import (
+    GENERATED_QUESTION_PREFIX,
+    load_qa,
+    merge_qa,
+    question_text_for_field,
+)
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
@@ -1265,6 +1270,7 @@ class FindNextSteps(View):
             context={
                 "outside_help_details": next_step_info.outside_help_details,
                 "combined": next_step_info.combined_form,
+                "questions_outcome": next_step_info.questions_outcome,
                 "denial_form": denial_ref_form,
                 "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
                 "financial_assistance": next_step_info.financial_assistance,
@@ -1309,6 +1315,7 @@ class FindNextSteps(View):
                 context={
                     "outside_help_details": next_step_info.outside_help_details,
                     "combined": next_step_info.combined_form,
+                    "questions_outcome": next_step_info.questions_outcome,
                     "denial_form": denial_ref_form,
                     "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
                     "financial_assistance": next_step_info.financial_assistance,
@@ -1377,6 +1384,17 @@ class FindNextStepsLoading(View):
             context={
                 "payload": request.POST,
                 "current_step": 6,
+                # The page offers this link once the wait has gone on long
+                # enough to need explaining. It is a link, not a second
+                # submit: find_next_steps is not idempotent and the
+                # auto-submitted POST is still in flight at that point.
+                "back_url": build_back_url(
+                    "categorize_review",
+                    form.cleaned_data["denial_id"],
+                    form.cleaned_data["email"],
+                    form.cleaned_data["semi_sekret"],
+                ),
+                "back_label": "Back to review",
             },
         )
 
@@ -1457,6 +1475,51 @@ class ChooseAppeal(View):
 
 class GenerateAppeal(View):
     """View for generating appeal letters using ML models."""
+
+    @staticmethod
+    def _unticked_checkbox_answers(denial, posted: set[str]) -> dict[str, str]:
+        """Write False for a checkbox that was answered before and is not now.
+
+        An unticked checkbox sends nothing at all, and ``merge_qa`` keeps
+        what it already holds for a key nobody sent -- so a person who
+        ticked "Urgent claim", went on, came back and unticked it left the
+        old "on" standing in ``qa_context`` and got an appeal that still
+        argued from it. Only keys that already hold an answer are written,
+        so a box nobody ever ticked adds no "False" noise to the prompt.
+
+        The page itself is the ownership boundary, which is why nothing is
+        excluded by name here. The only ``qa_context`` key the review step
+        writes that is also a checkbox is ``in_network``, and
+        ``InsuranceQuestions.__init__`` removes that field whenever the
+        review step owns it (``prof_pov``: the professional was asked in the
+        earlier form). So a box rendered on this page is always the person's
+        own to untick, and a value the review step owns is never rendered
+        here to be untouched. Excluding ``in_network`` by name instead left
+        every patient -- who does see the box -- unable to withdraw it.
+        """
+        try:
+            stored = load_qa(denial)
+            if not stored:
+                return {}
+            question_forms = (
+                common_view_logic.FindNextStepsHelper._build_question_forms(denial)
+            )
+            answers: dict[str, str] = {}
+            for question_form in question_forms:
+                for name, field in question_form.fields.items():
+                    if not isinstance(field, forms.BooleanField):
+                        continue
+                    if name in posted:
+                        continue
+                    if name in stored:
+                        answers[name] = "False"
+            return answers
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Could not work out which checkboxes were unticked for "
+                f"denial {getattr(denial, 'denial_id', '?')}: {e}"
+            )
+            return {}
 
     @staticmethod
     def _appeals_context(
@@ -1556,31 +1619,32 @@ class GenerateAppeal(View):
             updates: dict[str, str] = {}
             for k, v in elems.items():
                 key = k
-                # Per-key guard: one unmappable key (questions regenerated
-                # between render and submit -> IndexError, malformed key ->
-                # ValueError) must lose only ITS mapping, not silently drop
-                # every answer the user just typed -- the old whole-loop try
-                # discarded the entire questionnaire on the first bad key.
-                if "appeal_generated_" in k:
-                    try:
-                        question_index = int(k.rsplit("_", 1)[-1])
-                        # 1-based; reject 0/negative so a malformed key can't
-                        # silently alias Python's negative indexing onto the
-                        # wrong question.
-                        if not 1 <= question_index <= len(generated_questions):
-                            raise ValueError("question index out of range")
-                        key = generated_questions[question_index - 1][0]
-                    except Exception as e:
+                # Per-key guard: one unmappable key (a question that is no
+                # longer on the denial, a malformed key) must lose only ITS
+                # mapping, not silently drop every answer the user just
+                # typed -- the old whole-loop try discarded the entire
+                # questionnaire on the first bad key.
+                if k.startswith(GENERATED_QUESTION_PREFIX):
+                    # The same resolver the page used to name the field, so
+                    # the key written here is the key read back when the
+                    # person presses Back.
+                    question = question_text_for_field(k, generated_questions)
+                    if question is None:
                         logger.warning(
                             f"Could not map answer key {k!r} for denial "
-                            f"{denial_id}: {e}; keeping it under its raw name"
+                            f"{denial_id}; keeping it under its raw name"
                         )
+                    else:
+                        key = question
                 if isinstance(v, list):
                     v = v[0]
                     elems[k] = v
                 if key in restricted:
                     continue
                 updates[key] = v
+            updates.update(
+                self._unticked_checkbox_answers(denial, posted=set(elems.keys()))
+            )
             merge_qa(denial, updates, source="appeal_form_post")
             denial.save(update_fields=["qa_context"])
         except Exception as e:

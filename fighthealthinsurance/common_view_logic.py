@@ -75,7 +75,13 @@ from fighthealthinsurance.context_utils import (
     SPECULATIVE_CONTEXT_LEVELS,
     summarize_denial_context_tokens,
 )
-from fighthealthinsurance.denial_context import load_qa, merge_plan_context, merge_qa
+from fighthealthinsurance.denial_context import (
+    generated_question_fields,
+    load_qa,
+    merge_plan_context,
+    merge_qa,
+    stored_answer_for_question,
+)
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
     render_template_blocks,
@@ -159,11 +165,25 @@ states_with_caps = {
 }
 
 
+# What the questions page should say about the questions it is rendering.
+# The template used to branch on ``{% if combined %}``, a Django Form, which
+# is truthy even with no fields in it (BaseForm defines neither ``__bool__``
+# nor ``__len__``) -- so the "no questions" branch never rendered and a run
+# that timed out told the person their appeal was ready to generate.
+QUESTIONS_OUTCOME_PRESENT = "questions"
+QUESTIONS_OUTCOME_NONE = "no_questions"
+QUESTIONS_OUTCOME_UNFINISHED = "generation_unfinished"
+
+
 @dataclass
 class NextStepInfo:
     outside_help_details: list[Tuple[str, str]]
     combined_form: Form
     semi_sekret: str
+    # One of the QUESTIONS_OUTCOME_* values above. Says which of the three
+    # real states this page is in; the form object cannot, because it is
+    # always truthy.
+    questions_outcome: str = QUESTIONS_OUTCOME_PRESENT
     # PharmacyCouponSuggestion when the denial concerns a recognizable
     # prescription drug or contains generic prescription cues; None
     # otherwise. Surfaced in outside_help.html so users see GoodRx /
@@ -968,42 +988,76 @@ class FindNextStepsHelper:
     def _build_question_forms(
         cls, denial: "Denial", existing_answers: Optional[dict] = None
     ) -> list:
-        """Build question forms from denial types and generated questions (shared logic)."""
+        """Build question forms from denial types and generated questions (shared logic).
+
+        ``existing_answers`` is the decoded ``qa_context`` for this denial.
+        It was accepted and never read. The generated questions are the half
+        that needs it here rather than in ``magic_combined_form``: their
+        answers are stored under the QUESTION TEXT (what the appeal prompt
+        reads back as prose) while the field carrying them is named after the
+        question's stable identity, so a lookup by field name -- all
+        ``magic_combined_form`` can do -- never finds them. Resolving them
+        here is what makes Back show the answers the person already gave.
+        """
         from django import forms
 
+        answers: dict[str, str] = existing_answers or {}
         question_forms = []
         prof_pov = denial.professional_to_finish
 
-        # Add forms for each denial type
+        # Add forms for each denial type.
+        #
+        # No ``initial={"medical_reason": dt.appeal_text}`` here. ``appeal_text``
+        # is the canned paragraph ``_generate_appeals_body`` falls back to when
+        # a denial type's form does NOT validate; it is not a sentence the
+        # person wrote, and an answer box is the person's. Seeded "Preventive
+        # Care" makes the cost concrete: its ``appeal_text`` is 337 characters
+        # of ACA citation and ``PreventiveCareQuestions.medical_reason`` is
+        # ``max_length=300``, so pre-typing it both put legal boilerplate in
+        # the person's mouth and made the page fail its own validation, which
+        # cost that letter its salutation, its closing and every checkbox
+        # answer on the form.
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
-                new_form = new_form(
-                    initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
-                )
+                new_form = new_form(prof_pov=prof_pov)
                 question_forms.append(new_form)
 
         # Add generated questions form if available
         if denial.generated_questions:
-            generated_questions: list[tuple[str, str]] = denial.generated_questions
+            question_fields = generated_question_fields(denial.generated_questions)
 
             class AppealQuestionsForm(forms.Form):
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, **kwargs)
-                    for i, (question, initial_answer) in enumerate(
-                        generated_questions, 1
-                    ):
-                        field_name = f"appeal_generated_question_{i}"
+                    for field_name, (
+                        question,
+                        suggested_answer,
+                    ) in question_fields.items():
+                        stored = stored_answer_for_question(question, answers)
                         self.fields[field_name] = forms.CharField(
+                            # Label only. Setting help_text to the same
+                            # sentence made as_table print the question
+                            # above AND below every box.
                             label=question,
-                            help_text=question,
                             required=False,
-                            initial=initial_answer,
+                            initial=(
+                                stored if stored is not None else suggested_answer
+                            ),
                         )
 
             question_forms.append(AppealQuestionsForm())
 
         return question_forms
+
+    @staticmethod
+    def _questions_outcome(combined_form: Form, generation_finished: bool) -> str:
+        """Which of the three real states the questions page is in."""
+        if combined_form.fields:
+            return QUESTIONS_OUTCOME_PRESENT
+        if not generation_finished:
+            return QUESTIONS_OUTCOME_UNFINISHED
+        return QUESTIONS_OUTCOME_NONE
 
     @classmethod
     def find_next_steps(
@@ -1231,15 +1285,21 @@ class FindNextStepsHelper:
                 f"denial {denial_id}"
             )
 
-        # Generate questions for better appeal creation if they don't exist yet
+        # Generate questions for better appeal creation if they don't exist yet.
+        # ``generation_finished`` is False only when this request actually
+        # failed to finish generating: it is what lets the page say "we could
+        # not work out the questions" instead of "no questions this time".
+        generation_finished = True
         try:
             if not denial.generated_questions or len(denial.generated_questions) == 0:
                 logger.debug("Generating appeal questions")
-                async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
-                    denial_id=denial.denial_id
-                )
+                generated = async_to_sync(
+                    DenialCreatorHelper.generate_appeal_questions
+                )(denial_id=denial.denial_id)
+                generation_finished = generated is not None
                 denial.refresh_from_db()
         except Exception as e:
+            generation_finished = False
             logger.opt(exception=True).error(
                 f"Failed to process appeal questions for denial {denial_id}: {e}"
             )
@@ -1256,10 +1316,18 @@ class FindNextStepsHelper:
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                questions_outcome=cls._questions_outcome(
+                    combined_form, generation_finished
+                ),
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
             )
         except Exception as e:
+            # Last-ditch: the merge above no longer raises on a field name
+            # two denial types share, which is what used to land here and
+            # cost the person every answer they had given. Anything else
+            # that reaches this point still costs them those answers, so it
+            # is logged at error rather than swallowed quietly.
             logger.opt(exception=True).error(
                 f"Unexpected error building query {denial_id}: {e}"
             )
@@ -1268,6 +1336,9 @@ class FindNextStepsHelper:
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                questions_outcome=cls._questions_outcome(
+                    combined_form, generation_finished
+                ),
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
             )
@@ -1338,19 +1409,36 @@ class FindNextStepsHelper:
         )
 
     @classmethod
-    def find_next_steps_for_denial(cls, denial: "Denial", email: str) -> "NextStepInfo":
+    def find_next_steps_for_denial(
+        cls,
+        denial: "Denial",
+        email: str,
+        existing_answers: Optional[dict[str, str]] = None,
+    ) -> "NextStepInfo":
         """
         Simplified version of find_next_steps for GET requests (back navigation).
         Returns the outside_help info without modifying the denial.
+
+        ``existing_answers`` defaults to the answers stored on the row. This
+        path used to build the page from a bare ``{}``, so someone who
+        stepped back to add one detail was shown blank boxes and, on
+        submitting, kept only what they retyped.
         """
+        if existing_answers is None:
+            existing_answers = load_qa(denial)
         # Use shared helpers for outside help details and question forms
         outside_help_details = cls._get_outside_help_details(denial)
-        question_forms = cls._build_question_forms(denial)
-        combined_form = magic_combined_form(question_forms, {})
+        question_forms = cls._build_question_forms(denial, existing_answers)
+        combined_form = magic_combined_form(question_forms, existing_answers)
         return NextStepInfo(
             outside_help_details=outside_help_details,
             combined_form=combined_form,
             semi_sekret=denial.semi_sekret,
+            # Back navigation generates nothing, so it never claims a
+            # generation failed; it reports only what the page holds.
+            questions_outcome=cls._questions_outcome(
+                combined_form, generation_finished=True
+            ),
             pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
             financial_assistance=cls._build_financial_assistance(denial),
         )
@@ -1421,6 +1509,25 @@ class ProfessionalNotificationHelper:
         )
 
 
+# Outer deadline on one non-speculative question-generation run.
+#
+# MLAppealQuestionsHelper.generate_questions_for_denial can spend up to 120
+# seconds. Its nominal budget VARIABLE is 45 (`timeout = 60 if speculative
+# else 45`); it spends that as `model_timeout = 45 - 5` = a 40s model window
+# plus, only when nothing usable landed in that window,
+# best_within_timelimit's default overtime of
+# min(max(2*40, 60), FHI_ML_EXTENDED_WAIT[300]) = 80s. 40 + 80 = 120: the 45
+# and the 80 are not two windows that add up. This deadline sits above that
+# whole ceiling with room to spare. At its old value of 20s it fired before
+# the helper's FIRST window closed, cancelling it and discarding every model
+# result that had arrived -- and the page then showed no questions at all.
+# The loading page, not this timer, is what gives the person a way out
+# sooner: it offers a Continue button at 20 seconds. That button can start a
+# SECOND run for the same denial, which is why the write below refuses to
+# overwrite a stored question list with an empty one.
+QUESTION_GENERATION_DEADLINE_SECONDS = 130
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -1455,7 +1562,9 @@ class DenialCreatorHelper:
         return cls._all_denial_types
 
     @classmethod
-    async def generate_appeal_questions(cls, denial_id: int) -> List[Tuple[str, str]]:
+    async def generate_appeal_questions(
+        cls, denial_id: int
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate a list of questions that could help craft a better appeal for
         this specific denial. The questions will be stored in the denial object's
@@ -1466,12 +1575,16 @@ class DenialCreatorHelper:
             denial_id: The ID of the denial to generate questions for
 
         Returns:
-            A list of (question, answer) tuples to help with appeal creation
+            A list of (question, answer) tuples to help with appeal creation,
+            or None when generation did not finish. None and [] are different
+            answers: [] means the models had nothing to ask about this denial,
+            None means we never found out, and the page says so rather than
+            telling the person their appeal is ready to generate.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
-            return []
+            return None
 
         try:
             # Use fire_and_forget_in_new_threadpool for citation generation to run in background
@@ -1491,13 +1604,23 @@ class DenialCreatorHelper:
                 MLAppealQuestionsHelper.generate_questions_for_denial(
                     denial, speculative=False
                 ),
-                timeout=20,
+                timeout=QUESTION_GENERATION_DEADLINE_SECONDS,
             )
 
-            # Store the generated questions in the denial object
-            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                generated_questions=questions
-            )
+            # Store the generated questions in the denial object.
+            #
+            # Only a non-empty result is written. Two runs for one denial
+            # overlap whenever somebody uses the loading page's 20 second
+            # Continue button against this 130 second deadline, and a run
+            # that comes back with nothing to ask must not replace the
+            # questions the other run already found. Skipping the write is
+            # not a behaviour change for an empty result either way: every
+            # reader treats a stored ``[]`` as "no questions yet" and
+            # regenerates, exactly as it treats an unset field.
+            if questions:
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    generated_questions=questions
+                )
 
             logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
             return questions
@@ -1505,7 +1628,52 @@ class DenialCreatorHelper:
             logger.opt(exception=True).warning(
                 f"Failed to generate questions for denial {denial_id}: {e}"
             )
-            return []
+            return await cls._questions_already_on_the_row(denial_id)
+
+    @classmethod
+    async def _questions_already_on_the_row(
+        cls, denial_id: int
+    ) -> Optional[List[Tuple[str, str]]]:
+        """Questions this denial already has, after a generation run failed.
+
+        The deadline above cancels the helper mid-flight, which throws away
+        everything it had. Two things can still be on the row: questions a
+        previous run stored, and the speculative candidate set, which the
+        helper itself would have preferred had it got that far. Candidates
+        are promoted only under the helper's own rule -- the procedure and
+        diagnosis they were generated for still match the row -- so a
+        candidate written for a different service is never shown.
+
+        Returns None when there is nothing, i.e. generation really did not
+        finish.
+        """
+        try:
+            denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Could not re-read denial {denial_id} after failed question "
+                f"generation: {e}"
+            )
+            return None
+        if denial.generated_questions:
+            return cast(List[Tuple[str, str]], denial.generated_questions)
+        if (
+            denial.candidate_generated_questions
+            and denial.candidate_procedure == denial.procedure
+            and denial.candidate_diagnosis == denial.diagnosis
+        ):
+            questions = cast(
+                List[Tuple[str, str]], denial.candidate_generated_questions
+            )
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                generated_questions=questions
+            )
+            logger.info(
+                f"Question generation for denial {denial_id} did not finish; "
+                f"promoted {len(questions)} candidate question(s) instead"
+            )
+            return questions
+        return None
 
     @staticmethod
     def _invalidate_denial_text_artifacts(denial: Denial) -> None:
