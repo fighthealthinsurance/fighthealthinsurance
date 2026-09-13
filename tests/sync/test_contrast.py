@@ -1614,8 +1614,14 @@ INK_TOKEN = "--fhi-btn-ink"
 BRAND_BUTTON_CLASSES = frozenset(
     ("btn-green", "section-btn", "btn-delete", "pro-submit-btn", "pwyw-pill")
 )
+GRADIENT_BUTTON_CLASSES = ("btn-green", "section-btn", "btn-delete", "pro-submit-btn")
 DARK_INK_CANDIDATES = ("#2b0f3d", "#1a1a1a")
 DECISION_DATE = "2026-09-13"
+# WCAG 1.4.11: a control, and the indicator that says which control has focus,
+# needs 3:1 against what sits next to it.
+INDICATOR_RATIO = 3.0
+
+
 def brand_button_labels(rules: Sequence[Rule]) -> list[tuple[Rule, str, str]]:
     """Every rule that writes a label onto a button wearing the brand lime."""
     found: list[tuple[Rule, str, str]] = []
@@ -1757,6 +1763,189 @@ def test_the_button_fill_is_the_brand_lime_as_a_sweep() -> None:
     assert contrast_ratio(bright, dark) >= 1.5, (
         "the two stops are %.2f:1 apart, which reads as a flat fill rather "
         "than a sweep" % contrast_ratio(bright, dark)
+    )
+
+
+# ------------------------------------------------------------- hover and focus
+
+
+def _last_declaration(rule: Rule, name: str) -> Optional[str]:
+    found = None
+    for prop, value, _ in rule.declarations:
+        if prop == name:
+            found = value.strip()
+    return found
+
+
+def _sweep_stops(rule: Rule, variables: dict[str, str]) -> list[RGBA]:
+    """The gradient stops a rule paints, in the order it paints them."""
+    for prop in ("background-image", "background"):
+        value = _last_declaration(rule, prop)
+        if value and "gradient" in value:
+            return colours_in(resolve_vars(value, variables))
+    return []
+
+
+def _rules_on(rules: Sequence[Rule], name: str, state: str) -> list[Rule]:
+    """Rules whose subject is `.name` in `state`; "" means at rest."""
+    found = []
+    for rule in rules:
+        for selector in rule.selectors:
+            steps = split_selector(selector)
+            if not steps or name not in steps[-1][1].classes:
+                continue
+            states = selector_states(steps)
+            if (state in states) if state else not states:
+                found.append(rule)
+                break
+    return found
+
+
+def test_hover_still_slides_the_fill_across_the_button() -> None:
+    """The fill-in on hover is the site's, and is not collateral of a rework."""
+    rules = load_rules()
+    variables = custom_properties(rules)
+    for name in GRADIENT_BUTTON_CLASSES:
+        resting = [rule for rule in _rules_on(rules, name, "") if _sweep_stops(rule, variables)]
+        assert resting, ".%s does not carry the sweep any more" % name
+        sizes = {_last_declaration(rule, "background-size") for rule in _rules_on(rules, name, "")}
+        assert "200% auto" in sizes, (
+            ".%s no longer paints a fill twice its own width, so there is "
+            "nothing for hover to slide" % name
+        )
+        slides = [
+            rule
+            for rule in _rules_on(rules, name, "hover")
+            if _last_declaration(rule, "background-position") == "right center"
+        ]
+        assert slides, ".%s:hover no longer slides the fill" % name
+
+
+def test_focus_on_a_gradient_button_flips_the_gradient() -> None:
+    """The owner's preference: focus turns the sweep over, no white ring."""
+    rules = load_rules()
+    variables = custom_properties(rules)
+    swap = {}
+    for one, other in (("--fhi-btn-fill-a", "--fhi-btn-fill-b"), ("--fhi-btn-fill-b", "--fhi-btn-fill-a")):
+        here, there = parse_colour(variables[one]), parse_colour(variables[other])
+        assert here is not None and there is not None
+        swap[here] = there
+    for name in GRADIENT_BUTTON_CLASSES:
+        resting = [
+            _sweep_stops(rule, variables)
+            for rule in _rules_on(rules, name, "")
+            if _sweep_stops(rule, variables)
+        ]
+        assert resting, ".%s does not carry the sweep any more" % name
+        focused = [
+            _sweep_stops(rule, variables)
+            for rule in _rules_on(rules, name, "focus-visible")
+            if _sweep_stops(rule, variables)
+        ]
+        assert focused, (
+            ".%s:focus-visible does not repaint the fill, so focus is not "
+            "flipping the gradient" % name
+        )
+        wanted = [swap[stop] for stop in resting[-1]]
+        assert focused[-1] == wanted, (
+            ".%s:focus-visible paints %s; flipping the resting sweep %s gives "
+            "%s"
+            % (
+                name,
+                ["#%02x%02x%02x" % stop[:3] for stop in focused[-1]],
+                ["#%02x%02x%02x" % stop[:3] for stop in resting[-1]],
+                ["#%02x%02x%02x" % stop[:3] for stop in wanted],
+            )
+        )
+
+
+def test_a_focused_gradient_button_is_told_apart_from_a_hovered_one() -> None:
+    """The flip alone cannot carry focus, so the rule adds a second cue.
+
+    The fill is 200% of the button's width, so hover's slide to `right center`
+    shows the second half of the resting a-b-a sweep, which is b running to a.
+    The flipped b-a-b sweep at its resting position shows its first half,
+    which is also b running to a. Same two colours, same order: a reader
+    cannot tell focus from hover by the fill, and a focus state that looks
+    like a hover state is not an indicator.
+
+    So focus also draws a ring outside the button, in the deep end of the
+    button's own ramp, at 3:1 or better against both stops of the fill it
+    surrounds and against the white page it sits on. Hover never draws it,
+    and that is the difference the reader can actually see. If the two fills
+    ever stop matching, this still holds: the ring is the perceivable part.
+    """
+    rules = load_rules()
+    variables = custom_properties(rules)
+    for name in GRADIENT_BUTTON_CLASSES:
+        resting = [
+            _sweep_stops(rule, variables)
+            for rule in _rules_on(rules, name, "")
+            if _sweep_stops(rule, variables)
+        ][-1]
+        focus_rules = [
+            rule
+            for rule in _rules_on(rules, name, "focus-visible")
+            if _sweep_stops(rule, variables)
+        ]
+        assert focus_rules, ".%s:focus-visible does not repaint the fill" % name
+        focused = _sweep_stops(focus_rules[-1], variables)
+        hovered = resting[len(resting) // 2 :]
+        showing = focused[: len(hovered)]
+        rings = [
+            _last_declaration(rule, "outline")
+            for rule in focus_rules
+            if _last_declaration(rule, "outline")
+        ]
+        assert rings, (
+            ".%s:focus-visible draws no ring. Its flipped fill %s is what "
+            "hover already shows once it slides (%s), so without a second cue "
+            "focus and hover look the same."
+            % (
+                name,
+                ["#%02x%02x%02x" % stop[:3] for stop in showing],
+                ["#%02x%02x%02x" % stop[:3] for stop in hovered],
+            )
+        )
+        hover_rings = [
+            _last_declaration(rule, "outline")
+            for rule in _rules_on(rules, name, "hover")
+            if _last_declaration(rule, "outline")
+        ]
+        assert not hover_rings, (
+            ".%s:hover draws a ring of its own, so the ring no longer tells "
+            "focus apart from hover" % name
+        )
+        for ring in rings:
+            colour = next(iter(colours_in(resolve_vars(ring, variables))), None)
+            assert colour is not None, ".%s:focus-visible ring has no colour" % name
+            grounds = [stop[:3] for stop in resting] + [WHITE]
+            for ground in grounds:
+                ratio = contrast_ratio(flatten(colour, ground), ground)
+                assert ratio >= INDICATOR_RATIO, (
+                    ".%s draws its focus ring at %.2f:1 against #%02x%02x%02x, "
+                    "under the %.1f:1 an indicator needs"
+                    % ((name, ratio) + ground + (INDICATOR_RATIO,))
+                )
+
+
+def test_the_controls_that_carry_no_gradient_keep_a_ring() -> None:
+    """Links, inputs and checkboxes are not buttons and do not flip anything."""
+    rings = set()
+    for rule in load_rules():
+        if not any(prop == "outline" for prop, _, _ in rule.declarations):
+            continue
+        for selector in rule.selectors:
+            if ":focus-visible" in selector:
+                rings.add(_normalise(selector))
+    for wanted in (".form-control:focus-visible", ".form-select:focus-visible", ".form-check-input:focus-visible"):
+        assert any(wanted in ring for ring in rings), (
+            "%s lost its focus ring; only the gradient buttons trade the ring "
+            "for a flip" % wanted
+        )
+    assert any(ring == ":focus-visible" for ring in rings), (
+        "the site-wide :focus-visible ring is gone, so a plain link has "
+        "nothing"
     )
 
 

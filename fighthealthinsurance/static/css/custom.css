@@ -256,6 +256,8 @@ a.link:hover::after {
     font-weight: 600;
     box-shadow: 0 3px 12px rgba(165, 196, 34, 0.35);
 }
+/* The fill slides in from the right on hover. The gradient is twice the width
+   of the button, so moving the background is what draws it across. */
 .btn-green:hover {
     background-position: right center;
     color: var(--fhi-btn-ink);
@@ -688,6 +690,31 @@ a.link:hover::after {
    background-position: right center;
    color: var(--fhi-btn-ink);
    text-decoration: none;
+}
+
+/* Focus on a button that carries the sweep flips the gradient: the dark stop
+   comes to both ends and the bright one to the middle, the reverse of the
+   resting fill.
+   The flip cannot carry focus on its own. The fill is twice the button's
+   width, so hover's slide to `right center` already shows dark on the left
+   running to bright on the right, and that is the same sequence of colours
+   the flipped gradient draws at rest. A reader cannot tell the two apart by
+   the fill, and a focus state that looks like a hover state is not an
+   indicator. So focus also draws a ring, outside the button, in the deep end
+   of the button's own ramp: 6.17:1 against the bright stop, 3.48:1 against
+   the dark one and 9.69:1 against a white page. Hover never draws it, which
+   is the difference the reader can see. On the hero the ring sits on the
+   photograph, where no stylesheet can say what is behind it, the same limit
+   the gate names for everything else in that band. */
+.btn-green:focus-visible,
+.btn-delete:focus-visible,
+.pro-submit-btn:focus-visible,
+.section-btn:focus-visible,
+.section-btn.btn.btn-default.smoothScroll:focus-visible {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
+    background-position: left center;
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 3px;
 }
 
 .custom-angle-up {
