@@ -1680,48 +1680,71 @@ class DenialCreatorHelper:
             # letter (the speculative reserve + the cached summaries) is stale
             # if the letter itself changed, and must be invalidated below.
             denial_text_changed = denial.denial_text != denial_text
+            # Track exactly which columns this resubmission assigns, so the
+            # save below writes only those. A bare ``denial.save()`` writes
+            # back every column the caller's snapshot is holding (Denial.save
+            # builds its own update_fields for that case, excluding only
+            # person_counted and deferred fields), reverting anything a later
+            # step or a concurrent extraction had stored on the row in the
+            # meantime.
+            resubmit_fields: set[str] = set()
             # Directly update denial object fields instead of using denial.update()
             denial.denial_text = denial_text
             denial.hashed_email = hashed_email
             denial.use_external = use_external_models
+            resubmit_fields.update({"denial_text", "hashed_email", "use_external"})
             # Nudge opt-in = a retained raw_email; remember the old value so a
             # change can be pushed to an already-running intake journey below.
             contact_opt_in_before = bool((denial.raw_email or "").strip())
             denial.raw_email = possible_email
+            resubmit_fields.add("raw_email")
             # Guarded like every other optional field here: the denial form
             # has no health_history field, so this path is ALWAYS called with
             # health_history=None -- unguarded, a user who went back to edit
             # their denial letter lost their previously-entered history.
             if health_history is not None:
                 denial.health_history = health_history
+                resubmit_fields.add("health_history")
 
             # Only update these fields if they're provided
             if creating_professional is not None:
                 denial.creating_professional = creating_professional
+                resubmit_fields.add("creating_professional")
             if primary_professional is not None:
                 denial.primary_professional = primary_professional
+                resubmit_fields.add("primary_professional")
             if patient_user is not None:
                 denial.patient_user = patient_user
+                resubmit_fields.add("patient_user")
             if insurance_company is not None:
                 denial.insurance_company = insurance_company
+                resubmit_fields.add("insurance_company")
             if insurance_company_obj is not None:
                 denial.insurance_company_obj = insurance_company_obj
+                resubmit_fields.add("insurance_company_obj")
             if insurance_plan_obj is not None:
                 denial.insurance_plan_obj = insurance_plan_obj
+                resubmit_fields.add("insurance_plan_obj")
             if patient_visible is not None:
                 denial.patient_visible = patient_visible
+                resubmit_fields.add("patient_visible")
             if microsite_slug is not None:
                 denial.microsite_slug = microsite_slug
+                resubmit_fields.add("microsite_slug")
             if referral_source is not None:
                 denial.referral_source = referral_source
+                resubmit_fields.add("referral_source")
             if referral_source_details is not None:
                 denial.referral_source_details = referral_source_details
+                resubmit_fields.add("referral_source_details")
 
             # Update tracking info if provided
             if tracking_info:
                 tracking_info.update_model_fields(denial)
+                # The four columns update_model_fields assigns (fhi_users/audit.py).
+                resubmit_fields.update({"user_agent", "asn", "asn_name", "ip_address"})
 
-            denial.save()
+            denial.save(update_fields=sorted(resubmit_fields | {"last_interaction"}))
             if contact_opt_in_before != bool((possible_email or "").strip()):
                 # Best-effort, no outbox row: a lost signal fails SAFE because
                 # the nudge activity independently gates on the RETAINED
@@ -1761,7 +1784,13 @@ class DenialCreatorHelper:
             employer_name = g.group(1)
             if len(employer_name) < 300:
                 denial.employer_name = employer_name
-                denial.save()
+                # Its own column only, for the same reason as the two saves
+                # above: a bare save() here writes back every OTHER column
+                # from a snapshot loaded at the top of this call, reverting
+                # whatever a concurrent writer has since stored on the row.
+                # Not the zip block above, which shares this same instance and
+                # so can only ever be rewritten with its own values.
+                denial.save(update_fields=["employer_name", "last_interaction"])
 
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
@@ -2883,21 +2912,48 @@ class DenialCreatorHelper:
         # exception boundary, so the journey can never break the user-facing
         # flow. Opt-in for the nudge = store_raw_email, observable as a
         # retained raw_email.
+        # Track exactly which columns THIS request assigns, so the save below
+        # writes only those. A bare ``denial.save()`` writes back every column
+        # this instance is holding (Denial.save builds its own update_fields
+        # for that case, excluding only person_counted and deferred fields), so
+        # anything another writer stored on the row between the load at the top
+        # of ``update_denial`` and this save was silently reverted.
+        changed_fields: set[str] = set()
+
         with _transaction.atomic():
             if plan_documents is not None:
                 for plan_document in plan_documents:
                     PlanDocuments.objects.create(
                         plan_document_enc=plan_document, denial=denial
                     )
+            # ``health_history`` is a CharField(required=False) on the
+            # HealthHistory form, so an untouched box cleans to "" and arrives
+            # here as an empty string, not as None. That empty string used to
+            # land on top of the stored history because health_history.html
+            # rendered the textarea hardcoded empty, so every entry to the page
+            # posted a blank over what the person had written. The fix for that
+            # is on the render side: all four paths into the page now show what
+            # is stored, so an empty box means the person emptied it.
+            #
+            # Emptying it therefore has to WRITE. This is the person's own
+            # health history, the page tells them the step is optional and
+            # skippable, generate_appeal.py feeds the column to the model with
+            # no gate, and no other page can remove it. Refusing the blank
+            # would make "delete what I wrote" unreachable, which is a worse
+            # failure than the data loss above. A caller that does not send the
+            # field at all still passes None and changes nothing.
             if health_history is not None:
                 denial.health_history = health_history
+                changed_fields.add("health_history")
             if include_provided_health_history_in_appeal is not None:
                 denial.include_provided_health_history_in_appeal = (
                     include_provided_health_history_in_appeal
                 )
+                changed_fields.add("include_provided_health_history_in_appeal")
             if health_history_anonymized is not None:
                 denial.health_history_anonymized = health_history_anonymized
-            denial.save()
+                changed_fields.add("health_history_anonymized")
+            denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:
             intake_outbox.deliver(intent)
