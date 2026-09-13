@@ -4,6 +4,8 @@ import os
 import random
 import re
 import functools
+import secrets
+import time
 import typing
 from datetime import timedelta
 from typing import TypedDict
@@ -1157,12 +1159,19 @@ class CategorizeReview(View):
 
     def get(self, request):
         """Handle GET requests for back navigation to categorize/review page."""
-        denial_id = request.GET.get("denial_id")
-        email = request.GET.get("email")
-        semi_sekret = request.GET.get("semi_sekret")
+        # The back link carries an opaque reference, not the triple itself.
+        denial_ref = denial_ref_from_query(request)
+        denial_id = denial_ref.get("denial_id")
+        email = denial_ref.get("email")
+        semi_sekret = denial_ref.get("semi_sekret")
 
-        if not all([denial_id, email, semi_sekret]):
-            return redirect("scan")
+        # Covers a missing reference, one this session never issued, and one
+        # that has expired. All three land on the upload page, and when a
+        # back link was actually followed that page explains itself: a
+        # reference resolves only in the session that issued it, so this is
+        # also where someone who moved to a second device ends up.
+        if not denial_id or not email or not semi_sekret:
+            return unresolved_denial_ref_response(request)
 
         # Validate denial exists
         try:
@@ -1173,7 +1182,7 @@ class CategorizeReview(View):
         # denial_id raises from the field's to_python -- same recovery as a
         # missing denial, not a 500.
         except (models.Denial.DoesNotExist, ValueError, TypeError):
-            return redirect("scan")
+            return unresolved_denial_ref_response(request)
 
         # Check for microsite default procedure in session
         procedure = denial.procedure
@@ -1206,7 +1215,7 @@ class CategorizeReview(View):
             "post_infered_form": form,
             "upload_more": True,
             "current_step": 5,
-            "back_url": build_back_url("dvc", denial_id, email, semi_sekret),
+            "back_url": build_back_url(request, "dvc", denial_id, email, semi_sekret),
             "back_label": "Back to plan documents",
         }
 
@@ -1228,12 +1237,19 @@ class FindNextSteps(View):
 
     def get(self, request):
         """Handle GET requests for back navigation to outside_help/questions page."""
-        denial_id = request.GET.get("denial_id")
-        email = request.GET.get("email")
-        semi_sekret = request.GET.get("semi_sekret")
+        # The back link carries an opaque reference, not the triple itself.
+        denial_ref = denial_ref_from_query(request)
+        denial_id = denial_ref.get("denial_id")
+        email = denial_ref.get("email")
+        semi_sekret = denial_ref.get("semi_sekret")
 
-        if not all([denial_id, email, semi_sekret]):
-            return redirect("scan")
+        # Covers a missing reference, one this session never issued, and one
+        # that has expired. All three land on the upload page, and when a
+        # back link was actually followed that page explains itself: a
+        # reference resolves only in the session that issued it, so this is
+        # also where someone who moved to a second device ends up.
+        if not denial_id or not email or not semi_sekret:
+            return unresolved_denial_ref_response(request)
 
         # Validate denial exists
         try:
@@ -1244,7 +1260,7 @@ class FindNextSteps(View):
         # denial_id raises from the field's to_python -- same recovery as a
         # missing denial, not a 500.
         except (models.Denial.DoesNotExist, ValueError, TypeError):
-            return redirect("scan")
+            return unresolved_denial_ref_response(request)
 
         # Get the next step info based on denial
         next_step_info = (
@@ -1270,7 +1286,7 @@ class FindNextSteps(View):
                 "financial_assistance": next_step_info.financial_assistance,
                 "current_step": 6,
                 "back_url": build_back_url(
-                    "categorize_review", denial_id, email, semi_sekret
+                    request, "categorize_review", denial_id, email, semi_sekret
                 ),
                 "back_label": "Back to review",
             },
@@ -1314,6 +1330,7 @@ class FindNextSteps(View):
                     "financial_assistance": next_step_info.financial_assistance,
                     "current_step": 6,
                     "back_url": build_back_url(
+                        request,
                         "categorize_review",
                         denial_id,
                         email,
@@ -1331,7 +1348,7 @@ class FindNextSteps(View):
         _back = None
         if _ref.get("denial_id") and _ref.get("email") and _ref.get("semi_sekret"):
             _back = build_back_url(
-                "dvc", _ref["denial_id"], _ref["email"], _ref["semi_sekret"]
+                request, "dvc", _ref["denial_id"], _ref["email"], _ref["semi_sekret"]
             )
         return render(
             request,
@@ -1357,7 +1374,11 @@ class FindNextStepsLoading(View):
             _back = None
             if _ref.get("denial_id") and _ref.get("email") and _ref.get("semi_sekret"):
                 _back = build_back_url(
-                    "dvc", _ref["denial_id"], _ref["email"], _ref["semi_sekret"]
+                    request,
+                    "dvc",
+                    _ref["denial_id"],
+                    _ref["email"],
+                    _ref["semi_sekret"],
                 )
             return render(
                 request,
@@ -1444,6 +1465,7 @@ class ChooseAppeal(View):
                 "fax_form": fax_form,
                 "current_step": 8,
                 "back_url": build_back_url(
+                    request,
                     "generate_appeal",
                     form.cleaned_data["denial_id"],
                     form.cleaned_data["email"],
@@ -1460,7 +1482,7 @@ class GenerateAppeal(View):
 
     @staticmethod
     def _appeals_context(
-        *, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
+        *, request, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
     ) -> dict:
         return {
             # Raw dict; appeals.html serializes it with |json_script. The old
@@ -1474,19 +1496,26 @@ class GenerateAppeal(View):
             "current_step": 7,
             "use_external": denial.use_external,
             "back_url": build_back_url(
-                "find_next_steps", denial_id, email, semi_sekret
+                request, "find_next_steps", denial_id, email, semi_sekret
             ),
             "back_label": "Back to questions",
         }
 
     def get(self, request):
         """Handle GET requests for back navigation to appeals page."""
-        denial_id = request.GET.get("denial_id")
-        email = request.GET.get("email")
-        semi_sekret = request.GET.get("semi_sekret")
+        # The back link carries an opaque reference, not the triple itself.
+        denial_ref = denial_ref_from_query(request)
+        denial_id = denial_ref.get("denial_id")
+        email = denial_ref.get("email")
+        semi_sekret = denial_ref.get("semi_sekret")
 
-        if not all([denial_id, email, semi_sekret]):
-            return redirect("scan")
+        # Covers a missing reference, one this session never issued, and one
+        # that has expired. All three land on the upload page, and when a
+        # back link was actually followed that page explains itself: a
+        # reference resolves only in the session that issued it, so this is
+        # also where someone who moved to a second device ends up.
+        if not denial_id or not email or not semi_sekret:
+            return unresolved_denial_ref_response(request)
 
         # Validate denial exists
         try:
@@ -1497,7 +1526,7 @@ class GenerateAppeal(View):
         # denial_id raises from the field's to_python -- same recovery as a
         # missing denial, not a 500.
         except (models.Denial.DoesNotExist, ValueError, TypeError):
-            return redirect("scan")
+            return unresolved_denial_ref_response(request)
 
         # Build form context from denial
         elems = {
@@ -1510,6 +1539,7 @@ class GenerateAppeal(View):
             request,
             "appeals.html",
             context=self._appeals_context(
+                request=request,
                 denial=denial,
                 denial_id=denial_id,
                 email=email,
@@ -1594,6 +1624,7 @@ class GenerateAppeal(View):
             request,
             "appeals.html",
             context=self._appeals_context(
+                request=request,
                 denial=denial,
                 denial_id=form.cleaned_data["denial_id"],
                 email=form.cleaned_data["email"],
@@ -1619,7 +1650,10 @@ class GenerateEscalationPacket(View):
 
         denial = common_view_logic.get_denial_for_action(denial_id, email, semi_sekret)
         if denial is None:
-            return redirect("scan")
+            # On GET this is the back link failing to resolve, so the upload
+            # page explains it. On POST nothing was followed and it stays the
+            # plain redirect it has always been.
+            return unresolved_denial_ref_response(request)
 
         recipients = get_recipients_for_denial(denial)
         recipients_for_template = [
@@ -1649,18 +1683,21 @@ class GenerateEscalationPacket(View):
                 "recipients": recipients_for_template,
                 "recipients_count": len(recipients_for_template),
                 "back_url": build_back_url(
-                    "generate_appeal", denial_id, email, semi_sekret
+                    request, "generate_appeal", denial_id, email, semi_sekret
                 ),
                 "back_label": "Back to your appeal",
             },
         )
 
     def get(self, request):
+        # The back link carries an opaque reference, not the triple itself.
+        # _build redirects to scan when it does not resolve.
+        denial_ref = denial_ref_from_query(request)
         return self._build(
             request,
-            request.GET.get("denial_id"),
-            request.GET.get("email"),
-            request.GET.get("semi_sekret"),
+            denial_ref.get("denial_id"),
+            denial_ref.get("email"),
+            denial_ref.get("semi_sekret"),
         )
 
     def post(self, request):
@@ -1812,6 +1849,15 @@ class InitialProcessView(generic.FormView):
         context = super().get_context_data(**kwargs)
         ocr_result = self.get_ocr_result() or ""
         context["upload_more"] = True
+
+        # Someone followed a back link that could not open their case: a
+        # second device, a link they sent themselves, or a reference that has
+        # expired. Without this the upload page looks like a fresh start and
+        # reads as "your appeal is gone", so say what happened and offer a
+        # way back in. The hours come from the reference's own idle lifetime
+        # so the page cannot drift away from the code.
+        context["resume_help"] = bool(self.request.GET.get(RESUME_HELP_QUERY_PARAM))
+        context["resume_help_hours"] = DENIAL_REF_IDLE_TTL_SECONDS // 3600
 
         # Capture microsite parameters from URL for display
         default_procedure = self.request.GET.get("default_procedure", "")
@@ -2046,21 +2092,291 @@ class InitialProcessView(generic.FormView):
         )
 
 
-def build_back_url(url_name: str, denial_id, email: str, semi_sekret: str) -> str:
-    """
-    Build a back URL with denial ref parameters encoded.
-    This allows the user to navigate back and still have the form fields populated.
-    """
-    from urllib.parse import urlencode
+# The single query parameter a back link carries. Its value is a random
+# string with no structure: the case reference it stands for lives in the
+# session store, never in the URL.
+DENIAL_REF_QUERY_PARAM = "ref"
 
-    base_url = reverse(url_name)
-    params = urlencode(
-        {
-            "denial_id": denial_id,
-            "email": email,
-            "semi_sekret": semi_sekret,
-        }
+# Session key under which this session's live back-link references are kept.
+_DENIAL_REF_SESSION_KEY = "denial_back_refs"
+
+# How long a back-link reference stays usable with nobody touching it: twelve
+# hours, which covers a sitting, a night's sleep and a return the next
+# morning. This is an IDLE lifetime, not a lifetime from first issue. Every
+# resolve and every re-render of a link to the same case pushes the expiry out
+# again, so a person working an appeal across a whole day keeps the same
+# reference; one that nobody has used for twelve hours stops resolving. An
+# absolute cap measured from first issue was considered and rejected: it puts
+# a hard cliff in the middle of an active appeal, which is the exact failure
+# this is meant to avoid, and it buys nothing for retention, because the stored
+# copy of the triple is bounded by the session row and not by this (see
+# ``issue_denial_ref_token``). Owner decision if a different window is wanted;
+# the expiry is checked on every resolve, so shortening it takes effect
+# immediately.
+DENIAL_REF_IDLE_TTL_SECONDS = 12 * 60 * 60
+
+# Most references held in one session at once. The flow issues one per case,
+# so this is room for several restarts before the oldest is dropped.
+DENIAL_REF_MAX_PER_SESSION = 32
+
+
+def session_gate_enforced() -> bool:
+    """Whether ``SessionRequiredMixin`` insists on a session before rendering.
+
+    Off in production on purpose ("wait for everyone to have a session"), and
+    that is the whole reason the refusal of an unresolvable back link cannot
+    live behind it: ``Prod`` sets ``DEBUG = False`` and its ``pre_setup``
+    deletes ``TESTING`` from the environment, so a gate that reads this is a
+    gate that does nothing where it matters. Named rather than inlined so a
+    test can assert it is off and then show the refusal still happens.
+    """
+    return bool(settings.DEBUG or os.environ.get("TESTING", False))
+
+
+def legacy_denial_ref_query_accepted() -> bool:
+    """Whether a bare (denial_id, email, semi_sekret) query triple still resolves.
+
+    Transition window: one release. Links already sitting in people's browser
+    history point at the old triple, and refusing them outright would strand
+    anyone mid-appeal. While this returns True, one of those old links is
+    still a working credential on the case, which is the exposure this
+    reference scheme exists to end, so it is meant to be switched off in the
+    release after the one that ships it: set ``LEGACY_DENIAL_REF_QUERY`` to
+    False in settings, then delete this function and its callers.
+
+    Newly built links never contain the triple whatever this returns, so
+    accepting the old shape cannot be used to lift a secret out of a new one.
+    Form bodies are unaffected: the hidden denial_id / email / semi_sekret
+    fields the flow POSTs are not in the address bar and are not gated here.
+    """
+    return bool(getattr(settings, "LEGACY_DENIAL_REF_QUERY", True))
+
+
+def _prune_denial_refs(
+    refs: typing.Any, now: float, room_for: int = 0
+) -> typing.Dict[str, typing.Any]:
+    """Drop expired references, then the oldest ones over the per-session cap.
+
+    ``room_for`` is how many references the caller is about to add, so that
+    the cap holds after the addition rather than one short of it.
+
+    ``refs`` is whatever was sitting in the session, which is why it is typed
+    loosely: nothing writes that key but this module, and a session carrying
+    something else there should still resolve to "no references" rather than
+    raise out of a page render.
+    """
+    if not isinstance(refs, dict):
+        return {}
+    live = {
+        token: entry
+        for token, entry in refs.items()
+        if isinstance(entry, dict) and float(entry.get("exp") or 0) > now
+    }
+    cap = max(DENIAL_REF_MAX_PER_SESSION - room_for, 0)
+    if len(live) > cap:
+        oldest_first = sorted(
+            live, key=lambda token: float(live[token].get("exp") or 0)
+        )
+        for token in oldest_first[: len(live) - cap]:
+            del live[token]
+    return live
+
+
+def _refresh_denial_ref_expiry(entry: typing.Dict[str, typing.Any], now: float) -> None:
+    """Push one reference's idle expiry out from now.
+
+    Called on every use, which is what makes the twelve hours an idle window
+    rather than a cliff measured from first issue. The session is written on
+    the same requests anyway (a rendered page issues or reuses a reference),
+    so this costs no extra session write.
+    """
+    entry["exp"] = now + DENIAL_REF_IDLE_TTL_SECONDS
+
+
+def issue_denial_ref_token(
+    request, denial_id, email: str, semi_sekret: str
+) -> typing.Optional[str]:
+    """Mint (or reuse) this session's opaque reference to one case.
+
+    The returned string is random and carries nothing recoverable: the
+    denial_id, the email and the semi_sekret are stored server side against
+    this session, keyed by the string. A holder of the string in another
+    session has nothing.
+
+    Privacy note for whoever reads this next. ``Denial`` keeps only a hashed
+    email, and this puts the plaintext address and the case's permanent
+    ``semi_sekret`` into the session store, which is base64 JSON in
+    django_session and is not encrypted. Losing them from the address bar is
+    the larger win by a distance, but the copy left here outlives
+    ``DENIAL_REF_IDLE_TTL_SECONDS``: that constant decides only whether a
+    reference still resolves. Django's database session backend stops
+    honouring an expired row without deleting it, this repo sets no
+    ``SESSION_COOKIE_AGE`` (so Django's two-week default applies) and runs no
+    ``clearsessions`` job, so for someone who abandons the flow the row stays
+    until something purges it, and today nothing does. A retention job is the
+    fix and it is infrastructure, not this module.
+    """
+    if denial_id is None or not email or not semi_sekret:
+        return None
+    session = request.session
+    now = time.time()
+    refs: typing.Dict[str, typing.Any] = _prune_denial_refs(
+        session.get(_DENIAL_REF_SESSION_KEY), now, room_for=1
     )
+    wanted = (str(denial_id), str(email), str(semi_sekret))
+    for token, entry in refs.items():
+        if (
+            str(entry.get("denial_id")),
+            str(entry.get("email")),
+            str(entry.get("semi_sekret")),
+        ) == wanted:
+            # Reuse rather than mint per render, so a walk back and forth
+            # through the flow does not fill the session with references.
+            # Rendering a link to the case counts as using it, so the idle
+            # window starts again here.
+            _refresh_denial_ref_expiry(entry, now)
+            session[_DENIAL_REF_SESSION_KEY] = refs
+            return token
+    token = secrets.token_urlsafe(32)
+    refs[token] = {
+        "denial_id": str(denial_id),
+        "email": str(email),
+        "semi_sekret": str(semi_sekret),
+    }
+    _refresh_denial_ref_expiry(refs[token], now)
+    # Reassign rather than mutate in place: Django only notices a session
+    # write when a top level key is set.
+    session[_DENIAL_REF_SESSION_KEY] = refs
+    return token
+
+
+def resolve_denial_ref_token(request, token) -> typing.Dict[str, str]:
+    """Resolve an opaque reference back to its triple, or {} if it does not.
+
+    Returns {} for a string this session never issued, for one that has
+    expired, and for anything that is not a string at all. A reference that
+    does resolve has its idle expiry pushed out, so following back links
+    through a long appeal keeps the reference alive and only a reference
+    nobody has touched for ``DENIAL_REF_IDLE_TTL_SECONDS`` goes stale.
+    """
+    if not token or not isinstance(token, str):
+        return {}
+    session = request.session
+    refs = session.get(_DENIAL_REF_SESSION_KEY)
+    if not isinstance(refs, dict):
+        return {}
+    entry = refs.get(token)
+    if not isinstance(entry, dict):
+        return {}
+    now = time.time()
+    if float(entry.get("exp") or 0) <= now:
+        session[_DENIAL_REF_SESSION_KEY] = _prune_denial_refs(refs, now)
+        return {}
+    denial_id = entry.get("denial_id")
+    email = entry.get("email")
+    semi_sekret = entry.get("semi_sekret")
+    if not denial_id or not email or not semi_sekret:
+        return {}
+    _refresh_denial_ref_expiry(entry, now)
+    session[_DENIAL_REF_SESSION_KEY] = refs
+    return {
+        "denial_id": str(denial_id),
+        "email": str(email),
+        "semi_sekret": str(semi_sekret),
+    }
+
+
+def denial_ref_from_query(request) -> typing.Dict[str, str]:
+    """The case reference a back link carries, as a plain triple.
+
+    Nothing here touches the database; every caller validates the triple the
+    way it already did. Returns {} when the request carries no usable
+    reference. Every caller sends that to ``unresolved_denial_ref_response``,
+    so a back link that cannot be opened lands in one place and that place
+    explains itself.
+    """
+    token = request.GET.get(DENIAL_REF_QUERY_PARAM)
+    if token:
+        return resolve_denial_ref_token(request, token)
+    if not legacy_denial_ref_query_accepted():
+        return {}
+    denial_id = request.GET.get("denial_id")
+    email = request.GET.get("email")
+    semi_sekret = request.GET.get("semi_sekret")
+    if not denial_id or not email or not semi_sekret:
+        return {}
+    return {
+        "denial_id": str(denial_id),
+        "email": str(email),
+        "semi_sekret": str(semi_sekret),
+    }
+
+
+# Marker the upload page looks for when someone arrives from a back link that
+# did not open their case. It carries nothing about the person or the case; it
+# is there so the page can say what happened instead of looking like a fresh
+# start to someone who was halfway through an appeal.
+RESUME_HELP_QUERY_PARAM = "resume"
+
+
+def denial_ref_offered(request) -> bool:
+    """Whether this request was trying to reach a case through a back link.
+
+    A bare ``denial_id`` with no email and no secret does not count.
+    ``SessionRequiredMixin`` has always accepted one as a way to seed the
+    session and it never carried enough to open a case, so counting it here
+    would put a "your link did not work" explanation in front of people who
+    never followed a back link.
+    """
+    if request.GET.get(DENIAL_REF_QUERY_PARAM):
+        return True
+    return bool(
+        request.GET.get("denial_id")
+        and request.GET.get("email")
+        and request.GET.get("semi_sekret")
+    )
+
+
+def unresolved_denial_ref_response(request):
+    """Where a request goes when its back link did not open a case.
+
+    A reference is worth nothing outside the session that issued it, which is
+    exactly what stops a link in someone's history, an access log line or a
+    screenshot from being a working credential. The cost is real and it lands
+    on the patient: someone who starts on their phone and picks the appeal up
+    on a laptop, or texts the link to themselves, or comes back after the
+    reference has expired, arrives holding nothing. The old query triple
+    worked anywhere, so this is a behaviour change, not just a tidier URL.
+
+    Dropping that person on the upload page unannounced reads as "your appeal
+    is gone". So the upload page is told to explain what happened and offer a
+    way back in, and only when a back link was actually followed.
+    """
+    upload_url = reverse("scan")
+    if not denial_ref_offered(request):
+        # Nobody followed a back link; this is an unaddressed request and
+        # there is nothing to explain.
+        return redirect(upload_url)
+    return redirect(f"{upload_url}?{urlencode({RESUME_HELP_QUERY_PARAM: '1'})}")
+
+
+def build_back_url(
+    request, url_name: str, denial_id, email: str, semi_sekret: str
+) -> str:
+    """
+    Build a back URL carrying an opaque reference to the case.
+
+    This allows the user to navigate back and still have the form fields
+    populated, without the address bar holding their email address or the
+    case's permanent secret. ``request`` is needed because the reference
+    lives in that request's session.
+    """
+    base_url = reverse(url_name)
+    token = issue_denial_ref_token(request, denial_id, email, semi_sekret)
+    if not token:
+        # Nothing to reference; a bare link back is better than a broken one.
+        return base_url
+    params = urlencode({DENIAL_REF_QUERY_PARAM: token})
     return f"{base_url}?{params}"
 
 
@@ -2068,15 +2384,41 @@ class SessionRequiredMixin(View):
     """Verify that the current user has an active session."""
 
     def dispatch(self, request, *args, **kwargs):
-        # Don't enforce this rule for now in prod we want to wait for everyone to have a session
-        force_session = settings.DEBUG or os.environ.get("TESTING", False)
+        # A back link that cannot be resolved used to leave these pages
+        # rendering an empty form with no denial_id in it, so the person saw
+        # a blank step they could not submit and no word about why. That is
+        # where a second device lands now that the reference is session
+        # scoped, so send them to the upload page, which explains it. Only
+        # when a back link was actually followed: a bare denial_id in the
+        # query string is the mixin's own session seed, not a back link, and
+        # keeps the behaviour it has always had.
+        if (
+            request.method == "GET"
+            and denial_ref_offered(request)
+            and not self.get_denial_ref_from_request()
+        ):
+            return unresolved_denial_ref_response(request)
+        force_session = session_gate_enforced()
         if (
             force_session
             and not request.session.get("denial_uuid")
             and not request.session.get("denial_id")
         ):
             logger.debug("denial_id not in session, checking POST/GET")
-            denial_id = request.POST.get("denial_id") or request.GET.get("denial_id")
+            # The query string no longer carries denial_id directly: a back
+            # link carries an opaque reference instead, so resolve that.
+            # Reading request.GET["denial_id"] here would also reopen the
+            # legacy query triple after it is switched off.
+            denial_id = request.POST.get("denial_id") or denial_ref_from_query(
+                request
+            ).get("denial_id")
+            if not denial_id and legacy_denial_ref_query_accepted():
+                # Legacy: a bare denial_id in the query string was enough to
+                # seed the session. Nothing in the site builds such a link,
+                # but one may sit in someone's history, so it keeps working
+                # for the same transition window as the rest of the old
+                # query shape -- and stops working when that window closes.
+                denial_id = request.GET.get("denial_id")
             if denial_id:
                 request.session["denial_id"] = denial_id
             else:
@@ -2085,15 +2427,18 @@ class SessionRequiredMixin(View):
 
     def get_denial_ref_from_request(self) -> dict:
         """
-        Get denial ref fields from GET params (for back navigation) or POST.
+        Get denial ref fields from the back link's reference (on GET) or from
+        the posted hidden fields (on POST).
         Also validates that the session matches if we have a session.
         Returns dict with denial_id, email, and semi_sekret.
         """
-        # Try GET params first (back navigation), then POST
+        # Back navigation: resolve the opaque reference in the query string
+        # (or, during the transition window, the old query triple).
         if self.request.method == "GET":
-            denial_id = self.request.GET.get("denial_id")
-            email = self.request.GET.get("email")
-            semi_sekret = self.request.GET.get("semi_sekret")
+            ref = denial_ref_from_query(self.request)
+            denial_id = ref.get("denial_id")
+            email = ref.get("email")
+            semi_sekret = ref.get("semi_sekret")
         else:
             denial_id = self.request.POST.get("denial_id")
             email = self.request.POST.get("email")
@@ -2141,6 +2486,7 @@ class SessionRequiredMixin(View):
         """Build a back URL with denial ref params."""
         if denial_ref:
             return build_back_url(
+                self.request,
                 url_name,
                 denial_ref.get("denial_id", ""),
                 denial_ref.get("email", ""),
@@ -2222,6 +2568,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             "upload_more": True,
             "current_step": 5,
             "back_url": build_back_url(
+                self.request,
                 "dvc",
                 denial_response.denial_id,
                 email,
@@ -2291,6 +2638,7 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "next": reverse("dvc"),
                 "current_step": 3,
                 "back_url": build_back_url(
+                    self.request,
                     "hh",
                     denial_response.denial_id,
                     email,
@@ -2350,6 +2698,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
                 # history): the label promises a return to the plan-documents
                 # upload, and "hh" skipped it back two steps.
                 "back_url": build_back_url(
+                    self.request,
                     "dvc",
                     form.cleaned_data["denial_id"],
                     form.cleaned_data["email"],
