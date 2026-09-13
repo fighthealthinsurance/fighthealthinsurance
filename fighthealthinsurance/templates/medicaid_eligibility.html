@@ -131,7 +131,7 @@
                 </div>
 
                 <div class="text-center mt-4">
-                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green btn-lg">Start the Free Eligibility Check (Experimental)</a>
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Start the Free Eligibility Check (Experimental)</a>
                     <p class="text-muted small mt-2 mb-0">Experimental: results are estimates only&mdash;confirm with your state.</p>
                 </div>
             </div>
@@ -253,7 +253,7 @@
                 </div>
 
                 <div class="text-center mt-4">
-                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green btn-lg">Read the Work Requirements FAQ</a>
+                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Read the Work Requirements FAQ</a>
                 </div>
             </div>
         </div>
@@ -362,8 +362,8 @@
                 <h2 class="mb-3">Find Out Where You Stand&mdash;In Minutes</h2>
                 <p class="lead mb-4">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
                 <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap">
-                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green btn-lg">Check My Eligibility (Experimental)</a>
-                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green btn-lg">Work Requirements FAQ</a>
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Check My Eligibility (Experimental)</a>
+                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Work Requirements FAQ</a>
                     <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
                 </div>
             </div>
@@ -487,7 +487,7 @@
     }
 
     .experimental-banner .alert-link {
-        color: #6a7f0a;
+        color: var(--fhi-green-ink);
         font-weight: 600;
         text-decoration: underline;
     }
@@ -514,7 +514,7 @@
         width: 2.3rem;
         height: 2.3rem;
         border-radius: 50%;
-        background: #7B920A;
+        background: var(--fhi-green-deep);
         color: #ffffff;
         font-weight: 700;
         font-size: 1.05rem;
@@ -606,7 +606,7 @@
         position: absolute;
         left: 0;
         top: 0;
-        color: #7B920A;
+        color: var(--fhi-green-ink);
         font-weight: 700;
     }
 
@@ -618,14 +618,14 @@
     /* Page-scoped recolor: the site default (#a5c422 + black hover) reads
        poorly on this page's white sections. */
     .btn-outline-green {
-        color: #7B920A;
-        border-color: #7B920A;
+        color: var(--fhi-green-ink);
+        border-color: var(--fhi-olive);
     }
 
     .btn-outline-green:hover {
         background-color: #7B920A;
         border-color: #7B920A;
-        color: white;
+        color: var(--fhi-btn-ink);
     }
 
     /* Restore a real size hierarchy: custom.css pins .btn-green to 1rem,
@@ -643,7 +643,7 @@
     }
 
     .btn:focus-visible {
-        outline: 3px solid rgba(123, 146, 10, 0.5);
+        outline: 3px solid var(--fhi-green-deep);
         outline-offset: 2px;
     }
 
