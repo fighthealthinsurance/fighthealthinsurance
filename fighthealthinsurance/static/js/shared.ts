@@ -34,12 +34,11 @@ function setPersistenceEnabled(enabled: boolean): void {
 // introduce a key that the clear does not know about: the rule table's key
 // column is typed as this union, so adding one without adding it here fails
 // the type check.
-type ScrubberStorageKey = "name" | "subscriber_id" | "group_id";
-const SCRUBBER_STORAGE_KEYS: ScrubberStorageKey[] = [
-  "name",
-  "subscriber_id",
-  "group_id",
-];
+const SCRUBBER_STORAGE_KEYS = ["name", "subscriber_id", "group_id"] as const;
+// Derived from the list, not declared beside it: two declarations could
+// drift, and a key in the union but missing from the list would be stored
+// and never cleared (CodeRabbit).
+type ScrubberStorageKey = (typeof SCRUBBER_STORAGE_KEYS)[number];
 
 function clearFormData(): void {
   const keysToRemove: string[] = [];
@@ -50,7 +49,7 @@ function clearFormData(): void {
       (key.startsWith("store_") ||
         key === "email" ||
         key === "denial_text" ||
-        (SCRUBBER_STORAGE_KEYS as string[]).includes(key))
+        (SCRUBBER_STORAGE_KEYS as readonly string[]).includes(key))
     ) {
       keysToRemove.push(key);
     }
