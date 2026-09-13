@@ -27,4 +27,20 @@ class AdvancedOcrOfferedTest(TestCase):
         tag = tag[: tag.index(">") + 1]
         self.assertNotIn("checked", tag)
         self.assertContains(response, "Better text recognition for photos and scans")
-        self.assertNotContains(response, "huggingface")
+        # Hugging Face by its plain name, as the place the download comes
+        # from; never the host name or anything a reviewer needs.
+        self.assertContains(response, "from Hugging Face")
+        self.assertNotContains(response, "huggingface.co")
+        section = html[html.index('id="advanced_ocr_section"') : html.index("</label>", html.index('id="advanced_ocr_section"'))]
+        self.assertNotRegex(section, r"\b[a-z0-9-]+\.(?:co|com|net|org|io|ai)\b", "a host name is in the option's copy")
+        # The status line and the remove-model control ship with the option,
+        # both hidden until there is something to say or remove.
+        self.assertContains(response, 'id="advanced_ocr_status"')
+        self.assertContains(response, 'id="advanced_ocr_remove_model"')
+        html = response.content.decode()
+        # Each element's OWN opening tag, so a `hidden` on the neighbour
+        # cannot stand in for a missing one (review).
+        for element_id in ("advanced_ocr_status", "advanced_ocr_remove_model"):
+            start = html.rindex("<", 0, html.index(f'id="{element_id}"'))
+            tag = html[start : html.index(">", start) + 1]
+            self.assertRegex(tag, r"\bhidden\b", f"{element_id} is visible before there is anything to say or remove")
