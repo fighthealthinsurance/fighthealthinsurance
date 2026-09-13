@@ -12,7 +12,14 @@
            third-party round trip on the two pages most likely to be shown
            when something is already broken. */
         *, *::before, *::after { box-sizing: border-box; }
-        body { margin: 0; }
+        body {
+            margin: 0;
+            /* Reboot's body line-height. Browser default is `normal`, about
+               1.2, which tightens every wrapped line on these pages: the
+               "what happened" list and the support paragraph are the ones a
+               reader has to get through. */
+            line-height: 1.5;
+        }
         /* What Bootstrap's reboot was supplying, kept so removing the CDN
            link changes nothing a reader would notice: browser defaults size
            headings smaller and space them differently. */

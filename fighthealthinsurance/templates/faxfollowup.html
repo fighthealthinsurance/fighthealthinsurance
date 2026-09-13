@@ -16,9 +16,11 @@ Fax ReSend
   <div class="container">
     <form action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
       {% csrf_token %}
-      <table>
-	{{ form.as_table }}
-      </table>
+      <div class="scroll-x">
+	<table>
+	  {{ form.as_table }}
+	</table>
+      </div>
       <div class="form-group mt-2">
 	<button type="submit" id="submit" class="btn btn-green">Resubmit</button>
       </div>
