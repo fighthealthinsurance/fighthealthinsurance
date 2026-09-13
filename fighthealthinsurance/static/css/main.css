@@ -6,13 +6,46 @@ http://www.tooplate.com/view/2098-health
 
 */
 
-@import url('https://fonts.googleapis.com/css?family=Poppins:400,500,600');
-
 body {
     background: #ffffff;
-    font-family: 'Poppins', sans-serif;
-    overflow-x: hidden;
+    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+	'Helvetica Neue', Arial, sans-serif;
     position: relative; /* For skip link positioning */
+}
+
+/* Anything wider than the viewport should be reachable by scrolling it,
+   not silently cut off. Wrap the wide thing in this rather than putting
+   overflow-x:hidden back on body. */
+/* A flex item will not shrink below its own content unless it is told it may,
+   so a table wider than the phone hands its width to every flex ancestor and
+   the page scrolls sideways instead of the wrapper scrolling. This lets the
+   chain around a .scroll-x give way. :where() keeps it at zero specificity so
+   any real rule still wins; a browser without :has() simply behaves as it did
+   before, which is the thing being fixed rather than a new failure. */
+:where(form, div, section, li):has(.scroll-x) {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* "(doctor/therapist/practitioner/office/hospital)" has no space in it, and
+   a browser will not break a run like that on its own, so the consent label
+   holding it grew wider than the phone and took the page with it. This only
+   does anything to a word that would otherwise overflow. */
+label,
+.form-check-label {
+    /* break-word alone is not enough here: these labels are inline-block, and
+       an inline-block is sized by its longest unbreakable run whatever
+       break-word says. max-width is what actually stops it growing past the
+       phone; break-word is what makes the text inside wrap once it cannot. */
+    overflow-wrap: break-word;
+    max-width: 100%;
+}
+
+.scroll-x {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    min-width: 0;
 }
 
 /*---
@@ -113,7 +146,7 @@ h6 {
 }
 
 p {
-    color: #757575;
+    color: var(--fhi-muted);
     font-size: 14px;
     font-weight: normal;
     line-height: 24px;
@@ -138,8 +171,7 @@ a {
 a:hover,
 a:active,
 a:focus {
-    color: #a5c422;
-    outline: none;
+    color: var(--fhi-green-ink);
 }
 
 ::-webkit-scrollbar {
@@ -160,14 +192,20 @@ a:focus {
     margin-top: 0;
 }
 
+/* The `background` shorthand here used to clear custom.css's gradient, so a
+   section button outside the hero rendered as a flat panel of lime. It is a
+   background-color now: the sweep paints over it, and it is the dark stop, so
+   a button whose gradient does not paint is the readable end of the ramp. */
 .section-btn {
-    background: #a5c422;
+    background-color: var(--fhi-btn-fill-b);
     border: 0;
     border-radius: 3px;
-    color: #ffffff;
-    font-size: inherit;
+    color: var(--fhi-btn-ink);
+    font-size: var(--fhi-btn-font-md);
     font-weight: 500;
-    padding: 14px 20px;
+    line-height: 1.5;
+    min-height: var(--fhi-btn-height-md);
+    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
 }
 
 .text-align-right {
@@ -256,60 +294,6 @@ a:focus {
 
 
 /*---------------------------------------
-       PRE LOADER
-  -----------------------------------------*/
-
-.preloader {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 99999;
-    display: flex;
-    flex-flow: row nowrap;
-    justify-content: center;
-    align-items: center;
-    background: none repeat scroll 0 0 #ffffff;
-}
-
-.spinner {
-    border: 1px solid transparent;
-    border-radius: 3px;
-    position: relative;
-}
-
-.spinner:before {
-    content: '';
-    box-sizing: border-box;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 45px;
-    height: 45px;
-    margin-top: -10px;
-    margin-left: -10px;
-    border-radius: 50%;
-    border: 1px solid #575757;
-    border-top-color: #ffffff;
-    animation: spinner .9s linear infinite;
-}
-
-@-webkit-@keyframes spinner {
-    to {
-	transform: rotate(360deg);
-    }
-}
-
-@keyframes spinner {
-    to {
-	transform: rotate(360deg);
-    }
-}
-
-
-
-/*---------------------------------------
       MENU
   -----------------------------------------*/
 
@@ -381,26 +365,64 @@ header span i {
     margin: 3px 0 0 20px;
 }
 
+/* The nav call to action is the small size: it sits in a row of links, not in
+   the page. The !important flags are not decoration, they are what it takes
+   to beat `.navbar-default .navbar-nav li a`, which sets 12px type and 20px
+   side padding with !important of its own. inline-flex is what lets the
+   height apply at all, since the anchor is otherwise an inline box. */
 .navbar-default .navbar-nav li.appointment-btn a {
-    background: #a5c422;
+    /* The same sweep every other brand button wears, so the call to action in
+       the nav reads as the small version of the one on the page rather than
+       as a differently coloured control that happens to sit nearby. */
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
+    background-size: 200% auto;
+    background-position: left center;
+    transition: background-position 0.3s;
     border-radius: 3px;
-    color: #ffffff !important;
-    font-weight: 600;
-    padding-top: 12px;
-    padding-bottom: 12px;
+    color: var(--fhi-btn-ink) !important;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--fhi-btn-font-sm) !important;
+    line-height: 1.5;
+    min-height: var(--fhi-btn-height-sm);
+    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm) !important;
 }
 
+/* The sweep is twice the width of the button, so moving it is what draws the
+   dark end across and turns the fill over. What was here before was #4267b2,
+   Facebook's blue, left in by the bought theme: the site's main call to
+   action turned blue when a pointer touched it. */
 .navbar-default .navbar-nav li.appointment-btn a:hover {
-    background: #4267b2;
-    color: #ffffff !important;
+    background-position: right center;
+    color: var(--fhi-btn-ink) !important;
+}
+
+.navbar-default .navbar-nav li.appointment-btn a:focus-visible {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 3px;
 }
 
 .navbar-default .navbar-nav li a {
     color: #555555 !important;
-    font-size: 12px !important;
+    font-size: 15px !important;
     font-weight: 500 !important;
     padding-right: 20px !important;
     padding-left: 20px !important;
+    /* 44px is the smallest target a thumb hits reliably, and one of these
+       rows is Remove Your Data. min-height is what makes the row 44px;
+       display is here because min-height does not apply to a plain inline
+       box, and the Generate Appeal anchor (li.appointment-btn a) carries no
+       Bootstrap class, so it is inline unless we say otherwise. inline-block
+       rather than flex on purpose: the phone breakpoint further down this
+       file forces display:inline-block !important on this same selector, so
+       a flex box here would be dead on exactly the screens this is for, and
+       it would also turn Bootstrap's .dropdown-toggle::after caret into a
+       flex item on desktop. */
+    display: inline-block;
+    min-height: 44px;
     -webkit-transition: all ease-in-out 0.4s !important;
     transition: all ease-in-out 0.4s !important;
 }
@@ -564,7 +586,7 @@ header span i {
 }
 
 #about h6 {
-    color: #858585;
+    color: var(--fhi-muted);
     margin: 0;
 }
 
@@ -941,14 +963,16 @@ footer a:hover {
 
 .copyright-text p,
 .footer-link a {
-    color: #858585 !important;
-    font-size: 12px !important;
+    color: var(--fhi-muted) !important;
+    font-size: 14px !important;
     font-weight: 500 !important;
 }
 
 .footer-link a {
-    font-size: 12px;
-    display: inline-block;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     padding: 0 10px;
     margin-top: 4px;
 }
@@ -1152,6 +1176,8 @@ footer a:hover {
     }
     .slider .item-first {
 	height: auto;
-	min-height: 650px;
+	min-height: auto;
+	padding-top: 2.5rem;
+	padding-bottom: 2.5rem;
     }
 }

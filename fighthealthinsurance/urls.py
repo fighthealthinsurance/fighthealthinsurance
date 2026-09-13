@@ -447,7 +447,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "favicon.ico",
-        RedirectView.as_view(url=staticfiles_storage.url("images/favicon.ico")),
+        # The optimized icon is 984 bytes; images/favicon.ico is a 3 MB
+        # photograph, and every browser asks for this path unprompted.
+        RedirectView.as_view(
+            url=staticfiles_storage.url("images/favicon-optimized.ico")
+        ),
     ),
     # Agent-readable site (llms.txt v2): the index, robots.txt at the root
     # where crawlers look, and a markdown twin of every eligible public page

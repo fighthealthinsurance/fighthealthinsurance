@@ -424,8 +424,8 @@
                 <h2 class="mb-3">Denied After Turning 26? We Can Help.</h2>
                 <p class="lead mb-4">Coverage transitions are a common time for denials. Our AI-powered tool helps you generate appeal letters in minutes, for free.</p>
                 <div class="d-flex justify-content-center gap-3 flex-wrap">
-                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">Generate an Appeal</a>
-                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">AI Chat Assistant</a>
+                    <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">Generate an Appeal</a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">AI Chat Assistant</a>
                     <a href="{% url 'how-to-help' %}" class="btn btn-outline-secondary btn-lg">Help Our Mission</a>
                 </div>
             </div>
@@ -487,27 +487,27 @@
     }
 
     .btn-green {
-        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+        background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
         background-size: 200% auto;
         border: none;
-        color: white;
+        color: var(--fhi-btn-ink);
         transition: 0.5s;
     }
 
     .btn-green:hover {
         background-position: right center;
-        color: white;
+        color: var(--fhi-btn-ink);
     }
 
     .btn-outline-green {
-        color: #7B920A;
-        border-color: #7B920A;
+        color: var(--fhi-green-ink);
+        border-color: var(--fhi-olive);
     }
 
     .btn-outline-green:hover {
         background-color: #7B920A;
         border-color: #7B920A;
-        color: white;
+        color: var(--fhi-btn-ink);
     }
 
     section {
