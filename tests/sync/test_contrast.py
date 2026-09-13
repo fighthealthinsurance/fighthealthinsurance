@@ -1143,6 +1143,9 @@ class Pair:
         )
 
 
+_PAIRS: dict[tuple[Rule, ...], list[Pair]] = {}
+
+
 def all_pairs(rules: Sequence[Rule]) -> list[Pair]:
     """Every rule that writes words, measured where the templates put it.
 
@@ -1151,6 +1154,10 @@ def all_pairs(rules: Sequence[Rule]) -> list[Pair]:
     reader can hold that element in. The worst of those is the pair, because
     the worst is the one a patient can actually be looking at.
     """
+    key = tuple(rules)
+    cached = _PAIRS.get(key)
+    if cached is not None:
+        return cached
     dom = template_dom()
     painter = Painter(rules, dom)
     pairs: list[Pair] = []
@@ -1208,6 +1215,7 @@ def all_pairs(rules: Sequence[Rule]) -> list[Pair]:
                     where=worst[3],
                 )
             )
+    _PAIRS[key] = pairs
     return pairs
 
 
@@ -2472,3 +2480,48 @@ def _spreading_shadows(rules: Sequence[Rule], name: str) -> list[tuple[str, str]
             if lengths and max(lengths) > 0:
                 found.append((rule.selector, value.strip()))
     return found
+
+
+# Pages that must render when the rest of the site cannot, so they carry their
+# own CSS and never load custom.css. They cannot see the token block, which
+# means the brand ink has to be declared in each of them too.
+STANDALONE_TEMPLATES = ("403_csrf.html", "500.html")
+
+
+def test_a_standalone_page_declares_the_ink_it_uses() -> None:
+    """An error page cannot read a token from a stylesheet it never loads.
+
+    These two write their button's label as var(--fhi-btn-ink) like every
+    other brand button, but they extend nothing and link nothing, so without
+    a local declaration that property resolves to nothing and the label falls
+    back to whatever it inherits. An error page is the worst place on the
+    site to find that out.
+
+    Declaring it locally makes the label right and makes the duplicate
+    visible: this test fails the day the two values disagree, which is the
+    day someone swaps the ink and does not think about the error pages.
+    """
+    canonical = custom_properties(load_rules()).get(INK_TOKEN)
+    assert canonical is not None, "%s is gone from :root" % INK_TOKEN
+    for name in STANDALONE_TEMPLATES:
+        path = TEMPLATE_DIR / name
+        assert path.is_file(), "%s is gone" % name
+        text = path.read_text()
+        assert "{% extends" not in text, (
+            "%s now extends a base template, so it may be able to see "
+            "custom.css after all. If it can, drop its local declaration and "
+            "this entry rather than keeping a second copy of the ink." % name
+        )
+        if "var(%s)" % INK_TOKEN not in text:
+            continue
+        declared = re.search(r"%s:\s*([^;]+);" % INK_TOKEN, text)
+        assert declared is not None, (
+            "%s writes its button label as var(%s) but never declares it, and "
+            "it loads no stylesheet that does. The label resolves to whatever "
+            "it inherits." % (name, INK_TOKEN)
+        )
+        assert declared.group(1).strip() == canonical.strip(), (
+            "%s declares %s as %s while custom.css says %s. The error pages "
+            "have been left behind by an ink swap."
+            % (name, INK_TOKEN, declared.group(1).strip(), canonical.strip())
+        )

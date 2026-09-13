@@ -16,6 +16,16 @@
             align-items: center;
             justify-content: center;
         }
+        /* This page is deliberately standalone: it has to render when the
+           rest of the site cannot, so it loads no external stylesheet and
+           cannot see the token block in custom.css. The brand ink is
+           therefore declared here as well. test_contrast.py checks this
+           value against the one in custom.css, so an ink swap that forgets
+           the error pages fails the build rather than leaving two buttons
+           behind. */
+        :root {
+            --fhi-btn-ink: #fff;
+        }
         .error-container {
             max-width: 600px;
             padding: 2rem;
