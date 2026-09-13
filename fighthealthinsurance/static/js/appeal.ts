@@ -44,7 +44,25 @@ function getPiiValue(inputId: string, storageKey: string, defaultVal: string): s
 // Sentinel that marks the start of the appended PII block so we can strip & re-add
 const PII_BLOCK_MARKER = "\n\n---\nPatient Information:";
 
-function descrub() {
+// True once the person has typed in the finished letter themselves. Their
+// words win from then on: the letter is rebuilt from the draft and the
+// details panel only when they ask for it with the rebuild button, never
+// silently underneath them, and never on the way to the fax.
+let completedLetterEdited = false;
+let rebuildingCompletedLetter = false;
+
+function noteCompletedLetterEdit(): void {
+  if (!rebuildingCompletedLetter) {
+    completedLetterEdited = true;
+  }
+}
+
+// `force` is the rebuild button and the panel edits the person just made:
+// an explicit ask. Everything else leaves a hand-edited letter alone.
+function descrub(force = false) {
+  if (completedLetterEdited && !force) {
+    return;
+  }
   const appeal_text = document.getElementById("scrubbed_appeal_text");
   const target = document.getElementById(
     "id_completed_appeal_text",
@@ -162,7 +180,15 @@ function descrub() {
   }
 
   if (target) {
-    target.value = text;
+    rebuildingCompletedLetter = true;
+    try {
+      target.value = text;
+    } finally {
+      rebuildingCompletedLetter = false;
+    }
+    // A rebuild is the letter the person asked for, so it is no longer
+    // an edit of theirs waiting to be protected.
+    completedLetterEdited = false;
   } else {
     console.error(
       "Element with id 'id_completed_appeal_text' not found or not html text area",
@@ -178,10 +204,22 @@ function printAppeal() {
       ?.value || "";
 
   if (childWindow) {
-    childWindow.document.open();
-    childWindow.document.write("<html><head></head><body>");
-    childWindow.document.write(completedAppealText.replace(/\n/gi, "<br>"));
-    childWindow.document.write("</body></html>");
+    // The letter is typed by the person and written by a model, so it is
+    // text, not markup: it goes in through textContent, and the only thing
+    // written as HTML is this fixed shell. A pre with wrapping keeps the
+    // line breaks a letter needs while printing in the page's own font.
+    const doc = childWindow.document;
+    doc.open();
+    doc.write(
+      "<!doctype html><html><head><title>Your appeal</title>" +
+        "<style>body{margin:1in;font-family:inherit}" +
+        "pre{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0}</style>" +
+        "</head><body></body></html>",
+    );
+    doc.close();
+    const letter = doc.createElement("pre");
+    letter.textContent = completedAppealText;
+    doc.body.appendChild(letter);
     // Wait 1 second for chrome.
     setTimeout(function () {
       console.log("Executed after 1 second");
@@ -236,8 +274,11 @@ function checkForUnfilledPlaceholders(text: string): string[] {
     found.push(singleMatch[0]);
   }
 
-  // Dollar-prefixed template variables like $diagnosis, $DATE, $CASEID
-  const dollarMatches = text.match(/\$[A-Za-z0-9_]+/g);
+  // Dollar-prefixed template variables like $diagnosis, $DATE, $CASEID.
+  // A leading letter or underscore is required so an ordinary amount ("the
+  // treatment costs $500") is not reported as an unfilled placeholder and
+  // does not send a finished letter into the warning (review).
+  const dollarMatches = text.match(/\$[A-Za-z_][A-Za-z0-9_]*/g);
   if (dollarMatches) {
     found.push(...dollarMatches);
   }
@@ -296,8 +337,9 @@ function setupPiiPanelListeners() {
     if (!el) continue;
     el.addEventListener("input", () => {
       setLocalStorageItemWithTTL(storageKey, el.value);
-      // Re-run descrub so the completed appeal textarea reflects the new value
-      descrub();
+      // Re-run descrub so the completed appeal textarea reflects the new value.
+      // The person is editing their own details here, so this is an ask.
+      descrub(true);
     });
   }
 }
@@ -323,32 +365,51 @@ function setupAppeal() {
 
   const appeal_text = document.getElementById("scrubbed_appeal_text");
   if (appeal_text != null) {
-    appeal_text.oninput = descrub;
+    // Wrapped, not assigned: as a handler the event object would arrive as
+    // `force` and rebuild the letter on every keystroke in the draft.
+    appeal_text.oninput = () => descrub();
   }
   const descrub_button = document.getElementById("descrub");
   if (descrub_button != null) {
-    descrub_button.onclick = descrub;
+    // The one control whose whole purpose is to rebuild the letter.
+    descrub_button.onclick = () => descrub(true);
   }
-  descrub();
+  const completed_text = document.getElementById("id_completed_appeal_text");
+  if (completed_text != null) {
+    completed_text.addEventListener("input", noteCompletedLetterEdit);
+  }
+  // On a server rejection the page comes back with the letter the person
+  // submitted already in the box (fax_views puts the posted text in the
+  // context). Rebuilding on load would strip everything they had added
+  // after the details block, so the first build only fills an empty box
+  // (review).
+  const completedOnLoad = (completed_text as HTMLTextAreaElement | null)?.value ?? "";
+  if (completedOnLoad.trim() === "") {
+    descrub();
+  } else {
+    completedLetterEdited = true;
+  }
 
   // Warn before fax submission if PHI placeholders remain unfilled
   const faxButton = document.getElementById("fax_appeal");
   const faxForm = faxButton?.closest("form") as HTMLFormElement | null;
   if (faxForm) {
-    let skipCheck = false;
     faxForm.addEventListener("submit", (e) => {
-      if (skipCheck) {
-        skipCheck = false;
-        return;
-      }
-      // Regenerate appeal text from current PII panel values before checking
+      // Pick up the details panel for a letter the person has not touched,
+      // and leave a hand-edited letter exactly as they left it: this runs
+      // one line before the text is read and posted.
       descrub();
       const appealText =
         (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
           ?.value || "";
+      if (appealText.trim() === "") {
+        // An empty letter would go out as an empty fax.
+        e.preventDefault();
+        alert("There is no letter to send. Write or rebuild your letter first.");
+        return;
+      }
       const placeholders = checkForUnfilledPlaceholders(appealText);
       if (placeholders.length > 0) {
-        e.preventDefault();
         const listing = placeholders.join(", ");
         const proceed = confirm(
           "Your appeal still contains placeholder text that should be replaced with your personal information:\n\n" +
@@ -356,12 +417,14 @@ function setupAppeal() {
           "\n\nYou may need to fill in your PII/PHI manually — please double-check the letter before submission.\n\n" +
           "Press OK to send the fax anyway, or Cancel to go back and fill in your information first."
         );
-        if (proceed) {
-          skipCheck = true;
-          // Use requestSubmit() so other submit handlers (e.g. pwyw tracking)
-          // still fire and HTML5 constraint validation runs. skipCheck prevents
-          // this handler from re-triggering the placeholder check.
-          faxForm.requestSubmit();
+        // Decided before the submit is stopped: confirming lets this very
+        // submission through, so every other submit handler and the
+        // browser's own validation still run. Calling requestSubmit() from
+        // inside the submit event did nothing at all, so pressing OK
+        // silently sent no fax, and the skip flag it set then waved the
+        // next attempt past this check (review).
+        if (!proceed) {
+          e.preventDefault();
         }
       }
     });
