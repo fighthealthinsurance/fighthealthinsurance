@@ -16,10 +16,36 @@ body {
 /* Anything wider than the viewport should be reachable by scrolling it,
    not silently cut off. Wrap the wide thing in this rather than putting
    overflow-x:hidden back on body. */
+/* A flex item will not shrink below its own content unless it is told it may,
+   so a table wider than the phone hands its width to every flex ancestor and
+   the page scrolls sideways instead of the wrapper scrolling. This lets the
+   chain around a .scroll-x give way. :where() keeps it at zero specificity so
+   any real rule still wins; a browser without :has() simply behaves as it did
+   before, which is the thing being fixed rather than a new failure. */
+:where(form, div, section, li):has(.scroll-x) {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* "(doctor/therapist/practitioner/office/hospital)" has no space in it, and
+   a browser will not break a run like that on its own, so the consent label
+   holding it grew wider than the phone and took the page with it. This only
+   does anything to a word that would otherwise overflow. */
+label,
+.form-check-label {
+    /* break-word alone is not enough here: these labels are inline-block, and
+       an inline-block is sized by its longest unbreakable run whatever
+       break-word says. max-width is what actually stops it growing past the
+       phone; break-word is what makes the text inside wrap once it cannot. */
+    overflow-wrap: break-word;
+    max-width: 100%;
+}
+
 .scroll-x {
     max-width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    min-width: 0;
 }
 
 /*---
