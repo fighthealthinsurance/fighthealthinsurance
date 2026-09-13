@@ -8,6 +8,10 @@
     --fhi-ink: #333;
     --fhi-ink-2: #555;
     --fhi-muted: #666;
+    /* The appeal progress checklist. #28a745 measured 3.13:1 on white and
+       #999 measured 2.85:1, both under the 4.5:1 body text needs; these are
+       5.08:1 and 5.74:1. */
+    --fhi-ok: #1a7f37;
     --fhi-line: #e0e0e0;
     --fhi-surface: #f9f9f9;
     --fhi-radius: 10px;
@@ -266,14 +270,21 @@ a.link:hover::after {
     background-size: 200% auto;
     color: var(--fhi-btn-ink);
     transition: all 0.3s;
-    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-    min-height: var(--fhi-btn-height-md);
     border-radius: 4px;
     border: none;
-    font-size: var(--fhi-btn-font-md);
     line-height: 1.5;
     font-weight: 600;
     box-shadow: 0 3px 12px rgba(165, 196, 34, 0.35);
+}
+/* The default size, on a selector that names no state. Size on a state
+   selector outranks the size classes below on specificity, so a large
+   button would shrink back to medium the moment it took keyboard focus.
+   This rule ties with .fhi-btn-lg and loses to it on source order, which
+   is what lets a button keep its size through every state. */
+.btn-green {
+    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
+    min-height: var(--fhi-btn-height-md);
+    font-size: var(--fhi-btn-font-md);
 }
 /* The fill slides in from the right on hover. The gradient is twice the width
    of the button, so moving the background is what draws it across. */

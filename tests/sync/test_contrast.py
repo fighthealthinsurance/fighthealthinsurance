@@ -41,7 +41,7 @@ than against Bootstrap's actual text.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -169,6 +169,36 @@ def load_rules() -> list[Rule]:
     rules: list[Rule] = []
     for name in STYLESHEETS:
         rules.extend(parse_stylesheet((CSS_DIR / name).read_text(), name))
+    return rules
+
+
+_STYLE_BLOCK = re.compile(r"<style[^>]*>(.*?)</style>", re.S | re.I)
+
+
+def load_template_rules() -> list[Rule]:
+    """The CSS the templates carry in their own <style> blocks.
+
+    Two live overrides hid here while the gate read only the two stylesheets.
+    turning_26.html repainted the button gradient as literals and set its
+    label white at rest and on hover, so moving --fhi-btn-ink would have left
+    that one button behind. medicaid_eligibility.html replaced the focus ring
+    with a half-transparent olive at equal specificity and later source order,
+    which wins, and measures under the 3:1 a focus indicator needs.
+
+    A template block is last in source order and beats both stylesheets on a
+    tie, so it is the most likely place for an override to win and the least
+    likely place for anyone to look. Lines are counted from the top of the
+    template, not the top of the block, so a failure names a line that can be
+    opened.
+    """
+    rules: list[Rule] = []
+    for path in sorted(TEMPLATE_DIR.rglob("*.html")):
+        text = path.read_text(errors="replace")
+        name = "templates/" + path.relative_to(TEMPLATE_DIR).as_posix()
+        for match in _STYLE_BLOCK.finditer(text):
+            offset = text[: match.start(1)].count("\n")
+            for rule in parse_stylesheet(match.group(1), name):
+                rules.append(replace(rule, line=rule.line + offset))
     return rules
 
 
@@ -1396,6 +1426,37 @@ UNREACHED: tuple[Exempt, ...] = (
 )
 
 
+BRAND_INK_REASONS = (WHITE_ON_BRAND_LIME,)
+
+
+def brand_ink_fails() -> bool:
+    """Does the ink in :root actually measure under the bar on the lime?"""
+    variables = custom_properties(load_rules())
+    ink = parse_colour(resolve_vars("var(%s)" % INK_TOKEN, variables))
+    if ink is None:
+        return True
+    for token in ("--fhi-btn-fill-a", "--fhi-btn-fill-b"):
+        stop = parse_colour(variables[token])
+        if stop is not None and contrast_ratio(ink[:3], stop[:3]) < MINIMUM_RATIO:
+            return True
+    return False
+
+
+def active_exceptions() -> tuple[Exempt, ...]:
+    """EXCEPTIONS, minus the brand entries once the ink they excuse passes.
+
+    Swapping --fhi-btn-ink to a dark ink is meant to be one line in custom.css.
+    If eight excuses had to be deleted by hand in the same commit, the swap
+    would be a two-step with a stale-excuse failure waiting in the middle, and
+    the easiest way through that failure is to put the white back. So these
+    entries stand down on their own the moment the ink stops failing, and the
+    gate goes straight to measuring the new ink for real.
+    """
+    if brand_ink_fails():
+        return EXCEPTIONS
+    return tuple(entry for entry in EXCEPTIONS if entry.reason not in BRAND_INK_REASONS)
+
+
 def _normalise(selector: str) -> str:
     return " ".join(selector.split())
 
@@ -1461,7 +1522,7 @@ def test_the_gate_reads_the_ground_out_of_the_templates() -> None:
 
 def test_every_text_pair_in_the_stylesheets_meets_wcag_aa() -> None:
     rules = load_rules()
-    exempt = _keys(EXCEPTIONS)
+    exempt = _keys(active_exceptions())
     unexcused = [
         pair
         for pair in failing_pairs(rules)
@@ -1564,7 +1625,7 @@ def test_every_excuse_names_a_rule_that_still_exists() -> None:
             present.add((rule.stylesheet, _normalise(selector)))
     missing = [
         "%s  %s" % (entry.stylesheet, _normalise(entry.selector))
-        for entry in EXCEPTIONS + UNRESOLVED + UNREACHED
+        for entry in active_exceptions() + UNRESOLVED + UNREACHED
         if (entry.stylesheet, _normalise(entry.selector)) not in present
     ]
     assert not missing, (
@@ -1582,7 +1643,7 @@ def test_no_exception_is_kept_after_its_rule_starts_passing() -> None:
     }
     stale = [
         "%s  %s" % (entry.stylesheet, _normalise(entry.selector))
-        for entry in EXCEPTIONS
+        for entry in active_exceptions()
         if (entry.stylesheet, _normalise(entry.selector)) not in failing
     ]
     assert (
@@ -1596,7 +1657,7 @@ def test_no_exception_is_kept_after_its_rule_starts_passing() -> None:
 def test_every_excuse_carries_a_reason() -> None:
     unexplained = [
         "%s  %s" % (entry.stylesheet, _normalise(entry.selector))
-        for entry in EXCEPTIONS + UNRESOLVED + UNREACHED
+        for entry in active_exceptions() + UNRESOLVED + UNREACHED
         if len(entry.reason.strip()) < 20
     ]
     assert (
@@ -1647,7 +1708,7 @@ def test_a_brand_buttons_label_comes_from_one_token() -> None:
     dark ink is one value in :root rather than a hunt through two stylesheets
     for the literals that used to be there.
     """
-    labelled = brand_button_labels(load_rules())
+    labelled = brand_button_labels(load_rules() + load_template_rules())
     assert len(labelled) >= 6, (
         "only %d rules were found writing a label on a brand button, so the "
         "classes this check looks for have been renamed and it is no longer "
@@ -1700,7 +1761,9 @@ def test_the_inks_recorded_beside_the_token_measure_what_they_claim() -> None:
             "%s is one of the two inks the owner named as the way out, and it "
             "is not in the table" % candidate
         )
-        assert "/* %s: %s; */" % (INK_TOKEN, candidate) in text, (
+        commented = "/* %s: %s; */" % (INK_TOKEN, candidate) in text
+        in_use = "\n    %s: %s;" % (INK_TOKEN, candidate) in text
+        assert commented or in_use, (
             "%s is in the table but is not sitting under the token commented "
             "out, ready to be swapped in" % candidate
         )
@@ -1723,13 +1786,25 @@ def test_the_white_label_is_excused_by_a_dated_decision() -> None:
         for pair in failing_pairs(rules)
     }
     excused = {
-        (entry.stylesheet, _normalise(entry.selector)): entry for entry in EXCEPTIONS
+        (entry.stylesheet, _normalise(entry.selector)): entry
+        for entry in active_exceptions()
     }
     brand_failing = sorted(brand & failing)
+    if not brand_ink_fails():
+        assert not brand_failing, (
+            "%s now measures above %.1f:1 on the lime, but these brand rules "
+            "still fail, so something other than the token is writing their "
+            "label:\n  %s"
+            % (INK_TOKEN, MINIMUM_RATIO, "\n  ".join("%s  %s" % k for k in brand_failing))
+        )
+        assert not [e for e in active_exceptions() if e.reason in BRAND_INK_REASONS], (
+            "the ink was swapped and the white-on-lime excuses are still live"
+        )
+        return
     assert brand_failing, (
-        "no brand button measures as failing any more. If %s was swapped to a "
-        "dark ink, take these entries out of EXCEPTIONS rather than leaving a "
-        "stale excuse behind." % INK_TOKEN
+        "no brand button measures as failing any more, yet %s still measures "
+        "under the bar on the lime. The gate has stopped reaching these "
+        "rules." % INK_TOKEN
     )
     for key in brand_failing:
         entry = excused.get(key)
@@ -1966,7 +2041,7 @@ SIZE_ROLES = (
     ("custom.css", ".fhi-btn-sm", "sm"),
     ("custom.css", ".fhi-btn-md", "md"),
     ("custom.css", ".fhi-btn-lg", "lg"),
-    ("custom.css", ".btn-green, .btn-green:focus", "md"),
+    ("custom.css", ".btn-green", "md"),
     ("custom.css", ".btn-delete, .pro-submit-btn", "md"),
     ("custom.css", ".section-btn, .section-btn.btn.btn-default.smoothScroll", "md"),
     ("custom.css", ".secondary-cta, .tertiary-cta", "md"),
@@ -2230,3 +2305,133 @@ def test_the_drafts_phase_list_gets_its_colours_from_the_stylesheet() -> None:
         name = "appeal-phase-label-%s" % state
         assert name in fetcher, "%s is not applied by appeal_fetcher.ts" % name
         assert ".%s" % name in stylesheet, "%s is not declared in custom.css" % name
+
+
+# ------------------------------------------- the surfaces the gate now reads
+
+SIZE_PROPERTIES = ("padding", "font-size", "min-height", "height")
+STATE_PSEUDO = (":hover", ":focus", ":focus-visible", ":focus-within", ":active")
+
+
+def test_no_state_selector_decides_a_buttons_size() -> None:
+    """A button may not change size when it is hovered or focused.
+
+    .fhi-btn-lg is one class. .btn-green:focus is a class and a pseudo-class,
+    so it outranks it. While the medium size sat on that selector, the site's
+    largest button snapped back to medium the moment a keyboard reached it:
+    the target moved under the pointer, and the one control a patient tabs to
+    on the upload page was the one that jumped.
+
+    Nothing here forbids a state from restyling a button. It forbids a state
+    from deciding its box, which is what the size classes are for.
+    """
+    offenders = []
+    for rule in load_rules() + load_template_rules():
+        for selector in rule.selectors:
+            steps = split_selector(selector)
+            if not steps or not (steps[-1][1].classes & BRAND_BUTTON_CLASSES):
+                continue
+            if not any(state in selector for state in STATE_PSEUDO):
+                continue
+            for prop, value, _ in rule.declarations:
+                if prop in SIZE_PROPERTIES:
+                    offenders.append(
+                        "%s:%d  %s  %s: %s"
+                        % (rule.stylesheet, rule.line, selector, prop, value.strip())
+                    )
+    assert not offenders, (
+        "these rules put a size on a state selector, so the button changes "
+        "size when it is hovered or focused. Move the declaration to a rule "
+        "whose selector names no state:\n  %s" % "\n  ".join(sorted(set(offenders)))
+    )
+
+
+# Every template <style> block that still writes text the gate measures under
+# 4.5:1, counted on 2026-09-13 when the blocks were first read. The number a
+# template is allowed is the number it had that day. It may fall and may not
+# rise, so an unreadable pair added to a template block fails the build even
+# though the rest of that template's backlog is still standing.
+#
+# This is a backlog, not an exemption: none of these are decisions anyone made.
+# They are what a surface looks like the day it starts being measured.
+TEMPLATE_BASELINE: dict[str, int] = {
+    "templates/403_csrf.html": 1,
+    "templates/500.html": 1,
+    "templates/admin_model_query.html": 4,
+    "templates/admin_status.html": 4,
+    "templates/denial_language_library.html": 3,
+    "templates/faq.html": 3,
+    "templates/faxes/cover.html": 1,
+    "templates/faxes/fpw_cover.html": 1,
+    "templates/model_backend_status.html": 2,
+    "templates/model_usage_dashboard.html": 1,
+    "templates/other_resources.html": 4,
+    "templates/preparing_2026.html": 2,
+    "templates/proconnector.html": 5,
+    "templates/proconnector_letter.html": 1,
+    "templates/proconnector_quick_intro.html": 4,
+    "templates/send_bulk_email.html": 1,
+    "templates/staff_dashboard.html": 4,
+    "templates/state_help.html": 4,
+    "templates/state_help_index.html": 1,
+}
+
+
+def _reads_the_ink_token(rule: Rule) -> bool:
+    """Is this label's colour the brand ink token rather than a literal?
+
+    A rule that reads the token is covered by the dated decision beside that
+    token, in a stylesheet or in a template alike, and moves with it. Counting
+    it as template backlog would mean the backlog changed size every time the
+    ink changed, which tells nobody anything.
+    """
+    for prop, value, _ in rule.declarations:
+        if prop == "color" and "var(%s)" % INK_TOKEN in value:
+            return True
+    return False
+
+
+def template_failures() -> dict[str, int]:
+    counted: dict[str, int] = {}
+    rules = load_rules() + load_template_rules()
+    excused = _keys(active_exceptions())
+    for pair in failing_pairs(rules):
+        if not pair.rule.stylesheet.startswith("templates/"):
+            continue
+        if (pair.rule.stylesheet, _normalise(pair.rule.selector)) in excused:
+            continue
+        if _reads_the_ink_token(pair.rule):
+            continue
+        counted[pair.rule.stylesheet] = counted.get(pair.rule.stylesheet, 0) + 1
+    return counted
+
+
+def test_no_template_style_block_grows_its_backlog() -> None:
+    """The templates' own CSS is measured, and its backlog may only shrink."""
+    actual = template_failures()
+    grown = [
+        "%s: %d now, %d allowed" % (name, count, TEMPLATE_BASELINE.get(name, 0))
+        for name, count in sorted(actual.items())
+        if count > TEMPLATE_BASELINE.get(name, 0)
+    ]
+    assert not grown, (
+        "these templates write text under %.1f:1 in their own <style> block, "
+        "more than the baseline taken on %s. Read the colour out of a token "
+        "instead of writing a literal:\n  %s"
+        % (MINIMUM_RATIO, DECISION_DATE, "\n  ".join(grown))
+    )
+
+
+def test_the_template_baseline_has_no_stale_entries() -> None:
+    """A template that has been cleaned up loses its allowance."""
+    actual = template_failures()
+    stale = [
+        "%s is allowed %d and has %d" % (name, allowed, actual.get(name, 0))
+        for name, allowed in sorted(TEMPLATE_BASELINE.items())
+        if actual.get(name, 0) < allowed
+    ]
+    assert not stale, (
+        "these entries allow more than the template still needs. Lower them "
+        "to what is there so the backlog cannot quietly grow back:\n  %s"
+        % "\n  ".join(stale)
+    )

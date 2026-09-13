@@ -76,9 +76,9 @@ interface PhaseIcon {
 
 function getPhaseIcon(state: string): PhaseIcon {
   switch (state) {
-    case 'done': return { char: '\u2713', color: '#28a745' };
+    case 'done': return { char: '\u2713', color: 'var(--fhi-ok)' };
     case 'active': return { char: '', color: '', className: 'appeal-phase-spinner' };
-    case 'skipped': return { char: '\u2014', color: '#999' };
+    case 'skipped': return { char: '\u2014', color: 'var(--fhi-muted)' };
     case 'error': return { char: '\u2717', color: '#dc3545' };
     default: return { char: '\u25CB', color: '#ccc' };
   }
@@ -117,8 +117,8 @@ function renderChecklist(): void {
     if (phase.substeps) {
       for (const sub of phase.substeps) {
         const subIcon = getPhaseIcon(sub.state);
-        const subStyle = sub.state === 'done' ? 'color: #28a745;' :
-                         sub.state === 'skipped' ? 'color: #999;' : 'color: #888;';
+        const subStyle = sub.state === 'done' ? 'color: var(--fhi-ok);' :
+                         sub.state === 'skipped' ? 'color: var(--fhi-muted);' : 'color: var(--fhi-muted);';
         const subRow = document.createElement('div');
         subRow.setAttribute('style', `display: flex; align-items: center; gap: 8px; margin: 3px 0 3px 28px; font-size: 0.85rem; ${subStyle}`);
         const subIconSpan = document.createElement('span');
@@ -270,12 +270,12 @@ function createStatusIndicator(): HTMLElement {
       </div>
       <div id="status-count" style="font-size: 0.85rem; font-weight: 600; color: #7B920A;">0/3</div>
     </div>
-    <div id="appeal-wait-times" style="display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 0.72rem; color: #888; margin-bottom: 8px;">
+    <div id="appeal-wait-times" style="display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 0.72rem; color: var(--fhi-muted); margin-bottom: 8px;">
       <span>First appeal: <span id="wait-first" style="font-weight: 600; color: #555;">0s</span></span>
       <span>Current appeal: <span id="wait-current" style="font-weight: 600; color: #555;">0s</span></span>
       <span>Total: <span id="wait-total" style="font-weight: 600; color: #555;">0s</span></span>
     </div>
-    <div id="status-message" style="font-size: 0.8rem; color: #888; line-height: 1.4; font-style: italic; transition: opacity 0.2s ease;">${progressMessages[0]}</div>
+    <div id="status-message" style="font-size: 0.8rem; color: var(--fhi-muted); line-height: 1.4; font-style: italic; transition: opacity 0.2s ease;">${progressMessages[0]}</div>
   `;
   return statusDiv;
 }
@@ -339,7 +339,7 @@ function updateStatusIndicator(status: typeof connectionStatus, appealsCount: nu
     if (statusMessage) {
       statusMessage.textContent = 'Your appeals are ready! Choose the one you like best.';
       statusMessage.style.fontStyle = 'normal';
-      statusMessage.style.color = '#28a745';
+      statusMessage.style.color = 'var(--fhi-ok)';
     }
     clearAllTimers();
     setTimeout(() => {
@@ -1189,7 +1189,7 @@ async function requestExternalModels(
     externalModelsRequested = true;
     setStatus(
       "External models enabled. Generating additional appeals...",
-      "#28a745",
+      "var(--fhi-ok)",
     );
     prompt.style.display = "none";
     // Reset retry/parser state so doQuery starts a fresh generation
