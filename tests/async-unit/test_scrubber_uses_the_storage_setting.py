@@ -54,7 +54,7 @@ def test_turning_the_setting_off_clears_what_the_scrubber_stored():
     shared = _shared()
     body = shared[shared.index("function clearFormData") :]
     body = body[: body.index("\n}\n") + 3]
-    assert "(SCRUBBER_STORAGE_KEYS as string[]).includes(key)" in body, (
+    assert "(SCRUBBER_STORAGE_KEYS as readonly string[]).includes(key)" in body, (
         "the clear no longer covers the keys the scrubber writes"
     )
     assert 'key.startsWith("store_")' in body, "the clear stopped covering the form fields"
@@ -65,14 +65,19 @@ def test_a_new_rule_cannot_store_under_a_key_the_clear_does_not_know():
     a rule with a new key fails the type check rather than quietly leaving a
     value behind on a shared computer."""
     shared = _shared()
+    # One declaration, not two: the union is derived from the list, so a key
+    # cannot be in the type without being in what the clear removes.
     assert re.search(
-        r'type ScrubberStorageKey =\s*"name" \| "subscriber_id" \| "group_id";', shared
-    ), "the key union is gone or has drifted"
-    assert re.search(r"const SCRUBBER_STORAGE_KEYS: ScrubberStorageKey\[\] = \[", shared)
+        r'const SCRUBBER_STORAGE_KEYS = \["name", "subscriber_id", "group_id"\] as const;',
+        shared,
+    ), "the key list is gone or has drifted"
+    assert "type ScrubberStorageKey = (typeof SCRUBBER_STORAGE_KEYS)[number];" in shared, (
+        "the union is declared separately again, so the two can drift apart"
+    )
     assert "type ScrubRegex = [RegExp, ScrubberStorageKey, string];" in _scrubber(), (
         "the rule table takes any string as a key again"
     )
     # Every key actually used by a rule is in the union.
     keys = set(re.findall(r'\n    "([a-z_]+)",\n    "', _scrubber()))
-    declared = set(re.findall(r'"([a-z_]+)"', shared[shared.index("const SCRUBBER_STORAGE_KEYS") : shared.index("function clearFormData")]))
+    declared = set(re.findall(r'"([a-z_]+)"', shared[shared.index("const SCRUBBER_STORAGE_KEYS") : shared.index("type ScrubberStorageKey")]))
     assert keys <= declared, f"rules store under keys the clear does not know: {keys - declared}"
