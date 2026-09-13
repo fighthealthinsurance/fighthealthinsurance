@@ -401,7 +401,7 @@ header span i {
     transition: background-position 0.3s;
     border-radius: 3px;
     color: var(--fhi-btn-ink) !important;
-    font-weight: 600;
+    font-weight: 700;
     display: inline-flex;
     align-items: center;
     justify-content: center;
