@@ -2309,10 +2309,10 @@ class ConfirmedStateTest(TestCase):
     def test_a_resubmission_heals_a_row_left_in_the_old_shape(self):
         """Before this change the review POST wrote the correction to `state`
         only, so rows exist with the correction in `state` and the zip's guess
-        still in `your_state`. Migration 0209 backfills the ones present when
-        it runs; a row that reaches intake still in that shape (an older
-        process wrote it while the deploy was rolling) is healed from the
-        confirmed value rather than having the guess locked in."""
+        still in `your_state`. Those rows are NOT backfilled. A row that
+        reaches intake in that shape on the zip it already has is healed from
+        the stored value on the way past, so the check above holds the
+        correction rather than the stale guess."""
         denial = self._submit_upload_page(self.NY_ZIP)
         Denial.objects.filter(denial_id=denial.denial_id).update(
             state="CA", your_state="NY"
@@ -2339,6 +2339,51 @@ class ConfirmedStateTest(TestCase):
 
         self.assertEqual(denial.your_state, "CA")
         self.assertEqual(denial.service_zip, "941")
+
+    def test_a_corrected_zip_still_moves_the_state_after_a_review_pass_through(
+        self,
+    ):
+        """The review page prefills its state box from the zip's own guess, so
+        clicking through it without touching the box puts that guess in
+        `state`. That must not make the zip unable to move the state again:
+        someone who mistyped their zip, clicked through, then went back and
+        fixed the zip would otherwise keep getting an appeal addressed to the
+        wrong state's regulator with no way to reach it from the zip page.
+        """
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        self.assertEqual(denial.state, "NY")
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.service_zip, "941")
+
+    def test_a_corrected_zip_does_not_bounce_back_on_the_next_resubmission(self):
+        """The state reached from a replaced zip is dropped rather than left
+        on the row. Left there it would be read as a stored state on the next
+        submission of the new zip and copied back over the state that zip
+        infers, so the correction would hold for exactly one request."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+
+    def test_a_typed_state_survives_a_zip_that_did_not_change(self):
+        """The narrower guarantee that replaces "a stored state always wins":
+        a state the person typed holds against any number of resubmissions on
+        the zip it was typed against."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        denial = self._submit_upload_page(self.NY_ZIP, denial=denial)
+        denial = self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
 
     def test_the_review_page_renders_the_corrected_state(self):
         from django.urls import reverse

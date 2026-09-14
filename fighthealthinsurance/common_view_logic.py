@@ -1749,23 +1749,36 @@ class DenialCreatorHelper:
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)
         if zip is not None and zip != "":
-            # A value in denial.state is a state a person named. The review
-            # POST is its only writer in application code, and it writes only
-            # what the person typed; the one other way it gets set is a staff
-            # member editing the row in the Django admin, which DenialAdmin
-            # does not exclude (admin.py) and which is also a person naming a
-            # state. Either way it beats a guess from the zip. Without this
-            # check a resubmission of the upload page (a back button, a
-            # re-uploaded letter) put the guess back over the correction, and
-            # the appeal was written from the guess again.
+            # A value in denial.state is a state that came off the review
+            # form. It is worth more than a fresh guess from the zip, but it
+            # is NOT proof the person typed it: the review page prefills its
+            # state box from this same zip lookup (views.py, PostInferedForm
+            # initial), so anyone who clicks through without touching the box
+            # posts the guess straight back and the row looks confirmed from
+            # then on.
+            #
+            # So a stored state wins over the zip only while the zip has not
+            # changed -- a back button, the same letter uploaded again, which
+            # is the case that used to put the guess back over a correction
+            # and write the appeal from the guess. A person who EDITS the zip
+            # is restating where they are, and that is newer than whatever is
+            # on the row; treating it otherwise meant a mistyped zip could
+            # never move the state again, no matter how many times they fixed
+            # it, and left service_zip and your_state pointing at two
+            # different states for UCREnrichmentHelper to read.
+            previous_zip3 = (denial.service_zip or "").strip()
+            # No stored zip means there is nothing to compare, so treat it as
+            # unchanged rather than overwriting a stored state from a guess.
+            zip_changed = bool(previous_zip3) and previous_zip3 != zip[:3]
             confirmed_state = (denial.state or "").strip()
-            if confirmed_state:
+            changed_state_fields = ["service_zip", "your_state"]
+            if confirmed_state and not zip_changed:
                 # Rows written before the review POST wrote both columns hold
-                # the correction in `state` and the zip's guess in
-                # `your_state`. Migration 0209 backfills the ones that exist
-                # when it runs; healing here as well catches any row an older
-                # process wrote while a deploy was still rolling, so the guess
-                # is never locked in by the check above.
+                # the state in `state` and the zip's guess in `your_state`.
+                # There is no backfill for those, so this is the only thing
+                # that brings such a row back into step, and without it the
+                # check above would hold the stale guess in `your_state` for
+                # good.
                 if (denial.your_state or "").strip() != confirmed_state:
                     denial.your_state = confirmed_state
             else:
@@ -1774,12 +1787,26 @@ class DenialCreatorHelper:
                 except Exception as e:
                     # Default to no state - zip lookup can fail for invalid/unknown zips
                     logger.debug(f"Zip code lookup failed for {zip}: {e}")
+                if confirmed_state:
+                    # The state on the row was reached from the zip they just
+                    # replaced, so it is no longer a confirmation of anything.
+                    # Leaving it would let the next resubmission on the new
+                    # zip copy it straight back over the state we just
+                    # inferred, and the correction would bounce. The review
+                    # page comes after this one and gets the new value in its
+                    # state box, where they can still name a different state.
+                    denial.state = None
+                    changed_state_fields.append("state")
             # ZIP3 is HIPAA Safe Harbor de-identified, so it's safe to keep on
             # the row; UCREnrichmentHelper.resolve_geographic_area uses it.
             # Persist alongside `your_state` so neither field is silently
             # dropped on update paths that don't otherwise call save().
             denial.service_zip = zip[:3]
-            denial.save(update_fields=["service_zip", "your_state"])
+            # `state` is listed only when this path actually cleared it: a
+            # concurrent review POST writes that column, and naming it in
+            # every save would write our pre-fetch copy back over a
+            # correction that landed while this request was running.
+            denial.save(update_fields=changed_state_fields)
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
