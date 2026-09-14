@@ -10,10 +10,12 @@ The fix is on the render side: every path into the page now shows what is
 stored, so pressing Next posts the history back rather than a blank. The save
 side is deliberately NOT guarded against blanks. Once the box shows what is
 stored, an empty box means the person emptied it, and emptying it has to
-work: this is their own health history, generate_appeal.py feeds the column
-to the model with no gate, and no other page can remove it. Refusing the
-blank would make deletion unreachable while the page still promises the step
-is optional, which is worse than the data loss above.
+work: this is their own health history, generate_appeal.py's make_appeals
+feeds the column into the model prompt without checking
+include_provided_health_history_in_appeal (only the PDF attachment path in
+create_or_update_appeal checks it), and no other page can remove it. Refusing
+the blank would make deletion unreachable while the page still promises the
+step is optional, which is worse than the data loss above.
 
 Both properties are covered here: the value the server renders, on both entry
 paths to each page, and a clear-and-Next that ends with the column empty. The
@@ -297,9 +299,7 @@ class ClearingTheBoxRemovesTheHistoryTest(OptionalStepsTestCase):
         )
 
     def test_the_page_says_nothing_about_removing_an_empty_box(self):
-        Denial.objects.filter(denial_id=self.denial.denial_id).update(
-            health_history=""
-        )
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(health_history="")
 
         response = self.client.get(reverse("hh"), self.denial_ref())
 
@@ -400,9 +400,7 @@ class StepSavesWriteOnlyTheirOwnColumnsTest(OptionalStepsTestCase):
             semi_sekret=SEMI_SEKRET,
         )
         stale = Denial.objects.get(denial_id=stale.denial_id)
-        Denial.objects.filter(denial_id=stale.denial_id).update(
-            procedure="colonoscopy"
-        )
+        Denial.objects.filter(denial_id=stale.denial_id).update(procedure="colonoscopy")
 
         common_view_logic.DenialCreatorHelper.create_or_update_denial(
             email=EMAIL,
@@ -428,7 +426,10 @@ class StepSavesPersistTheColumnsTheyAssignTest(OptionalStepsTestCase):
     test_the_employer_name_save_does_not_revert_another_writers_column above,
     which already asserts employer_name landed.)
 
-    Every column each save assigns, not a sample. Measured before this test
+    Every column each save assigns, not a sample, with one deliberate
+    exception named at its own site: health_history on the resubmission save,
+    which that method's tail call to _update_denial writes too, so an
+    assertion there would pin nothing. Measured before this test
     was widened: nine columns deleted from the resubmission save's
     update_fields (denial_text, hashed_email, raw_email, health_history,
     creating_professional, primary_professional, patient_user,
@@ -489,7 +490,16 @@ class StepSavesPersistTheColumnsTheyAssignTest(OptionalStepsTestCase):
         plan = InsurancePlan.objects.create(
             insurance_company=company, plan_name="Widgets Gold PPO"
         )
+        # patient_visible is BooleanField(default=True) and setUp never sets
+        # it, so the row already reads True and assertTrue(fresh.patient_visible)
+        # below would pass with patient_visible deleted from the save's
+        # update_fields. Start the row at False so the save has to write it,
+        # the same trick the changed address below plays on hashed_email.
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(
+            patient_visible=False
+        )
         loaded = Denial.objects.get(denial_id=self.denial.denial_id)
+        self.assertFalse(loaded.patient_visible)
         # A different address, so hashed_email has to change to land.
         new_email = "moved@example.com"
         self.assertNotEqual(loaded.hashed_email, Denial.get_hashed_email(new_email))

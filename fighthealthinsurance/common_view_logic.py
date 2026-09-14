@@ -1706,11 +1706,15 @@ class DenialCreatorHelper:
                 denial.health_history = health_history
                 # The one entry in this list no test can pin on its own: this
                 # method ends by handing the same health_history to
-                # _update_denial, whose save lists the column too, so deleting
-                # this entry loses nothing today. Kept anyway, so the save is
-                # consistent with what the lines above it assigned and does
-                # not quietly start dropping a column if that tail call ever
-                # moves.
+                # _update_denial, whose save lists the column too, so on the
+                # happy path the value lands either way. It is still not a
+                # no-op. _update_denial's save shares one atomic() with
+                # intake_outbox.record_intent, and no request transaction
+                # wraps either save (settings.py sets ATOMIC_REQUESTS False on
+                # every database), so a record_intent failure rolls that write
+                # back while this one has already committed. Kept for that,
+                # and so the save stays consistent with what the lines above
+                # it assigned if the tail call ever moves.
                 resubmit_fields.add("health_history")
 
             # Only update these fields if they're provided
@@ -2955,8 +2959,11 @@ class DenialCreatorHelper:
             #
             # Emptying it therefore has to WRITE. This is the person's own
             # health history, the page tells them the step is optional and
-            # skippable, generate_appeal.py feeds the column to the model with
-            # no gate, and no other page can remove it. Refusing the blank
+            # skippable, generate_appeal.py's make_appeals feeds the column
+            # into the model prompt without checking
+            # include_provided_health_history_in_appeal (only the PDF
+            # attachment path in create_or_update_appeal checks it), and no
+            # other page can remove it. Refusing the blank
             # would make "delete what I wrote" unreachable, which is a worse
             # failure than the data loss above. A caller that does not send the
             # field at all still passes None and changes nothing.
