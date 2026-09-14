@@ -14,10 +14,12 @@ Rendering the template is not enough on its own. A page in this flow is read
 after its script has run, and appeal_fetcher.ts hides the whole loading block
 on appeals.html once the drafts land, taking five headings out of the
 accessibility tree with it. A template-only check passes on headings nobody can
-reach, so the order is checked twice: once on the server render, and once with
-the blocks that script hides taken out. The same goes for the two conditional
-sections outside_help.html includes, which render only for a denial that
-matches a medication or a financial-assistance programme.
+reach, so the order is checked three times: once on the server render, once
+with the blocks that script hides taken out, and once with the blocks that ship
+display:none taken out as well, because #external-models-prompt is revealed only
+when generation comes back short and is otherwise never read. The same goes for
+the two conditional sections outside_help.html includes, which render only for a
+denial that matches a medication or a financial-assistance programme.
 
 A heading that is only styling does not count, which is why every assertion
 below looks for a real ``h1`` element and reads its text.
@@ -232,6 +234,42 @@ class FlowStepHeadingTest(SimpleTestCase):
         )
         self.assert_opens_at_h1_and_skips_nothing(
             "appeals.html after hideLoading()", _headings(page)
+        )
+
+    def test_the_appeals_page_skips_nothing_for_a_reader_who_never_opens_the_prompt(
+        self,
+    ):
+        # hideLoading() is not the only thing keeping a heading off the page.
+        # #external-models-prompt ships with display:none in the markup and is
+        # revealed only when generation comes back short, so for most readers
+        # its h2 is never in the accessibility tree at all. Decomposing only the
+        # blocks the script hides would check an order that has an h2 in it
+        # nobody reaches, and would still pass on the day that h2 is the only
+        # thing bridging the page's h1 to a lower heading below it.
+        gone = _ids_hidden_by("appeal_fetcher.ts", "hideLoading")
+        page = _page("appeals.html")
+        for element_id in sorted(gone):
+            for tag in page.find_all(id=element_id):
+                tag.decompose()
+
+        unread = [
+            tag
+            for tag in page.find_all(style=True)
+            if "display:none" in tag["style"].replace(" ", "")
+        ]
+        # Without this the test would quietly stop checking the reader's state
+        # the day those blocks start out visible.
+        self.assertTrue(
+            unread,
+            "no block ships hidden any more, so this test no longer checks a "
+            "state different from the one above it",
+        )
+        for tag in unread:
+            tag.decompose()
+
+        self.assert_opens_at_h1_and_skips_nothing(
+            "appeals.html as a reader meets it once the drafts land",
+            _headings(page),
         )
 
     def test_outside_help_skips_nothing_when_the_assistance_sections_render(self):

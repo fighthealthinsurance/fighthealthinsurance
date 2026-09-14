@@ -197,7 +197,6 @@
     background: #ffebee;
     border-left-color: #f44336;
 }
-.alert-danger h4,
 .alert-danger p {
     color: #c62828;
 }
@@ -1343,10 +1342,6 @@ section:not(.slider) .share-subcopy {
 .alert-box-info {
     background: #e3f2fd;
     border-left-color: #2196f3;
-}
-.alert-box-info h4 {
-    margin: 0 0 0.5rem 0;
-    color: #1565c0;
 }
 
 /* Navigation/Form actions row */
