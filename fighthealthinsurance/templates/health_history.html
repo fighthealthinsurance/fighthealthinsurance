@@ -13,19 +13,11 @@ Optional: Health History
     <small class="text-muted">(e.g. transgender, type 2 diabetes, fibromyalgia, etc.)</small>
   </label><br>
   {% comment %}
-    Whatever is already stored, so this box never comes back empty and gets
-    posted back over the person's own history. On a submission that failed
-    validation the form is bound and .value is what they just typed rather
-    than what was saved. No padding inside the tag: a textarea keeps its
-    whitespace. Because the box now always shows what is stored, an empty box
-    on submit means the person emptied it, and the save honours that.
+    No padding inside the tag: a textarea keeps its own whitespace, so any
+    newline or indent here would arrive in the POST as typed content.
   {% endcomment %}
   <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
 	    placeholder="Related Health History Goes Here" class="form-control">{{ form.health_history.value|default_if_none:"" }}</textarea>
-  {% comment %}
-    Only when there is something in the box: with an empty box there is
-    nothing to remove and the sentence would be noise.
-  {% endcomment %}
   {% if form.health_history.value %}
   <p id="health_history_removal_note" class="form-text text-muted">
     This is what is saved for this appeal. To remove it, clear the box and press Next.

@@ -2031,10 +2031,8 @@ class InitialProcessView(generic.FormView):
                 "denial_id": denial_response.denial_id,
                 "email": cleaned_data["email"],
                 "semi_sekret": denial_response.semi_sekret,
-                # This is one of the two ways into the health history page: a
-                # resubmission of the upload form reuses an in-progress denial
-                # (see _reusable_session_denial above), so there can already
-                # be history to show.
+                # A resubmission reuses the session's denial, so there can
+                # already be history to show.
                 "health_history": stored_health_history(denial_response.denial_id),
             }
         )
@@ -2054,11 +2052,8 @@ class InitialProcessView(generic.FormView):
 def stored_health_history(denial_id) -> str:
     """What is already saved in ``Denial.health_history`` for this case.
 
-    health_history.html renders this into its textarea. Without it the box is
-    empty on every entry to the page, and because the box is posted on every
-    Next, the empty box was written straight over what the person had typed.
-    Returns "" when the denial cannot be resolved, so a render never fails on
-    a stale reference.
+    health_history.html renders this into its textarea. Returns "" when the
+    denial cannot be resolved, so a render never fails on a stale reference.
     """
     if not denial_id:
         return ""
@@ -2071,9 +2066,8 @@ def stored_health_history(denial_id) -> str:
 def plan_document_count(denial_id) -> int:
     """How many plan documents are already attached to this case.
 
-    PlanDocuments (models.py) keeps the file and the denial it belongs to and
-    no original filename, so a count is the only thing this page can say about
-    what already landed without inventing a name for it.
+    A count rather than a list: PlanDocuments keeps no original filename, so
+    there is no name to show. Returns 0 when the denial cannot be resolved.
     """
     if not denial_id:
         return 0
@@ -2288,14 +2282,9 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         initial = super().get_initial()
         denial_ref = self.get_denial_ref_from_request()
         initial.update(denial_ref)
-        # The other way into the health history page: back navigation, and the
-        # re-render of a POST that failed validation. Initial is only what an
-        # UNBOUND form shows; a bound form's BoundField.value() returns the
-        # submitted data, so a rejected submission redisplays what the person
-        # just typed. The two cannot currently disagree here: HealthHistory's
-        # only required fields are denial_id, email and semi_sekret, which are
-        # exactly what get_denial_ref_from_request needs, so a POST that fails
-        # validation also fails ref resolution and the lookup below returns "".
+        # Initial is only what an UNBOUND form shows. A bound field's value()
+        # returns the submitted data, so a POST that failed validation
+        # redisplays what the person just typed rather than this.
         initial["health_history"] = stored_health_history(denial_ref.get("denial_id"))
         return initial
 
@@ -2334,9 +2323,6 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "form": new_form,
                 "next": reverse("dvc"),
                 "current_step": 3,
-                # One of the two ways into the plan documents page. Someone who
-                # stepped back to the health history and pressed Next again
-                # arrives here with documents already uploaded.
                 "plan_document_count": plan_document_count(denial_response.denial_id),
                 "back_url": build_back_url(
                     "hh",
@@ -2366,8 +2352,6 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
         denial_ref = self.get_denial_ref_from_request()
         context["next"] = reverse("dvc")  # Form posts to itself
         context["current_step"] = 3
-        # The other way in: back navigation, and the re-render of a POST that
-        # failed validation.
         context["plan_document_count"] = plan_document_count(
             denial_ref.get("denial_id")
         )

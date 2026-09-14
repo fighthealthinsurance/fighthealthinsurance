@@ -1680,13 +1680,7 @@ class DenialCreatorHelper:
             # letter (the speculative reserve + the cached summaries) is stale
             # if the letter itself changed, and must be invalidated below.
             denial_text_changed = denial.denial_text != denial_text
-            # Track exactly which columns this resubmission assigns, so the
-            # save below writes only those. A bare ``denial.save()`` writes
-            # back every column the caller's snapshot is holding (Denial.save
-            # builds its own update_fields for that case, excluding only
-            # person_counted and deferred fields), reverting anything a later
-            # step or a concurrent extraction had stored on the row in the
-            # meantime.
+            # Scoped, so this save cannot revert a concurrent writer's column.
             resubmit_fields: set[str] = set()
             # Directly update denial object fields instead of using denial.update()
             denial.denial_text = denial_text
@@ -1704,17 +1698,12 @@ class DenialCreatorHelper:
             # their denial letter lost their previously-entered history.
             if health_history is not None:
                 denial.health_history = health_history
-                # The one entry in this list no test can pin on its own: this
-                # method ends by handing the same health_history to
-                # _update_denial, whose save lists the column too, so on the
-                # happy path the value lands either way. It is still not a
-                # no-op. _update_denial's save shares one atomic() with
-                # intake_outbox.record_intent, and no request transaction
-                # wraps either save (settings.py sets ATOMIC_REQUESTS False on
-                # every database), so a record_intent failure rolls that write
-                # back while this one has already committed. Kept for that,
-                # and so the save stays consistent with what the lines above
-                # it assigned if the tail call ever moves.
+                # Redundant with the _update_denial tail call on the happy
+                # path, but not a no-op: that save shares one atomic() with
+                # intake_outbox.record_intent and no request transaction wraps
+                # either save (ATOMIC_REQUESTS is False on every database), so
+                # a record_intent failure rolls that write back and leaves
+                # this one committed.
                 resubmit_fields.add("health_history")
 
             # Only update these fields if they're provided
@@ -1752,7 +1741,6 @@ class DenialCreatorHelper:
             # Update tracking info if provided
             if tracking_info:
                 tracking_info.update_model_fields(denial)
-                # The four columns update_model_fields assigns (fhi_users/audit.py).
                 resubmit_fields.update({"user_agent", "asn", "asn_name", "ip_address"})
 
             denial.save(update_fields=sorted(resubmit_fields | {"last_interaction"}))
@@ -1795,20 +1783,10 @@ class DenialCreatorHelper:
             employer_name = g.group(1)
             if len(employer_name) < 300:
                 denial.employer_name = employer_name
-                # Its own column, for the same reason as the resubmission
-                # save above. Nothing in this method re-reads the row, so by
-                # here ``denial`` still holds whatever it held when the caller
-                # handed it over (InitialProcessView reuses the denial it
-                # found in the session) or when the create above made it. A
-                # bare save() writes back every column that stale instance is
-                # carrying, including ones this request never touched, so a
-                # value another writer stored since then -- the entity extract
-                # fills in procedure and diagnosis on this same row -- is
-                # replaced by what the instance remembers. Sabotaging this
-                # line to a bare save() fails
-                # test_the_employer_name_save_does_not_revert_another_writers_column
-                # with "None != 'colonoscopy'". last_interaction is auto_now
-                # and only written when it is listed.
+                # Scoped like the resubmission save above: the entity extract
+                # fills procedure and diagnosis on this same row, and a bare
+                # save() would put this stale instance's copies back over it.
+                # last_interaction is auto_now, so it only moves when listed.
                 denial.save(update_fields=["employer_name", "last_interaction"])
 
         denial_id = denial.denial_id
@@ -2931,42 +2909,25 @@ class DenialCreatorHelper:
         # exception boundary, so the journey can never break the user-facing
         # flow. Opt-in for the nudge = store_raw_email, observable as a
         # retained raw_email.
-        # Track exactly which columns THIS request assigns, so the save below
-        # writes only those. A bare ``denial.save()`` writes back every column
-        # this instance is holding (Denial.save builds its own update_fields
-        # for that case, excluding only person_counted and deferred fields), so
-        # anything another writer stored on the row after this instance was
-        # read was silently reverted. Read where depends on the caller:
-        # ``update_denial`` above loads it a few lines before calling here,
-        # and ``create_or_update_denial`` passes on the instance it was handed
-        # or created.
+        # Scoped, so this save cannot revert a concurrent writer's column.
         changed_fields: set[str] = set()
 
         with _transaction.atomic():
             if plan_documents is not None:
+                # Additive and not idempotent: a second click or a replayed
+                # POST adds another row. PlanDocuments carries no filename or
+                # content hash to dedupe on, so plan_documents.html only shows
+                # a count to discourage it. 2026-09-14: left as is, a dedupe
+                # key is a migration this branch is not making.
                 for plan_document in plan_documents:
                     PlanDocuments.objects.create(
                         plan_document_enc=plan_document, denial=denial
                     )
-            # ``health_history`` is a CharField(required=False) on the
-            # HealthHistory form, so an untouched box cleans to "" and arrives
-            # here as an empty string, not as None. That empty string used to
-            # land on top of the stored history because health_history.html
-            # rendered the textarea hardcoded empty, so every entry to the page
-            # posted a blank over what the person had written. The fix for that
-            # is on the render side: all four paths into the page now show what
-            # is stored, so an empty box means the person emptied it.
-            #
-            # Emptying it therefore has to WRITE. This is the person's own
-            # health history, the page tells them the step is optional and
-            # skippable, generate_appeal.py's make_appeals feeds the column
-            # into the model prompt without checking
-            # include_provided_health_history_in_appeal (only the PDF
-            # attachment path in create_or_update_appeal checks it), and no
-            # other page can remove it. Refusing the blank
-            # would make "delete what I wrote" unreachable, which is a worse
-            # failure than the data loss above. A caller that does not send the
-            # field at all still passes None and changes nothing.
+            # The contract for all three optional columns below: None means
+            # the caller said nothing and the stored value stands. For
+            # health_history an empty string is a decision, not silence -- it
+            # is how the page deletes what the person wrote, and no other page
+            # can -- so the blank is written rather than refused.
             if health_history is not None:
                 denial.health_history = health_history
                 changed_fields.add("health_history")

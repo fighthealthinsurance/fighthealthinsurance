@@ -227,9 +227,13 @@ class DenialRefForm(forms.Form):
 
 
 class HealthHistory(DenialRefForm):
+    # Deliberately only the textarea. An unchecked BooleanField is absent from
+    # the POST and cleans to False, and _update_denial treats a False as a
+    # decision and writes it, so declaring health_history_anonymized or
+    # include_provided_health_history_in_appeal here -- with no checkbox for
+    # either in health_history.html -- made every Next reset both. 2026-09-14:
+    # removed rather than defaulted, so re-adding one forces adding its widget.
     health_history = forms.CharField(required=False)
-    health_history_anonymized = forms.BooleanField(required=False)
-    include_provided_health_history_in_appeal = forms.BooleanField(required=False)
 
 
 class PlanDocumentsForm(DenialRefForm):
