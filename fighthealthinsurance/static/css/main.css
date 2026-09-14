@@ -338,8 +338,8 @@ header span {
 header span.date-icon {
     border-left: 1px solid #f2f2f2;
     border-right: 1px solid #f2f2f2;
-    padding-right: 0;
-    padding-left: 0;
+    padding-right: var(--fhi-space-5);
+    padding-left: var(--fhi-space-5);
 }
 
 header span i {
@@ -357,8 +357,8 @@ header span i {
     background: #ffffff;
     box-shadow: 0 2px 8px rgba(0, 0, 0, .075);
     border: none;
-    margin-bottom:0;
-    padding: var(--fhi-space-2);
+    margin-bottom: 0;
+    padding: var(--fhi-space-3);
 }
 
 .navbar-default .navbar-brand {
@@ -396,7 +396,7 @@ header span i {
     font-size: var(--fhi-btn-font-sm) !important;
     line-height: 1.5;
     min-height: var(--fhi-btn-height-sm);
-    padding:var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm)!important;
+    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm)!important;
 }
 
 /* The sweep is twice the width of the button, so moving it is what draws the
@@ -418,8 +418,8 @@ header span i {
     color: #555555 !important;
     font-size: 15px !important;
     font-weight: 500 !important;
-    padding-right: var(--fhi-space-4)!important;
-    padding-left: var(--fhi-space-4)!important;
+    padding-right: var(--fhi-space-5) !important;
+    padding-left: var(--fhi-space-5) !important;
     /* 44px is the smallest target a thumb hits reliably, and one of these
        rows is Remove Your Data. min-height is what makes the row 44px;
        display is here because min-height does not apply to a plain inline
@@ -987,6 +987,11 @@ footer a:hover {
        which is Delete your Data. Rounding up widens the row by 36px and wraps
        "Contribute on GitHub" onto a second line. It keeps its literal and is
        counted in the backlog rather than forced onto the grid. */
+    /* 10px sits exactly between --fhi-space-2 and --fhi-space-3, and this row
+       holds nine links across. Rounding down narrows nine tap targets, one of
+       which is Delete your Data. Rounding up widens the row by 36px and wraps
+       the last link onto a second line. It keeps its literal and is counted
+       in the backlog rather than forced onto the grid. */
     padding: 0 10px;
     margin-top: var(--fhi-space-1);
 }
@@ -1077,8 +1082,8 @@ footer a:hover {
     }
 
     .navbar-default .navbar-nav li a {
-	padding-right: var(--fhi-space-4)!important;
-	padding-left: var(--fhi-space-4)!important;
+	padding-right: var(--fhi-space-4) !important;
+	padding-left: var(--fhi-space-4) !important;
     }
 }
 
@@ -1115,8 +1120,8 @@ footer a:hover {
 
     .navbar-default .navbar-nav li a {
 	display: inline-block !important;
-	padding-top: var(--fhi-space-2)!important;
-	padding-bottom: var(--fhi-space-2)!important;
+	padding-top: var(--fhi-space-2) !important;
+	padding-bottom: var(--fhi-space-2) !important;
     }
 
     .news-sidebar {

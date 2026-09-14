@@ -32,7 +32,11 @@ SPACING_PROPERTY = re.compile(
     r"(-(top|right|bottom|left|start|end|block|inline|block-start|block-end"
     r"|inline-start|inline-end|x|y))?$"
 )
-LENGTH = re.compile(r"^(-?[\d.]+)(px|rem|em)$")
+# Every length in the value, not only whole whitespace-separated tokens: a
+# length inside calc() spaces things exactly like a bare one does, and CSS
+# units are case-insensitive, so `calc(3px + 1rem)` and `10PX` both used to
+# walk past the ratchet untouched.
+LENGTH = re.compile(r"(-?[\d.]+)(px|rem|em)\b", re.IGNORECASE)
 
 # Every page renders this. It is migrated, and a literal here is a regression.
 SHELL_SELECTOR = re.compile(
@@ -61,12 +65,17 @@ SHELL_KEEPS_ITS_LITERAL = frozenset((".footer-link a",))
 BASELINE = {"custom.css": 71, "main.css": 48}
 
 
+def _lengths(value: str):
+    """Every length in one declaration value, in pixels."""
+    for number, unit in LENGTH.findall(value):
+        size = float(number)
+        yield size if unit.lower() == "px" else size * REM_PX
+
+
 def _px(value: str):
-    match = LENGTH.match(value.strip())
-    if match is None:
-        return None
-    size = float(match.group(1))
-    return size if match.group(2) == "px" else size * REM_PX
+    """The single length in a value, or None when it is not exactly one."""
+    found = list(_lengths(value))
+    return found[0] if len(found) == 1 else None
 
 
 def _spacing_values(rule: Rule):
@@ -75,6 +84,15 @@ def _spacing_values(rule: Rule):
             continue
         for token in value.split():
             yield prop, token.strip()
+
+
+def _spacing_lengths(rule: Rule):
+    """Every length any spacing property on this rule sets, calc() included."""
+    for prop, value, _ in rule.declarations:
+        if not SPACING_PROPERTY.match(prop):
+            continue
+        for size in _lengths(value):
+            yield prop, value.strip(), size
 
 
 def test_the_scale_is_a_four_pixel_grid() -> None:
@@ -126,9 +144,8 @@ def off_scale_counts() -> dict:
     for rule in load_rules():
         if rule.stylesheet not in counts:
             continue
-        for _prop, token in _spacing_values(rule):
-            size = _px(token)
-            if size is None or size == 0:
+        for _prop, _value, size in _spacing_lengths(rule):
+            if size == 0:
                 continue
             if abs(size) % BASE_PX != 0:
                 counts[rule.stylesheet] += 1
