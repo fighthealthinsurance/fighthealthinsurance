@@ -168,6 +168,25 @@
     color: #fff;
 }
 
+/* A Bootstrap size class carries Bootstrap's own weight and line height, so a
+   heading retagged for document order and given a size class to hold its size
+   came out lighter and tighter than every other heading on the page.
+   Bootstrap's reboot writes `.h1,.h2,...,h6 {font-weight:500; line-height:1.2}`,
+   and the class half of that list outranks main.css's `h1,...,h6
+   {font-weight:600; line-height:inherit}` on specificity, class over element.
+   Measured in Chromium at 1440px: "Almost there!" on categorize.html went from
+   600 weight and a 43.2px line box as an h4 to 500 and 33.6px as
+   `<h2 class="h3">`. Pinning the site's own two values here means the size
+   class only ever changes size. .h5 and .h6 are deliberately absent: main.css
+   gives those levels 500 and normal, which is what Bootstrap already writes. */
+.h1,
+.h2,
+.h3,
+.h4 {
+    font-weight: 600;
+    line-height: inherit;
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;

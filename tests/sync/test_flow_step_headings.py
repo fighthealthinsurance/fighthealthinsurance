@@ -257,15 +257,29 @@ class FlowStepHeadingTest(SimpleTestCase):
             for tag in page.find_all(style=True)
             if "display:none" in tag["style"].replace(" ", "")
         ]
-        # Without this the test would quietly stop checking the reader's state
-        # the day those blocks start out visible.
-        self.assertTrue(
-            unread,
-            "no block ships hidden any more, so this test no longer checks a "
-            "state different from the one above it",
-        )
+        # Named before anything is decomposed, because bs4 empties a tag's
+        # attributes when it goes and the failure message needs them.
+        hidden_names = [tag.get("id") or tag.name for tag in unread]
+        removed = []
         for tag in unread:
+            # An inline-hidden block can sit inside another one, and taking the
+            # outer one out takes the inner with it.
+            if tag.decomposed:
+                continue
+            removed.extend(_headings(tag))
             tag.decompose()
+        # The guard has to be the headings that left, not the existence of a
+        # hidden block. appeals.html also ships div#base-form with
+        # display:none and that block carries no heading, so asserting on
+        # `unread` stayed true with #external-models-prompt made visible, and
+        # this test silently became a copy of the one above it. This is the
+        # same shape the sibling test uses.
+        self.assertTrue(
+            removed,
+            f"no inline-hidden block carries a heading any more (hidden: "
+            f"{hidden_names}), so this test no longer checks a state different "
+            "from the one above it",
+        )
 
         self.assert_opens_at_h1_and_skips_nothing(
             "appeals.html as a reader meets it once the drafts land",
