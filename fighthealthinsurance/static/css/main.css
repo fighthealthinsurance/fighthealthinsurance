@@ -31,6 +31,15 @@ body {
    a browser will not break a run like that on its own, so the consent label
    holding it grew wider than the phone and took the page with it. This only
    does anything to a word that would otherwise overflow. */
+/* A bare URL is one unbreakable run. The terms page carries
+   https://fighthealthinsurance.com/remove_data in its text, which fit at 14px
+   and does not at 16px: 385px of link in a 390px window, and the whole page
+   scrolled sideways on a phone. Breaking a URL mid-string is normal and only
+   happens to a run that would otherwise overflow. */
+a {
+    overflow-wrap: break-word;
+}
+
 label,
 .form-check-label {
     /* break-word alone is not enough here: these labels are inline-block, and
@@ -119,24 +128,24 @@ h5 {
 
 h1 {
     color: #252525;
-    font-size: 5em;
+    font-size: var(--fhi-text-hero);
 }
 
 h2 {
     color: #272727;
-    font-size: 3em;
+    font-size: var(--fhi-text-page);
     padding-bottom: 10px;
 }
 
 h3 {
-    font-size: 1.8em;
-    line-height: 1.2em;
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
     margin-bottom: 0;
 }
 
 h4 {
     color: #454545;
-    font-size: 1.8em;
+    font-size: var(--fhi-text-title);
     padding-bottom: 2px;
 }
 
@@ -147,9 +156,9 @@ h6 {
 
 p {
     color: var(--fhi-muted);
-    font-size: 14px;
+    font-size: var(--fhi-text-body);
     font-weight: normal;
-    line-height: 24px;
+    line-height: var(--fhi-line-body);
 }
 
 
@@ -479,7 +488,7 @@ header span i {
 
 #home h3 {
     color: #ffffff;
-    font-size: 14px;
+    font-size: var(--fhi-text-small);
     font-weight: normal;
     line-height: inherit;
     letter-spacing: 3px;
@@ -744,7 +753,7 @@ header span i {
 .news-social-share .btn {
     border-radius: 100px;
     border: none;
-    font-size: 10px;
+    font-size: var(--fhi-text-micro);
     font-weight: 600;
     margin: 2px 6px;
     padding: 8px 14px;
@@ -860,7 +869,7 @@ header span i {
     border: none;
     border-radius: 3px;
     box-shadow: none;
-    font-size: 14px;
+    font-size: var(--fhi-text-input);
     font-weight: normal;
     margin-bottom: 15px;
     transition: all ease-in-out 0.4s;
@@ -1044,17 +1053,9 @@ footer a:hover {
   -----------------------------------------*/
 
 @media only screen and (max-width: 1200px) {
-    h1 {
-	font-size: 4em;
-    }
-
-    h2 {
-	font-size: 2.5em;
-    }
-
-    h3 {
-	font-size: 1.5em;
-    }
+    /* The heading steps that used to sit here are in --fhi-text-hero,
+       --fhi-text-page and --fhi-text-section, which cover this width and
+       every width between the breakpoints too. */
 
     header {
 	height: inherit;
@@ -1146,19 +1147,21 @@ footer a:hover {
 
 /* Mobile */
 @media only screen and (max-width: 768px) {
+    /* Same: the phone end of each heading is the low end of its token. The
+       one thing the tokens cannot carry is this line-height, which main.css
+       set here and nowhere else: without it a 48px title on a phone takes a
+       72px line box instead of a 57.6px one, and the hero grows by 43px. */
     h1 {
-	font-size: 3em;
-	line-height: 1.2em;
+	line-height: 1.2;
     }
 
-    h2 {
-	font-size: 2.1em;
-    }
 
-    h4 {
-	font-size: 1.4em;
-    }
-
+    /* The tagline over the hero title, set in caps at 11px on a phone. It is
+       under the 12px floor and stays there: it is deliberately subtle, it is
+       not something a patient has to read to use the site, and the sentence
+       it carries is a joke rather than an instruction. Product owner's call
+       of 2026-09-14. Excused in BELOW_FLOOR_BY_DESIGN rather than unmeasured:
+       the gate still sees it. */
     #home h3 {
 	font-size: 11px;
 	letter-spacing: 1px;
