@@ -180,6 +180,17 @@
     line-height: inherit;
 }
 
+/* .h5 takes only the line height. main.css gives a real h5 weight 500, which
+   is what Bootstrap's class writes too, so the weight needs no correction and
+   pinning 600 here would make a heading wearing the class heavier than the
+   element it stands in for. Line height is the half that does drift: the
+   element inherits the body's and the class does not. This also loosens the
+   one card title that wore the class before the retagging, on
+   microsite_directory, which is a heading that wraps and reads better for it. */
+.h5 {
+    line-height: inherit;
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;
