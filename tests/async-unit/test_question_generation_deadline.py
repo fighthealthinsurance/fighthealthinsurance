@@ -7,12 +7,19 @@ longer than that. Its nominal budget variable is 45 (``timeout = 60 if
 speculative else 45``), and it spends that as ``model_timeout = 45 - 5`` =
 40 seconds of model window plus, only when nothing usable landed in that
 window, ``best_within_timelimit``'s default overtime of
-``min(max(2 * 40, 60), FHI_ML_EXTENDED_WAIT)`` = 80 seconds. So the helper
-can run for 120 seconds; 45 and 80 are not two windows that add up. The
-outer 20 second timer fired before the helper's FIRST window closed,
+``min(max(2 * 40, 60), FHI_ML_EXTENDED_WAIT)`` = 80 seconds. So the model
+phase can run for 120 seconds; 45 and 80 are not two windows that add up.
+The outer 20 second timer fired before the helper's FIRST window closed,
 cancelled it, threw away every model result that had arrived, and returned
 an empty list. The page then said there were a few more questions and
 showed none.
+
+120 is the ceiling on the MODEL phase, not on the whole function: the
+pa_requirements lookup runs after it and carries no timer of its own, so
+it is bounded by the database rather than by anything this test can
+read. That lookup is a local indexed query, which is why the deadline is
+set against the model phase, and it is why the deadline is set ABOVE the
+ceiling rather than equal to it.
 
 Also pinned here: a run that comes back empty must not overwrite questions
 another run already stored. The loading page offers Continue at 20 seconds
@@ -22,55 +29,109 @@ with ``[]``.
 """
 
 import asyncio
+from typing import Any, Dict
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from asgiref.sync import async_to_sync
 from django.test import TestCase
 
-from fighthealthinsurance import common_view_logic
+from fighthealthinsurance import common_view_logic, pa_requirements
 from fighthealthinsurance.common_view_logic import (
     QUESTION_GENERATION_DEADLINE_SECONDS,
     DenialCreatorHelper,
 )
+from fighthealthinsurance.ml import ml_appeal_questions_helper
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.models import Denial
-from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.utils import best_within_timelimit, default_extended_timeout
 
 _HELPER = (
     "fighthealthinsurance.common_view_logic.MLAppealQuestionsHelper."
     "generate_questions_for_denial"
 )
-_CITATIONS = (
-    "fighthealthinsurance.common_view_logic.fire_and_forget_in_new_threadpool"
-)
+_CITATIONS = "fighthealthinsurance.common_view_logic.fire_and_forget_in_new_threadpool"
 
 _FAST = ("What did your doctor say?", "")
 _SLOW = ("What did the second model ask?", "")
 
 
 class QuestionGenerationDeadlineTest(TestCase):
-    # The helper's own ceiling, composed the way the helper composes it:
-    # a nominal budget of 45, spent as a (45 - 5) second model window and,
-    # when that window yields nothing usable, an overtime window of
-    # min(max(2 * 40, 60), 300).
-    HELPER_NOMINAL_BUDGET = 45
-    HELPER_MODEL_WINDOW = HELPER_NOMINAL_BUDGET - 5
-    HELPER_OVERTIME = min(max(2 * HELPER_MODEL_WINDOW, 60), 300)
-
+    @pytest.mark.django_db
     def test_the_deadline_sits_above_the_helpers_own_budget(self):
-        """40s model window + 80s overtime = 120s, all read off the helper."""
-        self.assertEqual(self.HELPER_MODEL_WINDOW, 40)
-        self.assertEqual(self.HELPER_OVERTIME, 80)
+        """Run the helper and watch what it actually buys, 40s + 80s.
+
+        An earlier version of this test retyped the composition (45, -5,
+        *2, 60, 300) as literals in the class body and asserted 130 > 120
+        against its own arithmetic. Setting the helper's budget to 200,
+        which puts the real ceiling at 495 seconds against this unchanged
+        130 second deadline, left the whole file green. So the numbers are
+        read here and nowhere typed: the model window is whatever the
+        helper hands best_within_timelimit, and the overtime is what
+        best_two_within_timelimit fills in for an omitted extended_timeout.
+        """
+        observed: Dict[str, Any] = {}
+
+        async def record_the_window(tasks, *args, **kwargs):
+            observed["timeout"] = kwargs.get(
+                "timeout", args[1] if len(args) > 1 else None
+            )
+            observed["extended_timeout"] = kwargs.get(
+                "extended_timeout", args[2] if len(args) > 2 else None
+            )
+            # The helper builds both model coroutines before this call, and
+            # nothing here awaits them; closing them keeps the run clean.
+            for task in tasks:
+                task.close()
+            return None
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8206,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+            )
+            try:
+                with patch.object(
+                    ml_appeal_questions_helper,
+                    "best_within_timelimit",
+                    new=record_the_window,
+                ), patch.object(
+                    pa_requirements,
+                    "get_pa_questions_for_denial",
+                    new=lambda denial: [],
+                ):
+                    await MLAppealQuestionsHelper.generate_questions_for_denial(
+                        denial, speculative=False
+                    )
+            finally:
+                await Denial.objects.filter(denial_id=8206).adelete()
+
+        async_to_sync(run)()
+
+        model_window = observed["timeout"]
+        self.assertIsNotNone(
+            model_window, "the helper never called best_within_timelimit"
+        )
+        # The helper passes no extended_timeout, so the overtime is the
+        # default best_two_within_timelimit computes from the same window.
+        overtime = observed["extended_timeout"]
+        if overtime is None:
+            overtime = default_extended_timeout(model_window)
+
+        # Tripwire on the numbers the module docstring and the commit
+        # message quote, so a budget change has to update the prose too.
+        self.assertEqual(model_window, 40)
+        self.assertEqual(overtime, 80)
         self.assertGreater(
             QUESTION_GENERATION_DEADLINE_SECONDS,
-            self.HELPER_MODEL_WINDOW + self.HELPER_OVERTIME,
+            model_window + overtime,
         )
 
     @pytest.mark.django_db
     @patch(_CITATIONS, new_callable=AsyncMock)
-    def test_an_empty_run_does_not_wipe_questions_another_run_stored(
-        self, _citations
-    ):
+    def test_an_empty_run_does_not_wipe_questions_another_run_stored(self, _citations):
         """Two runs overlap whenever someone uses the loading page's 20
         second Continue button against this 130 second deadline. The one
         that finishes empty must leave the other one's questions alone."""

@@ -1271,6 +1271,19 @@ def _extended_wait_cap() -> float:
         return 300.0
 
 
+def default_extended_timeout(timeout: float) -> float:
+    """The overtime window best_within_timelimit uses when none is passed.
+
+    Public because a caller's own deadline has to be able to sit above the
+    whole window it is buying, and the only honest way to check that is to
+    read this number rather than retype the expression. A test that retyped
+    it went green while the real budget drifted arbitrarily far past the
+    caller's deadline (question generation: a 20s outer timer over a helper
+    that could spend 120s, then a 130s timer over a helper free to grow).
+    """
+    return min(max(timeout * 2, 60.0), _extended_wait_cap())
+
+
 # Strong references to fire-and-forget cancellation tasks: a bare
 # asyncio.create_task result can be garbage-collected before it runs (RUF006),
 # which would let the stragglers it exists to cancel survive.
@@ -1373,7 +1386,7 @@ async def best_two_within_timelimit(
         return BestTwo(None, None, float("-inf"), float("-inf"), None, None)
 
     if extended_timeout is None:
-        extended_timeout = min(max(timeout * 2, 60.0), _extended_wait_cap())
+        extended_timeout = default_extended_timeout(timeout)
 
     wait_started = time.monotonic()
 

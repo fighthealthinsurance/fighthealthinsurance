@@ -381,7 +381,9 @@ class DenialTypeQuestionTest(QuestionsStepTestBase):
 
         self.assertEqual(self._qa()["medical_reason"], "my surgeon says so")
         combined = self._rebuild().combined_form
-        self.assertEqual(combined.fields["medical_reason"].initial, "my surgeon says so")
+        self.assertEqual(
+            combined.fields["medical_reason"].initial, "my surgeon says so"
+        )
 
     def test_the_denial_types_appeal_text_is_not_typed_into_the_answer_box(self):
         """``appeal_text`` is the canned paragraph the appeal builder falls
@@ -683,9 +685,7 @@ class LoadingPageTest(QuestionsStepTestBase):
     """
 
     def _loading_page(self):
-        response = self.client.post(
-            reverse("find_next_steps_loading"), self._ref()
-        )
+        response = self.client.post(reverse("find_next_steps_loading"), self._ref())
         self.assertEqual(response.status_code, 200)
         return response.content.decode()
 
@@ -705,7 +705,7 @@ class LoadingPageTest(QuestionsStepTestBase):
         block = body.split('id="slow-explanation"', 1)[1].split("</div>", 1)[0]
         self.assertIn(reverse("categorize_review"), block)
         self.assertNotIn("<button", block)
-        self.assertNotIn("type=\"submit\"", block)
+        self.assertNotIn('type="submit"', block)
 
     def test_the_page_submits_find_next_steps_exactly_once(self):
         body = self._loading_page()
