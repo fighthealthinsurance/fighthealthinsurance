@@ -1,18 +1,17 @@
 {% comment %}
-The caller says how deep this panel sits, because the same panel is a
-subsection on how_to_help.html and a top-level section on appeals.html, where
-appeal_fetcher.ts hides every heading above it once the drafts land and a
-fixed h5 would be a two-level skip from the page's own h1. Callers that say
-nothing keep the h5 they have always had.
+The caller says how deep this panel sits: it is a subsection on
+how_to_help.html and a top-level section on appeals.html, where the nearest
+heading above it is an h2 and a fixed h5 would skip two levels. Callers that
+say nothing keep the h5 they have always had.
 
 Everything you can see comes from .share-title, which outranks main.css's
-per-element rules. The two properties main.css varies by element name and
-.share-title does not set are pinned here, so the panel looks the same
-whichever level it is given.
+per-element rules. main.css also styles by element name, so the properties it
+varies that .share-title does not set are pinned here and the panel looks the
+same whichever level it is given.
 {% endcomment %}
 {% with heading=share_heading_level|default:5 %}
 <div class="share-panel" aria-labelledby="share-heading">
-  <h{{ heading }} id="share-heading" class="share-title" style="padding-bottom:0; letter-spacing:normal;">📢 Tell Your Friends</h{{ heading }}>
+  <h{{ heading }} id="share-heading" class="share-title" style="padding-bottom:0; letter-spacing:normal; line-height:inherit;">📢 Tell Your Friends</h{{ heading }}>
   <p class="share-subcopy">Know someone fighting a health insurance denial? Share this tool and help them fight back!</p>
   <div class="share-buttons">
     <a href="https://twitter.com/intent/tweet?text=I%20just%20found%20this%20free%20AI%20tool%20that%20helps%20you%20fight%20health%20insurance%20denials!%20Check%20it%20out%3A&url=https://www.fighthealthinsurance.com"

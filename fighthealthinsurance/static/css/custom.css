@@ -168,21 +168,14 @@
     color: #fff;
 }
 
-/* A Bootstrap size class carries Bootstrap's own weight and line height, so a
-   heading retagged for document order and given a size class to hold its size
-   came out lighter and tighter than every other heading on the page.
-   Bootstrap's reboot writes `.h1,.h2,...,h6 {font-weight:500; line-height:1.2}`,
-   and the class half of that list outranks main.css's `h1,...,h6
-   {font-weight:600; line-height:inherit}` on specificity, class over element.
-   Measured in Chromium at 1440px: "Almost there!" on categorize.html went from
-   600 weight and a 43.2px line box as an h4 to 500 and 33.6px as
-   `<h2 class="h3">`. Pinning the site's own two values here means the size
-   class only ever changes size. .h5 and .h6 are deliberately absent: main.css
-   gives those levels 500 and normal, which is what Bootstrap already writes. */
-.h1,
+/* Bootstrap's reboot writes `.h1,...,.h6 {font-weight:500; line-height:1.2}`,
+   and a class beats main.css's `h1,...,h6 {font-weight:600;
+   line-height:inherit}` on specificity, so a heading given a size class to
+   hold its size loses the site's weight and line height with it. .h5 stays
+   out: main.css sets h5 to 500 too, so 600 here would make `.h5` heavier
+   than a real h5. */
 .h2,
-.h3,
-.h4 {
+.h3 {
     font-weight: 600;
     line-height: inherit;
 }
@@ -195,11 +188,9 @@
     border-left-width: 4px;
     border-left-style: solid;
 }
-/* The appeal flow numbers its headings for document structure, so the same
-   callout can hold an h2, an h3 or an h4 depending on what sits above it on
-   that page. These rules match by element, so each level a page can use has
-   to be listed or a promoted heading silently loses its styling. That is how
-   six of them ended up carrying inline colours. */
+/* These callout rules match by element name, and the same callout holds a
+   different level depending on what sits above it, so every level a page can
+   put in one has to be listed or that heading silently loses its styling. */
 .alert-box h2,
 .alert-box h3,
 .alert-box h4 {
@@ -2330,6 +2321,7 @@ textarea,
    their colour from main.css's h4 rule; the flow promoted them to h3 for
    document order and the colour did not follow. A class rather than an
    inline style, so the contrast gate can still see them. */
+/* A class rather than an inline style, so the contrast gate can measure it. */
 .assistance-subheading {
     color: #454545;
     margin-bottom: 0.5rem;

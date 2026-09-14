@@ -1,28 +1,15 @@
-"""Every page in the appeal flow names its step in a real heading.
+"""The appeal-flow pages in FLOW_PAGES name their step in a real heading.
 
-Until now no page in the flow had an ``h1``. health_history.html,
-plan_documents.html and the single_optional_question.html shell they extend
-carried no heading of any level at all, so someone skimming with a screen
-reader on a very long page had nothing to skim: the browser tab title was the
-only structural signal that the step had changed.
+FLOW_PAGES is the whole of what is claimed here. scrub.html, the upload step,
+is out of it on purpose: its heading arrives with the upload rebuild.
 
-The pages checked here are exactly the ones the change touches. scrub.html,
-the upload step, is deliberately not in the list: its heading arrives with the
-upload rebuild, not here.
-
-Rendering the template is not enough on its own. A page in this flow is read
-after its script has run, and appeal_fetcher.ts hides the whole loading block
-on appeals.html once the drafts land, taking five headings out of the
-accessibility tree with it. A template-only check passes on headings nobody can
-reach, so the order is checked three times: once on the server render, once
-with the blocks that script hides taken out, and once with the blocks that ship
-display:none taken out as well, because #external-models-prompt is revealed only
-when generation comes back short and is otherwise never read. The same goes for
-the two conditional sections outside_help.html includes, which render only for a
-denial that matches a medication or a financial-assistance programme.
-
-A heading that is only styling does not count, which is why every assertion
-below looks for a real ``h1`` element and reads its text.
+These are structural checks on rendered markup, not checks of what the browser
+does. Where one covers a state a script produces, it gets there by reading ids
+out of the TypeScript and removing those nodes from the parsed page. Nothing
+here runs JavaScript, so whether hideLoading() is reached at all, its guards
+and its one-second timer are all outside what these can see. What they do
+check is that the markup left in that state still opens at h1 and skips no
+level.
 """
 
 import re
@@ -39,10 +26,8 @@ _EM_DASH = "\u2014"
 
 _JS = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "static" / "js"
 
-# `const name = document.getElementById("some-id")` and, separately, the
-# `name.style.display = "none"` that takes it off the page. Matching the two
-# and intersecting them is what keeps this test tracking the script instead of
-# a hard-coded list of ids that can quietly go stale.
+# Pairing the binding with the assignment that hides it keeps this reading the
+# script rather than a hard-coded list of ids that can go stale.
 _BOUND_ELEMENT = re.compile(
     r"""const\s+(\w+)\s*=\s*document\.getElementById\(\s*["']([^"']+)["']"""
 )
@@ -50,9 +35,6 @@ _DISPLAY_NONE = re.compile(r"""(\w+)\.style\.display\s*=\s*["']none["']""")
 
 _SHELL_CONTEXT = {"form": [], "next": "/next-step/"}
 
-# Stand-ins for the two objects that make outside_help.html render its
-# conditional sections. The templates read plain attributes, so dicts are
-# enough; only the shape matters here, not the values.
 _PHARMACY_SUGGESTION = {
     "bridge_message": "While you appeal, these may lower what you pay today.",
     "pharmacy_options": [
@@ -152,11 +134,7 @@ def _headings(page):
 
 
 def _ids_hidden_by(script, function):
-    """The element ids ``function`` in ``script`` sets to display:none.
-
-    Read out of the TypeScript rather than copied into this file, so that a
-    block which starts or stops being hidden changes what the test checks.
-    """
+    """The element ids ``function`` in ``script`` sets to display:none."""
     source = (_JS / script).read_text()
     bound = dict(_BOUND_ELEMENT.findall(source))
     start = source.find(f"function {function}(")
@@ -211,13 +189,9 @@ class FlowStepHeadingTest(SimpleTestCase):
                     template, _headings(_page(template))
                 )
 
-    def test_the_appeals_page_skips_nothing_once_its_script_hides_the_loading_block(
+    def test_the_appeals_page_skips_nothing_without_the_blocks_hideloading_hides(
         self,
     ):
-        # appeals.html is where people wait longest, and by the time the drafts
-        # arrive appeal_fetcher.ts has hidden the entire loading block. The
-        # headings inside it are then out of the accessibility tree, so the
-        # order a screen reader actually walks is the one left behind here.
         gone = _ids_hidden_by("appeal_fetcher.ts", "hideLoading")
         page = _page("appeals.html")
         removed = []
@@ -225,27 +199,21 @@ class FlowStepHeadingTest(SimpleTestCase):
             for tag in page.find_all(id=element_id):
                 removed.extend(_headings(tag))
                 tag.decompose()
-        # Without this the test would pass for the wrong reason the day the
-        # script stops hiding anything that carries a heading.
         self.assertTrue(
             removed,
             f"nothing carrying a heading was hidden (ids: {sorted(gone)}), so this "
             "test is no longer checking the state it was written for",
         )
         self.assert_opens_at_h1_and_skips_nothing(
-            "appeals.html after hideLoading()", _headings(page)
+            "appeals.html with the blocks hideLoading() hides removed", _headings(page)
         )
 
-    def test_the_appeals_page_skips_nothing_for_a_reader_who_never_opens_the_prompt(
+    def test_the_appeals_page_skips_nothing_without_the_blocks_that_ship_hidden(
         self,
     ):
-        # hideLoading() is not the only thing keeping a heading off the page.
-        # #external-models-prompt ships with display:none in the markup and is
-        # revealed only when generation comes back short, so for most readers
-        # its h2 is never in the accessibility tree at all. Decomposing only the
-        # blocks the script hides would check an order that has an h2 in it
-        # nobody reaches, and would still pass on the day that h2 is the only
-        # thing bridging the page's h1 to a lower heading below it.
+        # #external-models-prompt ships display:none and is revealed only when
+        # generation comes back short, so the order most people are served does
+        # not have its h2 in it to bridge down to the headings below.
         gone = _ids_hidden_by("appeal_fetcher.ts", "hideLoading")
         page = _page("appeals.html")
         for element_id in sorted(gone):
@@ -262,18 +230,11 @@ class FlowStepHeadingTest(SimpleTestCase):
         hidden_names = [tag.get("id") or tag.name for tag in unread]
         removed = []
         for tag in unread:
-            # An inline-hidden block can sit inside another one, and taking the
-            # outer one out takes the inner with it.
+            # Taking out an outer hidden block takes its nested ones with it.
             if tag.decomposed:
                 continue
             removed.extend(_headings(tag))
             tag.decompose()
-        # The guard has to be the headings that left, not the existence of a
-        # hidden block. appeals.html also ships div#base-form with
-        # display:none and that block carries no heading, so asserting on
-        # `unread` stayed true with #external-models-prompt made visible, and
-        # this test silently became a copy of the one above it. This is the
-        # same shape the sibling test uses.
         self.assertTrue(
             removed,
             f"no inline-hidden block carries a heading any more (hidden: "
@@ -282,14 +243,13 @@ class FlowStepHeadingTest(SimpleTestCase):
         )
 
         self.assert_opens_at_h1_and_skips_nothing(
-            "appeals.html as a reader meets it once the drafts land",
+            "appeals.html with the hidden blocks and the loading block removed",
             _headings(page),
         )
 
     def test_outside_help_skips_nothing_when_the_assistance_sections_render(self):
-        # Both sections are conditional on the denial matching a medication or
-        # a programme, so the ordinary render says nothing about the page the
-        # patients they exist for are reading.
+        # Both sections render only for a denial that matches a medication or
+        # a programme, so the default context never puts them on the page.
         _, context = FLOW_PAGES["outside_help.html"]
         page = BeautifulSoup(
             render_to_string(
@@ -312,9 +272,8 @@ class FlowStepHeadingTest(SimpleTestCase):
         )
 
     def test_the_share_panel_sits_at_the_level_the_page_asks_for(self):
-        # Seven templates outside this flow include the same panel, so the
-        # default has to stay exactly the h5 they were built around, and only
-        # a page that asks gets something else.
+        # Templates outside this flow include the panel without asking for a
+        # level, so the default has to stay the h5 they were built around.
         engine = engines["django"]
         unasked = engine.from_string(
             "{% include 'partials/share_buttons.html' %}"
@@ -332,8 +291,8 @@ class FlowStepHeadingTest(SimpleTestCase):
         )
 
     def test_the_two_optional_steps_name_different_steps(self):
-        # They share single_optional_question.html. A heading written into the
-        # shell instead of into each child would give them the same one.
+        # They share single_optional_question.html, so a heading written into
+        # the shell rather than each child would give them the same one.
         history = _page("health_history.html").find("h1").get_text(" ", strip=True)
         documents = _page("plan_documents.html").find("h1").get_text(" ", strip=True)
         self.assertNotEqual(history, documents)
@@ -346,8 +305,7 @@ class FlowStepHeadingTest(SimpleTestCase):
         ).render(dict(_SHELL_CONTEXT, current_step=2))
         self.assertIn("<h1>A step of its own</h1>", overridden)
 
-        # The shell writes no heading of its own, so a child that names no step
-        # is visibly missing one rather than inheriting a wrong one.
+        # A child that names no step gets none, rather than a wrong one.
         bare = engine.from_string(
             "{% extends 'single_optional_question.html' %}"
         ).render(dict(_SHELL_CONTEXT, current_step=2))
