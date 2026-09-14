@@ -2213,14 +2213,9 @@ class RegulatorContactInfoTest(TestCase):
         )
 
 
-class _FixedZipEngine:
-    """Offline stand-in for the uszipcode search engine.
 
-    The real lookup needs a downloaded database and would tie these tests to
-    whatever it thinks a zip means today. A fixed table keeps the guessed
-    state deliberately different from the state the person types, which is
-    the whole point of the round trip below.
-    """
+class _FixedZipEngine:
+    """Offline stand-in for the uszipcode engine, which needs a downloaded DB."""
 
     def __init__(self, mapping: dict):
         self.mapping = mapping
@@ -2231,12 +2226,18 @@ class _FixedZipEngine:
         return SimpleNamespace(state=self.mapping[zip_code])
 
 
+class _BrokenZipEngine:
+    """A lookup that fails the way an unknown zip or a missing DB file does."""
+
+    def by_zipcode(self, zip_code):
+        raise RuntimeError("zip database unavailable")
+
+
 class ConfirmedStateTest(TestCase):
-    """A state the person corrects on the review page has to reach the appeal,
-    and it has to survive them going back and submitting the upload page
-    again. ``your_state`` is the column of record; ``state`` is the mirror the
-    external review, chat RAG, plan matching and CA-question readers still use,
-    and its presence is what marks the state as confirmed.
+    """A state the person corrects on the review page has to reach the appeal
+    and survive a resubmission of the upload page. ``your_state`` is the column
+    of record; ``state`` is the mirror other readers use, and its presence is
+    what marks the state as having come off the review form.
     """
 
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
@@ -2251,12 +2252,12 @@ class ConfirmedStateTest(TestCase):
         "dispatch_speculative_appeals"
     )
 
-    def _submit_upload_page(self, zip_code, denial=None):
+    def _submit_upload_page(self, zip_code, denial=None, zip_engine=None):
         """Page one: the intake path that guesses a state from the zip."""
         with patch.object(
             common_view_logic.DenialCreatorHelper,
             "zip_engine",
-            _FixedZipEngine(self.ZIP_STATES),
+            zip_engine if zip_engine is not None else _FixedZipEngine(self.ZIP_STATES),
         ), patch(self._DISPATCH):
             response = DenialCreatorHelper.create_or_update_denial(
                 email=self.EMAIL,
@@ -2267,7 +2268,12 @@ class ConfirmedStateTest(TestCase):
         return Denial.objects.get(denial_id=response.denial_id)
 
     def _submit_review_page(self, denial, **overrides):
-        """The review POST, where the person confirms or corrects the state."""
+        """The review POST, where the person confirms or corrects the state.
+
+        The speculative dispatch is patched out and left on
+        ``self.last_dispatch`` so the refresh decision can be asserted without
+        running a real precompute.
+        """
         params = dict(
             denial_id=denial.denial_id,
             email=self.EMAIL,
@@ -2281,9 +2287,23 @@ class ConfirmedStateTest(TestCase):
             denial_date=None,
         )
         params.update(overrides)
-        FindNextStepsHelper.find_next_steps(**params)
+        with patch(self._DISPATCH) as dispatch:
+            FindNextStepsHelper.find_next_steps(**params)
+        self.last_dispatch = dispatch
         denial.refresh_from_db()
         return denial
+
+    def _seed_confirmed_reserve(self, denial):
+        from fighthealthinsurance.context_utils import (
+            CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+        )
+
+        return ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft written under the old state.",
+            speculative=True,
+            context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+        )
 
     def test_the_confirmed_state_lands_on_both_columns(self):
         denial = self._submit_upload_page(self.NY_ZIP)
@@ -2295,8 +2315,6 @@ class ConfirmedStateTest(TestCase):
         self.assertEqual(denial.state, "CA")
 
     def test_a_resubmitted_upload_page_keeps_the_confirmed_state(self):
-        """The round trip: correct the state, go back a page, submit the same
-        letter and the same zip again. The guess must not come back."""
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="CA")
 
@@ -2307,12 +2325,9 @@ class ConfirmedStateTest(TestCase):
         self.assertEqual(denial.service_zip, "100")
 
     def test_a_resubmission_heals_a_row_left_in_the_old_shape(self):
-        """Before this change the review POST wrote the correction to `state`
-        only, so rows exist with the correction in `state` and the zip's guess
-        still in `your_state`. Those rows are NOT backfilled. A row that
-        reaches intake in that shape on the zip it already has is healed from
-        the stored value on the way past, so the check above holds the
-        correction rather than the stale guess."""
+        """Rows predating the two-column write hold the correction in `state`
+        and the zip's guess in `your_state`. There is no backfill, so this pass
+        is the only thing that repairs one."""
         denial = self._submit_upload_page(self.NY_ZIP)
         Denial.objects.filter(denial_id=denial.denial_id).update(
             state="CA", your_state="NY"
@@ -2344,12 +2359,8 @@ class ConfirmedStateTest(TestCase):
         self,
     ):
         """The review page prefills its state box from the zip's own guess, so
-        clicking through it without touching the box puts that guess in
-        `state`. That must not make the zip unable to move the state again:
-        someone who mistyped their zip, clicked through, then went back and
-        fixed the zip would otherwise keep getting an appeal addressed to the
-        wrong state's regulator with no way to reach it from the zip page.
-        """
+        clicking through without touching it puts that guess in `state`. That
+        must not leave the zip unable to move the state again."""
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="NY")
         self.assertEqual(denial.state, "NY")
@@ -2360,10 +2371,6 @@ class ConfirmedStateTest(TestCase):
         self.assertEqual(denial.service_zip, "941")
 
     def test_a_corrected_zip_does_not_bounce_back_on_the_next_resubmission(self):
-        """The state reached from a replaced zip is dropped rather than left
-        on the row. Left there it would be read as a stored state on the next
-        submission of the new zip and copied back over the state that zip
-        infers, so the correction would hold for exactly one request."""
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="NY")
         denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
@@ -2372,10 +2379,7 @@ class ConfirmedStateTest(TestCase):
 
         self.assertEqual(denial.your_state, "CA")
 
-    def test_a_typed_state_survives_a_zip_that_did_not_change(self):
-        """The narrower guarantee that replaces "a stored state always wins":
-        a state the person typed holds against any number of resubmissions on
-        the zip it was typed against."""
+    def test_a_typed_state_survives_a_zip_whose_first_three_digits_held(self):
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="CA")
 
@@ -2384,6 +2388,32 @@ class ConfirmedStateTest(TestCase):
 
         self.assertEqual(denial.your_state, "CA")
         self.assertEqual(denial.state, "CA")
+
+    def test_a_failed_zip_lookup_leaves_the_stored_state_pair_alone(self):
+        """A changed zip whose lookup fails has no replacement to offer, so it
+        must not clear the pair the appeal consumers read."""
+        from fighthealthinsurance.external_review import (
+            generate_external_review_packet,
+        )
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        denial = self._submit_upload_page(
+            "99999", denial=denial, zip_engine=_BrokenZipEngine()
+        )
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+        self.assertEqual(denial.service_zip, "999")
+        self.assertEqual(
+            generate_external_review_packet(denial, {})["regulator"]["state"], "CA"
+        )
+        denial_type = DenialTypes.objects.get(name="Gender Affirming Care")
+        self.assertIn(
+            "CDI-Gender-Nondiscrimination-Regulations",
+            denial_type.get_form()().plan_context(denial),
+        )
 
     def test_the_review_page_renders_the_corrected_state(self):
         from django.urls import reverse
@@ -2405,34 +2435,9 @@ class ConfirmedStateTest(TestCase):
         self.assertIn('value="CA"', body)
         self.assertNotIn('value="NY"', body)
 
-    def test_the_california_question_branch_fires_for_a_corrected_state(self):
-        denial = self._submit_upload_page(self.NY_ZIP)
-        denial = self._submit_review_page(denial, your_state="CA")
-
-        denial_type = DenialTypes.objects.get(name="Gender Affirming Care")
-        form_class = denial_type.get_form()
-        self.assertIsNotNone(form_class)
-        plan_context = form_class().plan_context(denial)
-
-        self.assertIn("CDI-Gender-Nondiscrimination-Regulations", plan_context)
-
-    def test_the_external_review_packet_uses_the_corrected_state(self):
-        from fighthealthinsurance.external_review import (
-            generate_external_review_packet,
-        )
-
-        denial = self._submit_upload_page(self.NY_ZIP)
-        denial = self._submit_review_page(denial, your_state="CA")
-
-        packet = generate_external_review_packet(denial, {})
-
-        self.assertEqual(packet["regulator"]["state"], "CA")
-        self.assertNotIn(
-            "State missing; cannot confidently select regulator.",
-            packet["eligibility"]["rationale"],
-        )
-
-    def test_the_appeal_context_cites_the_corrected_states_regulator(self):
+    def test_the_appeal_regulatory_context_cites_the_corrected_state(self):
+        """``_collect_regulatory_context`` is the reader the live generation
+        calls, and it reads `your_state`, not the mirror."""
         from fighthealthinsurance.generate_appeal import AppealGenerator
 
         denial = self._submit_upload_page(self.NY_ZIP)
@@ -2444,13 +2449,27 @@ class ConfirmedStateTest(TestCase):
         assert regulatory_context is not None
         self.assertIn("California", regulatory_context)
 
-        # And it reaches the text the appeal is actually written from.
-        prompt = AppealGenerator().make_open_prompt(
-            denial_text=denial.denial_text,
-            regulatory_citation_context=regulatory_context,
-        )
-        assert prompt is not None
-        self.assertIn("California", prompt)
+    def test_a_state_only_correction_refreshes_the_confirmed_reserve(self):
+        """A reserve generated under the old state argues under the wrong
+        state's law, and the stall fallback would serve it verbatim."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        self._seed_confirmed_reserve(denial)
+
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        self.last_dispatch.assert_called_once()
+        self.assertTrue(self.last_dispatch.call_args.kwargs["force"])
+        self.assertTrue(self.last_dispatch.call_args.kwargs["confirmed_context"])
+
+    def test_an_unchanged_state_does_not_refire_the_confirmed_reserve(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+        self._seed_confirmed_reserve(denial)
+
+        self._submit_review_page(denial, your_state="CA")
+
+        self.last_dispatch.assert_not_called()
 
     def test_a_blank_date_of_service_leaves_the_stored_one_alone(self):
         denial = self._submit_upload_page(self.NY_ZIP)

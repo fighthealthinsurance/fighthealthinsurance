@@ -543,7 +543,10 @@ class ConfirmedContextDispatchRuleTest(TestCase):
     def test_changed_values_dispatch_with_force(self):
         with patch(_DISPATCH) as mock_dispatch:
             self.helper._maybe_dispatch_confirmed_speculative(
-                self.denial, prior_procedure="CT scan", prior_diagnosis="pain"
+                self.denial,
+                prior_procedure="CT scan",
+                prior_diagnosis="pain",
+                prior_state=None,
             )
         mock_dispatch.assert_called_once_with(
             self.denial.denial_id,
@@ -558,6 +561,7 @@ class ConfirmedContextDispatchRuleTest(TestCase):
                 self.denial,
                 prior_procedure="MRI",
                 prior_diagnosis="chronic back pain",
+                prior_state=None,
             )
         mock_dispatch.assert_called_once_with(
             self.denial.denial_id,
@@ -578,6 +582,7 @@ class ConfirmedContextDispatchRuleTest(TestCase):
                 self.denial,
                 prior_procedure="MRI",
                 prior_diagnosis="chronic back pain",
+                prior_state=None,
             )
         mock_dispatch.assert_not_called()
 
@@ -586,9 +591,48 @@ class ConfirmedContextDispatchRuleTest(TestCase):
         self.denial.diagnosis = ""
         with patch(_DISPATCH) as mock_dispatch:
             self.helper._maybe_dispatch_confirmed_speculative(
-                self.denial, prior_procedure="", prior_diagnosis=""
+                self.denial, prior_procedure="", prior_diagnosis="", prior_state=None
             )
         mock_dispatch.assert_not_called()
+
+    def test_a_corrected_state_dispatches_with_force(self):
+        """State picks the regulator and the law the appeal cites, so a
+        reserve built under the old one is stale even when dx/px held."""
+        self.denial.your_state = "CA"
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Existing confirmed-context reserve draft text here.",
+            speculative=True,
+            context_level="speculative_confirmed",
+        )
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="MRI",
+                prior_diagnosis="chronic back pain",
+                prior_state="NY",
+            )
+        mock_dispatch.assert_called_once_with(
+            self.denial.denial_id,
+            force=True,
+            trigger="dx_px_confirmed",
+            confirmed_context=True,
+        )
+
+    def test_a_corrected_state_dispatches_without_dx_or_px(self):
+        self.denial.procedure = ""
+        self.denial.diagnosis = ""
+        self.denial.your_state = "CA"
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial, prior_procedure="", prior_diagnosis="", prior_state="NY"
+            )
+        mock_dispatch.assert_called_once_with(
+            self.denial.denial_id,
+            force=True,
+            trigger="dx_px_confirmed",
+            confirmed_context=True,
+        )
 
 
 class DispatchGuardTest(TestCase):

@@ -1042,11 +1042,11 @@ class FindNextStepsHelper:
             semi_sekret=semi_sekret,
         ).get()
 
-        # Snapshot dx/px before the user's confirmed values overwrite them, so
-        # the round-2 speculative dispatch below can tell "user corrected the
-        # extraction" from "user accepted it as-is".
+        # Snapshot for the round-2 dispatch below, which fires on a
+        # correction but not on an unchanged re-POST.
         prior_procedure = denial.procedure
         prior_diagnosis = denial.diagnosis
+        prior_state = denial.your_state
 
         # Track exactly which fields THIS request assigns so the save below
         # can write only those columns. The old full-row ``denial.save()``
@@ -1131,14 +1131,9 @@ class FindNextStepsHelper:
         existing_answers: dict[str, str] = load_qa(denial)
 
         if your_state:
-            # your_state is the column of record: every render and every
-            # appeal consumer reads it. state is the mirror kept in step for
-            # the five readers still on the short column (external review
-            # eligibility, the chat RAG lookup, structured plan matching, the
-            # generation-time RAG context and the CA branch in
-            # forms/questions.py), and a value there also marks a state this
-            # person named, which the intake path checks before inferring one
-            # from the zip again.
+            # your_state is the column of record; state is a mirror some
+            # readers are still on, and doubles as the marker the intake path
+            # checks before inferring a state from the zip again.
             denial.your_state = your_state
             denial.state = your_state
             changed_fields.add("your_state")
@@ -1196,10 +1191,8 @@ class FindNextStepsHelper:
                         appeal_deadline_label=denial.appeal_deadline_label,
                     ).update(appeal_deadline=resolved)
                     denial.appeal_deadline = resolved
-        # Truthy, not "is not None": this form posts every field on every
-        # submit, so a person who left the box empty (or cleared it by
-        # accident) used to overwrite a date they already gave or the
-        # extractor already found. A blank means "nothing new to say".
+        # Truthy, not "is not None": the form posts every field on every
+        # submit, so an untouched box arrives as "" rather than absent.
         if date_of_service:
             denial.date_of_service = date_of_service
             changed_fields.add("date_of_service")
@@ -1237,7 +1230,7 @@ class FindNextStepsHelper:
         # questions page.
         try:
             cls._maybe_dispatch_confirmed_speculative(
-                denial, prior_procedure, prior_diagnosis
+                denial, prior_procedure, prior_diagnosis, prior_state
             )
         except Exception:
             logger.opt(exception=True).warning(
@@ -1292,30 +1285,40 @@ class FindNextStepsHelper:
         denial: "Denial",
         prior_procedure: Optional[str],
         prior_diagnosis: Optional[str],
+        prior_state: Optional[str],
     ) -> None:
         """Kick off the round-2 (confirmed-context) speculative precompute.
 
         Called after ``find_next_steps`` saves the user's confirmed
-        procedure/diagnosis. Fires when a dx or px is present AND either the
-        user actually changed a value (their correction supersedes any earlier
-        reserve, including a previous confirmed-context one) or no
-        confirmed-context reserve exists yet. Re-POSTs of the categorize-review
-        form with unchanged values therefore no-op here, and the helper's own
-        guards (skip when live appeals exist, replace only after new drafts
-        persist) bound the rest.
+        procedure, diagnosis and state. Fires when there is something to
+        generate from AND either the user actually changed one of those values
+        (their correction supersedes any earlier reserve, including a previous
+        confirmed-context one) or no confirmed-context reserve exists yet.
+        Re-POSTs of the categorize-review form with unchanged values therefore
+        no-op here, and the helper's own guards (skip when live appeals exist,
+        replace only after new drafts persist) bound the rest.
+
+        State counts as one of those values because
+        ``AppealGenerator._collect_regulatory_context`` reads ``your_state``:
+        a reserve built before the correction cites the wrong state's law,
+        and the stall fallback would serve it.
         """
         confirmed_procedure = (denial.procedure or "").strip()
         confirmed_diagnosis = (denial.diagnosis or "").strip()
-        if not confirmed_procedure and not confirmed_diagnosis:
+        confirmed_state = (denial.your_state or "").strip()
+        state_changed = (prior_state or "").strip() != confirmed_state
+        if not confirmed_procedure and not confirmed_diagnosis and not state_changed:
             logger.debug(
                 f"speculative appeals[dx_px_confirmed]: denial "
-                f"{denial.denial_id} confirmed without procedure or diagnosis; "
-                f"nothing to refresh with"
+                f"{denial.denial_id} confirmed without procedure, diagnosis or "
+                f"a state change; nothing to refresh with"
             )
             return
-        values_changed = (prior_procedure or "").strip() != confirmed_procedure or (
-            prior_diagnosis or ""
-        ).strip() != confirmed_diagnosis
+        values_changed = (
+            (prior_procedure or "").strip() != confirmed_procedure
+            or (prior_diagnosis or "").strip() != confirmed_diagnosis
+            or state_changed
+        )
         if not values_changed:
             from fighthealthinsurance.context_utils import (
                 CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
@@ -1332,8 +1335,8 @@ class FindNextStepsHelper:
             ).exists():
                 logger.debug(
                     f"speculative appeals[dx_px_confirmed]: denial "
-                    f"{denial.denial_id} unchanged dx/px and confirmed-context "
-                    f"reserve already exists; skipping"
+                    f"{denial.denial_id} unchanged dx/px/state and "
+                    f"confirmed-context reserve already exists; skipping"
                 )
                 return
 
@@ -1749,58 +1752,42 @@ class DenialCreatorHelper:
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)
         if zip is not None and zip != "":
-            # A value in denial.state is a state that came off the review
-            # form. It is worth more than a fresh guess from the zip, but it
-            # is NOT proof the person typed it: the review page prefills its
-            # state box from this same zip lookup (views.py, PostInferedForm
-            # initial), so anyone who clicks through without touching the box
-            # posts the guess straight back and the row looks confirmed from
-            # then on.
-            #
-            # So a stored state wins over the zip only while the zip has not
-            # changed -- a back button, the same letter uploaded again, which
-            # is the case that used to put the guess back over a correction
-            # and write the appeal from the guess. A person who EDITS the zip
-            # is restating where they are, and that is newer than whatever is
-            # on the row; treating it otherwise meant a mistyped zip could
-            # never move the state again, no matter how many times they fixed
-            # it, and left service_zip and your_state pointing at two
-            # different states for UCREnrichmentHelper to read.
+            # A value in denial.state came off the review form, but is NOT
+            # proof the person typed it: that form prefills its state box from
+            # this same zip lookup (views.py, PostInferedForm initial), so
+            # clicking through without touching it posts the guess back. So a
+            # stored state outranks the zip only while the zip is unchanged.
+            # Only ZIP3 is retained, so "unchanged" can only mean the first
+            # three digits; a correction inside the last two is invisible
+            # here and leaves a stored state standing.
             previous_zip3 = (denial.service_zip or "").strip()
-            # No stored zip means there is nothing to compare, so treat it as
-            # unchanged rather than overwriting a stored state from a guess.
             zip_changed = bool(previous_zip3) and previous_zip3 != zip[:3]
             confirmed_state = (denial.state or "").strip()
             changed_state_fields = ["service_zip", "your_state"]
             if confirmed_state and not zip_changed:
-                # Rows written before the review POST wrote both columns hold
-                # the state in `state` and the zip's guess in `your_state`.
-                # There is no backfill for those, so this is the only thing
-                # that brings such a row back into step, and without it the
-                # check above would hold the stale guess in `your_state` for
-                # good.
+                # Owner decision 2026-09-13: new cases only, no backfill
+                # migration, so this pass is the only thing that ever brings
+                # a pre-existing mismatched row back into step.
                 if (denial.your_state or "").strip() != confirmed_state:
                     denial.your_state = confirmed_state
             else:
+                inferred_state = None
                 try:
-                    denial.your_state = cls.zip_engine.by_zipcode(zip).state
+                    inferred_state = cls.zip_engine.by_zipcode(zip).state
                 except Exception as e:
-                    # Default to no state - zip lookup can fail for invalid/unknown zips
                     logger.debug(f"Zip code lookup failed for {zip}: {e}")
-                if confirmed_state:
-                    # The state on the row was reached from the zip they just
-                    # replaced, so it is no longer a confirmation of anything.
-                    # Leaving it would let the next resubmission on the new
-                    # zip copy it straight back over the state we just
-                    # inferred, and the correction would bounce. The review
-                    # page comes after this one and gets the new value in its
-                    # state box, where they can still name a different state.
-                    denial.state = None
-                    changed_state_fields.append("state")
+                if inferred_state:
+                    denial.your_state = inferred_state
+                    if confirmed_state:
+                        # Reached from the zip they just replaced, so it no
+                        # longer confirms anything; left on the row, the next
+                        # submission would copy it back over the inference.
+                        denial.state = None
+                        changed_state_fields.append("state")
+                # No else: a failed lookup has no replacement to offer, so
+                # it must leave both columns as they were.
             # ZIP3 is HIPAA Safe Harbor de-identified, so it's safe to keep on
             # the row; UCREnrichmentHelper.resolve_geographic_area uses it.
-            # Persist alongside `your_state` so neither field is silently
-            # dropped on update paths that don't otherwise call save().
             denial.service_zip = zip[:3]
             # `state` is listed only when this path actually cleared it: a
             # concurrent review POST writes that column, and naming it in
