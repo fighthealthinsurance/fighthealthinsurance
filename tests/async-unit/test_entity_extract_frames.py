@@ -1,44 +1,17 @@
 """The extraction and escalation streams must not report work that did not happen.
 
-Two pages presented failure as success. The extraction page painted a green
-"Extraction Complete!" and clicked Next for the person one second later, and it
-did that hardest on the runs where nothing at all had been streamed: the
-already-done early exit returns with no frames, and the client called done()
-from ws.onclose, so a socket that closed having sent nothing looked exactly like
-a finished run. A model failure was invisible for the same reason, and doubly
-so because ``extract_set_denial_and_diagnosis`` swallows every exception out of
-``get_procedure_and_diagnosis`` two layers down, so the task wrapper never saw
-it either.
+Two things are pinned here. The wire: every frame is a JSON object carrying a
+task and an outcome, and exactly one run-level outcome arrives per run. And
+that the outcomes are distinguishable, because the opposite lie is as cheap as
+the first one: a row whose only extraction state is
+``extract_procedure_diagnosis_finished`` must be told we read the letter and
+found nothing, not congratulated on details it does not have.
 
-Two things are pinned here. First, the wire: every frame is a JSON object
-carrying a task and an outcome, and exactly one run-level outcome arrives per
-run. Second, the outcomes are distinguishable, because the opposite lie is as
-cheap as the first one: the already-done gate is an OR that includes
-``extract_procedure_diagnosis_finished``, and that flag is set whenever the
-model call returned without raising, including a return of ``(None, None)``, so
-a row that has the flag and nothing else must be told we read the letter and
-found nothing rather than congratulated on details it does not have.
-
-The page-side rules ("no internal step name reaches the DOM", "nothing
-navigates for the person", "every terminal state offers both ways out") are
-asserted twice, and only one of the two is here.
-
-What is here reads the source text, the same way ``test_ocr_progress_indicator
-.py`` does it. Be honest about what that buys: it catches a rule being deleted,
-and a rewrite that keeps the shape while changing what the page does walks
-straight past it. That is not hypothetical. A reviewer restored the deleted
-auto-advance in full, as ``form.requestSubmit()``, and every one of these
-passed; the navigation test below is written as a shape rather than a list of
-spellings because of it, and a version that assembles the method name at
-runtime still gets through.
-
-The other half is in ``tests/sync/``, one file per page:
-``test_entity_fetcher_behaviour.py`` compiles this TypeScript the way the
-bundle is built and runs it in node over a fake page, and
-``test_escalation_packet_behaviour.py`` renders ``escalation_packet.html`` and
-runs its script the same way. Both assert on the DOM the person would be
-looking at, and that is where these rules are actually tested. Keep the greps
-here as the cheap tripwire that runs with no toolchain, and put new page-side
+The page-side rules are asserted twice. What is here reads the source text,
+which catches a rule being deleted and nothing more: a rewrite that keeps the
+shape while changing what the page does walks straight past it. The real
+page-side tests run the code, in ``tests/sync/test_entity_fetcher_behaviour.py``
+and ``tests/sync/test_escalation_packet_behaviour.py``. Put new page-side
 claims over there.
 """
 
@@ -54,6 +27,7 @@ from channels.testing import WebsocketCommunicator
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.common_view_logic import (
+    EXTRACTION_OUTCOME_CACHED,
     EXTRACTION_OUTCOME_FAILED,
     EXTRACTION_OUTCOME_FOUND,
     EXTRACTION_OUTCOME_KEPT_EXISTING,
@@ -64,13 +38,23 @@ from fighthealthinsurance.common_view_logic import (
     EXTRACTION_RUN_KEPT_YOUR_DETAILS,
     EXTRACTION_RUN_OUT_OF_ATTEMPTS,
     EXTRACTION_RUN_READ_AND_FOUND_NOTHING,
+    EXTRACTION_TASK_CLAIM_ID,
+    EXTRACTION_TASK_DATE_OF_SERVICE,
+    EXTRACTION_TASK_DENIAL_TYPE,
+    EXTRACTION_TASK_INSURANCE_COMPANY,
+    EXTRACTION_TASK_PLAN_ID,
     EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
     DenialCreatorHelper,
     EscalationPacketHelper,
 )
 from fighthealthinsurance.escalation_addresses import EscalationRecipient
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
-from fighthealthinsurance.models import Denial
+from fighthealthinsurance.models import (
+    DataSource,
+    Denial,
+    DenialTypes,
+    DenialTypesRelation,
+)
 from fighthealthinsurance.websockets import StreamingEntityBackend
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -83,9 +67,7 @@ FETCHER = REPO / "static" / "js" / "entity_fetcher.ts"
 ENTITY_TEMPLATE = REPO / "templates" / "entity_extract.html"
 ESCALATION_TEMPLATE = REPO / "templates" / "escalation_packet.html"
 
-# Every step except the one that reads the procedure and the diagnosis. They
-# are stubbed so a run is fast and deterministic and so "no step reported
-# found" means what it says; the letter reader itself is always the real one.
+# Every step except the one that reads the procedure and the diagnosis.
 OTHER_STEPS = (
     "extract_set_fax_number",
     "extract_set_insurance_company",
@@ -136,6 +118,63 @@ def _only_the_letter_reader():
             )
         )
         yield
+
+
+@contextlib.contextmanager
+def _the_model_answers(**answers):
+    """Real setters, stubbed model.
+
+    ``_only_the_letter_reader`` replaces the other extractors with AsyncMocks,
+    so no test through it can see what their writes do to the row. This stubs
+    the ``appealGenerator`` roundtrips instead and lets the real setters run.
+    """
+    defaults = {
+        "get_procedure_and_diagnosis": (None, None),
+        "get_insurance_company": None,
+        "get_plan_id": None,
+        "get_claim_id": None,
+        "get_date_of_service": None,
+        "get_fax_number": None,
+    }
+    defaults.update(answers)
+    with contextlib.ExitStack() as stack:
+        for name, value in defaults.items():
+            stack.enter_context(
+                patch(
+                    f"fighthealthinsurance.common_view_logic.appealGenerator.{name}",
+                    new=AsyncMock(return_value=value),
+                )
+            )
+        stack.enter_context(
+            patch.object(
+                MLPlanDocHelper,
+                "generate_plan_documents_summary",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                DenialCreatorHelper,
+                "_maybe_dispatch_ucr",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                common_view_logic, "fire_and_forget_in_new_threadpool", _swallow
+            )
+        )
+        yield
+
+async def _regex_source() -> None:
+    """Make the ``regex`` DataSource real for this test's database.
+
+    ``DenialCreatorHelper.regex_src`` caches the row on the class and the
+    database is flushed between these tests, so a row cached by an earlier test
+    points at a primary key that no longer exists.
+    """
+    DenialCreatorHelper._regex_src = None
+    await sync_to_async(DataSource.objects.get_or_create)(name="regex")
 
 
 async def _make_denial(**kwargs) -> Denial:
@@ -238,7 +277,7 @@ def _function_body(src: str, name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# The six fixtures, driven through the consumer.
+# The stream, driven through the consumer.
 # ---------------------------------------------------------------------------
 
 
@@ -273,8 +312,6 @@ async def test_a_row_that_already_has_the_details_is_told_so():
 
     assert reader.await_count == 0, "the already-done gate re-read the letter"
     assert _the_run_outcome(records) == EXTRACTION_RUN_ALREADY_HAVE_DETAILS
-    # The old page painted "Extraction Complete!" on exactly this run, which
-    # streamed nothing at all.
     blob = json.dumps(records).lower()
     assert "extraction complete" not in blob, records
 
@@ -353,13 +390,8 @@ async def test_a_failure_underneath_the_extractor_reaches_the_page():
 
 @pytest.mark.asyncio
 async def test_an_authorized_retry_reads_the_letter_again_within_the_cap():
-    """The retry is a real operation, not a link back to the same URL.
-
-    Returning to the extraction page re-runs nothing: the already-done gate and
-    the attempt cap both sit in front of it. The retry clears what the gate
-    reads, leaves what the person typed alone, and spends one of the letter's
-    attempts on its way through.
-    """
+    """The retry clears what the gate reads, leaves what the person typed
+    alone, and spends one of the letter's attempts on its way through."""
     denial = await _make_denial()
     with _only_the_letter_reader(), patch(
         "fighthealthinsurance.common_view_logic.appealGenerator."
@@ -411,14 +443,9 @@ async def test_an_authorized_retry_reads_the_letter_again_within_the_cap():
 
 @pytest.mark.asyncio
 async def test_a_find_we_could_not_write_down_is_not_reported_as_filled_in():
-    """The same defect as the green banner, on the path the retry opened.
-
-    The write to ``procedure``/``diagnosis`` declines on a column that already
-    holds something, because that something may be what the person typed. So a
-    run can read the letter, find a procedure, write nothing, and reach the end
-    of the loop having changed nothing at all. ``run_finished`` says "we filled
-    in what we found", and on this run we did not.
-    """
+    """A run can read the letter, find a procedure, and write nothing, because
+    the write declines on a column that already holds what the person typed.
+    ``run_finished`` says "we filled in what we found", and this run did not."""
     denial = await _make_denial(procedure="typed by the person", diagnosis="theirs too")
     with _only_the_letter_reader(), patch(
         "fighthealthinsurance.common_view_logic.appealGenerator."
@@ -449,10 +476,9 @@ async def test_the_retry_button_cannot_be_pressed_forever():
     """The cap has to count reads, not just the reads that raised.
 
     ``extract_attempts`` is bumped by the extractor's except path, so on a
-    letter the model reads cleanly and finds nothing in it never moves. The
-    retry clears the finished flag, so without spending an attempt of its own
-    every press would re-run eleven steps and the PubMed/ClinicalTrials/
-    speculative-context fan-out behind them, with nothing to stop it.
+    letter the model reads cleanly it never moves, and the retry clears the
+    finished flag: without an attempt of its own every press re-runs eleven
+    steps and the fan-out behind them.
     """
     denial = await _make_denial()
     with _only_the_letter_reader(), patch(
@@ -477,13 +503,176 @@ async def test_the_retry_button_cannot_be_pressed_forever():
     assert fresh.extract_attempts == 3, fresh.extract_attempts
 
 
+
+@pytest.mark.asyncio
+async def test_the_retry_does_not_overwrite_the_details_the_person_corrected():
+    """The retry lifts the gate that normally stops a second read.
+
+    Plan ID, claim ID, date of service and the insurer name are all editable on
+    the review page, and their extractors wrote unconditionally because no
+    other run reaches them twice. So the person could correct what the first
+    run got wrong, press Back, press retry, and get the model's answers again
+    in place of their own. The real setters run here; stubbing them is what
+    hid it.
+    """
+    await _regex_source()
+    denial = await _make_denial(
+        denial_text="Denied. Plan XYZ-1. Claim 998877. Served 2026-01-02.",
+    )
+    with _the_model_answers(
+        get_procedure_and_diagnosis=(None, None),
+        get_plan_id="AB12345",
+        get_claim_id="CD67890",
+        get_date_of_service="2026-01-02",
+        get_insurance_company="Model Insurance Co",
+    ):
+        await _run(denial)
+
+    # What the person fixed on the review page, in every column the model also
+    # answers.
+    await sync_to_async(Denial.objects.filter(denial_id=denial.denial_id).update)(
+        plan_id="ZZ99911",
+        claim_id="YY88822",
+        date_of_service="2025-12-31",
+        insurance_company="Their Insurance Co",
+    )
+
+    with _the_model_answers(
+        get_procedure_and_diagnosis=(None, "knee pain"),
+        get_plan_id="AB12345",
+        get_claim_id="CD67890",
+        get_date_of_service="2026-01-02",
+        get_insurance_company="Model Insurance Co",
+    ):
+        records = await _run(denial, retry=True)
+
+    fresh = await _reload(denial)
+    assert fresh.plan_id == "ZZ99911", "the retry overwrote the plan ID"
+    assert fresh.claim_id == "YY88822", "the retry overwrote the claim ID"
+    assert fresh.date_of_service == "2025-12-31", "the retry overwrote the date"
+    assert (
+        fresh.insurance_company == "Their Insurance Co"
+    ), "the retry overwrote the insurer"
+
+    # And the page says what happened rather than claiming a fill-in.
+    for task in (
+        EXTRACTION_TASK_PLAN_ID,
+        EXTRACTION_TASK_CLAIM_ID,
+        EXTRACTION_TASK_DATE_OF_SERVICE,
+        EXTRACTION_TASK_INSURANCE_COMPANY,
+    ):
+        assert _outcome_for(records, task) == EXTRACTION_OUTCOME_KEPT_EXISTING, task
+
+
+@pytest.mark.asyncio
+async def test_an_empty_row_still_gets_filled_in_by_the_real_setters():
+    """The other half of the conditional write: it still writes."""
+    await _regex_source()
+    denial = await _make_denial(denial_text="Denied. Plan XYZ-1. Claim 998877.")
+    with _the_model_answers(
+        get_plan_id="XYZ-1",
+        get_claim_id="998877",
+        get_date_of_service="2026-01-02",
+        get_insurance_company="Model Insurance Co",
+    ):
+        records = await _run(denial)
+
+    fresh = await _reload(denial)
+    assert fresh.plan_id == "XYZ-1"
+    assert fresh.claim_id == "998877"
+    assert fresh.date_of_service == "2026-01-02"
+    assert fresh.insurance_company == "Model Insurance Co"
+    for task in (
+        EXTRACTION_TASK_PLAN_ID,
+        EXTRACTION_TASK_CLAIM_ID,
+        EXTRACTION_TASK_DATE_OF_SERVICE,
+        EXTRACTION_TASK_INSURANCE_COMPANY,
+    ):
+        assert _outcome_for(records, task) == EXTRACTION_OUTCOME_FOUND, task
+
+
+@pytest.mark.asyncio
+async def test_a_step_that_blew_up_is_not_reported_as_absent_from_the_letter():
+    """These four setters swallow the model's exceptions, so a read that failed
+    returned the same ``None`` as a letter with no plan ID in it, and the page
+    said "not in this letter" for a step that never got an answer."""
+    await _regex_source()
+    denial = await _make_denial()
+    boom = AsyncMock(side_effect=RuntimeError("the model is down"))
+    with _the_model_answers(), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_plan_id", new=boom
+    ), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_claim_id", new=boom
+    ), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_date_of_service",
+        new=boom,
+    ), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+        new=boom,
+    ):
+        records = await _run(denial)
+
+    for task in (
+        EXTRACTION_TASK_PLAN_ID,
+        EXTRACTION_TASK_CLAIM_ID,
+        EXTRACTION_TASK_DATE_OF_SERVICE,
+        EXTRACTION_TASK_INSURANCE_COMPANY,
+    ):
+        assert _outcome_for(records, task) == EXTRACTION_OUTCOME_FAILED, task
+
+
+@pytest.mark.asyncio
+async def test_the_denial_reason_is_not_reported_missing_after_it_was_stored():
+    """The label on this step is "Reason they gave for the denial", and a bare
+    ``None`` return is read as nothing-found, so a run that stored two denial
+    types told the person the reason was not in their letter.
+
+    The second run pins the get-or-create: the relation table carries no unique
+    constraint, so a retry adds a second copy of every type.
+    """
+    await _regex_source()
+    kinds = [
+        await sync_to_async(DenialTypes.objects.create)(
+            name="Medical necessity", regex="necessity", diagnosis_regex=""
+        ),
+        await sync_to_async(DenialTypes.objects.create)(
+            name="Prior authorization", regex="prior auth", diagnosis_regex=""
+        ),
+    ]
+
+    denial = await _make_denial()
+
+    async def _two_types(**kwargs):
+        return kinds
+
+    with _the_model_answers(), patch.object(
+        DenialCreatorHelper.regex_denial_processor,
+        "get_denialtype",
+        new=AsyncMock(side_effect=_two_types),
+    ):
+        records = await _run(denial)
+        assert (
+            _outcome_for(records, EXTRACTION_TASK_DENIAL_TYPE)
+            == EXTRACTION_OUTCOME_FOUND
+        ), records
+        stored = await sync_to_async(
+            DenialTypesRelation.objects.filter(denial=denial).count
+        )()
+        assert stored == len(kinds)
+
+        records = await _run(denial, retry=True)
+
+    again = await sync_to_async(
+        DenialTypesRelation.objects.filter(denial=denial).count
+    )()
+    assert again == len(kinds), "the retry stored a second copy of every denial type"
+    assert (
+        _outcome_for(records, EXTRACTION_TASK_DENIAL_TYPE) == EXTRACTION_OUTCOME_CACHED
+    ), records
+
 @pytest.mark.asyncio
 async def test_a_case_that_does_not_resolve_uses_the_same_envelope():
-    """The rejection frame speaks the same vocabulary as everything else.
-
-    The authorization gate landed separately; this pins that its reply is not a
-    second shape the client has to know about.
-    """
+    """The rejection frame is not a second shape the client has to know."""
     denial = await _make_denial()
     raw = await _drive(
         {
@@ -540,13 +729,7 @@ def test_replacing_the_letter_clears_the_candidate_mirrors():
 
 
 def test_no_step_name_can_reach_the_page():
-    """The render path reads the server's words and nothing else.
-
-    The old client fell back to "Processed ${taskName}" for any step it had no
-    display name for, which put "triage" and "plan document summary" in front
-    of patients. There is no fallback now: a frame the server gave no label is
-    not rendered at all.
-    """
+    """A frame the server gave no label for is not rendered at all."""
     src = FETCHER.read_text()
     body = _function_body(src, "renderStep")
     assert "task" not in body, body
@@ -567,16 +750,11 @@ def test_the_words_extraction_complete_cannot_reach_the_dom():
 
 
 def test_the_extraction_page_never_navigates_for_the_person():
-    """Stated about this page, not about the flow.
+    """Stated about this page, not about the flow:
+    ``find_next_steps_loading.html`` auto-submits by design.
 
-    ``find_next_steps_loading.html`` auto-submits by design and belongs to a
-    different change; the claim here is only that nothing in the extraction
-    page's own script moves the person.
-
-    Written as a shape rather than a list of spellings. Three literals
-    (``.click()``, ``location.href``, ``.submit()``) let
-    ``form.requestSubmit()`` walk straight through, which is the same defect
-    under a different name.
+    A shape rather than a list of spellings, because three literals let
+    ``form.requestSubmit()`` walk straight through.
     """
     src = FETCHER.read_text()
     movers = re.findall(
@@ -586,20 +764,13 @@ def test_the_extraction_page_never_navigates_for_the_person():
     assert not movers, f"something moves the person: {movers}"
     assert not re.search(r"location\s*(\.\s*href)?\s*=", src), src
     assert "window.open" not in src
-    # The only way forward is a control the person presses, and it is a plain
-    # submit inside the flow's own form.
     assert "button.type = submits ? 'submit' : 'button'" in src
 
 
 def test_the_page_does_not_say_two_things_at_once_when_the_run_ends():
-    """The yellow block and the status panel are on screen together.
-
-    ``#waiting-msg`` says "Analyzing your denial..." behind a spinner with no
-    end, and on main the deleted auto-advance took it off screen about a second
-    after a run finished. Nothing else ever hides it, so a terminal state has
-    to, or every run ends with the page telling the person two different
-    things: still reading, above the panel saying it is done.
-    """
+    """``#waiting-msg`` says "Analyzing your denial..." behind an endless
+    spinner and nothing else hides it, so a terminal state has to, or the page
+    ends every run saying two different things at once."""
     src = FETCHER.read_text()
     finish_body = _function_body(src, "finish")
     assert "waiting-msg" in finish_body, finish_body
@@ -608,17 +779,13 @@ def test_the_page_does_not_say_two_things_at_once_when_the_run_ends():
         finish_body,
     )
     assert hide, finish_body
-    # The template still has the block for the run itself; this is about the
-    # end of the run, not about deleting the explanation.
+    # The block is still there for the run itself.
     assert 'id="waiting-msg"' in ENTITY_TEMPLATE.read_text()
 
 
 def test_a_good_run_is_not_offered_the_typing_words():
-    """The green button under a success said the person had typing to do.
-
-    Both controls are on every terminal state; only the words on the submit one
-    turn on whether the run went well.
-    """
+    """Both controls are on every terminal state; only the words on the submit
+    one turn on whether the run went well."""
     src = FETCHER.read_text()
     finish_body = _function_body(src, "finish")
     assert "Continue to the next page" in finish_body, finish_body
@@ -628,13 +795,8 @@ def test_a_good_run_is_not_offered_the_typing_words():
 
 
 def test_nothing_paints_over_a_terminal_state():
-    """``settled`` claims nothing may paint over the final words.
-
-    ``finish`` guards on it, but a late frame reaching ``renderStep`` would
-    still append a step line under them: a reconnect scheduled in the second
-    before a timer fires opens a socket whose first frames arrive after the
-    page has already given its answer.
-    """
+    """``finish`` guards on ``settled``, but a late frame reaching
+    ``renderStep`` would still append a step line under the final words."""
     src = FETCHER.read_text()
     handle = _function_body(src, "handleFrame")
     assert "if (settled)" in handle, handle
@@ -643,13 +805,9 @@ def test_nothing_paints_over_a_terminal_state():
 
 
 def test_the_bundle_url_moves_when_the_frames_change():
-    """An old cached bundle cannot read the new frames.
-
-    Static files here are served from unhashed URLs with no manifest storage,
-    so without a marker in the URL a browser holding the previous bundle keeps
-    it: it would render none of the new frames and still paint its own
-    all-clear when the socket closed, which is worse than what this replaced.
-    """
+    """Static files here are served from unhashed URLs with no manifest
+    storage, so without a marker in the URL a browser holding the previous
+    bundle keeps it and renders none of the new frames."""
     src = ENTITY_TEMPLATE.read_text()
     match = re.search(
         r'\{% static "js/dist/entity_fetcher\.bundle\.js" %\}\?frames=(\d+)', src
@@ -665,10 +823,8 @@ def test_every_terminal_state_offers_both_ways_out():
     end = finish_body.index("actions.style.display")
     between = finish_body[start:end]
     assert "Continue and type it in myself" in between, finish_body
-    # No branch between the two: a state that offers one and not the other is
-    # how the page stranded people in the first place. The words on the
-    # continue button do turn on the outcome, which is a ternary on its label
-    # and not a branch around the control.
+    # No branch between the two. The words on the continue button turn on the
+    # outcome through a ternary on its label, not a branch around the control.
     assert "if (" not in between, between
     assert between.count("actions.appendChild") == 2, between
 

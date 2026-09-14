@@ -1,14 +1,12 @@
 'use strict';
 // Drive the real compiled entity_fetcher over a fake page and report what the
 // person would be looking at. One scenario per process: the module keeps run
-// state at module scope (``settled``, the timers, the socket), and a fresh
-// process is the only way to be sure a scenario is not reading the leftovers
-// of the one before it.
+// state at module scope, so a fresh process is the only way to be sure a
+// scenario is not reading the leftovers of the one before it.
 //
 //   node entity_fetcher_behaviour.cjs <compiled entity_fetcher.js> <scenario>
 //
-// Writes one JSON object to stdout. Everything the page logs is swallowed so
-// the only thing on stdout is that object.
+// Writes one JSON object to stdout; everything the page logs is swallowed.
 
 const path = require('path');
 const {buildPage, install} = require(path.join(__dirname, 'fake_page.cjs'));
@@ -64,11 +62,8 @@ function buttons() {
     }));
 }
 
-// What a person could actually read off the page. A block with display:none
-// on it is not on the screen, which is the whole point of hiding the yellow
-// "Analyzing your denial..." spinner when the run ends: the test for "the page
-// does not say two things at once" has to look at what is visible, not at what
-// is still in the tree.
+// What a person could read off the page: a block with display:none on it is
+// not on the screen, whatever the tree still holds.
 function visibleText(node) {
   if (node.nodeType === 3) return node.data;
   if (node.style && node.style.display === 'none') return '';
@@ -102,9 +97,6 @@ function start() {
 }
 
 const scenarios = {
-  // A run that goes well. The green button under it must not be offering to
-  // let the person type in what we just filled in, and the yellow block must
-  // not still be saying we are reading the letter.
   good_run() {
     const ws = start();
     ws.fireOpen();
@@ -112,14 +104,12 @@ const scenarios = {
     ws.fireMessage(STEP_FOUND);
     ws.fireMessage(RUN_FINISHED);
     const ended = snapshot();
-    // The socket hanging up after a finished run is not a second answer.
     ws.fireClose();
     page.clock.advance(5000);
     return {opening, ended, afterTheSocketClosed: snapshot()};
   },
 
-  // The opposite news on the same wire. Both ways out, and the words that go
-  // with a run that found nothing.
+  // The opposite news on the same wire.
   nothing_found() {
     const ws = start();
     ws.fireOpen();
@@ -133,8 +123,7 @@ const scenarios = {
     return {ended: snapshot()};
   },
 
-  // A socket that closes having sent nothing. This is the run the page used to
-  // paint green and click Next on.
+  // A socket that closes having sent nothing.
   dead_socket() {
     start();
     for (let i = 0; i < 4; i++) {
@@ -146,7 +135,6 @@ const scenarios = {
     return {ended: snapshot()};
   },
 
-  // A run that opens, says one thing and then goes quiet forever.
   inactivity_timeout() {
     const ws = start();
     ws.fireOpen();
@@ -156,8 +144,7 @@ const scenarios = {
     return {beforeTheTimeout, ended: snapshot()};
   },
 
-  // A frame the server gave no words for is an internal step name. It is not
-  // for the person and must not reach the page under any spelling.
+  // A frame the server gave no words for is an internal step name.
   unlabeled_step_never_renders() {
     const ws = start();
     ws.fireOpen();
@@ -168,8 +155,6 @@ const scenarios = {
     return {ended: snapshot()};
   },
 
-  // A reconnect scheduled in the second before a timer fired can deliver
-  // frames after the page has already given its answer.
   late_frame_cannot_repaint() {
     const ws = start();
     ws.fireOpen();
@@ -191,8 +176,6 @@ const scenarios = {
     return {ended, afterTheLateFrames: snapshot()};
   },
 
-  // The retry control is a control, not a reload: pressing it runs again in
-  // place and tells the server this read is an authorized retry.
   retry_button_runs_again() {
     const ws = start();
     ws.fireOpen();
@@ -211,11 +194,9 @@ const scenarios = {
     };
   },
 
-  // A frame from the superseded run's socket, delivered while the run the
-  // person pressed retry for is still in flight. close() asks the browser to
-  // hang up; anything already queued on the wire is still delivered, and the
-  // run-level frame is the one that matters because ``settled`` went back to
-  // False when the new run started, so nothing else would stop it.
+  // close() asks the browser to hang up; anything already queued on the wire
+  // is still delivered, and ``settled`` went back to false when the new run
+  // started, so nothing but the generation would stop it.
   stale_frame_lands_during_the_next_run() {
     const ws = start();
     ws.fireOpen();
@@ -227,8 +208,7 @@ const scenarios = {
     retry.dispatch('click');
     const second = page.sockets[page.sockets.length - 1];
     second.fireOpen();
-    // The old socket speaks: first a step, then the verdict of the run that is
-    // already over.
+    // The old socket speaks: a step, then the verdict of a run already over.
     ws.fireMessage({
       type: 'step',
       task: 'extract_set_plan_id',
@@ -237,28 +217,23 @@ const scenarios = {
     });
     ws.fireMessage(RUN_FINISHED);
     const afterTheStaleFrames = snapshot();
-    // And the run the person actually asked for gets to say what it found.
     second.fireMessage(STEP_FOUND);
     second.fireMessage(RUN_FOUND_NOTHING);
     return {afterTheStaleFrames, ended: snapshot()};
   },
 
-  // A reconnect booked by the run that was abandoned. The socket blips, which
-  // books a retry a second out, and the run's own inactivity timer comes due
-  // before that retry does; the person presses the retry button, and only then
-  // does the old reconnect fall due.
+  // A reconnect booked by a run the person then abandons by pressing retry.
   reconnect_from_the_previous_run_never_opens() {
     const ws = start();
-    // Never opens, never says anything, hangs up just under the minute. That
+    // Never opens, never says anything, hangs up just under the minute, which
     // books a reconnect a second later.
     page.clock.advance(58500);
     ws.fireClose();
     page.clock.advance(1000);
     const second = page.sockets[page.sockets.length - 1];
-    // The reconnect's socket does the same, booking a second reconnect.
     second.fireClose();
-    // The inactivity timer runs from the start of the run rather than from the
-    // last socket, so it comes due while that reconnect is still booked.
+    // The inactivity timer runs from the start of the run, not from the last
+    // socket, so it comes due while that reconnect is still booked.
     page.clock.advance(500);
     const ended = snapshot();
     const actions = page.document.getElementById('entity-status-actions');
@@ -268,7 +243,6 @@ const scenarios = {
     retry.dispatch('click');
     const third = page.sockets[page.sockets.length - 1];
     third.fireOpen();
-    // Now the abandoned run's reconnect falls due.
     page.clock.advance(5000);
     const afterTheOldReconnect = snapshot();
     third.fireMessage(STEP_FOUND);
@@ -277,17 +251,30 @@ const scenarios = {
       ended,
       afterTheOldReconnect,
       finished: snapshot(),
-      // Which sockets the page itself hung up on, in the order they were
-      // opened. finish() hangs up whatever is in ``activeSocket``, so a stale
-      // socket that has taken that slot leaves the live run's socket open.
+      // finish() hangs up whatever is in ``activeSocket``, so a stale socket
+      // that has taken that slot leaves the live run's socket open.
       hungUpOn: page.sockets.map((s) => s.closedByPage),
     };
   },
 
+  // Nobody presses anything: the run ends by itself and the reconnect falls
+  // due after the verdict is already on the screen.
+  reconnect_after_the_verdict_never_opens() {
+    const ws = start();
+    // Hangs up at 59.5s, booking a reconnect for 60.5s.
+    page.clock.advance(59500);
+    ws.fireClose();
+    const beforeTheTimeout = snapshot();
+    // 60s: the inactivity timer paints the terminal state.
+    page.clock.advance(500);
+    const ended = snapshot();
+    // 60.5s: the booked reconnect falls due.
+    page.clock.advance(5000);
+    return {beforeTheTimeout, ended, afterTheBookedReconnect: snapshot()};
+  },
+
   // The close event for the run that just ended arrives while the run the
-  // person started by pressing retry is already in flight. A browser delivers
-  // it after the closing handshake, which is a network round trip, and the
-  // retry button is on the screen for the whole of that window.
+  // person started by pressing retry is already in flight.
   close_event_lands_during_the_next_run() {
     const ws = start();
     ws.fireOpen();
@@ -302,7 +289,6 @@ const scenarios = {
     // Now the first socket's close finally lands.
     page.clock.advance(10);
     const afterTheOldClose = snapshot();
-    // And the second run goes on to finish normally.
     second.fireMessage(STEP_FOUND);
     second.fireMessage(RUN_FINISHED);
     return {afterTheOldClose, ended: snapshot(), socketCount: page.sockets.length};

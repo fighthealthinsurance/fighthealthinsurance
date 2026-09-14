@@ -1,17 +1,14 @@
 'use strict';
 // Drive the escalation page's own script over a fake page and report what the
-// person would be looking at. One scenario per process, for the same reason
-// the extraction driver works that way: the script keeps its state in the
-// closure it builds on DOMContentLoaded, and a fresh process is the only way
-// to be sure a scenario is not reading the leftovers of the one before it.
+// person would be looking at. One scenario per process: the script keeps its
+// state in the closure it builds on DOMContentLoaded.
 //
 //   node escalation_packet_behaviour.cjs <script extracted from the template> <scenario>
 //
 // The script comes from rendering escalation_packet.html, not from a copy kept
 // here: a fixture that drifts from the template tests nothing.
 //
-// Writes one JSON object to stdout. Everything the page logs is swallowed so
-// the only thing on stdout is that object.
+// Writes one JSON object to stdout; everything the page logs is swallowed.
 
 const fs = require('fs');
 const path = require('path');
@@ -45,10 +42,7 @@ function textOf(el) {
   return el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
 }
 
-// What a person could actually read off the page. display:none is off the
-// screen, which is the whole question here: a loading block that says
-// "Drafting your regulator letters..." is a lie once the socket is gone, and
-// hiding it is the other lie.
+// What a person could read off the page: display:none is off the screen.
 function visibleText(node) {
   if (node.nodeType === 3) return node.data;
   if (node.style && node.style.display === 'none') return '';
@@ -86,8 +80,7 @@ function send(ws, frames) {
 }
 
 const scenarios = {
-  // The defect this branch exists for, on this page: the socket dies after two
-  // of four letters, and closing was read as finishing.
+  // The socket dies after two of four letters.
   close_without_done() {
     const ws = start();
     ws.fireOpen();
@@ -97,8 +90,7 @@ const scenarios = {
     return {beforeTheClose, ended: snapshot()};
   },
 
-  // The one case where hiding the block is honest: the server says every
-  // letter is there.
+  // The one case where hiding the block is honest.
   done_complete() {
     const ws = start();
     ws.fireOpen();
@@ -112,8 +104,7 @@ const scenarios = {
     return {beforeTheClose, ended: snapshot()};
   },
 
-  // A done frame that is not a complete one. The server skipped a recipient it
-  // could not draft for and carried on, so the packet is short.
+  // A done frame that is not a complete one: the server skipped a recipient.
   done_incomplete() {
     const ws = start();
     ws.fireOpen();
@@ -135,8 +126,7 @@ const scenarios = {
     return {beforeTheClose, ended: snapshot()};
   },
 
-  // onerror lands, then the socket closes a moment later. The close used to
-  // erase what onerror had just written.
+  // onerror lands, then the socket closes a moment later.
   error_then_close() {
     const ws = start();
     ws.fireOpen();
@@ -159,8 +149,7 @@ const scenarios = {
     return {afterTheError, afterTheStatus, ended: snapshot()};
   },
 
-  // A socket that closes having said nothing at all, which is what an
-  // already-done early exit on the server looks like from here.
+  // A socket that closes having said nothing at all.
   close_with_nothing_at_all() {
     const ws = start();
     ws.fireOpen();

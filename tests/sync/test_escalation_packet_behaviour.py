@@ -1,30 +1,17 @@
 """What the escalation page actually shows, run rather than read.
 
-The escalation half of ``tests/async-unit/test_entity_extract_frames.py`` pins
-the server's frames properly and then reads ``escalation_packet.html`` as text
-for the page-side rules. That fallback is weak in a demonstrated way: a
-reviewer restored the whole defect this branch removes, as
-``loadingText.setAttribute('style', 'display:none')`` at the top of the close
-handler, and all three source-text assertions still passed. A grep catches a
-rule being deleted. It does not catch the page doing the wrong thing.
+The source-text assertions in ``tests/async-unit/test_entity_extract_frames``
+catch a rule being deleted and nothing more: a reviewer restored this branch's
+whole defect as ``loadingText.setAttribute('style', 'display:none')`` and all
+three still passed.
 
 So this renders the real template, lifts its script out of the rendered HTML,
-and runs it in node over a hand-written page (``tests/js/fake_page.cjs``),
-driving a packet through a fake socket and asserting on the resulting DOM.
-Rendered rather than read as a file, because what ships is the render: the
-script sits behind ``{% if recipients_count > 0 %}`` and carries a Django tag
-inside it, and a harness that reads the raw template would be testing
-something the browser never sees.
+and runs it in node over ``tests/js/fake_page.cjs``, asserting on the resulting
+DOM. Rendered rather than read as a file because the script sits behind
+``{% if recipients_count > 0 %}`` and carries a Django tag inside it, so a
+harness reading the raw template would test something the browser never sees.
 
-The defect the escalation page had is the same one the extraction page had.
-``ws.onclose`` hid the loading block, so a socket that died after two of four
-letters looked exactly like a finished packet: the spinner went away, two
-letters sat on the screen, and nothing said the other two were never written.
-The close handler also ran after ``onerror``, erasing the connection error it
-had just put on the screen.
-
-Skipped, not silently passed, where node is not installed. CI installs it: the
-sync job sets node up before it runs tox.
+Skipped, not silently passed, where node is not installed. CI installs it.
 """
 
 import json
@@ -71,9 +58,8 @@ def page_script(tmp_path_factory) -> pathlib.Path:
     ours = [b for b in blocks if "streaming-escalation-backend" in b]
     assert len(ours) == 1, f"{len(ours)} candidate scripts in the rendered page"
     body = ours[0]
-    # An unrendered tag here means the extraction picked up template source
-    # instead of output, and node would die on it with a syntax error that says
-    # nothing useful.
+    # An unrendered tag means the extraction picked up template source rather
+    # than output, and node dies on it with an unhelpful syntax error.
     assert "{{" not in body and "{%" not in body, body
     out = tmp_path_factory.mktemp("escalation") / "page.js"
     out.write_text(body)
@@ -130,13 +116,11 @@ def test_a_socket_that_dies_mid_packet_is_not_a_finished_packet(page_script):
     assert STILL_DRAFTING in before["loadingHeading"].lower(), before
 
     ended = result["ended"]
-    # The letters that did arrive stay.
     assert ended["letterCount"] == 2, ended
     # The block is still on the screen, and it no longer claims we are working.
     assert ended["loadingDisplay"] != "none", ended
     assert ended["loadingHeading"] == "The connection ended early", ended
     assert STILL_DRAFTING not in ended["visibleText"].lower(), ended
-    # And it says how much of the packet the person actually has.
     assert "2 letter(s)" in ended["loadingDetail"], ended
     assert "Reload this page" in ended["loadingDetail"], ended
     assert ended["loadingBorderLeft"] == "4px solid #dc3545", ended
@@ -162,7 +146,7 @@ def test_only_a_complete_packet_takes_the_block_off_the_screen(page_script):
     assert ended["letterCount"] == 2, ended
     assert STILL_DRAFTING not in ended["visibleText"].lower(), ended
     # The close after a finished packet is the socket hanging up, not a second
-    # answer: nothing may put the connection-ended words up over it.
+    # answer.
     assert "connection ended early" not in ended["visibleText"].lower(), ended
 
 

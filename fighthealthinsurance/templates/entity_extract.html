@@ -6,14 +6,10 @@ Analyzing Your Denial
 {% endblock title %}
 
 {% block pre-roll %}
-{% comment %} The ?frames= marker is a cache-buster, not decoration. The frames
-   this bundle reads are a different shape from the ones the bundle before it
-   read, and static files here are served from unhashed URLs with no manifest
-   storage configured, so a browser holding the previous file would keep it.
-   That browser would parse none of the new server's frames and would still
-   paint its own all-clear when the socket closed, which is the exact defect
-   this page was changed to remove. A new query string is a new URL. Bump it
-   whenever the shape of what the socket sends changes. {% endcomment %}
+{% comment %} ?frames= is a cache-buster. Static files here are served from
+   unhashed URLs with no manifest storage configured, so a browser holding the
+   previous bundle would keep it and parse none of the new server's frames.
+   Bump it whenever the shape of what the socket sends changes. {% endcomment %}
 <script src='{% static "js/dist/entity_fetcher.bundle.js" %}?frames=2' defer></script>
 {% endblock pre-roll %}
 
@@ -57,9 +53,8 @@ Analyzing Your Denial
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
-      // wss:// over HTTPS, ws:// over plain HTTP. The scheme was hardcoded to
-      // wss://, which is right in production and breaks every run under the
-      // documented local http://localhost dev recipe.
+      // wss:// over HTTPS, ws:// over plain HTTP: a hardcoded wss:// breaks
+      // every run under the documented local http://localhost dev recipe.
       const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const backendUrl = `${wsProto}//${window.location.host}/ws/streaming-entity-backend/`;
       const data = {

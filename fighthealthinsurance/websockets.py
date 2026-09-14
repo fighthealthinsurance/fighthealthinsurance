@@ -970,8 +970,7 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
         # one of the three model attempts a case gets (an authorized retry
         # always does, an automatic run does when the model raises), so it
         # should only ever run for a request that can name the case it belongs
-        # to. The page already sends all three (entity_extract.html spreads
-        # form_context into the payload), so nothing changes for the client.
+        # to.
         #
         # One uniform reply for every failure, including a case that does not
         # exist: the response says nothing about which part did not match, or
@@ -995,9 +994,8 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
             # The id only: an email does not belong in a log line.
             logger.warning(f"entity ws: could not resolve denial {denial_id!r}")
             try:
-                # Same envelope as every other frame on this socket: a task, an
-                # outcome and the words for the page. The client has one shape
-                # to parse and no reason to guess.
+                # The same envelope as every other frame on this socket, so the
+                # client has one shape to parse.
                 await self.send(
                     json.dumps(
                         {
@@ -1016,9 +1014,8 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
                 logger.debug("entity ws: could not send the error frame")
             await self.close()
             return
-        # An authorized retry: the same gate above decides whether it is
-        # allowed, so the one mutation this adds is reachable only by a
-        # request that has already proved which case it belongs to.
+        # Reachable only past the gate above, so the extra mutation a retry
+        # performs needs a request that has proved which case it belongs to.
         retry = bool(data.get("retry"))
         # The id off the resolved row, not the one the client sent: it is
         # typed, and it is the case this request proved it may act on.
@@ -1027,18 +1024,13 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
         )
 
         try:
-            # One place serialises. The generator decides what happened and
-            # this loop writes it down: no bare task-name strings, and no
-            # newline frame between records, which the client had to filter
-            # out before it could tell an empty frame from a real one.
             async for record in aitr:
                 await self.send(json.dumps(record))
                 await asyncio.sleep(0)
             await asyncio.sleep(1)
         except Exception as e:
             # ERROR, not debug: a systemic extraction failure was invisible in
-            # production logs. And send an error frame -- a bare close is not
-            # success, and the page has to be able to say so.
+            # production logs.
             logger.opt(exception=True).error(f"Error sending back entity: {e}")
             try:
                 await self.send(

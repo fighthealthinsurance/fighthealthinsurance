@@ -1,38 +1,22 @@
 """What the extraction page actually shows, run rather than read.
 
-``tests/async-unit/test_entity_extract_frames.py`` pins the server's frames
-properly and then falls back to reading ``entity_fetcher.ts`` as text for the
-page-side rules, because there is no JS harness in this repo. That fallback is
-weak in a specific, demonstrated way: a reviewer restored the deleted
-auto-advance in full, as ``form.requestSubmit()``, and every one of those
-source-text assertions still passed. A grep catches a rule being deleted. It
-does not catch the page doing the wrong thing.
+The source-text assertions in ``tests/async-unit/test_entity_extract_frames``
+catch a rule being deleted and nothing more: a reviewer restored the deleted
+auto-advance as ``form.requestSubmit()`` and every one of them still passed.
 
 So this compiles the real TypeScript with the repo's own ``tsc``, loads it in
-node over a hand-written page (``tests/js/fake_page.cjs``), drives a run
-through a fake socket and asserts on the resulting DOM: the words on the
-screen, the controls under them, and whether anything moved the person. The
-page object records every ``click()``, ``submit()``, ``requestSubmit()`` and
-write to ``location``, on the flow's real form and Next button, so an
-auto-advance under any spelling shows up as a call in the log rather than as a
-missing string in the source.
+node over ``tests/js/fake_page.cjs``, drives a run through a fake socket and
+asserts on the resulting DOM. The page object records every ``click()``,
+``submit()``, ``requestSubmit()`` and write to ``location`` on the flow's real
+form and Next button, so an auto-advance under any spelling shows up as a call
+in the log rather than as a missing string in the source.
 
-Same source and the same emit, but not the same artifact. The flags below are
-taken from ``static/js/tsconfig.json``, the config webpack hands ts-loader, so
-the downlevelling that ``es5`` does to the object spread and the arrow
-functions is downlevelling these tests run. ``module`` is the one deliberate
-difference, because node has to be able to ``require`` the output, and
-``test_the_harness_compiles_the_way_the_bundle_does`` fails if the ship config
-moves. What is still not covered is what happens after tsc: webpack's own
-wrapping and the Terser pass that minifies it. Nothing here would catch a
-bundler or minifier bug.
+Same source and the same emit, but not the same artifact: what happens after
+tsc, webpack's wrapping and the Terser pass, is not covered here.
 
 Skipped, not silently passed, where node or the front-end toolchain is not
 installed: ``node_modules`` is gitignored, so a checkout that has never run
-``npm install`` cannot run these. CI is not one of those checkouts. The sync
-job sets node up and runs ``scripts/ci_npm_build.sh`` before it runs tox, so
-these run there; the skip is for a local checkout that only ever touches
-Python.
+``npm install`` cannot run these. CI is not one of those checkouts.
 """
 
 import json
@@ -75,13 +59,9 @@ COULD_NOT_READ = (
 
 TSCONFIG = JS / "tsconfig.json"
 
-# The settings the shipped bundle is built with, taken from
-# ``static/js/tsconfig.json`` (webpack hands ts-loader that file). ``module``
-# is the one knob that has to differ: the bundle is ES modules for webpack to
-# walk, and node has to ``require`` this, so it is compiled to commonjs. Every
-# other setting that changes the emitted JavaScript is matched, and
-# ``test_the_harness_compiles_the_way_the_bundle_does`` fails if tsconfig.json
-# moves away from these.
+# The settings the shipped bundle is built with, from
+# ``static/js/tsconfig.json``. ``module`` is the one knob that has to differ,
+# because node has to ``require`` the output.
 SHIP_TARGET = "es5"
 SHIP_LIB = "dom,dom.iterable,esnext"
 
@@ -90,18 +70,11 @@ SHIP_LIB = "dom,dom.iterable,esnext"
 def compiled(tmp_path_factory) -> pathlib.Path:
     """The real ``entity_fetcher.ts``, compiled the way the bundle is built.
 
-    Compiled rather than loaded from ``static/js/dist``: the committed bundle
-    can be older than the source, and a test that passes against last week's
-    bundle is worse than no test.
-
-    The flags mirror ``static/js/tsconfig.json`` rather than being picked for
-    convenience, because "we compile the real TypeScript" is only worth
-    something if it is the same TypeScript the browser gets. At ``es5`` the
-    object spread in ``startRun`` and every arrow function in the file are
-    downlevelled by tsc, which is the code that actually runs in production;
-    at ES2019 they are not, and the harness would be exercising an emit nobody
-    ships. ``--strict`` for the same reason: a type error the ship build
-    rejects has to fail here too.
+    Compiled rather than loaded from ``static/js/dist``, where the committed
+    bundle can be older than the source. The flags mirror
+    ``static/js/tsconfig.json``: at ``es5`` the object spread and every arrow
+    function are downlevelled, which is the code production runs, and at
+    ES2019 they are not.
     """
     out = tmp_path_factory.mktemp("entity-fetcher")
     result = subprocess.run(
@@ -215,8 +188,6 @@ def test_a_good_run_ends_on_the_words_for_a_good_run(compiled):
     assert result["opening"] == {"denial_id": 7, "retry": False}
     ended = result["ended"]
     assert ended["title"].startswith("We read your letter and filled in what we found")
-    # Both ways out, and the green one does not offer to let the person type in
-    # what we just filled in for them.
     assert button_texts(ended) == [RETRY_BUTTON, CONTINUE_GOOD]
     assert submit_button(ended)["text"] == CONTINUE_GOOD
     assert CONTINUE_TYPING not in ended["visibleText"]
@@ -237,8 +208,6 @@ def test_the_page_stops_saying_it_is_still_reading_once_the_run_ends(compiled):
         ended = result["ended"]
         assert ended["waitingDisplay"] == "none", scenario
         assert "analyzing your denial" not in ended["visibleText"].lower(), scenario
-        # And the block is still in the page for the run itself, so this is
-        # about the end of a run and not about deleting the explanation.
         assert ended["waitingStillSaysAnalyzing"] is True, scenario
 
 
@@ -261,6 +230,7 @@ def test_nothing_on_this_page_moves_the_person(compiled):
         "close_event_lands_during_the_next_run",
         "stale_frame_lands_during_the_next_run",
         "reconnect_from_the_previous_run_never_opens",
+        "reconnect_after_the_verdict_never_opens",
     ):
         result = run_scenario(compiled, scenario)
         for key, snapshot in result.items():
@@ -282,8 +252,6 @@ def test_every_terminal_state_offers_both_ways_out(compiled):
         ended = run_scenario(compiled, scenario)["ended"]
         assert button_texts(ended) == [RETRY_BUTTON, continue_text], scenario
         assert ended["actionsDisplay"] == "flex", scenario
-        # The continue control is a submit inside the flow's own form, so
-        # continuing is a press rather than a navigation the page performs.
         assert submit_button(ended)["text"] == continue_text, scenario
 
 
@@ -367,7 +335,6 @@ def test_the_last_runs_close_event_cannot_end_this_run(compiled):
     assert during["title"] == "Reading your denial letter", during
     assert during["buttons"] == [], during
     assert COULD_NOT_READ not in during["visibleText"], during
-    # And the run the person asked for gets to say what it found.
     ended = result["ended"]
     assert ended["title"].startswith("We read your letter and filled in what we found")
     assert button_texts(ended) == [RETRY_BUTTON, CONTINUE_GOOD]
@@ -395,7 +362,6 @@ def test_a_frame_from_the_last_run_cannot_speak_for_this_one(compiled):
     # The stale step line does not get appended under the live run either.
     assert "Plan ID" not in during["visibleText"], during
     assert during["steps"] == "Reading your letter again...", during
-    # And this run's own answer is the one the person is left with.
     ended = result["ended"]
     assert ended["title"].startswith("We read your letter and did not find")
     assert button_texts(ended) == [RETRY_BUTTON, CONTINUE_TYPING]
@@ -430,6 +396,29 @@ def test_a_reconnect_booked_by_the_last_run_never_opens(compiled):
     # live run's own socket when it finished. The first was closed by the
     # server, not by us.
     assert result["hungUpOn"] == [False, True, True], result["hungUpOn"]
+
+
+@needs_node
+def test_a_reconnect_booked_before_the_verdict_never_opens(compiled):
+    """No retry press, no generation change, and still a socket too many.
+
+    A socket that blips books a reconnect a second out. If the run's own
+    inactivity timer comes due inside that second, the page has already given
+    the person its terminal verdict when the reconnect falls due. The
+    generation guard does not cover this, because nothing started a new run:
+    the reconnect opens a socket and asks the server to read the letter again
+    under a verdict that is already on the screen.
+    """
+    result = run_scenario(compiled, "reconnect_after_the_verdict_never_opens")
+    before = result["beforeTheTimeout"]
+    assert before["socketCount"] == 1, before
+    ended = result["ended"]
+    assert ended["title"] == COULD_NOT_READ, ended
+    assert ended["socketCount"] == 1, ended
+    after = result["afterTheBookedReconnect"]
+    assert after["socketCount"] == 1, after
+    assert after["title"] == COULD_NOT_READ, after
+    assert button_texts(after) == [RETRY_BUTTON, CONTINUE_TYPING], after
 
 
 @needs_node

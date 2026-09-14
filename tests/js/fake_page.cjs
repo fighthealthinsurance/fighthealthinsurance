@@ -1,14 +1,8 @@
 'use strict';
-// A DOM small enough to read in one sitting and real enough to answer the one
-// question the source-text tests in test_entity_extract_frames.py cannot: what
-// does the extraction page actually put in front of the person when a run
-// ends, and does anything move them off it?
-//
-// There is no jsdom in this repo and node_modules is gitignored, so the shim
-// is hand written. It covers exactly what entity_fetcher.ts touches. Anything
-// the page reaches for that is not here throws rather than returning
-// undefined, so a rewrite that starts using a new DOM API fails loudly instead
-// of quietly doing nothing under the test.
+// A hand-written DOM shim: there is no jsdom in this repo and node_modules is
+// gitignored. It covers exactly what these two pages touch, and anything else
+// throws rather than returning undefined, so a rewrite that starts using a new
+// DOM API fails loudly instead of quietly doing nothing under the test.
 
 function camel(name) {
   return name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
@@ -94,10 +88,7 @@ class FakeElement {
     return hits;
   }
 
-  // A real cloneNode does not copy listeners, and neither does this one: the
-  // escalation page clones a hidden form per letter, and a clone that carried
-  // the original's handlers would be a page these tests could not tell apart
-  // from a correct one.
+  // A real cloneNode does not copy listeners, and neither does this one.
   cloneNode(deep) {
     const copy = new FakeElement(this.tagName, this.page);
     copy.id = this.id;
@@ -174,9 +165,7 @@ class FakeElement {
   }
 
   // Every way an element can move the person off this page, recorded rather
-  // than performed. The auto-advance this page had used to be a .click() on
-  // the flow's Next button; form.requestSubmit() is the same thing under
-  // another name, so both land in the same log.
+  // than performed, so .click() and .requestSubmit() land in the same log.
   click() {
     this.page.movedThePerson.push(describe(this) + '.click()');
   }
@@ -193,10 +182,9 @@ function describe(el) {
   return el.id ? '#' + el.id : el.tagName.toLowerCase();
 }
 
-// The selector subset these pages actually use: a tag name, an id, a class, or
-// a tag with one quoted attribute. Anything else throws rather than silently
-// matching nothing, because a querySelector that quietly returns null reads in
-// a test exactly like a page that legitimately has no such element.
+// The selector subset these pages use: a tag name, an id, a class, or a tag
+// with one quoted attribute. Anything else throws, because a querySelector
+// that quietly returns null reads exactly like a page with no such element.
 function matcher(selector) {
   const sel = String(selector).trim();
   if (sel.startsWith('#')) {
@@ -223,9 +211,8 @@ function matcher(selector) {
   };
 }
 
-// A tokenizer for the markup this page builds, which is plain nested tags with
-// double quoted attributes. It is not an HTML parser and does not pretend to
-// be one: anything it does not understand throws.
+// A tokenizer for plain nested tags with double quoted attributes. Not an HTML
+// parser: anything it does not understand throws.
 function parseFragment(html, page) {
   const roots = [];
   const stack = [];
@@ -272,8 +259,7 @@ function parseFragment(html, page) {
   return roots;
 }
 
-// The clock the page's timers run on. Nothing here waits sixty real seconds to
-// find out what the inactivity timeout does.
+// The clock the page's timers run on.
 class Clock {
   constructor() {
     this.now = 1600000000000;
@@ -329,9 +315,8 @@ class FakeSocket {
   close() {
     this.closedByPage = true;
     // A browser never fires close synchronously out of close(): the event
-    // arrives after the closing handshake, which is a network round trip away.
-    // Firing it inline here would hide every bug that lives in the gap, so it
-    // goes on the clock like a real one.
+    // arrives after the closing handshake, a network round trip away. Every
+    // bug in this page lives in that gap, so it goes on the clock.
     this.page.clock.setTimeout(() => this.fireClose(), 0);
   }
   fireOpen() {
@@ -352,13 +337,10 @@ class FakeSocket {
   }
 }
 
-// The page the run happens on. The markup mirrors entity_extract.html inside
-// single_optional_question.html: the yellow waiting block the extraction
-// template renders, sitting inside the flow's own form next to its Next
-// button. The ids are the real ones, and tests/sync/test_entity_fetcher_
-// behaviour.py checks they are still the real ones, so a restored
-// auto-advance has the same things to grab here that it would have in a
-// browser.
+// Mirrors entity_extract.html inside single_optional_question.html: the yellow
+// waiting block, inside the flow's own form next to its Next button. The ids
+// are the real ones and test_entity_fetcher_behaviour.py checks they still
+// are, so an auto-advance has the same things to grab as in a browser.
 const PAGE_MARKUP = `
 <form id="fuck_health_insurance_form">
   <div id="waiting-msg" class="waiting-msg">
@@ -370,13 +352,9 @@ const PAGE_MARKUP = `
 </form>
 `;
 
-// The escalation page's own markup, mirroring escalation_packet.html: the
-// loading block with its heading and its detail line, the container the
-// letters land in, and the hidden form the page clones once per letter. The
-// json_script element is where the page reads its form context from.
-// tests/sync/test_escalation_packet_behaviour.py checks these ids against the
-// rendered template, so a template rename cannot leave this fixture testing a
-// page that no longer exists.
+// Mirrors escalation_packet.html. test_escalation_packet_behaviour.py checks
+// these ids against the rendered template, so a rename cannot leave this
+// fixture testing a page that no longer exists.
 const ESCALATION_MARKUP = `
 <script id="escalation-form-context" type="application/json">{"denial_id": 5}</script>
 <div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
@@ -420,9 +398,8 @@ function buildPage(markup) {
       (page.documentListeners[name] = page.documentListeners[name] || []).push(handler);
     },
   };
-  // Pages that hang everything off DOMContentLoaded do nothing at all until it
-  // fires, so a scenario that forgets to fire it would pass every assertion
-  // against an untouched page. Firing with no listener registered throws.
+  // A scenario that forgets to fire DOMContentLoaded would pass every
+  // assertion against an untouched page, so firing with no listener throws.
   page.fireDomReady = () => {
     const handlers = (page.documentListeners || {})['DOMContentLoaded'] || [];
     if (!handlers.length) {
@@ -446,8 +423,7 @@ function buildPage(markup) {
   return page;
 }
 
-// Put the page where a browser would put it, then load the compiled module so
-// it binds these globals the way it binds the browser's.
+// Put the page where a browser would put it, before the module binds globals.
 function install(page) {
   global.document = page.document;
   global.location = page.location;
@@ -466,8 +442,7 @@ function install(page) {
   global.clearInterval = (id) => page.clock.clear(id);
   global.Date.now = () => page.clock.now;
 
-  // @sentry/browser is a browser bundle and is not worth loading to run four
-  // assertions; the page only ever calls captureMessage on it.
+  // @sentry/browser is a browser bundle; the page only calls captureMessage.
   const Module = require('module');
   const load = Module._load;
   Module._load = function (request, ...rest) {

@@ -84,10 +84,9 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
     const loadingDetail = loadingText ? loadingText.querySelector('p') : null;
     const baseForm = document.getElementById('base-letter-form');
 
-    // The socket closing is not the same as the packet being finished, and a
-    // done frame is not the same as every letter having been written. Track
-    // both, plus whether something has already written a failure into the
-    // block, so nothing quietly paints over bad news.
+    // A close is not a finished packet, and a done frame is not every letter
+    // written. Track both, plus whether a failure is already on the block, so
+    // nothing quietly paints over bad news.
     let doneSeen = false;
     let failureShown = false;
     let lettersRendered = 0;
@@ -181,9 +180,8 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
       }
       if (parsed.type === 'status' && parsed.phase === 'done') {
         doneSeen = true;
-        // A done frame can arrive with letters missing: the server skips a
-        // recipient it could not draft for and carries on. Only a frame that
-        // says every letter is there may hide this block.
+        // The server skips a recipient it could not draft for and carries on,
+        // so only a frame saying every letter is there may hide this block.
         if (parsed.complete === true) {
           if (loadingText) loadingText.style.display = 'none';
           return;
@@ -206,8 +204,7 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
         showFailure('We hit a problem', parsed.message || 'An error occurred.');
         return;
       }
-      // Status updates we surface in the loading text, but never over the top
-      // of a failure that has already been shown.
+      // Never over the top of a failure already shown.
       if (parsed.type === 'status' && parsed.message && !failureShown) {
         if (loadingDetail) loadingDetail.textContent = parsed.message;
       }
@@ -228,9 +225,9 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
     ws.onclose = () => {
       if (buffer.trim()) processLine(buffer);
       buffer = '';
-      // Hiding the loading block here was the whole defect: a socket that died
-      // after two of four letters looked exactly like a finished packet, and
-      // it also erased whatever onerror had just written.
+      // Hiding the loading block here made a socket that died after two of
+      // four letters look exactly like a finished packet, and erased whatever
+      // onerror had just written.
       if (doneSeen || failureShown) {
         return;
       }

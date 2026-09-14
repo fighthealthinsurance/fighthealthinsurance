@@ -1421,24 +1421,16 @@ class ProfessionalNotificationHelper:
         )
 
 
-# The vocabulary the extraction socket speaks.
-#
-# Every frame the extraction stream sends is a JSON object carrying a ``task``
-# and an ``outcome``. Before this, ``extract_entity`` yielded bare task-name
-# strings and the consumer put them on the wire with a newline after each, so
-# the page had no way to tell "we found this" from "this step ran and found
-# nothing" from "this step blew up" -- and a run that yielded nothing at all
-# (the already-done early exit) looked exactly like a successful one.
-#
-# Per-step outcomes:
+# The vocabulary the extraction socket speaks. Every frame is a JSON object
+# carrying a ``task`` and an ``outcome``.
 EXTRACTION_OUTCOME_FOUND = "found"
 EXTRACTION_OUTCOME_NOTHING_FOUND = "nothing_found"
 EXTRACTION_OUTCOME_FAILED = "failed"
 EXTRACTION_OUTCOME_CACHED = "cached"
 EXTRACTION_OUTCOME_TIMED_OUT = "timed_out"
-# The model found something and we wrote none of it down, because every column
-# it answered already held a value. Separate from ``found`` because the page's
-# words for ``found`` say we filled something in, and on this run we did not.
+# The model found something and we wrote none of it down: every column it
+# answered already held a value. Separate from ``found`` because the page's
+# words for ``found`` say we filled something in.
 EXTRACTION_OUTCOME_KEPT_EXISTING = "kept_existing"
 
 EXTRACTION_OUTCOMES = frozenset(
@@ -1453,12 +1445,10 @@ EXTRACTION_OUTCOMES = frozenset(
 )
 
 # Exactly one run-level outcome is sent per run. ``already_have_details`` and
-# ``read_and_found_nothing`` are deliberately separate: the early-exit gate is
-# an OR that includes ``extract_procedure_diagnosis_finished``, and that flag
-# is set whenever the model call returned without raising -- including a
-# return of (None, None). Collapsing the two would congratulate someone on
-# details that are not on their row, which is the same defect as the green
-# "Extraction Complete" this work removes, pointing the other way.
+# ``read_and_found_nothing`` are separate because the early-exit gate is an OR
+# that includes ``extract_procedure_diagnosis_finished``, and that flag is set
+# whenever the model call returned without raising, a return of (None, None)
+# included. Collapsing them congratulates someone on details they do not have.
 EXTRACTION_RUN_FINISHED = "run_finished"
 EXTRACTION_RUN_ALREADY_HAVE_DETAILS = "run_already_have_details"
 EXTRACTION_RUN_KEPT_YOUR_DETAILS = "run_kept_your_details"
@@ -1477,11 +1467,9 @@ EXTRACTION_RUN_OUTCOMES = frozenset(
     }
 )
 
-# Wire names for the steps. These are keys, not copy: nothing here is shown to
-# anyone. A step is only ever named on the page through
-# ``EXTRACTION_TASK_LABELS`` below, and a step with no entry there is sent but
-# never rendered -- which is how internal step names stay off the page without
-# the client needing a fallback that prints them.
+# Wire names for the steps. Keys, not copy: a step is only ever named on the
+# page through ``EXTRACTION_TASK_LABELS`` below, and one with no entry there is
+# sent but never rendered.
 EXTRACTION_TASK_FAX = "fax_number"
 EXTRACTION_TASK_INSURANCE_COMPANY = "insurance_company"
 EXTRACTION_TASK_INSURANCE_PLAN = "insurance_plan"
@@ -1494,11 +1482,9 @@ EXTRACTION_TASK_PLAN_DOCUMENTS = "plan_documents"
 EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS = "procedure_and_diagnosis"
 EXTRACTION_TASK_DENIAL_TYPE = "denial_type"
 
-# The run-level frame's task name, so every frame carries a task.
 EXTRACTION_TASK_RUN = "run"
 
-# The words for the steps a patient should see. Written for the person
-# reading them, in the past tense the outcome makes true.
+# The words for the steps a patient should see.
 EXTRACTION_TASK_LABELS: dict[str, str] = {
     EXTRACTION_TASK_FAX: "Fax number to send the appeal to",
     EXTRACTION_TASK_INSURANCE_COMPANY: "Insurance company",
@@ -1509,8 +1495,8 @@ EXTRACTION_TASK_LABELS: dict[str, str] = {
     EXTRACTION_TASK_DENIAL_TYPE: "Reason they gave for the denial",
 }
 
-# One sentence per run-level outcome, in the person's words. None of them
-# says the extraction completed unless something was actually read.
+# One sentence per run-level outcome. None of them says the extraction
+# completed unless something was actually read.
 EXTRACTION_RUN_LABELS: dict[str, str] = {
     EXTRACTION_RUN_FINISHED: (
         "We read your letter and filled in what we found. " "Check it on the next page."
@@ -1643,13 +1629,9 @@ class DenialCreatorHelper:
           of the raw text for oversized denials -- a summary of the old letter
           would silently misdescribe the claim.
         * the two candidate mirrors of the extracted procedure and diagnosis,
-          plus the extraction flags. The triage columns already went back to
-          null here while ``candidate_procedure`` and ``candidate_diagnosis``
-          stayed, so letter B could be described to the person using letter
-          A's extraction. ``extract_procedure_diagnosis_finished`` goes back
-          to False and ``extract_attempts`` back to zero with them: the flag
-          is a statement about a letter that no longer exists, and the attempt
-          budget is a per-letter failure budget, not a per-case one.
+          plus ``extract_procedure_diagnosis_finished`` (a statement about a
+          letter that no longer exists) and ``extract_attempts`` (a per-letter
+          failure budget, not a per-case one).
 
         The live ``procedure`` and ``diagnosis`` columns are deliberately NOT
         cleared: those may be what the person typed, and a new letter is not a
@@ -1964,9 +1946,8 @@ class DenialCreatorHelper:
         """One step's frame: what ran, how it came out, and the words for it.
 
         ``label`` is only present for the steps a patient should see. A step
-        with no label is still sent (so the stream stays auditable) and the
-        page renders nothing for it, which is why no internal step name can
-        reach the DOM without the client needing a print-the-key fallback.
+        with no label is still sent, so the stream stays auditable, and the
+        page renders nothing for it.
         """
         record: dict = {"type": "task", "task": task, "outcome": outcome}
         label = EXTRACTION_TASK_LABELS.get(task)
@@ -1989,8 +1970,9 @@ class DenialCreatorHelper:
         """Read a step's return value as an outcome.
 
         An extractor that knows its own outcome returns one of the outcome
-        strings and is believed. The rest return the value they extracted (or
-        ``None``), which is a truthful found/nothing-found signal.
+        strings and is believed. The rest return the value they extracted, or
+        ``None``, which is a truthful found/nothing-found signal only for the
+        extractors that let their exceptions out.
         """
         if isinstance(result, str) and result in EXTRACTION_OUTCOMES:
             return result
@@ -2000,12 +1982,7 @@ class DenialCreatorHelper:
 
     @classmethod
     async def _run_extraction_step(cls, awaitable: Awaitable[Any], task: str) -> dict:
-        """Await one step and turn it into exactly one frame.
-
-        This replaces ``named_task``, which returned ``(name, None)`` on an
-        exception -- indistinguishable on the wire from a step that ran and
-        found nothing.
-        """
+        """Await one step and turn it into exactly one frame."""
         try:
             result = await awaitable
         except asyncio.CancelledError:
@@ -2014,6 +1991,27 @@ class DenialCreatorHelper:
             logger.opt(exception=True).warning(f"Failed in task {task}: {e}")
             return cls._extraction_record(task, EXTRACTION_OUTCOME_FAILED)
         return cls._extraction_record(task, cls._outcome_for_result(result))
+
+    @staticmethod
+    async def _fill_if_empty(
+        denial_id: int, field: str, value: Any, *, blank_is_empty: bool = True
+    ) -> bool:
+        """Write ``value`` into ``field`` only where the row still holds nothing.
+
+        Every column these extractors write is editable on the review page, and
+        the retry lifts the gate that normally stops a second read, so an
+        unconditional write replaces a correction the person made between the
+        two runs. Read and write are one statement because the extractors run
+        concurrently with each other and with the review POST.
+        """
+        empty = Q(**{f"{field}__isnull": True})
+        if blank_is_empty:
+            empty = empty | Q(**{field: ""})
+        return bool(
+            await Denial.objects.filter(denial_id=denial_id)
+            .filter(empty)
+            .aupdate(**{field: value})
+        )
 
     @classmethod
     async def clear_extraction_for_retry(cls, denial_id: int) -> None:
@@ -2028,14 +2026,12 @@ class DenialCreatorHelper:
         which may be what the person typed.
 
         ``extract_attempts`` is bumped rather than reset, in the same UPDATE so
-        the increment is race-safe. It has to be: the counter is otherwise only
-        bumped by ``extract_set_denial_and_diagnosis``'s except path, so on a
-        letter the model reads cleanly and finds nothing in, it never moves.
-        Without this the retry button would be an unbounded invitation to
-        re-run eleven steps and the PubMed/ClinicalTrials/speculative-context
-        fan-out behind them, once per press. The caller checks the cap BEFORE
-        calling this, so a retry that is already out of attempts is refused
-        instead of being handed a clean slate it cannot use.
+        the increment is race-safe. It has to be bumped here: the counter is
+        otherwise only moved by ``extract_set_denial_and_diagnosis``'s except
+        path, so on a letter the model reads cleanly it never moves, and the
+        button would be an unbounded invitation to re-run eleven steps and the
+        PubMed/ClinicalTrials/speculative-context fan-out behind them. The
+        caller checks the cap BEFORE calling this.
         """
         await Denial.objects.filter(denial_id=denial_id).aupdate(
             extract_procedure_diagnosis_finished=False,
@@ -2059,16 +2055,14 @@ class DenialCreatorHelper:
         run-level record per run. The consumer is a ``json.dumps`` and a send;
         it makes no decisions about what any of this means.
 
-        ``retry=True`` is the authorized retry: it clears what the gate below
-        reads before the gate reads it, so the letter is actually read again,
-        and it spends one of the letter's attempts so the button cannot be
-        pressed forever.
+        ``retry=True`` clears what the gate below reads before the gate reads
+        it, so the letter is actually read again, and spends one of the
+        letter's attempts so the button cannot be pressed forever.
         """
 
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        # Read the budget before anything clears it. A retry that is already
-        # over the cap must reach the out-of-attempts branch below, not be
-        # handed a clean slate and an extra increment it cannot use.
+        # Read the budget before anything clears it: a retry already over the
+        # cap must reach the out-of-attempts branch below.
         attempts = denial.extract_attempts or 0
         out_of_attempts = attempts >= 3
         if retry and not out_of_attempts:
@@ -2094,12 +2088,10 @@ class DenialCreatorHelper:
             yield await cls._run_extraction_step(
                 cls.extract_set_triage(denial_id), EXTRACTION_TASK_TRIAGE
             )
-            # Two different rows reach this branch and they must not be told
-            # the same thing. A row with a procedure or a diagnosis on it
-            # really does already have the details. A row that only has
-            # extract_procedure_diagnosis_finished set got that flag from a
-            # model call that returned (None, None) -- we read the letter and
-            # did not find these, which is the opposite news.
+            # Two different rows reach this branch and must not be told the
+            # same thing. A row that only has extract_procedure_diagnosis_
+            # finished set got that flag from a model call that returned
+            # (None, None), which is the opposite news.
             if denial.procedure or denial.diagnosis:
                 yield cls._extraction_run_record(EXTRACTION_RUN_ALREADY_HAVE_DETAILS)
             else:
@@ -2117,11 +2109,9 @@ class DenialCreatorHelper:
                 f"extract_entity({denial_id}): skipping LLM extraction, "
                 f"extract_attempts={attempts} exhausted"
             )
-            # The counter measures the procedure/diagnosis extraction only
-            # (a model failure, or a retry asking for another read of the
-            # letter); regulator matching is a handful of regexes with no LLM
-            # in the loop, so run it anyway -- same reasoning as the
-            # already-done early exit above.
+            # The counter measures the procedure/diagnosis extraction only;
+            # regulator matching is a handful of regexes with no LLM in the
+            # loop, so run it anyway, as in the already-done exit above.
             yield await cls._run_extraction_step(
                 cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
             )
@@ -2203,9 +2193,8 @@ class DenialCreatorHelper:
                 optional=optional_awaitables,
                 required=required_awaitables,
                 fire_and_forget=[cls._maybe_dispatch_ucr(denial_id)],
-                # No done_record: the run-level frame is decided below, from
-                # what the steps actually reported, not from the fact that the
-                # loop reached its end.
+                # The run-level frame is decided below, from what the steps
+                # reported, not from the loop reaching its end.
                 done_record=None,
                 timeout=90,
                 # The optional tasks (fax number, insurer, plan/claim id, date
@@ -2230,8 +2219,7 @@ class DenialCreatorHelper:
             return
 
         # A step that never reported was cancelled by the timeout or the
-        # optional-task grace window. Saying so is the whole point: silence
-        # used to be indistinguishable from success.
+        # optional-task grace window.
         for task in expected_tasks:
             if task not in reported:
                 yield cls._extraction_record(task, EXTRACTION_OUTCOME_TIMED_OUT)
@@ -2241,17 +2229,12 @@ class DenialCreatorHelper:
         if main_outcome == EXTRACTION_OUTCOME_FOUND:
             yield cls._extraction_run_record(EXTRACTION_RUN_FINISHED)
         elif main_outcome == EXTRACTION_OUTCOME_KEPT_EXISTING:
-            # The model read the letter and every column it answered already
-            # held something, so the write declined and nothing was filled in.
-            # Saying "we filled in what we found" here would be the branch's
-            # own defect, on the path the branch added.
             yield cls._extraction_run_record(EXTRACTION_RUN_KEPT_YOUR_DETAILS)
         elif main_outcome == EXTRACTION_OUTCOME_NOTHING_FOUND:
             yield cls._extraction_run_record(EXTRACTION_RUN_READ_AND_FOUND_NOTHING)
         else:
-            # failed, timed out, or never reported at all: we did not finish
-            # reading the letter, which is not the same as having read it and
-            # found nothing.
+            # Failed, timed out, or never reported: we did not finish reading
+            # the letter, which is not the same as finding nothing in it.
             yield cls._extraction_run_record(EXTRACTION_RUN_FAILED)
 
     @classmethod
@@ -2304,12 +2287,10 @@ class DenialCreatorHelper:
 
         Attempts to extract the procedure and diagnosis fields using the appeal generator. Updates the denial with the extracted values and marks extraction as finished, regardless of success. If extraction is successful or existing values are present, triggers background tasks to search for related PubMed articles, prefetch ClinicalTrials.gov matches, and build speculative context. All background searches are fire-and-forget with their own timeouts and never block the caller.
 
-        Returns one of the extraction outcomes rather than ``None``. This
-        method swallows every exception out of ``get_procedure_and_diagnosis``
-        (it has to: a model outage must not break denial creation), so a
-        caller watching for an exception sees a clean return from a run where
-        nothing worked. The returned outcome is the only way a real model
-        failure is visible to the page.
+        Returns an extraction outcome rather than ``None``: this method
+        swallows every exception out of ``get_procedure_and_diagnosis``, which
+        it has to because a model outage must not break denial creation, so
+        the returned outcome is the only way a model failure reaches the page.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         procedure = None
@@ -2350,8 +2331,6 @@ class DenialCreatorHelper:
                 if field in update_fields:
                     user_facing[field] = update_fields.pop(field)
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
-            # Which of the model's answers actually landed on the row. The page
-            # is told we filled something in only where one of these writes did.
             filled_in = False
             kept_existing = False
             for field, value in user_facing.items():
@@ -2454,19 +2433,11 @@ class DenialCreatorHelper:
                     f"for denial {denial_id}"
                 )
 
-            # Two separate questions, and the page needs both answered.
-            #
-            # Did the MODEL produce anything? That is the candidate mirrors,
-            # not what the row now holds: the row may hold a procedure the
-            # person typed while this call was in flight, and reading that back
-            # as a find would credit us with their work.
-            #
-            # Did any of it get written down? The writes above decline on a
-            # column that already has something in it, so a run can find a
-            # procedure and change nothing. "found" is the outcome the page
-            # turns into "we filled in what we found", so it is only true when
-            # one of those writes landed; a find we could not write down says
-            # so in its own word instead.
+            # Two questions, both needed. Did the MODEL produce anything? That
+            # is the candidate mirrors, not what the row holds, which may be a
+            # procedure the person typed while this call was in flight. And did
+            # any of it get written down? "found" is the outcome the page turns
+            # into "we filled in what we found", so it needs both.
             if update_fields.get("candidate_procedure") or update_fields.get(
                 "candidate_diagnosis"
             ):
@@ -2646,7 +2617,7 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_insurance_company(cls, denial_id):
+    async def extract_set_insurance_company(cls, denial_id) -> str:
         """Extract insurance company name from denial text and match to structured models.
 
         Once a company is matched, propagates the company's known appeal-routing
@@ -2654,6 +2625,9 @@ class DenialCreatorHelper:
         one - this means downstream code (PDF cover sheet, fax send) can use
         Anthem/UHC/etc.'s published appeals fax even if the denial letter
         itself didn't include it.
+
+        Returns an extraction outcome, for the reason given on
+        ``extract_set_plan_id``.
         """
         from fighthealthinsurance.models import InsuranceCompany, InsurancePlan
 
@@ -2708,16 +2682,6 @@ class DenialCreatorHelper:
             if matched_company:
                 resolved_name = matched_company.name
 
-            update_fields: dict[str, Any] = {}
-            if resolved_name:
-                update_fields["insurance_company"] = resolved_name
-            if matched_company:
-                update_fields["insurance_company_obj"] = matched_company
-                logger.debug(f"Matched to structured company: {matched_company.name}")
-            if matched_plan:
-                update_fields["insurance_plan_obj"] = matched_plan
-                logger.debug(f"Matched to structured plan: {matched_plan}")
-
             # Propagate the known appeal fax number from the matched plan/company
             # onto the denial only if the denial doesn't already have one. We
             # do NOT overwrite a fax number that came directly from the denial
@@ -2731,12 +2695,30 @@ class DenialCreatorHelper:
             elif matched_company and matched_company.appeal_fax_number:
                 propagated_fax = matched_company.appeal_fax_number
 
-            if update_fields:
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    **update_fields
+            found_something = False
+            wrote_something = False
+            if resolved_name:
+                found_something = True
+                wrote_something |= await cls._fill_if_empty(
+                    denial_id, "insurance_company", resolved_name
                 )
-                logger.debug(
-                    f"Successfully extracted insurance company: {resolved_name}"
+            if matched_company:
+                found_something = True
+                logger.debug(f"Matched to structured company: {matched_company.name}")
+                wrote_something |= await cls._fill_if_empty(
+                    denial_id,
+                    "insurance_company_obj",
+                    matched_company,
+                    blank_is_empty=False,
+                )
+            if matched_plan:
+                found_something = True
+                logger.debug(f"Matched to structured plan: {matched_plan}")
+                wrote_something |= await cls._fill_if_empty(
+                    denial_id,
+                    "insurance_plan_obj",
+                    matched_plan,
+                    blank_is_empty=False,
                 )
 
             if propagated_fax:
@@ -2750,39 +2732,42 @@ class DenialCreatorHelper:
                         f"Propagated appeal_fax_number {propagated_fax} from carrier"
                     )
 
-            return resolved_name
+            if not found_something:
+                return EXTRACTION_OUTCOME_NOTHING_FOUND
+            if wrote_something:
+                return EXTRACTION_OUTCOME_FOUND
+            return EXTRACTION_OUTCOME_KEPT_EXISTING
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract insurance company for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
-    async def extract_set_plan_id(cls, denial_id):
-        """Extract plan ID from denial text"""
+    async def extract_set_plan_id(cls, denial_id) -> str:
+        """Extract plan ID from denial text.
+
+        Returns an extraction outcome: this method swallows the model's
+        exceptions, so a returned value cannot tell a read that failed from a
+        letter with no plan ID in it, and the page says one or the other.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        plan_id = None
         try:
-            # Extract plan ID - could be in various formats (alphanumeric)
             plan_id = await appealGenerator.get_plan_id(denial_text=denial.denial_text)
 
-            # Validate that the extracted value looks like a real identifier
             from fighthealthinsurance.generate_appeal import is_plausible_identifier
 
             if plan_id is not None and is_plausible_identifier(plan_id):
-                # Use aupdate to directly update the field at the database level
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    plan_id=plan_id
-                )
-                logger.debug(f"Successfully extracted plan ID: {plan_id}")
-                return plan_id
-            else:
-                logger.debug(f"Rejected plan ID extraction: {plan_id}")
+                if await cls._fill_if_empty(denial_id, "plan_id", plan_id):
+                    return EXTRACTION_OUTCOME_FOUND
+                return EXTRACTION_OUTCOME_KEPT_EXISTING
+            logger.debug(f"Rejected plan ID extraction: {plan_id}")
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract plan ID for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def match_insurance_plan_from_regex(cls, denial_id):
@@ -2792,12 +2777,12 @@ class DenialCreatorHelper:
         """
         from fighthealthinsurance.models import InsurancePlan
 
-        # select_related caches both FKs so the insurance_*_obj reads below
-        # stay async-safe (a lazy read would raise SynchronousOnlyOperation,
+        # select_related caches the FK so the insurance_plan_obj read below
+        # stays async-safe (a lazy read would raise SynchronousOnlyOperation,
         # silently eaten by the except blocks).
-        denial = await Denial.objects.select_related(
-            "insurance_plan_obj", "insurance_company_obj"
-        ).aget(denial_id=denial_id)
+        denial = await Denial.objects.select_related("insurance_plan_obj").aget(
+            denial_id=denial_id
+        )
 
         try:
             # Only proceed if we don't already have a plan matched
@@ -2822,15 +2807,22 @@ class DenialCreatorHelper:
                             # We found a match!
                             logger.debug(f"Matched denial {denial_id} to plan: {plan}")
 
-                            # Update both plan and company if not already set
-                            update_fields: dict[str, Any] = {"insurance_plan_obj": plan}
-                            if not denial.insurance_company_obj:
-                                update_fields["insurance_company_obj"] = (
-                                    plan.insurance_company
-                                )
-
-                            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                                **update_fields
+                            # Conditional rather than a read-then-write against
+                            # the instance loaded above: the retry runs this
+                            # concurrently with extract_set_insurance_company
+                            # and after the person may have picked a plan on
+                            # the review page.
+                            await cls._fill_if_empty(
+                                denial_id,
+                                "insurance_plan_obj",
+                                plan,
+                                blank_is_empty=False,
+                            )
+                            await cls._fill_if_empty(
+                                denial_id,
+                                "insurance_company_obj",
+                                plan.insurance_company,
+                                blank_is_empty=False,
                             )
                             return plan
                     except Exception as e:
@@ -2848,60 +2840,58 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_claim_id(cls, denial_id):
-        """Extract claim ID from denial text"""
+    async def extract_set_claim_id(cls, denial_id) -> str:
+        """Extract claim ID from denial text.
+
+        Returns an extraction outcome, for the reason given on
+        ``extract_set_plan_id``.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        claim_id = None
         try:
             claim_id = await appealGenerator.get_claim_id(
                 denial_text=denial.denial_text
             )
 
-            # Validate that the extracted value looks like a real identifier
             from fighthealthinsurance.generate_appeal import is_plausible_identifier
 
             if claim_id is not None and is_plausible_identifier(claim_id):
-                # Use aupdate to directly update the field at the database level
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    claim_id=claim_id
-                )
-                logger.debug(f"Successfully extracted claim ID: {claim_id}")
-                return claim_id
-            else:
-                logger.debug(f"Rejected claim ID extraction: {claim_id}")
+                if await cls._fill_if_empty(denial_id, "claim_id", claim_id):
+                    return EXTRACTION_OUTCOME_FOUND
+                return EXTRACTION_OUTCOME_KEPT_EXISTING
+            logger.debug(f"Rejected claim ID extraction: {claim_id}")
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract claim ID for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
-    async def extract_set_date_of_service(cls, denial_id):
-        """Extract date of service from denial text"""
+    async def extract_set_date_of_service(cls, denial_id) -> str:
+        """Extract date of service from denial text.
+
+        Returns an extraction outcome, for the reason given on
+        ``extract_set_plan_id``.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        date_of_service = None
         try:
             date_of_service = await appealGenerator.get_date_of_service(
                 denial_text=denial.denial_text
             )
 
-            # Validate date of service
             if date_of_service is not None:
-                # Use aupdate to directly update at the database level
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    date_of_service=date_of_service
-                )
-                logger.debug(
-                    f"Successfully extracted date of service: {date_of_service}"
-                )
-                return date_of_service
-            else:
-                logger.debug(f"No date of service found")
+                if await cls._fill_if_empty(
+                    denial_id, "date_of_service", date_of_service
+                ):
+                    return EXTRACTION_OUTCOME_FOUND
+                return EXTRACTION_OUTCOME_KEPT_EXISTING
+            logger.debug("No date of service found")
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract date of service for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def get_plan_documents_text(cls, denial_id: int) -> str:
@@ -3098,10 +3088,8 @@ class DenialCreatorHelper:
         on the text hash, so a retry after the letter was triaged is free.
 
         Returns an extraction outcome. Every path that leaves the row
-        untriaged returns ``nothing_found`` rather than a bare ``None`` the
-        caller would have to guess at; the already-current path is reported as
-        ``cached`` because it is the one path where the work is genuinely
-        already done.
+        untriaged says ``nothing_found``; the already-current path says
+        ``cached``, being the one path where the work is genuinely done.
         """
         if not denial_triage.enabled():
             return EXTRACTION_OUTCOME_NOTHING_FOUND
@@ -3152,9 +3140,8 @@ class DenialCreatorHelper:
         the escalation packet's ERISA detection) can surface the right
         regulator along with its complaint phone number.
 
-        Returns an extraction outcome so the stream can say which of the three
-        things happened here: the row already had one, we matched one, or the
-        letter matched nothing.
+        Returns an extraction outcome: the row already had a regulator, we
+        matched one, or the letter matched nothing.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if denial.regulator_id is not None:
@@ -3171,8 +3158,16 @@ class DenialCreatorHelper:
         return EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
-    async def extract_set_denialtype(cls, denial_id):
-        # Try and guess at the denial types
+    async def extract_set_denialtype(cls, denial_id) -> str:
+        """Match the denial text against the known denial types and store them.
+
+        Returns an extraction outcome: the page's words for this step are
+        "Reason they gave for the denial", and a bare return reads as
+        nothing-found even on the runs that stored types.
+
+        ``get_or_create``, not ``create``: DenialTypesRelation carries no
+        unique constraint, so a second read adds a second copy of every type.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         denial_types = await cls.regex_denial_processor.get_denialtype(
             denial_text=denial.denial_text,
@@ -3182,14 +3177,29 @@ class DenialCreatorHelper:
         logger.debug(
             f"extract_set_denialtype({denial_id}): processing {len(denial_types)} types"
         )
+        src = await cls.regex_src()
+        created = 0
+        already_stored = 0
+        failed = 0
         for dt in denial_types:
             try:
-                await DenialTypesRelation.objects.acreate(
-                    denial=denial, denial_type=dt, src=await cls.regex_src()
+                _, was_created = await DenialTypesRelation.objects.aget_or_create(
+                    denial=denial, denial_type=dt, src=src
                 )
+                if was_created:
+                    created += 1
+                else:
+                    already_stored += 1
             except Exception as e:
-                # Can fail if relation already exists (duplicate)
+                failed += 1
                 logger.opt(exception=True).debug(f"Failed setting denial type: {e}")
+        if created:
+            return EXTRACTION_OUTCOME_FOUND
+        if failed:
+            return EXTRACTION_OUTCOME_FAILED
+        if already_stored:
+            return EXTRACTION_OUTCOME_CACHED
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
     def update_denial(
@@ -6004,11 +6014,9 @@ class EscalationPacketHelper:
             r for r in recipients if r.recipient_type not in existing_by_type
         ]
 
-        # ``total`` covers every recipient the packet is meant to contain, not
-        # just the ones that still need an ML call. It used to count only
-        # ``needing_generation``, so a run that reused three cached letters and
-        # generated one reported a total of one and the page could not tell
-        # whether anything was missing.
+        # ``total`` is every recipient the packet must contain, not just the
+        # ones still needing an ML call, so the page can tell a full packet
+        # from a partial one.
         yield json.dumps(
             {
                 "type": "status",
@@ -6105,10 +6113,6 @@ class EscalationPacketHelper:
                 if not t.done():
                     t.cancel()
 
-        # The done frame used to say "All regulator letters generated." even
-        # when recipients had been skipped with an error substep above. It now
-        # carries the counts and the names, so the page can tell a full packet
-        # from a partial one without having to add up the substeps itself.
         delivered = generated + len(existing_by_type)
         complete = delivered == len(recipients) and not failed_names
         yield json.dumps(

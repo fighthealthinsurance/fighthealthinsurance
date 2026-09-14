@@ -1,11 +1,8 @@
 declare const $: any;
 import * as Sentry from '@sentry/browser';
 
-// Every frame the extraction socket sends is a JSON object carrying a task and
-// an outcome. `label` is present only for the steps that have words meant for
-// the person reading the page; a frame without one is never rendered, which is
-// how internal step names stay off the page without a fallback that prints
-// them.
+// `label` carries the only words that may reach the page. A frame without one
+// is never rendered, so no internal step name can be shown to a person.
 interface ExtractionFrame {
   type?: string;
   task?: string;
@@ -14,17 +11,12 @@ interface ExtractionFrame {
   message?: string;
 }
 
-// A run that goes quiet is a run that failed. The socket closing used to be
-// read as success, so a dead connection painted a green all-done banner and
-// clicked Next; now silence lands on the could-not-read state instead.
+// A run that goes quiet is a run that failed.
 const INACTIVITY_MS = 60000;
 const HARD_CAP_MS = 120000;
-// Transient connection blips are worth one or two reconnects, but only while
-// nothing at all has arrived.
 const MAX_CONNECT_RETRIES = 2;
 
-// The client's own words for the states no server frame can describe, because
-// the server never got to send one.
+// The client's own words, for a run the server never got to describe.
 const COULD_NOT_READ =
   'We could not finish reading your letter. You can have us try again, or type the details in yourself.';
 
@@ -46,7 +38,6 @@ const OUTCOME_COLOR: {[key: string]: string} = {
   kept_existing: '#555555',
 };
 
-// Run-level outcomes that are not bad news. Everything else paints red.
 const CALM_RUN_OUTCOMES = [
   'run_finished',
   'run_already_have_details',
@@ -58,18 +49,13 @@ let timerInterval: ReturnType<typeof setInterval> | null = null;
 let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 let hardCapTimer: ReturnType<typeof setTimeout> | null = null;
 let renderedTasks: Set<string> = new Set();
-// True once a terminal state has been painted. Nothing may paint over it: a
-// close arriving after the run-level frame is just the socket hanging up.
+// True once a terminal state has been painted. Nothing may paint over it.
 let settled = false;
 let activeSocket: WebSocket | null = null;
-// Which run a socket belongs to. Pressing retry starts a new run while the
-// previous run's socket is still alive: close() only asks the browser to hang
-// up, and the close event lands a network round trip later, which is well
-// inside the window the retry button is on the screen for. That late event was
-// read as this run's verdict, so a retry painted "we could not finish reading
-// your letter" over a run that had not finished yet, and the answer the run
-// then produced was dropped by the settled guard. A handler from an older run
-// does nothing.
+// Which run a socket belongs to. close() only asks the browser to hang up, and
+// the close and message events of a superseded run keep landing for a network
+// round trip after that, which is inside the window the retry button is on the
+// screen for. A handler from an older generation does nothing.
 let runGeneration = 0;
 let currentUrl = '';
 let currentData: Record<string, unknown> = {};
@@ -77,8 +63,7 @@ let currentData: Record<string, unknown> = {};
 function createStatusIndicator(): HTMLElement {
   const statusDiv = document.createElement('div');
   statusDiv.id = 'entity-status-indicator';
-  // The panel is the live region: a screen reader hears each step as it is
-  // added and hears the final state when it lands.
+  // The panel is the live region: a screen reader hears each step as it lands.
   statusDiv.setAttribute('role', 'status');
   statusDiv.setAttribute('aria-live', 'polite');
   statusDiv.style.cssText = `
@@ -109,8 +94,8 @@ function updateTimer(): void {
   const elapsed = Math.floor((Date.now() - startTime) / 1000);
   const timerEl = document.getElementById('entity-timer');
   if (timerEl) {
-    // aria-hidden on this element: a counter that ticks once a second inside a
-    // polite live region would talk over everything else in it.
+    // aria-hidden: a counter ticking once a second inside a polite live region
+    // talks over everything else in it.
     timerEl.textContent = `Time elapsed: ${elapsed}s`;
   }
 }
@@ -139,8 +124,6 @@ function armInactivityTimer(): void {
   }, INACTIVITY_MS);
 }
 
-// One step's line. Only a frame the server gave words for is rendered, so
-// there is no branch here that could put a wire name in front of a person.
 function renderStep(frame: ExtractionFrame): void {
   const label = frame.label;
   const outcome = frame.outcome || '';
@@ -166,9 +149,8 @@ function renderStep(frame: ExtractionFrame): void {
 
 function actionButton(text: string, submits: boolean): HTMLButtonElement {
   const button = document.createElement('button');
-  // The continue control is a plain submit button inside the flow's own form,
-  // so continuing is the person pressing a button and the page never navigates
-  // on their behalf.
+  // A submit inside the flow's own form: continuing is a press, never a
+  // navigation the page performs.
   button.type = submits ? 'submit' : 'button';
   button.textContent = text;
   button.className = submits ? 'btn btn-green' : 'btn btn-secondary';
@@ -176,9 +158,7 @@ function actionButton(text: string, submits: boolean): HTMLButtonElement {
   return button;
 }
 
-// Paint the terminal state and offer the two ways out of it. Every outcome
-// gets both: continuing was the only thing on offer before and retrying was
-// the only thing missing.
+// Paint the terminal state. Every outcome offers both ways out of it.
 function finish(frame: ExtractionFrame): void {
   if (settled) {
     return;
@@ -198,14 +178,9 @@ function finish(frame: ExtractionFrame): void {
   const label = frame.label || COULD_NOT_READ;
   const calm = CALM_RUN_OUTCOMES.indexOf(outcome) >= 0;
 
-  // The yellow block above this panel says "Analyzing your denial..." behind a
-  // spinner with no end, and it is only true while a run is in flight. The
-  // deleted auto-advance used to whisk it off screen about a second after a
-  // successful run; with the auto-advance gone it would sit there under every
-  // terminal state, telling the person we are still reading a letter the panel
-  // below has just finished reporting on. Two answers on one page is worse
-  // than the one false answer this work removes, so the run's own words are
-  // the only ones left standing.
+  // The yellow block above says "Analyzing your denial..." behind an endless
+  // spinner, so leaving it up would put a second, contradictory answer on the
+  // page next to the run's own words.
   const waitingMsg = document.getElementById('waiting-msg');
   if (waitingMsg) {
     waitingMsg.style.display = 'none';
@@ -232,10 +207,6 @@ function finish(frame: ExtractionFrame): void {
       startRun(true);
     });
     actions.appendChild(retry);
-    // Both ways out on every state, and the same two controls: only the words
-    // on the green one change. "Continue and type it in myself" under "we read
-    // your letter and filled in what we found" told the person their good run
-    // had left them with the typing to do.
     actions.appendChild(
       actionButton(
         calm ? 'Continue to the next page' : 'Continue and type it in myself',
@@ -248,11 +219,8 @@ function finish(frame: ExtractionFrame): void {
 
 function handleFrame(raw: string): void {
   if (settled) {
-    // A terminal state is already on the page. A frame arriving after it (a
-    // socket opened by a reconnect that was scheduled in the second before a
-    // timer fired, say) must not append a step line under the final words:
     // renderStep has no opinion about what is already painted, so the guard
-    // belongs here, in front of it.
+    // against appending a step line under the final words belongs here.
     return;
   }
   // Frames can carry extracted denial entities (PHI) -- log only the size.
@@ -285,18 +253,20 @@ function connect(retries: number): void {
   let receivedAnything = false;
   let resolved = false;
 
-  // True while this socket still belongs to the run on the screen.
-  const current = () => generation === runGeneration;
+  // True while this socket belongs to the run on the screen and that run still
+  // wants work done. `settled` is half of it: a timer paints the terminal state
+  // without touching the generation, so a reconnect booked just before it fired
+  // would otherwise ask the server to read the letter again under that verdict.
+  const current = () => generation === runGeneration && !settled;
 
   const settleConnection = () => {
-    if (!current() || resolved || settled) {
+    if (!current() || resolved) {
       return;
     }
     resolved = true;
     if (!receivedAnything && retries < MAX_CONNECT_RETRIES) {
-      // Nothing arrived at all: a blip worth one more try. The inactivity and
-      // hard-cap timers keep running across reconnects, so this can never
-      // loop past the point where the page owes the person an answer.
+      // The inactivity and hard-cap timers keep running across reconnects, so
+      // this cannot loop past the point where the page owes an answer.
       setTimeout(() => {
         if (current()) {
           connect(retries + 1);
@@ -304,8 +274,7 @@ function connect(retries: number): void {
       }, 1000);
       return;
     }
-    // The socket ended without a run-level frame. That is not success, and it
-    // used to be read as one.
+    // The socket ended without a run-level frame. That is not success.
     finish({outcome: 'run_failed', label: COULD_NOT_READ});
   };
 
@@ -326,8 +295,6 @@ function connect(retries: number): void {
 
 function startRun(retry: boolean): void {
   settled = false;
-  // Anything still holding the previous generation stops here: the sockets of
-  // the run being replaced, and the reconnect one of them may have scheduled.
   runGeneration += 1;
   renderedTasks = new Set();
   stopTimers();
