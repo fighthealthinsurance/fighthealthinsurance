@@ -1704,6 +1704,13 @@ class DenialCreatorHelper:
             # their denial letter lost their previously-entered history.
             if health_history is not None:
                 denial.health_history = health_history
+                # The one entry in this list no test can pin on its own: this
+                # method ends by handing the same health_history to
+                # _update_denial, whose save lists the column too, so deleting
+                # this entry loses nothing today. Kept anyway, so the save is
+                # consistent with what the lines above it assigned and does
+                # not quietly start dropping a column if that tail call ever
+                # moves.
                 resubmit_fields.add("health_history")
 
             # Only update these fields if they're provided
@@ -1784,12 +1791,20 @@ class DenialCreatorHelper:
             employer_name = g.group(1)
             if len(employer_name) < 300:
                 denial.employer_name = employer_name
-                # Its own column only, for the same reason as the two saves
-                # above: a bare save() here writes back every OTHER column
-                # from a snapshot loaded at the top of this call, reverting
-                # whatever a concurrent writer has since stored on the row.
-                # Not the zip block above, which shares this same instance and
-                # so can only ever be rewritten with its own values.
+                # Its own column, for the same reason as the resubmission
+                # save above. Nothing in this method re-reads the row, so by
+                # here ``denial`` still holds whatever it held when the caller
+                # handed it over (InitialProcessView reuses the denial it
+                # found in the session) or when the create above made it. A
+                # bare save() writes back every column that stale instance is
+                # carrying, including ones this request never touched, so a
+                # value another writer stored since then -- the entity extract
+                # fills in procedure and diagnosis on this same row -- is
+                # replaced by what the instance remembers. Sabotaging this
+                # line to a bare save() fails
+                # test_the_employer_name_save_does_not_revert_another_writers_column
+                # with "None != 'colonoscopy'". last_interaction is auto_now
+                # and only written when it is listed.
                 denial.save(update_fields=["employer_name", "last_interaction"])
 
         denial_id = denial.denial_id
@@ -2916,8 +2931,11 @@ class DenialCreatorHelper:
         # writes only those. A bare ``denial.save()`` writes back every column
         # this instance is holding (Denial.save builds its own update_fields
         # for that case, excluding only person_counted and deferred fields), so
-        # anything another writer stored on the row between the load at the top
-        # of ``update_denial`` and this save was silently reverted.
+        # anything another writer stored on the row after this instance was
+        # read was silently reverted. Read where depends on the caller:
+        # ``update_denial`` above loads it a few lines before calling here,
+        # and ``create_or_update_denial`` passes on the instance it was handed
+        # or created.
         changed_fields: set[str] = set()
 
         with _transaction.atomic():

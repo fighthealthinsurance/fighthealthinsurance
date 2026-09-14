@@ -31,13 +31,20 @@ really checking.
 import html as html_module
 import re
 
+from django.contrib.auth import get_user_model
 from django.template.loader import render_to_string
 from django.test import Client, TestCase
 from django.urls import reverse
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
-from fighthealthinsurance.models import Denial, PlanDocuments
+from fighthealthinsurance.models import (
+    Denial,
+    InsuranceCompany,
+    InsurancePlan,
+    PlanDocuments,
+)
 from fhi_users.audit import TrackingInfo
+from fhi_users.models import PatientUser, ProfessionalUser
 
 EMAIL = "history@example.com"
 SEMI_SEKRET = "sekret-for-the-optional-steps"
@@ -420,6 +427,15 @@ class StepSavesPersistTheColumnsTheyAssignTest(OptionalStepsTestCase):
     columns it assigns come back. (The employer-name save is covered by
     test_the_employer_name_save_does_not_revert_another_writers_column above,
     which already asserts employer_name landed.)
+
+    Every column each save assigns, not a sample. Measured before this test
+    was widened: nine columns deleted from the resubmission save's
+    update_fields (denial_text, hashed_email, raw_email, health_history,
+    creating_professional, primary_professional, patient_user,
+    insurance_company_obj, insurance_plan_obj) produced exactly one failure
+    across the whole sync suite, 2649 other tests still passing, and that one
+    failure was test_denial_session_reuse's denial_text assertion. Eight of
+    the nine were pinned by nothing at all.
     """
 
     def test_the_optional_step_save_persists_every_column_it_assigns(self):
@@ -441,17 +457,58 @@ class StepSavesPersistTheColumnsTheyAssignTest(OptionalStepsTestCase):
         self.assertTrue(fresh.include_provided_health_history_in_appeal)
 
     def test_a_resubmitted_upload_persists_the_columns_it_assigns(self):
-        """The resubmission branch of create_or_update_denial, including the
-        four columns TrackingInfo.update_model_fields assigns."""
+        """The resubmission branch of create_or_update_denial: every column
+        it can assign, including the four TrackingInfo.update_model_fields
+        assigns and the ones only the pro and REST callers ever pass.
+
+        Every optional argument is passed, because the columns behind them
+        are assigned only when their argument is not None, and an unpassed
+        argument leaves its entry out of update_fields and so proves nothing
+        about it.
+        """
+        users = get_user_model()
+        creating = ProfessionalUser.objects.create(
+            user=users.objects.create_user(
+                username="creating-pro", email="creating@clinic.example"
+            ),
+            active=True,
+        )
+        primary = ProfessionalUser.objects.create(
+            user=users.objects.create_user(
+                username="primary-pro", email="primary@clinic.example"
+            ),
+            active=True,
+        )
+        patient = PatientUser.objects.create(
+            user=users.objects.create_user(
+                username="the-patient", email="patient@example.org"
+            ),
+            active=True,
+        )
+        company = InsuranceCompany.objects.create(name="Widgets Health")
+        plan = InsurancePlan.objects.create(
+            insurance_company=company, plan_name="Widgets Gold PPO"
+        )
         loaded = Denial.objects.get(denial_id=self.denial.denial_id)
+        # A different address, so hashed_email has to change to land.
+        new_email = "moved@example.com"
+        self.assertNotEqual(loaded.hashed_email, Denial.get_hashed_email(new_email))
 
         common_view_logic.DenialCreatorHelper.create_or_update_denial(
-            email=EMAIL,
-            denial_text=loaded.denial_text,
+            email=new_email,
+            denial_text="Your claim has been denied, again.",
             zip="",
             denial=loaded,
+            health_history=TYPED,
+            # Retains the raw address, which is what raw_email holds.
+            store_raw_email=True,
             use_external_models=False,
+            creating_professional=creating,
+            primary_professional=primary,
+            patient_user=patient,
             insurance_company="Widgets Health",
+            insurance_company_obj=company,
+            insurance_plan_obj=plan,
             patient_visible=True,
             microsite_slug="widgets",
             referral_source="Search Engine",
@@ -465,8 +522,22 @@ class StepSavesPersistTheColumnsTheyAssignTest(OptionalStepsTestCase):
         )
 
         fresh = Denial.objects.get(denial_id=self.denial.denial_id)
+        self.assertEqual(fresh.denial_text, "Your claim has been denied, again.")
+        self.assertEqual(fresh.hashed_email, Denial.get_hashed_email(new_email))
+        self.assertEqual(fresh.raw_email, new_email)
+        # No health_history assertion here, deliberately. This method ends by
+        # calling _update_denial with the same health_history, and that save
+        # lists the column too, so an assertion here would pass with
+        # health_history deleted from THIS save's update_fields and would be
+        # pinning nothing. The column is pinned by
+        # test_the_optional_step_save_persists_every_column_it_assigns.
         self.assertFalse(fresh.use_external)
+        self.assertEqual(fresh.creating_professional_id, creating.id)
+        self.assertEqual(fresh.primary_professional_id, primary.id)
+        self.assertEqual(fresh.patient_user_id, patient.id)
         self.assertEqual(fresh.insurance_company, "Widgets Health")
+        self.assertEqual(fresh.insurance_company_obj_id, company.id)
+        self.assertEqual(fresh.insurance_plan_obj_id, plan.id)
         self.assertTrue(fresh.patient_visible)
         self.assertEqual(fresh.microsite_slug, "widgets")
         self.assertEqual(fresh.referral_source, "Search Engine")
