@@ -41,7 +41,9 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic, forms as core_forms, models
+from fighthealthinsurance import common_view_logic
+from fighthealthinsurance import forms as core_forms, models
+from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
@@ -2026,14 +2028,16 @@ class InitialProcessView(generic.FormView):
             self.request.session["microsite_slug"] = microsite_slug
             self.request.session["microsite_title"] = microsite_title
 
+        # A resubmission reuses the session's denial, so there can already
+        # be history to show.
+        stored = stored_health_history(denial_response.denial_id)
         form = core_forms.HealthHistory(
             initial={
                 "denial_id": denial_response.denial_id,
                 "email": cleaned_data["email"],
                 "semi_sekret": denial_response.semi_sekret,
-                # A resubmission reuses the session's denial, so there can
-                # already be history to show.
-                "health_history": stored_health_history(denial_response.denial_id),
+                "health_history": stored,
+                "health_history_seen": health_history_digest(stored),
             }
         )
 
@@ -2288,7 +2292,9 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         # Initial is only what an UNBOUND form shows. A bound field's value()
         # returns the submitted data, so a POST that failed validation
         # redisplays what the person just typed rather than this.
-        initial["health_history"] = stored_health_history(denial_ref.get("denial_id"))
+        stored = stored_health_history(denial_ref.get("denial_id"))
+        initial["health_history"] = stored
+        initial["health_history_seen"] = health_history_digest(stored)
         return initial
 
     def get_context_data(self, **kwargs):

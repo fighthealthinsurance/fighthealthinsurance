@@ -121,3 +121,17 @@ def merge_plan_context(
             f"fragment(s) denial_id={getattr(denial, 'denial_id', '?')}"
         )
     return new_value
+
+
+def health_history_digest(value: Optional[str]) -> str:
+    """A stable fingerprint of one health history, for staleness checks.
+
+    Never the text itself: this is the most sensitive column on the row and
+    it already travels once per submission. An empty box and a column that
+    was never written are the same thing here, because a page rendered
+    before anything was stored and a page rendered after a removal are the
+    same page as far as the person is concerned.
+    """
+    import hashlib
+
+    return hashlib.sha256((value or "").strip().encode("utf-8")).hexdigest()
