@@ -19,16 +19,24 @@ model call returned without raising, including a return of ``(None, None)``, so
 a row that has the flag and nothing else must be told we read the letter and
 found nothing rather than congratulated on details it does not have.
 
-The client is TypeScript with no JS harness in this repo, so the page-side rules
-("no internal step name reaches the DOM", "nothing navigates for the person",
-"every terminal state offers both ways out") are asserted structurally against
-the source, the same way ``test_ocr_progress_indicator.py`` does it. Be honest
-about what that buys: these read the source text, so they catch a change that
-takes a rule out, and a rewrite that keeps the shape while changing what the
-page does can still walk past them. The navigation one is written as a shape
-rather than a list of spellings because a three-literal version of it let
-``form.requestSubmit()`` through, which is the same auto-advance under another
-name.
+The page-side rules ("no internal step name reaches the DOM", "nothing
+navigates for the person", "every terminal state offers both ways out") are
+asserted twice, and only one of the two is here.
+
+What is here reads the source text, the same way ``test_ocr_progress_indicator
+.py`` does it. Be honest about what that buys: it catches a rule being deleted,
+and a rewrite that keeps the shape while changing what the page does walks
+straight past it. That is not hypothetical. A reviewer restored the deleted
+auto-advance in full, as ``form.requestSubmit()``, and every one of these
+passed; the navigation test below is written as a shape rather than a list of
+spellings because of it, and a version that assembles the method name at
+runtime still gets through.
+
+The other half is ``tests/sync/test_entity_fetcher_behaviour.py``, which
+compiles this TypeScript and runs it in node over a fake page, then asserts on
+the DOM the person would be looking at. That is where these rules are actually
+tested. Keep these as the cheap tripwire that runs with no toolchain, and put
+new page-side claims over there.
 """
 
 import contextlib

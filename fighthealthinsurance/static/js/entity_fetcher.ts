@@ -62,6 +62,15 @@ let renderedTasks: Set<string> = new Set();
 // close arriving after the run-level frame is just the socket hanging up.
 let settled = false;
 let activeSocket: WebSocket | null = null;
+// Which run a socket belongs to. Pressing retry starts a new run while the
+// previous run's socket is still alive: close() only asks the browser to hang
+// up, and the close event lands a network round trip later, which is well
+// inside the window the retry button is on the screen for. That late event was
+// read as this run's verdict, so a retry painted "we could not finish reading
+// your letter" over a run that had not finished yet, and the answer the run
+// then produced was dropped by the settled guard. A handler from an older run
+// does nothing.
+let runGeneration = 0;
 let currentUrl = '';
 let currentData: Record<string, unknown> = {};
 
@@ -270,13 +279,17 @@ function handleFrame(raw: string): void {
 }
 
 function connect(retries: number): void {
+  const generation = runGeneration;
   const ws = new WebSocket(currentUrl);
   activeSocket = ws;
   let receivedAnything = false;
   let resolved = false;
 
+  // True while this socket still belongs to the run on the screen.
+  const current = () => generation === runGeneration;
+
   const settleConnection = () => {
-    if (resolved || settled) {
+    if (!current() || resolved || settled) {
       return;
     }
     resolved = true;
@@ -284,7 +297,11 @@ function connect(retries: number): void {
       // Nothing arrived at all: a blip worth one more try. The inactivity and
       // hard-cap timers keep running across reconnects, so this can never
       // loop past the point where the page owes the person an answer.
-      setTimeout(() => connect(retries + 1), 1000);
+      setTimeout(() => {
+        if (current()) {
+          connect(retries + 1);
+        }
+      }, 1000);
       return;
     }
     // The socket ended without a run-level frame. That is not success, and it
@@ -296,6 +313,9 @@ function connect(retries: number): void {
     ws.send(JSON.stringify(currentData));
   };
   ws.onmessage = (event) => {
+    if (!current()) {
+      return;
+    }
     receivedAnything = true;
     armInactivityTimer();
     handleFrame(event.data);
@@ -306,6 +326,9 @@ function connect(retries: number): void {
 
 function startRun(retry: boolean): void {
   settled = false;
+  // Anything still holding the previous generation stops here: the sockets of
+  // the run being replaced, and the reconnect one of them may have scheduled.
+  runGeneration += 1;
   renderedTasks = new Set();
   stopTimers();
 
