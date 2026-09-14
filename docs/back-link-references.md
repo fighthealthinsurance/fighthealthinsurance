@@ -28,9 +28,19 @@ retention period and must not be quoted as one.
 The stored copy of the triple lives longer than that, and today it lives
 until somebody purges it by hand:
 
-- `Denial` deliberately stores only a hashed email. This scheme puts the
-  plaintext address and the case's permanent `semi_sekret` into the session
-  store, which is base64 JSON in `django_session` and is not encrypted.
+- What this scheme adds is a plaintext copy of the email address and of the
+  case's permanent `semi_sekret`, in the session store, which is base64 JSON
+  in `django_session` and is not encrypted.
+- What the database already holds, for comparison, because an earlier draft of
+  this file got it wrong and said `Denial` keeps only a hashed email. It does
+  not. `Denial.hashed_email` is stored for every case, `Denial.semi_sekret` is
+  stored in plaintext for every case (`models.py`), and
+  `Denial.raw_email` is a plaintext `TextField` (`models.py:2387`) holding the
+  address for anybody who opted into follow-up contact. So the `semi_sekret` in
+  the session is a second copy of something already in plaintext, and the email
+  is the part that is genuinely new: the session holds it for everyone who
+  walks the flow, opt-in or not, and `email_polling_actor`'s sweep that clears
+  `raw_email` after follow-ups are sent does not reach it.
 - No `SESSION_ENGINE` is set, on `Prod` or anywhere else, so Django's
   database backend applies (`global_settings.py` default
   `django.contrib.sessions.backends.db`).
@@ -41,16 +51,33 @@ until somebody purges it by hand:
   Deletion is what `manage.py clearsessions` does, and nothing in this
   checkout runs it, anywhere git can see.
 
-Each of those three is an assertion in `RetentionClaimTest`, so the paragraph
-fails out loud rather than rotting. The first two read the `Prod`
-configuration class rather than `django.conf.settings`, because the claim is
-about production and the test process runs `TestSync`; the third lists the
-repo with `git ls-files` rather than naming directories.
+`RetentionClaimTest` pins those bullets, so the paragraph fails out loud
+rather than rotting. What each assertion actually covers, stated narrowly
+because a test that is believed to cover more than it does is worse than no
+test:
+
+- Two assertions read the value that applies, on `Prod` and on the running
+  configuration. `django.conf.settings` alone is not enough: the test process
+  runs `TestSync`, and setting a cookie age on `class Prod(Base)` alone once
+  left every assertion here passing. Neither can answer "is it set", because
+  django-configurations copies Django's global defaults into every
+  configuration class body, so a third assertion asks that of the text of
+  `settings.py` instead.
+- One assertion exercises the behaviour rather than the setting: it drives a
+  real session through the test client, checks `expire_date` lands two weeks
+  out, ages the row by hand, and shows the session store stops honouring it
+  while the row itself is still in the table.
+- The purge search looks for a `clearsessions` invocation, any use of the
+  `Session` model, and a raw `DELETE FROM django_session`, over every file
+  `git ls-files --cached --others --exclude-standard` reports. Files a purge
+  could be written in are read whole however large; only opaque blobs are
+  capped. It cannot rule out a purge that spells the same thing some third
+  way, or one that lives outside this repo. Tripwire, not proof.
 
 So for somebody who abandons the flow, the plaintext email and the permanent
 case secret sit in `django_session` until something purges them, and today
-nothing does. The honest sentence is "until the session row is purged, and
-nothing purges it".
+nothing in this repo does. The honest sentence is "until the session row is
+purged, and nothing purges it".
 
 That is still a trade worth taking. What this removes is a live credential in
 the address bar, in history and in access logs, reachable by anyone who gets
@@ -135,12 +162,11 @@ reason.
 `settings.SESSION_COOKIE_AGE` and searched five named directories, and a
 reviewer got all of it to pass with a six hour cookie age on `class
 Prod(Base)` and a `clearsessions` step in `.github/workflows/`: both facts
-this paragraph rests on were false and nothing failed. It now reads
-`Prod.SESSION_COOKIE_AGE` and `Prod.SESSION_ENGINE` off the configuration
-class, and searches every file `git ls-files --cached --others
---exclude-standard` reports. It also asserts that the listing reached
-`.github/workflows/ci.yml`, so a listing that comes back short fails instead
-of passing empty.
+this paragraph rests on were false and nothing failed. It now reads the
+configuration classes directly, tests the expiry behaviour rather than only
+the number, and searches every text file git reports. It also asserts that the
+listing reached `.github/workflows/ci.yml`, so a listing that comes back short
+fails instead of passing empty.
 
 One consequence worth knowing before it surprises somebody: this class fails
 on a change to infrastructure rather than to application code. The day a

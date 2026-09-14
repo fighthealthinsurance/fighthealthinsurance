@@ -32,21 +32,16 @@ Upload your Health Insurance Denial
 <section class="scan-section mt-2">
     <div class="container">
 	{% if resume_help %}
-	{# The person followed a link back into an appeal and it did not open. #}
-	{# Back links are tied to the browser they were made in, so this is what #}
-	{# a second device, a link someone texted themselves, or a stale link #}
-	{# looks like. Say so, because an unexplained upload page reads as "your #}
-	{# appeal is gone". #}
 	<div class="alert-box alert-box-warning-light" id="resume-help">
 	    <h4>That link did not open your appeal</h4>
 	    <p>
 		A link back into an appeal only works in the same browser you started in, and it goes stale about {{ resume_help_hours }} hours after you last used it. If you opened it on a different phone or computer, or sent it to yourself, or set it down for longer than that, it will not find your case. We keep it that way on purpose, so that a link sitting in your history is not a key to your medical information.
 	    </p>
 	    <p>
-		Go back to the browser you started in and open the link again, or use its back button, and your appeal will be where you left it.
+		If you started this appeal in a different browser, go back to that one and open the link again, or use its back button, and your appeal will be where you left it. If you are already in the browser you started in, the link has gone stale and opening it again will not bring it back. Your appeal is still here either way. We just need to look it up for you.
 	    </p>
 	    <p>
-		If you cannot get back to that browser, email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> or <a href="{% url 'contact' %}">contact us</a> and we will help you pick your appeal back up. You can also start a new one below.
+		Email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> or <a href="{% url 'contact' %}">contact us</a> and we will help you pick your appeal back up. You can also start a new one below.
 	    </p>
 	</div>
 	{% endif %}

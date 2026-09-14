@@ -1,46 +1,25 @@
 """Back links carry an opaque reference, not the case's credentials.
 
 ``build_back_url`` used to urlencode (denial_id, email, semi_sekret) into the
-query string of every back link from step 3 onward. From there the triple
-lands in browser history on a shared device, in every reverse proxy access
-log, and in anything the person screenshots or pastes when asking a friend
-for help -- and the triple is the whole credential on the case, because
-``sensitive_post_parameters`` covers POST bodies only and
-``SessionRequiredMixin`` enforces a session only under DEBUG or TESTING.
+query string of every back link from step 3 onward, where the triple lands in
+browser history, in access logs, and in anything the person screenshots. The
+triple is the whole credential on the case: ``sensitive_post_parameters``
+covers POST bodies only, and ``SessionRequiredMixin`` enforces a session only
+under DEBUG or TESTING.
 
-The link now carries one random string. The case reference it stands for is
-kept server side against the session, so the string is worth nothing on its
-own, worth nothing in someone else's session, and worth nothing once it has
-expired. These tests pin all three, pin that every consumer resolves it
-(including the pages reached through ``SessionRequiredMixin``, which the
-three named GET handlers do not cover), and pin that the transition window
-for the old triple can actually be closed.
+The link now carries one random string, resolved server side against the
+session that issued it. These tests pin that it is worth nothing on its own,
+nothing in another session and nothing once expired, that every consumer
+resolves it (including the ``SessionRequiredMixin`` pages, which the three
+named GET handlers do not cover), and that the transition window for the old
+triple can be closed.
 
-Tying the reference to the session costs something, and it costs the patient,
-so the cost is spelled out here rather than left between the lines. The old
-triple worked in any browser: someone could start an appeal on their phone
-and open the same link on a laptop, or text it to themselves. A reference
-that resolves only in its own session ends that, and ``CrossDeviceResumeTest``
-is the acceptance for what happens instead. Every way a back link can fail to
-open a case -- a second device, a link someone sent themselves, a reference
-that has expired, an old link after the transition window closes -- lands on
-the upload page with that page told to say what happened, what it means for
-their appeal, and how to get back in. Somebody who followed no link at all is
-told nothing, because they have nothing to explain.
-
-Two of these classes exist because a test can pass and still be telling you
-about the wrong site:
-
-``ProductionShapedRefusalTest`` strips the session gate the way ``Prod`` does
-(DEBUG off, TESTING deleted from the environment) before asserting any of it.
-Under tox that gate is on, and while the refusal sat behind it these same
-assertions went green over a production that served the patient a blank form
-instead.
-
-``SlidingLifetimeTest`` covers the other half of "the failure has to be
-honest", which is not failing at people who did nothing wrong. The twelve
-hours run from the last use, so a person working an appeal all day keeps
-their reference; only one nobody has touched for twelve hours goes stale.
+The scheme costs the patient a back link that works on a second device, so
+``CrossDeviceResumeTest`` is the acceptance for what they are told instead,
+and ``SlidingLifetimeTest`` for not failing at somebody who did nothing wrong.
+``ProductionShapedRefusalTest`` asserts the refusals with the session gate
+removed the way ``Prod`` removes it, because under tox that gate is on and the
+refusal once sat behind it.
 """
 
 import base64
@@ -51,19 +30,48 @@ import re
 import subprocess
 import time
 import types
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.contrib.sessions.models import Session
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from fighthealthinsurance import common_view_logic, models, views
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# A scheduled purge does not live inside a multi-megabyte image, and reading
-# every tracked blob would put 76MB through this test on every run.
-LARGEST_FILE_WORTH_READING = 512 * 1024
+# Reading every tracked blob would put 76MB through this test on every run, so
+# anything a purge could not be written in is read only up to here. Anything it
+# could be written in is read whole however big it gets, because "we skipped it
+# for size" is exactly how a search like this goes quietly blind.
+LARGEST_OPAQUE_FILE_WORTH_READING = 512 * 1024
+PURGE_COULD_BE_WRITTEN_IN_SUFFIXES = frozenset(
+    {
+        ".cfg",
+        ".conf",
+        ".env",
+        ".ini",
+        ".js",
+        ".json",
+        ".mk",
+        ".py",
+        ".service",
+        ".sh",
+        ".sql",
+        ".timer",
+        ".toml",
+        ".ts",
+        ".tf",
+        ".txt",
+        ".yaml",
+        ".yml",
+    }
+)
+PURGE_COULD_BE_WRITTEN_IN_NAMES = ("Makefile", "Dockerfile", "Procfile", "Justfile")
 
 
 def repo_files() -> list:
@@ -123,11 +131,22 @@ def repo_files() -> list:
     return walked
 
 
+def could_hold_a_purge(relative_path) -> bool:
+    """Whether a scheduled job could plausibly be written in this file."""
+    name = relative_path.name
+    return relative_path.suffix in PURGE_COULD_BE_WRITTEN_IN_SUFFIXES or any(
+        name.startswith(prefix) for prefix in PURGE_COULD_BE_WRITTEN_IN_NAMES
+    )
+
+
 def read_repo_text(relative_path) -> str:
     """A tracked file as text, or an empty string if it is not readable text."""
     path = REPO_ROOT / relative_path
     try:
-        if path.stat().st_size > LARGEST_FILE_WORTH_READING:
+        if (
+            not could_hold_a_purge(relative_path)
+            and path.stat().st_size > LARGEST_OPAQUE_FILE_WORTH_READING
+        ):
             return ""
         return path.read_text(errors="ignore")
     except OSError:
@@ -221,9 +240,7 @@ class BackLinkReferenceTestBase(TestCase):
         query = url.split("?", 1)[1] if "?" in url else ""
         self.assertNotIn("@", url, msg=f"email address in URL: {url}")
         self.assertNotIn(EMAIL, url, msg=f"email address in URL: {url}")
-        self.assertNotIn(
-            self.denial.semi_sekret, url, msg=f"case secret in URL: {url}"
-        )
+        self.assertNotIn(self.denial.semi_sekret, url, msg=f"case secret in URL: {url}")
         self.assertNotIn(
             models.Denial.get_hashed_email(EMAIL),
             url,
@@ -233,8 +250,6 @@ class BackLinkReferenceTestBase(TestCase):
         self.assertNotIn("email", query, msg=f"email named in URL: {url}")
         self.assertNotIn("denial_id", query, msg=f"case id named in URL: {url}")
         if query:
-            # One parameter, and it is the opaque reference. Anything else in
-            # the address bar is something this change exists to remove.
             self.assertEqual(
                 [pair.split("=")[0] for pair in query.split("&")],
                 [views.DENIAL_REF_QUERY_PARAM],
@@ -357,11 +372,9 @@ class TokenOpacityTest(BackLinkReferenceTestBase):
         be encoded and look again.
         """
         token = self.issue_token()
-        # The acceptance criterion: no email address, no hashed email and no
-        # semi_sekret. The denial_id is deliberately not in this list -- it is
-        # a short integer, so looking for it inside a random string is a coin
-        # flip, not a test. That the id is not in the address bar is asserted
-        # by the walk, which pins the query string down to one ref parameter.
+        # The denial_id is deliberately not in this list: it is a short
+        # integer, so looking for it inside a random string is a coin flip.
+        # The walk pins the query string down to one ref parameter instead.
         secrets_that_must_not_appear = (
             EMAIL,
             EMAIL.split("@")[0],
@@ -486,8 +499,7 @@ class SlidingLifetimeTest(BackLinkReferenceTestBase):
 
     def test_following_a_back_link_pushes_the_expiry_out(self):
         token = self.issue_token()
-        # Eleven and a half hours in: the old code would have let this die
-        # half an hour later however hard the person was working.
+        # Eleven and a half hours in, and still being used.
         nearly_up = time.time() + 30 * 60
         self.set_expiry(token, nearly_up)
 
@@ -594,13 +606,48 @@ class ReferenceStoreTest(BackLinkReferenceTestBase):
                 msg=f"store held more than {views.DENIAL_REF_MAX_PER_SESSION}",
             )
 
-    def test_a_session_holding_junk_under_the_key_does_not_500(self):
-        """Nothing writes that key but this module, so this is belt and braces.
+    def test_reusing_a_reference_at_the_cap_evicts_nothing(self):
+        """A full store plus a case it already knows needs no new slot.
 
-        The resolver already refused a non-dict; issuing walked straight into
-        it. Both sides guard now, because a page render is not the place to
-        find out.
+        Evicting anyway costs the person a live reference, and if the evicted
+        one is the case being rendered its token changes under it and the back
+        links already in their history stop resolving.
         """
+        session = self.client.session
+        tokens = [
+            self.issue_for_new_case(session, index)
+            for index in range(views.DENIAL_REF_MAX_PER_SESSION)
+        ]
+        refs = session[views._DENIAL_REF_SESSION_KEY]
+        self.assertEqual(len(refs), views.DENIAL_REF_MAX_PER_SESSION)
+        # Spread the expiries so "the oldest" is not a tie, and put the case
+        # about to be re-rendered at the front of the queue for eviction.
+        base = time.time() + views.DENIAL_REF_IDLE_TTL_SECONDS
+        for offset, token in enumerate(tokens):
+            refs[token]["exp"] = base + offset
+        session[views._DENIAL_REF_SESSION_KEY] = refs
+        oldest = tokens[0]
+        entry = dict(refs[oldest])
+
+        again = views.issue_denial_ref_token(
+            types.SimpleNamespace(session=session),
+            entry["denial_id"],
+            entry["email"],
+            entry["semi_sekret"],
+        )
+        self.assertEqual(
+            again,
+            oldest,
+            msg="a case the session already knew was given a new reference",
+        )
+        self.assertEqual(
+            set(session[views._DENIAL_REF_SESSION_KEY]),
+            set(tokens),
+            msg="re-rendering a link at the cap evicted a live reference",
+        )
+
+    def test_a_session_holding_junk_under_the_key_does_not_500(self):
+        """Both sides guard: a page render is not the place to find out."""
         session = self.client.session
         session[views._DENIAL_REF_SESSION_KEY] = ["not", "a", "dict"]
         session.save()
@@ -717,20 +764,13 @@ class LegacyQueryTripleTest(BackLinkReferenceTestBase):
 class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
     """The refusal is real where it matters, not only where the tests run.
 
-    ``SessionRequiredMixin`` has always had a session gate that is switched
-    off in production on purpose, and for a while the refusal of an
-    unresolvable back link sat behind it. Under tox that gate is on
-    (``TESTING=True``), so a test could assert a redirect from health
-    history, plan documents or extraction and pass, while production served
-    those same requests a 200 with an empty form and not a word about why:
-    the patient on the second device retyped their procedure and diagnosis,
-    submitted, and only then got bounced to the upload page with what they
-    had typed gone.
-
-    So this class removes the gate the way ``Prod`` does -- ``DEBUG = False``
-    plus ``pre_setup`` deleting ``TESTING`` from the environment -- and makes
-    the same assertions again. The first test proves the removal took, and
-    the rest would go green for the wrong reason without it.
+    ``SessionRequiredMixin``'s session gate is off in production on purpose,
+    and on under tox (``TESTING=True``), so a refusal that sits behind it goes
+    green here over a production that serves the patient a blank form instead.
+    This class removes the gate the way ``Prod`` does (``DEBUG = False``,
+    ``pre_setup`` deleting ``TESTING``) and asserts every refusal again. The
+    first two tests prove the removal took; without them the rest would pass
+    for the wrong reason.
     """
 
     def setUp(self):
@@ -742,9 +782,8 @@ class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
         self.addCleanup(environment.stop)
         os.environ.pop("TESTING", None)
 
-    # Every page a back link can land on: the four plain View handlers, then
-    # the three served through SessionRequiredMixin, which are the ones that
-    # used to fail silently.
+    # Every page a back link can land on: four plain View handlers, then the
+    # three served through SessionRequiredMixin.
     PLAIN_PAGES = (
         "categorize_review",
         "find_next_steps",
@@ -793,6 +832,21 @@ class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
         for url_name in self.ALL_PAGES:
             with self.subTest(page=url_name):
                 response = self.client.get(self.ref_url(url_name, token + "x"))
+                self.assertLandsOnUploadPageWithHelp(response)
+
+    def test_an_empty_reference_is_refused_on_every_page(self):
+        """``?ref=`` is a back link that arrived mangled, not one nobody sent.
+
+        Whether a link was followed was read off the truthiness of the value,
+        so an empty one counted as "nothing followed", walked past the refusal
+        and left the mixin pages serving the blank production 200 this branch
+        exists to stop.
+        """
+        for url_name in self.ALL_PAGES:
+            with self.subTest(page=url_name):
+                response = self.client.get(
+                    f"{reverse(url_name)}?{views.DENIAL_REF_QUERY_PARAM}="
+                )
                 self.assertLandsOnUploadPageWithHelp(response)
 
     @override_settings(LEGACY_DENIAL_REF_QUERY=False)
@@ -866,13 +920,10 @@ class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
 class CrossDeviceResumeTest(BackLinkReferenceTestBase):
     """The cost of a session-scoped reference, and what the person is told.
 
-    The old query triple worked in any browser, so a patient could start on
-    their phone and finish on a laptop, or text themselves the link. A
-    reference that resolves only in the session that issued it takes that
-    away. That is the point of it (a link in someone's history stops being a
-    key to their medical case) but it is a real behaviour change and it lands
-    on the patient, so the failure has to say what happened and offer a way
-    back in rather than dropping them on a blank upload page.
+    Losing a back link that works on a second device is the point of the
+    scheme and a real behaviour change that lands on somebody mid-appeal, so
+    the failure has to say what happened and offer a way back in rather than
+    dropping them on a blank upload page.
     """
 
     def upload_page_after(self, response, client):
@@ -891,10 +942,7 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
             msg="the upload page said nothing about the link that failed",
         )
         self.assertIn("did not open your appeal", body)
-        # Says WHY, in the terms the person can act on: the browser they
-        # started in, and the fact that the link goes stale.
         self.assertIn("same browser you started in", body)
-        # Offers a way back in rather than only an apology.
         self.assertIn("mailto:support42@fighthealthinsurance.com", body)
         self.assertIn(reverse("contact"), body)
 
@@ -928,7 +976,13 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
                 )
 
     def test_an_expired_link_in_the_same_browser_explains_itself_too(self):
-        """Same person, same browser, back the next day."""
+        """Same person, same browser, back the next day.
+
+        And the copy has to hold for them. "Go back to the browser you started
+        in and your appeal will be where you left it" is true for a second
+        device and false here: this person is already in that browser, and
+        reopening the link does nothing.
+        """
         token = self.issue_token()
         session = self.client.session
         refs = session[views._DENIAL_REF_SESSION_KEY]
@@ -938,8 +992,15 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
 
         response = self.client.get(self.ref_url("categorize_review", token))
         self.assertLandsOnUploadPageWithHelp(response)
-        self.assertExplainsAndOffersAWayBack(
-            self.upload_page_after(response, self.client)
+        page = self.upload_page_after(response, self.client)
+        self.assertExplainsAndOffersAWayBack(page)
+        self.assertIn(
+            "opening it again will not bring it back",
+            page.content.decode(),
+            msg=(
+                "the page promises the original browser restores the appeal, "
+                "which is not true for a link that has gone stale in it"
+            ),
         )
 
     def test_the_explanation_carries_nothing_about_the_case(self):
@@ -1023,40 +1084,33 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
 class RetentionClaimTest(TestCase):
     """The retention sentence an owner signs off on, pinned to the repo.
 
-    An earlier draft of this change told the owner the stored copy of the
-    triple lived twelve hours. It does not. Twelve hours
-    (``DENIAL_REF_IDLE_TTL_SECONDS``) decides only whether a reference still
-    resolves; the plaintext email and the permanent ``semi_sekret`` sit in
-    ``django_session``, whose row lifetime comes from ``SESSION_COOKIE_AGE``,
-    whose storage comes from ``SESSION_ENGINE`` and whose deletion comes from
-    ``manage.py clearsessions``. This repo sets neither setting and runs no
-    purge, so the honest sentence is "until the session row is purged, and
-    nothing purges it".
+    An earlier draft told the owner the stored copy of the triple lived twelve
+    hours. It does not. ``DENIAL_REF_IDLE_TTL_SECONDS`` decides only whether a
+    reference still resolves; the plaintext email and the permanent
+    ``semi_sekret`` sit in ``django_session``, whose row lifetime comes from
+    ``SESSION_COOKIE_AGE``, whose storage comes from ``SESSION_ENGINE`` and
+    whose deletion comes from a purge nobody has written.
 
     That sentence is prose, in ``docs/back-link-references.md`` and in
-    ``views.issue_denial_ref_token``, and prose rots quietly. If somebody
-    later sets a cookie age, moves the session store, or wires up a purge,
-    the sentence becomes wrong while still reading fine, and the next owner
-    signs off on a stale claim. So fail here and name the files to fix.
+    ``views.issue_denial_ref_token``, and prose rots quietly. So fail here and
+    name the files to fix.
 
-    Two things about the shape, both learned from a reviewer who got the
-    first version of this class to stay green while the claim was false:
+    What this class does and does not establish, because a test believed to
+    cover more than it does is worse than no test:
 
-    The settings assertions read the ``Prod`` configuration class, not
-    ``django.conf.settings``. The active settings object under tox is
-    whatever ``TestSync`` resolved to, and the paragraph is a claim about
-    production: setting ``SESSION_COOKIE_AGE`` on ``class Prod(Base)`` alone
-    left every assertion here passing. ``Prod.SESSION_COOKIE_AGE`` resolves
-    through that class's own MRO, so it reports the number production would
-    run under no matter which configuration the test process picked. The
-    active value is checked too, as a second, separate assertion.
-
-    The purge search asks git what is in the repo rather than naming
-    directories. The first version looked only in k8s, charts, scripts, conf
-    and the Makefile; a ``clearsessions`` step added under
-    ``.github/workflows/`` walked straight past it, and a Dockerfile
-    entrypoint, a management command or a Temporal workflow would have done
-    the same.
+    - The settings assertions read the ``Prod`` configuration class as well as
+      the running one. The active settings object under tox is whatever
+      ``TestSync`` resolved to, and a reviewer once set a six hour cookie age
+      on ``class Prod(Base)`` with every assertion here still passing.
+      django-configurations copies Django's global defaults into every
+      configuration class body, so "is it set" cannot be asked of the class;
+      it is asked of the settings source instead.
+    - One test drives the store rather than reading a setting, because the
+      bullet about Django not deleting expired rows is a claim about
+      behaviour.
+    - The purge search finds a ``clearsessions`` invocation or a direct delete
+      of ``Session`` rows. It cannot rule out a purge spelled some third way,
+      or one living outside this repo. Tripwire, not proof.
     """
 
     # Django's own defaults, from django/conf/global_settings.py. Spelled out
@@ -1067,6 +1121,17 @@ class RetentionClaimTest(TestCase):
     DJANGO_DEFAULT_SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
     DOC = "docs/back-link-references.md"
+    SETTINGS_SOURCE = pathlib.Path("fighthealthinsurance/settings.py")
+
+    # A purge, in the shapes it would actually be written in. The negative
+    # lookbehind keeps the other models in this repo whose names end in
+    # "Session" out of it.
+    PURGE_PATTERNS = (
+        r"clearsessions",
+        r"(?<![\w.])Session\.objects",
+        r"from django\.contrib\.sessions\.models import Session",
+        r"""(?i:delete\s+from\s+["'`]?django_session)""",
+    )
 
     @staticmethod
     def prod_configuration():
@@ -1087,7 +1152,28 @@ class RetentionClaimTest(TestCase):
             ),
         )
 
-    def test_production_sets_no_session_cookie_age(self):
+    def test_the_settings_module_leaves_both_session_settings_alone(self):
+        """ "Nothing sets them" is the claim; this is the only place to ask it.
+
+        ``Prod.SESSION_COOKIE_AGE`` answers "what value applies", never "did we
+        set it": django-configurations puts Django's global defaults in every
+        configuration class body, so ``vars()`` cannot tell the two apart.
+        """
+        source = read_repo_text(self.SETTINGS_SOURCE)
+        self.assertNotEqual(source, "", msg=f"could not read {self.SETTINGS_SOURCE}")
+        for setting in ("SESSION_COOKIE_AGE", "SESSION_ENGINE"):
+            with self.subTest(setting=setting):
+                assignment = re.search(rf"^\s*{setting}\s*=", source, re.MULTILINE)
+                self.assertIsNone(
+                    assignment,
+                    msg=(
+                        f"{self.SETTINGS_SOURCE} now sets {setting}, so the "
+                        f"retention paragraph in {self.DOC} and the privacy "
+                        "note in views.issue_denial_ref_token are out of date"
+                    ),
+                )
+
+    def test_production_runs_the_two_week_default_cookie_age(self):
         stale = (
             "is no longer Django's two week default, so the retention "
             f"paragraph in {self.DOC} and the privacy note in "
@@ -1108,8 +1194,7 @@ class RetentionClaimTest(TestCase):
         """The bullet the whole ``django_session`` paragraph rests on.
 
         A cache or signed-cookie engine would mean there is no plaintext row
-        in ``django_session`` to purge at all, and the retention paragraph
-        would be describing a table nothing writes to.
+        in ``django_session`` to purge at all.
         """
         stale = (
             "is not Django's database backend, so the paragraph about a "
@@ -1127,21 +1212,60 @@ class RetentionClaimTest(TestCase):
             msg=f"the running configuration's SESSION_ENGINE {stale}",
         )
 
-    def test_nothing_in_the_repo_purges_expired_sessions(self):
-        """No ``clearsessions`` anywhere git knows about, so the row stays.
+    def test_an_expired_session_row_stops_resolving_and_stays_in_the_table(self):
+        """The "stops honouring, does not delete" bullet, exercised.
 
-        Markdown is excluded because saying that nothing runs it is exactly
-        what the documentation does. The two source files below name it in
-        prose for the same reason and are listed one by one, so that a third
-        file naming it has to be looked at by a person.
+        Everything else here reads a setting. This drives the store: a real
+        row, the expiry Django stamps on it, and what survives the clock.
+        """
+        store = SessionStore()
+        store[views._DENIAL_REF_SESSION_KEY] = {"token": {"exp": 0}}
+        store.save()
+        key = store.session_key
+
+        row = Session.objects.get(session_key=key)
+        self.assertAlmostEqual(
+            (row.expire_date - timezone.now()).total_seconds(),
+            settings.SESSION_COOKIE_AGE,
+            delta=300,
+            msg=(
+                "a session row is not stamped with SESSION_COOKIE_AGE, so the "
+                f"retention paragraph in {self.DOC} quotes the wrong lifetime"
+            ),
+        )
+
+        Session.objects.filter(session_key=key).update(
+            expire_date=timezone.now() - timedelta(seconds=1)
+        )
+        self.assertEqual(
+            SessionStore(session_key=key).load(),
+            {},
+            msg="an expired session row still resolves",
+        )
+        self.assertTrue(
+            Session.objects.filter(session_key=key).exists(),
+            msg=(
+                "Django deleted the expired row by itself, so the retention "
+                f"paragraph in {self.DOC} and the privacy note in "
+                "views.issue_denial_ref_token overstate what is retained"
+            ),
+        )
+
+    def test_nothing_in_the_repo_deletes_expired_session_rows(self):
+        """No ``clearsessions`` and no delete against ``Session``.
+
+        Markdown is excluded because saying that nothing runs a purge is
+        exactly what the documentation does, and this file is excluded because
+        the test above deletes nothing but does name the model. Any third file
+        that matches has to be looked at by a person.
         """
         searched = repo_files()
-        # A listing that quietly came back short would make every assertion
-        # below pass for the wrong reason, which is exactly how the hand
-        # written directory list failed. ci.yml is a committed file in the
-        # directory that defeated it.
-        self.assertTrue(
-            pathlib.Path(".github/workflows/ci.yml") in searched,
+        # A listing that came back short would make the search below pass for
+        # the wrong reason. ci.yml is a committed file in a directory an
+        # earlier hand written listing missed entirely.
+        self.assertIn(
+            pathlib.Path(".github/workflows/ci.yml"),
+            searched,
             msg=(
                 f"the repo listing came back with {len(searched)} files and "
                 "none of them is .github/workflows/ci.yml, so the listing is "
@@ -1149,24 +1273,20 @@ class RetentionClaimTest(TestCase):
                 "fix the listing before believing the result below"
             ),
         )
-        prose_only = {
-            # The privacy note in issue_denial_ref_token, which says the same
-            # thing this test asserts.
-            pathlib.Path("fighthealthinsurance/views.py"),
-            pathlib.Path(__file__).resolve().relative_to(REPO_ROOT),
-        }
+        this_file = pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)
+        purge = re.compile("|".join(self.PURGE_PATTERNS))
         runs_it = sorted(
             str(path)
             for path in searched
             if path.suffix != ".md"
-            and path not in prose_only
-            and "clearsessions" in read_repo_text(path)
+            and path != this_file
+            and purge.search(read_repo_text(path))
         )
         self.assertEqual(
             runs_it,
             [],
             msg=(
-                "something purges expired sessions now, so the retention "
+                "something may purge expired sessions now, so the retention "
                 f"paragraph in {self.DOC} and the privacy note in "
                 "views.issue_denial_ref_token understate what is cleaned up: "
                 + ", ".join(runs_it)
