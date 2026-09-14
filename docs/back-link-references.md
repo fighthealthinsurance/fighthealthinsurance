@@ -31,14 +31,21 @@ until somebody purges it by hand:
 - `Denial` deliberately stores only a hashed email. This scheme puts the
   plaintext address and the case's permanent `semi_sekret` into the session
   store, which is base64 JSON in `django_session` and is not encrypted.
-- No `SESSION_ENGINE` is set, so Django's database backend applies
-  (`global_settings.py` default `django.contrib.sessions.backends.db`).
-- No `SESSION_COOKIE_AGE` is set anywhere in this repo, so Django's two week
-  default applies. The row's `expire_date` is stamped from that on each save,
-  which means two weeks from the last write, not from the first.
+- No `SESSION_ENGINE` is set, on `Prod` or anywhere else, so Django's
+  database backend applies (`global_settings.py` default
+  `django.contrib.sessions.backends.db`).
+- No `SESSION_COOKIE_AGE` is set, on `Prod` or anywhere else, so Django's two
+  week default applies. The row's `expire_date` is stamped from that on each
+  save, which means two weeks from the last write, not from the first.
 - The database backend stops honouring an expired row. It does not delete it.
-  Deletion is what `manage.py clearsessions` does, and nothing runs it: not
-  `k8s/`, not `charts/`, not `scripts/`, not `conf/`, not the `Makefile`.
+  Deletion is what `manage.py clearsessions` does, and nothing in this
+  checkout runs it, anywhere git can see.
+
+Each of those three is an assertion in `RetentionClaimTest`, so the paragraph
+fails out loud rather than rotting. The first two read the `Prod`
+configuration class rather than `django.conf.settings`, because the claim is
+about production and the test process runs `TestSync`; the third lists the
+repo with `git ls-files` rather than naming directories.
 
 So for somebody who abandons the flow, the plaintext email and the permanent
 case secret sit in `django_session` until something purges them, and today
@@ -123,3 +130,21 @@ refusal still happens. `ProductionShapedRefusalTest` in
 refusal across all seven pages a back link can land on. Two of its tests exist
 only to prove the removal took, so the rest cannot go green for the wrong
 reason.
+
+`RetentionClaimTest` is shaped for the same reason. A first version read
+`settings.SESSION_COOKIE_AGE` and searched five named directories, and a
+reviewer got all of it to pass with a six hour cookie age on `class
+Prod(Base)` and a `clearsessions` step in `.github/workflows/`: both facts
+this paragraph rests on were false and nothing failed. It now reads
+`Prod.SESSION_COOKIE_AGE` and `Prod.SESSION_ENGINE` off the configuration
+class, and searches every file `git ls-files --cached --others
+--exclude-standard` reports. It also asserts that the listing reached
+`.github/workflows/ci.yml`, so a listing that comes back short fails instead
+of passing empty.
+
+One consequence worth knowing before it surprises somebody: this class fails
+on a change to infrastructure rather than to application code. The day a
+purge job lands, or a cookie age is set, `tests/sync/test_back_url_token.py`
+goes red and the retention paragraph above has to be rewritten in the same
+pull request. That is the intent, not an accident, but it means an infra
+change carries a docs edit with it.

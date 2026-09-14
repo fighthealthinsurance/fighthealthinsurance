@@ -48,6 +48,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import time
 import types
 from unittest.mock import patch
@@ -57,6 +58,80 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from fighthealthinsurance import common_view_logic, models, views
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# A scheduled purge does not live inside a multi-megabyte image, and reading
+# every tracked blob would put 76MB through this test on every run.
+LARGEST_FILE_WORTH_READING = 512 * 1024
+
+
+def repo_files() -> list:
+    """Every file tracked in this checkout, relative to its root.
+
+    Tracked files plus anything untracked that git is not ignoring.
+    ``RetentionClaimTest`` used to search a hand written list of directories
+    (k8s, charts, scripts, conf, the Makefile). A reviewer added a
+    ``clearsessions`` step under ``.github/workflows/`` and the test stayed
+    green, so the list is gone: ask git what the repo holds. The walk is a
+    fallback for a checkout with no git binary on PATH, where returning
+    nothing would read as a pass.
+    """
+    try:
+        listing = subprocess.run(
+            # --others --exclude-standard so a purge that is written but not
+            # yet committed still counts: a reviewer dropping one in to check
+            # this test bites should see it bite.
+            [
+                "git",
+                "-C",
+                str(REPO_ROOT),
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=120,
+        ).stdout
+        tracked = [pathlib.Path(name) for name in listing.split("\0") if name]
+    except (OSError, subprocess.SubprocessError):
+        tracked = []
+    if tracked:
+        return tracked
+
+    skip = {
+        ".git",
+        ".tox",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "fhi.egg-info",
+    }
+    walked = []
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [name for name in dirnames if name not in skip]
+        here = pathlib.Path(dirpath)
+        walked.extend((here / name).relative_to(REPO_ROOT) for name in filenames)
+    return walked
+
+
+def read_repo_text(relative_path) -> str:
+    """A tracked file as text, or an empty string if it is not readable text."""
+    path = REPO_ROOT / relative_path
+    try:
+        if path.stat().st_size > LARGEST_FILE_WORTH_READING:
+            return ""
+        return path.read_text(errors="ignore")
+    except OSError:
+        return ""
 
 
 EMAIL = "back-link-walker@example.com"
@@ -952,71 +1027,141 @@ class RetentionClaimTest(TestCase):
     triple lived twelve hours. It does not. Twelve hours
     (``DENIAL_REF_IDLE_TTL_SECONDS``) decides only whether a reference still
     resolves; the plaintext email and the permanent ``semi_sekret`` sit in
-    ``django_session``, whose row lifetime comes from ``SESSION_COOKIE_AGE``
-    and whose deletion comes from ``manage.py clearsessions``. This repo sets
-    neither, so the honest sentence is "until the session row is purged, and
+    ``django_session``, whose row lifetime comes from ``SESSION_COOKIE_AGE``,
+    whose storage comes from ``SESSION_ENGINE`` and whose deletion comes from
+    ``manage.py clearsessions``. This repo sets neither setting and runs no
+    purge, so the honest sentence is "until the session row is purged, and
     nothing purges it".
 
     That sentence is prose, in ``docs/back-link-references.md`` and in
     ``views.issue_denial_ref_token``, and prose rots quietly. If somebody
-    later sets a cookie age or wires up a purge, the sentence becomes wrong
-    while still reading fine, and the next owner signs off on a stale claim.
-    So fail here and name the files to fix.
+    later sets a cookie age, moves the session store, or wires up a purge,
+    the sentence becomes wrong while still reading fine, and the next owner
+    signs off on a stale claim. So fail here and name the files to fix.
+
+    Two things about the shape, both learned from a reviewer who got the
+    first version of this class to stay green while the claim was false:
+
+    The settings assertions read the ``Prod`` configuration class, not
+    ``django.conf.settings``. The active settings object under tox is
+    whatever ``TestSync`` resolved to, and the paragraph is a claim about
+    production: setting ``SESSION_COOKIE_AGE`` on ``class Prod(Base)`` alone
+    left every assertion here passing. ``Prod.SESSION_COOKIE_AGE`` resolves
+    through that class's own MRO, so it reports the number production would
+    run under no matter which configuration the test process picked. The
+    active value is checked too, as a second, separate assertion.
+
+    The purge search asks git what is in the repo rather than naming
+    directories. The first version looked only in k8s, charts, scripts, conf
+    and the Makefile; a ``clearsessions`` step added under
+    ``.github/workflows/`` walked straight past it, and a Dockerfile
+    entrypoint, a management command or a Temporal workflow would have done
+    the same.
     """
 
-    # Django's own default, from django/conf/global_settings.py. Spelled out
-    # rather than imported so that this test keeps meaning something if the
-    # default ever moves.
+    # Django's own defaults, from django/conf/global_settings.py. Spelled out
+    # rather than imported because the assertion is about the numbers the
+    # retention paragraph quotes, not about whatever Django says today: if a
+    # default moves, the paragraph needs rewriting and this should say so.
     DJANGO_DEFAULT_SESSION_COOKIE_AGE = 60 * 60 * 24 * 7 * 2
+    DJANGO_DEFAULT_SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
     DOC = "docs/back-link-references.md"
+
+    @staticmethod
+    def prod_configuration():
+        """The configuration class production runs (``DJANGO_CONFIGURATION=Prod``)."""
+        from fighthealthinsurance import settings as settings_module
+
+        return settings_module.Prod
 
     def test_the_reference_lifetime_is_not_the_retention_period(self):
         """The two numbers are different, which is the whole point."""
         self.assertLess(
             views.DENIAL_REF_IDLE_TTL_SECONDS,
-            settings.SESSION_COOKIE_AGE,
+            self.prod_configuration().SESSION_COOKIE_AGE,
             msg=(
-                "the stored triple outlives the reference that points at it; "
-                f"if that stops being true, rewrite {self.DOC}"
+                "in production the stored triple no longer outlives the "
+                "reference that points at it; if that stops being true, "
+                f"rewrite {self.DOC}"
             ),
         )
 
-    def test_the_repo_still_sets_no_session_cookie_age(self):
+    def test_production_sets_no_session_cookie_age(self):
+        stale = (
+            "is no longer Django's two week default, so the retention "
+            f"paragraph in {self.DOC} and the privacy note in "
+            "views.issue_denial_ref_token are out of date"
+        )
+        self.assertEqual(
+            self.prod_configuration().SESSION_COOKIE_AGE,
+            self.DJANGO_DEFAULT_SESSION_COOKIE_AGE,
+            msg=f"Prod.SESSION_COOKIE_AGE {stale}",
+        )
         self.assertEqual(
             settings.SESSION_COOKIE_AGE,
             self.DJANGO_DEFAULT_SESSION_COOKIE_AGE,
-            msg=(
-                "SESSION_COOKIE_AGE is no longer Django's two week default, so "
-                f"the retention paragraph in {self.DOC} and the privacy note in "
-                "views.issue_denial_ref_token are out of date"
-            ),
+            msg=f"the running configuration's SESSION_COOKIE_AGE {stale}",
+        )
+
+    def test_production_keeps_the_database_session_backend(self):
+        """The bullet the whole ``django_session`` paragraph rests on.
+
+        A cache or signed-cookie engine would mean there is no plaintext row
+        in ``django_session`` to purge at all, and the retention paragraph
+        would be describing a table nothing writes to.
+        """
+        stale = (
+            "is not Django's database backend, so the paragraph about a "
+            f"plaintext row in django_session in {self.DOC} and the privacy "
+            "note in views.issue_denial_ref_token describe the wrong store"
+        )
+        self.assertEqual(
+            self.prod_configuration().SESSION_ENGINE,
+            self.DJANGO_DEFAULT_SESSION_ENGINE,
+            msg=f"Prod.SESSION_ENGINE {stale}",
+        )
+        self.assertEqual(
+            settings.SESSION_ENGINE,
+            self.DJANGO_DEFAULT_SESSION_ENGINE,
+            msg=f"the running configuration's SESSION_ENGINE {stale}",
         )
 
     def test_nothing_in_the_repo_purges_expired_sessions(self):
-        """No ``clearsessions`` anywhere, so an abandoned row stays.
+        """No ``clearsessions`` anywhere git knows about, so the row stays.
 
-        Searched over the places a scheduled purge could live: the k8s
-        manifests, the helm charts, the scripts directory and the Makefile.
-        Documentation is excluded, because saying that nothing runs it is
-        exactly what the documentation does.
+        Markdown is excluded because saying that nothing runs it is exactly
+        what the documentation does. The two source files below name it in
+        prose for the same reason and are listed one by one, so that a third
+        file naming it has to be looked at by a person.
         """
-        root = pathlib.Path(__file__).resolve().parents[2]
-        searched = [
-            path
-            for directory in ("k8s", "charts", "scripts", "conf")
-            for path in (root / directory).rglob("*")
-            if path.is_file() and path.suffix != ".md"
-        ]
-        searched.append(root / "Makefile")
-        runs_it = []
-        for path in searched:
-            try:
-                text = path.read_text(errors="ignore")
-            except OSError:
-                continue
-            if "clearsessions" in text:
-                runs_it.append(str(path.relative_to(root)))
+        searched = repo_files()
+        # A listing that quietly came back short would make every assertion
+        # below pass for the wrong reason, which is exactly how the hand
+        # written directory list failed. ci.yml is a committed file in the
+        # directory that defeated it.
+        self.assertTrue(
+            pathlib.Path(".github/workflows/ci.yml") in searched,
+            msg=(
+                f"the repo listing came back with {len(searched)} files and "
+                "none of them is .github/workflows/ci.yml, so the listing is "
+                "not reaching one of the places a scheduled purge would live; "
+                "fix the listing before believing the result below"
+            ),
+        )
+        prose_only = {
+            # The privacy note in issue_denial_ref_token, which says the same
+            # thing this test asserts.
+            pathlib.Path("fighthealthinsurance/views.py"),
+            pathlib.Path(__file__).resolve().relative_to(REPO_ROOT),
+        }
+        runs_it = sorted(
+            str(path)
+            for path in searched
+            if path.suffix != ".md"
+            and path not in prose_only
+            and "clearsessions" in read_repo_text(path)
+        )
         self.assertEqual(
             runs_it,
             [],
