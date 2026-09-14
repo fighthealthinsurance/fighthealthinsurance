@@ -1993,6 +1993,42 @@ class DenialCreatorHelper:
         return cls._extraction_record(task, cls._outcome_for_result(result))
 
     @staticmethod
+    async def _fax_for_the_carrier_on_the_row(denial_id: int) -> Optional[str]:
+        """The appeal fax of whichever carrier the row actually holds.
+
+        Read after the carrier columns are written rather than before, so a
+        name the person corrected decides the fax as well. Returns None when
+        the row's own carrier has no fax on file, which leaves the column
+        empty for the person to fill rather than filling it with somebody
+        else's number.
+
+        Values rather than model instances: these rows carry RegexFields that
+        compile on load and raise on a stored empty pattern, and none of that
+        is needed to read a phone number.
+        """
+        row = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values(
+                "insurance_company_obj__appeal_fax_number",
+                "insurance_plan_obj__appeal_fax_number",
+                "insurance_plan_obj__insurance_company_id",
+                "insurance_company_obj__id",
+            )
+            .afirst()
+        )
+        if not row:
+            return None
+        company_id = row["insurance_company_obj__id"]
+        plan_fax = row["insurance_plan_obj__appeal_fax_number"]
+        plan_company_id = row["insurance_plan_obj__insurance_company_id"]
+        # A plan belonging to a different carrier than the row names is the
+        # same mismatch one level down, so it has to agree too.
+        if plan_fax and (company_id is None or plan_company_id == company_id):
+            return str(plan_fax)
+        company_fax = row["insurance_company_obj__appeal_fax_number"]
+        return str(company_fax) if company_fax else None
+
+    @staticmethod
     async def _fill_if_empty(
         denial_id: int, field: str, value: Any, *, blank_is_empty: bool = True
     ) -> bool:
@@ -2682,19 +2718,6 @@ class DenialCreatorHelper:
             if matched_company:
                 resolved_name = matched_company.name
 
-            # Propagate the known appeal fax number from the matched plan/company
-            # onto the denial only if the denial doesn't already have one. We
-            # do NOT overwrite a fax number that came directly from the denial
-            # letter or plan documents. Use a single conditional ``aupdate``
-            # so the read+write is atomic - extract_set_fax_number runs
-            # concurrently and could otherwise write between our read and
-            # write.
-            propagated_fax = None
-            if matched_plan and matched_plan.appeal_fax_number:
-                propagated_fax = matched_plan.appeal_fax_number
-            elif matched_company and matched_company.appeal_fax_number:
-                propagated_fax = matched_company.appeal_fax_number
-
             found_something = False
             wrote_something = False
             if resolved_name:
@@ -2721,6 +2744,23 @@ class DenialCreatorHelper:
                     blank_is_empty=False,
                 )
 
+            # The fax follows the carrier that is actually on the row, not the
+            # one this run matched in the letter.
+            #
+            # Each column above is protected separately, which is right on its
+            # own and wrong together. If the person corrected the insurer
+            # between two runs, their name survives while the plan and fax
+            # slots are still empty, so a retry that matches the old carrier
+            # again fills those with the old carrier's details. The row then
+            # names one insurer and carries another's fax number, and the fax
+            # option sends the appeal, with everything in it, to a company
+            # that has nothing to do with the claim.
+            #
+            # So: re-read the row, take the fax from whatever carrier it ended
+            # up holding, and if that carrier has no fax on file leave the
+            # column empty. An empty fax number asks the person for one. A
+            # wrong fax number does not.
+            propagated_fax = await cls._fax_for_the_carrier_on_the_row(denial_id)
             if propagated_fax:
                 rows_updated = (
                     await Denial.objects.filter(denial_id=denial_id)
@@ -2729,7 +2769,8 @@ class DenialCreatorHelper:
                 )
                 if rows_updated:
                     logger.debug(
-                        f"Propagated appeal_fax_number {propagated_fax} from carrier"
+                        f"Propagated appeal_fax_number {propagated_fax} from the "
+                        f"carrier on the row"
                     )
 
             if not found_something:
