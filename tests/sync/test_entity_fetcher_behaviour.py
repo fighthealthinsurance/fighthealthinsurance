@@ -17,6 +17,16 @@ write to ``location``, on the flow's real form and Next button, so an
 auto-advance under any spelling shows up as a call in the log rather than as a
 missing string in the source.
 
+Same source and the same emit, but not the same artifact. The flags below are
+taken from ``static/js/tsconfig.json``, the config webpack hands ts-loader, so
+the downlevelling that ``es5`` does to the object spread and the arrow
+functions is downlevelling these tests run. ``module`` is the one deliberate
+difference, because node has to be able to ``require`` the output, and
+``test_the_harness_compiles_the_way_the_bundle_does`` fails if the ship config
+moves. What is still not covered is what happens after tsc: webpack's own
+wrapping and the Terser pass that minifies it. Nothing here would catch a
+bundler or minifier bug.
+
 Skipped, not silently passed, where node or the front-end toolchain is not
 installed: ``node_modules`` is gitignored, so a checkout that has never run
 ``npm install`` cannot run these. CI is not one of those checkouts. The sync
@@ -28,6 +38,7 @@ Python.
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -62,13 +73,35 @@ COULD_NOT_READ = (
 )
 
 
+TSCONFIG = JS / "tsconfig.json"
+
+# The settings the shipped bundle is built with, taken from
+# ``static/js/tsconfig.json`` (webpack hands ts-loader that file). ``module``
+# is the one knob that has to differ: the bundle is ES modules for webpack to
+# walk, and node has to ``require`` this, so it is compiled to commonjs. Every
+# other setting that changes the emitted JavaScript is matched, and
+# ``test_the_harness_compiles_the_way_the_bundle_does`` fails if tsconfig.json
+# moves away from these.
+SHIP_TARGET = "es5"
+SHIP_LIB = "dom,dom.iterable,esnext"
+
+
 @pytest.fixture(scope="module")
 def compiled(tmp_path_factory) -> pathlib.Path:
-    """The real ``entity_fetcher.ts``, compiled, once for the module.
+    """The real ``entity_fetcher.ts``, compiled the way the bundle is built.
 
     Compiled rather than loaded from ``static/js/dist``: the committed bundle
     can be older than the source, and a test that passes against last week's
     bundle is worse than no test.
+
+    The flags mirror ``static/js/tsconfig.json`` rather than being picked for
+    convenience, because "we compile the real TypeScript" is only worth
+    something if it is the same TypeScript the browser gets. At ``es5`` the
+    object spread in ``startRun`` and every arrow function in the file are
+    downlevelled by tsc, which is the code that actually runs in production;
+    at ES2019 they are not, and the harness would be exercising an emit nobody
+    ships. ``--strict`` for the same reason: a type error the ship build
+    rejects has to fail here too.
     """
     out = tmp_path_factory.mktemp("entity-fetcher")
     result = subprocess.run(
@@ -76,13 +109,17 @@ def compiled(tmp_path_factory) -> pathlib.Path:
             NODE,
             str(TSC),
             "--target",
-            "ES2019",
+            SHIP_TARGET,
             "--module",
             "commonjs",
             "--moduleResolution",
             "node",
             "--lib",
-            "ES2019,DOM",
+            SHIP_LIB,
+            "--strict",
+            "--esModuleInterop",
+            "--allowSyntheticDefaultImports",
+            "--forceConsistentCasingInFileNames",
             "--skipLibCheck",
             "--outDir",
             str(out),
@@ -150,6 +187,27 @@ def test_the_fake_page_still_carries_the_real_pages_ids(compiled):
         assert f'id="{ident}"' in fixture, ident
 
 
+def test_the_harness_compiles_the_way_the_bundle_does():
+    """The fixture's flags have to keep matching the shipped build.
+
+    Without this the fixture drifts silently: someone raises the bundle's
+    target to ES2020, the harness carries on compiling at whatever it was
+    pinned to, and the claim that these tests run the shipping code becomes
+    false with nothing failing. No node needed, so it runs everywhere.
+    """
+    config = json.loads(re.sub(r"//[^\n]*", "", TSCONFIG.read_text()))
+    options = config["compilerOptions"]
+    assert options["target"].lower() == SHIP_TARGET, options["target"]
+    assert ",".join(sorted(x.lower() for x in options["lib"])) == ",".join(
+        sorted(SHIP_LIB.split(","))
+    ), options["lib"]
+    assert options["strict"] is True, options
+    # The bundle is ES modules and this has to be requirable, so ``module`` is
+    # deliberately not matched. Named here so the exception is a decision
+    # rather than an oversight.
+    assert options["module"] == "es2020", options["module"]
+
+
 @needs_node
 def test_a_good_run_ends_on_the_words_for_a_good_run(compiled):
     result = run_scenario(compiled, "good_run")
@@ -201,6 +259,8 @@ def test_nothing_on_this_page_moves_the_person(compiled):
         "late_frame_cannot_repaint",
         "retry_button_runs_again",
         "close_event_lands_during_the_next_run",
+        "stale_frame_lands_during_the_next_run",
+        "reconnect_from_the_previous_run_never_opens",
     ):
         result = run_scenario(compiled, scenario)
         for key, snapshot in result.items():
@@ -313,6 +373,63 @@ def test_the_last_runs_close_event_cannot_end_this_run(compiled):
     assert button_texts(ended) == [RETRY_BUTTON, CONTINUE_GOOD]
     # The stale socket does not get replaced by a reconnect either.
     assert result["socketCount"] == 2, result
+
+
+@needs_node
+def test_a_frame_from_the_last_run_cannot_speak_for_this_one(compiled):
+    """The generation guard in ``onmessage``, on its own.
+
+    ``finish`` calls ``close()``, which asks the browser to hang up; frames
+    already on the wire are still delivered. ``settled`` is no help here,
+    because pressing retry set it back to False on purpose, so the stale
+    run-level frame would go straight through ``handleFrame`` into ``finish``
+    and paint the old run's verdict over a run still in flight. This is the
+    green version of that: "we read your letter and filled in what we found",
+    claimed for a read that had not happened yet.
+    """
+    result = run_scenario(compiled, "stale_frame_lands_during_the_next_run")
+    during = result["afterTheStaleFrames"]
+    assert during["title"] == "Reading your denial letter", during
+    assert during["buttons"] == [], during
+    assert "filled in what we found" not in during["visibleText"], during
+    # The stale step line does not get appended under the live run either.
+    assert "Plan ID" not in during["visibleText"], during
+    assert during["steps"] == "Reading your letter again...", during
+    # And this run's own answer is the one the person is left with.
+    ended = result["ended"]
+    assert ended["title"].startswith("We read your letter and did not find")
+    assert button_texts(ended) == [RETRY_BUTTON, CONTINUE_TYPING]
+
+
+@needs_node
+def test_a_reconnect_booked_by_the_last_run_never_opens(compiled):
+    """The generation guard on the reconnect timer, on its own.
+
+    A socket that blips books a reconnect a second out. If the run is over
+    before that second is up (the inactivity timer fires, the person presses
+    retry), the reconnect is for a run nobody is looking at any more. Without
+    the guard it opens a fourth socket and takes the ``activeSocket`` slot from
+    the live run, so when the live run finishes the page hangs up on the stale
+    socket and leaves the real one open.
+    """
+    result = run_scenario(compiled, "reconnect_from_the_previous_run_never_opens")
+    ended = result["ended"]
+    assert ended["title"] == COULD_NOT_READ, ended
+    assert ended["socketCount"] == 2, ended
+    after = result["afterTheOldReconnect"]
+    # Two sockets for the abandoned run, one for the run the person asked for.
+    assert after["socketCount"] == 3, after
+    assert after["title"] == "Reading your denial letter", after
+    assert after["buttons"] == [], after
+    finished = result["finished"]
+    assert finished["socketCount"] == 3, finished
+    assert finished["title"].startswith(
+        "We read your letter and filled in what we found"
+    )
+    # The page hung up on the second socket when the run timed out, and on the
+    # live run's own socket when it finished. The first was closed by the
+    # server, not by us.
+    assert result["hungUpOn"] == [False, True, True], result["hungUpOn"]
 
 
 @needs_node

@@ -69,6 +69,52 @@ class FakeElement {
     return this.attributes[name];
   }
 
+  removeAttribute(name) {
+    if (name === 'id') this.id = '';
+    else if (name === 'class') this.className = '';
+    else if (name === 'style') this.style = new Style();
+    else delete this.attributes[name];
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
+  }
+
+  querySelectorAll(selector) {
+    const match = matcher(selector);
+    const hits = [];
+    const walk = (node) => {
+      for (const child of node.childNodes || []) {
+        if (child.nodeType !== 1) continue;
+        if (match(child)) hits.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return hits;
+  }
+
+  // A real cloneNode does not copy listeners, and neither does this one: the
+  // escalation page clones a hidden form per letter, and a clone that carried
+  // the original's handlers would be a page these tests could not tell apart
+  // from a correct one.
+  cloneNode(deep) {
+    const copy = new FakeElement(this.tagName, this.page);
+    copy.id = this.id;
+    copy.className = this.className;
+    copy.attributes = Object.assign({}, this.attributes);
+    Object.assign(copy.style, this.style);
+    if ('value' in this) copy.value = this.value;
+    if (deep) {
+      for (const child of this.childNodes) {
+        copy.appendChild(
+          child.nodeType === 3 ? new TextNode(child.data) : child.cloneNode(true),
+        );
+      }
+    }
+    return copy;
+  }
+
   appendChild(node) {
     if (node.parentNode) node.parentNode.removeChild(node);
     node.parentNode = this;
@@ -145,6 +191,36 @@ class FakeElement {
 
 function describe(el) {
   return el.id ? '#' + el.id : el.tagName.toLowerCase();
+}
+
+// The selector subset these pages actually use: a tag name, an id, a class, or
+// a tag with one quoted attribute. Anything else throws rather than silently
+// matching nothing, because a querySelector that quietly returns null reads in
+// a test exactly like a page that legitimately has no such element.
+function matcher(selector) {
+  const sel = String(selector).trim();
+  if (sel.startsWith('#')) {
+    const id = sel.slice(1);
+    return (el) => el.id === id;
+  }
+  if (sel.startsWith('.')) {
+    const cls = sel.slice(1);
+    return (el) => String(el.className).split(/\s+/).indexOf(cls) >= 0;
+  }
+  const parsed = /^([A-Za-z][A-Za-z0-9]*)?(?:\[([A-Za-z_:][-A-Za-z0-9_:.]*)="([^"]*)"\])?$/.exec(
+    sel,
+  );
+  if (!parsed || (!parsed[1] && !parsed[2])) {
+    throw new Error('fake_page: unsupported selector ' + selector);
+  }
+  const tag = parsed[1] ? parsed[1].toUpperCase() : null;
+  const attr = parsed[2];
+  const value = parsed[3];
+  return (el) => {
+    if (tag && el.tagName !== tag) return false;
+    if (attr && el.getAttribute(attr) !== value) return false;
+    return true;
+  };
 }
 
 // A tokenizer for the markup this page builds, which is plain nested tags with
@@ -294,11 +370,34 @@ const PAGE_MARKUP = `
 </form>
 `;
 
-function buildPage() {
+// The escalation page's own markup, mirroring escalation_packet.html: the
+// loading block with its heading and its detail line, the container the
+// letters land in, and the hidden form the page clones once per letter. The
+// json_script element is where the page reads its form context from.
+// tests/sync/test_escalation_packet_behaviour.py checks these ids against the
+// rendered template, so a template rename cannot leave this fixture testing a
+// page that no longer exists.
+const ESCALATION_MARKUP = `
+<script id="escalation-form-context" type="application/json">{"denial_id": 5}</script>
+<div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
+  <h4>Drafting your regulator letters...</h4>
+  <p style="color:#666;">This usually takes 1 to 2 minutes per recipient.</p>
+</div>
+<div id="escalation-letters"></div>
+<div id="base-letter-form" style="display:none;">
+  <form action="/choose-escalation-letter/" method="post">
+    <input type="hidden" name="escalation_uuid" value="" />
+    <textarea name="letter_text" class="appeal_text"></textarea>
+    <button type="submit" class="btn btn-green">Save and review this letter</button>
+  </form>
+</div>
+`;
+
+function buildPage(markup) {
   const page = {sockets: [], movedThePerson: [], clock: new Clock()};
   const body = new FakeElement('body', page);
   page.body = body;
-  for (const node of parseFragment(PAGE_MARKUP, page)) body.appendChild(node);
+  for (const node of parseFragment(markup || PAGE_MARKUP, page)) body.appendChild(node);
 
   const find = (node, id) => {
     if (node.nodeType === 1 && node.id === id) return node;
@@ -313,10 +412,23 @@ function buildPage() {
     body,
     getElementById: (id) => find(body, id),
     createElement: (tag) => new FakeElement(tag, page),
+    createTextNode: (data) => new TextNode(String(data)),
+    querySelector: (selector) => body.querySelector(selector),
+    querySelectorAll: (selector) => body.querySelectorAll(selector),
     addEventListener: (name, handler) => {
       (page.documentListeners = page.documentListeners || {});
       (page.documentListeners[name] = page.documentListeners[name] || []).push(handler);
     },
+  };
+  // Pages that hang everything off DOMContentLoaded do nothing at all until it
+  // fires, so a scenario that forgets to fire it would pass every assertion
+  // against an untouched page. Firing with no listener registered throws.
+  page.fireDomReady = () => {
+    const handlers = (page.documentListeners || {})['DOMContentLoaded'] || [];
+    if (!handlers.length) {
+      throw new Error('fake_page: nothing registered for DOMContentLoaded');
+    }
+    for (const handler of handlers) handler({});
   };
   page.location = {
     protocol: 'https:',
@@ -367,4 +479,11 @@ function install(page) {
   page.sentry = [];
 }
 
-module.exports = {buildPage, install, FakeSocket, parseFragment};
+module.exports = {
+  buildPage,
+  install,
+  FakeSocket,
+  parseFragment,
+  PAGE_MARKUP,
+  ESCALATION_MARKUP,
+};

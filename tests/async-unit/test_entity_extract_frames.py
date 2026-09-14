@@ -32,11 +32,14 @@ passed; the navigation test below is written as a shape rather than a list of
 spellings because of it, and a version that assembles the method name at
 runtime still gets through.
 
-The other half is ``tests/sync/test_entity_fetcher_behaviour.py``, which
-compiles this TypeScript and runs it in node over a fake page, then asserts on
-the DOM the person would be looking at. That is where these rules are actually
-tested. Keep these as the cheap tripwire that runs with no toolchain, and put
-new page-side claims over there.
+The other half is in ``tests/sync/``, one file per page:
+``test_entity_fetcher_behaviour.py`` compiles this TypeScript the way the
+bundle is built and runs it in node over a fake page, and
+``test_escalation_packet_behaviour.py`` renders ``escalation_packet.html`` and
+runs its script the same way. Both assert on the DOM the person would be
+looking at, and that is where these rules are actually tested. Keep the greps
+here as the cheap tripwire that runs with no toolchain, and put new page-side
+claims over there.
 """
 
 import contextlib
@@ -794,6 +797,13 @@ async def test_no_eligible_recipients_says_so():
 
 
 def test_the_escalation_page_does_not_read_a_close_as_a_finished_packet():
+    """A tripwire, not the coverage.
+
+    This passes against a close handler that hides the block under a different
+    spelling (``setAttribute('style', 'display:none')``). What actually holds
+    the rule is ``tests/sync/test_escalation_packet_behaviour.py``, which runs
+    the rendered script and reads the screen.
+    """
     src = ESCALATION_TEMPLATE.read_text()
     close_handler = src[src.index("ws.onclose") : src.index("ws.onerror")]
     assert "style.display = 'none'" not in close_handler, close_handler
@@ -804,6 +814,7 @@ def test_the_escalation_page_does_not_read_a_close_as_a_finished_packet():
 
 
 def test_the_escalation_page_keeps_a_connection_error_visible():
+    """Also a tripwire. The behaviour is held in the sync harness."""
     src = ESCALATION_TEMPLATE.read_text()
     error_handler = src[src.index("ws.onerror") :]
     assert "showFailure" in error_handler, error_handler

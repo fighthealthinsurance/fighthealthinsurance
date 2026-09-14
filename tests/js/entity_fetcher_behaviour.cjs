@@ -211,6 +211,79 @@ const scenarios = {
     };
   },
 
+  // A frame from the superseded run's socket, delivered while the run the
+  // person pressed retry for is still in flight. close() asks the browser to
+  // hang up; anything already queued on the wire is still delivered, and the
+  // run-level frame is the one that matters because ``settled`` went back to
+  // False when the new run started, so nothing else would stop it.
+  stale_frame_lands_during_the_next_run() {
+    const ws = start();
+    ws.fireOpen();
+    ws.fireMessage(RUN_FOUND_NOTHING);
+    const actions = page.document.getElementById('entity-status-actions');
+    const retry = actions.childNodes.find(
+      (n) => n.nodeType === 1 && n.textContent.includes('Try reading'),
+    );
+    retry.dispatch('click');
+    const second = page.sockets[page.sockets.length - 1];
+    second.fireOpen();
+    // The old socket speaks: first a step, then the verdict of the run that is
+    // already over.
+    ws.fireMessage({
+      type: 'step',
+      task: 'extract_set_plan_id',
+      outcome: 'found',
+      label: 'Plan ID',
+    });
+    ws.fireMessage(RUN_FINISHED);
+    const afterTheStaleFrames = snapshot();
+    // And the run the person actually asked for gets to say what it found.
+    second.fireMessage(STEP_FOUND);
+    second.fireMessage(RUN_FOUND_NOTHING);
+    return {afterTheStaleFrames, ended: snapshot()};
+  },
+
+  // A reconnect booked by the run that was abandoned. The socket blips, which
+  // books a retry a second out, and the run's own inactivity timer comes due
+  // before that retry does; the person presses the retry button, and only then
+  // does the old reconnect fall due.
+  reconnect_from_the_previous_run_never_opens() {
+    const ws = start();
+    // Never opens, never says anything, hangs up just under the minute. That
+    // books a reconnect a second later.
+    page.clock.advance(58500);
+    ws.fireClose();
+    page.clock.advance(1000);
+    const second = page.sockets[page.sockets.length - 1];
+    // The reconnect's socket does the same, booking a second reconnect.
+    second.fireClose();
+    // The inactivity timer runs from the start of the run rather than from the
+    // last socket, so it comes due while that reconnect is still booked.
+    page.clock.advance(500);
+    const ended = snapshot();
+    const actions = page.document.getElementById('entity-status-actions');
+    const retry = actions.childNodes.find(
+      (n) => n.nodeType === 1 && n.textContent.includes('Try reading'),
+    );
+    retry.dispatch('click');
+    const third = page.sockets[page.sockets.length - 1];
+    third.fireOpen();
+    // Now the abandoned run's reconnect falls due.
+    page.clock.advance(5000);
+    const afterTheOldReconnect = snapshot();
+    third.fireMessage(STEP_FOUND);
+    third.fireMessage(RUN_FINISHED);
+    return {
+      ended,
+      afterTheOldReconnect,
+      finished: snapshot(),
+      // Which sockets the page itself hung up on, in the order they were
+      // opened. finish() hangs up whatever is in ``activeSocket``, so a stale
+      // socket that has taken that slot leaves the live run's socket open.
+      hungUpOn: page.sockets.map((s) => s.closedByPage),
+    };
+  },
+
   // The close event for the run that just ended arrives while the run the
   // person started by pressing retry is already in flight. A browser delivers
   // it after the closing handshake, which is a network round trip, and the
