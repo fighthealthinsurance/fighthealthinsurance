@@ -31,6 +31,15 @@ body {
    a browser will not break a run like that on its own, so the consent label
    holding it grew wider than the phone and took the page with it. This only
    does anything to a word that would otherwise overflow. */
+/* A bare URL is one unbreakable run. The terms page carries
+   https://fighthealthinsurance.com/remove_data in its text, which fit at 14px
+   and does not at 16px: 385px of link in a 390px window, and the whole page
+   scrolled sideways on a phone. Breaking a URL mid-string is normal and only
+   happens to a run that would otherwise overflow. */
+a {
+    overflow-wrap: break-word;
+}
+
 label,
 .form-check-label {
     /* break-word alone is not enough here: these labels are inline-block, and
@@ -1147,12 +1156,14 @@ footer a:hover {
     }
 
 
-    /* This is the line under the hero title, not a label: it was 11px on a
-       phone, the smallest readable thing on the site and the first sentence
-       a patient meets. It takes the small size at every width now, which is
-       14px: it is set in caps with letter-spacing, where 14px reads as well
-       as 16px does in a sentence. */
+    /* The tagline over the hero title, set in caps at 11px on a phone. It is
+       under the 12px floor and stays there: it is deliberately subtle, it is
+       not something a patient has to read to use the site, and the sentence
+       it carries is a joke rather than an instruction. Product owner's call
+       of 2026-09-14. Excused in BELOW_FLOOR_BY_DESIGN rather than unmeasured:
+       the gate still sees it. */
     #home h3 {
+	font-size: 11px;
 	letter-spacing: 1px;
     }
 

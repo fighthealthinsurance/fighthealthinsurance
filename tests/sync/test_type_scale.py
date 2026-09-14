@@ -38,7 +38,14 @@ MICRO_FLOOR_PX = 12.0
 # A bingo cell is a fixed square in a five-by-five grid and the words have to
 # fit inside it. That is a layout constraint, not a choice about readability,
 # and it is the only one on the site. Nothing in the appeal flow is here.
-BELOW_FLOOR_BY_DESIGN = {("custom.css", ".bingo-cell")}
+BELOW_FLOOR_BY_DESIGN = {
+    ("custom.css", ".bingo-cell"),
+    # The tagline over the hero title, 11px in caps on a phone. Deliberately
+    # subtle, not something a patient has to read to use the site, and the
+    # sentence is a joke rather than an instruction. Product owner's call of
+    # 2026-09-14. Listed, not skipped: the gate still measures it.
+    ("main.css", "#home h3"),
+}
 
 HEADING_TOKENS = {
     "h1": "--fhi-text-hero",
@@ -355,7 +362,13 @@ def _inline_font_sizes(variables: dict):
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*")):
-            if path.suffix not in (".html", ".ts", ".js") or "node_modules" in path.parts:
+            # dist/workers/tesseract.js is a directory, not a file, and CI
+            # builds it. A suffix check alone tried to read it and raised.
+            if not path.is_file():
+                continue
+            if path.suffix not in (".html", ".ts", ".js"):
+                continue
+            if {"node_modules", "dist"} & set(path.parts):
                 continue
             text = path.read_text(errors="replace")
             for match in _INLINE_SIZE.finditer(text):
