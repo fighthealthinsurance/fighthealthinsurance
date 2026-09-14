@@ -1025,14 +1025,21 @@ class FindNextStepsHelper:
                         suggested_answer,
                     ) in question_fields.items():
                         stored = stored_answer_for_question(question, answers)
+                        # The model's suggestion goes beside the box, not in
+                        # it. The letter is written in this person's voice and
+                        # sent over their name, and the box is posted on every
+                        # Next whether or not it was touched, so a prefilled
+                        # suggestion nobody read became their own account of
+                        # their own medical history. Offered as a hint it
+                        # still helps with questions like "reason for elevated
+                        # risk requiring this screening", which few people can
+                        # answer cold. Product owner's call of 2026-09-14.
+                        hint = (suggested_answer or "").strip()
                         self.fields[field_name] = forms.CharField(
-                            # Label only: help_text carrying the same
-                            # sentence makes as_table print it twice.
                             label=question,
                             required=False,
-                            initial=(
-                                stored if stored is not None else suggested_answer
-                            ),
+                            initial=stored if stored is not None else "",
+                            help_text=(f"One way to answer: {hint}" if hint else ""),
                         )
 
             question_forms.append(AppealQuestionsForm())
