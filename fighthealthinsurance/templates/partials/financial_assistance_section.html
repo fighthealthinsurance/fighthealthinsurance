@@ -21,7 +21,7 @@ include it unconditionally.
                 <p class="text-center text-muted mb-4">Curated copay foundations, manufacturer programs, and safety-net clinics that may help with the cost while you appeal.</p>
 
                 {% if financial_assistance.diagnosis_specific %}
-                <h3 class="mt-4" style="color:#454545; margin-bottom:0.5rem;">For your condition</h3>
+                <h3 class="mt-4 assistance-subheading">For your condition</h3>
                 {% for program in financial_assistance.diagnosis_specific %}
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
@@ -37,7 +37,7 @@ include it unconditionally.
                 {% endif %}
 
                 {% if financial_assistance.manufacturer %}
-                <h3 class="mt-4" style="color:#454545; margin-bottom:0.5rem;">Manufacturer copay programs</h3>
+                <h3 class="mt-4 assistance-subheading">Manufacturer copay programs</h3>
                 {% for program in financial_assistance.manufacturer %}
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
@@ -52,7 +52,7 @@ include it unconditionally.
                 {% endif %}
 
                 {% if financial_assistance.general %}
-                <h3 class="mt-4" style="color:#454545; margin-bottom:0.5rem;">General copay foundations &amp; directories</h3>
+                <h3 class="mt-4 assistance-subheading">General copay foundations &amp; directories</h3>
                 {% for program in financial_assistance.general %}
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
@@ -68,7 +68,7 @@ include it unconditionally.
                 {% endif %}
 
                 {% if financial_assistance.safety_net %}
-                <h3 class="mt-4" style="color:#454545; margin-bottom:0.5rem;">Safety-net clinics &amp; 340B</h3>
+                <h3 class="mt-4 assistance-subheading">Safety-net clinics &amp; 340B</h3>
                 {% for program in financial_assistance.safety_net %}
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
@@ -82,7 +82,7 @@ include it unconditionally.
                 {% endif %}
 
                 {% if financial_assistance.state_medicaid_name %}
-                <h3 class="mt-4" style="color:#454545; margin-bottom:0.5rem;">State Medicaid pathway</h3>
+                <h3 class="mt-4 assistance-subheading">State Medicaid pathway</h3>
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
                         <h4 class="h5 card-title mb-2">

@@ -195,6 +195,12 @@
     border-left-width: 4px;
     border-left-style: solid;
 }
+/* The appeal flow numbers its headings for document structure, so the same
+   callout can hold an h2, an h3 or an h4 depending on what sits above it on
+   that page. These rules match by element, so each level a page can use has
+   to be listed or a promoted heading silently loses its styling. That is how
+   six of them ended up carrying inline colours. */
+.alert-box h2,
 .alert-box h3,
 .alert-box h4 {
     margin: 0 0 0.5rem 0;
@@ -207,6 +213,7 @@
     background: #e8f5e9;
     border-left-color: #4caf50;
 }
+.alert-success h2,
 .alert-success h3,
 .alert-success h4 {
     color: #2e7d32;
@@ -216,6 +223,7 @@
     background: #ffebee;
     border-left-color: #f44336;
 }
+.alert-danger h3,
 .alert-danger p {
     color: #c62828;
 }
@@ -224,6 +232,7 @@
     background: #fff3cd;
     border-left-color: #ffc107;
 }
+.alert-warning h2,
 .alert-warning h4,
 .alert-warning li {
     color: #856404;
@@ -233,6 +242,8 @@
     background: #e3f2fd;
     border-left-color: #2196f3;
 }
+.alert-info h2,
+.alert-info h3,
 .alert-info h4 {
     color: #1565c0;
 }
@@ -1362,6 +1373,9 @@ section:not(.slider) .share-subcopy {
     background: #e3f2fd;
     border-left-color: #2196f3;
 }
+.alert-box-info h2 {
+    color: #1565c0;
+}
 
 /* Navigation/Form actions row */
 .form-nav-row {
@@ -2310,4 +2324,13 @@ select,
 textarea,
 .form-control {
     font-size: var(--fhi-text-input);
+}
+
+/* The financial assistance directory's subheadings. They were h4s taking
+   their colour from main.css's h4 rule; the flow promoted them to h3 for
+   document order and the colour did not follow. A class rather than an
+   inline style, so the contrast gate can still see them. */
+.assistance-subheading {
+    color: #454545;
+    margin-bottom: 0.5rem;
 }
