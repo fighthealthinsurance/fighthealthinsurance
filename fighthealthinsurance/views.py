@@ -2296,10 +2296,23 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         context["back_url"] = reverse("scan")  # Scan doesn't need denial ref
         return context
 
+    # Neither consent flag has a checkbox on this page, so "unticked" and
+    # "never offered" look identical in the POST and a plain Next would decide
+    # both by omission. They stay on the form because the REST serializer is
+    # built from it; the page that cannot ask drops them instead.
+    UNRENDERED_CONSENT_FIELDS = (
+        "health_history_anonymized",
+        "include_provided_health_history_in_appeal",
+    )
+
     def form_valid(self, form):
+        submitted = dict(form.cleaned_data)
+        for name in self.UNRENDERED_CONSENT_FIELDS:
+            if name not in self.request.POST:
+                submitted.pop(name, None)
         try:
             denial_response = common_view_logic.DenialCreatorHelper.update_denial(
-                **form.cleaned_data,
+                **submitted,
             )
         except models.Denial.DoesNotExist:
             logger.warning(

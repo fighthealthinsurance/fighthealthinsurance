@@ -34,7 +34,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance import common_view_logic, forms as core_forms, views
 from fighthealthinsurance.models import (
     Denial,
     InsuranceCompany,
@@ -538,17 +538,35 @@ class PressingNextDecidesNothingItCannotAskTest(OptionalStepsTestCase):
         self.assertTrue(fresh.health_history_anonymized)
         self.assertTrue(fresh.include_provided_health_history_in_appeal)
 
-    def test_the_form_declares_no_field_the_page_cannot_render(self):
-        """The rule behind the test above, so the next field added to this
-        form has to bring a widget with it."""
-        rendered = self.client.get(reverse("hh"), self.denial_ref()).content.decode()
+    def test_a_field_the_page_cannot_render_is_dropped_before_the_save(self):
+        """The rule behind the test above.
 
-        for name in core_forms.HealthHistory().fields:
-            # assertTrue, not assertIn: assertIn would print the whole page.
-            self.assertTrue(
-                f'name="{name}"' in rendered,
-                f"HealthHistory declares {name}, which health_history.html "
-                "never renders, so every submission decides it by omission",
+        The form cannot simply refuse to declare these: the REST serializer is
+        built from it and drf_braces strips whatever the form omits, so taking
+        them off stopped the API revoking a consent it was told to revoke. They
+        stay declared, and the view drops the ones its own page never rendered.
+        So the invariant is not "the form declares nothing the page omits", it
+        is "nothing the page omits reaches the save".
+        """
+        rendered = self.client.get(reverse("hh"), self.denial_ref()).content.decode()
+        unrendered = [
+            name
+            for name in core_forms.HealthHistory().fields
+            if f'name="{name}"' not in rendered
+        ]
+        self.assertTrue(
+            unrendered,
+            "health_history.html now renders every field the form declares, so "
+            "this test no longer guards anything; delete it or the view's drop "
+            "list with it",
+        )
+        for name in unrendered:
+            self.assertIn(
+                name,
+                views.PlanDocumentsView.UNRENDERED_CONSENT_FIELDS,
+                f"HealthHistory declares {name}, health_history.html never "
+                "renders it, and the view does not drop it, so every "
+                "submission decides it by omission",
             )
 
 
