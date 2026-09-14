@@ -38,14 +38,27 @@ MICRO_FLOOR_PX = 12.0
 # A bingo cell is a fixed square in a five-by-five grid and the words have to
 # fit inside it. That is a layout constraint, not a choice about readability,
 # and it is the only one on the site. Nothing in the appeal flow is here.
+# Each entry names the exact sizes that were agreed, not the selector as a
+# whole. A selector-wide exemption would also excuse a below-floor size added
+# later to a different rule with the same selector, which is not what anyone
+# decided.
 BELOW_FLOOR_BY_DESIGN = {
-    ("custom.css", ".bingo-cell"),
-    # The tagline over the hero title, 11px in caps on a phone. Deliberately
-    # subtle, not something a patient has to read to use the site, and the
-    # sentence is a joke rather than an instruction. Product owner's call of
-    # 2026-09-14. Listed, not skipped: the gate still measures it.
-    ("main.css", "#home h3"),
+    # A bingo cell is a fixed square in a five-by-five grid and the words have
+    # to fit inside it. Two sizes: the cell, and the longer squares.
+    ("custom.css", ".bingo-cell"): (11.2, 9.6),
+    # The tagline over the hero title, 11px in caps inside the 768px media
+    # query. Deliberately subtle, not something a patient has to read to use
+    # the site, and the sentence is a joke rather than an instruction.
+    # Product owner's call of 2026-09-14. The desktop rule for the same
+    # selector is 14px and never reaches this list. Listed, not skipped: the
+    # gate still measures it.
+    ("main.css", "#home h3"): (11.0,),
 }
+
+
+def _excused(stylesheet: str, selector: str, size: float) -> bool:
+    allowed = BELOW_FLOOR_BY_DESIGN.get((stylesheet, selector.strip()))
+    return bool(allowed) and any(abs(size - a) < 0.05 for a in allowed)
 
 HEADING_TOKENS = {
     "h1": "--fhi-text-hero",
@@ -325,12 +338,12 @@ def test_nothing_is_set_below_the_floor() -> None:
     variables = custom_properties(load_rules())
     offenders = []
     for rule in load_rules() + load_template_rules():
-        if (rule.stylesheet, rule.selector.strip()) in BELOW_FLOOR_BY_DESIGN:
-            continue
         value = _font_size(rule)
         if value is None:
             continue
         size = _px(resolve_vars(value, variables))
+        if size is not None and _excused(rule.stylesheet, rule.selector, size):
+            continue
         if size is not None and size < MICRO_FLOOR_PX:
             offenders.append(
                 "%s:%d  %s  font-size: %s (%.1fpx)"
