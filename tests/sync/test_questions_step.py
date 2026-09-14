@@ -20,13 +20,15 @@ Pinned regressions:
   ``initial += initial``, which raised when the kept field had no default,
   and ``find_next_steps`` recovered from that raise by rebuilding the page
   with an empty answers dict -- wiping every answer the person had given;
-- and, in the other direction, a denial type's ``appeal_text`` was being
-  passed in as ``initial={"medical_reason": ...}``. That is the canned
-  paragraph the appeal builder falls back to, not the person's words. See
-  ``NoAnswerIsTypedForThePatientTest``.
+- a denial type's ``appeal_text`` was passed in as
+  ``initial={"medical_reason": ...}``. That is canned appeal boilerplate,
+  not the person's words. See ``NoDenialTypeBoilerplateInTheAnswerBoxTest``;
+- an answer to a generated question whose text collides with a key the
+  review step owns overwrote that key. See ``ReservedQaKeyTest``.
 """
 
 import json
+import re
 from unittest.mock import AsyncMock, patch
 
 from django import forms as django_forms
@@ -53,6 +55,10 @@ from fighthealthinsurance.models import Denial, DenialTypes
 _QUESTIONS = (
     "fighthealthinsurance.common_view_logic.DenialCreatorHelper."
     "generate_appeal_questions"
+)
+_ML_HELPER = (
+    "fighthealthinsurance.common_view_logic.MLAppealQuestionsHelper."
+    "generate_questions_for_denial"
 )
 
 _Q1 = "How long have you been on this treatment?"
@@ -249,25 +255,41 @@ class ReservedQaKeyTest(QuestionsStepTestBase):
         for reserved in RESERVED_QA_KEYS:
             self.assertEqual(stored[reserved], self._OLD_SHAPE[reserved])
 
+    def test_answering_a_question_named_like_a_reserved_key_does_not_take_it(self):
+        """The collision on the WRITE path, which read-side protection alone
+        never reached: the answer landed straight on the reserved key,
+        overwriting the review step's date, and Back then hid what had
+        happened by refusing to read that key back."""
+        self.denial.generated_questions = [[_Q1, ""], ["date of service", ""]]
+        self.denial.save(update_fields=["generated_questions"])
+        field = question_field_name("date of service")
+
+        self._generate_appeal(**{field: "the follow-up on 2024-06-01"})
+
+        stored = self._qa()
+        self.assertEqual(stored["date of service"], self._OLD_SHAPE["date of service"])
+        self.assertEqual(stored[field], "the follow-up on 2024-06-01")
+
+    def test_that_answer_is_still_shown_back_to_the_person(self):
+        """Filed out of the reserved namespace, it still has to come back."""
+        self.denial.generated_questions = [[_Q1, ""], ["date of service", ""]]
+        self.denial.save(update_fields=["generated_questions"])
+        field = question_field_name("date of service")
+
+        self._generate_appeal(**{field: "the follow-up on 2024-06-01"})
+
+        combined = self._rebuild().combined_form
+        self.assertEqual(combined.fields[field].initial, "the follow-up on 2024-06-01")
+
 
 class InNetworkOwnershipTest(QuestionsStepTestBase):
     """Whoever can see the box owns the answer in it.
 
     ``in_network`` is the one key that is both something the review step can
     write and a checkbox on this page, and ``InsuranceQuestions.__init__``
-    already draws the line: it REMOVES the field whenever the review step
-    owns it (``prof_pov``), because the professional was asked in the
-    earlier form. So a box that is on this page is always the person's own
-    to untick, and a value the review step owns is never on this page at
-    all.
-
-    Pinned regression: ``_unticked_checkbox_answers`` skipped every
-    RESERVED_QA_KEY, ``in_network`` included, on the reasoning that the
-    review step owned it. But ``find_next_steps`` only writes ``in_network``
-    in the professional flow, while every patient sees the checkbox. Tick
-    it, go on, come back, untick it, generate, and ``qa_context`` still said
-    "on" -- so the letter kept arguing an in-network claim on a denial the
-    person had just told us was out of network.
+    draws the line: it REMOVES the field whenever the review step owns it
+    (``prof_pov``). Excluding ``in_network`` by name instead left every
+    patient, who does see the box, unable to untick it.
     """
 
     def setUp(self):
@@ -350,8 +372,7 @@ class CheckboxAnswerTest(QuestionsStepTestBase):
         """qa_context is read as prose, so "emergency:False" is noise.
 
         The second POST is the one under test: by then the denial has
-        answers stored, so only "already answered" keeps the untouched boxes
-        out.
+        answers stored.
         """
         self._generate_appeal(prior_auth_id="PA-1")
         self._generate_appeal(prior_auth_id="PA-1", prior_auth_obtained="on")
@@ -412,21 +433,17 @@ class DenialTypeQuestionTest(QuestionsStepTestBase):
         self.assertEqual(combined.fields["age"].initial, "41")
 
 
-class NoAnswerIsTypedForThePatientTest(QuestionsStepTestBase):
-    """Nothing on this page arrives holding words the person did not write.
+class NoDenialTypeBoilerplateInTheAnswerBoxTest(QuestionsStepTestBase):
+    """No denial type's canned appeal paragraph reaches an answer box.
 
-    Pinned regression: ``_build_question_forms`` built every denial-type form
-    as ``form(initial={"medical_reason": dt.appeal_text})``, and once
-    ``magic_combined_form`` started reading a per-form ``initial`` that
-    default reached the page. On the seeded "Preventive Care" type
-    ``appeal_text`` is 337 characters of ACA citation and
-    ``PreventiveCareQuestions.medical_reason`` is ``max_length=300``, so the
-    person was shown a box labelled "Reason for elevated risk requiring this
-    screening." pre-typed with legal boilerplate they had never written, and
-    submitting the page unedited failed ``is_valid()`` in the appeal builder
-    -- which then dropped that form's preface, footer and every checkbox
-    answer on it, while the boilerplate went into the model's medical context
-    as though it were the patient's own account.
+    Narrow on purpose. A GENERATED question still renders the model's
+    suggested answer as its default, which is words the person did not
+    write; that is the existing behaviour of the questions step and is not
+    what this class is about. ``appeal_text`` is different: it is the
+    paragraph the appeal builder falls back to when a form does NOT
+    validate, several of them are longer than the field they would land in,
+    and once it is in the box it goes into the model's medical context and
+    the regulator letter as the patient's own account.
     """
 
     _ACA_PREFIX = "The ACA (and equivalent regulations for many non-ACA plans)"
@@ -468,21 +485,18 @@ class NoAnswerIsTypedForThePatientTest(QuestionsStepTestBase):
 
     def test_the_boilerplate_never_reaches_the_stored_answers(self):
         """qa_context goes into the model's medical context and into the
-        regulator letter verbatim, so whatever lands there is read as the
-        person's own account of their case."""
+        regulator letter verbatim."""
         denial_type = self._preventive_care()
         combined = self._rebuild().combined_form
 
-        # What the browser posts when the person types one real answer and
-        # leaves every other box as the page rendered it.
+        # The person ticks one box and leaves every other box exactly as
+        # the page rendered it: a prefill only reaches storage when nobody
+        # types over it.
         posted = {
             name: field.initial
             for name, field in combined.fields.items()
             if field.initial
         }
-        # The person ticks one box and leaves every other box exactly as the
-        # page rendered it, which is the case that matters: a prefill only
-        # reaches storage when nobody types over it.
         posted["trans_gender"] = "on"
         self._generate_appeal(**posted)
 
@@ -492,9 +506,7 @@ class NoAnswerIsTypedForThePatientTest(QuestionsStepTestBase):
         self.assertIn(stored.get("medical_reason", ""), (None, ""))
 
     def test_no_seeded_denial_type_prefills_a_box_it_would_then_reject(self):
-        """Every seeded type, not just the one that broke. A prefill the
-        person did not write is wrong on its own, and a prefill longer than
-        its own field is wrong twice over."""
+        """Every seeded type, not just the one that broke."""
         for denial_type in DenialTypes.objects.exclude(form__isnull=True).exclude(
             form=""
         ):
@@ -585,6 +597,26 @@ class QuestionsOutcomeTest(QuestionsStepTestBase):
             )
         self.assertEqual(info.questions_outcome, QUESTIONS_OUTCOME_UNFINISHED)
 
+    def test_the_ml_helpers_own_none_reaches_the_page(self):
+        """The distinction has to survive the ML helper boundary, not just
+        the wrapper's exception handler: an inner deadline or an exhausted
+        set of backends is not "we have what we need"."""
+        self._no_questions_denial()
+        with patch(_ML_HELPER, new_callable=AsyncMock, return_value=None):
+            info = FindNextStepsHelper.find_next_steps(
+                denial_id=self.denial.denial_id,
+                email=self.email,
+                semi_sekret="sekret",
+                procedure="",
+                diagnosis="",
+                insurance_company="",
+                plan_id="",
+                claim_id="",
+                denial_type=None,
+                denial_date=None,
+            )
+        self.assertEqual(info.questions_outcome, QUESTIONS_OUTCOME_UNFINISHED)
+
     def test_a_run_that_found_nothing_to_ask_reports_no_questions(self):
         """[] and None are different answers and get different copy."""
         self._no_questions_denial()
@@ -638,10 +670,7 @@ class QuestionsOutcomeTest(QuestionsStepTestBase):
 
     def test_a_render_with_no_outcome_does_not_invent_a_failure(self):
         """The dataclass defaults to "questions"; the template must not
-        default to the most alarming copy of the three. A caller that leaves
-        the outcome out -- another template test, a view added later --
-        would otherwise tell the person a generation failed that never ran.
-        """
+        default to the most alarming copy of the three."""
         body = render_to_string(
             "outside_help.html",
             {
@@ -684,21 +713,67 @@ class LoadingPageTest(QuestionsStepTestBase):
     submission of the same payload.
     """
 
+    _OPENS_A_CALLBACK = "window.setTimeout(function () {"
+    _SUBMIT_CALL = re.compile(r"\.(?:submit|requestSubmit)\s*\(")
+    _LOOP = re.compile(r"\b(?:for|while)\s*\(|\.forEach\s*\(")
+
     def _loading_page(self):
         response = self.client.post(reverse("find_next_steps_loading"), self._ref())
         self.assertEqual(response.status_code, 200)
         return response.content.decode()
 
-    def test_the_explanation_is_revealed_at_eight_seconds(self):
+    _SCRIPT_BLOCK = re.compile(r"<script\b[^>]*>(.*?)</script>", re.DOTALL)
+
+    def _script(self, body):
+        """The page's own script block, not whichever one base.html emits first."""
+        blocks = [
+            block
+            for block in self._SCRIPT_BLOCK.findall(body)
+            if "next-steps-form" in block
+        ]
+        self.assertEqual(
+            len(blocks), 1, "expected exactly one script driving the loading page"
+        )
+        return blocks[0]
+
+    def _callback_registered_at(self, body, delay_ms):
+        """The body of the setTimeout callback registered for ``delay_ms``.
+
+        Reading the callback, not the text near the number: an identifier
+        that merely appears close to "8000" says nothing about whether the
+        timer that fires then does anything with it.
+        """
+        script = self._script(body)
+        before, marker, _ = script.partition(f"}}, {delay_ms});")
+        self.assertTrue(marker, f"no setTimeout registered at {delay_ms}ms")
+        opened = before.rfind(self._OPENS_A_CALLBACK)
+        self.assertNotEqual(opened, -1, f"the {delay_ms}ms timer takes no callback")
+        return before[opened + len(self._OPENS_A_CALLBACK) :]
+
+    def test_the_explanation_starts_hidden(self):
         body = self._loading_page()
-        after_eight = body.split("8000")[0].rsplit("setTimeout", 1)[-1]
-        self.assertIn("slow-explanation", after_eight)
+        block = body.split('id="slow-explanation"', 1)[1].split(">", 1)[0]
+        self.assertIn("display:none", block)
+
+    def test_the_explanation_is_revealed_at_eight_seconds(self):
+        """The 8s callback shows the explanation, not merely name it."""
+        callback = self._callback_registered_at(self._loading_page(), 8000)
+        self.assertIn("slow-explanation", callback)
+        self.assertIn("display = 'block'", callback)
+        self.assertNotIn("manual-continue", callback)
+        self.assertNotIn("manualContinue", callback)
 
     def test_the_submit_control_still_waits_for_twenty_seconds(self):
+        """The manual Continue button is revealed by the 20s callback and by
+        no earlier one."""
         body = self._loading_page()
-        after_twenty = body.split("20000")[0].rsplit("setTimeout", 1)[-1]
-        self.assertIn("manualContinue", after_twenty)
-        self.assertNotIn("slow-explanation", after_twenty)
+
+        twenty = self._callback_registered_at(body, 20000)
+        self.assertIn("manualContinue", twenty)
+        self.assertIn("display = 'block'", twenty)
+
+        eight = self._callback_registered_at(body, 8000)
+        self.assertNotIn("manualContinue", eight)
 
     def test_the_eight_second_block_offers_a_way_back_and_no_submit(self):
         body = self._loading_page()
@@ -708,20 +783,32 @@ class LoadingPageTest(QuestionsStepTestBase):
         self.assertNotIn('type="submit"', block)
 
     def test_the_page_submits_find_next_steps_exactly_once(self):
-        body = self._loading_page()
-        self.assertEqual(body.count("form.submit()"), 1)
+        """One submission call in the whole script, and no loop around it.
+
+        Counting a literal ``form.submit()`` missed both ways of adding a
+        second POST of the same non-idempotent payload: another call spelt
+        ``requestSubmit``, or a loop around the one that is there.
+        """
+        script = self._script(self._loading_page())
+
+        self.assertEqual(
+            len(self._SUBMIT_CALL.findall(script)),
+            1,
+            "the loading script submits the payload more than once",
+        )
+        self.assertIsNone(
+            self._LOOP.search(script),
+            "a loop in the loading script can repeat the submission",
+        )
 
 
 class MagicCombinedFormTest(TestCase):
     """The merge itself, on the two shapes that used to break it."""
 
     def test_a_shared_field_name_does_not_raise_or_concatenate(self):
-        """``initial += initial`` raised when the kept field had no default.
-
-        find_next_steps caught that raise and rebuilt the whole form with an
-        empty answers dict, so a name clash between two denial types wiped
-        every answer the person had given.
-        """
+        """``initial += initial`` raised when the kept field had no default,
+        and find_next_steps recovered from that raise by rebuilding the form
+        with an empty answers dict."""
 
         class First(django_forms.Form):
             medical_reason = django_forms.CharField(required=False)
@@ -759,9 +846,7 @@ class MagicCombinedFormTest(TestCase):
     def test_a_per_form_initial_reaches_the_field(self):
         """``SomeForm(initial={...})`` lives on the form, not on the field,
         so ``field.initial`` cannot see it and ``get_initial_for_field`` is
-        the accessor that reads both. This is the merge's contract, not a
-        licence to pre-type answers: the questions page passes no per-form
-        initial at all (see ``NoAnswerIsTypedForThePatientTest``)."""
+        the accessor that reads both."""
 
         class WithDefault(django_forms.Form):
             medical_reason = django_forms.CharField(required=False)

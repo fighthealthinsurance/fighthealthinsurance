@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, cast
 
 from channels.db import database_sync_to_async
+from django.db import transaction
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -13,6 +14,36 @@ from fighthealthinsurance.utils import best_within_timelimit
 # Maps a get_appeal_questions coroutine to the originating model's quality score
 QuestionsCoroutine = Coroutine[Any, Any, List[Tuple[str, str]]]
 AwaitableQualityMap = Dict[QuestionsCoroutine, int]
+
+
+def _claim_generated_questions_sync(
+    denial_id: int, questions: List[Tuple[str, str]]
+) -> List[Tuple[str, str]]:
+    with transaction.atomic():
+        fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
+        if fresh.generated_questions:
+            return cast(List[Tuple[str, str]], fresh.generated_questions)
+        fresh.generated_questions = questions
+        fresh.save(update_fields=["generated_questions"])
+        return questions
+
+
+async def claim_generated_questions(
+    denial_id: int, questions: List[Tuple[str, str]]
+) -> List[Tuple[str, str]]:
+    """Store ``questions`` only if the row holds none, and return what stands.
+
+    The first non-empty set to land owns the slot. Answers are filed against
+    the question they were asked under, so a second overlapping run that
+    replaced a set already rendered to somebody would strand their answers
+    under field names nothing can resolve. Serialized under a row lock;
+    ``select_for_update`` degrades to a plain read on sqlite, where nothing
+    is concurrent anyway.
+    """
+    stored = await database_sync_to_async(_claim_generated_questions_sync)(
+        denial_id, questions
+    )
+    return cast(List[Tuple[str, str]], stored)
 
 
 class MLAppealQuestionsHelper:
@@ -214,7 +245,7 @@ class MLAppealQuestionsHelper:
     @staticmethod
     async def generate_questions_for_denial(
         denial: Denial, speculative: bool
-    ) -> List[Tuple[str, str]]:
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate appeal questions for a given denial. Uses speculative/candidate generation if nothing
         changed.
@@ -224,9 +255,13 @@ class MLAppealQuestionsHelper:
             speculative: Whether this is a speculative generation (candidate) or final.
 
         Returns:
-            A list of (question, answer) tuples.
+            A list of (question, answer) tuples, or None when nothing usable
+            came back at all. None and [] are different answers: [] means we
+            asked and there was nothing to ask about, None means an inner
+            deadline closed or no backend answered, and the page tells the
+            person which of those happened.
         """
-        questions: List[Tuple[str, str]] = []
+        questions: Optional[List[Tuple[str, str]]] = None
 
         # Check if candidate questions exist and the diagnosis/procedure has not changed
         if (
@@ -278,9 +313,10 @@ class MLAppealQuestionsHelper:
                 timeout=model_timeout,
             )
 
-            # Ensure we have a valid list of questions
-            if result is not None:
-                questions = result
+            # best_within_timelimit returns None when nothing usable
+            # arrived: its window closed empty, or every backend failed.
+            # Carried through rather than flattened to [].
+            questions = result
 
         # Merge PA-aware questions derived from the indexed payer rules.
         # These come from a deterministic lookup (no model call) and target
@@ -301,22 +337,27 @@ class MLAppealQuestionsHelper:
             pa_questions = []
 
         if pa_questions:
-            existing = {q.strip().lower() for q, _ in questions}
+            # A deterministic lookup answered, so this run finished even if
+            # the model phase came back with nothing.
+            merged: List[Tuple[str, str]] = list(questions or [])
+            existing = {q.strip().lower() for q, _ in merged}
             for question, default in pa_questions:
                 if question.strip().lower() not in existing:
-                    questions.append((question, default))
+                    merged.append((question, default))
                     existing.add(question.strip().lower())
+            questions = merged
 
-        # Update the denial with the result
-        if questions and len(questions) > 0:
+        if questions is None:
+            return None
+
+        if questions:
             logger.debug(
                 f"Generated {len(questions)} questions for denial {denial.denial_id}"
             )
-            qs = Denial.objects.filter(denial_id=denial.denial_id)
             if speculative:
-                await qs.aupdate(candidate_generated_questions=questions)
-            else:
-                await qs.aupdate(generated_questions=questions)
-            return questions
-        else:
-            return []
+                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                    candidate_generated_questions=questions
+                )
+                return questions
+            return await claim_generated_questions(denial.denial_id, questions)
+        return []

@@ -25,27 +25,16 @@ def magic_combined_form(
 ) -> forms.Form:
     """Merge several question forms into the one form the page renders.
 
-    ``existing_answers`` is the decoded ``qa_context``, keyed by field name.
-    Whatever it holds for a field wins over that field's default, so the
-    page comes back filled in.
+    The merge contract:
 
-    Two things this used to get wrong:
-
+    * ``existing_answers`` is the decoded ``qa_context``, keyed by field
+      name.  Whatever it holds for a field beats that field's default.
     * A per-form default passed as ``SomeForm(initial={...})`` lives on the
-      FORM, not on the field, so reading ``field.initial`` never saw it.
-      The form's own ``get_initial_for_field`` is the accessor that reads
-      both.  This is about reading a default correctly, not about putting
-      one in front of the person: the questions page passes no per-form
-      initial, because the only thing it ever passed was the denial type's
-      canned ``appeal_text`` and that is not a sentence the person wrote.
-    * On a field name declared by two of the forms, the old code did
-      ``combined.fields[name].initial += field.initial``, which concatenates
-      two unrelated defaults into one string and raises ``TypeError`` when
-      the kept field has no default at all.  ``find_next_steps`` recovered
-      from that raise by rebuilding the whole form with an empty answers
-      dict, so a name clash between two denial types wiped every answer the
-      person had given.  The first form to declare a name now owns the
-      field, and a later form only fills a gap it left.
+      FORM, not on the field, so ``field.initial`` cannot see it;
+      ``get_initial_for_field`` is the accessor that reads both.
+    * On a name two forms declare, the first to declare it owns the field.
+      A later form only fills a default it left empty; the two are
+      unrelated sentences and must never be combined.
     """
     combined_form = forms.Form()
 
@@ -58,11 +47,9 @@ def magic_combined_form(
                 if field_name in existing_answers:
                     value = existing_answers[field_name]
                     if isinstance(field, forms.BooleanField):
-                        # The field's own coercion, not a "True"/"False"
-                        # string compare: an unchecked box posts nothing and
-                        # a checked one posts "on", so a compare against
-                        # "True" left every checkbox the person had ticked
-                        # rendering back unticked.
+                        # The field's own coercion: a browser posts "on" for
+                        # a ticked box and nothing at all for an unticked
+                        # one, never "True"/"False".
                         field.initial = field.to_python(value)
                     else:
                         field.initial = value

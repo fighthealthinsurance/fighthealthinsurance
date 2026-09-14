@@ -1274,12 +1274,8 @@ def _extended_wait_cap() -> float:
 def default_extended_timeout(timeout: float) -> float:
     """The overtime window best_within_timelimit uses when none is passed.
 
-    Public because a caller's own deadline has to be able to sit above the
-    whole window it is buying, and the only honest way to check that is to
-    read this number rather than retype the expression. A test that retyped
-    it went green while the real budget drifted arbitrarily far past the
-    caller's deadline (question generation: a 20s outer timer over a helper
-    that could spend 120s, then a 130s timer over a helper free to grow).
+    Public so a caller setting its own deadline above the window it is
+    buying can read this number rather than retype the expression.
     """
     return min(max(timeout * 2, 60.0), _extended_wait_cap())
 

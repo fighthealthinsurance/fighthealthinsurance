@@ -8,17 +8,14 @@ Pinned regressions:
   ``DenialTypes.get_form`` logged the failed lookup and returned None, so
   that denial type silently asked nothing at all;
 - two question forms declared booleans with no label, so Django derived the
-  label from the field name. Only one of the two is reachable: a real
-  prior-auth case (fixture pk 3) was asked to tick "Emergency", "Contact
-  insurance before" and "Told prior auth not needed". BalanceBillQuestions,
-  which is where "Match eob" lives, is named by no fixture row, so that one
-  was never put in front of anyone; it is labelled anyway because the test
-  below holds every form in the module, not just today's reachable ones;
+  label from the field name and a real prior-auth case was asked to tick
+  "Emergency" and "Told prior auth not needed";
 - ``OutOfNetworkReimbursement.why_need_out_of_network`` was required on a
-  page where every other question is optional. Nothing in the fixture names
-  that class, so no patient has ever been shown the field; making it
-  optional is prophylactic, and the test below is what holds the whole
-  module to the rule rather than just the classes reachable today.
+  page where every other question is optional.
+
+The last two rules are checked against every form in the module rather than
+only the ones a fixture reaches today, so a class becomes safe to seed
+before anyone seeds it.
 
 Also pins the contract the appeal builder relies on:
 ``AppealsBackendHelper._generate_appeals_body`` calls ``preface()``,
@@ -42,14 +39,9 @@ _FIXTURE = "fighthealthinsurance/fixtures/initial.yaml"
 
 # Seeded denial types that ask nothing: either a grouping parent, or a type
 # whose questions have never been written. Listed one by one so a NEW row
-# arriving with no form has to be added here on purpose rather than joining
-# a silent majority.
-#
-# Two of these have a plausible class sitting unused in forms/questions.py --
-# "Provider Bill (possible balance billing)" against BalanceBillQuestions and
-# "STEP Therapy" against StepTherapy -- but nothing in the fixture points at
-# either, so today they ask nothing. Wiring them is a seeded-data decision,
-# not a code one.
+# arriving with no form has to be added here on purpose. Two of them have a
+# plausible class sitting unused in forms/questions.py; wiring those up is a
+# seeded-data decision, not a code one.
 _TYPES_WITH_NO_QUESTIONS = {
     "Co-Ordination of Benefits",
     "Denied Out-Of-Network Provider",

@@ -31,19 +31,14 @@ _DROPPED_VALUES = {"", "UNKNOWN", None}
 # Form-field prefix for the questions a model generated for one denial.
 GENERATED_QUESTION_PREFIX = "appeal_generated_question_"
 
-# Keys ``FindNextStepsHelper.find_next_steps`` writes into ``qa_context``
-# that are not answers to a question on the questions page.  They stay in
-# the dict -- the appeal prompt and the regulator letter read the whole
-# dict as prose -- but the questions page must never take one for a stored
-# answer to a GENERATED question: those are keyed by question text, and a
-# model that happened to ask "date of service" would otherwise be handed
-# the review step's date as the person's answer.
+# ``qa_context`` keys the review step owns.  A generated question is stored
+# under its own text, so a model that asks "date of service" would collide
+# with the review step's date in both directions; these keys are therefore
+# never read as, nor written from, an answer to a generated question.
 #
-# This is not a "nothing on the page may write these" list.  ``in_network``
-# is both written here (professional flow only) and a real checkbox every
-# patient sees, and whoever can see the box owns what is in it --
-# ``InsuranceQuestions.__init__`` removes the field exactly when the review
-# step owns it.  See ``GenerateAppeal._unticked_checkbox_answers``.
+# Not a "nothing on the page may write these" list: ``in_network`` is also a
+# checkbox every patient sees, and ``InsuranceQuestions.__init__`` removes
+# that field exactly when the review step owns it instead.
 RESERVED_QA_KEYS = frozenset(
     {"denial date", "date of service", "date_of_service", "in_network"}
 )
@@ -54,8 +49,7 @@ def _question_text(row: Any) -> Optional[str]:
 
     Rows are written as ``(question, suggested_answer)`` tuples and come
     back from the JSONField as two-element lists, so index rather than
-    unpack.  Anything else on the row is ignored rather than raised over:
-    these rows are model output.
+    unpack.  Anything else is model output we cannot read, and is skipped.
     """
     if isinstance(row, str):
         question = row
@@ -80,10 +74,8 @@ def question_field_name(question: str) -> str:
     """The form-field name for one generated question.
 
     Derived from the question text, so the identity survives the list being
-    regenerated or reordered between the page being rendered and the answers
-    being submitted.  The old name was the question's 1-based position, which
-    silently moved an answer onto a different question whenever the list
-    changed under it.
+    reordered between the page being rendered and the answers being
+    submitted.
     """
     digest = hashlib.sha256(question.strip().encode("utf-8")).hexdigest()[:16]
     return f"{GENERATED_QUESTION_PREFIX}{digest}"
@@ -94,10 +86,8 @@ def generated_question_fields(
 ) -> dict[str, tuple[str, str]]:
     """Map field name -> (question text, suggested answer).
 
-    Insertion order is the stored order, so the page asks the questions in
-    the order they were generated.  Two rows carrying the same question
-    collapse onto one field, which is what keeps the same sentence from
-    being asked twice.
+    Insertion order is the stored order.  Two rows carrying the same
+    question collapse onto one field, so the same sentence is asked once.
     """
     fields: dict[str, tuple[str, str]] = {}
     for row in generated_questions or []:
@@ -138,24 +128,32 @@ def question_text_for_field(
     return None
 
 
+def qa_key_for_question(question: str) -> str:
+    """The ``qa_context`` key an answer to one generated question is filed under.
+
+    The question text, because the appeal prompt (``generate_appeal``) and
+    the regulator letter read ``qa_context`` as prose and an identifier
+    there would read as noise.  The exception is a question whose text is a
+    key the review step owns: that one is filed under its field name
+    instead, so answering it cannot overwrite the review step's value.
+    """
+    if question in RESERVED_QA_KEYS:
+        return question_field_name(question)
+    return question
+
+
 def stored_answer_for_question(
     question: str, existing_answers: Mapping[str, str]
 ) -> Optional[str]:
     """The answer already stored for one generated question, if any.
 
-    Answers are stored under the QUESTION TEXT, because the appeal prompt
-    (``generate_appeal``) and the regulator letter read ``qa_context`` as
-    prose and an identifier there would read as noise.  The field they
-    belong to is named after the question's stable identity, so the answer
-    has to be looked up here rather than by field name -- which is why
-    pressing Back used to show blank boxes.
-
-    A reserved key is never an answer to a question, and an answer that a
-    failed mapping left filed under the raw field name is still read back.
+    Answers are filed by ``qa_key_for_question``, not by field name, so the
+    lookup has to go through it.  A reserved key is read only under the
+    field name; the review step's own value under that key is never shown
+    back as the person's answer.  An answer that a failed mapping left
+    filed under the raw field name is still read back.
     """
-    if question in RESERVED_QA_KEYS:
-        return None
-    value = existing_answers.get(question)
+    value = existing_answers.get(qa_key_for_question(question))
     if value is None:
         value = existing_answers.get(question_field_name(question))
     return value

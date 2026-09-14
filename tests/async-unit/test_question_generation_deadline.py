@@ -1,31 +1,25 @@
-"""The outer deadline on question generation must not outlive its purpose.
+"""The outer deadline on question generation, and what one run may overwrite.
 
-Pinned regression: ``generate_appeal_questions`` wrapped the helper in
-``asyncio.wait_for(..., timeout=20)`` while
-``MLAppealQuestionsHelper.generate_questions_for_denial`` can spend far
-longer than that. Its nominal budget variable is 45 (``timeout = 60 if
-speculative else 45``), and it spends that as ``model_timeout = 45 - 5`` =
-40 seconds of model window plus, only when nothing usable landed in that
-window, ``best_within_timelimit``'s default overtime of
-``min(max(2 * 40, 60), FHI_ML_EXTENDED_WAIT)`` = 80 seconds. So the model
-phase can run for 120 seconds; 45 and 80 are not two windows that add up.
-The outer 20 second timer fired before the helper's FIRST window closed,
-cancelled it, threw away every model result that had arrived, and returned
-an empty list. The page then said there were a few more questions and
-showed none.
+Pinned regressions:
 
-120 is the ceiling on the MODEL phase, not on the whole function: the
-pa_requirements lookup runs after it and carries no timer of its own, so
-it is bounded by the database rather than by anything this test can
-read. That lookup is a local indexed query, which is why the deadline is
-set against the model phase, and it is why the deadline is set ABOVE the
-ceiling rather than equal to it.
+- ``generate_appeal_questions`` wrapped the helper in
+  ``asyncio.wait_for(..., timeout=20)`` while the model phase alone buys a
+  model window plus a longer overtime window on top of it. The outer timer
+  fired first, cancelled the helper, threw away every model result that had
+  arrived, and the page said there were a few more questions and showed
+  none. Both numbers are read off a real run below, never retyped;
+- a run that came back with nothing overwrote the questions another,
+  overlapping run had already stored and rendered. Answers are filed
+  against the question they were asked with, so replacing a rendered set
+  strands them under field names nothing can resolve;
+- the helper flattened "nothing usable arrived" to ``[]``, so an inner
+  deadline or an exhausted set of backends reached the page as "No extra
+  questions... We have what we need."
 
-Also pinned here: a run that comes back empty must not overwrite questions
-another run already stored. The loading page offers Continue at 20 seconds
-while this deadline is 130, so a second, overlapping run is reachable for
-about 110 seconds, and it used to be able to replace a full question list
-with ``[]``.
+What the test measures is the ceiling on the MODEL phase, not on the whole
+function: the pa_requirements lookup runs after it and carries no timer of
+its own, being a local indexed query. That is why the deadline is set above
+the model ceiling rather than equal to it.
 """
 
 import asyncio
@@ -58,19 +52,22 @@ _SLOW = ("What did the second model ask?", "")
 
 class QuestionGenerationDeadlineTest(TestCase):
     @pytest.mark.django_db
-    def test_the_deadline_sits_above_the_helpers_own_budget(self):
-        """Run the helper and watch what it actually buys, 40s + 80s.
+    @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_the_deadline_sits_above_the_helpers_own_budget(self, _citations):
+        """Both numbers are read off one real run, neither is retyped.
 
-        An earlier version of this test retyped the composition (45, -5,
-        *2, 60, 300) as literals in the class body and asserted 130 > 120
-        against its own arithmetic. Setting the helper's budget to 200,
-        which puts the real ceiling at 495 seconds against this unchanged
-        130 second deadline, left the whole file green. So the numbers are
-        read here and nowhere typed: the model window is whatever the
-        helper hands best_within_timelimit, and the overtime is what
-        best_two_within_timelimit fills in for an omitted extended_timeout.
+        The model window is whatever the helper hands
+        best_within_timelimit; the overtime is what
+        best_two_within_timelimit fills in for an omitted extended_timeout;
+        the deadline is the timeout generate_appeal_questions actually
+        hands asyncio.wait_for, not the constant it is supposed to read.
         """
         observed: Dict[str, Any] = {}
+        real_wait_for = asyncio.wait_for
+
+        async def record_the_deadline(awaitable, timeout=None, **kwargs):
+            observed["deadline"] = timeout
+            return await real_wait_for(awaitable, timeout=timeout, **kwargs)
 
         async def record_the_window(tasks, *args, **kwargs):
             observed["timeout"] = kwargs.get(
@@ -86,7 +83,7 @@ class QuestionGenerationDeadlineTest(TestCase):
             return None
 
         async def run():
-            denial = await Denial.objects.acreate(
+            await Denial.objects.acreate(
                 denial_id=8206,
                 semi_sekret="sekret",
                 hashed_email=Denial.get_hashed_email("deadline@example.com"),
@@ -101,10 +98,10 @@ class QuestionGenerationDeadlineTest(TestCase):
                     pa_requirements,
                     "get_pa_questions_for_denial",
                     new=lambda denial: [],
+                ), patch.object(
+                    common_view_logic.asyncio, "wait_for", new=record_the_deadline
                 ):
-                    await MLAppealQuestionsHelper.generate_questions_for_denial(
-                        denial, speculative=False
-                    )
+                    await DenialCreatorHelper.generate_appeal_questions(8206)
             finally:
                 await Denial.objects.filter(denial_id=8206).adelete()
 
@@ -120,14 +117,16 @@ class QuestionGenerationDeadlineTest(TestCase):
         if overtime is None:
             overtime = default_extended_timeout(model_window)
 
-        # Tripwire on the numbers the module docstring and the commit
-        # message quote, so a budget change has to update the prose too.
-        self.assertEqual(model_window, 40)
-        self.assertEqual(overtime, 80)
-        self.assertGreater(
-            QUESTION_GENERATION_DEADLINE_SECONDS,
-            model_window + overtime,
+        deadline = observed.get("deadline")
+        self.assertIsNotNone(
+            deadline, "generate_appeal_questions never called asyncio.wait_for"
         )
+        self.assertEqual(
+            deadline,
+            QUESTION_GENERATION_DEADLINE_SECONDS,
+            "the wait_for timeout has to be the constant, not a literal",
+        )
+        self.assertGreater(deadline, model_window + overtime)
 
     @pytest.mark.django_db
     @patch(_CITATIONS, new_callable=AsyncMock)
@@ -169,13 +168,179 @@ class QuestionGenerationDeadlineTest(TestCase):
 
     @pytest.mark.django_db
     @patch(_CITATIONS, new_callable=AsyncMock)
-    def test_a_slow_model_does_not_lose_the_fast_models_questions(self, _citations):
-        """One candidate times out; the other's questions still arrive.
+    def test_a_second_run_does_not_replace_the_first_runs_questions(self, _citations):
+        """The helper's own write site, against a stale in-memory row.
 
-        The windows are scaled down but keep the real relationship: the
-        helper's own window (0.3s) sits under the outer deadline (5s), which
-        is what the 20s-over-45s pairing got backwards.
+        Two runs overlap whenever somebody uses the loading page's Continue
+        button. The second read an empty list before the first stored its
+        set, and used to replace a set already rendered to the person --
+        stranding the answers they were about to submit, which are filed
+        against the question they were asked with.
         """
+
+        async def second_run_finds_something_else(tasks, *args, **kwargs):
+            for task in tasks:
+                task.close()
+            return [_SLOW]
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8207,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+                procedure="MRI",
+                diagnosis="back pain",
+            )
+            try:
+                # The first run stored its set after this one read the row,
+                # so the object in hand still says there are no questions.
+                await Denial.objects.filter(denial_id=8207).aupdate(
+                    generated_questions=[list(_FAST)]
+                )
+                with patch.object(
+                    ml_appeal_questions_helper,
+                    "best_within_timelimit",
+                    new=second_run_finds_something_else,
+                ), patch.object(
+                    pa_requirements,
+                    "get_pa_questions_for_denial",
+                    new=lambda denial: [],
+                ):
+                    returned = (
+                        await MLAppealQuestionsHelper.generate_questions_for_denial(
+                            denial, speculative=False
+                        )
+                    )
+                self.assertEqual([tuple(row) for row in returned], [_FAST])
+                stored = await Denial.objects.aget(denial_id=8207)
+                self.assertEqual(
+                    [tuple(row) for row in stored.generated_questions], [_FAST]
+                )
+            finally:
+                await Denial.objects.filter(denial_id=8207).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_the_outer_write_site_also_refuses_to_replace(self, _citations):
+        """The same rule at generate_appeal_questions' own write."""
+
+        async def helper(denial, speculative):
+            return [_SLOW]
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8208,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+                generated_questions=[list(_FAST)],
+            )
+            try:
+                with patch(_HELPER, new=helper):
+                    questions = await DenialCreatorHelper.generate_appeal_questions(
+                        denial.denial_id
+                    )
+                # What the page renders is what the row holds.
+                self.assertEqual([tuple(row) for row in questions], [_FAST])
+                stored = await Denial.objects.aget(denial_id=denial.denial_id)
+                self.assertEqual(
+                    [tuple(row) for row in stored.generated_questions], [_FAST]
+                )
+            finally:
+                await Denial.objects.filter(denial_id=8208).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    def test_a_model_phase_that_finds_nothing_says_it_did_not_finish(self):
+        """None has to survive the ML helper boundary.
+
+        best_within_timelimit returns None when nothing usable arrived: its
+        window closed empty, or no backend answered. Flattened to [], that
+        reached the page as "No extra questions... We have what we need."
+        """
+
+        async def nothing_usable(tasks, *args, **kwargs):
+            for task in tasks:
+                task.close()
+            return None
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8209,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+                procedure="MRI",
+                diagnosis="back pain",
+            )
+            try:
+                with patch.object(
+                    ml_appeal_questions_helper,
+                    "best_within_timelimit",
+                    new=nothing_usable,
+                ), patch.object(
+                    pa_requirements,
+                    "get_pa_questions_for_denial",
+                    new=lambda denial: [],
+                ):
+                    self.assertIsNone(
+                        await MLAppealQuestionsHelper.generate_questions_for_denial(
+                            denial, speculative=False
+                        )
+                    )
+            finally:
+                await Denial.objects.filter(denial_id=8209).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    def test_a_payer_rule_question_still_counts_as_finishing(self):
+        """The PA lookup is deterministic: if it answered, the run finished."""
+
+        async def nothing_usable(tasks, *args, **kwargs):
+            for task in tasks:
+                task.close()
+            return None
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8210,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+                procedure="MRI",
+                diagnosis="back pain",
+            )
+            try:
+                with patch.object(
+                    ml_appeal_questions_helper,
+                    "best_within_timelimit",
+                    new=nothing_usable,
+                ), patch.object(
+                    pa_requirements,
+                    "get_pa_questions_for_denial",
+                    new=lambda denial: [_FAST],
+                ):
+                    questions = (
+                        await MLAppealQuestionsHelper.generate_questions_for_denial(
+                            denial, speculative=False
+                        )
+                    )
+                self.assertEqual([tuple(row) for row in questions], [_FAST])
+            finally:
+                await Denial.objects.filter(denial_id=8210).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_a_slow_model_does_not_lose_the_fast_models_questions(self, _citations):
+        """One candidate times out; the other's questions still arrive and
+        reach the row."""
 
         async def helper(denial, speculative):
             async def fast():

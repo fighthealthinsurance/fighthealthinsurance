@@ -170,15 +170,6 @@ class OutOfNetworkReimbursement(forms.Form):
     why_need_out_of_network = forms.CharField(
         max_length=300,
         # Optional, like every other question on the questions page.
-        #
-        # Nothing reaches this box today: no row in fixtures/initial.yaml
-        # names OutOfNetworkReimbursement, so DenialTypes.get_form never
-        # returns it and no patient has ever been shown this field. The
-        # change is prophylactic -- required=True here would be the one box
-        # able to block a whole questionnaire from being submitted, the
-        # moment anyone seeds a denial type against this class. Seeding one
-        # still needs preface() and footer() added first; see
-        # UnderpaidOutOfNetworkQuestions below.
         required=False,
         label="Why do you need to go out of network?",
         help_text="E.g., no in-network provider, in-network providers don't meet standards of care, don't accept new patients, or don't perform the needed service.",
@@ -195,8 +186,6 @@ class OutOfNetworkReimbursement(forms.Form):
         return ""
 
     def main(self):
-        # The reason is optional now, and a sentence ending in "because ."
-        # is worse than no sentence at all.
         reason = self.cleaned_data.get("why_need_out_of_network")
         if not reason:
             return []
@@ -212,21 +201,10 @@ class OutOfNetworkReimbursement(forms.Form):
 class UnderpaidOutOfNetworkQuestions(InsuranceQuestions):
     """Questions for the seeded "Underpaid Out of Network" denial type.
 
-    ``fixtures/initial.yaml`` has named this class since that denial type
-    was seeded, but no such class existed, so ``DenialTypes.get_form``
-    logged the lookup failure, returned None, and the type asked nothing at
-    all.
-
-    It asks what an underpaid out-of-network claim turns on -- why the care
-    had to happen out of network -- on top of the shared insurance
-    questions. It inherits ``InsuranceQuestions`` rather than the
-    (unreferenced) ``OutOfNetworkReimbursement`` because the appeal builder
-    calls ``preface()``, ``main()`` and ``footer()`` on every form a denial
-    type resolves to, with no guard, and only this line defines all three:
-    ``OutOfNetworkReimbursement`` has no ``preface`` or ``footer``, so
-    pointing the fixture at it would swap a silent no-op for an
-    AttributeError mid-generation, and the letter would have lost its
-    salutation and closing either way.
+    Inherits ``InsuranceQuestions`` rather than the similar
+    ``OutOfNetworkReimbursement`` because the appeal builder calls
+    ``preface()``, ``main()`` and ``footer()`` unguarded on every form a
+    denial type resolves to, and only this line defines all three.
     """
 
     why_need_out_of_network = forms.CharField(

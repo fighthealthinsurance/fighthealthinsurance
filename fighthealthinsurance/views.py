@@ -47,6 +47,7 @@ from fighthealthinsurance.denial_context import (
     GENERATED_QUESTION_PREFIX,
     load_qa,
     merge_qa,
+    qa_key_for_question,
     question_text_for_field,
 )
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
@@ -1384,10 +1385,6 @@ class FindNextStepsLoading(View):
             context={
                 "payload": request.POST,
                 "current_step": 6,
-                # The page offers this link once the wait has gone on long
-                # enough to need explaining. It is a link, not a second
-                # submit: find_next_steps is not idempotent and the
-                # auto-submitted POST is still in flight at that point.
                 "back_url": build_back_url(
                     "categorize_review",
                     form.cleaned_data["denial_id"],
@@ -1480,22 +1477,16 @@ class GenerateAppeal(View):
     def _unticked_checkbox_answers(denial, posted: set[str]) -> dict[str, str]:
         """Write False for a checkbox that was answered before and is not now.
 
-        An unticked checkbox sends nothing at all, and ``merge_qa`` keeps
-        what it already holds for a key nobody sent -- so a person who
-        ticked "Urgent claim", went on, came back and unticked it left the
-        old "on" standing in ``qa_context`` and got an appeal that still
-        argued from it. Only keys that already hold an answer are written,
-        so a box nobody ever ticked adds no "False" noise to the prompt.
+        An unticked checkbox sends nothing at all and ``merge_qa`` keeps
+        what it already holds for a key nobody sent, so unticking a box
+        would otherwise never take. Only keys that already hold an answer
+        are written, so a box nobody ever ticked adds no "False" noise to
+        the prompt, which is read as prose.
 
-        The page itself is the ownership boundary, which is why nothing is
-        excluded by name here. The only ``qa_context`` key the review step
-        writes that is also a checkbox is ``in_network``, and
-        ``InsuranceQuestions.__init__`` removes that field whenever the
-        review step owns it (``prof_pov``: the professional was asked in the
-        earlier form). So a box rendered on this page is always the person's
-        own to untick, and a value the review step owns is never rendered
-        here to be untouched. Excluding ``in_network`` by name instead left
-        every patient -- who does see the box -- unable to withdraw it.
+        Nothing is excluded by name: the page itself is the ownership
+        boundary. ``in_network`` is the one reserved key that is also a
+        checkbox here, and ``InsuranceQuestions.__init__`` removes that
+        field whenever the review step owns it (``prof_pov``).
         """
         try:
             stored = load_qa(denial)
@@ -1621,13 +1612,8 @@ class GenerateAppeal(View):
                 key = k
                 # Per-key guard: one unmappable key (a question that is no
                 # longer on the denial, a malformed key) must lose only ITS
-                # mapping, not silently drop every answer the user just
-                # typed -- the old whole-loop try discarded the entire
-                # questionnaire on the first bad key.
+                # mapping, not every answer the person just typed.
                 if k.startswith(GENERATED_QUESTION_PREFIX):
-                    # The same resolver the page used to name the field, so
-                    # the key written here is the key read back when the
-                    # person presses Back.
                     question = question_text_for_field(k, generated_questions)
                     if question is None:
                         logger.warning(
@@ -1635,7 +1621,7 @@ class GenerateAppeal(View):
                             f"{denial_id}; keeping it under its raw name"
                         )
                     else:
-                        key = question
+                        key = qa_key_for_question(question)
                 if isinstance(v, list):
                     v = v[0]
                     elems[k] = v
