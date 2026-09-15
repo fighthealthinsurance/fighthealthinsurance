@@ -152,6 +152,8 @@ function actionButton(text: string, submits: boolean): HTMLButtonElement {
   // A submit inside the flow's own form: continuing is a press, never a
   // navigation the page performs.
   button.type = submits ? 'submit' : 'button';
+  // Stable handles for the browser tests: the labels change with the outcome.
+  button.id = submits ? 'entity-continue' : 'entity-retry';
   button.textContent = text;
   button.className = submits ? 'btn btn-green' : 'btn btn-secondary';
   button.style.cssText = 'margin: 0 0.25rem;';

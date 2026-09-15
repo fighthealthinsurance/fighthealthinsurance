@@ -38,6 +38,16 @@ class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
+    def continue_past_extraction(self):
+        """The extraction page no longer moves on by itself.
+
+        It reads the letter over a socket the test server does not serve, so
+        the run ends at once in its terminal state, which offers a retry and
+        a continue. A person presses Continue; so does this.
+        """
+        self.assert_title_eventually("Analyzing Your Denial")
+        self.click("button#entity-continue", timeout=90)
+
     def test_submit_an_appeal_with_missing_info_and_fail(self):
         self.open(f"{self.live_server_url}/")
         self.assert_title_eventually(
@@ -116,6 +126,7 @@ Cheap-O-Insurance-Corp""",
         self.click("button#next")
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
         # This is because channels is needs a different base to work and it's hanging so we manually
         # select the denial type for now.
@@ -175,6 +186,7 @@ Cheap-O-Insurance-Corp""",
         self.click("button#next")
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
         self.click("button#submit_cat")
         self.assert_title_eventually("Additional Resources & Questions")
@@ -206,6 +218,7 @@ Cheap-O-Insurance-Corp""",
         self.click("button#next")
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
         self.click("button#submit_cat")
         self.assert_title_eventually("Additional Resources & Questions")
@@ -395,6 +408,7 @@ Cheap-O-Insurance-Corp"""
 
         # Go forward to Entity Extract
         self.click("button#next")
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
 
         # Go back again to plan documents (back from entity_extract now goes to plan docs)
@@ -406,6 +420,7 @@ Cheap-O-Insurance-Corp"""
 
         # And forward again should still work
         self.click("button#next")
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
 
     def test_session_scoped_localstorage_does_not_mix_appeals(self):
@@ -616,6 +631,7 @@ Cheap-O-Insurance-Corp"""
         self.click("button#next")
 
         # Now at Categorize page
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
 
         # Click back button - should go to Plan Documents (not Health History)
@@ -627,6 +643,7 @@ Cheap-O-Insurance-Corp"""
 
         # Go forward again - should work without errors
         self.click("button#next")
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
 
     def test_back_navigation_flow_from_questions_to_categorize(self):
@@ -663,6 +680,7 @@ Cheap-O-Insurance-Corp"""
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
 
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
         # Manually select denial type since channels is not working in test
         self.select_option_by_value("select#id_denial_type", "2")
@@ -717,6 +735,7 @@ Cheap-O-Insurance-Corp"""
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
 
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
         self.select_option_by_value("select#id_denial_type", "2")
         self.type("input#id_procedure", "prep")
