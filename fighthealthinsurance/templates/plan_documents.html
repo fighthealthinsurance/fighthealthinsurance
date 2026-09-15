@@ -12,6 +12,12 @@ Optional: Add Plan Documents
     <b>Optional</b>: Plan Documents
     <small class="text-muted">(e.g. summary description)</small>
   </label><br>
+  {% if plan_document_count %}
+  <p id="plan_documents_already_added" class="form-text text-muted">
+    {{ plan_document_count }} plan document{{ plan_document_count|pluralize }} already added to this appeal.
+    Anything you pick here is added to {{ plan_document_count|pluralize:"it,them" }}, so there is no need to upload the same file again.
+  </p>
+  {% endif %}
   <div class="col-md-4">
     <input id="plan_documents" type="file" name="plan_documents" multiple="true" class="form-control mt-2"><br>
   </div>

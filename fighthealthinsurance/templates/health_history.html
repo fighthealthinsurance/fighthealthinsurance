@@ -12,8 +12,17 @@ Optional: Health History
     <b>Optional</b>: Your Relevant Health History
     <small class="text-muted">(e.g. transgender, type 2 diabetes, fibromyalgia, etc.)</small>
   </label><br>
+  {% comment %}
+    No padding inside the tag: a textarea keeps its own whitespace, so any
+    newline or indent here would arrive in the POST as typed content.
+  {% endcomment %}
   <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
-	    placeholder="Related Health History Goes Here" class="form-control"></textarea>
+	    placeholder="Related Health History Goes Here" class="form-control">{{ form.health_history.value|default_if_none:"" }}</textarea>
+  {% if form.health_history.value and not form.errors %}
+  <p id="health_history_removal_note" class="form-text text-muted">
+    This is what is saved for this appeal. To remove it, clear the box and press Next.
+  </p>
+  {% endif %}
   <br>
 </div>
 <script src="{% static 'js/dist/formPersistence.bundle.js' %}"></script>

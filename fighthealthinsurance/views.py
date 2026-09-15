@@ -2031,6 +2031,9 @@ class InitialProcessView(generic.FormView):
                 "denial_id": denial_response.denial_id,
                 "email": cleaned_data["email"],
                 "semi_sekret": denial_response.semi_sekret,
+                # A resubmission reuses the session's denial, so there can
+                # already be history to show.
+                "health_history": stored_health_history(denial_response.denial_id),
             }
         )
 
@@ -2044,6 +2047,31 @@ class InitialProcessView(generic.FormView):
                 "back_url": reverse("scan"),
             },
         )
+
+
+def stored_health_history(denial_id) -> str:
+    """What is already saved in ``Denial.health_history`` for this case.
+
+    health_history.html renders this into its textarea. Returns "" when the
+    denial cannot be resolved, so a render never fails on a stale reference.
+    """
+    if not denial_id:
+        return ""
+    denial = models.Denial.objects.filter(denial_id=denial_id).first()
+    if denial is None:
+        return ""
+    return denial.health_history or ""
+
+
+def plan_document_count(denial_id) -> int:
+    """How many plan documents are already attached to this case.
+
+    A count rather than a list: PlanDocuments keeps no original filename, so
+    there is no name to show. Returns 0 when the denial cannot be resolved.
+    """
+    if not denial_id:
+        return 0
+    return models.PlanDocuments.objects.filter(denial__denial_id=denial_id).count()
 
 
 def build_back_url(url_name: str, denial_id, email: str, semi_sekret: str) -> str:
@@ -2108,11 +2136,14 @@ class SessionRequiredMixin(View):
                     f"denial_id={denial_id}"
                 )
                 return {}
-            # Validate the denial exists and semi_sekret matches
+            # Validate the whole triple, as every save does. The id and the
+            # secret alone would let a GET with someone else's email render
+            # what this page now shows: the stored health history.
             try:
                 denial = models.Denial.objects.get(
                     denial_id=denial_id,
                     semi_sekret=semi_sekret,
+                    hashed_email=models.Denial.get_hashed_email(email),
                 )
                 # Check session matches if we have one
                 session_denial_id = self.request.session.get("denial_id")
@@ -2252,7 +2283,12 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
     def get_initial(self):
         """Populate form with denial ref data from URL params for back navigation."""
         initial = super().get_initial()
-        initial.update(self.get_denial_ref_from_request())
+        denial_ref = self.get_denial_ref_from_request()
+        initial.update(denial_ref)
+        # Initial is only what an UNBOUND form shows. A bound field's value()
+        # returns the submitted data, so a POST that failed validation
+        # redisplays what the person just typed rather than this.
+        initial["health_history"] = stored_health_history(denial_ref.get("denial_id"))
         return initial
 
     def get_context_data(self, **kwargs):
@@ -2263,10 +2299,23 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         context["back_url"] = reverse("scan")  # Scan doesn't need denial ref
         return context
 
+    # Neither consent flag has a checkbox on this page, so "unticked" and
+    # "never offered" look identical in the POST and a plain Next would decide
+    # both by omission. They stay on the form because the REST serializer is
+    # built from it; the page that cannot ask drops them instead.
+    UNRENDERED_CONSENT_FIELDS = (
+        "health_history_anonymized",
+        "include_provided_health_history_in_appeal",
+    )
+
     def form_valid(self, form):
+        submitted = dict(form.cleaned_data)
+        for name in self.UNRENDERED_CONSENT_FIELDS:
+            if name not in self.request.POST:
+                submitted.pop(name, None)
         try:
             denial_response = common_view_logic.DenialCreatorHelper.update_denial(
-                **form.cleaned_data,
+                **submitted,
             )
         except models.Denial.DoesNotExist:
             logger.warning(
@@ -2290,6 +2339,7 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "form": new_form,
                 "next": reverse("dvc"),
                 "current_step": 3,
+                "plan_document_count": plan_document_count(denial_response.denial_id),
                 "back_url": build_back_url(
                     "hh",
                     denial_response.denial_id,
@@ -2318,6 +2368,9 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
         denial_ref = self.get_denial_ref_from_request()
         context["next"] = reverse("dvc")  # Form posts to itself
         context["current_step"] = 3
+        context["plan_document_count"] = plan_document_count(
+            denial_ref.get("denial_id")
+        )
         context["back_url"] = self.get_back_url("hh", denial_ref)
         return context
 
