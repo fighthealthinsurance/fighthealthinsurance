@@ -166,6 +166,7 @@ def _the_model_answers(**answers):
         )
         yield
 
+
 async def _regex_source() -> None:
     """Make the ``regex`` DataSource real for this test's database.
 
@@ -503,7 +504,6 @@ async def test_the_retry_button_cannot_be_pressed_forever():
     assert fresh.extract_attempts == 3, fresh.extract_attempts
 
 
-
 @pytest.mark.asyncio
 async def test_the_retry_does_not_overwrite_the_details_the_person_corrected():
     """The retry lifts the gate that normally stops a second read.
@@ -669,6 +669,7 @@ async def test_the_denial_reason_is_not_reported_missing_after_it_was_stored():
     assert (
         _outcome_for(records, EXTRACTION_TASK_DENIAL_TYPE) == EXTRACTION_OUTCOME_CACHED
     ), records
+
 
 @pytest.mark.asyncio
 async def test_a_case_that_does_not_resolve_uses_the_same_envelope():
@@ -913,6 +914,50 @@ async def test_two_of_four_letters_failing_is_not_all_letters_generated():
     assert done["complete"] is False
     assert sorted(done["failed_names"]) == ["Recipient 1", "Recipient 3"]
     assert "all" not in done["message"].lower(), done["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_drafting_task_that_raises_is_counted_and_the_done_frame_still_comes():
+    """Only an empty letter used to count as a failure. A task that raised
+    escaped the loop, and the done frame the page waits on never came."""
+    denial = await _make_denial(your_state="CA")
+    recipients = [_recipient(f"kind{i}", f"Recipient {i}") for i in range(3)]
+
+    def letter_for(recipient):
+        if recipient.name == "Recipient 1":
+            raise RuntimeError("backend exploded")
+        return "A letter."
+
+    records = await _escalation_frames(denial, recipients, letter_for)
+    done = _done_frame(records)
+    assert done is not None, records
+    assert done["generated"] == 2
+    assert done["failed"] == 1
+    assert done["failed_names"] == ["Recipient 1"]
+    assert done["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_letter_that_cannot_be_saved_is_counted_and_the_done_frame_still_comes():
+    denial = await _make_denial(your_state="CA")
+    recipients = [_recipient(f"kind{i}", f"Recipient {i}") for i in range(3)]
+    real_acreate = common_view_logic.RegulatorEscalation.objects.acreate
+
+    async def flaky_acreate(**kwargs):
+        if kwargs["recipient_name"] == "Recipient 2":
+            raise RuntimeError("database went away")
+        return await real_acreate(**kwargs)
+
+    with patch.object(
+        common_view_logic.RegulatorEscalation.objects, "acreate", new=flaky_acreate
+    ):
+        records = await _escalation_frames(denial, recipients, lambda r: "A letter.")
+    done = _done_frame(records)
+    assert done is not None, records
+    assert done["generated"] == 2
+    assert done["failed"] == 1
+    assert done["failed_names"] == ["Recipient 2"]
+    assert done["complete"] is False
 
 
 @pytest.mark.asyncio

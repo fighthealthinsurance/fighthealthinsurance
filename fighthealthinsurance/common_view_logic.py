@@ -6094,9 +6094,18 @@ class EscalationPacketHelper:
         use_external = bool(getattr(denial, "use_external", False))
 
         async def _draft(recipient):
-            text = await generate_regulator_letter(
-                denial, recipient, use_external=use_external
-            )
+            # One recipient's failure, never the stream's: raising out of
+            # here skips the done frame, and the page is left with no
+            # complete flag and no count for the run.
+            try:
+                text = await generate_regulator_letter(
+                    denial, recipient, use_external=use_external
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"escalation letter for {recipient.recipient_type} raised"
+                )
+                text = None
             return recipient, text
 
         tasks = [asyncio.create_task(_draft(r)) for r in needing_generation]
@@ -6121,16 +6130,35 @@ class EscalationPacketHelper:
                     ) + "\n"
                     continue
 
-                escalation = await RegulatorEscalation.objects.acreate(
-                    for_denial=denial,
-                    hashed_email=hashed_email,
-                    recipient_type=recipient.recipient_type,
-                    recipient_name=recipient.name,
-                    recipient_address=recipient.address,
-                    recipient_phone=recipient.phone,
-                    recipient_url=recipient.url,
-                    letter_text=letter_text,
-                )
+                try:
+                    escalation = await RegulatorEscalation.objects.acreate(
+                        for_denial=denial,
+                        hashed_email=hashed_email,
+                        recipient_type=recipient.recipient_type,
+                        recipient_name=recipient.name,
+                        recipient_address=recipient.address,
+                        recipient_phone=recipient.phone,
+                        recipient_url=recipient.url,
+                        letter_text=letter_text,
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"could not save the {recipient.recipient_type} letter"
+                    )
+                    failed_names.append(recipient.name)
+                    yield json.dumps(
+                        {
+                            "type": "status",
+                            "phase": "generating",
+                            "substep": recipient.recipient_type,
+                            "state": "error",
+                            "message": (
+                                f"Could not save the letter for "
+                                f"{recipient.name}; skipping."
+                            ),
+                        }
+                    ) + "\n"
+                    continue
 
                 yield json.dumps(
                     {
