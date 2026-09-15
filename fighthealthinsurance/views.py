@@ -1,4 +1,7 @@
 import html
+import base64
+import hashlib
+import hmac
 import json
 import os
 import random
@@ -12,6 +15,7 @@ from typing import TypedDict
 from urllib.parse import quote, urlencode
 
 from django import forms
+from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
@@ -2025,6 +2029,14 @@ class InitialProcessView(generic.FormView):
 
         self.request.session["denial_uuid"] = str(denial_response.uuid)
         self.request.session["denial_id"] = int(denial_response.denial_id)
+        # The one request that starts a case in this session: the reference
+        # scheme's per-session secret and this case's email are written here,
+        # ahead of any page that renders a link, so no later concurrent
+        # render has to.
+        _denial_ref_fernet(self.request.session, create=True)
+        remember_denial_ref_email(
+            self.request.session, denial_response.denial_id, cleaned_data["email"]
+        )
 
         # Store microsite data in session for prefilling later in the flow
         default_procedure = self.request.POST.get(
@@ -2068,19 +2080,21 @@ class InitialProcessView(generic.FormView):
 
 DENIAL_REF_QUERY_PARAM = "ref"
 
-_DENIAL_REF_SESSION_KEY = "denial_back_refs"
+# The session holds two things for this scheme: a random per-session secret
+# the reference key is derived from, and, per case, the email the later
+# pages post. A reference is not stored anywhere; it is self-contained.
+_DENIAL_REF_KEY_SESSION_KEY = "denial_back_ref_key"
+_DENIAL_REF_EMAILS_SESSION_KEY = "denial_back_ref_emails"
 
 # Idle lifetime, not a lifetime from first issue: every resolve and every
 # re-render of a link to the same case stamps a fresh expiry, so an appeal
 # worked across a day keeps one reference. Owner decision, Melanie
 # 2026-09-13: one sitting plus a same-day return, and no absolute cap on top,
 # because a cap puts a cliff in the middle of an active appeal. Changing this
-# number moves the window for references minted afterwards, and for existing
-# ones the next time they are used, since a use stamps a fresh expiry from it;
-# an entry nobody touches keeps the absolute expiry it was stamped with.
+# number applies to references minted afterwards; a reference carries its own
+# minting time, so one already in a history keeps the window it was minted
+# under.
 DENIAL_REF_IDLE_TTL_SECONDS = 12 * 60 * 60
-
-DENIAL_REF_MAX_PER_SESSION = 32
 
 
 def session_gate_enforced() -> bool:
@@ -2105,127 +2119,117 @@ def legacy_denial_ref_query_accepted() -> bool:
     return bool(getattr(settings, "LEGACY_DENIAL_REF_QUERY", True))
 
 
-def _prune_denial_refs(
-    refs: typing.Any, now: float, room_for: int = 0
-) -> typing.Dict[str, typing.Any]:
-    """Drop expired references, then the oldest ones over the per-session cap.
+def _denial_ref_fernet(session, create: bool) -> typing.Optional[Fernet]:
+    """The cipher for this session's references.
 
-    ``room_for`` is how many references the caller is about to add, so the cap
-    holds after the addition. Pass 0 when nothing is being added, so a store
-    already at the cap keeps every live entry.
-
-    ``refs`` is whatever the session happened to hold under that key, hence
-    the loose type: a session carrying something else there resolves to "no
-    references" rather than raising out of a page render.
+    The key is derived from the site secret and a random secret kept in this
+    session, so a reference decrypts only in the browser that minted it and
+    only while the site secret stands. ``create`` mints the session secret
+    when there is none; resolution never creates one, a session without one
+    has issued nothing.
     """
-    if not isinstance(refs, dict):
-        return {}
-    live = {
-        token: entry
-        for token, entry in refs.items()
-        if isinstance(entry, dict) and float(entry.get("exp") or 0) > now
-    }
-    cap = max(DENIAL_REF_MAX_PER_SESSION - room_for, 0)
-    if len(live) > cap:
-        oldest_first = sorted(
-            live, key=lambda token: float(live[token].get("exp") or 0)
-        )
-        for token in oldest_first[: len(live) - cap]:
-            del live[token]
-    return live
+    session_secret = session.get(_DENIAL_REF_KEY_SESSION_KEY)
+    if not isinstance(session_secret, str) or not session_secret:
+        if not create:
+            return None
+        session_secret = secrets.token_urlsafe(32)
+        session[_DENIAL_REF_KEY_SESSION_KEY] = session_secret
+    site_secret = settings.SECRET_KEY
+    if isinstance(site_secret, str):
+        site_secret = site_secret.encode("utf-8")
+    key = hmac.new(site_secret, session_secret.encode("utf-8"), hashlib.sha256).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
 
 
-def _refresh_denial_ref_expiry(entry: typing.Dict[str, typing.Any], now: float) -> None:
-    """Push one reference's idle expiry out from now."""
-    entry["exp"] = now + DENIAL_REF_IDLE_TTL_SECONDS
+def remember_denial_ref_email(session, denial_id, email: str) -> None:
+    """Keep, per case, the email the later pages post.
+
+    Written when the session is bound to a case and again, with the same
+    value, whenever a link to it is rendered: a write that repeats the
+    value it replaces cannot lose to a concurrent save.
+    """
+    if denial_id is None or not email:
+        return
+    emails = session.get(_DENIAL_REF_EMAILS_SESSION_KEY)
+    if not isinstance(emails, dict):
+        emails = {}
+    if emails.get(str(denial_id)) == str(email):
+        return
+    emails = dict(emails)
+    emails[str(denial_id)] = str(email)
+    # Reassign rather than mutate in place: Django only notices a session
+    # write when a top level key is set.
+    session[_DENIAL_REF_EMAILS_SESSION_KEY] = emails
+
+
+def denial_ref_expiry(session, token: str) -> typing.Optional[float]:
+    """When a reference stops resolving, or None for one this session cannot read."""
+    fernet = _denial_ref_fernet(session, create=False)
+    if fernet is None or not isinstance(token, str) or not token:
+        return None
+    try:
+        minted = fernet.extract_timestamp(token.encode("utf-8"))
+    except (InvalidToken, TypeError, ValueError):
+        return None
+    return float(minted) + DENIAL_REF_IDLE_TTL_SECONDS
 
 
 def issue_denial_ref_token(
     request, denial_id, email: str, semi_sekret: str
 ) -> typing.Optional[str]:
-    """Mint (or reuse) this session's opaque reference to one case.
+    """Mint this session's reference to one case.
 
-    The returned string is random and carries nothing recoverable: the
-    denial_id, the email and the semi_sekret are stored server side against
-    this session, keyed by the string. A holder of the string in another
-    session has nothing.
+    The reference is the case id and its permanent secret, encrypted with a
+    key only this session can derive (``_denial_ref_fernet``), carrying its
+    own minting time. Nothing about it is stored: a holder of the string in
+    another session has ciphertext, and two requests minting at once cannot
+    lose each other's work, because there is no shared list to save.
 
-    Privacy note. This puts a plaintext copy of the email and of the case's
-    permanent ``semi_sekret`` into the session store, which is base64 JSON in
-    django_session and is not encrypted. ``Denial`` already holds
-    ``semi_sekret`` in plaintext and holds ``hashed_email`` for every case,
-    but it holds the plaintext ``raw_email`` only for someone who opted into
-    follow-up contact, and ``email_polling_actor`` clears that again. The
-    session copy has neither limit: it exists for everybody who walks the
-    flow, and nothing in this repo deletes expired session rows.
-    ``DENIAL_REF_IDLE_TTL_SECONDS`` governs only whether a reference still
-    resolves, never how long that copy lives. Full statement, and the
-    follow-up that fixes it, in ``docs/back-link-references.md``.
+    Privacy note. The session keeps the email the later pages post, per case
+    (``remember_denial_ref_email``), in the session store, which is base64
+    JSON in django_session and is not encrypted, and which nothing in this
+    repo purges. The case's ``semi_sekret`` is not in the session; it
+    travels only inside the encrypted reference. Full statement in
+    ``docs/back-link-references.md``.
     """
     if denial_id is None or not email or not semi_sekret:
         return None
     session = request.session
-    now = time.time()
-    refs: typing.Dict[str, typing.Any] = _prune_denial_refs(
-        session.get(_DENIAL_REF_SESSION_KEY), now
-    )
-    wanted = (str(denial_id), str(email), str(semi_sekret))
-    for token, entry in refs.items():
-        if (
-            str(entry.get("denial_id")),
-            str(entry.get("email")),
-            str(entry.get("semi_sekret")),
-        ) == wanted:
-            # Reuse rather than mint per render, so walking the flow back and
-            # forth does not fill the session with references. Rendering a
-            # link counts as using it, so the idle window restarts here.
-            _refresh_denial_ref_expiry(entry, now)
-            session[_DENIAL_REF_SESSION_KEY] = refs
-            return token
-    # A slot is only needed once reuse has been ruled out, so only here may a
-    # live reference be evicted to make one. Evicting earlier can drop the very
-    # entry the caller was about to reuse, changing its token under back links
-    # the person already holds.
-    refs = _prune_denial_refs(refs, now, room_for=1)
-    token = secrets.token_urlsafe(32)
-    refs[token] = {
-        "denial_id": str(denial_id),
-        "email": str(email),
-        "semi_sekret": str(semi_sekret),
-    }
-    _refresh_denial_ref_expiry(refs[token], now)
-    # Reassign rather than mutate in place: Django only notices a session
-    # write when a top level key is set.
-    session[_DENIAL_REF_SESSION_KEY] = refs
-    return token
+    fernet = _denial_ref_fernet(session, create=True)
+    if fernet is None:
+        return None
+    remember_denial_ref_email(session, denial_id, email)
+    payload = json.dumps({"d": str(denial_id), "s": str(semi_sekret)})
+    return fernet.encrypt(payload.encode("utf-8")).decode("ascii")
 
 
 def resolve_denial_ref_token(request, token) -> typing.Dict[str, str]:
-    """Resolve an opaque reference back to its triple, or {} if it does not.
+    """Resolve a reference back to its triple, or {} if it does not.
 
-    {} covers a string this session never issued, one that has expired, and
-    anything that is not a string. Resolving pushes the idle expiry out.
+    {} covers a string this session never issued (it will not decrypt), one
+    minted more than ``DENIAL_REF_IDLE_TTL_SECONDS`` ago, anything that is
+    not a string, and a case this session holds no email for. Nothing is
+    written on resolution.
     """
     if not token or not isinstance(token, str):
         return {}
     session = request.session
-    refs = session.get(_DENIAL_REF_SESSION_KEY)
-    if not isinstance(refs, dict):
+    fernet = _denial_ref_fernet(session, create=False)
+    if fernet is None:
         return {}
-    entry = refs.get(token)
-    if not isinstance(entry, dict):
+    try:
+        raw = fernet.decrypt(token.encode("utf-8"), ttl=DENIAL_REF_IDLE_TTL_SECONDS)
+        payload = json.loads(raw.decode("utf-8"))
+    except (InvalidToken, TypeError, ValueError):
         return {}
-    now = time.time()
-    if float(entry.get("exp") or 0) <= now:
-        session[_DENIAL_REF_SESSION_KEY] = _prune_denial_refs(refs, now)
+    if not isinstance(payload, dict):
         return {}
-    denial_id = entry.get("denial_id")
-    email = entry.get("email")
-    semi_sekret = entry.get("semi_sekret")
-    if not denial_id or not email or not semi_sekret:
+    denial_id = payload.get("d")
+    semi_sekret = payload.get("s")
+    emails = session.get(_DENIAL_REF_EMAILS_SESSION_KEY)
+    email = emails.get(str(denial_id)) if isinstance(emails, dict) else None
+    if not denial_id or not semi_sekret or not email:
         return {}
-    _refresh_denial_ref_expiry(entry, now)
-    session[_DENIAL_REF_SESSION_KEY] = refs
     return {
         "denial_id": str(denial_id),
         "email": str(email),

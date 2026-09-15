@@ -6,12 +6,16 @@ credential on a case, so from step 3 to step 8 the address bar held a working
 key to somebody's medical denial. It went into browser history on a shared
 device, into reverse proxy access logs, and into any screenshot or pasted link.
 
-A back link now carries one parameter, `ref`, whose value is
-`secrets.token_urlsafe(32)`. The triple it stands for is kept server side in
-that browser's session and resolves only there. The code is in
-`fighthealthinsurance/views.py`: `issue_denial_ref_token`,
-`resolve_denial_ref_token`, `denial_ref_from_query` and
-`unresolved_denial_ref_response`.
+A back link now carries one parameter, `ref`. Its value is the case id and
+the case's permanent secret, encrypted (Fernet) with a key derived from the
+site secret and a random secret kept in that browser's session, so it decrypts
+only there; it carries its own minting time, and stops resolving twelve hours
+after it. The email the later pages post is kept in the session, per case,
+written when the case is started in that session. Nothing else is stored, so
+two requests minting at once have nothing to lose to each other's save. The
+code is in `fighthealthinsurance/views.py`: `issue_denial_ref_token`,
+`resolve_denial_ref_token`, `remember_denial_ref_email`,
+`denial_ref_from_query` and `unresolved_denial_ref_response`.
 
 This file exists so the pull request body and whoever signs off can quote the
 two things that are easy to state wrongly: how long the copy of the triple
@@ -20,27 +24,31 @@ actually lives, and what the change takes away from patients.
 ## Retention: it is not twelve hours
 
 `DENIAL_REF_IDLE_TTL_SECONDS` is twelve hours, and that number decides one
-thing only: whether a reference still resolves. It is an idle window, pushed
-out again on every resolve and every re-render of a link to the same case, so
-a person working an appeal across a day keeps the same reference. It is not a
-retention period and must not be quoted as one.
+thing only: whether a reference still resolves. A reference carries its own
+minting time, and every page render mints fresh ones for the links it shows,
+so a person working an appeal across a day always holds links minted within
+the last twelve hours. An old link in a history keeps the window it was minted
+under. It is not a retention period and must not be quoted as one.
 
-The stored copy of the triple lives longer than that, and today it lives
-until somebody purges it by hand:
+What the session holds lives longer than that, and today it lives until
+somebody purges it by hand:
 
-- What this scheme adds is a plaintext copy of the email address and of the
-  case's permanent `semi_sekret`, in the session store, which is base64 JSON
-  in `django_session` and is not encrypted.
+- A reference is not stored. It is the case id and its permanent
+  `semi_sekret`, encrypted with a key derived from the site secret and a
+  random secret kept in the session, so it decrypts only in the browser that
+  minted it. The session keeps that random secret, and, per case, a plaintext
+  copy of the email address the later pages post, in the session store, which
+  is base64 JSON in `django_session` and is not encrypted. The `semi_sekret`
+  is not in the session.
 - What the database already holds, for comparison, because an earlier draft of
   this file got it wrong and said `Denial` keeps only a hashed email. It does
   not. `Denial.hashed_email` is stored for every case, `Denial.semi_sekret` is
   stored in plaintext for every case (`models.py`), and
   `Denial.raw_email` is a plaintext `TextField` (`models.py:2387`) holding the
-  address for anybody who opted into follow-up contact. So the `semi_sekret` in
-  the session is a second copy of something already in plaintext, and the email
-  is the part that is genuinely new: the session holds it for everyone who
-  walks the flow, opt-in or not, and `email_polling_actor`'s sweep that clears
-  `raw_email` after follow-ups are sent does not reach it.
+  address for anybody who opted into follow-up contact. So the email in the
+  session is the part that is genuinely new: the session holds it for everyone
+  who walks the flow, opt-in or not, and `email_polling_actor`'s sweep that
+  clears `raw_email` after follow-ups are sent does not reach it.
 - No `SESSION_ENGINE` is set, on `Prod` or anywhere else, so Django's
   database backend applies (`global_settings.py` default
   `django.contrib.sessions.backends.db`).
@@ -112,10 +120,11 @@ upload page with an explanation and a support address instead of a blank form.
 Melanie settled two of these on 2026-09-13 and they are not reviewer calls to
 reopen:
 
-- The window covers one sitting plus a same day return. Twelve hours idle,
-  pushed out on every use, is what that came to. An absolute cap measured
-  from first issue was rejected, because it puts a cliff in the middle of an
-  active appeal and buys nothing for retention.
+- The window covers one sitting plus a same day return. Twelve hours from
+  minting is what that came to, with every page render minting the links it
+  shows afresh, so a person who keeps working keeps holding fresh links. An
+  absolute cap measured from the first link was rejected, because it puts a
+  cliff in the middle of an active appeal and buys nothing for retention.
 - Old style links are accepted for one more release, so the ones already in
   people's browser history keep working. That is item 2 below.
 

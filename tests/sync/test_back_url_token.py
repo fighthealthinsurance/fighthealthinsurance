@@ -34,6 +34,8 @@ import types
 from datetime import timedelta
 from unittest.mock import patch
 
+from urllib.parse import parse_qs, urlparse
+
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
@@ -213,22 +215,24 @@ class BackLinkReferenceTestBase(TestCase):
         return f"{reverse(url_name)}?{views.DENIAL_REF_QUERY_PARAM}={token}"
 
     def stored_expiry(self, token: str, client=None) -> float:
-        """The idle expiry the session is holding for one reference."""
+        """When a reference stops resolving, read out of the reference."""
         client = client or self.client
-        return client.session[views._DENIAL_REF_SESSION_KEY][token]["exp"]
+        expiry = views.denial_ref_expiry(client.session, token)
+        assert expiry is not None, "this session cannot read that reference"
+        return expiry
 
-    def set_expiry(self, token: str, exp: float, client=None):
-        """Move a reference's expiry, the way the clock would."""
-        client = client or self.client
-        session = client.session
-        refs = session[views._DENIAL_REF_SESSION_KEY]
-        refs[token]["exp"] = exp
-        session[views._DENIAL_REF_SESSION_KEY] = refs
-        session.save()
+    def issue_token_at(self, minted_at: float, client=None, denial=None) -> str:
+        """Mint a reference as if the clock read ``minted_at``."""
+        with patch("time.time", return_value=minted_at):
+            return self.issue_token(client=client, denial=denial)
 
-    def expire(self, token: str, client=None):
-        """Age a reference past its idle window."""
-        self.set_expiry(token, time.time() - 1, client=client)
+    def expired_token(self, client=None, denial=None) -> str:
+        """A reference minted just past its window."""
+        return self.issue_token_at(
+            time.time() - views.DENIAL_REF_IDLE_TTL_SECONDS - 1,
+            client=client,
+            denial=denial,
+        )
 
     def legacy_url(self, url_name: str) -> str:
         return (
@@ -424,9 +428,24 @@ class TokenOpacityTest(BackLinkReferenceTestBase):
         )
         self.assertNotEqual(self.issue_token(), self.issue_token(denial=other))
 
-    def test_the_same_case_reuses_one_reference(self):
-        """A walk back and forth must not fill the session with references."""
-        self.assertEqual(self.issue_token(), self.issue_token())
+    def test_the_same_case_can_be_referenced_more_than_once(self):
+        """Each render mints afresh; every reference to the case resolves."""
+        first, second = self.issue_token(), self.issue_token()
+        self.assertNotEqual(first, second)
+        request = types.SimpleNamespace(session=self.client.session)
+        for token in (first, second):
+            self.assertEqual(
+                views.resolve_denial_ref_token(request, token)["denial_id"],
+                str(self.denial.denial_id),
+            )
+
+    def test_nothing_about_a_reference_is_stored_in_the_session(self):
+        token = self.issue_token()
+        session = self.client.session
+        self.assertNotIn("denial_back_refs", session.keys())
+        for value in session.values():
+            self.assertNotIn(token, str(value))
+        self.assertNotIn(self.denial.semi_sekret, str(dict(session)))
 
 
 class TokenScopeAndExpiryTest(BackLinkReferenceTestBase):
@@ -452,219 +471,150 @@ class TokenScopeAndExpiryTest(BackLinkReferenceTestBase):
         self.assertEqual(views.DENIAL_REF_IDLE_TTL_SECONDS, 12 * 60 * 60)
 
     def test_an_expired_reference_lands_on_the_upload_page(self):
-        token = self.issue_token()
-        self.expire(token)
+        token = self.expired_token()
 
         response = self.client.get(self.ref_url("generate_appeal", token))
         self.assertLandsOnUploadPageWithHelp(response)
 
     def test_an_expired_reference_is_refused_by_the_session_mixin_pages_too(self):
-        token = self.issue_token()
-        self.expire(token)
+        token = self.expired_token()
 
         response = self.client.get(self.ref_url("eev", token))
         self.assertLandsOnUploadPageWithHelp(response)
 
-    def test_an_expired_reference_is_dropped_from_the_session(self):
-        token = self.issue_token()
-        self.expire(token)
-
-        self.client.get(self.ref_url("generate_appeal", token))
-        self.assertNotIn(token, self.client.session[views._DENIAL_REF_SESSION_KEY])
-
 
 class SlidingLifetimeTest(BackLinkReferenceTestBase):
-    """The twelve hours run from the last use, not from the first issue.
+    """A person working an appeal never hits a cliff.
 
-    An expiry stamped once at first issue is a cliff in the middle of an
-    active appeal: somebody who uploads a denial in the morning, works at it
-    through the day and comes back to it at ten at night is thrown out to the
-    upload page while still using the site. These pin the idle window
-    instead, and pin that it is still a window: a reference nobody touches
-    for the full lifetime does go stale.
+    Every page render mints fresh references for the links it shows, each
+    good for the full window from that moment, so following a link inside
+    its window always leaves the person holding links good for another full
+    window. There is nothing stored to push out.
     """
 
-    def assertExpiryPushedOut(self, token, before, client=None):
-        after = self.stored_expiry(token, client=client)
-        self.assertGreater(
-            after,
-            before,
-            msg="using the reference did not push its expiry out",
-        )
-        self.assertAlmostEqual(
-            after - time.time(),
-            views.DENIAL_REF_IDLE_TTL_SECONDS,
-            delta=30,
-            msg="the reference did not get a fresh full idle window",
-        )
+    def _tokens_on(self, response) -> list:
+        return [
+            parse_qs(urlparse(href).query)[views.DENIAL_REF_QUERY_PARAM][0]
+            for href in flow_hrefs(response)
+            if views.DENIAL_REF_QUERY_PARAM in parse_qs(urlparse(href).query)
+        ]
 
-    def test_following_a_back_link_pushes_the_expiry_out(self):
-        token = self.issue_token()
-        # Eleven and a half hours in, and still being used.
-        nearly_up = time.time() + 30 * 60
-        self.set_expiry(token, nearly_up)
+    def test_following_a_back_link_leaves_fresh_links_on_the_page(self):
+        nearly_up = time.time() - views.DENIAL_REF_IDLE_TTL_SECONDS + 60
+        token = self.issue_token_at(nearly_up)
 
         response = self.client.get(self.ref_url("generate_appeal", token))
+
         self.assertEqual(response.status_code, 200)
-        self.assertExpiryPushedOut(token, nearly_up)
+        fresh = self._tokens_on(response)
+        self.assertTrue(fresh, "the page rendered no reference links")
+        for new_token in fresh:
+            self.assertNotEqual(new_token, token)
+            self.assertAlmostEqual(
+                self.stored_expiry(new_token) - time.time(),
+                views.DENIAL_REF_IDLE_TTL_SECONDS,
+                delta=30,
+            )
 
-    def test_the_mixin_pages_push_the_expiry_out_too(self):
-        """Health history, plan documents and extraction, same rule."""
-        for url_name in ("eev", "dvc", "hh"):
-            with self.subTest(page=url_name):
-                token = self.issue_token()
-                nearly_up = time.time() + 30 * 60
-                self.set_expiry(token, nearly_up)
-
+    def test_the_mixin_pages_mint_fresh_links_too(self):
+        for url_name in ("hh", "dvc", "eev"):
+            with self.subTest(url_name=url_name):
+                nearly_up = time.time() - views.DENIAL_REF_IDLE_TTL_SECONDS + 60
+                token = self.issue_token_at(nearly_up)
                 response = self.client.get(self.ref_url(url_name, token))
                 self.assertEqual(response.status_code, 200)
-                self.assertExpiryPushedOut(token, nearly_up)
-
-    def test_rendering_a_link_to_the_case_counts_as_using_it(self):
-        """The reference stays alive while the flow keeps linking to the case.
-
-        Forward navigation POSTs, so a long sitting may never follow a back
-        link at all. The page still renders one, and that is the person
-        still working, so it keeps the reference alive.
-        """
-        token = self.issue_token()
-        nearly_up = time.time() + 30 * 60
-        self.set_expiry(token, nearly_up)
-
-        response = self.client.post(
-            reverse("escalation_packet"),
-            {
-                "denial_id": self.denial.denial_id,
-                "email": EMAIL,
-                "semi_sekret": self.denial.semi_sekret,
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertExpiryPushedOut(token, nearly_up)
+                for new_token in self._tokens_on(response):
+                    self.assertGreater(
+                        self.stored_expiry(new_token), self.stored_expiry(token)
+                    )
 
     def test_a_day_of_work_never_hits_the_cliff(self):
-        """The whole point, walked out: use it, wait, use it, wait, use it.
-
-        Each wait is longer than half the idle window, so an expiry stamped
-        at first issue would have run out partway through.
-        """
-        token = self.issue_token()
-        elapsed = 0.0
-        for _ in range(4):
-            step = views.DENIAL_REF_IDLE_TTL_SECONDS * 0.75
-            elapsed += step
-            # Wind the stored expiry back by the time that has "passed"
-            # rather than sleeping for nine hours.
-            self.set_expiry(token, self.stored_expiry(token) - step)
-            response = self.client.get(self.ref_url("categorize_review", token))
-            self.assertEqual(
-                response.status_code,
-                200,
-                msg=f"thrown out after {elapsed / 3600:.0f} hours of use",
-            )
+        """Hop every eleven hours for three days; each hop follows a link the
+        previous page minted."""
+        step = views.DENIAL_REF_IDLE_TTL_SECONDS - 60 * 60
+        now = time.time()
+        token = self.issue_token_at(now)
+        for hop in range(1, 7):
+            with patch("time.time", return_value=now + hop * step):
+                response = self.client.get(self.ref_url("generate_appeal", token))
+                self.assertEqual(response.status_code, 200, f"hop {hop} was refused")
+                fresh = self._tokens_on(response)
+                self.assertTrue(fresh, f"hop {hop} rendered no reference links")
+                token = fresh[0]
 
     def test_a_reference_nobody_touches_still_goes_stale(self):
-        """Sliding is not immortal, or the window would mean nothing."""
         token = self.issue_token()
-        self.set_expiry(token, time.time() - 1)
+        later = time.time() + views.DENIAL_REF_IDLE_TTL_SECONDS + 1
+        with patch("time.time", return_value=later):
+            response = self.client.get(self.ref_url("generate_appeal", token))
+        self.assertLandsOnUploadPageWithHelp(response)
+
+
+class NothingToLoseInASaveRaceTest(BackLinkReferenceTestBase):
+    """Two requests minting at once cannot lose each other's references.
+
+    The old scheme kept every reference in one session dictionary that each
+    request saved whole, so the second save dropped the first's entry. A
+    reference is now self-contained, and the session holds only a secret
+    written when the case was started and the case's email, written with
+    the same value every time.
+    """
+
+    def test_a_reference_survives_a_stale_session_snapshot_saved_after_it(self):
+        # The upload request bound the session to the case: secret and email
+        # written, ahead of any page that renders a link.
+        bound = self.client.session
+        views._denial_ref_fernet(bound, create=True)
+        views.remember_denial_ref_email(bound, self.denial.denial_id, EMAIL)
+        bound.save()
+        # Request 2 loads the session now, before request 1 has minted.
+        stale = self.client.session
+        # Request 1 renders a link.
+        token = self.issue_token()
+        # Request 2 saves last, carrying only what it read.
+        stale["unrelated"] = "write from a concurrent request"
+        stale.save()
 
         response = self.client.get(self.ref_url("generate_appeal", token))
-        self.assertLandsOnUploadPageWithHelp(response)
-        self.assertNotIn(token, self.client.session[views._DENIAL_REF_SESSION_KEY])
 
+        self.assertEqual(response.status_code, 200)
 
-class ReferenceStoreTest(BackLinkReferenceTestBase):
-    """The session store holds what it says it holds."""
-
-    def issue_for_new_case(self, session, index: int) -> str:
-        denial = models.Denial.objects.create(
-            denial_text=f"Denial {index}.",
+    def test_two_references_minted_from_one_snapshot_both_resolve(self):
+        request = types.SimpleNamespace(session=self.client.session)
+        first = views.issue_denial_ref_token(
+            request, self.denial.denial_id, EMAIL, self.denial.semi_sekret
+        )
+        other = models.Denial.objects.create(
+            denial_text="A second denial.",
             hashed_email=models.Denial.get_hashed_email(EMAIL),
-            semi_sekret=f"secret-{index}",
+            semi_sekret="a-different-secret",
         )
-        token = views.issue_denial_ref_token(
-            types.SimpleNamespace(session=session),
-            denial.denial_id,
-            EMAIL,
-            denial.semi_sekret,
+        second = views.issue_denial_ref_token(
+            request, other.denial_id, EMAIL, other.semi_sekret
         )
-        assert token is not None
-        return token
+        request.session.save()
 
-    def test_the_store_never_goes_over_its_stated_cap(self):
-        """The cap is the cap, not the cap plus the one being added.
-
-        Every entry is a plaintext email and a permanent case secret, so
-        "briefly one over" is a real extra copy, and a constant that does not
-        mean what it says is worse than a different number.
-        """
-        session = self.client.session
-        for index in range(views.DENIAL_REF_MAX_PER_SESSION + 5):
-            self.issue_for_new_case(session, index)
-            self.assertLessEqual(
-                len(session[views._DENIAL_REF_SESSION_KEY]),
-                views.DENIAL_REF_MAX_PER_SESSION,
-                msg=f"store held more than {views.DENIAL_REF_MAX_PER_SESSION}",
+        for token, denial in ((first, self.denial), (second, other)):
+            self.assertEqual(
+                views.resolve_denial_ref_token(request, token)["denial_id"],
+                str(denial.denial_id),
             )
 
-    def test_reusing_a_reference_at_the_cap_evicts_nothing(self):
-        """A full store plus a case it already knows needs no new slot.
-
-        Evicting anyway costs the person a live reference, and if the evicted
-        one is the case being rendered its token changes under it and the back
-        links already in their history stop resolving.
-        """
+    def test_a_session_holding_junk_under_the_keys_does_not_500(self):
+        token = self.issue_token()
         session = self.client.session
-        tokens = [
-            self.issue_for_new_case(session, index)
-            for index in range(views.DENIAL_REF_MAX_PER_SESSION)
-        ]
-        refs = session[views._DENIAL_REF_SESSION_KEY]
-        self.assertEqual(len(refs), views.DENIAL_REF_MAX_PER_SESSION)
-        # Spread the expiries so "the oldest" is not a tie, and put the case
-        # about to be re-rendered at the front of the queue for eviction.
-        base = time.time() + views.DENIAL_REF_IDLE_TTL_SECONDS
-        for offset, token in enumerate(tokens):
-            refs[token]["exp"] = base + offset
-        session[views._DENIAL_REF_SESSION_KEY] = refs
-        oldest = tokens[0]
-        entry = dict(refs[oldest])
-
-        again = views.issue_denial_ref_token(
-            types.SimpleNamespace(session=session),
-            entry["denial_id"],
-            entry["email"],
-            entry["semi_sekret"],
-        )
-        self.assertEqual(
-            again,
-            oldest,
-            msg="a case the session already knew was given a new reference",
-        )
-        self.assertEqual(
-            set(session[views._DENIAL_REF_SESSION_KEY]),
-            set(tokens),
-            msg="re-rendering a link at the cap evicted a live reference",
-        )
-
-    def test_a_session_holding_junk_under_the_key_does_not_500(self):
-        """Both sides guard: a page render is not the place to find out."""
-        session = self.client.session
-        session[views._DENIAL_REF_SESSION_KEY] = ["not", "a", "dict"]
+        session[views._DENIAL_REF_KEY_SESSION_KEY] = ["not", "a", "string"]
+        session[views._DENIAL_REF_EMAILS_SESSION_KEY] = "not a dict"
         session.save()
 
-        response = self.client.get(
-            f"{reverse('generate_appeal')}?{views.DENIAL_REF_QUERY_PARAM}=whatever"
-        )
-        self.assertLandsOnUploadPageWithHelp(response)
+        response = self.client.get(self.ref_url("generate_appeal", token))
 
-        token = views.issue_denial_ref_token(
-            types.SimpleNamespace(session=self.client.session),
-            self.denial.denial_id,
-            EMAIL,
-            self.denial.semi_sekret,
+        self.assertLandsOnUploadPageWithHelp(response)
+        request = types.SimpleNamespace(session=self.client.session)
+        reissued = views.issue_denial_ref_token(
+            request, self.denial.denial_id, EMAIL, self.denial.semi_sekret
         )
-        self.assertIsNotNone(token, msg="issuing died on a junk session value")
+        self.assertIsNotNone(reissued, msg="issuing died on a junk session value")
 
 
 class LegacyQueryTripleTest(BackLinkReferenceTestBase):
@@ -823,8 +773,7 @@ class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
     def test_an_expired_reference_is_refused_on_every_page(self):
         for url_name in self.ALL_PAGES:
             with self.subTest(page=url_name):
-                token = self.issue_token()
-                self.expire(token)
+                token = self.expired_token()
                 response = self.client.get(self.ref_url(url_name, token))
                 self.assertLandsOnUploadPageWithHelp(response)
 
@@ -984,12 +933,7 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
         device and false here: this person is already in that browser, and
         reopening the link does nothing.
         """
-        token = self.issue_token()
-        session = self.client.session
-        refs = session[views._DENIAL_REF_SESSION_KEY]
-        refs[token]["exp"] = time.time() - 1
-        session[views._DENIAL_REF_SESSION_KEY] = refs
-        session.save()
+        token = self.expired_token()
 
         response = self.client.get(self.ref_url("categorize_review", token))
         self.assertLandsOnUploadPageWithHelp(response)
@@ -1031,8 +975,8 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
         ):
             self.assertNotIn(secret, body, msg=f"{secret!r} on the upload page")
         self.assertIsNone(
-            other_device.session.get(views._DENIAL_REF_SESSION_KEY),
-            msg="the second device was handed a reference it should not have",
+            other_device.session.get(views._DENIAL_REF_KEY_SESSION_KEY),
+            msg="the second device was handed a way to read references",
         )
 
     def test_the_lifetime_the_page_quotes_comes_from_the_code(self):
@@ -1220,7 +1164,7 @@ class RetentionClaimTest(TestCase):
         row, the expiry Django stamps on it, and what survives the clock.
         """
         store = SessionStore()
-        store[views._DENIAL_REF_SESSION_KEY] = {"token": {"exp": 0}}
+        store[views._DENIAL_REF_EMAILS_SESSION_KEY] = {"1": "someone@example.com"}
         store.save()
         key = store.session_key
 
