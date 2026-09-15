@@ -673,6 +673,28 @@ class ConfirmedContextDispatchRuleTest(TestCase):
             )
         mock_dispatch.assert_not_called()
 
+    def test_a_changed_procedure_retires_the_confirmed_reserve_before_dispatch(self):
+        """The old reserve argues about the old procedure. It goes now, not
+        when a replacement lands, because a replacement may never land."""
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A confirmed reserve draft about the CT scan.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="CT scan",
+                prior_diagnosis="chronic back pain",
+            )
+        mock_dispatch.assert_called_once()
+        self.assertFalse(
+            ProposedAppeal.objects.filter(for_denial=self.denial).exists(),
+            "the reserve for the old procedure survived the correction",
+        )
+
     def test_a_corrected_state_dispatches_with_force(self):
         """State picks the regulator and the law the appeal cites, so a
         reserve built under the old one is stale even when dx/px held."""

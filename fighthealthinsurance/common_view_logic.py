@@ -1321,11 +1321,10 @@ class FindNextStepsHelper:
             context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
             built_for_state=confirmed_state,
         ).exists()
-        values_changed = (
-            (prior_procedure or "").strip() != confirmed_procedure
-            or (prior_diagnosis or "").strip() != confirmed_diagnosis
-            or not reserve_for_this_state
-        )
+        dx_px_changed = (prior_procedure or "").strip() != confirmed_procedure or (
+            prior_diagnosis or ""
+        ).strip() != confirmed_diagnosis
+        values_changed = dx_px_changed or not reserve_for_this_state
         if not values_changed:
             logger.debug(
                 f"speculative appeals[dx_px_confirmed]: denial "
@@ -1338,6 +1337,23 @@ class FindNextStepsHelper:
             dispatch_speculative_appeals,
         )
 
+        if dx_px_changed:
+            # A confirmed reserve about the old procedure or diagnosis is
+            # worse than none while the replacement is written: a stalled run
+            # would serve it, and a replacement that produces nothing would
+            # leave it. Retire it now rather than when the replacement lands.
+            retired, _ = ProposedAppeal.objects.filter(
+                for_denial=denial,
+                speculative=True,
+                chosen=False,
+                context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+            ).delete()
+            if retired:
+                logger.info(
+                    f"speculative appeals[dx_px_confirmed]: retired {retired} "
+                    f"confirmed reserve row(s) for denial {denial.denial_id} "
+                    f"written for the values before this correction"
+                )
         # force: a confirmed-context reserve written for other values must
         # not veto this one in the helper.
         dispatch_speculative_appeals(
@@ -1794,6 +1810,10 @@ class DenialCreatorHelper:
             previous_zip3 = (denial.service_zip or "").strip()
             zip_changed = bool(previous_zip3) and previous_zip3 != zip[:3]
             confirmed_state = (denial.state or "").strip()
+            # What this request decided from. The write below is conditional
+            # on the row still holding these, so a review correction landing
+            # meanwhile is kept and this request's decision is dropped.
+            decided_from = {"your_state": denial.your_state, "state": denial.state}
             # Every column named here is written from this request's copy of
             # the row, so a column is named only when this request changed
             # it: a review correction landing meanwhile keeps its value.
@@ -1831,11 +1851,24 @@ class DenialCreatorHelper:
                 # (without the population check Safe Harbor also asks for).
                 # UCREnrichmentHelper.resolve_geographic_area reads it.
                 denial.service_zip = zip[:3]
-                # `state` is listed only when this path actually cleared it: a
-                # concurrent review POST writes that column, and naming it in
-                # every save would write our pre-fetch copy back over a
-                # correction that landed while this request was running.
-                denial.save(update_fields=changed_state_fields)
+                Denial.objects.filter(denial_id=denial.denial_id).update(
+                    service_zip=denial.service_zip
+                )
+                state_columns = {
+                    column: getattr(denial, column)
+                    for column in changed_state_fields
+                    if column != "service_zip"
+                }
+                if state_columns:
+                    moved = not Denial.objects.filter(
+                        denial_id=denial.denial_id, **decided_from
+                    ).update(**state_columns)
+                    if moved:
+                        logger.info(
+                            f"intake: the state on denial {denial.denial_id} moved "
+                            f"while this request ran; its own decision is dropped"
+                        )
+                        denial.refresh_from_db(fields=["your_state", "state"])
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
@@ -4832,13 +4865,15 @@ class AppealsBackendHelper:
                         # pattern as the reserve flush; if the flush claimed
                         # it first the update is a no-op and the row is
                         # already deliverable.
-                        # Its text is the live run's own, so it is served
-                        # for the state the row holds now: restamp it, or the
-                        # replay filter hides it next time under the old one.
+                        # Its text is the live run's own, generated from the
+                        # inputs this run started with, so it is stamped for
+                        # the state this run started under. If the state has
+                        # moved meanwhile the replay filter hides it next time,
+                        # as it should: the text argues under the old law.
                         await ProposedAppeal.objects.filter(
                             pk=existing.pk, speculative=True
                         ).aupdate(
-                            speculative=False, built_for_state=state_on_the_row_now()
+                            speculative=False, built_for_state=reserve_state(denial)
                         )
                         existing.speculative = False
                     if existing.appeal_text != appeal_text:

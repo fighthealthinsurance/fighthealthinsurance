@@ -1258,6 +1258,52 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_twin_promoted_on_a_text_conflict_keeps_the_runs_own_state(
+        self, mock_appeal_generator
+    ):
+        """The live run started under NY; the person corrected to CA while it
+        ran; its text matches a held-back NY row. The promoted twin is stamped
+        NY, what the text was written under, not the CA the row holds now."""
+        email, denial = self._create_test_denial(40, gen_attempts=3)
+        Denial.objects.filter(denial_id=40).update(your_state="NY")
+        twin_text = "A draft whose text the live run will produce again."
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=twin_text,
+            speculative=True,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.0, [twin_text]
+        )
+
+        async def test():
+            try:
+                with self._fast_keepalive():
+                    collecting = asyncio.create_task(
+                        self.collect_appeal_responses(
+                            {
+                                "denial_id": 40,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                    await asyncio.sleep(0.2)
+                    await Denial.objects.filter(denial_id=40).aupdate(your_state="CA")
+                    _, appeal_contents, _ = await collecting
+                self.assertIn(twin_text, appeal_contents)
+                await spec.arefresh_from_db()
+                self.assertFalse(spec.speculative, "the twin is promoted")
+                self.assertEqual(spec.built_for_state, "NY")
+            finally:
+                await Denial.objects.filter(denial_id=40).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_reserve_lands_under_target_once_the_longer_deadline_passes(
         self, mock_appeal_generator
     ):
@@ -2651,6 +2697,25 @@ class ConfirmedStateTest(TestCase):
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="NY")
         stale_copy = Denial.objects.get(denial_id=denial.denial_id)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            state="CA", your_state="CA"
+        )
+
+        self._submit_upload_page(self.NY_ZIP, denial=stale_copy)
+
+        fresh = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertEqual((fresh.state, fresh.your_state), ("CA", "CA"))
+
+    def test_an_intake_request_with_no_confirmed_state_keeps_a_correction_too(
+        self,
+    ):
+        """Its copy had no confirmed state, so it took the lookup path and
+        would have written the zip's state over the CA the review page
+        committed meanwhile. The write is conditional on what it decided
+        from."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        stale_copy = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertIsNone(stale_copy.state)
         Denial.objects.filter(denial_id=denial.denial_id).update(
             state="CA", your_state="CA"
         )
