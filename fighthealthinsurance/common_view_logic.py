@@ -100,6 +100,7 @@ from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelp
 from fighthealthinsurance.ml.ml_appeal_questions_helper import (
     MLAppealQuestionsHelper,
     claim_generated_questions,
+    questions_fingerprint,
 )
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.imr_decision_retriever import IMRDecisionRetriever
@@ -1290,7 +1291,12 @@ class FindNextStepsHelper:
         # Generate questions for better appeal creation if they don't exist yet.
         generation_finished = True
         try:
-            if not denial.generated_questions or len(denial.generated_questions) == 0:
+            if denial.generated_questions is None or (
+                denial.generated_questions_for
+                != questions_fingerprint(denial.procedure, denial.diagnosis)
+            ):
+                # Nothing finished for these inputs yet: none stored, or a set
+                # stored for a procedure or diagnosis since corrected.
                 logger.debug("Generating appeal questions")
                 generated = async_to_sync(
                     DenialCreatorHelper.generate_appeal_questions
@@ -1427,10 +1433,12 @@ class FindNextStepsHelper:
             outside_help_details=outside_help_details,
             combined_form=combined_form,
             semi_sekret=denial.semi_sekret,
-            # Back navigation generates nothing, so it never claims a
-            # generation failed.
+            # Back navigation generates nothing. Whether the last run
+            # finished is on the row: a finished run stores its set, empty
+            # included; a run that never finished stores nothing.
             questions_outcome=cls._questions_outcome(
-                combined_form, generation_finished=True
+                combined_form,
+                generation_finished=denial.generated_questions is not None,
             ),
             pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
             financial_assistance=cls._build_financial_assistance(denial),
@@ -1616,11 +1624,16 @@ class DenialCreatorHelper:
 
             if questions is None:
                 return await cls._questions_already_on_the_row(denial_id)
-            if questions:
-                # Never a bare write: another run for this denial may have
-                # rendered its own set to the person already.
-                questions = await claim_generated_questions(denial_id, questions)
-
+            # Never a bare write: another run for this denial may have
+            # rendered its own set to the person already. The helper claims
+            # for itself too; a second claim for the same inputs is a read.
+            questions = await claim_generated_questions(
+                denial_id,
+                questions,
+                generated_for=questions_fingerprint(denial.procedure, denial.diagnosis),
+            )
+            if questions is None:
+                return await cls._questions_already_on_the_row(denial_id)
             logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
             return questions
         except Exception as e:
@@ -1662,7 +1675,12 @@ class DenialCreatorHelper:
             questions = await claim_generated_questions(
                 denial_id,
                 cast(List[Tuple[str, str]], denial.candidate_generated_questions),
+                generated_for=questions_fingerprint(
+                    denial.candidate_procedure, denial.candidate_diagnosis
+                ),
             )
+            if questions is None:
+                return None
             logger.info(
                 f"Question generation for denial {denial_id} did not finish; "
                 f"promoted {len(questions)} candidate question(s) instead"

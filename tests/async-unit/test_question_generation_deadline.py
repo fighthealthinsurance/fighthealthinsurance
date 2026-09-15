@@ -155,7 +155,9 @@ class QuestionGenerationDeadlineTest(TestCase):
                         denial.denial_id
                     )
                 # [] is still the honest answer to "what did THIS run find"...
-                self.assertEqual(questions, [])
+                # The claim returns what stands for the row: the other run's
+                # set, not this run's empty one.
+                self.assertEqual([tuple(row) for row in questions], [_FAST])
                 # ...but the row keeps what the other run found.
                 stored = await Denial.objects.aget(denial_id=denial.denial_id)
                 self.assertEqual(
@@ -163,6 +165,50 @@ class QuestionGenerationDeadlineTest(TestCase):
                 )
             finally:
                 await Denial.objects.filter(denial_id=8205).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_every_model_answering_empty_is_finished_not_unfinished(self, _citations):
+        """The selector discards falsy results, so [] from both generators
+        came back as None and the page said the run could not finish."""
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            MLAppealQuestionsHelper,
+        )
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8206,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+                procedure="MRI",
+                diagnosis="knee pain",
+            )
+            try:
+                with patch.object(
+                    MLAppealQuestionsHelper,
+                    "generate_generic_questions",
+                    new=AsyncMock(return_value=[]),
+                ), patch.object(
+                    MLAppealQuestionsHelper,
+                    "generate_specific_questions",
+                    new=AsyncMock(return_value=[]),
+                ), patch(
+                    "fighthealthinsurance.pa_requirements.get_pa_questions_for_denial",
+                    return_value=[],
+                ):
+                    questions = (
+                        await MLAppealQuestionsHelper.generate_questions_for_denial(
+                            denial, speculative=False
+                        )
+                    )
+                self.assertEqual(questions, [])
+                stored = await Denial.objects.aget(denial_id=denial.denial_id)
+                self.assertEqual(stored.generated_questions, [])
+            finally:
+                await Denial.objects.filter(denial_id=8206).adelete()
 
         async_to_sync(run)()
 

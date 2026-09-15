@@ -16,34 +16,62 @@ QuestionsCoroutine = Coroutine[Any, Any, List[Tuple[str, str]]]
 AwaitableQualityMap = Dict[QuestionsCoroutine, int]
 
 
+def questions_fingerprint(procedure: Optional[str], diagnosis: Optional[str]) -> str:
+    """What a set of questions was generated for."""
+    import hashlib
+
+    parts = ((procedure or "").strip().lower(), (diagnosis or "").strip().lower())
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
 def _claim_generated_questions_sync(
-    denial_id: int, questions: List[Tuple[str, str]]
-) -> List[Tuple[str, str]]:
+    denial_id: int, questions: List[Tuple[str, str]], generated_for: str
+) -> Optional[List[Tuple[str, str]]]:
     with transaction.atomic():
         fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
-        if fresh.generated_questions:
+        current = questions_fingerprint(fresh.procedure, fresh.diagnosis)
+        # A row from before the stamp existed holds a set of unknown origin;
+        # it is kept, as it always was, rather than replaced under someone's
+        # answers.
+        stored_is_current = fresh.generated_questions is not None and (
+            fresh.generated_questions_for is None
+            or fresh.generated_questions_for == current
+        )
+        if generated_for != current:
+            # This run was started for inputs the person has since corrected.
+            # Its questions are not stored; what stands is a set for the
+            # current inputs if one exists, otherwise nothing finished.
+            if stored_is_current:
+                return cast(List[Tuple[str, str]], fresh.generated_questions)
+            return None
+        if stored_is_current:
+            # First writer for these inputs keeps the slot: answers are filed
+            # against the questions the person was shown.
             return cast(List[Tuple[str, str]], fresh.generated_questions)
         fresh.generated_questions = questions
-        fresh.save(update_fields=["generated_questions"])
+        fresh.generated_questions_for = generated_for
+        fresh.save(update_fields=["generated_questions", "generated_questions_for"])
         return questions
 
 
 async def claim_generated_questions(
-    denial_id: int, questions: List[Tuple[str, str]]
-) -> List[Tuple[str, str]]:
-    """Store ``questions`` only if the row holds none, and return what stands.
+    denial_id: int, questions: List[Tuple[str, str]], generated_for: str
+) -> Optional[List[Tuple[str, str]]]:
+    """Store ``questions`` for the inputs they were generated for, and return
+    what stands for the row's current inputs.
 
-    The first non-empty set to land owns the slot. Answers are filed against
-    the question they were asked under, so a second overlapping run that
-    replaced a set already rendered to somebody would strand their answers
-    under field names nothing can resolve. Serialized under a row lock;
-    ``select_for_update`` degrades to a plain read on sqlite, where nothing
-    is concurrent anyway.
+    A set already stored for the current inputs keeps the slot: answers are
+    filed against the question they were asked under, so replacing a set
+    already rendered to somebody would strand their answers. A run started
+    for inputs since corrected stores nothing. An empty finished set is
+    stored as ``[]``, which Back can tell from a run that never finished.
+    Returns None when nothing stands for the current inputs. Serialized
+    under a row lock; ``select_for_update`` is a plain read on sqlite.
     """
     stored = await database_sync_to_async(_claim_generated_questions_sync)(
-        denial_id, questions
+        denial_id, questions, generated_for
     )
-    return cast(List[Tuple[str, str]], stored)
+    return cast(Optional[List[Tuple[str, str]]], stored)
 
 
 class MLAppealQuestionsHelper:
@@ -262,6 +290,10 @@ class MLAppealQuestionsHelper:
             person which of those happened.
         """
         questions: Optional[List[Tuple[str, str]]] = None
+        # The inputs this run is for, taken now: the claim at the end compares
+        # them with the row's inputs then, and a run for inputs since corrected
+        # stores nothing.
+        generated_for = questions_fingerprint(denial.procedure, denial.diagnosis)
 
         # Check if candidate questions exist and the diagnosis/procedure has not changed
         if (
@@ -284,18 +316,33 @@ class MLAppealQuestionsHelper:
 
             # Subtract 5 seconds to ensure proper processing time
             model_timeout = max(1, timeout - 5)
-            no_context_awaitable = MLAppealQuestionsHelper.generate_generic_questions(
-                procedure=denial.procedure,
-                diagnosis=denial.diagnosis,
-                timeout=model_timeout,
+            # Which of the two answered at all: [] from both is "nothing to
+            # ask", which the selector below cannot tell from nobody answering.
+            answered: List[str] = []
+
+            async def watched(name: str, coro):
+                result = await coro
+                answered.append(name)
+                return result
+
+            no_context_awaitable = watched(
+                "generic",
+                MLAppealQuestionsHelper.generate_generic_questions(
+                    procedure=denial.procedure,
+                    diagnosis=denial.diagnosis,
+                    timeout=model_timeout,
+                ),
             )
-            context_awaitable = MLAppealQuestionsHelper.generate_specific_questions(
-                denial_text=denial.denial_text,
-                patient_context=denial.health_history,  # Using health_history as patient_context
-                procedure=denial.procedure,
-                diagnosis=denial.diagnosis,
-                timeout=model_timeout,
-                use_external=denial.use_external,
+            context_awaitable = watched(
+                "specific",
+                MLAppealQuestionsHelper.generate_specific_questions(
+                    denial_text=denial.denial_text,
+                    patient_context=denial.health_history,  # Using health_history as patient_context
+                    procedure=denial.procedure,
+                    diagnosis=denial.diagnosis,
+                    timeout=model_timeout,
+                    use_external=denial.use_external,
+                ),
             )
 
             # Bias for context
@@ -312,6 +359,9 @@ class MLAppealQuestionsHelper:
                 score_fn=MLAppealQuestionsHelper.make_score_fn(is_with_context),
                 timeout=model_timeout,
             )
+            if result is None and answered:
+                # Every model that answered had nothing to ask: finished, empty.
+                result = []
 
             # best_within_timelimit returns None when nothing usable
             # arrived: its window closed empty, or every backend failed.
@@ -350,14 +400,16 @@ class MLAppealQuestionsHelper:
         if questions is None:
             return None
 
-        if questions:
-            logger.debug(
-                f"Generated {len(questions)} questions for denial {denial.denial_id}"
-            )
-            if speculative:
+        logger.debug(
+            f"Generated {len(questions)} questions for denial {denial.denial_id}"
+        )
+        if speculative:
+            if questions:
                 await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
                     candidate_generated_questions=questions
                 )
-                return questions
-            return await claim_generated_questions(denial.denial_id, questions)
-        return []
+            return questions
+        # Empty included: a finished run with nothing to ask is stored as [].
+        return await claim_generated_questions(
+            denial.denial_id, questions, generated_for
+        )

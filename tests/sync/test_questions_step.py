@@ -391,6 +391,146 @@ class WithdrawalEdgesTest(QuestionsStepTestBase):
         self.assertIn("&lt;b onmouseover", body)
 
 
+class QuestionsAreForTheInputsTheyWereGeneratedForTest(QuestionsStepTestBase):
+    """The stored set carries what it was generated for, and the claim
+    compares that with the row under the lock."""
+
+    def setUp(self):
+        super().setUp()
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            _claim_generated_questions_sync,
+            questions_fingerprint,
+        )
+
+        self.claim = _claim_generated_questions_sync
+        self.fp = questions_fingerprint
+        self.denial.generated_questions = None
+        self.denial.generated_questions_for = None
+        self.denial.procedure = "CT scan"
+        self.denial.diagnosis = "knee pain"
+        self.denial.save(
+            update_fields=[
+                "generated_questions",
+                "generated_questions_for",
+                "procedure",
+                "diagnosis",
+            ]
+        )
+
+    def test_a_run_for_inputs_since_corrected_stores_nothing(self):
+        """Started for an MRI, finished after the person corrected it to CT."""
+        stale = self.claim(
+            self.denial.denial_id, [["Q for MRI", ""]], self.fp("MRI", "knee pain")
+        )
+
+        self.denial.refresh_from_db()
+        self.assertIsNone(stale)
+        self.assertIsNone(self.denial.generated_questions)
+
+    def test_the_first_set_for_the_current_inputs_keeps_the_slot(self):
+        first = self.claim(
+            self.denial.denial_id, [["Q one", ""]], self.fp("CT scan", "knee pain")
+        )
+        second = self.claim(
+            self.denial.denial_id, [["Q two", ""]], self.fp("CT scan", "knee pain")
+        )
+
+        self.assertEqual(first, [["Q one", ""]])
+        self.assertEqual(second, [["Q one", ""]], "answers are filed against the first")
+
+    def test_a_set_for_the_current_inputs_replaces_one_for_old_inputs(self):
+        self.denial.generated_questions = [["Q for MRI", ""]]
+        self.denial.generated_questions_for = self.fp("MRI", "knee pain")
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
+
+        stored = self.claim(
+            self.denial.denial_id, [["Q for CT", ""]], self.fp("CT scan", "knee pain")
+        )
+
+        self.assertEqual(stored, [["Q for CT", ""]])
+
+    def test_a_finished_run_with_nothing_to_ask_is_stored_as_empty(self):
+        stored = self.claim(self.denial.denial_id, [], self.fp("CT scan", "knee pain"))
+
+        self.denial.refresh_from_db()
+        self.assertEqual(stored, [])
+        self.assertEqual(self.denial.generated_questions, [])
+
+    def test_the_review_post_regenerates_for_corrected_inputs_and_not_otherwise(self):
+        from unittest.mock import AsyncMock, patch
+
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        self.denial.generated_questions = [["Q for MRI", ""]]
+        self.denial.generated_questions_for = self.fp("MRI", "knee pain")
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
+        with patch.object(
+            DenialCreatorHelper,
+            "generate_appeal_questions",
+            new=AsyncMock(return_value=[]),
+        ) as generate:
+            FindNextStepsHelper.find_next_steps(
+                denial_id=self.denial.denial_id,
+                email=self.email,
+                semi_sekret=self.denial.semi_sekret,
+                procedure="CT scan",
+                diagnosis="knee pain",
+                insurance_company="evilco",
+                plan_id="1",
+                claim_id="7",
+                denial_type=None,
+                denial_date=None,
+            )
+        generate.assert_awaited_once()
+
+        self.denial.generated_questions_for = self.fp("CT scan", "knee pain")
+        self.denial.save(update_fields=["generated_questions_for"])
+        with patch.object(
+            DenialCreatorHelper,
+            "generate_appeal_questions",
+            new=AsyncMock(return_value=[]),
+        ) as generate:
+            FindNextStepsHelper.find_next_steps(
+                denial_id=self.denial.denial_id,
+                email=self.email,
+                semi_sekret=self.denial.semi_sekret,
+                procedure="CT scan",
+                diagnosis="knee pain",
+                insurance_company="evilco",
+                plan_id="1",
+                claim_id="7",
+                denial_type=None,
+                denial_date=None,
+            )
+        generate.assert_not_awaited()
+
+
+class BackAfterAnUnfinishedRunTest(QuestionsStepTestBase):
+    def test_back_after_a_run_that_never_finished_does_not_say_we_have_what_we_need(
+        self,
+    ):
+        """Nothing stored means no run finished; Back used to call that
+        finished and empty."""
+        self.denial.generated_questions = None
+        self.denial.save(update_fields=["generated_questions"])
+
+        info = FindNextStepsHelper.find_next_steps_for_denial(self.denial, self.email)
+
+        self.assertEqual(info.questions_outcome, "generation_unfinished")
+
+    def test_back_after_a_finished_empty_run_says_no_questions(self):
+        self.denial.generated_questions = []
+        self.denial.save(update_fields=["generated_questions"])
+
+        info = FindNextStepsHelper.find_next_steps_for_denial(self.denial, self.email)
+
+        self.assertEqual(info.questions_outcome, "no_questions")
+
+
 class InNetworkOwnershipTest(QuestionsStepTestBase):
     """Whoever can see the box owns the answer in it.
 
