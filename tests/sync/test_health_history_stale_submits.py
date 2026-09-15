@@ -45,7 +45,7 @@ class StaleHealthHistorySubmitTest(TestCase):
 
     def test_a_stale_untouched_page_does_not_overwrite_a_newer_edit(self) -> None:
         denial = self._denial("first, from the phone")
-        seen = health_history_digest("first, from the phone")
+        seen = health_history_digest("first, from the phone", denial.denial_id)
         # somewhere else, the person rewrites it
         denial.health_history = "second, from the laptop"
         denial.save()
@@ -56,7 +56,7 @@ class StaleHealthHistorySubmitTest(TestCase):
 
     def test_a_stale_untouched_page_does_not_restore_a_removal(self) -> None:
         denial = self._denial("a diagnosis they later thought better of")
-        seen = health_history_digest(denial.health_history)
+        seen = health_history_digest(denial.health_history, denial.denial_id)
         denial.health_history = ""
         denial.save()
         self._update(denial, "a diagnosis they later thought better of", seen)
@@ -66,7 +66,7 @@ class StaleHealthHistorySubmitTest(TestCase):
     def test_typing_into_a_stale_page_still_wins(self) -> None:
         """Refusing an edit would be worse than the problem being fixed."""
         denial = self._denial("first")
-        seen = health_history_digest("first")
+        seen = health_history_digest("first", denial.denial_id)
         denial.health_history = "second"
         denial.save()
         self._update(denial, "what they actually want to say", seen)
@@ -75,13 +75,13 @@ class StaleHealthHistorySubmitTest(TestCase):
 
     def test_an_ordinary_edit_from_a_current_page_is_saved(self) -> None:
         denial = self._denial("before")
-        self._update(denial, "after", health_history_digest("before"))
+        self._update(denial, "after", health_history_digest("before", denial.denial_id))
         denial.refresh_from_db()
         self.assertEqual(denial.health_history, "after")
 
     def test_clearing_the_box_from_a_current_page_still_removes_it(self) -> None:
         denial = self._denial("remove me")
-        self._update(denial, "", health_history_digest("remove me"))
+        self._update(denial, "", health_history_digest("remove me", denial.denial_id))
         denial.refresh_from_db()
         self.assertEqual(denial.health_history, "")
 
@@ -91,6 +91,44 @@ class StaleHealthHistorySubmitTest(TestCase):
         self._update(denial, "replaced by the api", None)
         denial.refresh_from_db()
         self.assertEqual(denial.health_history, "replaced by the api")
+
+    def test_a_windows_line_ending_does_not_turn_an_untouched_box_into_typing(
+        self,
+    ) -> None:
+        """The stored text holds LF; a browser posts a textarea back with CRLF.
+        Untouched must still read as untouched."""
+        denial = self._denial("first line\nsecond line")
+        seen = health_history_digest("first line\nsecond line", denial.denial_id)
+        Denial.objects.filter(pk=denial.pk).update(health_history="edited elsewhere")
+
+        self._update(denial, "first line\r\nsecond line", seen)
+
+        self.assertEqual(self._stored(denial), "edited elsewhere")
+
+    def test_the_check_reads_the_row_not_the_instance_the_caller_loaded(self) -> None:
+        """Request A loaded the case, request B saved, A decides. A's copy
+        still says the old text and would call its own submit current."""
+        denial = self._denial("old")
+        stale_copy = Denial.objects.get(pk=denial.pk)
+        Denial.objects.filter(pk=denial.pk).update(health_history="new, from B")
+
+        common_view_logic.DenialCreatorHelper._update_denial(
+            stale_copy,
+            health_history="old",
+            health_history_seen=health_history_digest("old", denial.denial_id),
+        )
+
+        self.assertEqual(self._stored(denial), "new, from B")
+
+    def test_the_fingerprint_is_keyed_to_the_case_and_the_site(self) -> None:
+        import hashlib
+
+        one = health_history_digest("type 2 diabetes", 1)
+        self.assertNotEqual(one, health_history_digest("type 2 diabetes", 2))
+        self.assertNotEqual(one, hashlib.sha256(b"type 2 diabetes").hexdigest())
+
+    def _stored(self, denial) -> str:
+        return Denial.objects.get(pk=denial.pk).health_history
 
 
 def fingerprint_on(html: str) -> str:
@@ -159,7 +197,10 @@ class StaleSubmitThroughThePagesTest(TestCase):
     def test_back_navigation_carries_the_fingerprint(self):
         html = self.render_by_back_navigation()
 
-        self.assertEqual(fingerprint_on(html), health_history_digest(self.STORED))
+        self.assertEqual(
+            fingerprint_on(html),
+            health_history_digest(self.STORED, self.denial.denial_id),
+        )
 
     def test_the_render_after_the_upload_step_carries_the_fingerprint(self):
         """The other way in: a resubmitted upload renders this page itself."""
@@ -180,7 +221,9 @@ class StaleSubmitThroughThePagesTest(TestCase):
         self.assertEqual(second.status_code, 200)
         html = second.content.decode()
         self.assertEqual(textarea_on(html).strip(), self.STORED)
-        self.assertEqual(fingerprint_on(html), health_history_digest(self.STORED))
+        self.assertEqual(
+            fingerprint_on(html), health_history_digest(self.STORED, reused_id)
+        )
 
     def test_a_stale_untouched_page_does_not_undo_an_edit_made_since(self):
         stale_tab = self.render_by_back_navigation()

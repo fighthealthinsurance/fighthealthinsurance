@@ -2932,7 +2932,7 @@ class DenialCreatorHelper:
             # is how the page deletes what the person wrote, and no other page
             # can -- so the blank is written rather than refused.
             if health_history is not None and not cls._history_submit_is_stale(
-                denial, health_history, health_history_seen
+                denial, health_history, health_history_seen, locked=True
             ):
                 denial.health_history = health_history
                 changed_fields.add("health_history")
@@ -2953,7 +2953,11 @@ class DenialCreatorHelper:
 
     @classmethod
     def _history_submit_is_stale(
-        cls, denial, submitted: Optional[str], seen_digest: Optional[str]
+        cls,
+        denial,
+        submitted: Optional[str],
+        seen_digest: Optional[str],
+        locked: bool = False,
     ) -> bool:
         """Is this an untouched page posting over an edit made after it loaded?
 
@@ -2964,9 +2968,16 @@ class DenialCreatorHelper:
         stale text back and quietly undo the newer edit, or restore history
         that had just been deleted.
 
-        Only that case is refused. A page whose box differs from what it was
-        rendered with is somebody typing, and the last person to type wins,
-        which is what they expect.
+        Only that case is refused. A box whose content differs from what the
+        page was rendered with is treated as typing, and the last to type
+        wins. That is a comparison of content, not of intent: it cannot tell
+        someone who retyped the original wording from someone who never
+        touched the box, and it cannot see what the browser put there.
+
+        ``locked`` reads the stored history inside the caller's transaction
+        with the row locked, so the comparison and the write that follows
+        cannot straddle another request's save. The instance the caller
+        loaded is not consulted for it.
         """
         if not seen_digest:
             # No digest means a caller that does not render the box at all
@@ -2975,9 +2986,18 @@ class DenialCreatorHelper:
             return False
         from fighthealthinsurance.denial_context import health_history_digest
 
-        if health_history_digest(submitted) != seen_digest:
+        if health_history_digest(submitted, denial.denial_id) != seen_digest:
             return False
-        stale: bool = health_history_digest(denial.health_history) != seen_digest
+        if locked:
+            stored = (
+                Denial.objects.select_for_update()
+                .filter(pk=denial.pk)
+                .values_list("health_history", flat=True)
+                .first()
+            )
+        else:
+            stored = denial.health_history
+        stale: bool = health_history_digest(stored, denial.denial_id) != seen_digest
         if stale:
             logger.info(
                 f"health history: refusing a stale unedited submit for denial "

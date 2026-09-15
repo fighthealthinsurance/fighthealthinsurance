@@ -2037,7 +2037,9 @@ class InitialProcessView(generic.FormView):
                 "email": cleaned_data["email"],
                 "semi_sekret": denial_response.semi_sekret,
                 "health_history": stored,
-                "health_history_seen": health_history_digest(stored),
+                "health_history_seen": health_history_digest(
+                    stored, denial_response.denial_id
+                ),
             }
         )
 
@@ -2294,7 +2296,9 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         # redisplays what the person just typed rather than this.
         stored = stored_health_history(denial_ref.get("denial_id"))
         initial["health_history"] = stored
-        initial["health_history_seen"] = health_history_digest(stored)
+        initial["health_history_seen"] = health_history_digest(
+            stored, denial_ref.get("denial_id")
+        )
         return initial
 
     def get_context_data(self, **kwargs):

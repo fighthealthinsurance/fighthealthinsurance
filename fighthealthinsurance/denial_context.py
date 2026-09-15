@@ -123,15 +123,26 @@ def merge_plan_context(
     return new_value
 
 
-def health_history_digest(value: Optional[str]) -> str:
-    """A stable fingerprint of one health history, for staleness checks.
+def health_history_digest(value: Optional[str], denial_id) -> str:
+    """A fingerprint of one case's health history, for staleness checks.
 
     Never the text itself: this is the most sensitive column on the row and
-    it already travels once per submission. An empty box and a column that
-    was never written are the same thing here, because a page rendered
-    before anything was stored and a page rendered after a removal are the
-    same page as far as the person is concerned.
+    it already travels once per submission. Keyed with the site secret and
+    the case, so holding the fingerprint gives nobody a way to confirm a
+    guess at a short history, and identical histories on two cases do not
+    share one. Line endings are normalised because a browser posts a
+    textarea's newlines as CRLF while the stored text may hold LF; an
+    untouched box must still match. An empty box and a column never written
+    are the same thing here.
     """
     import hashlib
+    import hmac
 
-    return hashlib.sha256((value or "").strip().encode("utf-8")).hexdigest()
+    from django.conf import settings
+
+    text = (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    message = f"{denial_id}\x1f{text}".encode("utf-8")
+    key = settings.SECRET_KEY
+    if isinstance(key, str):
+        key = key.encode("utf-8")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
