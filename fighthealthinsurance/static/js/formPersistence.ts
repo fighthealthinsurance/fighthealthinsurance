@@ -112,9 +112,20 @@ export function setupTextareaPersistence(textareaId: string, options?: { alwaysR
     // Determine if we should restore
     // - On POST responses, only restore if the field is empty AND (alwaysRestore OR isAlwaysRestorePage)
     // - On GET responses, always restore if field is empty
+    // A page that carries a fingerprint of what the server rendered
+    // (<input name="<id>_seen">) has said what is stored, empty included.
+    // A local copy from an earlier visit must not be put over that: the
+    // history may have been removed from another device since, and the
+    // server would read the restored text as the person typing it back.
+    const serverSaidWhatIsStored = () =>
+      document.querySelector('input[name="' + textareaId + '_seen"]') !== null;
+
     const shouldRestore = () => {
       if (textarea.value !== '') {
         return false;  // Field already has a value, don't overwrite
+      }
+      if (serverSaidWhatIsStored()) {
+        return false;
       }
       if (options?.alwaysRestore || isAlwaysRestorePage()) {
         return true;  // This page always needs restore (e.g., PII fill-in)
@@ -125,6 +136,12 @@ export function setupTextareaPersistence(textareaId: string, options?: { alwaysR
       return true;  // GET response with empty field - restore from localStorage
     };
 
+    if (serverSaidWhatIsStored()) {
+      // Whatever this browser kept is stale by definition: the server's
+      // word replaces it. Both keys, unconditionally; the getter can answer
+      // "" or null from one key while the other still holds text.
+      clearLocalStorageItem(textareaId);
+    }
     // Restore saved value if conditions are met
     const saved = getLocalStorageItemWithTTL(textareaId);
     if (saved && shouldRestore()) {

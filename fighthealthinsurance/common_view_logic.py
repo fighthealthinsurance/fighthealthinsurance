@@ -2874,6 +2874,7 @@ class DenialCreatorHelper:
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
+        health_history_seen=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         denial = Denial.objects.filter(
@@ -2885,6 +2886,7 @@ class DenialCreatorHelper:
             plan_documents=plan_documents,
             include_provided_health_history_in_appeal=include_provided_health_history_in_appeal,
             health_history_anonymized=health_history_anonymized,
+            health_history_seen=health_history_seen,
         )
 
     @classmethod
@@ -2895,6 +2897,7 @@ class DenialCreatorHelper:
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
+        health_history_seen=None,
     ):
         from django.db import transaction as _transaction
 
@@ -2928,7 +2931,9 @@ class DenialCreatorHelper:
             # health_history an empty string is a decision, not silence -- it
             # is how the page deletes what the person wrote, and no other page
             # can -- so the blank is written rather than refused.
-            if health_history is not None:
+            if health_history is not None and not cls._history_submit_is_stale(
+                denial, health_history, health_history_seen, locked=True
+            ):
                 denial.health_history = health_history
                 changed_fields.add("health_history")
             if include_provided_health_history_in_appeal is not None:
@@ -2945,6 +2950,61 @@ class DenialCreatorHelper:
             intake_outbox.deliver(intent)
         # Return the current the state
         return cls.format_denial_response_info(denial)
+
+    @classmethod
+    def _history_submit_is_stale(
+        cls,
+        denial,
+        submitted: Optional[str],
+        seen_digest: Optional[str],
+        locked: bool = False,
+    ) -> bool:
+        """Is this an untouched page posting over an edit made after it loaded?
+
+        The step is reachable from several places and a person can have it
+        open in one tab while editing in another, or press Back onto a copy
+        rendered before a removal. The box is posted on every Next whether or
+        not it was touched, so an untouched stale page would write its own
+        stale text back and quietly undo the newer edit, or restore history
+        that had just been deleted.
+
+        Only that case is refused. A box whose content differs from what the
+        page was rendered with is treated as typing, and the last to type
+        wins. That is a comparison of content, not of intent: it cannot tell
+        someone who retyped the original wording from someone who never
+        touched the box, and it cannot see what the browser put there.
+
+        ``locked`` reads the stored history inside the caller's transaction
+        with the row locked, so the comparison and the write that follows
+        cannot straddle another request's save. The instance the caller
+        loaded is not consulted for it.
+        """
+        if not seen_digest:
+            # No digest means a caller that does not render the box at all
+            # (the REST API, the professional flow). Nothing to be stale
+            # against, so this rule has no opinion.
+            return False
+        from fighthealthinsurance.denial_context import health_history_digest
+
+        if health_history_digest(submitted, denial.denial_id) != seen_digest:
+            return False
+        if locked:
+            stored = (
+                Denial.objects.select_for_update()
+                .filter(pk=denial.pk)
+                .values_list("health_history", flat=True)
+                .first()
+            )
+        else:
+            stored = denial.health_history
+        stale: bool = health_history_digest(stored, denial.denial_id) != seen_digest
+        if stale:
+            logger.info(
+                f"health history: refusing a stale unedited submit for denial "
+                f"{denial.denial_id}; the stored history changed after this "
+                f"page was rendered"
+            )
+        return stale
 
     @classmethod
     def format_denial_response_info(cls, denial):
