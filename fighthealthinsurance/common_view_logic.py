@@ -1760,7 +1760,15 @@ class DenialCreatorHelper:
             # assigned is named, so the save below writes nothing else: a
             # full-row save wrote this request's copy of every column,
             # including a state the review page corrected while it ran.
-            assigned = ["denial_text", "hashed_email", "use_external", "raw_email"]
+            # last_interaction is auto_now, which a scoped save updates only
+            # when it is named; the full-row save used to update it.
+            assigned = [
+                "denial_text",
+                "hashed_email",
+                "use_external",
+                "raw_email",
+                "last_interaction",
+            ]
             if health_history is not None:
                 assigned.append("health_history")
             optional_columns = (
@@ -1936,7 +1944,19 @@ class DenialCreatorHelper:
         if health_history is None and plan_documents is None:
             # Nothing for the optional-step save to write. Its full-row save
             # would put this request's copy of every column back, including
-            # a state the review page corrected while this request ran.
+            # a state the review page corrected while this request ran. The
+            # one thing it does on every call besides the save, recording
+            # the intake-started intent, still happens here.
+            from django.db import transaction as _transaction
+
+            from fighthealthinsurance import intake_outbox
+
+            with _transaction.atomic():
+                intent = intake_outbox.record_intent(
+                    denial, intake_outbox.INTAKE_STARTED
+                )
+            if intent is not None:
+                intake_outbox.deliver(intent)
             return cls.format_denial_response_info(denial)
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents

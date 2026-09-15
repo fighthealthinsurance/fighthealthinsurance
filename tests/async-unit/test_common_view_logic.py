@@ -2725,6 +2725,37 @@ class ConfirmedStateTest(TestCase):
         fresh = Denial.objects.get(denial_id=denial.denial_id)
         self.assertEqual((fresh.state, fresh.your_state), ("CA", "CA"))
 
+    def test_a_resubmitted_upload_still_records_the_intake_intent(self):
+        """The scoped save skips the optional-step save when there is nothing
+        for it to write; the intake-started intent that save also records
+        must not be skipped with it."""
+        from unittest.mock import patch
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        with patch(
+            "fighthealthinsurance.intake_outbox.record_intent", return_value=None
+        ) as record:
+            self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        record.assert_called_once()
+        self.assertEqual(record.call_args.args[1], "intake_started")
+
+    def test_a_resubmitted_upload_still_moves_last_interaction(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        long_ago = timezone.now() - timedelta(days=3)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            last_interaction=long_ago
+        )
+
+        self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        fresh = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertGreater(fresh.last_interaction, long_ago + timedelta(days=1))
+
     def test_a_failed_zip_lookup_can_be_retried_with_the_same_zip(self):
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="NY")
