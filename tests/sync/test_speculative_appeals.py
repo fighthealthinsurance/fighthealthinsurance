@@ -602,6 +602,15 @@ class ConfirmedContextDispatchRuleTest(TestCase):
         )
 
     def test_changed_values_dispatch_with_force(self):
+        # A confirmed reserve for this state already exists, so only the
+        # changed dx/px can be what fires.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Existing confirmed-context reserve draft text here.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
         with patch(_DISPATCH) as mock_dispatch:
             self.helper._maybe_dispatch_confirmed_speculative(
                 self.denial,

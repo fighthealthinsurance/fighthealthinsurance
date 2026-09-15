@@ -1436,6 +1436,33 @@ def reserve_state(denial) -> str:
     return (denial.your_state or "").strip()
 
 
+async def reserve_state_now(denial_id) -> str:
+    """The state on the row at this moment, for the instant a reserve is promoted.
+
+    The in-memory denial can be minutes old by then, and a correction that
+    landed meanwhile has to decide.
+    """
+    state = (
+        await Denial.objects.filter(denial_id=denial_id)
+        .values_list("your_state", flat=True)
+        .afirst()
+    )
+    return (state or "").strip()
+
+
+def served_reserve_for_another_state(denial) -> Q:
+    """Promoted reserve rows that argue under another state's law.
+
+    A reserve keeps its stamp when it is promoted, so a case that has since
+    named another state does not get it replayed or fed to synthesis unless
+    the person chose it. A row from before the stamp existed is unknown, and
+    unknown is treated as another state.
+    """
+    return Q(context_level__in=SPECULATIVE_CONTEXT_LEVELS, chosen=False) & (
+        ~Q(built_for_state=reserve_state(denial)) | Q(built_for_state__isnull=True)
+    )
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -3665,6 +3692,7 @@ class AppealsBackendHelper:
         # those rows the whole budget; nulls_last puts them where they belong.
         existing_appeals = (
             ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+            .exclude(served_reserve_for_another_state(denial))
             .order_by(F("created_at").desc(nulls_last=True), "-id")
             .all()
         )
@@ -3997,7 +4025,10 @@ class AppealsBackendHelper:
                     # dedupes by content, so the done frame would promise more
                     # appeals than are on screen. The loser of the race skips.
                     if not await ProposedAppeal.objects.filter(
-                        pk=row.pk, speculative=True, chosen=False
+                        pk=row.pk,
+                        speculative=True,
+                        chosen=False,
+                        built_for_state=await reserve_state_now(denial.denial_id),
                     ).aupdate(speculative=False):
                         continue
                     row.speculative = False
@@ -5249,7 +5280,9 @@ class AppealsBackendHelper:
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
             async for pa in deliverable_candidates(
-                ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+                ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=False
+                ).exclude(served_reserve_for_another_state(denial))
             )
             if is_real_appeal(pa.appeal_text)
             and str(pa.appeal_text).strip() not in early_reserve_texts
@@ -5416,10 +5449,12 @@ class AppealsBackendHelper:
                 ProposedAppeal.objects.filter(for_denial=denial, chosen=False).filter(
                     # A held-back reserve written for another state argues
                     # under that state's law: only a live row or a reserve
-                    # written for this state is served.
+                    # written for this state is served...
                     Q(speculative=False)
                     | Q(built_for_state=reserve_state(denial))
                 )
+                # ...and a reserve already promoted keeps its stamp.
+                .exclude(served_reserve_for_another_state(denial))
             ).order_by("id"):
                 text = row.appeal_text
                 if not is_real_appeal(text):
@@ -5452,7 +5487,10 @@ class AppealsBackendHelper:
                     # reason as the early flush above: a concurrent run must not
                     # serve the same held-back draft, and the loser skips it.
                     if not await ProposedAppeal.objects.filter(
-                        pk=row.pk, speculative=True, chosen=False
+                        pk=row.pk,
+                        speculative=True,
+                        chosen=False,
+                        built_for_state=await reserve_state_now(denial.denial_id),
                     ).aupdate(speculative=False):
                         continue
                     row.speculative = False

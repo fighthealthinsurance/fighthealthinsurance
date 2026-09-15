@@ -2529,7 +2529,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     ip_address = models.CharField(max_length=64, null=True, blank=True)
 
     # UCR (Usual & Customary Rate) fields.
-    # service_zip stores ZIP3 (HIPAA Safe Harbor de-identified). Procedure
+    # service_zip stores only the first three digits of the zip. Procedure
     # codes are extracted from free-text via medical_code_extractor, so we
     # don't carry separate procedure_code/modifier columns on Denial.
     service_zip = models.CharField(max_length=5, blank=True, default="")

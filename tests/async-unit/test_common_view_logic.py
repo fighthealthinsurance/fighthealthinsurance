@@ -1,4 +1,5 @@
 import asyncio
+import asyncio
 import json
 import io
 from contextlib import contextmanager
@@ -1138,6 +1139,120 @@ class TestCommonViewLogic(TestCase):
                 self.assertEqual(done["speculative_appeals"], 0)
             finally:
                 await Denial.objects.filter(denial_id=36).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_reserve_with_no_stamp_is_not_served(self, mock_appeal_generator):
+        """A row from before the stamp existed: not known, not served."""
+        email, denial = self._create_test_denial(37, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft from before the stamp existed.",
+            speculative=True,
+            built_for_state=None,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = RuntimeError("down")
+
+        async def test():
+            try:
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {"denial_id": 37, "email": email, "semi_sekret": denial.semi_sekret}
+                )
+                self.assertNotIn(
+                    "A reserve draft from before the stamp existed.", appeal_contents
+                )
+                spec = await ProposedAppeal.objects.aget(for_denial=denial)
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=37).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_promoted_reserve_for_another_state_is_not_replayed(
+        self, mock_appeal_generator
+    ):
+        """A reserve served under NY keeps its stamp after promotion. The case
+        now says CA: it is not replayed as an existing appeal, and not fed to
+        synthesis, unless the person chose it."""
+        email, denial = self._create_test_denial(38, gen_attempts=3)
+        Denial.objects.filter(denial_id=38).update(your_state="CA")
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A promoted reserve draft arguing under New York law.",
+            speculative=False,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        live_text = "A live appeal letter written for the corrected case."
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts([live_text])
+        )
+
+        async def test():
+            try:
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {"denial_id": 38, "email": email, "semi_sekret": denial.semi_sekret}
+                )
+                self.assertNotIn("New York law", " ".join(appeal_contents))
+                self.assertIn(live_text, appeal_contents)
+            finally:
+                await Denial.objects.filter(denial_id=38).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_correction_landing_mid_run_stops_the_stall_fallback(
+        self, mock_appeal_generator
+    ):
+        """The run loaded the case as NY; the person corrects it to CA while
+        the live draft is still generating. When the stall deadline passes,
+        the NY reserve must not go out: the row's state now, not the run's
+        copy, decides."""
+        email, denial = self._create_test_denial(39, gen_attempts=3)
+        Denial.objects.filter(denial_id=39).update(your_state="NY")
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft arguing under New York law.",
+            speculative=True,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        live_text = "A slow live appeal letter that finishes much later on."
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.5, [live_text]
+        )
+
+        async def test():
+            try:
+                with self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.5
+                ):
+                    collecting = asyncio.create_task(
+                        self.collect_appeal_responses(
+                            {
+                                "denial_id": 39,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                    # After the run has loaded its copy of the case, before
+                    # the stall deadline.
+                    await asyncio.sleep(0.2)
+                    await Denial.objects.filter(denial_id=39).aupdate(your_state="CA")
+                    _, appeal_contents, _ = await collecting
+                self.assertNotIn("New York law", " ".join(appeal_contents))
+                self.assertIn(live_text, appeal_contents)
+                await spec.arefresh_from_db()
+                self.assertTrue(spec.speculative, "an unserved row stays held back")
+            finally:
+                await Denial.objects.filter(denial_id=39).adelete()
 
         async_to_sync(test)()
 

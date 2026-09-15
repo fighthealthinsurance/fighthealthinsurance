@@ -270,7 +270,8 @@ class SpeculativeAppealsHelper:
             # Likewise the state, procedure and diagnosis: a draft argues under
             # the state's law and about the confirmed service, so a correction
             # landing mid-generation makes this run's output wrong, not merely
-            # stale. Re-checked before persisting, same as the text.
+            # stale. Re-read after the rows are written, same as the text, and
+            # a run whose inputs moved deletes its own rows.
             generated_from_context = reserve_context(denial)
 
             # Force internal-only end-to-end: the primary calls are already
@@ -436,9 +437,12 @@ class SpeculativeAppealsHelper:
             # between it and these inserts runs its invalidation sweep while we
             # have no rows to sweep, and our stale drafts then appear behind it
             # -- permanently, since nothing sweeps again. Checking once more here
-            # closes it completely, because the only replacement this can now
-            # miss is one that lands after this read, and that one's own
-            # invalidation WILL find our speculative=True rows and delete them.
+            # closes it for the text: the only replacement this can now miss
+            # lands after this read, and its own invalidation sweep finds our
+            # speculative=True rows. There is no such sweep for the state,
+            # procedure or diagnosis. A correction landing after this read
+            # leaves this run's rows in place, stamped for the old state, where
+            # nothing serves them and the next confirmed refresh retires them.
             if saved:
                 current = dict(
                     await Denial.objects.filter(denial_id=denial_id)
@@ -471,11 +475,26 @@ class SpeculativeAppealsHelper:
             # from anything the live flow claimed (claiming flips
             # speculative=False) while the refresh was running.
             if confirmed_context and saved:
+                from django.db.models import OuterRef, Subquery, Value
+                from django.db.models.functions import Coalesce
+
+                # The state the row holds at the moment of the delete, read in
+                # the same statement: a run whose state moved after its own
+                # check above must not retire the run that replaced it.
+                state_now = Subquery(
+                    Denial.objects.filter(denial_id=OuterRef("for_denial"))
+                    .annotate(now=Coalesce("your_state", Value("")))
+                    .values("now")[:1]
+                )
                 superseded, _ = (
                     await ProposedAppeal.objects.filter(
                         for_denial=denial, speculative=True, chosen=False
                     )
                     .exclude(pk__in=created_pks)
+                    .exclude(
+                        context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+                        built_for_state=state_now,
+                    )
                     .adelete()
                 )
                 if superseded:
