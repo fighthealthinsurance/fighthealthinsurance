@@ -2287,6 +2287,11 @@ def unresolved_denial_ref_response(request):
     upload_url = reverse("scan")
     if not denial_ref_offered(request):
         return redirect(upload_url)
+    # The page they land on offers a new appeal. Without this, the upload
+    # form's session dedupe would reuse the case this session last worked
+    # on, and "start a new one" would overwrite it with the new letter.
+    for key in ("denial_uuid", "denial_id"):
+        request.session.pop(key, None)
     return redirect(f"{upload_url}?{urlencode({RESUME_HELP_QUERY_PARAM: '1'})}")
 
 

@@ -1382,3 +1382,63 @@ class BackLinkCallSiteTest(TestCase):
                 "the call raises at render time: " + ", ".join(stale)
             ),
         )
+
+
+class StartingOverAfterARefusalTest(TestCase):
+    """The refusal page says "you can also start a new one below", so the
+    upload form under it must create a new case. The form's session dedupe
+    would otherwise reuse the case this browser last worked on and write
+    the new letter over it."""
+
+    EMAIL = "starting-over@example.com"
+
+    def _upload(self, client, letter):
+        return client.post(
+            reverse("process"),
+            {
+                "email": self.EMAIL,
+                "denial_text": letter,
+                "pii": "on",
+                "tos": "on",
+                "privacy": "on",
+            },
+            follow=True,
+        )
+
+    def test_the_new_appeal_offered_after_a_refusal_is_a_new_case(self):
+        client = Client()
+        first = self._upload(client, "The first denial letter, about an MRI.")
+        self.assertEqual(first.status_code, 200)
+        original = models.Denial.objects.get(
+            hashed_email=models.Denial.get_hashed_email(self.EMAIL)
+        )
+
+        refused = client.get(
+            f"{reverse('hh')}?{views.DENIAL_REF_QUERY_PARAM}=not-a-reference",
+            follow=True,
+        )
+        self.assertEqual(refused.status_code, 200)
+
+        second = self._upload(client, "A different denial letter, about a CT scan.")
+        self.assertEqual(second.status_code, 200)
+
+        rows = models.Denial.objects.filter(
+            hashed_email=models.Denial.get_hashed_email(self.EMAIL)
+        )
+        self.assertEqual(rows.count(), 2, "starting over must not reuse the case")
+        original.refresh_from_db()
+        self.assertEqual(original.denial_text, "The first denial letter, about an MRI.")
+
+    def test_without_a_refusal_the_dedupe_still_reuses_the_case(self):
+        """The dedupe is deliberate for a reload or a double submit; only the
+        refusal page turns it off."""
+        client = Client()
+        self._upload(client, "The first denial letter, about an MRI.")
+        self._upload(client, "The first denial letter, about an MRI.")
+
+        self.assertEqual(
+            models.Denial.objects.filter(
+                hashed_email=models.Denial.get_hashed_email(self.EMAIL)
+            ).count(),
+            1,
+        )
