@@ -2736,6 +2736,12 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     text_fingerprint = models.CharField(
         max_length=64, null=True, blank=True, db_index=True
     )
+    # The state the reserve was written for. A held-back draft argues under
+    # that state's law, so nothing serves it once the case names another
+    # state. Null is a row from before this column: not known, not served.
+    built_for_state = models.CharField(
+        max_length=32, null=True, blank=True, db_index=True
+    )
     # Criteria score from ml/letter_quality.py, used to ORDER drafts on the
     # page and to watch draft quality per backend on the staff dashboard.
     # quality_score is a 0..1 composite; grounding_score is the
