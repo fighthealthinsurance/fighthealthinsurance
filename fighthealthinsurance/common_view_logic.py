@@ -2078,6 +2078,7 @@ class DenialCreatorHelper:
                 "insurance_plan_obj__insurance_company_id",
                 "insurance_company_obj__id",
                 "insurance_company_obj__name",
+                "insurance_plan_obj__insurance_company__name",
                 "insurance_company",
             )
             .afirst()
@@ -2087,6 +2088,12 @@ class DenialCreatorHelper:
         company_id = row["insurance_company_obj__id"]
         if DenialCreatorHelper._names_disagree(
             row["insurance_company"], row["insurance_company_obj__name"]
+        ) or (
+            company_id is None
+            and DenialCreatorHelper._names_disagree(
+                row["insurance_company"],
+                row["insurance_plan_obj__insurance_company__name"],
+            )
         ):
             # The box names one insurer and the structured column another
             # (a text correction made after the match). Neither number is
@@ -2749,10 +2756,16 @@ class DenialCreatorHelper:
 
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         insurance_company = None
+        reader_failed = False
         try:
-            insurance_company = await appealGenerator.get_insurance_company(
-                denial_text=denial.denial_text
-            )
+            try:
+                insurance_company = await appealGenerator.get_insurance_company(
+                    denial_text=denial.denial_text
+                )
+            except ExtractionUnavailable:
+                # The carrier regexes below need no model. Failed is the
+                # answer only if they find nothing either.
+                reader_failed = True
 
             # Reject obviously hallucinated names early - but still allow the
             # regex-based fallback below to run, since a missing/invalid LLM
@@ -2853,6 +2866,8 @@ class DenialCreatorHelper:
                     )
 
             if not found_something:
+                if reader_failed:
+                    return EXTRACTION_OUTCOME_FAILED
                 return EXTRACTION_OUTCOME_NOTHING_FOUND
             if wrote_something:
                 return EXTRACTION_OUTCOME_FOUND

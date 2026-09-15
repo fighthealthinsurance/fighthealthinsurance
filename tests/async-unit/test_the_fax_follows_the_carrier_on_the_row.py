@@ -272,3 +272,68 @@ async def test_a_text_correction_after_the_match_leaves_the_fax_empty() -> None:
     fax = await DenialCreatorHelper._fax_for_the_carrier_on_the_row(denial.denial_id)
 
     assert fax is None
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_a_plan_of_another_carrier_supplies_no_fax_when_no_carrier_is_stored() -> (
+    None
+):
+    """Typed Cigna, no structured carrier, an Aetna plan left on the row from
+    an earlier match. The plan's carrier is checked against the typed name."""
+    other = await _carrier_row("Aetna", "555-0002")
+    other_plan = await _plan_of(other, "Aetna PPO", "555-0003")
+    denial = await Denial.objects.acreate(
+        denial_text="a denial",
+        hashed_email="x",
+        insurance_company="Cigna",
+        insurance_plan_obj=other_plan,
+    )
+
+    fax = await DenialCreatorHelper._fax_for_the_carrier_on_the_row(denial.denial_id)
+
+    assert fax is None
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_an_unreachable_reader_does_not_stop_the_carrier_regex() -> None:
+    """The model could not be asked, but a configured carrier's regex
+    matches the letter: the carrier is stored and the step is found."""
+    from fighthealthinsurance.generate_appeal import ExtractionUnavailable
+
+    aetna = await _carrier_row("Aetna", "555-0002")
+    denial = await Denial.objects.acreate(
+        denial_text="Aetna has denied your claim.", hashed_email="x"
+    )
+    with patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+        new=AsyncMock(side_effect=ExtractionUnavailable("down")),
+    ):
+        outcome = await DenialCreatorHelper.extract_set_insurance_company(
+            denial.denial_id
+        )
+
+    row = (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values("insurance_company_obj_id")
+        .afirst()
+    )
+    assert outcome == "found", outcome
+    assert row["insurance_company_obj_id"] == aetna.id
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_an_unreachable_reader_with_no_regex_match_is_failed_not_absent() -> None:
+    from fighthealthinsurance.generate_appeal import ExtractionUnavailable
+
+    denial = await Denial.objects.acreate(
+        denial_text="a denial naming nobody", hashed_email="x"
+    )
+    with patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+        new=AsyncMock(side_effect=ExtractionUnavailable("down")),
+    ):
+        outcome = await DenialCreatorHelper.extract_set_insurance_company(
+            denial.denial_id
+        )
+
+    assert outcome == "failed", outcome

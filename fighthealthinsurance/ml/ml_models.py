@@ -3203,6 +3203,11 @@ class RemoteOpenLike(RemoteModel):
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
                 record_ml_call(call_model, "timeout", time.monotonic() - started)
+                failures = kwargs.get("transport_failures")
+                if failures is not None:
+                    failures.append(
+                        f"{call_model}: no answer within {effective_timeout:.0f}s"
+                    )
                 # Budget timeouts strike ONLY when (a) the backend had a
                 # GENEROUS window (>=120s of nothing is a wedged backend, not
                 # deadline pressure -- tight windows near a requester
@@ -4577,6 +4582,8 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             logger.debug(
                 f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
             )
+            if raise_on_unavailable:
+                raise ProviderUnavailable("backing off after a 429")
             return None
         try:
             return await self._do_infer(
@@ -4602,6 +4609,10 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                     f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
                     f"for {self.model}, backing off for {retry_after}s"
                 )
+                if raise_on_unavailable:
+                    raise ProviderUnavailable(
+                        f"HTTP 429, backing off {retry_after}s"
+                    ) from e
                 return None
             if _http_status_is_expected(e.status):
                 # Quota/auth/billing conditions are operational, not bugs:
@@ -4611,8 +4622,14 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                     f"{self}: skipping backend -- {self.api_base} returned "
                     f"HTTP {e.status} ({e.message}); check quota/billing/API key."
                 )
+                if raise_on_unavailable:
+                    raise ProviderUnavailable(f"HTTP {e.status}") from e
                 return None
             raise
+        except ProviderUnavailable:
+            if raise_on_unavailable:
+                raise
+            return None
         except Exception as e:
             described = describe_model_error(e)
             logger.warning(
