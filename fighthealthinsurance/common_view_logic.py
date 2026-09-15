@@ -1291,12 +1291,18 @@ class FindNextStepsHelper:
         # Generate questions for better appeal creation if they don't exist yet.
         generation_finished = True
         try:
-            if denial.generated_questions is None or (
-                denial.generated_questions_for
-                != questions_fingerprint(denial.procedure, denial.diagnosis)
+            stamp = denial.generated_questions_for
+            current = questions_fingerprint(denial.procedure, denial.diagnosis)
+            if (
+                denial.generated_questions is None
+                or (stamp is None and not denial.generated_questions)
+                or (stamp is not None and stamp != current)
             ):
-                # Nothing finished for these inputs yet: none stored, or a set
-                # stored for a procedure or diagnosis since corrected.
+                # Nothing finished for these inputs yet: none stored, a set
+                # stored for a procedure or diagnosis since corrected, or an
+                # empty set from before the stamp, which always regenerated.
+                # A nonempty set from before the stamp is of unknown origin
+                # and is kept as it always was.
                 logger.debug("Generating appeal questions")
                 generated = async_to_sync(
                     DenialCreatorHelper.generate_appeal_questions

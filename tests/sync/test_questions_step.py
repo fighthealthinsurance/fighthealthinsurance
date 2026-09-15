@@ -458,6 +458,37 @@ class QuestionsAreForTheInputsTheyWereGeneratedForTest(QuestionsStepTestBase):
         self.assertEqual(stored, [])
         self.assertEqual(self.denial.generated_questions, [])
 
+    def test_a_set_from_before_the_stamp_is_not_regenerated_on_every_post(self):
+        """A legacy row holds questions and no stamp. Regenerating it on each
+        review POST would run the models every time and never stamp it."""
+        from unittest.mock import AsyncMock, patch
+
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        self.denial.generated_questions = [["Q from before the stamp", ""]]
+        self.denial.generated_questions_for = None
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
+        with patch.object(
+            DenialCreatorHelper,
+            "generate_appeal_questions",
+            new=AsyncMock(return_value=[]),
+        ) as generate:
+            FindNextStepsHelper.find_next_steps(
+                denial_id=self.denial.denial_id,
+                email=self.email,
+                semi_sekret=self.denial.semi_sekret,
+                procedure="CT scan",
+                diagnosis="knee pain",
+                insurance_company="evilco",
+                plan_id="1",
+                claim_id="7",
+                denial_type=None,
+                denial_date=None,
+            )
+        generate.assert_not_awaited()
+
     def test_the_review_post_regenerates_for_corrected_inputs_and_not_otherwise(self):
         from unittest.mock import AsyncMock, patch
 
