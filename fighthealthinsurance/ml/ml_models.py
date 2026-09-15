@@ -3295,6 +3295,8 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"{self}: skipping {model} at {api_base} -- flagged as not served here"
             )
+            if transport_failures is not None:
+                transport_failures.append(f"{model} via {api_base}: not served here")
             return None
         # Same idea for repeated transport failures (refused/DNS/timeout):
         # skip quietly while the short cooldown lasts; probes bypass this so
@@ -3489,6 +3491,10 @@ class RemoteOpenLike(RemoteModel):
                                 )
                                 if raise_http_errors:
                                     raise
+                                if transport_failures is not None:
+                                    transport_failures.append(
+                                        f"{model} via {api_base}: not served here"
+                                    )
                                 return None
 
                             response_body_preview = response_body[:2000]
@@ -4632,6 +4638,11 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             return None
         except Exception as e:
             described = describe_model_error(e)
+            if raise_on_unavailable and isinstance(e, MODEL_TRANSPORT_ERRORS):
+                # A transport failure from an adapter that overrides the
+                # transport (the Messages API) lands here, not in
+                # RemoteOpenLike.__infer.
+                raise ProviderUnavailable(described) from e
             logger.warning(
                 f"{type(self).__name__}._infer: {self.model} failed -- {described}"
             )

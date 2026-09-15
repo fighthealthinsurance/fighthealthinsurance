@@ -337,3 +337,65 @@ async def test_an_unreachable_reader_with_no_regex_match_is_failed_not_absent() 
         )
 
     assert outcome == "failed", outcome
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_a_fax_read_for_one_carrier_is_not_written_after_a_correction() -> None:
+    """The read chose Aetna's number; the person corrected the insurer to
+    Cigna before the write. The write carries the carrier it was read for,
+    and finds the row no longer holds it."""
+    aetna = await _carrier_row("Aetna", "555-0002")
+    cigna = await _carrier_row("Cigna", "555-0001")
+    denial = await Denial.objects.acreate(
+        denial_text="a denial", hashed_email="x", insurance_company_obj=aetna
+    )
+    fax, justified_by = await DenialCreatorHelper._fax_and_its_justification(
+        denial.denial_id
+    )
+    assert fax == "555-0002"
+    await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+        insurance_company_obj=cigna, insurance_company="Cigna"
+    )
+
+    written = await DenialCreatorHelper._write_fax_if_the_carrier_still_holds(
+        denial.denial_id, fax, justified_by
+    )
+
+    stored = (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values_list("appeal_fax_number", flat=True)
+        .afirst()
+    )
+    assert written is False
+    assert not stored, f"Aetna's number landed on a Cigna case: {stored}"
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_a_plan_checked_against_one_carrier_is_not_stored_after_a_correction() -> (
+    None
+):
+    """The check read Aetna; the person corrected the insurer to Cigna before
+    the write. The write carries the carrier it was checked against."""
+    aetna = await _carrier_row("Aetna", "555-0002")
+    cigna = await _carrier_row("Cigna", "555-0001")
+    aetna_plan = await _plan_of(aetna, "Aetna PPO", "555-0003")
+    denial = await Denial.objects.acreate(
+        denial_text="a denial", hashed_email="x", insurance_company_obj=aetna
+    )
+    checked_against = (aetna.id, None)
+    await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+        insurance_company_obj=cigna, insurance_company="Cigna"
+    )
+
+    stored = await DenialCreatorHelper._write_plan_if_the_carrier_still_holds(
+        denial.denial_id, aetna_plan, *checked_against
+    )
+
+    row = (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values("insurance_plan_obj_id", "insurance_company_obj_id")
+        .afirst()
+    )
+    assert stored is False
+    assert row["insurance_plan_obj_id"] is None
+    assert row["insurance_company_obj_id"] == cigna.id

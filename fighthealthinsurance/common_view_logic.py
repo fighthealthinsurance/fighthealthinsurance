@@ -2035,11 +2035,13 @@ class DenialCreatorHelper:
         A row with no structured carrier yet takes any plan; a row that holds
         one takes only that carrier's plans.
         """
-        carrier_id = (
+        row = dict(
             await Denial.objects.filter(denial_id=denial_id)
-            .values_list("insurance_company_obj_id", flat=True)
+            .values("insurance_company_obj_id", "insurance_company")
             .afirst()
+            or {}
         )
+        carrier_id = row.get("insurance_company_obj_id")
         if carrier_id is not None and carrier_id != plan.insurance_company_id:
             logger.debug(
                 f"Plan {plan.id} belongs to another carrier than the row holds; "
@@ -2052,12 +2054,53 @@ class DenialCreatorHelper:
             # No structured carrier yet, but the person named one in the box
             # and it is not this plan's.
             return False
-        return await cls._fill_if_empty(
-            denial_id, "insurance_plan_obj", plan, blank_is_empty=False
+        return await cls._write_plan_if_the_carrier_still_holds(
+            denial_id, plan, carrier_id, row.get("insurance_company")
         )
 
     @staticmethod
-    async def _fax_for_the_carrier_on_the_row(denial_id: int) -> Optional[str]:
+    async def _write_plan_if_the_carrier_still_holds(
+        denial_id: int, plan, carrier_id, typed_insurer
+    ) -> bool:
+        """Fill the empty plan column only if the row still holds the carrier
+        columns the plan was checked against; a correction landing between
+        the check and the write is kept."""
+        return bool(
+            await Denial.objects.filter(
+                denial_id=denial_id,
+                insurance_plan_obj__isnull=True,
+                insurance_company_obj_id=carrier_id,
+                insurance_company=typed_insurer,
+            ).aupdate(insurance_plan_obj=plan)
+        )
+
+    @classmethod
+    async def _fax_for_the_carrier_on_the_row(cls, denial_id: int) -> Optional[str]:
+        """The fax the row's carrier justifies; see _fax_and_its_justification."""
+        fax, _ = await cls._fax_and_its_justification(denial_id)
+        return fax
+
+    @staticmethod
+    async def _write_fax_if_the_carrier_still_holds(
+        denial_id: int, fax: str, justification: dict
+    ) -> bool:
+        """Write ``fax`` only if the row still holds what justified it.
+
+        The read that chose the number and the write that stores it are
+        separate statements, so a carrier correction landing between them
+        would otherwise get the old carrier's number written under it. The
+        write carries the carrier columns as they were read.
+        """
+        return bool(
+            await Denial.objects.filter(denial_id=denial_id, **justification)
+            .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
+            .aupdate(appeal_fax_number=fax)
+        )
+
+    @staticmethod
+    async def _fax_and_its_justification(
+        denial_id: int,
+    ) -> tuple[Optional[str], dict]:
         """The appeal fax of whichever carrier the row actually holds.
 
         Read after the carrier columns are written rather than before, so a
@@ -2076,6 +2119,7 @@ class DenialCreatorHelper:
                 "insurance_company_obj__appeal_fax_number",
                 "insurance_plan_obj__appeal_fax_number",
                 "insurance_plan_obj__insurance_company_id",
+                "insurance_plan_obj_id",
                 "insurance_company_obj__id",
                 "insurance_company_obj__name",
                 "insurance_plan_obj__insurance_company__name",
@@ -2084,8 +2128,13 @@ class DenialCreatorHelper:
             .afirst()
         )
         if not row:
-            return None
+            return None, {}
         company_id = row["insurance_company_obj__id"]
+        justification = {
+            "insurance_company_obj_id": company_id,
+            "insurance_plan_obj_id": row["insurance_plan_obj_id"],
+            "insurance_company": row["insurance_company"],
+        }
         if DenialCreatorHelper._names_disagree(
             row["insurance_company"], row["insurance_company_obj__name"]
         ) or (
@@ -2098,15 +2147,15 @@ class DenialCreatorHelper:
             # The box names one insurer and the structured column another
             # (a text correction made after the match). Neither number is
             # trusted; empty asks the person for one.
-            return None
+            return None, justification
         plan_fax = row["insurance_plan_obj__appeal_fax_number"]
         plan_company_id = row["insurance_plan_obj__insurance_company_id"]
         # A plan belonging to a different carrier than the row names is the
         # same mismatch one level down, so it has to agree too.
         if plan_fax and (company_id is None or plan_company_id == company_id):
-            return str(plan_fax)
+            return str(plan_fax), justification
         company_fax = row["insurance_company_obj__appeal_fax_number"]
-        return str(company_fax) if company_fax else None
+        return (str(company_fax) if company_fax else None), justification
 
     @staticmethod
     async def _fill_if_empty(
@@ -2852,12 +2901,12 @@ class DenialCreatorHelper:
             # and match_insurance_plan_from_regex. An empty fax number asks the
             # person for one. A wrong one sends the appeal, with everything in
             # it, to a company that has nothing to do with the claim.
-            propagated_fax = await cls._fax_for_the_carrier_on_the_row(denial_id)
+            propagated_fax, justified_by = await cls._fax_and_its_justification(
+                denial_id
+            )
             if propagated_fax:
-                rows_updated = (
-                    await Denial.objects.filter(denial_id=denial_id)
-                    .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
-                    .aupdate(appeal_fax_number=propagated_fax)
+                rows_updated = await cls._write_fax_if_the_carrier_still_holds(
+                    denial_id, propagated_fax, justified_by
                 )
                 if rows_updated:
                     logger.debug(
@@ -3163,7 +3212,14 @@ class DenialCreatorHelper:
             )
             if already:
                 return already
-            appeal_fax_number = await cls._fax_for_the_carrier_on_the_row(denial_id)
+            fallback_fax, justified_by = await cls._fax_and_its_justification(denial_id)
+            if fallback_fax and await cls._write_fax_if_the_carrier_still_holds(
+                denial_id, fallback_fax, justified_by
+            ):
+                return fallback_fax
+            # Nothing, or the carrier moved under the read: the letter's own
+            # verdict stands.
+            appeal_fax_number = None
         if appeal_fax_number is not None:
             # Conditional update: only write if no fax has been set since
             # we started (extract_set_insurance_company runs concurrently

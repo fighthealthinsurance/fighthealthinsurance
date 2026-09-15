@@ -58,3 +58,36 @@ async def test_without_asking_the_adapter_still_answers_none():
             system_prompts=["x"], prompt="a letter", timeout=1
         )
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_a_model_the_provider_no_longer_serves_is_reported_as_unreachable():
+    adapter = _adapter()
+    adapter._note_missing_model(adapter.api_base, adapter.model, "model not found")
+    with pytest.raises(ProviderUnavailable):
+        await adapter.get_plan_id("a letter")
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_in_a_messages_api_adapter_is_reported_when_asked():
+    """Adapters that override the transport never reach RemoteOpenLike's own
+    handling; their connection failures land in the rate-limited wrapper."""
+    from fighthealthinsurance.ml.ml_models import RateLimitedRemoteOpenLike
+
+    class Wrapped(RateLimitedRemoteOpenLike):
+        PROVIDER_LABEL = "test"
+
+        async def _do_infer(self, *args, **kwargs):
+            raise aiohttp.ClientConnectionError("connection refused")
+
+    adapter = Wrapped(api_base="http://provider.invalid/v1", token="t", model="m")
+    adapter._ensure_rate_limiter("m")
+    with pytest.raises(ProviderUnavailable):
+        await adapter._infer(
+            system_prompts=["x"], prompt="p", raise_on_unavailable=True
+        )
+    assert (
+        await adapter._infer(
+            system_prompts=["x"], prompt="p", raise_on_unavailable=False
+        )
+    ) is None
