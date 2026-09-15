@@ -1436,18 +1436,21 @@ def reserve_state(denial) -> str:
     return (denial.your_state or "").strip()
 
 
-async def reserve_state_now(denial_id) -> str:
-    """The state on the row at this moment, for the instant a reserve is promoted.
+def state_on_the_row_now():
+    """The row's state as a subquery, for the UPDATE that promotes a reserve.
 
-    The in-memory denial can be minutes old by then, and a correction that
-    landed meanwhile has to decide.
+    Read in the same statement as the promotion, so a correction landing
+    between a separate read and the write cannot slip a wrong-state row
+    through. Matches the stamp's spelling: empty for no state.
     """
-    state = (
-        await Denial.objects.filter(denial_id=denial_id)
-        .values_list("your_state", flat=True)
-        .afirst()
+    from django.db.models import OuterRef, Subquery, Value
+    from django.db.models.functions import Coalesce
+
+    return Subquery(
+        Denial.objects.filter(denial_id=OuterRef("for_denial"))
+        .annotate(now=Coalesce("your_state", Value("")))
+        .values("now")[:1]
     )
-    return (state or "").strip()
 
 
 def served_reserve_for_another_state(denial) -> Q:
@@ -1737,33 +1740,36 @@ class DenialCreatorHelper:
             if health_history is not None:
                 denial.health_history = health_history
 
-            # Only update these fields if they're provided
-            if creating_professional is not None:
-                denial.creating_professional = creating_professional
-            if primary_professional is not None:
-                denial.primary_professional = primary_professional
-            if patient_user is not None:
-                denial.patient_user = patient_user
-            if insurance_company is not None:
-                denial.insurance_company = insurance_company
-            if insurance_company_obj is not None:
-                denial.insurance_company_obj = insurance_company_obj
-            if insurance_plan_obj is not None:
-                denial.insurance_plan_obj = insurance_plan_obj
-            if patient_visible is not None:
-                denial.patient_visible = patient_visible
-            if microsite_slug is not None:
-                denial.microsite_slug = microsite_slug
-            if referral_source is not None:
-                denial.referral_source = referral_source
-            if referral_source_details is not None:
-                denial.referral_source_details = referral_source_details
+            # Only update these fields if they're provided. Every column
+            # assigned is named, so the save below writes nothing else: a
+            # full-row save wrote this request's copy of every column,
+            # including a state the review page corrected while it ran.
+            assigned = ["denial_text", "hashed_email", "use_external", "raw_email"]
+            if health_history is not None:
+                assigned.append("health_history")
+            optional_columns = (
+                ("creating_professional", creating_professional),
+                ("primary_professional", primary_professional),
+                ("patient_user", patient_user),
+                ("insurance_company", insurance_company),
+                ("insurance_company_obj", insurance_company_obj),
+                ("insurance_plan_obj", insurance_plan_obj),
+                ("patient_visible", patient_visible),
+                ("microsite_slug", microsite_slug),
+                ("referral_source", referral_source),
+                ("referral_source_details", referral_source_details),
+            )
+            for column, value in optional_columns:
+                if value is not None:
+                    setattr(denial, column, value)
+                    assigned.append(column)
 
             # Update tracking info if provided
             if tracking_info:
                 tracking_info.update_model_fields(denial)
+                assigned += ["user_agent", "asn", "asn_name", "ip_address"]
 
-            denial.save()
+            denial.save(update_fields=assigned)
             if contact_opt_in_before != bool((possible_email or "").strip()):
                 # Best-effort, no outbox row: a lost signal fails SAFE because
                 # the nudge activity independently gates on the RETAINED
@@ -1788,13 +1794,17 @@ class DenialCreatorHelper:
             previous_zip3 = (denial.service_zip or "").strip()
             zip_changed = bool(previous_zip3) and previous_zip3 != zip[:3]
             confirmed_state = (denial.state or "").strip()
-            changed_state_fields = ["service_zip", "your_state"]
+            # Every column named here is written from this request's copy of
+            # the row, so a column is named only when this request changed
+            # it: a review correction landing meanwhile keeps its value.
+            changed_state_fields = ["service_zip"]
             if confirmed_state and not zip_changed:
                 # Owner decision 2026-09-13: new cases only, no backfill
                 # migration, so this pass is the only thing that ever brings
                 # a pre-existing mismatched row back into step.
                 if (denial.your_state or "").strip() != confirmed_state:
                     denial.your_state = confirmed_state
+                    changed_state_fields.append("your_state")
             else:
                 inferred_state = None
                 try:
@@ -1803,6 +1813,7 @@ class DenialCreatorHelper:
                     logger.debug(f"Zip code lookup failed for {zip}: {e}")
                 if inferred_state:
                     denial.your_state = inferred_state
+                    changed_state_fields.append("your_state")
                     if confirmed_state:
                         # Reached from the zip they just replaced, so it no
                         # longer confirms anything; left on the row, the next
@@ -1837,7 +1848,7 @@ class DenialCreatorHelper:
             employer_name = g.group(1)
             if len(employer_name) < 300:
                 denial.employer_name = employer_name
-                denial.save()
+                denial.save(update_fields=["employer_name"])
 
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
@@ -1889,6 +1900,11 @@ class DenialCreatorHelper:
                     f"denial {denial_id}"
                 )
 
+        if health_history is None and plan_documents is None:
+            # Nothing for the optional-step save to write. Its full-row save
+            # would put this request's copy of every column back, including
+            # a state the review page corrected while this request ran.
+            return cls.format_denial_response_info(denial)
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
@@ -4028,7 +4044,7 @@ class AppealsBackendHelper:
                         pk=row.pk,
                         speculative=True,
                         chosen=False,
-                        built_for_state=await reserve_state_now(denial.denial_id),
+                        built_for_state=state_on_the_row_now(),
                     ).aupdate(speculative=False):
                         continue
                     row.speculative = False
@@ -4816,9 +4832,14 @@ class AppealsBackendHelper:
                         # pattern as the reserve flush; if the flush claimed
                         # it first the update is a no-op and the row is
                         # already deliverable.
+                        # Its text is the live run's own, so it is served
+                        # for the state the row holds now: restamp it, or the
+                        # replay filter hides it next time under the old one.
                         await ProposedAppeal.objects.filter(
                             pk=existing.pk, speculative=True
-                        ).aupdate(speculative=False)
+                        ).aupdate(
+                            speculative=False, built_for_state=state_on_the_row_now()
+                        )
                         existing.speculative = False
                     if existing.appeal_text != appeal_text:
                         # A normalized variant collided: stream the DURABLE
@@ -5490,7 +5511,7 @@ class AppealsBackendHelper:
                         pk=row.pk,
                         speculative=True,
                         chosen=False,
-                        built_for_state=await reserve_state_now(denial.denial_id),
+                        built_for_state=state_on_the_row_now(),
                     ).aupdate(speculative=False):
                         continue
                     row.speculative = False

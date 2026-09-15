@@ -2644,6 +2644,22 @@ class ConfirmedStateTest(TestCase):
             denial_type.get_form()().plan_context(denial),
         )
 
+    def test_an_intake_request_that_loaded_before_a_correction_keeps_it(self):
+        """Intake loaded NY/NY for an unchanged zip; the review page committed
+        CA to both columns while it ran; intake saves last. It must name only
+        the columns it changed, so the correction stands."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        stale_copy = Denial.objects.get(denial_id=denial.denial_id)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            state="CA", your_state="CA"
+        )
+
+        self._submit_upload_page(self.NY_ZIP, denial=stale_copy)
+
+        fresh = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertEqual((fresh.state, fresh.your_state), ("CA", "CA"))
+
     def test_a_failed_zip_lookup_can_be_retried_with_the_same_zip(self):
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="NY")

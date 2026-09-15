@@ -475,26 +475,17 @@ class SpeculativeAppealsHelper:
             # from anything the live flow claimed (claiming flips
             # speculative=False) while the refresh was running.
             if confirmed_context and saved:
-                from django.db.models import OuterRef, Subquery, Value
-                from django.db.models.functions import Coalesce
-
-                # The state the row holds at the moment of the delete, read in
-                # the same statement: a run whose state moved after its own
-                # check above must not retire the run that replaced it.
-                state_now = Subquery(
-                    Denial.objects.filter(denial_id=OuterRef("for_denial"))
-                    .annotate(now=Coalesce("your_state", Value("")))
-                    .values("now")[:1]
-                )
+                # Only rows older than this run's: a run that started later
+                # holds the newer inputs, and an older run finishing last
+                # must not retire it. Everything older is superseded,
+                # including a confirmed reserve for the same state written
+                # for a procedure since corrected.
                 superseded, _ = (
                     await ProposedAppeal.objects.filter(
                         for_denial=denial, speculative=True, chosen=False
                     )
                     .exclude(pk__in=created_pks)
-                    .exclude(
-                        context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
-                        built_for_state=state_now,
-                    )
+                    .exclude(pk__gt=max(created_pks))
                     .adelete()
                 )
                 if superseded:

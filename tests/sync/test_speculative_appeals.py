@@ -584,6 +584,16 @@ class ConfirmedContextRefreshTest(TestCase):
                 confirmed_context=True,
             )
         self.assertEqual(count, 1)
+        # And the reserve written for the values before the edit is gone:
+        # same state, wrong procedure, not worth keeping.
+        self.assertEqual(
+            list(
+                ProposedAppeal.objects.filter(for_denial=self.denial).values_list(
+                    "appeal_text", flat=True
+                )
+            ),
+            ["A second confirmed refresh after the user edited the values."],
+        )
 
 
 class ConfirmedContextDispatchRuleTest(TestCase):
