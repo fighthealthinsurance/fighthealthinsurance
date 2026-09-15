@@ -509,6 +509,34 @@ class QuestionsAreForTheInputsTheyWereGeneratedForTest(QuestionsStepTestBase):
         generate.assert_not_awaited()
 
 
+class OnlyAQuestionnaireCanWithdrawTest(QuestionsStepTestBase):
+    def test_generation_without_a_questionnaire_keeps_the_derived_sentence(self):
+        from fighthealthinsurance.common_view_logic import (
+            record_derived_medical_context,
+        )
+
+        self.denial.qa_context = json.dumps(
+            {"medical_context": "This is an urgent claim."}
+        )
+
+        changed = record_derived_medical_context(self.denial, set(), withdraw=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            json.loads(self.denial.qa_context)["medical_context"],
+            "This is an urgent claim.",
+        )
+
+    def test_the_questionnaire_form_carries_its_mark_and_the_mark_is_not_stored(self):
+        response = self.client.get(reverse("find_next_steps"), self._ref())
+        self.assertIn('name="questionnaire"', response.content.decode())
+
+        self._generate_appeal(questionnaire="1")
+
+        after = self.denial_after_post().qa_context
+        self.assertTrue(not after or "questionnaire" not in json.loads(after), after)
+
+
 class BackAfterAnUnfinishedRunTest(QuestionsStepTestBase):
     def test_back_after_a_run_that_never_finished_does_not_say_we_have_what_we_need(
         self,

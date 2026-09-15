@@ -214,6 +214,103 @@ class QuestionGenerationDeadlineTest(TestCase):
 
     @pytest.mark.django_db
     @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_nobody_answering_is_unfinished_not_finished_empty(self, _citations):
+        """The inner generators return None when their backends all failed;
+        that must not be counted as an answer of nothing."""
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            MLAppealQuestionsHelper,
+        )
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8207,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+                procedure="MRI",
+                diagnosis="knee pain",
+            )
+            try:
+                with patch.object(
+                    MLAppealQuestionsHelper,
+                    "generate_generic_questions",
+                    new=AsyncMock(return_value=None),
+                ), patch.object(
+                    MLAppealQuestionsHelper,
+                    "generate_specific_questions",
+                    new=AsyncMock(return_value=None),
+                ), patch(
+                    "fighthealthinsurance.pa_requirements.get_pa_questions_for_denial",
+                    return_value=[],
+                ):
+                    questions = (
+                        await MLAppealQuestionsHelper.generate_questions_for_denial(
+                            denial, speculative=False
+                        )
+                    )
+                self.assertIsNone(questions)
+                stored = await Denial.objects.aget(denial_id=denial.denial_id)
+                self.assertIsNone(stored.generated_questions)
+            finally:
+                await Denial.objects.filter(denial_id=8207).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_a_set_stored_for_a_corrected_procedure_is_regenerated_not_relabelled(
+        self, _citations
+    ):
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            MLAppealQuestionsHelper,
+            questions_fingerprint,
+        )
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8208,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied a CT scan.",
+                procedure="CT scan",
+                diagnosis="knee pain",
+                generated_questions=[["Q about the MRI?", ""]],
+                generated_questions_for=questions_fingerprint("MRI", "knee pain"),
+            )
+            try:
+                with patch.object(
+                    MLAppealQuestionsHelper,
+                    "generate_generic_questions",
+                    new=AsyncMock(return_value=[("Q about the CT?", "")]),
+                ) as generic, patch.object(
+                    MLAppealQuestionsHelper,
+                    "generate_specific_questions",
+                    new=AsyncMock(return_value=None),
+                ), patch(
+                    "fighthealthinsurance.pa_requirements.get_pa_questions_for_denial",
+                    return_value=[],
+                ):
+                    questions = (
+                        await MLAppealQuestionsHelper.generate_questions_for_denial(
+                            denial, speculative=False
+                        )
+                    )
+                generic.assert_awaited_once()
+                self.assertEqual(
+                    [tuple(q) for q in questions], [("Q about the CT?", "")]
+                )
+                stored = await Denial.objects.aget(denial_id=denial.denial_id)
+                self.assertEqual(
+                    stored.generated_questions_for,
+                    questions_fingerprint("CT scan", "knee pain"),
+                )
+            finally:
+                await Denial.objects.filter(denial_id=8208).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch(_CITATIONS, new_callable=AsyncMock)
     def test_a_second_run_does_not_replace_the_first_runs_questions(self, _citations):
         """The helper's own write site, against a stale in-memory row.
 

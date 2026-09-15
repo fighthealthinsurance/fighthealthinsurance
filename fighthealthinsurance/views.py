@@ -1606,7 +1606,13 @@ class GenerateAppeal(View):
         elems = dict((k, v[0]) for k, v in elems.items())
         try:
             generated_questions: list[tuple[str, str]] = denial.generated_questions  # type: ignore
-            restricted = ["csrfmiddlewaretoken", "denial_id", "email", "semi_sekret"]
+            restricted = [
+                "csrfmiddlewaretoken",
+                "denial_id",
+                "email",
+                "semi_sekret",
+                "questionnaire",
+            ]
             updates: dict[str, str] = {}
             for k, v in elems.items():
                 key = k

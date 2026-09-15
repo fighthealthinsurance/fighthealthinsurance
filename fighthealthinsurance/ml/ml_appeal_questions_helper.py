@@ -78,7 +78,7 @@ class MLAppealQuestionsHelper:
     @staticmethod
     async def generate_generic_questions(
         procedure: Optional[str], diagnosis: Optional[str], timeout: int = 90
-    ) -> List[Tuple[str, str]]:
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate generic appeal questions based only on procedure and diagnosis.
         These are cached for reuse across multiple patients with the same procedure/diagnosis.
@@ -165,7 +165,8 @@ class MLAppealQuestionsHelper:
                 logger.opt(exception=True).warning(
                     f"Error caching generic questions: {e}"
                 )
-        return questions if questions else []
+        # None when nobody answered, so the caller can tell that from [].
+        return questions
 
     @staticmethod
     def make_score_fn(
@@ -217,7 +218,7 @@ class MLAppealQuestionsHelper:
         diagnosis: Optional[str],
         timeout: int = 90,
         use_external: bool = False,
-    ) -> List[Tuple[str, str]]:
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate specific appeal questions based on denial text, patient info, procedure, and diagnosis.
         These are not cached between patients.
@@ -268,7 +269,8 @@ class MLAppealQuestionsHelper:
             ),
             timeout=model_timeout,
         )
-        return questions if questions else []
+        # None when nobody answered, so the caller can tell that from [].
+        return questions
 
     @staticmethod
     async def generate_questions_for_denial(
@@ -306,7 +308,14 @@ class MLAppealQuestionsHelper:
             questions = cast(
                 List[Tuple[str, str]], denial.candidate_generated_questions
             )
-        elif denial.generated_questions and len(denial.generated_questions) > 0:
+        elif (
+            denial.generated_questions
+            and len(denial.generated_questions) > 0
+            and denial.generated_questions_for in (None, generated_for)
+        ):
+            # A stored set is reused only when it was generated for the
+            # inputs the row holds now (or predates the stamp). One stored
+            # for a since-corrected procedure is regenerated, not relabelled.
             logger.debug(f"Using cached questions for denial {denial.denial_id}")
             questions = cast(List[Tuple[str, str]], denial.generated_questions)
         else:
@@ -322,7 +331,10 @@ class MLAppealQuestionsHelper:
 
             async def watched(name: str, coro):
                 result = await coro
-                answered.append(name)
+                if result is not None:
+                    # None is the generator's "nobody answered"; [] is an
+                    # answer with nothing in it.
+                    answered.append(name)
                 return result
 
             no_context_awaitable = watched(

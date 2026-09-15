@@ -34,6 +34,8 @@ Additional Resources & Questions
 </div>
 {% endif %}
 <form action="{% url 'generate_appeal' %}" method="post">
+  {# The mark of a questionnaire submission: only this form can withdraw an answer. #}
+  <input type="hidden" name="questionnaire" value="1">
   {% csrf_token %}
   {{ denial_form }}
   {% if combined.fields %}

@@ -1519,7 +1519,9 @@ class ProfessionalNotificationHelper:
 QUESTION_GENERATION_DEADLINE_SECONDS = 130
 
 
-def record_derived_medical_context(denial, medical_context: set[str]) -> bool:
+def record_derived_medical_context(
+    denial, medical_context: set[str], withdraw: bool = True
+) -> bool:
     """Replace, never add to, the sentence the answers derive.
 
     ``medical_context`` is computed from the current answers on every
@@ -1538,7 +1540,7 @@ def record_derived_medical_context(denial, medical_context: set[str]) -> bool:
             {"medical_context": " ".join(sorted(sentences))},
             source="appeal_gen_form",
         )
-    else:
+    elif withdraw:
         merge_qa(denial, {}, source="appeal_gen_form", withdraw=["medical_context"])
     return bool(denial.qa_context != before)
 
@@ -1665,7 +1667,10 @@ class DenialCreatorHelper:
                 f"generation: {e}"
             )
             return None
-        if denial.generated_questions:
+        if denial.generated_questions and denial.generated_questions_for in (
+            None,
+            questions_fingerprint(denial.procedure, denial.diagnosis),
+        ):
             return cast(List[Tuple[str, str]], denial.generated_questions)
         if (
             denial.candidate_generated_questions
@@ -4318,7 +4323,12 @@ class AppealsBackendHelper:
         # behavior users see, and silent background retries were eating it
         # (PR #963 review).
         dirty_fields = set() if background else {"gen_attempts"}
-        if record_derived_medical_context(denial, medical_context):
+        # Only a questionnaire submission can withdraw the derived sentence.
+        # Back and background generation carry no answers, so their empty
+        # forms say nothing about what the person decided.
+        if record_derived_medical_context(
+            denial, medical_context, withdraw=bool(parameters.get("questionnaire"))
+        ):
             dirty_fields.add("qa_context")
         if plan_context:
             merge_plan_context(denial, sorted(plan_context))
