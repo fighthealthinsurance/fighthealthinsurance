@@ -1615,7 +1615,9 @@ class AppealGenerator(object):
             if hasattr(m, model_method_name)
         ]
         if not models_to_try:
-            return None
+            # The regexes found nothing and there is nobody to ask: that is
+            # a read that could not happen, not a letter with nothing in it.
+            raise ExtractionUnavailable(f"no model configured for {model_method_name}")
 
         denial_lowered = denial_text.lower()
 
@@ -1901,14 +1903,29 @@ class AppealGenerator(object):
 
         # If regex fails, use ML models with known companies as context
         models_to_try = ml_router.entity_extract_backends(use_external)
+        answered = False
         for model in models_to_try:
-            if hasattr(model, "get_insurance_company"):
+            if not hasattr(model, "get_insurance_company"):
+                continue
+            try:
                 insurance_company: Optional[str] = await model.get_insurance_company(
                     denial_text
                 )
-                if insurance_company is not None and "UNKNOWN" not in insurance_company:
-                    return insurance_company
-
+            except Exception as e:
+                # A provider that could not be reached is not an answer.
+                logger.debug(
+                    f"get_insurance_company via {model} failed -- "
+                    f"{describe_model_error(e)}"
+                )
+                continue
+            answered = True
+            if insurance_company is not None and "UNKNOWN" not in insurance_company:
+                return insurance_company
+        if not answered:
+            # Nobody could be asked, or nobody answered: the caller has its
+            # own regexes to fall back on, and reports failed only if those
+            # find nothing either.
+            raise ExtractionUnavailable("no model answered get_insurance_company")
         return None
 
     async def get_plan_id(self, denial_text=None, use_external=False) -> Optional[str]:
@@ -2119,7 +2136,7 @@ class AppealGenerator(object):
             proc = None
         if diag is not None and len(diag) > 200:
             diag = None
-        if proc is None and diag is None and len(models_to_try) > 1 and not answered:
+        if proc is None and diag is None and not answered:
             # The regex found nothing (its (None, None) is a truthy tuple and
             # can be the "best") and no model got an answer out: a read that
             # failed, not a letter with nothing in it.

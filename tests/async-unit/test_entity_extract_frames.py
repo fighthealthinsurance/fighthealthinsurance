@@ -700,16 +700,27 @@ def _the_providers_are_down():
 
     ``_the_models_are_down`` raises from a stand-in's methods, which is one
     layer above where a real adapter turns a dead provider into ``None``.
-    This one is the shipped OpenAI-compatible adapter pointed at a closed
-    port, so the transport failure is the real thing.
+    This one is the shipped OpenAI-compatible adapter with the transport
+    refusing at the aiohttp boundary, so the adapter's own handling of a
+    dead provider is what runs.
     """
     from fighthealthinsurance import generate_appeal
     from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 
+    import aiohttp
+
     nobody_home = RemoteFullOpenLike(
-        api_base="http://127.0.0.1:9/v1", token="not-a-token", model="not-a-model"
+        api_base="http://provider.invalid/v1", token="not-a-token", model="not-a-model"
     )
+
+    def refused(*args, **kwargs):
+        raise aiohttp.ClientConnectionError("connection refused")
+
     with contextlib.ExitStack() as stack:
+        # The transport is mocked at the aiohttp boundary: no socket opens.
+        stack.enter_context(
+            patch.object(aiohttp.ClientSession, "post", side_effect=refused)
+        )
         stack.enter_context(
             patch.object(
                 generate_appeal.ml_router,
@@ -746,6 +757,58 @@ async def test_a_dead_provider_behind_a_real_adapter_is_not_absent_from_the_lett
     await _regex_source()
     denial = await _make_denial()
     with _the_providers_are_down():
+        records = await _run(denial)
+
+    for task in (
+        EXTRACTION_TASK_PLAN_ID,
+        EXTRACTION_TASK_CLAIM_ID,
+        EXTRACTION_TASK_DATE_OF_SERVICE,
+        EXTRACTION_TASK_INSURANCE_COMPANY,
+        EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
+    ):
+        assert _outcome_for(records, task) == EXTRACTION_OUTCOME_FAILED, task
+
+
+@contextlib.contextmanager
+def _no_model_is_configured():
+    """Real setters, real appealGenerator, an empty backend list."""
+    from fighthealthinsurance import generate_appeal
+
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch.object(
+                generate_appeal.ml_router, "entity_extract_backends", return_value=[]
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                MLPlanDocHelper,
+                "generate_plan_documents_summary",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                DenialCreatorHelper,
+                "_maybe_dispatch_ucr",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                common_view_logic, "fire_and_forget_in_new_threadpool", _swallow
+            )
+        )
+        yield
+
+
+@pytest.mark.asyncio
+async def test_no_configured_model_is_could_not_read_not_absent_from_the_letter():
+    """Nobody looked. "Not in this letter" would be a claim about the letter
+    that nothing made."""
+    await _regex_source()
+    denial = await _make_denial()
+    with _no_model_is_configured():
         records = await _run(denial)
 
     for task in (
