@@ -473,6 +473,30 @@ async def test_a_find_we_could_not_write_down_is_not_reported_as_filled_in():
 
 
 @pytest.mark.asyncio
+async def test_a_retry_that_fails_spends_one_attempt_not_two():
+    """The retry spends its attempt up front, in clear_extraction_for_retry.
+    The reader's own failure path bumped the counter again, so one failed
+    retry cost two of the three reads the person is allowed."""
+    denial = await _make_denial()
+    down = AsyncMock(side_effect=RuntimeError("the model is down"))
+    with _only_the_letter_reader(), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator."
+        "get_procedure_and_diagnosis",
+        new=down,
+    ):
+        await _run(denial)
+    assert (await _reload(denial)).extract_attempts == 1
+    with _only_the_letter_reader(), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator."
+        "get_procedure_and_diagnosis",
+        new=down,
+    ):
+        await _run(denial, retry=True)
+
+    assert (await _reload(denial)).extract_attempts == 2
+
+
+@pytest.mark.asyncio
 async def test_the_retry_button_cannot_be_pressed_forever():
     """The cap has to count reads, not just the reads that raised.
 

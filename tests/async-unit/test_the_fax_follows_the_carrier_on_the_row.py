@@ -225,3 +225,50 @@ async def test_a_match_that_contradicts_the_insurer_the_person_named_is_not_stor
     assert row["insurance_company"] == "Cigna"
     assert row["insurance_company_obj_id"] is None
     assert not row["appeal_fax_number"], "Aetna's fax landed on a Cigna case"
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_the_regex_plan_matcher_honours_the_insurer_the_person_named() -> None:
+    """No structured carrier yet, Cigna typed in the box, and the letter
+    matches an Aetna plan. The box wins: nothing structured is stored."""
+    await _carrier_row("Cigna", "555-0001")
+    other = await _carrier_row("Aetna", "555-0002")
+    await _plan_of(other, "Aetna PPO", "555-0003", regex="Aetna PPO")
+    denial = await Denial.objects.acreate(
+        denial_text="Your Aetna PPO claim was denied.",
+        hashed_email="x",
+        insurance_company="Cigna",
+    )
+
+    matched = await DenialCreatorHelper.match_insurance_plan_from_regex(
+        denial.denial_id
+    )
+
+    row = (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values(
+            "insurance_plan_obj_id", "insurance_company_obj_id", "insurance_company"
+        )
+        .afirst()
+    )
+    assert matched is None
+    assert row["insurance_plan_obj_id"] is None
+    assert row["insurance_company_obj_id"] is None
+    assert row["insurance_company"] == "Cigna"
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_a_text_correction_after_the_match_leaves_the_fax_empty() -> None:
+    """The structured carrier says Aetna from an earlier match; the person
+    then corrects the insurer box to Cigna. Aetna's fax is not theirs."""
+    other = await _carrier("Aetna", "555-0002")
+    denial = await Denial.objects.acreate(
+        denial_text="a denial",
+        hashed_email="x",
+        insurance_company="Cigna",
+        insurance_company_obj=other,
+    )
+
+    fax = await DenialCreatorHelper._fax_for_the_carrier_on_the_row(denial.denial_id)
+
+    assert fax is None

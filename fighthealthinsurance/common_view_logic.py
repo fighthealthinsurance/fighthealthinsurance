@@ -1993,23 +1993,40 @@ class DenialCreatorHelper:
         return cls._extraction_record(task, cls._outcome_for_result(result))
 
     @staticmethod
-    async def _row_names_another_carrier(denial_id: int, matched) -> bool:
+    def _names_disagree(named: Optional[str], theirs: Optional[str]) -> bool:
+        """Does the insurer the person wrote disagree with a carrier's name?
+
+        An empty box, or one naming the same carrier, is agreement.
+        """
+        named = (named or "").strip().lower()
+        theirs = (theirs or "").strip().lower()
+        if not named or not theirs:
+            return False
+        return not (named in theirs or theirs in named)
+
+    @classmethod
+    async def _row_names_another_carrier(cls, denial_id: int, matched) -> bool:
         """Does the insurer the person wrote in the box disagree with ``matched``?
 
         The free-text name is theirs to correct and is never overwritten, so
         a structured match that contradicts it must not be stored beside it.
-        An empty box, or one naming the same carrier, is agreement.
+        ``matched`` is a carrier, or a carrier id when only that is to hand.
         """
         named = (
             await Denial.objects.filter(denial_id=denial_id)
             .values_list("insurance_company", flat=True)
             .afirst()
         ) or ""
-        named = named.strip().lower()
-        if not named:
+        if not named.strip():
             return False
-        theirs = (matched.name or "").strip().lower()
-        return not (named in theirs or theirs in named)
+        theirs = (
+            matched.name
+            if hasattr(matched, "name")
+            else await InsuranceCompany.objects.filter(id=matched)
+            .values_list("name", flat=True)
+            .afirst()
+        )
+        return cls._names_disagree(named, theirs)
 
     @classmethod
     async def _store_plan_if_it_is_the_rows_carriers(cls, denial_id: int, plan) -> bool:
@@ -2028,6 +2045,12 @@ class DenialCreatorHelper:
                 f"Plan {plan.id} belongs to another carrier than the row holds; "
                 f"not storing it"
             )
+            return False
+        if carrier_id is None and await cls._row_names_another_carrier(
+            denial_id, plan.insurance_company_id
+        ):
+            # No structured carrier yet, but the person named one in the box
+            # and it is not this plan's.
             return False
         return await cls._fill_if_empty(
             denial_id, "insurance_plan_obj", plan, blank_is_empty=False
@@ -2054,12 +2077,21 @@ class DenialCreatorHelper:
                 "insurance_plan_obj__appeal_fax_number",
                 "insurance_plan_obj__insurance_company_id",
                 "insurance_company_obj__id",
+                "insurance_company_obj__name",
+                "insurance_company",
             )
             .afirst()
         )
         if not row:
             return None
         company_id = row["insurance_company_obj__id"]
+        if DenialCreatorHelper._names_disagree(
+            row["insurance_company"], row["insurance_company_obj__name"]
+        ):
+            # The box names one insurer and the structured column another
+            # (a text correction made after the match). Neither number is
+            # trusted; empty asks the person for one.
+            return None
         plan_fax = row["insurance_plan_obj__appeal_fax_number"]
         plan_company_id = row["insurance_plan_obj__insurance_company_id"]
         # A plan belonging to a different carrier than the row names is the
@@ -2238,7 +2270,7 @@ class DenialCreatorHelper:
         required_awaitables: list[Coroutine[Any, Any, dict]] = [
             # Denial type depends on denial and diagnosis
             cls._run_extraction_step(
-                cls.extract_set_denial_and_diagnosis(denial_id),
+                cls.extract_set_denial_and_diagnosis(denial_id, attempt_spent=retry),
                 EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
             ),
             cls._run_extraction_step(
@@ -2358,7 +2390,9 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_denial_and_diagnosis(cls, denial_id: int) -> str:
+    async def extract_set_denial_and_diagnosis(
+        cls, denial_id: int, attempt_spent: bool = False
+    ) -> str:
         """
         Asynchronously extracts procedure and diagnosis from a denial's text and updates the denial record.
 
@@ -2532,15 +2566,20 @@ class DenialCreatorHelper:
             # subsequent extract_entity call can re-attempt extraction on
             # transient failures. Bump extract_attempts atomically (F()
             # makes concurrent-reconnect increments race-safe) so
-            # extract_entity's gate stops retrying after 3 failures.
-            try:
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    extract_attempts=F("extract_attempts") + 1
-                )
-            except Exception as inner:
-                logger.opt(exception=True).debug(
-                    f"Failed to bump extract_attempts for denial {denial_id}: {inner}"
-                )
+            # extract_entity's gate stops retrying after 3 failures. An
+            # authorized retry spent its attempt up front, in
+            # clear_extraction_for_retry; a failed retry is one attempt,
+            # not two.
+            if not attempt_spent:
+                try:
+                    await Denial.objects.filter(denial_id=denial_id).aupdate(
+                        extract_attempts=F("extract_attempts") + 1
+                    )
+                except Exception as inner:
+                    logger.opt(exception=True).debug(
+                        f"Failed to bump extract_attempts for denial {denial_id}: "
+                        f"{inner}"
+                    )
             return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
@@ -3070,6 +3109,7 @@ class DenialCreatorHelper:
                             f"Found fax number in plan documents for denial {denial_id}"
                         )
             except Exception as e:
+                reader_failed = reader_failed or isinstance(e, ExtractionUnavailable)
                 logger.opt(exception=True).warning(
                     f"Failed to extract fax number from plan docs for {denial_id}: {e}"
                 )
