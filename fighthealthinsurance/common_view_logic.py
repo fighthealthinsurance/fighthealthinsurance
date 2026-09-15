@@ -46,7 +46,7 @@ from django.db.models.functions import Length
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.utils.html import escape as html_escape
+from django.utils.html import format_html, escape as html_escape
 
 import asyncstdlib as a
 import ray
@@ -1039,7 +1039,13 @@ class FindNextStepsHelper:
                             label=question,
                             required=False,
                             initial=stored if stored is not None else "",
-                            help_text=(f"One way to answer: {hint}" if hint else ""),
+                            # Escaped: the form's table template marks
+                            # help_text safe, and this text is model output.
+                            help_text=(
+                                format_html("One way to answer: {}", hint)
+                                if hint
+                                else ""
+                            ),
                         )
 
             question_forms.append(AppealQuestionsForm())
@@ -1515,10 +1521,13 @@ def record_derived_medical_context(denial, medical_context: set[str]) -> bool:
     whether qa_context changed.
     """
     before = denial.qa_context
-    if medical_context:
+    # A form whose boxes are all unticked derives "", which is not a
+    # sentence; {""} must read as nothing derived.
+    sentences = {text.strip() for text in medical_context if text and text.strip()}
+    if sentences:
         merge_qa(
             denial,
-            {"medical_context": " ".join(sorted(medical_context))},
+            {"medical_context": " ".join(sorted(sentences))},
             source="appeal_gen_form",
         )
     else:

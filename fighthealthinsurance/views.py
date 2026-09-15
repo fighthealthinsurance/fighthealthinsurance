@@ -1639,6 +1639,16 @@ class GenerateAppeal(View):
             withdrawn = [
                 k for k, v in updates.items() if not str(v).strip() and k in stored
             ]
+            # An answer once filed under the raw field name (the question was
+            # unmappable at the time) shadows the canonical key on Back and
+            # survives a clear. Whatever the person does to a question now
+            # also retires that older copy.
+            for raw in elems:
+                if not raw.startswith(GENERATED_QUESTION_PREFIX) or raw not in stored:
+                    continue
+                question = question_text_for_field(raw, generated_questions)
+                if question is not None and raw != qa_key_for_question(question):
+                    withdrawn.append(raw)
             merge_qa(denial, updates, source="appeal_form_post", withdraw=withdrawn)
             denial.save(update_fields=["qa_context"])
         except Exception as e:

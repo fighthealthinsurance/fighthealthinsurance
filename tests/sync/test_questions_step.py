@@ -342,6 +342,55 @@ class WithdrawingAnAnswerTest(QuestionsStepTestBase):
         )
 
 
+class WithdrawalEdgesTest(QuestionsStepTestBase):
+    def setUp(self):
+        super().setUp()
+        self.denial.generated_questions = [[_Q1, ""]]
+        self.denial.save(update_fields=["generated_questions"])
+        self.field = question_field_name(_Q1)
+        self.key = qa_key_for_question(_Q1)
+
+    def test_a_form_deriving_an_empty_sentence_withdraws_the_old_one(self):
+        """InsuranceQuestions.medical_context() returns "" when every box is
+        unticked, so the collector hands over {""}: not a sentence."""
+        from fighthealthinsurance.common_view_logic import (
+            record_derived_medical_context,
+        )
+
+        self.denial.qa_context = json.dumps(
+            {"medical_context": "This is an urgent claim."}
+        )
+
+        record_derived_medical_context(self.denial, {""})
+
+        self.assertNotIn("medical_context", json.loads(self.denial.qa_context))
+
+    def test_an_answer_filed_under_the_raw_field_name_is_withdrawn_with_the_question(
+        self,
+    ):
+        """A submission while the question was unmappable filed the answer
+        under the raw field name. Clearing the question now has to retire
+        that copy too, or Back shows it again."""
+        self.denial.qa_context = json.dumps({self.field: "an older answer"})
+        self.denial.save(update_fields=["qa_context"])
+
+        self._generate_appeal(**{self.field: ""})
+
+        self.assertNotIn(self.field, self._qa())
+
+    def test_a_suggested_answer_with_markup_reaches_the_page_as_text(self):
+        self.denial.generated_questions = [
+            [_Q1, "<b onmouseover=alert(1)>six</b> months"]
+        ]
+        self.denial.save(update_fields=["generated_questions"])
+
+        response = self.client.get(reverse("find_next_steps"), self._ref())
+
+        body = response.content.decode()
+        self.assertNotIn("<b onmouseover", body)
+        self.assertIn("&lt;b onmouseover", body)
+
+
 class InNetworkOwnershipTest(QuestionsStepTestBase):
     """Whoever can see the box owns the answer in it.
 
