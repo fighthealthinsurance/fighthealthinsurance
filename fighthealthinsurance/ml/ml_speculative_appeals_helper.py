@@ -41,6 +41,15 @@ from fighthealthinsurance.context_utils import (
 from fighthealthinsurance.utils import is_real_appeal
 
 
+def reserve_context(denial) -> tuple[str, str, str]:
+    """(state, procedure, diagnosis) a reserve is written for.
+
+    Takes a Denial or a ``values()`` row of the same three columns.
+    """
+    get = denial.get if isinstance(denial, dict) else lambda k: getattr(denial, k)
+    return tuple((get(k) or "").strip() for k in ("your_state", "procedure", "diagnosis"))  # type: ignore[return-value]
+
+
 class SpeculativeAppealsHelper:
     """Internal-only, no-research-context candidate-appeal precompute."""
 
@@ -258,6 +267,12 @@ class SpeculativeAppealsHelper:
             # and the reconciliation's oldest-first promotion actively PREFERS
             # them -- handing the user an appeal letter about the wrong denial.
             generated_from_text = denial.denial_text
+            # Likewise the state, procedure and diagnosis: a draft argues under
+            # the state's law and about the confirmed service, so a correction
+            # landing mid-generation makes this run's output wrong, not merely
+            # stale. Re-read after the rows are written, same as the text, and
+            # a run whose inputs moved deletes its own rows.
+            generated_from_context = reserve_context(denial)
 
             # Force internal-only end-to-end: the primary calls are already
             # internal, but make_appeals' backup_calls honor denial.use_external.
@@ -407,6 +422,7 @@ class SpeculativeAppealsHelper:
                         # internal tier make_appeals used to produce them.
                         speculative=True,
                         context_level=row_context_level,
+                        built_for_state=generated_from_context[0],
                     )
                     saved += 1
                     created_pks.append(row.pk)
@@ -421,23 +437,32 @@ class SpeculativeAppealsHelper:
             # between it and these inserts runs its invalidation sweep while we
             # have no rows to sweep, and our stale drafts then appear behind it
             # -- permanently, since nothing sweeps again. Checking once more here
-            # closes it completely, because the only replacement this can now
-            # miss is one that lands after this read, and that one's own
-            # invalidation WILL find our speculative=True rows and delete them.
+            # closes it for the text: the only replacement this can now miss
+            # lands after this read, and its own invalidation sweep finds our
+            # speculative=True rows. There is no such sweep for the state,
+            # procedure or diagnosis. A correction landing after this read
+            # leaves this run's rows in place, stamped for the old state, where
+            # nothing serves them and the next confirmed refresh retires them.
             if saved:
-                current_text = await (
-                    Denial.objects.filter(denial_id=denial_id)
-                    .values_list("denial_text", flat=True)
+                current = dict(
+                    await Denial.objects.filter(denial_id=denial_id)
+                    .values("denial_text", "your_state", "procedure", "diagnosis")
                     .afirst()
+                    or {}
                 )
-                if current_text != generated_from_text:
+                moved = None
+                if current.get("denial_text") != generated_from_text:
+                    moved = "text was replaced"
+                elif reserve_context(current) != generated_from_context:
+                    moved = "state, procedure or diagnosis changed"
+                if moved:
                     deleted, _ = await ProposedAppeal.objects.filter(
                         pk__in=created_pks
                     ).adelete()
                     logger.info(
                         f"speculative appeals[{trigger}]: denial {denial_id} "
-                        f"text was replaced while precomputing; removed "
-                        f"{deleted} reserve row(s) written about the old letter"
+                        f"{moved} while precomputing; removed {deleted} reserve "
+                        f"row(s) written about the old case"
                     )
                     return 0
 
@@ -450,11 +475,17 @@ class SpeculativeAppealsHelper:
             # from anything the live flow claimed (claiming flips
             # speculative=False) while the refresh was running.
             if confirmed_context and saved:
+                # Only rows older than this run's: a run that started later
+                # holds the newer inputs, and an older run finishing last
+                # must not retire it. Everything older is superseded,
+                # including a confirmed reserve for the same state written
+                # for a procedure since corrected.
                 superseded, _ = (
                     await ProposedAppeal.objects.filter(
                         for_denial=denial, speculative=True, chosen=False
                     )
                     .exclude(pk__in=created_pks)
+                    .exclude(pk__gt=max(created_pks))
                     .adelete()
                 )
                 if superseded:

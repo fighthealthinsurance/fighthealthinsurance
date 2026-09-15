@@ -94,6 +94,7 @@ class SpeculativeAppealsHelperTest(TestCase):
             for_denial=self.denial,
             appeal_text="pre-existing speculative draft",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         with patch(_MAKE_APPEALS) as mock_make:
@@ -365,6 +366,64 @@ class DenialTextReplacedMidGenerationTest(TransactionTestCase):
         self.assertIn("text was replaced while precomputing", logged)
         self.assertNotIn("generation failed for denial", logged)
 
+    def test_discards_reserve_when_the_state_changed_mid_generation(self):
+        """An older run finishing after a state correction must not persist
+        drafts under the old state, and must not touch the newer run's rows."""
+        denial_id = self.denial.denial_id
+        Denial.objects.filter(denial_id=denial_id).update(your_state="NY")
+        self.denial.refresh_from_db()
+
+        def _correct_state_then_yield(*args, **kwargs):
+            Denial.objects.filter(denial_id=denial_id).update(your_state="CA")
+            ProposedAppeal.objects.create(
+                for_denial=self.denial,
+                appeal_text="The newer run's draft, written under California law.",
+                speculative=True,
+                built_for_state="CA",
+                context_level="speculative_confirmed",
+            )
+            return iter(
+                [
+                    GeneratedAppeal(
+                        text="A draft written under New York law.", model_name="m"
+                    )
+                ]
+            )
+
+        with patch(_MAKE_APPEALS, side_effect=_correct_state_then_yield), patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                denial_id, force=True, confirmed_context=True
+            )
+
+        self.assertEqual(count, 0)
+        rows = list(ProposedAppeal.objects.filter(for_denial=self.denial))
+        self.assertEqual([r.built_for_state for r in rows], ["CA"])
+
+    def test_the_reserve_is_stamped_with_the_state_it_was_written_for(self):
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(your_state="CA")
+        with patch(
+            _MAKE_APPEALS,
+            return_value=iter(
+                [
+                    GeneratedAppeal(
+                        text="A draft written under California law.", model_name="m"
+                    )
+                ]
+            ),
+        ), patch(_SUMMARIZE, new_callable=AsyncMock, return_value=None):
+            SpeculativeAppealsHelper.generate_for_denial_sync(self.denial.denial_id)
+
+        self.assertEqual(
+            list(
+                ProposedAppeal.objects.filter(for_denial=self.denial).values_list(
+                    "built_for_state", flat=True
+                )
+            ),
+            ["CA"],
+        )
+
     def test_removes_reserve_when_text_is_replaced_after_the_pre_write_check(self):
         """The pre-write check alone leaves a window: a replacement landing
         between it and the inserts runs its invalidation sweep while there are
@@ -426,6 +485,7 @@ class ConfirmedContextRefreshTest(TestCase):
             appeal_text="Round-one bare speculative draft, long enough to serve.",
             model_name="m",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
 
@@ -498,6 +558,7 @@ class ConfirmedContextRefreshTest(TestCase):
             appeal_text="An existing confirmed-context reserve draft here.",
             model_name="m",
             speculative=True,
+            built_for_state="",
             context_level="speculative_confirmed",
         )
         with patch(_MAKE_APPEALS) as mock_make:
@@ -523,6 +584,16 @@ class ConfirmedContextRefreshTest(TestCase):
                 confirmed_context=True,
             )
         self.assertEqual(count, 1)
+        # And the reserve written for the values before the edit is gone:
+        # same state, wrong procedure, not worth keeping.
+        self.assertEqual(
+            list(
+                ProposedAppeal.objects.filter(for_denial=self.denial).values_list(
+                    "appeal_text", flat=True
+                )
+            ),
+            ["A second confirmed refresh after the user edited the values."],
+        )
 
 
 class ConfirmedContextDispatchRuleTest(TestCase):
@@ -541,9 +612,20 @@ class ConfirmedContextDispatchRuleTest(TestCase):
         )
 
     def test_changed_values_dispatch_with_force(self):
+        # A confirmed reserve for this state already exists, so only the
+        # changed dx/px can be what fires.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Existing confirmed-context reserve draft text here.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
         with patch(_DISPATCH) as mock_dispatch:
             self.helper._maybe_dispatch_confirmed_speculative(
-                self.denial, prior_procedure="CT scan", prior_diagnosis="pain"
+                self.denial,
+                prior_procedure="CT scan",
+                prior_diagnosis="pain",
             )
         mock_dispatch.assert_called_once_with(
             self.denial.denial_id,
@@ -561,7 +643,7 @@ class ConfirmedContextDispatchRuleTest(TestCase):
             )
         mock_dispatch.assert_called_once_with(
             self.denial.denial_id,
-            force=False,
+            force=True,
             trigger="dx_px_confirmed",
             confirmed_context=True,
         )
@@ -571,6 +653,7 @@ class ConfirmedContextDispatchRuleTest(TestCase):
             for_denial=self.denial,
             appeal_text="Existing confirmed-context reserve draft text here.",
             speculative=True,
+            built_for_state="",
             context_level="speculative_confirmed",
         )
         with patch(_DISPATCH) as mock_dispatch:
@@ -589,6 +672,106 @@ class ConfirmedContextDispatchRuleTest(TestCase):
                 self.denial, prior_procedure="", prior_diagnosis=""
             )
         mock_dispatch.assert_not_called()
+
+    def test_a_changed_procedure_retires_the_confirmed_reserve_before_dispatch(self):
+        """The old reserve argues about the old procedure. It goes now, not
+        when a replacement lands, because a replacement may never land."""
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A confirmed reserve draft about the CT scan.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="CT scan",
+                prior_diagnosis="chronic back pain",
+            )
+        mock_dispatch.assert_called_once()
+        self.assertFalse(
+            ProposedAppeal.objects.filter(for_denial=self.denial).exists(),
+            "the reserve for the old procedure survived the correction",
+        )
+
+    def test_a_reserve_written_after_this_request_began_is_kept(self):
+        """Request A paused before retiring; request B's correct reserve landed
+        meanwhile. A retires only what is older than itself."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        request_started = timezone.now() - timedelta(seconds=30)
+        older = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A confirmed reserve draft about the CT scan.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        ProposedAppeal.objects.filter(pk=older.pk).update(
+            created_at=request_started - timedelta(seconds=30)
+        )
+        newer = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Request B's confirmed reserve draft about the MRI.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        with patch(_DISPATCH):
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="CT scan",
+                prior_diagnosis="chronic back pain",
+                since=request_started,
+            )
+        remaining = set(
+            ProposedAppeal.objects.filter(for_denial=self.denial).values_list(
+                "pk", flat=True
+            )
+        )
+        self.assertEqual(remaining, {newer.pk})
+
+    def test_a_corrected_state_dispatches_with_force(self):
+        """State picks the regulator and the law the appeal cites, so a
+        reserve built under the old one is stale even when dx/px held."""
+        self.denial.your_state = "CA"
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Existing confirmed-context reserve draft text here.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="MRI",
+                prior_diagnosis="chronic back pain",
+            )
+        mock_dispatch.assert_called_once_with(
+            self.denial.denial_id,
+            force=True,
+            trigger="dx_px_confirmed",
+            confirmed_context=True,
+        )
+
+    def test_a_corrected_state_dispatches_without_dx_or_px(self):
+        self.denial.procedure = ""
+        self.denial.diagnosis = ""
+        self.denial.your_state = "CA"
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial, prior_procedure="", prior_diagnosis=""
+            )
+        mock_dispatch.assert_called_once_with(
+            self.denial.denial_id,
+            force=True,
+            trigger="dx_px_confirmed",
+            confirmed_context=True,
+        )
 
 
 class DispatchGuardTest(TestCase):
@@ -688,6 +871,7 @@ class DispatchOnDenialCreateTest(TestCase):
             for_denial=existing,
             appeal_text="Reserve appeal written about the ORIGINAL letter.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         # Already delivered to the user (and possibly chosen): must survive.
