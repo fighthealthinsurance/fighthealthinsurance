@@ -695,6 +695,45 @@ class ConfirmedContextDispatchRuleTest(TestCase):
             "the reserve for the old procedure survived the correction",
         )
 
+    def test_a_reserve_written_after_this_request_began_is_kept(self):
+        """Request A paused before retiring; request B's correct reserve landed
+        meanwhile. A retires only what is older than itself."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        request_started = timezone.now() - timedelta(seconds=30)
+        older = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A confirmed reserve draft about the CT scan.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        ProposedAppeal.objects.filter(pk=older.pk).update(
+            created_at=request_started - timedelta(seconds=30)
+        )
+        newer = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Request B's confirmed reserve draft about the MRI.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        with patch(_DISPATCH):
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="CT scan",
+                prior_diagnosis="chronic back pain",
+                since=request_started,
+            )
+        remaining = set(
+            ProposedAppeal.objects.filter(for_denial=self.denial).values_list(
+                "pk", flat=True
+            )
+        )
+        self.assertEqual(remaining, {newer.pk})
+
     def test_a_corrected_state_dispatches_with_force(self):
         """State picks the regulator and the law the appeal cites, so a
         reserve built under the old one is stale even when dx/px held."""

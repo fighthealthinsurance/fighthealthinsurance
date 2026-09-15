@@ -1045,6 +1045,9 @@ class FindNextStepsHelper:
         # Snapshot for the round-2 dispatch below, which fires on a
         # correction but not on an unchanged re-POST.
         prior_procedure = denial.procedure
+        # When this request began, for the reserve retirement below: rows
+        # written after this belong to a later correction and are kept.
+        request_started = timezone.now()
         prior_diagnosis = denial.diagnosis
 
         # Track exactly which fields THIS request assigns so the save below
@@ -1229,7 +1232,7 @@ class FindNextStepsHelper:
         # questions page.
         try:
             cls._maybe_dispatch_confirmed_speculative(
-                denial, prior_procedure, prior_diagnosis
+                denial, prior_procedure, prior_diagnosis, since=request_started
             )
         except Exception:
             logger.opt(exception=True).warning(
@@ -1284,6 +1287,7 @@ class FindNextStepsHelper:
         denial: "Denial",
         prior_procedure: Optional[str],
         prior_diagnosis: Optional[str],
+        since: Optional[datetime.datetime] = None,
     ) -> None:
         """Kick off the round-2 (confirmed-context) speculative precompute.
 
@@ -1342,11 +1346,14 @@ class FindNextStepsHelper:
             # worse than none while the replacement is written: a stalled run
             # would serve it, and a replacement that produces nothing would
             # leave it. Retire it now rather than when the replacement lands.
+            # Only rows older than this request: a reserve written since is
+            # a later correction's and is kept.
             retired, _ = ProposedAppeal.objects.filter(
                 for_denial=denial,
                 speculative=True,
                 chosen=False,
                 context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+                created_at__lt=since or timezone.now(),
             ).delete()
             if retired:
                 logger.info(
