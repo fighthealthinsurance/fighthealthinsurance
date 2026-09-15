@@ -10,8 +10,8 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
     <h3>📨 Regulator Escalation Packet</h3>
     <p style="font-size:1.05rem;">
       We're drafting parallel cover letters you can send alongside your
-      appeal — to the people who hold your plan accountable. Each letter
-      is tailored to its recipient's role.
+      appeal, addressed to the people who hold your plan accountable. Each
+      letter is tailored to its recipient's role.
     </p>
   </div>
 
@@ -42,7 +42,7 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
 
   <div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
     <h4>Drafting your regulator letters…</h4>
-    <p style="color:#666;">This usually takes 1–2 minutes per recipient.</p>
+    <p style="color:#666;">This usually takes 1 to 2 minutes per recipient.</p>
   </div>
 
   <div id="escalation-letters"></div>
@@ -80,7 +80,33 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
 
     const lettersContainer = document.getElementById('escalation-letters');
     const loadingText = document.getElementById('loading-text');
+    const loadingHeading = loadingText ? loadingText.querySelector('h4') : null;
+    const loadingDetail = loadingText ? loadingText.querySelector('p') : null;
     const baseForm = document.getElementById('base-letter-form');
+
+    // A close is not a finished packet, and a done frame is not every letter
+    // written. Track both, plus whether a failure is already on the block, so
+    // nothing quietly paints over bad news.
+    let doneSeen = false;
+    let failureShown = false;
+    let lettersRendered = 0;
+
+    function setLoading(headingText, detailText) {
+      if (loadingHeading) loadingHeading.textContent = headingText;
+      if (loadingDetail) loadingDetail.textContent = detailText;
+      if (loadingText) loadingText.style.display = '';
+    }
+
+    function showFailure(headingText, detailText) {
+      failureShown = true;
+      setLoading(headingText, detailText);
+      if (loadingText) {
+        loadingText.style.background = '#fff3cd';
+        loadingText.style.borderLeft = '4px solid #dc3545';
+        loadingText.style.padding = '1rem';
+        loadingText.style.textAlign = 'left';
+      }
+    }
 
     function renderLetter(payload) {
       const wrapper = document.createElement('div');
@@ -135,6 +161,7 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
       wrapper.appendChild(cloned);
 
       lettersContainer.appendChild(wrapper);
+      lettersRendered += 1;
     }
 
     function processLine(line) {
@@ -152,17 +179,34 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
         return;
       }
       if (parsed.type === 'status' && parsed.phase === 'done') {
-        if (loadingText) loadingText.style.display = 'none';
+        doneSeen = true;
+        // The server skips a recipient it could not draft for and carries on,
+        // so only a frame saying every letter is there may hide this block.
+        if (parsed.complete === true) {
+          if (loadingText) loadingText.style.display = 'none';
+          return;
+        }
+        const total = typeof parsed.total === 'number' ? parsed.total : null;
+        const delivered = (parsed.generated || 0) + (parsed.cached || 0);
+        const names = Array.isArray(parsed.failed_names) ? parsed.failed_names : [];
+        let detail = parsed.message || 'Some of these letters could not be written.';
+        if (total !== null) {
+          detail = delivered + ' of ' + total + ' letters are ready.';
+        }
+        if (names.length) {
+          detail += ' We could not write the letter to ' + names.join(', ') + '.';
+        }
+        detail += ' You can send the ones that are here, or reload this page to try the rest again.';
+        showFailure('Some letters are missing', detail);
         return;
       }
       if (parsed.type === 'error') {
-        if (loadingText) loadingText.textContent = parsed.message || 'An error occurred.';
+        showFailure('We hit a problem', parsed.message || 'An error occurred.');
         return;
       }
-      // Status updates we surface in the loading text
-      if (parsed.type === 'status' && parsed.message) {
-        const inner = loadingText && loadingText.querySelector('p');
-        if (inner) inner.textContent = parsed.message;
+      // Never over the top of a failure already shown.
+      if (parsed.type === 'status' && parsed.message && !failureShown) {
+        if (loadingDetail) loadingDetail.textContent = parsed.message;
       }
     }
 
@@ -180,11 +224,21 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
     };
     ws.onclose = () => {
       if (buffer.trim()) processLine(buffer);
-      if (loadingText) loadingText.style.display = 'none';
+      buffer = '';
+      // Hiding the loading block here made a socket that died after two of
+      // four letters look exactly like a finished packet, and erased whatever
+      // onerror had just written.
+      if (doneSeen || failureShown) {
+        return;
+      }
+      showFailure(
+        'The connection ended early',
+        'We drafted ' + lettersRendered + ' letter(s) before the connection dropped. Reload this page to draft the rest.'
+      );
     };
     ws.onerror = (e) => {
       console.error('WebSocket error', e);
-      if (loadingText) loadingText.textContent = 'Connection error — please try again.';
+      showFailure('Connection error', 'We lost the connection while drafting your letters, please try again.');
     };
   });
 </script>

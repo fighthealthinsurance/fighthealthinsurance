@@ -966,11 +966,11 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
             denial_id = None
         # Resolve the (denial_id, email, semi_sekret) triple before doing any
         # work, the same gate the appeals consumer above applies and the same
-        # helper. Extraction is not a read: it writes the row and spends one
-        # of the three automatic-read attempts a case gets, so it should only
-        # ever run for a request that can name the case it belongs to. The
-        # page already sends all three (entity_extract.html spreads
-        # form_context into the payload), so nothing changes for the client.
+        # helper. Extraction is not a read: it writes the row and can spend
+        # one of the three model attempts a case gets (an authorized retry
+        # always does, an automatic run does when the model raises), so it
+        # should only ever run for a request that can name the case it belongs
+        # to.
         #
         # One uniform reply for every failure, including a case that does not
         # exist: the response says nothing about which part did not match, or
@@ -994,38 +994,57 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
             # The id only: an email does not belong in a log line.
             logger.warning(f"entity ws: could not resolve denial {denial_id!r}")
             try:
+                # The same envelope as every other frame on this socket, so the
+                # client has one shape to parse.
                 await self.send(
-                    json.dumps({"type": "error", "message": "Not found"}) + "\n"
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "task": common_view_logic.EXTRACTION_TASK_RUN,
+                            "outcome": common_view_logic.EXTRACTION_RUN_FAILED,
+                            "label": (
+                                "We could not open this case. Go back a step and "
+                                "start again from the link in your email."
+                            ),
+                            "message": "Not found",
+                        }
+                    )
                 )
             except Exception:
                 logger.debug("entity ws: could not send the error frame")
             await self.close()
             return
+        # Reachable only past the gate above, so the extra mutation a retry
+        # performs needs a request that has proved which case it belongs to.
+        retry = bool(data.get("retry"))
         # The id off the resolved row, not the one the client sent: it is
         # typed, and it is the case this request proved it may act on.
-        aitr = common_view_logic.DenialCreatorHelper.extract_entity(denial.denial_id)
+        aitr = common_view_logic.DenialCreatorHelper.extract_entity(
+            denial.denial_id, retry=retry
+        )
 
         try:
             async for record in aitr:
-                await self.send(record)
+                await self.send(json.dumps(record))
                 await asyncio.sleep(0)
-                await self.send("\n")
             await asyncio.sleep(1)
         except Exception as e:
             # ERROR, not debug: a systemic extraction failure was invisible in
-            # production logs. And send an error frame -- the client treats a
-            # bare close as success ("Extraction Complete!") and auto-advances
-            # the user to a blank form.
+            # production logs.
             logger.opt(exception=True).error(f"Error sending back entity: {e}")
             try:
                 await self.send(
                     json.dumps(
                         {
                             "type": "error",
+                            "task": common_view_logic.EXTRACTION_TASK_RUN,
+                            "outcome": common_view_logic.EXTRACTION_RUN_FAILED,
+                            "label": common_view_logic.EXTRACTION_RUN_LABELS[
+                                common_view_logic.EXTRACTION_RUN_FAILED
+                            ],
                             "message": "Extraction failed on the server.",
                         }
                     )
-                    + "\n"
                 )
             except Exception:
                 logger.debug("entity ws: could not send error frame")

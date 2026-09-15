@@ -122,11 +122,14 @@ async def test_the_matching_triple_still_runs_the_extractor(monkeypatch):
     denial = await _make_denial()
     ran = {"count": 0}
 
-    async def _fake_extract(denial_id):
+    # The extractor now yields records rather than bare task names, and takes
+    # the retry flag the consumer passes it.
+    async def _fake_extract(denial_id, retry=False):
         ran["count"] += 1
         assert denial_id == denial.denial_id
-        yield "claim id"
-        yield "Extraction complete"
+        assert retry is False
+        yield {"type": "task", "task": "claim_id", "outcome": "found"}
+        yield {"type": "run", "task": "run", "outcome": "run_finished"}
 
     monkeypatch.setattr(
         common_view_logic.DenialCreatorHelper, "extract_entity", _fake_extract
@@ -139,4 +142,4 @@ async def test_the_matching_triple_still_runs_the_extractor(monkeypatch):
         }
     )
     assert ran["count"] == 1, "the extractor did not run for a request that resolves"
-    assert any("Extraction complete" in f for f in frames), frames
+    assert any(json.loads(f).get("type") == "run" for f in frames), frames
