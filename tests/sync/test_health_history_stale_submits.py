@@ -7,15 +7,16 @@ removed elsewhere, would submit what it was rendered with and quietly undo
 the newer edit.
 
 The page carries a digest of the history it was rendered with. A submit whose
-box still matches that digest is nobody typing, and if the stored history has
-moved since, that submit is refused. A box that differs from the digest is
-somebody typing, and the last person to type wins.
+box still matches that digest is treated as untouched, and if the stored
+history has moved since, that submit is refused. A box that differs is
+treated as typing, and the last to type wins. That is a comparison of
+content: it cannot see intent, nor what the browser put in the box.
 """
 
 import html as html_module
 import re
 
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from fighthealthinsurance import common_view_logic
@@ -126,6 +127,8 @@ class StaleHealthHistorySubmitTest(TestCase):
         one = health_history_digest("type 2 diabetes", 1)
         self.assertNotEqual(one, health_history_digest("type 2 diabetes", 2))
         self.assertNotEqual(one, hashlib.sha256(b"type 2 diabetes").hexdigest())
+        with override_settings(SECRET_KEY="a-different-site"):
+            self.assertNotEqual(one, health_history_digest("type 2 diabetes", 1))
 
     def _stored(self, denial) -> str:
         return Denial.objects.get(pk=denial.pk).health_history

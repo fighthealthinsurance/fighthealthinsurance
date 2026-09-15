@@ -136,13 +136,16 @@ export function setupTextareaPersistence(textareaId: string, options?: { alwaysR
       return true;  // GET response with empty field - restore from localStorage
     };
 
+    if (serverSaidWhatIsStored()) {
+      // Whatever this browser kept is stale by definition: the server's
+      // word replaces it. Both keys, unconditionally; the getter can answer
+      // "" or null from one key while the other still holds text.
+      clearLocalStorageItem(textareaId);
+    }
     // Restore saved value if conditions are met
     const saved = getLocalStorageItemWithTTL(textareaId);
     if (saved && shouldRestore()) {
       textarea.value = saved;
-    } else if (saved && serverSaidWhatIsStored()) {
-      // Stale by definition: the server's word replaces it.
-      clearLocalStorageItem(textareaId);
     }
     // Save on input
     textarea.addEventListener('input', function() {
