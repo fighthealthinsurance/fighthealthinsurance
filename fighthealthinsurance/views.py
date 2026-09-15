@@ -1631,7 +1631,15 @@ class GenerateAppeal(View):
             updates.update(
                 self._unticked_checkbox_answers(denial, posted=set(elems.keys()))
             )
-            merge_qa(denial, updates, source="appeal_form_post")
+            # This page posts every field it rendered, so a blank where an
+            # answer was stored is the person clearing it. merge_qa drops
+            # blanks on its own, which is right for the sparse posts other
+            # pages send and wrong here.
+            stored = load_qa(denial)
+            withdrawn = [
+                k for k, v in updates.items() if not str(v).strip() and k in stored
+            ]
+            merge_qa(denial, updates, source="appeal_form_post", withdraw=withdrawn)
             denial.save(update_fields=["qa_context"])
         except Exception as e:
             logger.warning(

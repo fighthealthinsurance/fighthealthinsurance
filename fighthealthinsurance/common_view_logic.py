@@ -1505,6 +1505,27 @@ class ProfessionalNotificationHelper:
 QUESTION_GENERATION_DEADLINE_SECONDS = 130
 
 
+def record_derived_medical_context(denial, medical_context: set[str]) -> bool:
+    """Replace, never add to, the sentence the answers derive.
+
+    ``medical_context`` is computed from the current answers on every
+    generation. Merging it additively kept the previous sentence when the
+    answers no longer produced one: untick "urgent", generate, and the
+    prompt still said the claim was urgent. Empty now withdraws it. Returns
+    whether qa_context changed.
+    """
+    before = denial.qa_context
+    if medical_context:
+        merge_qa(
+            denial,
+            {"medical_context": " ".join(sorted(medical_context))},
+            source="appeal_gen_form",
+        )
+    else:
+        merge_qa(denial, {}, source="appeal_gen_form", withdraw=["medical_context"])
+    return bool(denial.qa_context != before)
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -4270,12 +4291,7 @@ class AppealsBackendHelper:
         # behavior users see, and silent background retries were eating it
         # (PR #963 review).
         dirty_fields = set() if background else {"gen_attempts"}
-        if medical_context:
-            merge_qa(
-                denial,
-                {"medical_context": " ".join(sorted(medical_context))},
-                source="appeal_gen_form",
-            )
+        if record_derived_medical_context(denial, medical_context):
             dirty_fields.add("qa_context")
         if plan_context:
             merge_plan_context(denial, sorted(plan_context))

@@ -43,6 +43,7 @@ from fighthealthinsurance.common_view_logic import (
     FindNextStepsHelper,
 )
 from fighthealthinsurance.denial_context import (
+    qa_key_for_question,
     GENERATED_QUESTION_PREFIX,
     RESERVED_QA_KEYS,
     load_qa,
@@ -280,6 +281,65 @@ class ReservedQaKeyTest(QuestionsStepTestBase):
 
         combined = self._rebuild().combined_form
         self.assertEqual(combined.fields[field].initial, "the follow-up on 2024-06-01")
+
+
+class WithdrawingAnAnswerTest(QuestionsStepTestBase):
+    """An answer the person clears has to leave, and so has the sentence the
+    answers derive for the prompt."""
+
+    def setUp(self):
+        super().setUp()
+        self.denial.generated_questions = [[_Q1, ""]]
+        self.denial.save(update_fields=["generated_questions"])
+        self.field = question_field_name(_Q1)
+        # Answers file under the question, not the field.
+        self.key = qa_key_for_question(_Q1)
+
+    def test_clearing_a_text_answer_removes_it(self):
+        self._generate_appeal(**{self.field: "about six months"})
+        self.assertEqual(self._qa()[self.key], "about six months")
+
+        self._generate_appeal(**{self.field: ""})
+
+        self.assertNotIn(self.key, self._qa())
+
+    def test_a_blank_for_a_question_never_answered_writes_nothing(self):
+        self._generate_appeal(**{self.field: ""})
+
+        after = self.denial_after_post().qa_context
+        self.assertTrue(not after or self.key not in json.loads(after), after)
+
+    def test_the_derived_medical_context_is_withdrawn_when_the_answers_stop_deriving_it(
+        self,
+    ):
+        from fighthealthinsurance.common_view_logic import (
+            record_derived_medical_context,
+        )
+
+        self.denial.qa_context = json.dumps(
+            {"medical_context": "This is an urgent claim.", "kept": "yes"}
+        )
+
+        changed = record_derived_medical_context(self.denial, set())
+
+        self.assertTrue(changed)
+        self.assertEqual(json.loads(self.denial.qa_context), {"kept": "yes"})
+
+    def test_the_derived_medical_context_is_replaced_not_added_to(self):
+        from fighthealthinsurance.common_view_logic import (
+            record_derived_medical_context,
+        )
+
+        self.denial.qa_context = json.dumps(
+            {"medical_context": "This is an urgent claim."}
+        )
+
+        record_derived_medical_context(self.denial, {"The patient is pregnant."})
+
+        self.assertEqual(
+            json.loads(self.denial.qa_context)["medical_context"],
+            "The patient is pregnant.",
+        )
 
 
 class InNetworkOwnershipTest(QuestionsStepTestBase):

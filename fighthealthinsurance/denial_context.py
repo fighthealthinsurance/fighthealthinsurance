@@ -183,6 +183,7 @@ def merge_qa(
     updates: Mapping[str, Any],
     *,
     source: str,
+    withdraw: Iterable[str] = (),
 ) -> dict[str, str]:
     """Merge ``updates`` into the denial's ``qa_context`` JSON.
 
@@ -190,6 +191,9 @@ def merge_qa(
       replacement value.
     - Empty / ``UNKNOWN`` / ``None`` updates are dropped so a sparse form
       submission cannot blank out previously captured answers.
+    - ``withdraw`` names keys to remove. Only a caller that knows a blank
+      was a decision (a page that posts every field it rendered, or a
+      value derived from the current answers) should send one.
     - The denial instance's ``qa_context`` attribute is assigned the new
       JSON string but no ``save`` is issued.
 
@@ -198,6 +202,10 @@ def merge_qa(
     """
     existing = load_qa(denial)
     changed_keys: list[str] = []
+    for key in withdraw:
+        if key in existing:
+            del existing[key]
+            changed_keys.append(key)
     for key, value in updates.items():
         if key is None or key == "":
             continue
