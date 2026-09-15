@@ -51,6 +51,7 @@ from fighthealthinsurance.denial_base import DenialBase
 from .exec import background_executor, executor
 from .ml.ml_models import (
     MODEL_TRANSPORT_ERRORS,
+    ProviderUnavailable,
     RemoteFullOpenLike,
     RemoteModelLike,
     describe_model_error,
@@ -1634,7 +1635,7 @@ class AppealGenerator(object):
                     extracted: Optional[str] = await method(denial_text)  # type: ignore
                     answered.append(type(model).__name__)
                 except Exception as e:
-                    if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                    if isinstance(e, (*MODEL_TRANSPORT_ERRORS, ProviderUnavailable)):
                         # One concise line: a down backend would otherwise
                         # emit a full traceback for every entity type x model
                         # x retry.

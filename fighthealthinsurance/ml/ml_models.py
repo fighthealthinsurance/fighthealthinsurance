@@ -200,6 +200,16 @@ MODEL_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
+class ProviderUnavailable(Exception):
+    """The provider could not be asked: transport, timeout or an HTTP error.
+
+    Raised only when a caller asks for it (``raise_on_unavailable``). The
+    default stays ``None``, which chat and appeal generation read as "try
+    the next model"; entity extraction needs the difference between a model
+    that answered and found nothing and a model that was never reached.
+    """
+
+
 def describe_model_error(exc: BaseException) -> str:
     """Map an exception from a model-backend call to a concise one-line reason.
 
@@ -1156,6 +1166,7 @@ class RemoteModelLike(DenialBase):
         temperature=0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
+        raise_on_unavailable: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
@@ -1172,6 +1183,7 @@ class RemoteModelLike(DenialBase):
         temperature=0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
+        raise_on_unavailable: bool = False,
     ) -> Optional[str]:
         result = await self._infer(
             system_prompts=system_prompts,
@@ -1183,6 +1195,7 @@ class RemoteModelLike(DenialBase):
             temperature=temperature,
             raise_http_errors=raise_http_errors,
             timeout=timeout,
+            raise_on_unavailable=raise_on_unavailable,
         )
         if result:
             return result[0]
@@ -1740,6 +1753,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             system_prompts=["You are a helpful assistant."],
             prompt=prompt,
             timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
         )
         # Just get the text response.
         if _is_verbose_logging():
@@ -2640,6 +2654,7 @@ class RemoteOpenLike(RemoteModel):
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
             prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         return result
@@ -2657,6 +2672,7 @@ class RemoteOpenLike(RemoteModel):
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
             prompt=f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The insurance company is" in result:
@@ -2676,6 +2692,7 @@ class RemoteOpenLike(RemoteModel):
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
             prompt=f"Extract the plan ID (an alphanumeric identifier code containing digits, like 'H5521-001', 'PLAN987654', 'GRP12345') from the following denial letter. Plan IDs are NOT common English words -- they are codes assigned by insurance companies. Output ONLY the ID value exactly as it appears in the document, nothing else. If no plan ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. Remember: output ONLY the identifier code, DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The plan ID is" in result:
@@ -2695,6 +2712,7 @@ class RemoteOpenLike(RemoteModel):
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
             prompt=f"Extract the claim ID (an alphanumeric identifier code containing digits, like 'CLM2024001234', '2024-12345-A', 'C987654321') from the following denial letter. Claim IDs are NOT common English words -- they are reference codes. It could be multiple but is normally just one. Output ONLY the ID value exactly as it appears in the document, nothing else. If no claim ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
         )
         if result and "Claim ID is" in result:
@@ -2714,6 +2732,7 @@ class RemoteOpenLike(RemoteModel):
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
         )
         if result and "Date of service is" in result:
@@ -2744,6 +2763,7 @@ class RemoteOpenLike(RemoteModel):
             system_prompts=self.get_system_prompts("procedure"),
             prompt=prompt,
             timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
         )
         if model_response is None or "Diagnosis" not in model_response:
             logger.debug(
@@ -2753,6 +2773,7 @@ class RemoteOpenLike(RemoteModel):
                 system_prompts=self.get_system_prompts("procedure"),
                 prompt=prompt,
                 timeout=ml_task_timeout("entity"),
+                raise_on_unavailable=True,
             )
         if model_response is not None:
             responses: list[str] = model_response.split("\n")
@@ -2794,10 +2815,17 @@ class RemoteOpenLike(RemoteModel):
         temperature=0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
+        raise_on_unavailable: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """
         Try and infer on a given model falling back to fallback in primary fails.
+
+        ``raise_on_unavailable`` turns the three ways of not reaching the
+        provider (below) into ProviderUnavailable instead of None.
         """
+        # Filled in by __infer for each attempt that could not reach the
+        # provider; those return None so the backup can be tried.
+        transport_failures: list[str] = []
         try:
             for system_prompt in system_prompts:
                 # Call the actual inference method
@@ -2819,6 +2847,7 @@ class RemoteOpenLike(RemoteModel):
                             history=history,
                             model=self.model,
                             raise_http_errors=raise_http_errors,
+                            transport_failures=transport_failures,
                             timeout=timeout,
                         )
                     )
@@ -2836,6 +2865,7 @@ class RemoteOpenLike(RemoteModel):
                             model=self.backup_model,
                             api_base=self.backup_api_base,
                             raise_http_errors=raise_http_errors,
+                            transport_failures=transport_failures,
                             timeout=timeout,
                         )
                     )
@@ -2907,6 +2937,7 @@ class RemoteOpenLike(RemoteModel):
                         history=history,
                         model=self.model,
                         raise_http_errors=raise_http_errors,
+                        transport_failures=transport_failures,
                         timeout=timeout,
                     )
                 if raw_response and raw_response[0]:
@@ -2930,6 +2961,7 @@ class RemoteOpenLike(RemoteModel):
                         model=self.backup_model,
                         api_base=self.backup_api_base,
                         raise_http_errors=raise_http_errors,
+                        transport_failures=transport_failures,
                         timeout=timeout,
                     )
                     if backup_response and backup_response[0]:
@@ -2977,17 +3009,25 @@ class RemoteOpenLike(RemoteModel):
                     f"{self}: giving up on {self.api_base} -- "
                     f"{describe_model_error(e)}"
                 )
+            if raise_on_unavailable:
+                raise ProviderUnavailable(describe_model_error(e)) from e
         except MODEL_TRANSPORT_ERRORS as e:
             # Transport failures are logged (classified) per-attempt in
             # __infer; anything landing here was raised outside that wrapper.
             logger.warning(
                 f"{self}: giving up on {self.api_base} -- {describe_model_error(e)}"
             )
-        except Exception:
+            if raise_on_unavailable:
+                raise ProviderUnavailable(describe_model_error(e)) from e
+        except Exception as e:
             logger.opt(exception=True).error(
                 f"Unexpected error calling {self.api_base} for {self}"
             )
+            if raise_on_unavailable:
+                raise ProviderUnavailable(f"{type(e).__name__}: {e}") from e
 
+        if raise_on_unavailable and transport_failures:
+            raise ProviderUnavailable("; ".join(transport_failures))
         return None
 
     def _supports_custom_temperature(self, model: str) -> bool:
@@ -3224,6 +3264,7 @@ class RemoteOpenLike(RemoteModel):
         raise_http_errors: bool = False,
         *,
         request_timeout: Optional[float] = None,
+        transport_failures: Optional[list] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
             api_base = self.api_base
@@ -3257,6 +3298,12 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"{self}: skipping {model} at {api_base} -- transport-failure cooldown"
             )
+            if transport_failures is not None:
+                # Skipped because the provider was unreachable moments ago:
+                # for the caller that asked, that is still "unreachable".
+                transport_failures.append(
+                    f"{model} via {api_base}: in transport-failure cooldown"
+                )
             return None
         if self.token is None:
             logger.warning(f"No token provided for {model}")
@@ -3528,6 +3575,11 @@ class RemoteOpenLike(RemoteModel):
             _note_probe_transport_error(described)
             if not raise_http_errors:
                 self._note_transport_failure(api_base, model, described)
+            if transport_failures is not None:
+                # For _infer: returning None here is what lets it try the
+                # backup; it needs to know afterwards that this was a failure
+                # to reach the provider, not a model with nothing to say.
+                transport_failures.append(f"{model} via {api_base}: {described}")
             return None
         except Exception:
             logger.opt(exception=True).warning(
@@ -4509,6 +4561,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         temperature: float = 0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
+        raise_on_unavailable: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference with rate-limit gating and 429 back-off.
 
@@ -4537,6 +4590,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 temperature=temperature,
                 raise_http_errors=raise_http_errors,
                 timeout=timeout,
+                raise_on_unavailable=raise_on_unavailable,
             )
         except aiohttp.ClientResponseError as e:
             if raise_http_errors:
@@ -4589,6 +4643,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         temperature: float = 0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
+        raise_on_unavailable: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """The actual transport call wrapped by ``_infer``'s rate-limit gating
         and 429 back-off.
@@ -4615,6 +4670,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             temperature=temperature,
             raise_http_errors=raise_http_errors,
             timeout=timeout,
+            raise_on_unavailable=raise_on_unavailable,
         )
 
 
@@ -5024,6 +5080,10 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         temperature: float = 0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
+        # Accepted for the shared signature. This provider speaks the
+        # Messages API and raises its HTTP errors; what it swallows into
+        # None it still swallows.
+        raise_on_unavailable: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
 
