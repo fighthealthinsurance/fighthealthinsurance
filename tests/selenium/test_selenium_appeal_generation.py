@@ -38,16 +38,6 @@ class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def continue_past_extraction(self):
-        """The extraction page no longer moves on by itself.
-
-        It reads the letter over a socket the test server does not serve, so
-        the run ends at once in its terminal state, which offers a retry and
-        a continue. A person presses Continue; so does this.
-        """
-        self.assert_title_eventually("Analyzing Your Denial")
-        self.click("button#entity-continue", timeout=90)
-
     def test_submit_an_appeal_with_missing_info_and_fail(self):
         self.open(f"{self.live_server_url}/")
         self.assert_title_eventually(
