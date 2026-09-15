@@ -2136,11 +2136,14 @@ class SessionRequiredMixin(View):
                     f"denial_id={denial_id}"
                 )
                 return {}
-            # Validate the denial exists and semi_sekret matches
+            # Validate the whole triple, as every save does. The id and the
+            # secret alone would let a GET with someone else's email render
+            # what this page now shows: the stored health history.
             try:
                 denial = models.Denial.objects.get(
                     denial_id=denial_id,
                     semi_sekret=semi_sekret,
+                    hashed_email=models.Denial.get_hashed_email(email),
                 )
                 # Check session matches if we have one
                 session_denial_id = self.request.session.get("denial_id")

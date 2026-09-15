@@ -587,3 +587,34 @@ class TheOptionalStepSaveTouchesTheRowTest(OptionalStepsTestCase):
 
         fresh = Denial.objects.get(denial_id=self.denial.denial_id)
         self.assertGreater(fresh.last_interaction, stale)
+
+
+class WhatThePageShowsIsGatedTest(OptionalStepsTestCase):
+    """The page now shows stored medical history, so what it takes as
+    proof of who is asking has to be what the save takes."""
+
+    def test_the_right_id_and_secret_with_someone_elses_email_show_nothing(self):
+        ref = self.denial_ref()
+        ref["email"] = "someone-else@example.com"
+
+        response = self.client.get(reverse("hh"), ref)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(STORED, response.content.decode())
+
+    def test_a_rejected_submission_is_not_described_as_saved(self):
+        response = self.client.post(
+            reverse("hh"),
+            {
+                "denial_id": self.denial.denial_id,
+                # No email: the form is invalid, nothing is saved.
+                "semi_sekret": SEMI_SEKRET,
+                "health_history": TYPED,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        self.assertEqual(textarea_value(body).strip(), TYPED)
+        self.assertNotIn("This is what is saved", body)
+        self.assertEqual(self.stored_history(), STORED)
