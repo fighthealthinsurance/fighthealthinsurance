@@ -22,6 +22,7 @@ removed the way ``Prod`` removes it, because under tox that gate is on and the
 refusal once sat behind it.
 """
 
+import ast
 import base64
 import json
 import os
@@ -1290,5 +1291,94 @@ class RetentionClaimTest(TestCase):
                 f"paragraph in {self.DOC} and the privacy note in "
                 "views.issue_denial_ref_token understate what is cleaned up: "
                 + ", ".join(runs_it)
+            ),
+        )
+
+
+class BackLinkCallSiteTest(TestCase):
+    """Every caller passes the request, checked by walking the call sites.
+
+    The reference lives in the session, so ``build_back_url`` grew a leading
+    ``request`` parameter and every caller here moved with it. A branch
+    written against the old signature merges clean: git sees a call added in
+    one place and a signature changed in another and has no reason to object.
+    The break then surfaces as a TypeError while a patient is loading the
+    step. Walking the call sites turns that into a failing build.
+    """
+
+    SOURCE = pathlib.Path("fighthealthinsurance/views.py")
+
+    def call_sites(self):
+        """(path, call node) for every ``build_back_url(...)`` in the repo."""
+        for relative_path in repo_files():
+            if relative_path.suffix != ".py":
+                continue
+            source = read_repo_text(relative_path)
+            if "build_back_url" not in source:
+                continue
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                called = getattr(func, "id", None) or getattr(func, "attr", None)
+                if called == "build_back_url":
+                    yield relative_path, node
+
+    def test_the_definition_still_takes_the_request_first(self):
+        tree = ast.parse(read_repo_text(self.SOURCE))
+        defs = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "build_back_url"
+        ]
+        self.assertEqual(
+            len(defs),
+            1,
+            msg=f"expected one build_back_url in {self.SOURCE}, found {len(defs)}",
+        )
+        first = defs[0].args.args[0].arg if defs[0].args.args else None
+        self.assertEqual(
+            first,
+            "request",
+            msg=(
+                "build_back_url no longer takes the request first, so the "
+                "call site check below is pinned to a signature that is gone; "
+                f"it takes {first!r}"
+            ),
+        )
+
+    def test_no_call_site_was_written_against_the_old_signature(self):
+        sites = list(self.call_sites())
+        self.assertGreater(
+            len(sites),
+            1,
+            msg=(
+                f"found {len(sites)} build_back_url call sites, so this walk "
+                "is not reaching views.py and a green result means nothing"
+            ),
+        )
+        stale = []
+        for relative_path, node in sites:
+            if any(keyword.arg == "request" for keyword in node.keywords):
+                continue
+            first = node.args[0] if node.args else None
+            # ``request`` in a view function, ``self.request`` in a CBV.
+            if isinstance(first, ast.Name) and first.id == "request":
+                continue
+            if isinstance(first, ast.Attribute) and first.attr == "request":
+                continue
+            stale.append(f"{relative_path}:{node.lineno}")
+        self.assertEqual(
+            stale,
+            [],
+            msg=(
+                "these build_back_url calls do not pass the request, so the "
+                "back link cannot reach the session holding the reference and "
+                "the call raises at render time: " + ", ".join(stale)
             ),
         )
