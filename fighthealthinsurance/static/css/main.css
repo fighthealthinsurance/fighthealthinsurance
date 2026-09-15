@@ -987,11 +987,6 @@ footer a:hover {
        which is Delete your Data. Rounding up widens the row by 36px and wraps
        "Contribute on GitHub" onto a second line. It keeps its literal and is
        counted in the backlog rather than forced onto the grid. */
-    /* 10px sits exactly between --fhi-space-2 and --fhi-space-3, and this row
-       holds nine links across. Rounding down narrows nine tap targets, one of
-       which is Delete your Data. Rounding up widens the row by 36px and wraps
-       the last link onto a second line. It keeps its literal and is counted
-       in the backlog rather than forced onto the grid. */
     padding: 0 10px;
     margin-top: var(--fhi-space-1);
 }

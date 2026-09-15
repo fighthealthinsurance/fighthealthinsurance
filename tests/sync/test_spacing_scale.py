@@ -17,6 +17,7 @@ off-scale value fails the build while the existing backlog is worked off at
 whatever pace the surrounding work allows.
 """
 
+import pathlib
 import re
 
 from tests.sync.test_contrast import Rule, custom_properties, load_rules
@@ -57,7 +58,12 @@ SHELL_SPACED_BY_THE_BUTTON_SCALE = frozenset(
 # up widens the row by 36px and wraps the last link onto a second line.
 # Neither is worth a tidier number, so it keeps its literal and stays in the
 # backlog like any other value that has not been converted.
-SHELL_KEEPS_ITS_LITERAL = frozenset((".footer-link a",))
+# Selector -> the properties that keep a literal there. Named per property,
+# not per selector: the footer link's 10px sits between two steps and stays,
+# and nothing else on that rule gets to hide behind it.
+SHELL_KEEPS_ITS_LITERAL = {
+    ".footer-link a": frozenset(("padding", "padding-left", "padding-right")),
+}
 
 # Off-scale spacing declarations still in each stylesheet, counted on
 # 2026-09-13. Lower these as the values are migrated; the test refuses to let
@@ -106,8 +112,7 @@ def test_the_scale_is_a_four_pixel_grid() -> None:
         assert size is not None, "--fhi-space-%d is %s" % (index, value)
         assert size % BASE_PX == 0, (
             "--fhi-space-%d is %.1fpx, which is not a multiple of %.0f. The "
-            "point of the base is that every step lands on it."
-            % (index, size, BASE_PX)
+            "point of the base is that every step lands on it." % (index, size, BASE_PX)
         )
         steps.append(size)
     assert steps == sorted(steps), "the scale does not ascend: %s" % steps
@@ -123,16 +128,19 @@ def test_the_shared_shell_spaces_itself_from_the_scale() -> None:
             continue
         if selector in SHELL_SPACED_BY_THE_BUTTON_SCALE:
             continue
-        if selector in SHELL_KEEPS_ITS_LITERAL:
-            continue
         for prop, token in _spacing_values(rule):
-            size = _px(token)
-            if size is None or size == 0:
+            if prop in SHELL_KEEPS_ITS_LITERAL.get(selector, ()):
                 continue
-            offenders.append(
-                "%s:%d  %s  %s: %s"
-                % (rule.stylesheet, rule.line, rule.selector, prop, token)
-            )
+            # Every length in the value, so max(4px, 9px) is checked per
+            # operand rather than skipped for holding two.
+            for size in _lengths(token):
+                if size == 0:
+                    continue
+                offenders.append(
+                    "%s:%d  %s  %s: %s"
+                    % (rule.stylesheet, rule.line, rule.selector, prop, token)
+                )
+                break
     assert not offenders, (
         "the shell is on the scale and these put a literal back into it. Use "
         "the nearest --fhi-space step:\n  %s" % "\n  ".join(sorted(set(offenders)))
@@ -178,4 +186,49 @@ def test_the_spacing_baseline_has_no_stale_numbers() -> None:
     assert not stale, (
         "lower these to what the stylesheet actually has, so the backlog "
         "cannot quietly grow back into the headroom:\n  %s" % "\n  ".join(stale)
+    )
+
+
+INLINE_STYLE = re.compile(r'style="([^"]*)"')
+SHELL_TEMPLATES = ("base.html",)
+TEMPLATES = (
+    pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance/templates"
+)
+
+
+def _scale_steps() -> set:
+    variables = custom_properties(load_rules())
+    return {
+        _px(variables["--fhi-space-%d" % index])
+        for index in range(1, 12)
+        if variables.get("--fhi-space-%d" % index)
+    }
+
+
+def _inline_spacing_lengths(template_name: str):
+    """(line, property, value) for every spacing length in a style attribute."""
+    path = TEMPLATES / template_name
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        for style in INLINE_STYLE.findall(line):
+            for declaration in style.split(";"):
+                if ":" not in declaration:
+                    continue
+                prop, value = (part.strip() for part in declaration.split(":", 1))
+                if SPACING_PROPERTY.match(prop):
+                    for size in _lengths(value):
+                        yield number, prop, value, size
+
+
+def test_the_shell_templates_put_no_off_grid_spacing_in_a_style_attribute() -> None:
+    """The stylesheet gate cannot see a style="" attribute, and the shell
+    template has a few. Literals there are held to the same grid."""
+    steps = _scale_steps()
+    offenders = [
+        "%s:%d  %s: %s" % (name, number, prop, value)
+        for name in SHELL_TEMPLATES
+        for number, prop, value, size in _inline_spacing_lengths(name)
+        if size and size not in steps
+    ]
+    assert not offenders, "off the 4px grid in the shell's inline styles:\n  %s" % (
+        "\n  ".join(offenders)
     )
