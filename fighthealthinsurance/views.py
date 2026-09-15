@@ -2075,8 +2075,9 @@ _DENIAL_REF_SESSION_KEY = "denial_back_refs"
 # worked across a day keeps one reference. Owner decision, Melanie
 # 2026-09-13: one sitting plus a same-day return, and no absolute cap on top,
 # because a cap puts a cliff in the middle of an active appeal. Changing this
-# number moves the window for references minted afterwards; entries already in
-# a session keep the absolute expiry they were stamped with.
+# number moves the window for references minted afterwards, and for existing
+# ones the next time they are used, since a use stamps a fresh expiry from it;
+# an entry nobody touches keeps the absolute expiry it was stamped with.
 DENIAL_REF_IDLE_TTL_SECONDS = 12 * 60 * 60
 
 DENIAL_REF_MAX_PER_SESSION = 32
