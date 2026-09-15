@@ -621,6 +621,75 @@ async def test_a_step_that_blew_up_is_not_reported_as_absent_from_the_letter():
         assert _outcome_for(records, task) == EXTRACTION_OUTCOME_FAILED, task
 
 
+class _EveryModelIsDown:
+    """A backend whose every read raises, the way a dead provider does."""
+
+    async def _boom(self, *args, **kwargs):
+        raise RuntimeError("the provider is down")
+
+    get_plan_id = get_claim_id = get_date_of_service = _boom
+    get_insurance_company = get_fax_number = get_procedure_and_diagnosis = _boom
+
+
+@contextlib.contextmanager
+def _the_models_are_down():
+    """Real setters, real appealGenerator, dead models underneath.
+
+    ``_the_model_answers`` stubs ``appealGenerator.get_*`` and so never
+    reaches the layer that swallowed a dead provider into ``None``.
+    """
+    from fighthealthinsurance import generate_appeal
+
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch.object(
+                generate_appeal.ml_router,
+                "entity_extract_backends",
+                return_value=[_EveryModelIsDown()],
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                MLPlanDocHelper,
+                "generate_plan_documents_summary",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                DenialCreatorHelper,
+                "_maybe_dispatch_ucr",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                common_view_logic, "fire_and_forget_in_new_threadpool", _swallow
+            )
+        )
+        yield
+
+
+@pytest.mark.asyncio
+async def test_a_failure_underneath_the_reader_is_not_reported_as_absent_from_the_letter():
+    """One layer below the test above. The regex finds nothing in this letter
+    and every model raises; that used to come back as ``None`` from inside
+    the reader, and the page said "not in this letter"."""
+    await _regex_source()
+    denial = await _make_denial()
+    with _the_models_are_down():
+        records = await _run(denial)
+
+    for task in (
+        EXTRACTION_TASK_PLAN_ID,
+        EXTRACTION_TASK_CLAIM_ID,
+        EXTRACTION_TASK_DATE_OF_SERVICE,
+        EXTRACTION_TASK_INSURANCE_COMPANY,
+        EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
+    ):
+        assert _outcome_for(records, task) == EXTRACTION_OUTCOME_FAILED, task
+
+
 @pytest.mark.asyncio
 async def test_the_denial_reason_is_not_reported_missing_after_it_was_stored():
     """The label on this step is "Reason they gave for the denial", and a bare

@@ -1993,6 +1993,47 @@ class DenialCreatorHelper:
         return cls._extraction_record(task, cls._outcome_for_result(result))
 
     @staticmethod
+    async def _row_names_another_carrier(denial_id: int, matched) -> bool:
+        """Does the insurer the person wrote in the box disagree with ``matched``?
+
+        The free-text name is theirs to correct and is never overwritten, so
+        a structured match that contradicts it must not be stored beside it.
+        An empty box, or one naming the same carrier, is agreement.
+        """
+        named = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values_list("insurance_company", flat=True)
+            .afirst()
+        ) or ""
+        named = named.strip().lower()
+        if not named:
+            return False
+        theirs = (matched.name or "").strip().lower()
+        return not (named in theirs or theirs in named)
+
+    @classmethod
+    async def _store_plan_if_it_is_the_rows_carriers(cls, denial_id: int, plan) -> bool:
+        """Fill the empty plan column, only with a plan of the row's carrier.
+
+        A row with no structured carrier yet takes any plan; a row that holds
+        one takes only that carrier's plans.
+        """
+        carrier_id = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values_list("insurance_company_obj_id", flat=True)
+            .afirst()
+        )
+        if carrier_id is not None and carrier_id != plan.insurance_company_id:
+            logger.debug(
+                f"Plan {plan.id} belongs to another carrier than the row holds; "
+                f"not storing it"
+            )
+            return False
+        return await cls._fill_if_empty(
+            denial_id, "insurance_plan_obj", plan, blank_is_empty=False
+        )
+
+    @staticmethod
     async def _fax_for_the_carrier_on_the_row(denial_id: int) -> Optional[str]:
         """The appeal fax of whichever carrier the row actually holds.
 
@@ -2727,6 +2768,17 @@ class DenialCreatorHelper:
                 )
             if matched_company:
                 found_something = True
+                if await cls._row_names_another_carrier(denial_id, matched_company):
+                    # The person wrote a different insurer in the box. Their
+                    # words outrank a match in the letter; the structured
+                    # columns stay empty rather than hold the wrong carrier.
+                    logger.debug(
+                        f"Row names a different insurer than the matched "
+                        f"{matched_company.name}; not storing the match"
+                    )
+                    matched_company = None
+                    matched_plan = None
+            if matched_company:
                 logger.debug(f"Matched to structured company: {matched_company.name}")
                 wrote_something |= await cls._fill_if_empty(
                     denial_id,
@@ -2737,29 +2789,17 @@ class DenialCreatorHelper:
             if matched_plan:
                 found_something = True
                 logger.debug(f"Matched to structured plan: {matched_plan}")
-                wrote_something |= await cls._fill_if_empty(
-                    denial_id,
-                    "insurance_plan_obj",
-                    matched_plan,
-                    blank_is_empty=False,
+                wrote_something |= await cls._store_plan_if_it_is_the_rows_carriers(
+                    denial_id, matched_plan
                 )
 
-            # The fax follows the carrier that is actually on the row, not the
-            # one this run matched in the letter.
-            #
-            # Each column above is protected separately, which is right on its
-            # own and wrong together. If the person corrected the insurer
-            # between two runs, their name survives while the plan and fax
-            # slots are still empty, so a retry that matches the old carrier
-            # again fills those with the old carrier's details. The row then
-            # names one insurer and carries another's fax number, and the fax
-            # option sends the appeal, with everything in it, to a company
-            # that has nothing to do with the claim.
-            #
-            # So: re-read the row, take the fax from whatever carrier it ended
-            # up holding, and if that carrier has no fax on file leave the
-            # column empty. An empty fax number asks the person for one. A
-            # wrong fax number does not.
+            # The rule every carrier writer follows: a plan is stored only for
+            # the carrier the row holds, and the fax is the published fax of
+            # whatever carrier the row holds after the columns are written,
+            # or empty. The writers are this function, extract_set_fax_number
+            # and match_insurance_plan_from_regex. An empty fax number asks the
+            # person for one. A wrong one sends the appeal, with everything in
+            # it, to a company that has nothing to do with the claim.
             propagated_fax = await cls._fax_for_the_carrier_on_the_row(denial_id)
             if propagated_fax:
                 rows_updated = (
@@ -2818,20 +2858,25 @@ class DenialCreatorHelper:
         """
         from fighthealthinsurance.models import InsurancePlan
 
-        # select_related caches the FK so the insurance_plan_obj read below
-        # stays async-safe (a lazy read would raise SynchronousOnlyOperation,
-        # silently eaten by the except blocks).
-        denial = await Denial.objects.select_related("insurance_plan_obj").aget(
-            denial_id=denial_id
+        # Columns, not a joined instance: a select_related over the plan FK
+        # runs RegexField.from_db_value on the NULL regex columns of a row
+        # with no plan yet, which is every row this is meant to fill, and
+        # that raises before the try below.
+        row = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values("denial_text", "insurance_plan_obj_id")
+            .afirst()
         )
+        if row is None:
+            return None
 
         try:
             # Only proceed if we don't already have a plan matched
-            if denial.insurance_plan_obj:
+            if row["insurance_plan_obj_id"]:
                 logger.debug(f"Denial {denial_id} already has matched plan, skipping")
-                return denial.insurance_plan_obj
+                return await InsurancePlan.objects.aget(id=row["insurance_plan_obj_id"])
 
-            denial_text = denial.denial_text
+            denial_text = row["denial_text"]
 
             # Try to match plans using regex patterns
             async for plan in InsurancePlan.objects.select_related(
@@ -2853,12 +2898,11 @@ class DenialCreatorHelper:
                             # concurrently with extract_set_insurance_company
                             # and after the person may have picked a plan on
                             # the review page.
-                            await cls._fill_if_empty(
-                                denial_id,
-                                "insurance_plan_obj",
-                                plan,
-                                blank_is_empty=False,
-                            )
+                            if not await cls._store_plan_if_it_is_the_rows_carriers(
+                                denial_id, plan
+                            ):
+                                # Another carrier's plan, or one is stored.
+                                continue
                             await cls._fill_if_empty(
                                 denial_id,
                                 "insurance_company_obj",
@@ -2997,6 +3041,9 @@ class DenialCreatorHelper:
         plan_docs_text = ""
         all_source_text = denial_text
         appeal_fax_number: Optional[str] = None
+        # A reader that could not read is a failure, not a letter with no fax
+        # in it; it only shows if nothing else supplies a number below.
+        reader_failed = False
 
         # First try to extract from denial text
         try:
@@ -3004,6 +3051,7 @@ class DenialCreatorHelper:
                 denial_text=denial_text
             )
         except Exception as e:
+            reader_failed = isinstance(e, ExtractionUnavailable)
             logger.opt(exception=True).warning(
                 f"Failed to extract fax number from denial text for {denial_id}: {e}"
             )
@@ -3049,55 +3097,18 @@ class DenialCreatorHelper:
                 else:
                     logger.debug(f"Validated fax number {appeal_fax_number}")
 
-        # Final fallback: if we still don't have a fax number but we matched a
-        # carrier (insurance_company_obj or insurance_plan_obj), use that
-        # carrier's published appeal fax. This is a last resort and isn't
-        # validated against source text - it's the carrier's own data.
-        # Re-read the denial under a fresh query in case a concurrent task
-        # (extract_set_insurance_company) has just propagated a fax onto it -
-        # we never want to overwrite an already-stored value here. We avoid
-        # ``select_related`` because the joined regex columns trigger
-        # RegexField.from_db_value on NULL values and raise ValidationError.
+        # Final fallback: the published fax of the carrier the row holds. Same
+        # rule as the carrier extractor (_fax_for_the_carrier_on_the_row), so
+        # a plan belonging to another carrier can never supply it here either.
         if appeal_fax_number is None:
-            current = (
+            already = (
                 await Denial.objects.filter(denial_id=denial_id)
-                .values(
-                    "appeal_fax_number",
-                    "insurance_company_obj_id",
-                    "insurance_plan_obj_id",
-                )
+                .values_list("appeal_fax_number", flat=True)
                 .afirst()
             )
-            if current is not None:
-                if current["appeal_fax_number"]:
-                    return current["appeal_fax_number"]
-                if current["insurance_plan_obj_id"]:
-                    plan_fax = (
-                        await InsurancePlan.objects.filter(
-                            id=current["insurance_plan_obj_id"]
-                        )
-                        .values_list("appeal_fax_number", flat=True)
-                        .afirst()
-                    )
-                    if plan_fax:
-                        appeal_fax_number = plan_fax
-                        logger.debug(
-                            f"Using plan-published appeal fax {appeal_fax_number}"
-                        )
-                if appeal_fax_number is None and current["insurance_company_obj_id"]:
-                    company_fax = (
-                        await InsuranceCompany.objects.filter(
-                            id=current["insurance_company_obj_id"]
-                        )
-                        .values_list("appeal_fax_number", flat=True)
-                        .afirst()
-                    )
-                    if company_fax:
-                        appeal_fax_number = company_fax
-                        logger.debug(
-                            f"Using carrier-published appeal fax {appeal_fax_number}"
-                        )
-
+            if already:
+                return already
+            appeal_fax_number = await cls._fax_for_the_carrier_on_the_row(denial_id)
         if appeal_fax_number is not None:
             # Conditional update: only write if no fax has been set since
             # we started (extract_set_insurance_company runs concurrently
@@ -3117,7 +3128,7 @@ class DenialCreatorHelper:
                 .values_list("appeal_fax_number", flat=True)
                 .afirst()
             )
-        return None
+        return EXTRACTION_OUTCOME_FAILED if reader_failed else None
 
     @classmethod
     async def extract_set_triage(cls, denial_id) -> str:

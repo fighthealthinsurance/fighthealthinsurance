@@ -57,6 +57,17 @@ from .ml.ml_models import (
     repetition_penalty,
 )
 from .ml.ml_router import ml_router
+
+
+class ExtractionUnavailable(Exception):
+    """No model answered: every one asked raised or ran out of time.
+
+    Distinct from a model that answered and found nothing, which is ``None``.
+    A page that reads ``None`` as "not in this letter" must not read this
+    the same way.
+    """
+
+
 from .ml.model_attempt_log import (
     MAX_RESPONSE_CHARS,
     ModelAttemptRecord,
@@ -1613,12 +1624,15 @@ class AppealGenerator(object):
             score_freetext_extraction,
         )
 
+        answered: List[str] = []
+
         async def attempt_model(model: DenialBase) -> Optional[str]:
             method = getattr(model, model_method_name)
             # Retry up to 3 times gently
             for _ in range(3):
                 try:
                     extracted: Optional[str] = await method(denial_text)  # type: ignore
+                    answered.append(type(model).__name__)
                 except Exception as e:
                     if isinstance(e, MODEL_TRANSPORT_ERRORS):
                         # One concise line: a down backend would otherwise
@@ -1687,6 +1701,11 @@ class AppealGenerator(object):
             logger.debug(f"Entity extraction fan-out produced no result: {e}")
             best = None
 
+        if best is None and not answered:
+            raise ExtractionUnavailable(
+                f"no model answered {model_method_name}: "
+                f"{len(models_to_try)} asked, none returned"
+            )
         # best_within_timelimit returns any truthy result regardless of score.
         # If a score_fn was provided, verify the result actually scores positively
         # to avoid returning junk like English words that passed attempt_model.
@@ -2041,9 +2060,19 @@ class AppealGenerator(object):
         )
 
         # Prepare awaitables from all models
+        answered: List[str] = []
+
+        async def ask(
+            model: DenialBase,
+        ) -> Optional[Tuple[Optional[str], Optional[str]]]:
+            result = await model.get_procedure_and_diagnosis(denial_text)
+            if model is not self.regex_denial_processor:
+                answered.append(type(model).__name__)
+            return result
+
         awaitables: List[
             Coroutine[Any, Any, Optional[Tuple[Optional[str], Optional[str]]]]
-        ] = [model.get_procedure_and_diagnosis(denial_text) for model in models_to_try]
+        ] = [ask(model) for model in models_to_try]
 
         # Scoring: prefer results that give both fields, penalize overly long values
         def score_fn(
@@ -2081,14 +2110,19 @@ class AppealGenerator(object):
 
         if best is None:
             logger.debug("No model returned procedure/diagnosis within timeout")
-            return (None, None)
-
-        proc, diag = best
+            proc, diag = None, None
+        else:
+            proc, diag = best
         # Enforce length constraint similar to previous logic
         if proc is not None and len(proc) > 200:
             proc = None
         if diag is not None and len(diag) > 200:
             diag = None
+        if proc is None and diag is None and len(models_to_try) > 1 and not answered:
+            # The regex found nothing (its (None, None) is a truthy tuple and
+            # can be the "best") and no model got an answer out: a read that
+            # failed, not a letter with nothing in it.
+            raise ExtractionUnavailable("no model answered get_procedure_and_diagnosis")
         logger.debug(f"Returning (procedure, diagnosis)=({proc}, {diag})")
         return (proc, diag)
 

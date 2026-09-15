@@ -110,3 +110,118 @@ async def test_the_rows_own_plan_still_wins_over_its_carrier() -> None:
         denial.denial_id
     )
     assert fax == "555-0009"
+
+
+# The same rule, through the writers rather than the helper. The four tests
+# above prove the helper; these prove each writer obeys it.
+
+from unittest.mock import AsyncMock, patch
+
+from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+# Loading a carrier or plan as a model instance compiles both of its regex
+# columns, and an empty negative_regex is stored as NULL, which the field
+# refuses. The writers below load instances; the helper tests above do not.
+NEVER = "zzz-never-matches-zzz"
+
+
+async def _carrier_row(name, fax):
+    return await InsuranceCompany.objects.acreate(
+        name=name, regex=name, negative_regex=NEVER, appeal_fax_number=fax
+    )
+
+
+async def _plan_of(carrier, name, fax, regex=None):
+    return await InsurancePlan.objects.acreate(
+        insurance_company=carrier,
+        plan_name=name,
+        regex=regex if regex is not None else name,
+        negative_regex=NEVER,
+        appeal_fax_number=fax,
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_the_fax_extractor_does_not_take_another_carriers_plan_fax() -> None:
+    """The row names Cigna and, from an earlier mismatch, holds an Aetna plan.
+    The letter has no fax in it. The fallback used to take the plan's."""
+    theirs = await _carrier_row("Cigna", "")
+    other = await _carrier_row("Aetna", "555-0002")
+    other_plan = await _plan_of(other, "Aetna PPO", "555-0003")
+    denial = await Denial.objects.acreate(
+        denial_text="a denial with no fax number in it",
+        hashed_email="x",
+        insurance_company="Cigna",
+        insurance_company_obj=theirs,
+        insurance_plan_obj=other_plan,
+    )
+    with patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_fax_number",
+        new=AsyncMock(return_value=None),
+    ), patch.object(
+        DenialCreatorHelper, "get_plan_documents_text", new=AsyncMock(return_value="")
+    ):
+        outcome = await DenialCreatorHelper.extract_set_fax_number(denial.denial_id)
+
+    stored = (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values_list("appeal_fax_number", flat=True)
+        .afirst()
+    )
+    assert not stored, f"the fax column holds {stored}, another carrier's number"
+    assert outcome in (None, "")
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_the_regex_plan_matcher_does_not_store_another_carriers_plan() -> None:
+    theirs = await _carrier_row("Cigna", "555-0001")
+    other = await _carrier_row("Aetna", "555-0002")
+    await _plan_of(other, "Aetna PPO", "555-0003", regex="Aetna PPO")
+    denial = await Denial.objects.acreate(
+        denial_text="Your Aetna PPO claim was denied.",
+        hashed_email="x",
+        insurance_company="Cigna",
+        insurance_company_obj=theirs,
+    )
+
+    matched = await DenialCreatorHelper.match_insurance_plan_from_regex(
+        denial.denial_id
+    )
+
+    row = (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values("insurance_plan_obj_id", "insurance_company_obj_id")
+        .afirst()
+    )
+    assert matched is None
+    assert row["insurance_plan_obj_id"] is None
+    assert row["insurance_company_obj_id"] == theirs.id
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_a_match_that_contradicts_the_insurer_the_person_named_is_not_stored() -> (
+    None
+):
+    """The person typed Cigna in the box and picked nothing structured. A
+    retry reading the letter matches Aetna. Their words outrank the letter."""
+    await _carrier_row("Cigna", "555-0001")
+    await _carrier_row("Aetna", "555-0002")
+    denial = await Denial.objects.acreate(
+        denial_text="Aetna has denied your claim.",
+        hashed_email="x",
+        insurance_company="Cigna",
+    )
+    with patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+        new=AsyncMock(return_value="Aetna"),
+    ):
+        await DenialCreatorHelper.extract_set_insurance_company(denial.denial_id)
+
+    row = (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values("insurance_company", "insurance_company_obj_id", "appeal_fax_number")
+        .afirst()
+    )
+    assert row["insurance_company"] == "Cigna"
+    assert row["insurance_company_obj_id"] is None
+    assert not row["appeal_fax_number"], "Aetna's fax landed on a Cigna case"
