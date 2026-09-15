@@ -1014,8 +1014,14 @@ class FindNextStepsHelper:
                 new_form = new_form(prof_pov=prof_pov)
                 question_forms.append(new_form)
 
-        # Add generated questions form if available
-        if denial.generated_questions:
+        # Add generated questions form if available, and only if it was
+        # generated for the inputs the row holds now (or predates the stamp):
+        # after a failed regeneration the old set is still on the row, and
+        # rendering it would show questions about a since-corrected service.
+        if denial.generated_questions and denial.generated_questions_for in (
+            None,
+            questions_fingerprint(denial.procedure, denial.diagnosis),
+        ):
             question_fields = generated_question_fields(denial.generated_questions)
 
             class AppealQuestionsForm(forms.Form):

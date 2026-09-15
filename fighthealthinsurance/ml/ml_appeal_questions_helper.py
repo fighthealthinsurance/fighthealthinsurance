@@ -103,8 +103,10 @@ class MLAppealQuestionsHelper:
 
         # Skip if we don't have enough information
         if procedure == "" and diagnosis == "":
+            # Nothing to ask about is not an answer of nothing: None, so the
+            # caller does not read this as a finished run with no questions.
             logger.debug(f"Missing procedure and diagnosis for generic questions")
-            return []
+            return None
 
         # Check for existing cached questions first
         try:
@@ -244,7 +246,7 @@ class MLAppealQuestionsHelper:
             not patient_context or patient_context == ""
         ):
             logger.debug(f"All patient specific context is unset, quick return.")
-            return []
+            return None
 
         # If no cached questions exist, generate them
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing

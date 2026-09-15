@@ -568,6 +568,32 @@ class OnlyAQuestionnaireCanWithdrawTest(QuestionsStepTestBase):
         self.assertTrue(not after or "questionnaire" not in json.loads(after), after)
 
 
+class AStaleSetIsNotRenderedTest(QuestionsStepTestBase):
+    def test_a_set_for_a_corrected_procedure_is_not_rendered(self):
+        """Regeneration failed and the MRI set is still on the row. The page
+        must not ask MRI questions about a CT scan."""
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            questions_fingerprint,
+        )
+
+        self.denial.procedure = "CT scan"
+        self.denial.diagnosis = "knee pain"
+        self.denial.generated_questions = [["What about the MRI?", ""]]
+        self.denial.generated_questions_for = questions_fingerprint("MRI", "knee pain")
+        self.denial.save(
+            update_fields=[
+                "procedure",
+                "diagnosis",
+                "generated_questions",
+                "generated_questions_for",
+            ]
+        )
+
+        combined = self._rebuild().combined_form
+
+        self.assertNotIn(question_field_name("What about the MRI?"), combined.fields)
+
+
 class BackAfterAnUnfinishedRunTest(QuestionsStepTestBase):
     def test_back_after_a_run_that_never_finished_does_not_say_we_have_what_we_need(
         self,

@@ -311,6 +311,35 @@ class QuestionGenerationDeadlineTest(TestCase):
 
     @pytest.mark.django_db
     @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_nothing_to_ask_about_is_not_an_answer_of_nothing(self, _citations):
+        """No procedure and no diagnosis (the state after a failed extraction):
+        the generic generator cannot ask, and must not be counted as having
+        asked and found nothing."""
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            MLAppealQuestionsHelper,
+        )
+
+        async def run():
+            self.assertIsNone(
+                await MLAppealQuestionsHelper.generate_generic_questions(
+                    procedure="", diagnosis="", timeout=1
+                )
+            )
+            self.assertIsNone(
+                await MLAppealQuestionsHelper.generate_specific_questions(
+                    denial_text="",
+                    patient_context="",
+                    procedure="x",
+                    diagnosis="y",
+                    timeout=1,
+                    use_external=False,
+                )
+            )
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch(_CITATIONS, new_callable=AsyncMock)
     def test_a_second_run_does_not_replace_the_first_runs_questions(self, _citations):
         """The helper's own write site, against a stale in-memory row.
 
