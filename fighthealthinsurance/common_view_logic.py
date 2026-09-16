@@ -4741,7 +4741,7 @@ class AppealsBackendHelper:
                 ProposedAppeal.objects.filter(
                     for_denial=denial,
                     speculative=True,
-                    built_for_state=reserve_state(denial),
+                    built_for_state=state_on_the_row_now(),
                 )
             ).only("appeal_text"):
                 if is_real_appeal(_row.appeal_text):
@@ -4834,11 +4834,15 @@ class AppealsBackendHelper:
                 # row we stop on; is_real_appeal then re-checks each survivor,
                 # since the word rule doesn't fit in SQL.
                 async for row in deliverable_candidates(
+                    # Compared with the state on the row as the query runs,
+                    # like the promotion below: a correction landing mid-run
+                    # must not hide a reserve stamped for the corrected state
+                    # behind the copy this run loaded when it began.
                     ProposedAppeal.objects.filter(
                         for_denial=denial,
                         speculative=True,
                         chosen=False,
-                        built_for_state=reserve_state(denial),
+                        built_for_state=state_on_the_row_now(),
                     )
                 ).order_by("id"):
                     if (new + old) >= cls.ENOUGH_APPEALS:
