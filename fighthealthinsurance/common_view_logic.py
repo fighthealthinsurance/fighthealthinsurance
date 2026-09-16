@@ -1726,32 +1726,39 @@ def reserve_state(denial) -> str:
 
 
 def state_on_the_row_now():
-    """The row's state as a subquery, for the UPDATE that promotes a reserve.
+    """The row's state as a subquery, for every statement that compares a
+    reserve's stamp with the case's state.
 
-    Read in the same statement as the promotion, so a correction landing
-    between a separate read and the write cannot slip a wrong-state row
-    through. Matches the stamp's spelling: empty for no state.
+    Read in the same statement as the write or the filter, so a correction
+    landing between a separate read and this statement cannot slip a
+    wrong-state row through. Matches the stamp's spelling, which
+    reserve_state trims: empty for no state, no surrounding whitespace.
     """
     from django.db.models import OuterRef, Subquery, Value
-    from django.db.models.functions import Coalesce
+    from django.db.models.functions import Coalesce, Trim
 
     return Subquery(
         Denial.objects.filter(denial_id=OuterRef("for_denial"))
-        .annotate(now=Coalesce("your_state", Value("")))
+        .annotate(now=Trim(Coalesce("your_state", Value(""))))
         .values("now")[:1]
     )
 
 
-def served_reserve_for_another_state(denial) -> Q:
+def served_reserve_for_another_state() -> Q:
     """Promoted reserve rows that argue under another state's law.
 
     A reserve keeps its stamp when it is promoted, so a case that has since
     named another state does not get it replayed or fed to synthesis unless
     the person chose it. A row from before the stamp existed is unknown, and
     unknown is treated as another state.
+
+    The stamp is compared with the state on the row as the query runs, not
+    with the copy the request loaded when it began: a correction landing
+    mid-run moves the row, and a reserve stamped for the old state must not
+    pass on a snapshot taken before it.
     """
     return Q(context_level__in=SPECULATIVE_CONTEXT_LEVELS, chosen=False) & (
-        ~Q(built_for_state=reserve_state(denial)) | Q(built_for_state__isnull=True)
+        ~Q(built_for_state=state_on_the_row_now()) | Q(built_for_state__isnull=True)
     )
 
 
@@ -4608,7 +4615,7 @@ class AppealsBackendHelper:
         # those rows the whole budget; nulls_last puts them where they belong.
         existing_appeals = (
             ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
-            .exclude(served_reserve_for_another_state(denial))
+            .exclude(served_reserve_for_another_state())
             .order_by(F("created_at").desc(nulls_last=True), "-id")
             .all()
         )
@@ -4825,7 +4832,7 @@ class AppealsBackendHelper:
                 ProposedAppeal.objects.filter(
                     for_denial=denial,
                     speculative=True,
-                    built_for_state=reserve_state(denial),
+                    built_for_state=state_on_the_row_now(),
                 )
             ).only("appeal_text"):
                 if is_real_appeal(_row.appeal_text):
@@ -4918,11 +4925,15 @@ class AppealsBackendHelper:
                 # row we stop on; is_real_appeal then re-checks each survivor,
                 # since the word rule doesn't fit in SQL.
                 async for row in deliverable_candidates(
+                    # Compared with the state on the row as the query runs,
+                    # like the promotion below: a correction landing mid-run
+                    # must not hide a reserve stamped for the corrected state
+                    # behind the copy this run loaded when it began.
                     ProposedAppeal.objects.filter(
                         for_denial=denial,
                         speculative=True,
                         chosen=False,
-                        built_for_state=reserve_state(denial),
+                        built_for_state=state_on_the_row_now(),
                     )
                 ).order_by("id"):
                     if (new + old) >= cls.ENOUGH_APPEALS:
@@ -6205,7 +6216,7 @@ class AppealsBackendHelper:
             async for pa in deliverable_candidates(
                 ProposedAppeal.objects.filter(
                     for_denial=denial, speculative=False
-                ).exclude(served_reserve_for_another_state(denial))
+                ).exclude(served_reserve_for_another_state())
             )
             if is_real_appeal(pa.appeal_text)
             and str(pa.appeal_text).strip() not in early_reserve_texts
@@ -6372,12 +6383,12 @@ class AppealsBackendHelper:
                 ProposedAppeal.objects.filter(for_denial=denial, chosen=False).filter(
                     # A held-back reserve written for another state argues
                     # under that state's law: only a live row or a reserve
-                    # written for this state is served...
+                    # written for the state on the row now is served...
                     Q(speculative=False)
-                    | Q(built_for_state=reserve_state(denial))
+                    | Q(built_for_state=state_on_the_row_now())
                 )
                 # ...and a reserve already promoted keeps its stamp.
-                .exclude(served_reserve_for_another_state(denial))
+                .exclude(served_reserve_for_another_state())
             ).order_by("id"):
                 text = row.appeal_text
                 if not is_real_appeal(text):
