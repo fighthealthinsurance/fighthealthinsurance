@@ -42,6 +42,19 @@ Getting Your Questions Ready
       </div>
     </noscript>
   </form>
+
+  {# Outside the form, and no submit control in it: the auto-submitted POST #}
+  {# is still in flight here and find_next_steps is not idempotent.         #}
+  <div id="slow-explanation" style="display:none; text-align:center; margin-top:1rem;">
+    <p style="margin-bottom:0.75rem; color:#4f5b67;">
+      This one is taking longer than usual. We ask a couple of models what is worth
+      asking you about this denial, and they are still thinking. The page moves on by
+      itself as soon as one of them answers.
+    </p>
+    {% if back_url %}
+    <a href="{{ back_url }}" class="btn btn-secondary-custom">← {{ back_label|default:"Back to review" }}</a>
+    {% endif %}
+  </div>
 </div>
 
 <script>
@@ -78,10 +91,16 @@ Getting Your Questions Ready
         form.submit();
       }, 250);
 
-      // Failure path for the auto-submit: if the POST is slow or errors, the
-      // user used to be stuck on the spinner with no visible control at all.
-      // Reveal the manual button after 20s; a successful navigation tears
-      // this page down before the timer matters.
+      window.setTimeout(function () {
+        const slowExplanation = document.getElementById('slow-explanation');
+        if (slowExplanation) {
+          slowExplanation.style.display = 'block';
+        }
+      }, 8000);
+
+      // Failure path for the auto-submit. This IS a second submission of
+      // the same payload; claim_generated_questions is what makes the
+      // overlap safe. A successful navigation tears the page down first.
       window.setTimeout(function () {
         if (manualContinue) {
           manualContinue.style.display = 'block';
