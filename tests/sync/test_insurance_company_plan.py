@@ -699,10 +699,12 @@ class ExtractInsuranceCompanyPropagationTests(TestCase):
 
     def test_resolved_name_set_when_only_regex_matches(self):
         """When LLM extraction returns nothing but a company is matched via
-        regex fallback, the denial's text ``insurance_company`` field and the
-        method return value should both be the matched company's canonical
-        name - not None."""
-        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+        regex fallback, the denial's text ``insurance_company`` field should
+        hold the matched company's canonical name - not None."""
+        from fighthealthinsurance.common_view_logic import (
+            EXTRACTION_OUTCOME_FOUND,
+            DenialCreatorHelper,
+        )
 
         # Create an insurance company with a regex that will match the denial text
         # but no name overlap with anything in the text
@@ -726,7 +728,10 @@ class ExtractInsuranceCompanyPropagationTests(TestCase):
         denial.refresh_from_db()
         self.assertEqual(denial.insurance_company_obj, bcbs_carrier)
         self.assertEqual(denial.insurance_company, "Acme Carrier Long Name")
-        self.assertEqual(result, "Acme Carrier Long Name")
+        # The setter reports an outcome rather than the value: it swallows the
+        # model's exceptions, so a returned name could not say whether a read
+        # failed or the letter simply had no insurer in it.
+        self.assertEqual(result, EXTRACTION_OUTCOME_FOUND)
 
 
 class ExtractSetFaxNumberTests(TestCase):

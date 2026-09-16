@@ -51,12 +51,24 @@ from fighthealthinsurance.denial_base import DenialBase
 from .exec import background_executor, executor
 from .ml.ml_models import (
     MODEL_TRANSPORT_ERRORS,
+    ProviderUnavailable,
     RemoteFullOpenLike,
     RemoteModelLike,
     describe_model_error,
     repetition_penalty,
 )
 from .ml.ml_router import ml_router
+
+
+class ExtractionUnavailable(Exception):
+    """No model answered: every one asked raised or ran out of time.
+
+    Distinct from a model that answered and found nothing, which is ``None``.
+    A page that reads ``None`` as "not in this letter" must not read this
+    the same way.
+    """
+
+
 from .ml.model_attempt_log import (
     MAX_RESPONSE_CHARS,
     ModelAttemptRecord,
@@ -1603,7 +1615,9 @@ class AppealGenerator(object):
             if hasattr(m, model_method_name)
         ]
         if not models_to_try:
-            return None
+            # The regexes found nothing and there is nobody to ask: that is
+            # a read that could not happen, not a letter with nothing in it.
+            raise ExtractionUnavailable(f"no model configured for {model_method_name}")
 
         denial_lowered = denial_text.lower()
 
@@ -1613,14 +1627,17 @@ class AppealGenerator(object):
             score_freetext_extraction,
         )
 
+        answered: List[str] = []
+
         async def attempt_model(model: DenialBase) -> Optional[str]:
             method = getattr(model, model_method_name)
             # Retry up to 3 times gently
             for _ in range(3):
                 try:
                     extracted: Optional[str] = await method(denial_text)  # type: ignore
+                    answered.append(type(model).__name__)
                 except Exception as e:
-                    if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                    if isinstance(e, (*MODEL_TRANSPORT_ERRORS, ProviderUnavailable)):
                         # One concise line: a down backend would otherwise
                         # emit a full traceback for every entity type x model
                         # x retry.
@@ -1687,6 +1704,11 @@ class AppealGenerator(object):
             logger.debug(f"Entity extraction fan-out produced no result: {e}")
             best = None
 
+        if best is None and not answered:
+            raise ExtractionUnavailable(
+                f"no model answered {model_method_name}: "
+                f"{len(models_to_try)} asked, none returned"
+            )
         # best_within_timelimit returns any truthy result regardless of score.
         # If a score_fn was provided, verify the result actually scores positively
         # to avoid returning junk like English words that passed attempt_model.
@@ -1881,14 +1903,29 @@ class AppealGenerator(object):
 
         # If regex fails, use ML models with known companies as context
         models_to_try = ml_router.entity_extract_backends(use_external)
+        answered = False
         for model in models_to_try:
-            if hasattr(model, "get_insurance_company"):
+            if not hasattr(model, "get_insurance_company"):
+                continue
+            try:
                 insurance_company: Optional[str] = await model.get_insurance_company(
                     denial_text
                 )
-                if insurance_company is not None and "UNKNOWN" not in insurance_company:
-                    return insurance_company
-
+            except Exception as e:
+                # A provider that could not be reached is not an answer.
+                logger.debug(
+                    f"get_insurance_company via {model} failed -- "
+                    f"{describe_model_error(e)}"
+                )
+                continue
+            answered = True
+            if insurance_company is not None and "UNKNOWN" not in insurance_company:
+                return insurance_company
+        if not answered:
+            # Nobody could be asked, or nobody answered: the caller has its
+            # own regexes to fall back on, and reports failed only if those
+            # find nothing either.
+            raise ExtractionUnavailable("no model answered get_insurance_company")
         return None
 
     async def get_plan_id(self, denial_text=None, use_external=False) -> Optional[str]:
@@ -2041,9 +2078,19 @@ class AppealGenerator(object):
         )
 
         # Prepare awaitables from all models
+        answered: List[str] = []
+
+        async def ask(
+            model: DenialBase,
+        ) -> Optional[Tuple[Optional[str], Optional[str]]]:
+            result = await model.get_procedure_and_diagnosis(denial_text)
+            if model is not self.regex_denial_processor:
+                answered.append(type(model).__name__)
+            return result
+
         awaitables: List[
             Coroutine[Any, Any, Optional[Tuple[Optional[str], Optional[str]]]]
-        ] = [model.get_procedure_and_diagnosis(denial_text) for model in models_to_try]
+        ] = [ask(model) for model in models_to_try]
 
         # Scoring: prefer results that give both fields, penalize overly long values
         def score_fn(
@@ -2081,14 +2128,19 @@ class AppealGenerator(object):
 
         if best is None:
             logger.debug("No model returned procedure/diagnosis within timeout")
-            return (None, None)
-
-        proc, diag = best
+            proc, diag = None, None
+        else:
+            proc, diag = best
         # Enforce length constraint similar to previous logic
         if proc is not None and len(proc) > 200:
             proc = None
         if diag is not None and len(diag) > 200:
             diag = None
+        if proc is None and diag is None and not answered:
+            # The regex found nothing (its (None, None) is a truthy tuple and
+            # can be the "best") and no model got an answer out: a read that
+            # failed, not a letter with nothing in it.
+            raise ExtractionUnavailable("no model answered get_procedure_and_diagnosis")
         logger.debug(f"Returning (procedure, diagnosis)=({proc}, {diag})")
         return (proc, diag)
 
