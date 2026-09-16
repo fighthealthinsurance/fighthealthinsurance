@@ -46,7 +46,7 @@ from django.db.models.functions import Length
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.utils.html import escape as html_escape
+from django.utils.html import format_html, escape as html_escape
 
 import asyncstdlib as a
 import ray
@@ -75,7 +75,13 @@ from fighthealthinsurance.context_utils import (
     SPECULATIVE_CONTEXT_LEVELS,
     summarize_denial_context_tokens,
 )
-from fighthealthinsurance.denial_context import load_qa, merge_plan_context, merge_qa
+from fighthealthinsurance.denial_context import (
+    generated_question_fields,
+    load_qa,
+    merge_plan_context,
+    merge_qa,
+    stored_answer_for_question,
+)
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
     render_template_blocks,
@@ -91,7 +97,11 @@ from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
-from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
+from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+    MLAppealQuestionsHelper,
+    claim_generated_questions,
+    questions_fingerprint,
+)
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.imr_decision_retriever import IMRDecisionRetriever
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
@@ -159,11 +169,22 @@ states_with_caps = {
 }
 
 
+# What the questions page should say about the questions it is rendering.
+# A Django Form is truthy with no fields in it (BaseForm defines neither
+# ``__bool__`` nor ``__len__``), so the template cannot work this out from
+# the form and has to be told.
+QUESTIONS_OUTCOME_PRESENT = "questions"
+QUESTIONS_OUTCOME_NONE = "no_questions"
+QUESTIONS_OUTCOME_UNFINISHED = "generation_unfinished"
+
+
 @dataclass
 class NextStepInfo:
     outside_help_details: list[Tuple[str, str]]
     combined_form: Form
     semi_sekret: str
+    # One of the QUESTIONS_OUTCOME_* values above.
+    questions_outcome: str = QUESTIONS_OUTCOME_PRESENT
     # PharmacyCouponSuggestion when the denial concerns a recognizable
     # prescription drug or contains generic prescription cues; None
     # otherwise. Surfaced in outside_help.html so users see GoodRx /
@@ -187,6 +208,7 @@ class NextStepInfo:
                 )
             ),
             semi_sekret=self.semi_sekret,
+            questions_outcome=self.questions_outcome,
         )
 
     def _field_to_dict(self, field_name: str, field: Any) -> dict[str, Any]:
@@ -672,6 +694,11 @@ class NextStepInfoSerializable:
     outside_help_details: list[Tuple[str, str]]
     combined_form: list[Any]
     semi_sekret: str
+    # One of the QUESTIONS_OUTCOME_* values: an empty combined_form is
+    # "no_questions" after a finished run and "generation_unfinished" after
+    # one that did not finish, and a REST client cannot tell those apart
+    # from the form alone.
+    questions_outcome: str
 
 
 def schedule_follow_ups(
@@ -968,42 +995,84 @@ class FindNextStepsHelper:
     def _build_question_forms(
         cls, denial: "Denial", existing_answers: Optional[dict] = None
     ) -> list:
-        """Build question forms from denial types and generated questions (shared logic)."""
+        """Build question forms from denial types and generated questions (shared logic).
+
+        ``existing_answers`` is the decoded ``qa_context``. Generated
+        questions have to resolve their stored answers here rather than in
+        ``magic_combined_form``: those answers are filed by
+        ``qa_key_for_question``, not by field name, so the lookup by field
+        name that the merge does never finds them.
+        """
         from django import forms
 
+        answers: dict[str, str] = existing_answers or {}
         question_forms = []
         prof_pov = denial.professional_to_finish
 
-        # Add forms for each denial type
+        # Deliberately no ``initial=`` from the denial type: ``appeal_text``
+        # is canned appeal boilerplate, not an answer, and an answer box is
+        # the person's. Some of those paragraphs are also longer than the
+        # field they would land in, so the page would fail its own
+        # validation.
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
-                new_form = new_form(
-                    initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
-                )
+                new_form = new_form(prof_pov=prof_pov)
                 question_forms.append(new_form)
 
-        # Add generated questions form if available
-        if denial.generated_questions:
-            generated_questions: list[tuple[str, str]] = denial.generated_questions
+        # Add generated questions form if available, and only if it was
+        # generated for the inputs the row holds now (or predates the stamp):
+        # after a failed regeneration the old set is still on the row, and
+        # rendering it would show questions about a since-corrected service.
+        if denial.generated_questions and denial.generated_questions_for in (
+            None,
+            questions_fingerprint(denial.procedure, denial.diagnosis),
+        ):
+            question_fields = generated_question_fields(denial.generated_questions)
 
             class AppealQuestionsForm(forms.Form):
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, **kwargs)
-                    for i, (question, initial_answer) in enumerate(
-                        generated_questions, 1
-                    ):
-                        field_name = f"appeal_generated_question_{i}"
+                    for field_name, (
+                        question,
+                        suggested_answer,
+                    ) in question_fields.items():
+                        stored = stored_answer_for_question(question, answers)
+                        # The model's suggestion goes beside the box, not in
+                        # it. The letter is written in this person's voice and
+                        # sent over their name, and the box is posted on every
+                        # Next whether or not it was touched, so a prefilled
+                        # suggestion nobody read became their own account of
+                        # their own medical history. Offered as a hint it
+                        # still helps with questions like "reason for elevated
+                        # risk requiring this screening", which few people can
+                        # answer cold. Product owner's call of 2026-09-14.
+                        hint = (suggested_answer or "").strip()
                         self.fields[field_name] = forms.CharField(
                             label=question,
-                            help_text=question,
                             required=False,
-                            initial=initial_answer,
+                            initial=stored if stored is not None else "",
+                            # Escaped: the form's table template marks
+                            # help_text safe, and this text is model output.
+                            help_text=(
+                                format_html("One way to answer: {}", hint)
+                                if hint
+                                else ""
+                            ),
                         )
 
             question_forms.append(AppealQuestionsForm())
 
         return question_forms
+
+    @staticmethod
+    def _questions_outcome(combined_form: Form, generation_finished: bool) -> str:
+        """Which of the three real states the questions page is in."""
+        if combined_form.fields:
+            return QUESTIONS_OUTCOME_PRESENT
+        if not generation_finished:
+            return QUESTIONS_OUTCOME_UNFINISHED
+        return QUESTIONS_OUTCOME_NONE
 
     @classmethod
     def find_next_steps(
@@ -1246,15 +1315,23 @@ class FindNextStepsHelper:
                 f"denial {denial_id}"
             )
 
-        # Generate questions for better appeal creation if they don't exist yet
+        # Generate questions for better appeal creation if they don't exist yet.
+        generation_finished = True
         try:
-            if not denial.generated_questions or len(denial.generated_questions) == 0:
+            if not stored_questions_are_current(denial):
+                # Nothing finished for these inputs yet: none stored, a set
+                # stored for a procedure or diagnosis since corrected, or an
+                # empty set from before the stamp, which always regenerated.
+                # A nonempty set from before the stamp is of unknown origin
+                # and is kept as it always was.
                 logger.debug("Generating appeal questions")
-                async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
-                    denial_id=denial.denial_id
-                )
+                generated = async_to_sync(
+                    DenialCreatorHelper.generate_appeal_questions
+                )(denial_id=denial.denial_id)
+                generation_finished = generated is not None
                 denial.refresh_from_db()
         except Exception as e:
+            generation_finished = False
             logger.opt(exception=True).error(
                 f"Failed to process appeal questions for denial {denial_id}: {e}"
             )
@@ -1271,10 +1348,15 @@ class FindNextStepsHelper:
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                questions_outcome=cls._questions_outcome(
+                    combined_form, generation_finished
+                ),
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
             )
         except Exception as e:
+            # Anything landing here rebuilds the page without the answers
+            # the person gave, so it is logged at error, not swallowed.
             logger.opt(exception=True).error(
                 f"Unexpected error building query {denial_id}: {e}"
             )
@@ -1283,6 +1365,9 @@ class FindNextStepsHelper:
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                questions_outcome=cls._questions_outcome(
+                    combined_form, generation_finished
+                ),
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
             )
@@ -1377,19 +1462,36 @@ class FindNextStepsHelper:
         )
 
     @classmethod
-    def find_next_steps_for_denial(cls, denial: "Denial", email: str) -> "NextStepInfo":
+    def find_next_steps_for_denial(
+        cls,
+        denial: "Denial",
+        email: str,
+        existing_answers: Optional[dict[str, str]] = None,
+    ) -> "NextStepInfo":
         """
         Simplified version of find_next_steps for GET requests (back navigation).
         Returns the outside_help info without modifying the denial.
+
+        ``existing_answers`` defaults to the answers stored on the row.
         """
+        if existing_answers is None:
+            existing_answers = load_qa(denial)
         # Use shared helpers for outside help details and question forms
         outside_help_details = cls._get_outside_help_details(denial)
-        question_forms = cls._build_question_forms(denial)
-        combined_form = magic_combined_form(question_forms, {})
+        question_forms = cls._build_question_forms(denial, existing_answers)
+        combined_form = magic_combined_form(question_forms, existing_answers)
         return NextStepInfo(
             outside_help_details=outside_help_details,
             combined_form=combined_form,
             semi_sekret=denial.semi_sekret,
+            # Back navigation generates nothing. Whether a run finished for
+            # the inputs the row holds now is on the row, by the same rule
+            # that starts one: a set stamped for corrected-away inputs, left
+            # behind when its replacement never finished, is not finished.
+            questions_outcome=cls._questions_outcome(
+                combined_form,
+                generation_finished=stored_questions_are_current(denial),
+            ),
             pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
             financial_assistance=cls._build_financial_assistance(denial),
         )
@@ -1458,6 +1560,60 @@ class ProfessionalNotificationHelper:
             },
             to_email=email,
         )
+
+
+# Outer deadline on one non-speculative question-generation run. It must
+# stay above the model phase's own ceiling: firing first cancels the helper
+# and throws away every model result that had already arrived. The loading
+# page, not this timer, is what gives the person a way out sooner, and its
+# Continue button at 20 seconds can start a second overlapping run --
+# see claim_generated_questions.
+QUESTION_GENERATION_DEADLINE_SECONDS = 130
+
+
+def stored_questions_are_current(denial: "Denial") -> bool:
+    """Whether the set on the row is a finished set for the row's inputs now.
+
+    Stamped for the current procedure and diagnosis: finished, empty
+    included, since a run that found nothing to ask stores []. Unstamped,
+    from before the stamp existed: finished only when nonempty, since the
+    code before the stamp wrote [] for a run that never finished. Anything
+    else, a set stamped for inputs since corrected above all, is not a
+    finished set for this row. The one rule for starting a run, reporting
+    one that did not finish, and rendering Back.
+    """
+    if denial.generated_questions is None:
+        return False
+    stamp = denial.generated_questions_for
+    if stamp is None:
+        return bool(denial.generated_questions)
+    return bool(stamp == questions_fingerprint(denial.procedure, denial.diagnosis))
+
+
+def record_derived_medical_context(
+    denial, medical_context: set[str], withdraw: bool = True
+) -> bool:
+    """Replace, never add to, the sentence the answers derive.
+
+    ``medical_context`` is computed from the current answers on every
+    generation. Merging it additively kept the previous sentence when the
+    answers no longer produced one: untick "urgent", generate, and the
+    prompt still said the claim was urgent. Empty now withdraws it. Returns
+    whether qa_context changed.
+    """
+    before = denial.qa_context
+    # A form whose boxes are all unticked derives "", which is not a
+    # sentence; {""} must read as nothing derived.
+    sentences = {text.strip() for text in medical_context if text and text.strip()}
+    if sentences:
+        merge_qa(
+            denial,
+            {"medical_context": " ".join(sorted(sentences))},
+            source="appeal_gen_form",
+        )
+    elif withdraw:
+        merge_qa(denial, {}, source="appeal_gen_form", withdraw=["medical_context"])
+    return bool(denial.qa_context != before)
 
 
 def reserve_state(denial) -> str:
@@ -1529,7 +1685,9 @@ class DenialCreatorHelper:
         return cls._all_denial_types
 
     @classmethod
-    async def generate_appeal_questions(cls, denial_id: int) -> List[Tuple[str, str]]:
+    async def generate_appeal_questions(
+        cls, denial_id: int
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate a list of questions that could help craft a better appeal for
         this specific denial. The questions will be stored in the denial object's
@@ -1540,12 +1698,16 @@ class DenialCreatorHelper:
             denial_id: The ID of the denial to generate questions for
 
         Returns:
-            A list of (question, answer) tuples to help with appeal creation
+            A list of (question, answer) tuples to help with appeal creation,
+            or None when generation did not finish. None and [] are different
+            answers: [] means we asked and there was nothing to ask about,
+            None means we never found out, and the page tells the person
+            which of those happened instead of offering both the same copy.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
-            return []
+            return None
 
         try:
             # Use fire_and_forget_in_new_threadpool for citation generation to run in background
@@ -1565,21 +1727,76 @@ class DenialCreatorHelper:
                 MLAppealQuestionsHelper.generate_questions_for_denial(
                     denial, speculative=False
                 ),
-                timeout=20,
+                timeout=QUESTION_GENERATION_DEADLINE_SECONDS,
             )
 
-            # Store the generated questions in the denial object
-            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                generated_questions=questions
+            if questions is None:
+                return await cls._questions_already_on_the_row(denial_id)
+            # Never a bare write: another run for this denial may have
+            # rendered its own set to the person already. The helper claims
+            # for itself too; a second claim for the same inputs is a read.
+            questions = await claim_generated_questions(
+                denial_id,
+                questions,
+                generated_for=questions_fingerprint(denial.procedure, denial.diagnosis),
             )
-
+            if questions is None:
+                return await cls._questions_already_on_the_row(denial_id)
             logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
             return questions
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to generate questions for denial {denial_id}: {e}"
             )
-            return []
+            return await cls._questions_already_on_the_row(denial_id)
+
+    @classmethod
+    async def _questions_already_on_the_row(
+        cls, denial_id: int
+    ) -> Optional[List[Tuple[str, str]]]:
+        """Questions this denial already has, after a run came back with none.
+
+        Two things can still be on the row: questions a previous run stored,
+        and the speculative candidate set. Candidates are promoted only
+        under the helper's own rule -- the procedure and diagnosis they were
+        generated for still match the row -- so a candidate written for a
+        different service is never shown.
+
+        Returns None when there is nothing, i.e. generation really did not
+        finish.
+        """
+        try:
+            denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Could not re-read denial {denial_id} after failed question "
+                f"generation: {e}"
+            )
+            return None
+        # The inverse of the rule that starts a run, so a set another run
+        # finished for these inputs, empty included, counts as finished.
+        if stored_questions_are_current(denial):
+            return cast(List[Tuple[str, str]], denial.generated_questions)
+        if (
+            denial.candidate_generated_questions
+            and denial.candidate_procedure == denial.procedure
+            and denial.candidate_diagnosis == denial.diagnosis
+        ):
+            questions = await claim_generated_questions(
+                denial_id,
+                cast(List[Tuple[str, str]], denial.candidate_generated_questions),
+                generated_for=questions_fingerprint(
+                    denial.candidate_procedure, denial.candidate_diagnosis
+                ),
+            )
+            if questions is None:
+                return None
+            logger.info(
+                f"Question generation for denial {denial_id} did not finish; "
+                f"promoted {len(questions)} candidate question(s) instead"
+            )
+            return questions
+        return None
 
     @staticmethod
     def _invalidate_denial_text_artifacts(denial: Denial) -> None:
@@ -4397,12 +4614,12 @@ class AppealsBackendHelper:
         # behavior users see, and silent background retries were eating it
         # (PR #963 review).
         dirty_fields = set() if background else {"gen_attempts"}
-        if medical_context:
-            merge_qa(
-                denial,
-                {"medical_context": " ".join(sorted(medical_context))},
-                source="appeal_gen_form",
-            )
+        # Only a questionnaire submission can withdraw the derived sentence.
+        # Back and background generation carry no answers, so their empty
+        # forms say nothing about what the person decided.
+        if record_derived_medical_context(
+            denial, medical_context, withdraw=bool(parameters.get("questionnaire"))
+        ):
             dirty_fields.add("qa_context")
         if plan_context:
             merge_plan_context(denial, sorted(plan_context))
