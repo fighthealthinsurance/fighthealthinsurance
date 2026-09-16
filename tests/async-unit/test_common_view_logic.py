@@ -1,4 +1,5 @@
 import asyncio
+import asyncio
 import json
 import io
 from contextlib import contextmanager
@@ -800,6 +801,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="A speculative fallback appeal letter goes here.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         # Live generation produces nothing -> underdelivered.
@@ -845,6 +847,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="Held-back speculative draft that must not be served.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         # The live run below delivers 3 appeals, so we're at/over threshold and
@@ -916,6 +919,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="A reserve appeal held for exactly this failure.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.side_effect = RuntimeError(
@@ -949,6 +953,49 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_reserve_written_for_another_state_is_not_served(
+        self, mock_appeal_generator
+    ):
+        """A held-back draft argues under the law of the state it was written
+        for. Once the case names another state it is not shared, even with
+        nothing else to offer: a stall beats a letter citing the wrong law."""
+        email, denial = self._create_test_denial(21, gen_attempts=3)
+        Denial.objects.filter(denial_id=21).update(your_state="CA")
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve appeal arguing under New York law.",
+            speculative=True,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = RuntimeError(
+            "every backend is down"
+        )
+
+        async def test():
+            try:
+                status_messages, appeal_contents, _ = (
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 21,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"]
+                self.assertTrue(done, "must still emit a done frame")
+                self.assertEqual(done[0]["new_appeals"], 0)
+                self.assertNotIn("New York law", " ".join(appeal_contents))
+                spec = await ProposedAppeal.objects.aget(for_denial=denial)
+                self.assertTrue(spec.speculative, "an unserved row stays held back")
+            finally:
+                await Denial.objects.filter(denial_id=21).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_reconciliation_caps_mini_rows_at_threshold(self, mock_appeal_generator):
         """When the live run underdelivers, held-back speculative ("mini") rows
         are promoted only up to the threshold; the surplus stays held back."""
@@ -960,6 +1007,7 @@ class TestCommonViewLogic(TestCase):
                     f"Speculative reserve appeal number {i} with sufficient length."
                 ),
                 speculative=True,
+                built_for_state="",
                 context_level="speculative",
             )
         # Live run produces nothing -> heavily underdelivered.
@@ -1003,6 +1051,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="A reserve draft the user should get without waiting.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         live_text = "A slow live appeal letter that finishes much later on."
@@ -1045,6 +1094,216 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_the_stall_fallback_skips_a_reserve_written_for_another_state(
+        self, mock_appeal_generator
+    ):
+        """Same stall as above, but the only reserve on hand was written for
+        NY and the case now says CA. The person waits for the live draft;
+        the NY draft is never shared and stays held back."""
+        email, denial = self._create_test_denial(36, gen_attempts=3)
+        Denial.objects.filter(denial_id=36).update(your_state="CA")
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft arguing under New York law.",
+            speculative=True,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        live_text = "A slow live appeal letter that finishes much later on."
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.5, [live_text]
+        )
+
+        async def test():
+            try:
+                with self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.5
+                ):
+                    status_messages, appeal_contents, _ = (
+                        await self.collect_appeal_responses(
+                            {
+                                "denial_id": 36,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                self.assertNotIn(
+                    "A reserve draft arguing under New York law.", appeal_contents
+                )
+                self.assertIn(live_text, appeal_contents)
+                await spec.arefresh_from_db()
+                self.assertTrue(spec.speculative, "an unserved row stays held back")
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                self.assertEqual(done["new_appeals"], 1)
+                self.assertEqual(done["speculative_appeals"], 0)
+            finally:
+                await Denial.objects.filter(denial_id=36).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_reserve_with_no_stamp_is_not_served(self, mock_appeal_generator):
+        """A row from before the stamp existed: not known, not served."""
+        email, denial = self._create_test_denial(37, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft from before the stamp existed.",
+            speculative=True,
+            built_for_state=None,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = RuntimeError("down")
+
+        async def test():
+            try:
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {"denial_id": 37, "email": email, "semi_sekret": denial.semi_sekret}
+                )
+                self.assertNotIn(
+                    "A reserve draft from before the stamp existed.", appeal_contents
+                )
+                spec = await ProposedAppeal.objects.aget(for_denial=denial)
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=37).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_promoted_reserve_for_another_state_is_not_replayed(
+        self, mock_appeal_generator
+    ):
+        """A reserve served under NY keeps its stamp after promotion. The case
+        now says CA: it is not replayed as an existing appeal, and not fed to
+        synthesis, unless the person chose it."""
+        email, denial = self._create_test_denial(38, gen_attempts=3)
+        Denial.objects.filter(denial_id=38).update(your_state="CA")
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A promoted reserve draft arguing under New York law.",
+            speculative=False,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        live_text = "A live appeal letter written for the corrected case."
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts([live_text])
+        )
+
+        async def test():
+            try:
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {"denial_id": 38, "email": email, "semi_sekret": denial.semi_sekret}
+                )
+                self.assertNotIn("New York law", " ".join(appeal_contents))
+                self.assertIn(live_text, appeal_contents)
+            finally:
+                await Denial.objects.filter(denial_id=38).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_correction_landing_mid_run_stops_the_stall_fallback(
+        self, mock_appeal_generator
+    ):
+        """The run loaded the case as NY; the person corrects it to CA while
+        the live draft is still generating. When the stall deadline passes,
+        the NY reserve must not go out: the row's state now, not the run's
+        copy, decides."""
+        email, denial = self._create_test_denial(39, gen_attempts=3)
+        Denial.objects.filter(denial_id=39).update(your_state="NY")
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft arguing under New York law.",
+            speculative=True,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        live_text = "A slow live appeal letter that finishes much later on."
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.5, [live_text]
+        )
+
+        async def test():
+            try:
+                with self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.5
+                ):
+                    collecting = asyncio.create_task(
+                        self.collect_appeal_responses(
+                            {
+                                "denial_id": 39,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                    # After the run has loaded its copy of the case, before
+                    # the stall deadline.
+                    await asyncio.sleep(0.2)
+                    await Denial.objects.filter(denial_id=39).aupdate(your_state="CA")
+                    _, appeal_contents, _ = await collecting
+                self.assertNotIn("New York law", " ".join(appeal_contents))
+                self.assertIn(live_text, appeal_contents)
+                await spec.arefresh_from_db()
+                self.assertTrue(spec.speculative, "an unserved row stays held back")
+            finally:
+                await Denial.objects.filter(denial_id=39).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_twin_promoted_on_a_text_conflict_keeps_the_runs_own_state(
+        self, mock_appeal_generator
+    ):
+        """The live run started under NY; the person corrected to CA while it
+        ran; its text matches a held-back NY row. The promoted twin is stamped
+        NY, what the text was written under, not the CA the row holds now."""
+        email, denial = self._create_test_denial(40, gen_attempts=3)
+        Denial.objects.filter(denial_id=40).update(your_state="NY")
+        twin_text = "A draft whose text the live run will produce again."
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=twin_text,
+            speculative=True,
+            built_for_state="NY",
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.0, [twin_text]
+        )
+
+        async def test():
+            try:
+                with self._fast_keepalive():
+                    collecting = asyncio.create_task(
+                        self.collect_appeal_responses(
+                            {
+                                "denial_id": 40,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                    await asyncio.sleep(0.2)
+                    await Denial.objects.filter(denial_id=40).aupdate(your_state="CA")
+                    _, appeal_contents, _ = await collecting
+                self.assertIn(twin_text, appeal_contents)
+                await spec.arefresh_from_db()
+                self.assertFalse(spec.speculative, "the twin is promoted")
+                self.assertEqual(spec.built_for_state, "NY")
+            finally:
+                await Denial.objects.filter(denial_id=40).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_reserve_lands_under_target_once_the_longer_deadline_passes(
         self, mock_appeal_generator
     ):
@@ -1063,6 +1322,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="A reserve draft for a run that stays under target.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         live_text = "A slow live appeal letter that finishes much later on."
@@ -1120,6 +1380,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="A reserve draft that the short deadline must not send.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
@@ -1168,6 +1429,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="A reserve draft that must not be served early here.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         live_texts = [
@@ -1216,6 +1478,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text=reserve_text,
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
@@ -1255,6 +1518,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text=reserve_text,
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.return_value = iter([])
@@ -1318,6 +1582,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text=reserve_text,
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.return_value = iter([])
@@ -1359,6 +1624,7 @@ class TestCommonViewLogic(TestCase):
                 for_denial=denial,
                 appeal_text=text,
                 speculative=True,
+                built_for_state="",
                 context_level="speculative",
             )
         mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
@@ -1412,6 +1678,7 @@ class TestCommonViewLogic(TestCase):
                 for_denial=denial,
                 appeal_text=f"Reserve draft number {i} with plenty of length here.",
                 speculative=True,
+                built_for_state="",
                 context_level="speculative",
             )
         # Live generation delivers nothing, so the only rows are the reserve.
@@ -1451,6 +1718,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="The one and only reserve draft for this denial here.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.return_value = iter([])
@@ -1495,6 +1763,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="The reserve draft this run is going to fall back on.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.return_value = iter([])
@@ -1532,6 +1801,7 @@ class TestCommonViewLogic(TestCase):
                 for_denial=denial,
                 appeal_text="A reserve draft that landed while we generated.",
                 speculative=True,
+                built_for_state="",
                 context_level="speculative",
             )
             return None
@@ -1578,6 +1848,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text="A reserve draft this run will never need to use.",
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.return_value = iter(
@@ -1622,6 +1893,7 @@ class TestCommonViewLogic(TestCase):
             for_denial=denial,
             appeal_text=shared_text,
             speculative=True,
+            built_for_state="",
             context_level="speculative",
         )
         mock_appeal_generator.make_appeals.return_value = iter(
@@ -2211,3 +2483,370 @@ class RegulatorContactInfoTest(TestCase):
                 "1-800-368-1019",
             },
         )
+
+
+class _FixedZipEngine:
+    """Offline stand-in for the uszipcode engine, which needs a downloaded DB."""
+
+    def __init__(self, mapping: dict):
+        self.mapping = mapping
+
+    def by_zipcode(self, zip_code):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(state=self.mapping[zip_code])
+
+
+class _BrokenZipEngine:
+    """A lookup that fails the way an unknown zip or a missing DB file does."""
+
+    def by_zipcode(self, zip_code):
+        raise RuntimeError("zip database unavailable")
+
+
+class ConfirmedStateTest(TestCase):
+    """A state the person corrects on the review page has to reach the appeal
+    and survive a resubmission of the upload page. ``your_state`` is the column
+    of record; ``state`` is the mirror other readers use, and its presence is
+    what marks the state as having come off the review form.
+    """
+
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    EMAIL = "state-correction@example.com"
+    DENIAL_TEXT = "Your claim for gender affirming surgery was denied."
+    NY_ZIP = "10001"
+    CA_ZIP = "94103"
+    ZIP_STATES = {"10001": "NY", "94103": "CA"}
+    _DISPATCH = (
+        "fighthealthinsurance.ml.ml_speculative_appeals_helper."
+        "dispatch_speculative_appeals"
+    )
+
+    def _submit_upload_page(self, zip_code, denial=None, zip_engine=None):
+        """Page one: the intake path that guesses a state from the zip."""
+        with patch.object(
+            common_view_logic.DenialCreatorHelper,
+            "zip_engine",
+            zip_engine if zip_engine is not None else _FixedZipEngine(self.ZIP_STATES),
+        ), patch(self._DISPATCH):
+            response = DenialCreatorHelper.create_or_update_denial(
+                email=self.EMAIL,
+                denial_text=self.DENIAL_TEXT,
+                zip=zip_code,
+                denial=denial,
+            )
+        return Denial.objects.get(denial_id=response.denial_id)
+
+    def _submit_review_page(self, denial, **overrides):
+        """The review POST, where the person confirms or corrects the state.
+
+        The speculative dispatch is patched out and left on
+        ``self.last_dispatch`` so the refresh decision can be asserted without
+        running a real precompute.
+        """
+        params = dict(
+            denial_id=denial.denial_id,
+            email=self.EMAIL,
+            semi_sekret=denial.semi_sekret,
+            procedure="top surgery",
+            diagnosis="gender dysphoria",
+            insurance_company="evilco",
+            plan_id="1",
+            claim_id="7",
+            denial_type=None,
+            denial_date=None,
+        )
+        params.update(overrides)
+        with patch(self._DISPATCH) as dispatch:
+            FindNextStepsHelper.find_next_steps(**params)
+        self.last_dispatch = dispatch
+        denial.refresh_from_db()
+        return denial
+
+    def _seed_confirmed_reserve(self, denial, built_for_state):
+        from fighthealthinsurance.context_utils import (
+            CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+        )
+
+        return ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=f"A reserve draft written under {built_for_state} law.",
+            speculative=True,
+            built_for_state=built_for_state,
+            context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+        )
+
+    def test_the_confirmed_state_lands_on_both_columns(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        self.assertEqual(denial.your_state, "NY")
+
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+
+    def test_a_resubmitted_upload_page_keeps_the_confirmed_state(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        denial = self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+        self.assertEqual(denial.service_zip, "100")
+
+    def test_a_resubmission_heals_a_row_left_in_the_old_shape(self):
+        """Rows predating the two-column write hold the correction in `state`
+        and the zip's guess in `your_state`. There is no backfill, so this pass
+        is the only thing that repairs one."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            state="CA", your_state="NY"
+        )
+        stale = Denial.objects.get(denial_id=denial.denial_id)
+
+        denial = self._submit_upload_page(self.NY_ZIP, denial=stale)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+        self.assertEqual(denial.service_zip, "100")
+
+    def test_a_first_submission_still_infers_the_state_from_the_zip(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+
+        self.assertEqual(denial.your_state, "NY")
+        self.assertEqual(denial.service_zip, "100")
+        self.assertFalse(denial.state)
+
+    def test_a_changed_zip_re_infers_while_no_state_is_confirmed(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.service_zip, "941")
+
+    def test_a_corrected_zip_still_moves_the_state_after_a_review_pass_through(
+        self,
+    ):
+        """The review page prefills its state box from the zip's own guess, so
+        clicking through without touching it puts that guess in `state`. That
+        must not leave the zip unable to move the state again."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        self.assertEqual(denial.state, "NY")
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.service_zip, "941")
+
+    def test_a_corrected_zip_does_not_bounce_back_on_the_next_resubmission(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+
+    def test_a_typed_state_survives_a_zip_whose_first_three_digits_held(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        denial = self._submit_upload_page(self.NY_ZIP, denial=denial)
+        denial = self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+
+    def test_a_failed_zip_lookup_leaves_the_stored_state_pair_alone(self):
+        """A changed zip whose lookup fails has no replacement to offer, so it
+        must not clear the pair the appeal consumers read."""
+        from fighthealthinsurance.external_review import (
+            generate_external_review_packet,
+        )
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        denial = self._submit_upload_page(
+            "99999", denial=denial, zip_engine=_BrokenZipEngine()
+        )
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.state, "CA")
+        # And not the new ZIP3: recording it would make the next submit of
+        # the same zip read as unchanged, and the lookup would never be
+        # retried.
+        self.assertEqual(denial.service_zip, self.NY_ZIP[:3])
+        self.assertEqual(
+            generate_external_review_packet(denial, {})["regulator"]["state"], "CA"
+        )
+        denial_type = DenialTypes.objects.get(name="Gender Affirming Care")
+        self.assertIn(
+            "CDI-Gender-Nondiscrimination-Regulations",
+            denial_type.get_form()().plan_context(denial),
+        )
+
+    def test_an_intake_request_that_loaded_before_a_correction_keeps_it(self):
+        """Intake loaded NY/NY for an unchanged zip; the review page committed
+        CA to both columns while it ran; intake saves last. It must name only
+        the columns it changed, so the correction stands."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        stale_copy = Denial.objects.get(denial_id=denial.denial_id)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            state="CA", your_state="CA"
+        )
+
+        self._submit_upload_page(self.NY_ZIP, denial=stale_copy)
+
+        fresh = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertEqual((fresh.state, fresh.your_state), ("CA", "CA"))
+
+    def test_an_intake_request_with_no_confirmed_state_keeps_a_correction_too(
+        self,
+    ):
+        """Its copy had no confirmed state, so it took the lookup path and
+        would have written the zip's state over the CA the review page
+        committed meanwhile. The write is conditional on what it decided
+        from."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        stale_copy = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertIsNone(stale_copy.state)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            state="CA", your_state="CA"
+        )
+
+        self._submit_upload_page(self.NY_ZIP, denial=stale_copy)
+
+        fresh = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertEqual((fresh.state, fresh.your_state), ("CA", "CA"))
+
+    def test_a_resubmitted_upload_still_records_the_intake_intent(self):
+        """The scoped save skips the optional-step save when there is nothing
+        for it to write; the intake-started intent that save also records
+        must not be skipped with it."""
+        from unittest.mock import patch
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        with patch(
+            "fighthealthinsurance.intake_outbox.record_intent", return_value=None
+        ) as record:
+            self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        record.assert_called_once()
+        self.assertEqual(record.call_args.args[1], "intake_started")
+
+    def test_a_resubmitted_upload_still_moves_last_interaction(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        long_ago = timezone.now() - timedelta(days=3)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            last_interaction=long_ago
+        )
+
+        self._submit_upload_page(self.NY_ZIP, denial=denial)
+
+        fresh = Denial.objects.get(denial_id=denial.denial_id)
+        self.assertGreater(fresh.last_interaction, long_ago + timedelta(days=1))
+
+    def test_a_failed_zip_lookup_can_be_retried_with_the_same_zip(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        denial = self._submit_upload_page(
+            self.CA_ZIP, denial=denial, zip_engine=_BrokenZipEngine()
+        )
+        self.assertEqual(denial.your_state, "NY")
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+
+        self.assertEqual(denial.your_state, "CA")
+        self.assertEqual(denial.service_zip, self.CA_ZIP[:3])
+
+    def test_the_review_page_renders_the_corrected_state(self):
+        from django.urls import reverse
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        response = self.client.get(
+            reverse("categorize_review"),
+            {
+                "denial_id": denial.denial_id,
+                "email": self.EMAIL,
+                "semi_sekret": denial.semi_sekret,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        self.assertIn('value="CA"', body)
+        self.assertNotIn('value="NY"', body)
+
+    def test_the_appeal_regulatory_context_cites_the_corrected_state(self):
+        """``_collect_regulatory_context`` is the reader the live generation
+        calls, and it reads `your_state`, not the mirror."""
+        from fighthealthinsurance.generate_appeal import AppealGenerator
+
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        regulatory_context = AppealGenerator._collect_regulatory_context(denial)
+
+        self.assertIsNotNone(regulatory_context)
+        assert regulatory_context is not None
+        self.assertIn("California", regulatory_context)
+
+    def test_a_state_only_correction_refreshes_the_confirmed_reserve(self):
+        """A reserve generated under the old state argues under the wrong
+        state's law, and the stall fallback would serve it verbatim."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        self._seed_confirmed_reserve(denial, built_for_state="NY")
+
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        self.last_dispatch.assert_called_once()
+        self.assertTrue(self.last_dispatch.call_args.kwargs["force"])
+        self.assertTrue(self.last_dispatch.call_args.kwargs["confirmed_context"])
+
+    def test_a_zip_corrected_before_the_review_page_still_refreshes_the_reserve(
+        self,
+    ):
+        """The zip step writes the new state in its own request, so by the
+        time the review page runs, before and after both read CA. A reserve
+        written for NY is still on the row, and that is what has to decide."""
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="NY")
+        self._seed_confirmed_reserve(denial, built_for_state="NY")
+
+        denial = self._submit_upload_page(self.CA_ZIP, denial=denial)
+        self.assertEqual(denial.your_state, "CA")
+        denial = self._submit_review_page(denial, your_state="CA")
+
+        self.last_dispatch.assert_called_once()
+        self.assertTrue(self.last_dispatch.call_args.kwargs["force"])
+
+    def test_an_unchanged_state_does_not_refire_the_confirmed_reserve(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, your_state="CA")
+        self._seed_confirmed_reserve(denial, built_for_state="CA")
+
+        self._submit_review_page(denial, your_state="CA")
+
+        self.last_dispatch.assert_not_called()
+
+    def test_a_blank_date_of_service_leaves_the_stored_one_alone(self):
+        denial = self._submit_upload_page(self.NY_ZIP)
+        denial = self._submit_review_page(denial, date_of_service="01/15/2024")
+        self.assertEqual(denial.date_of_service, "01/15/2024")
+
+        denial = self._submit_review_page(denial, date_of_service="")
+
+        self.assertEqual(denial.date_of_service, "01/15/2024")
