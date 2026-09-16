@@ -594,12 +594,16 @@ class WhatThePageShowsIsGatedTest(OptionalStepsTestCase):
     proof of who is asking has to be what the save takes."""
 
     def test_the_right_id_and_secret_with_someone_elses_email_show_nothing(self):
+        """A reference that does not resolve is sent to the upload page with
+        an explanation, not rendered as a blank form: nothing of the case is
+        shown either way."""
         ref = self.denial_ref()
         ref["email"] = "someone-else@example.com"
 
         response = self.client.get(reverse("hh"), ref)
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"].split("?")[0], reverse("scan"))
         self.assertNotIn(STORED, response.content.decode())
 
     def test_a_rejected_submission_is_not_described_as_saved(self):
