@@ -239,6 +239,12 @@ class HealthHistory(DenialRefForm):
     # They stay here for the API, and PlanDocumentsView drops the ones its own
     # page never asked about.
     health_history = forms.CharField(required=False)
+    # A digest of the history this page was rendered with, so the save can
+    # tell a stale page passing through from someone actually editing. The
+    # digest rather than the text: a hidden field holding the history itself
+    # would put it in the DOM and in the POST body a second time, and it is
+    # the most sensitive column on the row.
+    health_history_seen = forms.CharField(required=False, widget=forms.HiddenInput)
     health_history_anonymized = forms.BooleanField(required=False)
     include_provided_health_history_in_appeal = forms.BooleanField(required=False)
 
