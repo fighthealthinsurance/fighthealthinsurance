@@ -2095,59 +2095,70 @@ class DenialCreatorHelper:
             # letter (the speculative reserve + the cached summaries) is stale
             # if the letter itself changed, and must be invalidated below.
             denial_text_changed = denial.denial_text != denial_text
+            # Scoped, so this save cannot revert a concurrent writer's column.
+            resubmit_fields: set[str] = set()
             # Directly update denial object fields instead of using denial.update()
             denial.denial_text = denial_text
             denial.hashed_email = hashed_email
             denial.use_external = use_external_models
+            resubmit_fields.update({"denial_text", "hashed_email", "use_external"})
             # Nudge opt-in = a retained raw_email; remember the old value so a
             # change can be pushed to an already-running intake journey below.
             contact_opt_in_before = bool((denial.raw_email or "").strip())
             denial.raw_email = possible_email
+            resubmit_fields.add("raw_email")
             # Guarded like every other optional field here: the denial form
             # has no health_history field, so this path is ALWAYS called with
             # health_history=None -- unguarded, a user who went back to edit
             # their denial letter lost their previously-entered history.
             if health_history is not None:
                 denial.health_history = health_history
+                # Redundant with the _update_denial tail call on the happy
+                # path, but not a no-op: that save shares one atomic() with
+                # intake_outbox.record_intent and no request transaction wraps
+                # either save (ATOMIC_REQUESTS is False on every database), so
+                # a record_intent failure rolls that write back and leaves
+                # this one committed.
+                resubmit_fields.add("health_history")
 
-            # Only update these fields if they're provided. Every column
-            # assigned is named, so the save below writes nothing else: a
-            # full-row save wrote this request's copy of every column,
-            # including a state the review page corrected while it ran.
-            # last_interaction is auto_now, which a scoped save updates only
-            # when it is named; the full-row save used to update it.
-            assigned = [
-                "denial_text",
-                "hashed_email",
-                "use_external",
-                "raw_email",
-                "last_interaction",
-            ]
-            if health_history is not None:
-                assigned.append("health_history")
-            optional_columns = (
-                ("creating_professional", creating_professional),
-                ("primary_professional", primary_professional),
-                ("patient_user", patient_user),
-                ("insurance_company", insurance_company),
-                ("insurance_company_obj", insurance_company_obj),
-                ("insurance_plan_obj", insurance_plan_obj),
-                ("patient_visible", patient_visible),
-                ("microsite_slug", microsite_slug),
-                ("referral_source", referral_source),
-                ("referral_source_details", referral_source_details),
-            )
-            for column, value in optional_columns:
-                if value is not None:
-                    setattr(denial, column, value)
-                    assigned.append(column)
+            # Only update these fields if they're provided
+            if creating_professional is not None:
+                denial.creating_professional = creating_professional
+                resubmit_fields.add("creating_professional")
+            if primary_professional is not None:
+                denial.primary_professional = primary_professional
+                resubmit_fields.add("primary_professional")
+            if patient_user is not None:
+                denial.patient_user = patient_user
+                resubmit_fields.add("patient_user")
+            if insurance_company is not None:
+                denial.insurance_company = insurance_company
+                resubmit_fields.add("insurance_company")
+            if insurance_company_obj is not None:
+                denial.insurance_company_obj = insurance_company_obj
+                resubmit_fields.add("insurance_company_obj")
+            if insurance_plan_obj is not None:
+                denial.insurance_plan_obj = insurance_plan_obj
+                resubmit_fields.add("insurance_plan_obj")
+            if patient_visible is not None:
+                denial.patient_visible = patient_visible
+                resubmit_fields.add("patient_visible")
+            if microsite_slug is not None:
+                denial.microsite_slug = microsite_slug
+                resubmit_fields.add("microsite_slug")
+            if referral_source is not None:
+                denial.referral_source = referral_source
+                resubmit_fields.add("referral_source")
+            if referral_source_details is not None:
+                denial.referral_source_details = referral_source_details
+                resubmit_fields.add("referral_source_details")
 
             # Update tracking info if provided
             if tracking_info:
                 tracking_info.update_model_fields(denial)
-                assigned += ["user_agent", "asn", "asn_name", "ip_address"]
+                resubmit_fields.update({"user_agent", "asn", "asn_name", "ip_address"})
 
-            denial.save(update_fields=assigned)
+            denial.save(update_fields=sorted(resubmit_fields | {"last_interaction"}))
             if contact_opt_in_before != bool((possible_email or "").strip()):
                 # Best-effort, no outbox row: a lost signal fails SAFE because
                 # the nudge activity independently gates on the RETAINED
@@ -2243,7 +2254,11 @@ class DenialCreatorHelper:
             employer_name = g.group(1)
             if len(employer_name) < 300:
                 denial.employer_name = employer_name
-                denial.save(update_fields=["employer_name"])
+                # Scoped like the resubmission save above: the entity extract
+                # fills procedure and diagnosis on this same row, and a bare
+                # save() would put this stale instance's copies back over it.
+                # last_interaction is auto_now, so it only moves when listed.
+                denial.save(update_fields=["employer_name", "last_interaction"])
 
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
@@ -3784,21 +3799,37 @@ class DenialCreatorHelper:
         # exception boundary, so the journey can never break the user-facing
         # flow. Opt-in for the nudge = store_raw_email, observable as a
         # retained raw_email.
+        # Scoped, so this save cannot revert a concurrent writer's column.
+        changed_fields: set[str] = set()
+
         with _transaction.atomic():
             if plan_documents is not None:
+                # Additive and not idempotent: a second click or a replayed
+                # POST adds another row. PlanDocuments carries no filename or
+                # content hash to dedupe on, so plan_documents.html only shows
+                # a count to discourage it. 2026-09-14: left as is, a dedupe
+                # key is a migration this branch is not making.
                 for plan_document in plan_documents:
                     PlanDocuments.objects.create(
                         plan_document_enc=plan_document, denial=denial
                     )
+            # The contract for all three optional columns below: None means
+            # the caller said nothing and the stored value stands. For
+            # health_history an empty string is a decision, not silence -- it
+            # is how the page deletes what the person wrote, and no other page
+            # can -- so the blank is written rather than refused.
             if health_history is not None:
                 denial.health_history = health_history
+                changed_fields.add("health_history")
             if include_provided_health_history_in_appeal is not None:
                 denial.include_provided_health_history_in_appeal = (
                     include_provided_health_history_in_appeal
                 )
+                changed_fields.add("include_provided_health_history_in_appeal")
             if health_history_anonymized is not None:
                 denial.health_history_anonymized = health_history_anonymized
-            denial.save()
+                changed_fields.add("health_history_anonymized")
+            denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:
             intake_outbox.deliver(intent)
