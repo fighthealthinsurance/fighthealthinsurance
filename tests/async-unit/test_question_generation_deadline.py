@@ -170,6 +170,45 @@ class QuestionGenerationDeadlineTest(TestCase):
 
     @pytest.mark.django_db
     @patch(_CITATIONS, new_callable=AsyncMock)
+    def test_a_run_that_does_not_finish_reports_a_finished_empty_set(self, _citations):
+        """Another run for the same inputs finished and stored [] under the
+        stamp: nothing to ask. A run that then times out must report that
+        finished set, not "unfinished", or the page tells the person to go
+        back and retry a run that the trigger will not start again."""
+
+        async def helper(denial, speculative):
+            return None
+
+        async def run():
+            denial = await Denial.objects.acreate(
+                denial_id=8290,
+                semi_sekret="sekret",
+                hashed_email=Denial.get_hashed_email("deadline@example.com"),
+                denial_text="Denied an MRI.",
+                procedure="MRI",
+                diagnosis="knee pain",
+            )
+            try:
+                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                    generated_questions=[],
+                    generated_questions_for=(
+                        ml_appeal_questions_helper.questions_fingerprint(
+                            "MRI", "knee pain"
+                        )
+                    ),
+                )
+                with patch(_HELPER, new=helper):
+                    questions = await DenialCreatorHelper.generate_appeal_questions(
+                        denial.denial_id
+                    )
+                self.assertEqual(questions, [], "finished with nothing to ask")
+            finally:
+                await Denial.objects.filter(denial_id=8290).adelete()
+
+        async_to_sync(run)()
+
+    @pytest.mark.django_db
+    @patch(_CITATIONS, new_callable=AsyncMock)
     def test_every_model_answering_empty_is_finished_not_unfinished(self, _citations):
         """The selector discards falsy results, so [] from both generators
         came back as None and the page said the run could not finish."""

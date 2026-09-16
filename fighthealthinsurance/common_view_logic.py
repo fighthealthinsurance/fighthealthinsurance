@@ -1679,9 +1679,15 @@ class DenialCreatorHelper:
                 f"generation: {e}"
             )
             return None
-        if denial.generated_questions and denial.generated_questions_for in (
-            None,
-            questions_fingerprint(denial.procedure, denial.diagnosis),
+        # The inverse of the rule that starts a run: a set stamped for the
+        # current inputs is finished even when it is empty (another run found
+        # nothing to ask), while an unstamped set counts only when nonempty,
+        # since the code before the stamp wrote [] for a run that never
+        # finished.
+        stamp = denial.generated_questions_for
+        current = questions_fingerprint(denial.procedure, denial.diagnosis)
+        if denial.generated_questions is not None and (
+            stamp == current or (stamp is None and denial.generated_questions)
         ):
             return cast(List[Tuple[str, str]], denial.generated_questions)
         if (

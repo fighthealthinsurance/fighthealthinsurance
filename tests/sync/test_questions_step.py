@@ -458,6 +458,29 @@ class QuestionsAreForTheInputsTheyWereGeneratedForTest(QuestionsStepTestBase):
         self.assertEqual(stored, [])
         self.assertEqual(self.denial.generated_questions, [])
 
+    def test_an_empty_set_from_before_the_stamp_is_replaced(self):
+        """A legacy row holds [] and no stamp. The code before the stamp
+        wrote that for a run that found nothing and regenerated it on every
+        visit, so it is not a finished set. Counting it as current would hand
+        back [] and never store what this run found: the row stays empty for
+        good and every review POST burns a model run for nothing."""
+        self.denial.generated_questions = []
+        self.denial.generated_questions_for = None
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
+
+        stored = self.claim(
+            self.denial.denial_id, [["Q one", ""]], self.fp("CT scan", "knee pain")
+        )
+
+        self.denial.refresh_from_db()
+        self.assertEqual(stored, [["Q one", ""]])
+        self.assertEqual(self.denial.generated_questions, [["Q one", ""]])
+        self.assertEqual(
+            self.denial.generated_questions_for, self.fp("CT scan", "knee pain")
+        )
+
     def test_a_set_from_before_the_stamp_is_not_regenerated_on_every_post(self):
         """A legacy row holds questions and no stamp. Regenerating it on each
         review POST would run the models every time and never stamp it."""

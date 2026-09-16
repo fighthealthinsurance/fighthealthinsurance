@@ -31,12 +31,15 @@ def _claim_generated_questions_sync(
         fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
         current = questions_fingerprint(fresh.procedure, fresh.diagnosis)
         # A row from before the stamp existed holds a set of unknown origin;
-        # it is kept, as it always was, rather than replaced under someone's
-        # answers.
-        stored_is_current = fresh.generated_questions is not None and (
-            fresh.generated_questions_for is None
-            or fresh.generated_questions_for == current
-        )
+        # a nonempty one is kept, as it always was, rather than replaced under
+        # someone's answers. An empty one is not a finished set: the old code
+        # stored [] for a run that found nothing and regenerated it on every
+        # visit, so it is claimable, the same as no set at all. Counting it as
+        # current would hand back [] here and never store what this run found.
+        stored_is_current = (
+            fresh.generated_questions is not None
+            and fresh.generated_questions_for == current
+        ) or (fresh.generated_questions_for is None and bool(fresh.generated_questions))
         if generated_for != current:
             # This run was started for inputs the person has since corrected.
             # Its questions are not stored; what stands is a set for the
