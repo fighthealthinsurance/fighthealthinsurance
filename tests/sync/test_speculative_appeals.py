@@ -1018,3 +1018,59 @@ class SpeculativeAppealsActorOptionsTest(TestCase):
         # The restart/retry policy the other actors use, kept alongside it.
         self.assertEqual(options["max_restarts"], -1)
         self.assertEqual(options["max_task_retries"], -1)
+
+
+class ServedReserveFilterReadsTheRowTest(TestCase):
+    """The filters that keep a promoted reserve from being replayed or fed to
+    synthesis compare its stamp with the case's state. That comparison has to
+    read the row as the query runs: a correction landing mid-run moves the
+    row, and the copy the request loaded when it began still names the old
+    state, which is exactly the state the stale reserve was stamped with."""
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_id=7401,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email("filter@example.com"),
+            denial_text="Denied an MRI.",
+            your_state="NY",
+        )
+        self.reserve = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A promoted draft written under New York law.",
+            speculative=False,
+            chosen=False,
+            built_for_state="NY",
+            context_level="speculative_confirmed",
+        )
+
+    def _servable(self, snapshot):
+        from fighthealthinsurance.common_view_logic import (
+            served_reserve_for_another_state,
+        )
+
+        return list(
+            ProposedAppeal.objects.filter(
+                for_denial=snapshot, speculative=False
+            ).exclude(served_reserve_for_another_state())
+        )
+
+    def test_a_reserve_for_the_rows_state_is_served(self):
+        self.assertEqual(self._servable(self.denial), [self.reserve])
+
+    def test_a_correction_behind_the_snapshot_retires_the_reserve(self):
+        snapshot = Denial.objects.get(denial_id=self.denial.denial_id)
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(
+            your_state="CA"
+        )
+
+        self.assertEqual(snapshot.your_state, "NY", "the copy in hand is stale")
+        self.assertEqual(self._servable(snapshot), [])
+
+    def test_the_comparison_trims_the_way_the_stamp_was_written(self):
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(
+            your_state=" NY "
+        )
+
+        self.assertEqual(self._servable(self.denial), [self.reserve])
+
