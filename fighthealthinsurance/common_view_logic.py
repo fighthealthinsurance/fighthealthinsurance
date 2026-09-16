@@ -1045,8 +1045,14 @@ class FindNextStepsHelper:
         # Snapshot for the round-2 dispatch below, which fires on a
         # correction but not on an unchanged re-POST.
         prior_procedure = denial.procedure
-        # When this request began, for the reserve retirement below: rows
-        # written after this belong to a later correction and are kept.
+        # The boundary for the reserve retirement below, taken deliberately
+        # right after the read of the prior values above rather than at the
+        # top of the request. A reserve is written by a background run from a
+        # snapshot it took when it started, so a row created before this
+        # instant was built from inputs no newer than the ones just read, and
+        # is stale once this request changes them. Rows created after it may
+        # belong to a later correction and are kept. Moving this earlier
+        # would keep stale rows written during the read.
         request_started = timezone.now()
         prior_diagnosis = denial.diagnosis
 
