@@ -1571,7 +1571,7 @@ class ProfessionalNotificationHelper:
 QUESTION_GENERATION_DEADLINE_SECONDS = 130
 
 
-def stored_questions_are_current(denial) -> bool:
+def stored_questions_are_current(denial: "Denial") -> bool:
     """Whether the set on the row is a finished set for the row's inputs now.
 
     Stamped for the current procedure and diagnosis: finished, empty
@@ -1587,7 +1587,7 @@ def stored_questions_are_current(denial) -> bool:
     stamp = denial.generated_questions_for
     if stamp is None:
         return bool(denial.generated_questions)
-    return stamp == questions_fingerprint(denial.procedure, denial.diagnosis)
+    return bool(stamp == questions_fingerprint(denial.procedure, denial.diagnosis))
 
 
 def record_derived_medical_context(
