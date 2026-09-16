@@ -43,6 +43,16 @@ class FHISeleniumBase(BaseCase, TestCase):
             lambda d: expected_text in d.find_element(*element_locator).text
         )
 
+    def continue_past_extraction(self):
+        """The extraction page no longer moves on by itself.
+
+        It reads the letter over a socket the test server does not serve, so
+        the run ends at once in its terminal state, which offers a retry and
+        a continue. A person presses Continue; so does this.
+        """
+        self.assert_title_eventually("Analyzing Your Denial")
+        self.click("button#entity-continue", timeout=90)
+
     def click_button_eventually(self, target):
         element_locator = (By.ID, target)
         WebDriverWait(self.driver, 60).until(

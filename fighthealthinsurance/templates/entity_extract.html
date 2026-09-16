@@ -6,7 +6,11 @@ Analyzing Your Denial
 {% endblock title %}
 
 {% block pre-roll %}
-<script src='{% static "js/dist/entity_fetcher.bundle.js" %}' defer></script>
+{% comment %} ?frames= is a cache-buster. Static files here are served from
+   unhashed URLs with no manifest storage configured, so a browser holding the
+   previous bundle would keep it and parse none of the new server's frames.
+   Bump it whenever the shape of what the socket sends changes. {% endcomment %}
+<script src='{% static "js/dist/entity_fetcher.bundle.js" %}?frames=2' defer></script>
 {% endblock pre-roll %}
 
 {% block page_heading %}
@@ -29,6 +33,12 @@ Analyzing Your Denial
         <strong>This usually takes less than a minute.</strong> You can skip ahead if you prefer to enter this information manually.
     </p>
 </div>
+<noscript>
+    <div class="alert-box alert-warning" style="background:#fff3cd; padding:1rem; border-radius:8px; margin-bottom:1.5rem; border-left:4px solid #ffc107;">
+        <p style="margin:0 0 0.5rem 0;"><strong>Reading your letter needs JavaScript, which is turned off.</strong></p>
+        <p style="margin:0;">You can type the procedure and the diagnosis in yourself on the next page. Press <strong>Next</strong> to go there.</p>
+    </div>
+</noscript>
 <style>
 .spinner-border {
     display: inline-block;
@@ -47,7 +57,10 @@ Analyzing Your Denial
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
-      const backendUrl = `wss://${window.location.host}/ws/streaming-entity-backend/`;
+      // wss:// over HTTPS, ws:// over plain HTTP: a hardcoded wss:// breaks
+      // every run under the documented local http://localhost dev recipe.
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const backendUrl = `${wsProto}//${window.location.host}/ws/streaming-entity-backend/`;
       const data = {
           ...JSON.parse(document.getElementById('fhi-form-context').textContent),
           ...{

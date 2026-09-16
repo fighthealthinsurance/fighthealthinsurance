@@ -1562,6 +1562,110 @@ class ProfessionalNotificationHelper:
         )
 
 
+# The vocabulary the extraction socket speaks. Every frame is a JSON object
+# carrying a ``task`` and an ``outcome``.
+EXTRACTION_OUTCOME_FOUND = "found"
+EXTRACTION_OUTCOME_NOTHING_FOUND = "nothing_found"
+EXTRACTION_OUTCOME_FAILED = "failed"
+EXTRACTION_OUTCOME_CACHED = "cached"
+EXTRACTION_OUTCOME_TIMED_OUT = "timed_out"
+# The model found something and we wrote none of it down: every column it
+# answered already held a value. Separate from ``found`` because the page's
+# words for ``found`` say we filled something in.
+EXTRACTION_OUTCOME_KEPT_EXISTING = "kept_existing"
+
+EXTRACTION_OUTCOMES = frozenset(
+    {
+        EXTRACTION_OUTCOME_FOUND,
+        EXTRACTION_OUTCOME_NOTHING_FOUND,
+        EXTRACTION_OUTCOME_FAILED,
+        EXTRACTION_OUTCOME_CACHED,
+        EXTRACTION_OUTCOME_TIMED_OUT,
+        EXTRACTION_OUTCOME_KEPT_EXISTING,
+    }
+)
+
+# Exactly one run-level outcome is sent per run. ``already_have_details`` and
+# ``read_and_found_nothing`` are separate because the early-exit gate is an OR
+# that includes ``extract_procedure_diagnosis_finished``, and that flag is set
+# whenever the model call returned without raising, a return of (None, None)
+# included. Collapsing them congratulates someone on details they do not have.
+EXTRACTION_RUN_FINISHED = "run_finished"
+EXTRACTION_RUN_ALREADY_HAVE_DETAILS = "run_already_have_details"
+EXTRACTION_RUN_KEPT_YOUR_DETAILS = "run_kept_your_details"
+EXTRACTION_RUN_READ_AND_FOUND_NOTHING = "run_read_and_found_nothing"
+EXTRACTION_RUN_OUT_OF_ATTEMPTS = "run_out_of_attempts"
+EXTRACTION_RUN_FAILED = "run_failed"
+
+EXTRACTION_RUN_OUTCOMES = frozenset(
+    {
+        EXTRACTION_RUN_FINISHED,
+        EXTRACTION_RUN_ALREADY_HAVE_DETAILS,
+        EXTRACTION_RUN_KEPT_YOUR_DETAILS,
+        EXTRACTION_RUN_READ_AND_FOUND_NOTHING,
+        EXTRACTION_RUN_OUT_OF_ATTEMPTS,
+        EXTRACTION_RUN_FAILED,
+    }
+)
+
+# Wire names for the steps. Keys, not copy: a step is only ever named on the
+# page through ``EXTRACTION_TASK_LABELS`` below, and one with no entry there is
+# sent but never rendered.
+EXTRACTION_TASK_FAX = "fax_number"
+EXTRACTION_TASK_INSURANCE_COMPANY = "insurance_company"
+EXTRACTION_TASK_INSURANCE_PLAN = "insurance_plan"
+EXTRACTION_TASK_PLAN_ID = "plan_id"
+EXTRACTION_TASK_CLAIM_ID = "claim_id"
+EXTRACTION_TASK_DATE_OF_SERVICE = "date_of_service"
+EXTRACTION_TASK_REGULATOR = "regulator"
+EXTRACTION_TASK_TRIAGE = "triage"
+EXTRACTION_TASK_PLAN_DOCUMENTS = "plan_documents"
+EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS = "procedure_and_diagnosis"
+EXTRACTION_TASK_DENIAL_TYPE = "denial_type"
+
+EXTRACTION_TASK_RUN = "run"
+
+# The words for the steps a patient should see.
+EXTRACTION_TASK_LABELS: dict[str, str] = {
+    EXTRACTION_TASK_FAX: "Fax number to send the appeal to",
+    EXTRACTION_TASK_INSURANCE_COMPANY: "Insurance company",
+    EXTRACTION_TASK_PLAN_ID: "Plan ID",
+    EXTRACTION_TASK_CLAIM_ID: "Claim ID",
+    EXTRACTION_TASK_DATE_OF_SERVICE: "Date of service",
+    EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS: "Procedure and diagnosis",
+    EXTRACTION_TASK_DENIAL_TYPE: "Reason they gave for the denial",
+}
+
+# One sentence per run-level outcome. None of them says the extraction
+# completed unless something was actually read.
+EXTRACTION_RUN_LABELS: dict[str, str] = {
+    EXTRACTION_RUN_FINISHED: (
+        "We read your letter and filled in what we found. " "Check it on the next page."
+    ),
+    EXTRACTION_RUN_ALREADY_HAVE_DETAILS: (
+        "The details for this case are already here, so we did not read the "
+        "letter again."
+    ),
+    EXTRACTION_RUN_KEPT_YOUR_DETAILS: (
+        "We read your letter and did not change the details already on your "
+        "case. Check them on the next page."
+    ),
+    EXTRACTION_RUN_READ_AND_FOUND_NOTHING: (
+        "We read your letter and did not find the procedure or the diagnosis "
+        "in it. You can have us try again, or type them in yourself."
+    ),
+    EXTRACTION_RUN_OUT_OF_ATTEMPTS: (
+        "We have used up the tries we give one letter and still could not "
+        "find the procedure or the diagnosis. Typing them in yourself is the "
+        "way forward from here."
+    ),
+    EXTRACTION_RUN_FAILED: (
+        "We could not finish reading your letter. You can have us try again, "
+        "or type the details in yourself."
+    ),
+}
+
+
 # Outer deadline on one non-speculative question-generation run. It must
 # stay above the model phase's own ceiling: firing first cancels the helper
 # and throws away every model result that had already arrived. The loading
@@ -1815,6 +1919,14 @@ class DenialCreatorHelper:
         * both cached summaries, which are substituted into the prompt in place
           of the raw text for oversized denials -- a summary of the old letter
           would silently misdescribe the claim.
+        * the two candidate mirrors of the extracted procedure and diagnosis,
+          plus ``extract_procedure_diagnosis_finished`` (a statement about a
+          letter that no longer exists) and ``extract_attempts`` (a per-letter
+          failure budget, not a per-case one).
+
+        The live ``procedure`` and ``diagnosis`` columns are deliberately NOT
+        cleared: those may be what the person typed, and a new letter is not a
+        reason to throw their answers away.
 
         Best-effort: a failure here must not break denial creation/update, so
         the caller wraps this. The in-memory instance is cleared too, since it
@@ -1827,17 +1939,29 @@ class DenialCreatorHelper:
         # back to null so nothing downstream can read letter A's deadline
         # against letter B.
         cleared = denial_triage.cleared_values()
+        extraction_cleared: dict[str, Any] = {
+            "candidate_procedure": None,
+            "candidate_diagnosis": None,
+            "extract_procedure_diagnosis_finished": False,
+            "extract_attempts": 0,
+        }
         Denial.objects.filter(denial_id=denial.denial_id).update(
-            denial_text_summary=None, candidate_denial_text_summary=None, **cleared
+            denial_text_summary=None,
+            candidate_denial_text_summary=None,
+            **cleared,
+            **extraction_cleared,
         )
         denial.denial_text_summary = None
         denial.candidate_denial_text_summary = None
         for column, value in cleared.items():
             setattr(denial, column, value)
+        for column, value in extraction_cleared.items():
+            setattr(denial, column, value)
         logger.info(
             f"Denial {denial.denial_id} text replaced; invalidated "
-            f"{deleted} held-back speculative appeal(s) and both cached "
-            f"denial-text summaries"
+            f"{deleted} held-back speculative appeal(s), both cached "
+            f"denial-text summaries, the triage columns and the candidate "
+            f"procedure/diagnosis mirrors"
         )
 
     @classmethod
@@ -1971,59 +2095,70 @@ class DenialCreatorHelper:
             # letter (the speculative reserve + the cached summaries) is stale
             # if the letter itself changed, and must be invalidated below.
             denial_text_changed = denial.denial_text != denial_text
+            # Scoped, so this save cannot revert a concurrent writer's column.
+            resubmit_fields: set[str] = set()
             # Directly update denial object fields instead of using denial.update()
             denial.denial_text = denial_text
             denial.hashed_email = hashed_email
             denial.use_external = use_external_models
+            resubmit_fields.update({"denial_text", "hashed_email", "use_external"})
             # Nudge opt-in = a retained raw_email; remember the old value so a
             # change can be pushed to an already-running intake journey below.
             contact_opt_in_before = bool((denial.raw_email or "").strip())
             denial.raw_email = possible_email
+            resubmit_fields.add("raw_email")
             # Guarded like every other optional field here: the denial form
             # has no health_history field, so this path is ALWAYS called with
             # health_history=None -- unguarded, a user who went back to edit
             # their denial letter lost their previously-entered history.
             if health_history is not None:
                 denial.health_history = health_history
+                # Redundant with the _update_denial tail call on the happy
+                # path, but not a no-op: that save shares one atomic() with
+                # intake_outbox.record_intent and no request transaction wraps
+                # either save (ATOMIC_REQUESTS is False on every database), so
+                # a record_intent failure rolls that write back and leaves
+                # this one committed.
+                resubmit_fields.add("health_history")
 
-            # Only update these fields if they're provided. Every column
-            # assigned is named, so the save below writes nothing else: a
-            # full-row save wrote this request's copy of every column,
-            # including a state the review page corrected while it ran.
-            # last_interaction is auto_now, which a scoped save updates only
-            # when it is named; the full-row save used to update it.
-            assigned = [
-                "denial_text",
-                "hashed_email",
-                "use_external",
-                "raw_email",
-                "last_interaction",
-            ]
-            if health_history is not None:
-                assigned.append("health_history")
-            optional_columns = (
-                ("creating_professional", creating_professional),
-                ("primary_professional", primary_professional),
-                ("patient_user", patient_user),
-                ("insurance_company", insurance_company),
-                ("insurance_company_obj", insurance_company_obj),
-                ("insurance_plan_obj", insurance_plan_obj),
-                ("patient_visible", patient_visible),
-                ("microsite_slug", microsite_slug),
-                ("referral_source", referral_source),
-                ("referral_source_details", referral_source_details),
-            )
-            for column, value in optional_columns:
-                if value is not None:
-                    setattr(denial, column, value)
-                    assigned.append(column)
+            # Only update these fields if they're provided
+            if creating_professional is not None:
+                denial.creating_professional = creating_professional
+                resubmit_fields.add("creating_professional")
+            if primary_professional is not None:
+                denial.primary_professional = primary_professional
+                resubmit_fields.add("primary_professional")
+            if patient_user is not None:
+                denial.patient_user = patient_user
+                resubmit_fields.add("patient_user")
+            if insurance_company is not None:
+                denial.insurance_company = insurance_company
+                resubmit_fields.add("insurance_company")
+            if insurance_company_obj is not None:
+                denial.insurance_company_obj = insurance_company_obj
+                resubmit_fields.add("insurance_company_obj")
+            if insurance_plan_obj is not None:
+                denial.insurance_plan_obj = insurance_plan_obj
+                resubmit_fields.add("insurance_plan_obj")
+            if patient_visible is not None:
+                denial.patient_visible = patient_visible
+                resubmit_fields.add("patient_visible")
+            if microsite_slug is not None:
+                denial.microsite_slug = microsite_slug
+                resubmit_fields.add("microsite_slug")
+            if referral_source is not None:
+                denial.referral_source = referral_source
+                resubmit_fields.add("referral_source")
+            if referral_source_details is not None:
+                denial.referral_source_details = referral_source_details
+                resubmit_fields.add("referral_source_details")
 
             # Update tracking info if provided
             if tracking_info:
                 tracking_info.update_model_fields(denial)
-                assigned += ["user_agent", "asn", "asn_name", "ip_address"]
+                resubmit_fields.update({"user_agent", "asn", "asn_name", "ip_address"})
 
-            denial.save(update_fields=assigned)
+            denial.save(update_fields=sorted(resubmit_fields | {"last_interaction"}))
             if contact_opt_in_before != bool((possible_email or "").strip()):
                 # Best-effort, no outbox row: a lost signal fails SAFE because
                 # the nudge activity independently gates on the RETAINED
@@ -2119,7 +2254,11 @@ class DenialCreatorHelper:
             employer_name = g.group(1)
             if len(employer_name) < 300:
                 denial.employer_name = employer_name
-                denial.save(update_fields=["employer_name"])
+                # Scoped like the resubmission save above: the entity extract
+                # fills procedure and diagnosis on this same row, and a bare
+                # save() would put this stale instance's copies back over it.
+                # last_interaction is auto_now, so it only moves when listed.
+                denial.save(update_fields=["employer_name", "last_interaction"])
 
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
@@ -2192,14 +2331,299 @@ class DenialCreatorHelper:
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
 
-    @classmethod
-    async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
+    @staticmethod
+    def _extraction_record(task: str, outcome: str) -> dict:
+        """One step's frame: what ran, how it came out, and the words for it.
+
+        ``label`` is only present for the steps a patient should see. A step
+        with no label is still sent, so the stream stays auditable, and the
+        page renders nothing for it.
         """
-        Perform entity extraction on a given denial id
+        record: dict = {"type": "task", "task": task, "outcome": outcome}
+        label = EXTRACTION_TASK_LABELS.get(task)
+        if label is not None:
+            record["label"] = label
+        return record
+
+    @staticmethod
+    def _extraction_run_record(outcome: str) -> dict:
+        """The one run-level frame. Exactly one of these is sent per run."""
+        return {
+            "type": "run",
+            "task": EXTRACTION_TASK_RUN,
+            "outcome": outcome,
+            "label": EXTRACTION_RUN_LABELS[outcome],
+        }
+
+    @staticmethod
+    def _outcome_for_result(result: Any) -> str:
+        """Read a step's return value as an outcome.
+
+        An extractor that knows its own outcome returns one of the outcome
+        strings and is believed. The rest return the value they extracted, or
+        ``None``, which is a truthful found/nothing-found signal only for the
+        extractors that let their exceptions out.
+        """
+        if isinstance(result, str) and result in EXTRACTION_OUTCOMES:
+            return result
+        if result:
+            return EXTRACTION_OUTCOME_FOUND
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
+
+    @classmethod
+    async def _run_extraction_step(cls, awaitable: Awaitable[Any], task: str) -> dict:
+        """Await one step and turn it into exactly one frame."""
+        try:
+            result = await awaitable
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.opt(exception=True).warning(f"Failed in task {task}: {e}")
+            return cls._extraction_record(task, EXTRACTION_OUTCOME_FAILED)
+        return cls._extraction_record(task, cls._outcome_for_result(result))
+
+    @staticmethod
+    def _names_disagree(named: Optional[str], theirs: Optional[str]) -> bool:
+        """Does the insurer the person wrote disagree with a carrier's name?
+
+        An empty box, or one naming the same carrier, is agreement.
+        """
+        named = (named or "").strip().lower()
+        theirs = (theirs or "").strip().lower()
+        if not named or not theirs:
+            return False
+        return not (named in theirs or theirs in named)
+
+    @classmethod
+    async def _row_names_another_carrier(cls, denial_id: int, matched) -> bool:
+        """Does the insurer the person wrote in the box disagree with ``matched``?
+
+        The free-text name is theirs to correct and is never overwritten, so
+        a structured match that contradicts it must not be stored beside it.
+        ``matched`` is a carrier, or a carrier id when only that is to hand.
+        """
+        named = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values_list("insurance_company", flat=True)
+            .afirst()
+        ) or ""
+        if not named.strip():
+            return False
+        theirs = (
+            matched.name
+            if hasattr(matched, "name")
+            else await InsuranceCompany.objects.filter(id=matched)
+            .values_list("name", flat=True)
+            .afirst()
+        )
+        return cls._names_disagree(named, theirs)
+
+    @classmethod
+    async def _store_plan_if_it_is_the_rows_carriers(cls, denial_id: int, plan) -> bool:
+        """Fill the empty plan column, only with a plan of the row's carrier.
+
+        A row with no structured carrier yet takes any plan; a row that holds
+        one takes only that carrier's plans.
+        """
+        row = dict(
+            await Denial.objects.filter(denial_id=denial_id)
+            .values("insurance_company_obj_id", "insurance_company")
+            .afirst()
+            or {}
+        )
+        carrier_id = row.get("insurance_company_obj_id")
+        if carrier_id is not None and carrier_id != plan.insurance_company_id:
+            logger.debug(
+                f"Plan {plan.id} belongs to another carrier than the row holds; "
+                f"not storing it"
+            )
+            return False
+        if carrier_id is None and await cls._row_names_another_carrier(
+            denial_id, plan.insurance_company_id
+        ):
+            # No structured carrier yet, but the person named one in the box
+            # and it is not this plan's.
+            return False
+        return await cls._write_plan_if_the_carrier_still_holds(
+            denial_id, plan, carrier_id, row.get("insurance_company")
+        )
+
+    @staticmethod
+    async def _write_plan_if_the_carrier_still_holds(
+        denial_id: int, plan, carrier_id, typed_insurer
+    ) -> bool:
+        """Fill the empty plan column only if the row still holds the carrier
+        columns the plan was checked against; a correction landing between
+        the check and the write is kept."""
+        return bool(
+            await Denial.objects.filter(
+                denial_id=denial_id,
+                insurance_plan_obj__isnull=True,
+                insurance_company_obj_id=carrier_id,
+                insurance_company=typed_insurer,
+            ).aupdate(insurance_plan_obj=plan)
+        )
+
+    @classmethod
+    async def _fax_for_the_carrier_on_the_row(cls, denial_id: int) -> Optional[str]:
+        """The fax the row's carrier justifies; see _fax_and_its_justification."""
+        fax, _ = await cls._fax_and_its_justification(denial_id)
+        return fax
+
+    @staticmethod
+    async def _write_fax_if_the_carrier_still_holds(
+        denial_id: int, fax: str, justification: dict
+    ) -> bool:
+        """Write ``fax`` only if the row still holds what justified it.
+
+        The read that chose the number and the write that stores it are
+        separate statements, so a carrier correction landing between them
+        would otherwise get the old carrier's number written under it. The
+        write carries the carrier columns as they were read.
+        """
+        return bool(
+            await Denial.objects.filter(denial_id=denial_id, **justification)
+            .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
+            .aupdate(appeal_fax_number=fax)
+        )
+
+    @staticmethod
+    async def _fax_and_its_justification(
+        denial_id: int,
+    ) -> tuple[Optional[str], dict]:
+        """The appeal fax of whichever carrier the row actually holds.
+
+        Read after the carrier columns are written rather than before, so a
+        name the person corrected decides the fax as well. Returns None when
+        the row's own carrier has no fax on file, which leaves the column
+        empty for the person to fill rather than filling it with somebody
+        else's number.
+
+        Values rather than model instances: these rows carry RegexFields that
+        compile on load and raise on a stored empty pattern, and none of that
+        is needed to read a phone number.
+        """
+        row = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values(
+                "insurance_company_obj__appeal_fax_number",
+                "insurance_plan_obj__appeal_fax_number",
+                "insurance_plan_obj__insurance_company_id",
+                "insurance_plan_obj_id",
+                "insurance_company_obj__id",
+                "insurance_company_obj__name",
+                "insurance_plan_obj__insurance_company__name",
+                "insurance_company",
+            )
+            .afirst()
+        )
+        if not row:
+            return None, {}
+        company_id = row["insurance_company_obj__id"]
+        justification = {
+            "insurance_company_obj_id": company_id,
+            "insurance_plan_obj_id": row["insurance_plan_obj_id"],
+            "insurance_company": row["insurance_company"],
+        }
+        if DenialCreatorHelper._names_disagree(
+            row["insurance_company"], row["insurance_company_obj__name"]
+        ) or (
+            company_id is None
+            and DenialCreatorHelper._names_disagree(
+                row["insurance_company"],
+                row["insurance_plan_obj__insurance_company__name"],
+            )
+        ):
+            # The box names one insurer and the structured column another
+            # (a text correction made after the match). Neither number is
+            # trusted; empty asks the person for one.
+            return None, justification
+        plan_fax = row["insurance_plan_obj__appeal_fax_number"]
+        plan_company_id = row["insurance_plan_obj__insurance_company_id"]
+        # A plan belonging to a different carrier than the row names is the
+        # same mismatch one level down, so it has to agree too.
+        if plan_fax and (company_id is None or plan_company_id == company_id):
+            return str(plan_fax), justification
+        company_fax = row["insurance_company_obj__appeal_fax_number"]
+        return (str(company_fax) if company_fax else None), justification
+
+    @staticmethod
+    async def _fill_if_empty(
+        denial_id: int, field: str, value: Any, *, blank_is_empty: bool = True
+    ) -> bool:
+        """Write ``value`` into ``field`` only where the row still holds nothing.
+
+        Every column these extractors write is editable on the review page, and
+        the retry lifts the gate that normally stops a second read, so an
+        unconditional write replaces a correction the person made between the
+        two runs. Read and write are one statement because the extractors run
+        concurrently with each other and with the review POST.
+        """
+        empty = Q(**{f"{field}__isnull": True})
+        if blank_is_empty:
+            empty = empty | Q(**{field: ""})
+        return bool(
+            await Denial.objects.filter(denial_id=denial_id)
+            .filter(empty)
+            .aupdate(**{field: value})
+        )
+
+    @classmethod
+    async def clear_extraction_for_retry(cls, denial_id: int) -> None:
+        """Spend one of the letter's attempts and make it readable again.
+
+        Returning to the extraction URL re-runs nothing: the already-done gate
+        in ``extract_entity`` is an OR over ``diagnosis``,
+        ``extract_procedure_diagnosis_finished`` and ``procedure``, so a run
+        that read the letter and found nothing can never be asked to look
+        again. This clears the finished flag and the two candidate mirrors,
+        which are ours, and leaves ``procedure`` and ``diagnosis`` alone,
+        which may be what the person typed.
+
+        ``extract_attempts`` is bumped rather than reset, in the same UPDATE so
+        the increment is race-safe. It has to be bumped here: the counter is
+        otherwise only moved by ``extract_set_denial_and_diagnosis``'s except
+        path, so on a letter the model reads cleanly it never moves, and the
+        button would be an unbounded invitation to re-run eleven steps and the
+        PubMed/ClinicalTrials/speculative-context fan-out behind them. The
+        caller checks the cap BEFORE calling this.
+        """
+        await Denial.objects.filter(denial_id=denial_id).aupdate(
+            extract_procedure_diagnosis_finished=False,
+            candidate_procedure=None,
+            candidate_diagnosis=None,
+            extract_attempts=F("extract_attempts") + 1,
+        )
+        logger.debug(
+            f"extract_entity({denial_id}): cleared for an authorized retry, "
+            "one attempt spent"
+        )
+
+    @classmethod
+    async def extract_entity(
+        cls, denial_id: int, retry: bool = False
+    ) -> AsyncIterator[dict]:
+        """
+        Perform entity extraction on a given denial id.
+
+        Yields one JSON-serialisable record per finished step and exactly one
+        run-level record per run. The consumer is a ``json.dumps`` and a send;
+        it makes no decisions about what any of this means.
+
+        ``retry=True`` clears what the gate below reads before the gate reads
+        it, so the letter is actually read again, and spends one of the
+        letter's attempts so the button cannot be pressed forever.
         """
 
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        if (
+        # Read the budget before anything clears it: a retry already over the
+        # cap must reach the out-of-attempts branch below.
+        attempts = denial.extract_attempts or 0
+        out_of_attempts = attempts >= 3
+        if retry and not out_of_attempts:
+            await cls.clear_extraction_for_retry(denial_id)
+
+        if not retry and (
             denial.diagnosis
             or denial.extract_procedure_diagnosis_finished
             or denial.procedure
@@ -2207,107 +2631,126 @@ class DenialCreatorHelper:
             logger.debug(f"extract_entity({denial_id}): skipping, already done")
             # Regulator matching is cheap (a handful of regexes), idempotent,
             # and independent of the procedure/diagnosis extraction this gate
-            # protects — run it even when the denial was manually populated or
+            # protects: run it even when the denial was manually populated or
             # extraction already finished, so those denials still get
             # regulator contact info.
-            try:
-                await cls.extract_set_regulator(denial_id)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_regulator failed for denial {denial_id}"
-                )
+            yield await cls._run_extraction_step(
+                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+            )
             # Triage is idempotent on the text hash, so retrying it here is
             # free when it already ran, and it is the only retry a timed-out
             # first attempt gets (a reconnect lands on this branch).
-            try:
-                await cls.extract_set_triage(denial_id)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_triage failed for denial {denial_id}"
-                )
+            yield await cls._run_extraction_step(
+                cls.extract_set_triage(denial_id), EXTRACTION_TASK_TRIAGE
+            )
+            # Two different rows reach this branch and must not be told the
+            # same thing. A row that only has extract_procedure_diagnosis_
+            # finished set got that flag from a model call that returned
+            # (None, None), which is the opposite news.
+            if denial.procedure or denial.diagnosis:
+                yield cls._extraction_run_record(EXTRACTION_RUN_ALREADY_HAVE_DETAILS)
+            else:
+                yield cls._extraction_run_record(EXTRACTION_RUN_READ_AND_FOUND_NOTHING)
             return
         # Bound persistent extraction failures: extract_entity runs once per
         # WebSocket connection (websockets.StreamingEntityBackend.receive)
         # with no upstream rate-limit, so without a cap a denial whose LLM
         # extraction reliably fails would re-run extraction (and re-fire
-        # the PubMed/citation cache warmers) on every reconnect. The
-        # counter is bumped in extract_set_denial_and_diagnosis's except
-        # path via F() so the increment is race-safe.
-        if (denial.extract_attempts or 0) >= 3:
+        # the PubMed/citation cache warmers) on every reconnect. The counter
+        # is bumped by extract_set_denial_and_diagnosis's except path and by
+        # an authorized retry, both via F() so the increments are race-safe.
+        if out_of_attempts:
             logger.warning(
                 f"extract_entity({denial_id}): skipping LLM extraction, "
-                f"extract_attempts={denial.extract_attempts} exhausted"
+                f"extract_attempts={attempts} exhausted"
             )
-            # The counter measures procedure/diagnosis LLM failures only;
+            # The counter measures the procedure/diagnosis extraction only;
             # regulator matching is a handful of regexes with no LLM in the
-            # loop, so run it anyway -- same reasoning as the already-done
-            # early exit above. Also yield a completion frame so the client's
-            # status list doesn't present an instant, empty close as success
-            # with no output at all.
-            try:
-                await cls.extract_set_regulator(denial_id)
-                yield "regulator"
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_regulator failed for denial {denial_id}"
-                )
+            # loop, so run it anyway, as in the already-done exit above.
+            yield await cls._run_extraction_step(
+                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+            )
             # Same for triage: no LLM of ours in the loop, idempotent on the
             # text hash, and this branch is the only retry it would get.
-            try:
-                await cls.extract_set_triage(denial_id)
-                yield "triage"
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"extract_set_triage failed for denial {denial_id}"
-                )
-            yield "Extraction complete"
+            yield await cls._run_extraction_step(
+                cls.extract_set_triage(denial_id), EXTRACTION_TASK_TRIAGE
+            )
+            yield cls._extraction_run_record(EXTRACTION_RUN_OUT_OF_ATTEMPTS)
             return
 
-        # Define a wrapper function that returns both the name and result
-        async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
-            try:
-                result = await awaitable
-                return name, result
-            except Exception as e:
-                logger.opt(exception=True).warning(f"Failed in task {name}: {e}")
-                return name, None
-
         # Best effort extractions
-        optional_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
-            named_task(cls.extract_set_fax_number(denial_id), "fax"),
-            named_task(
-                cls.extract_set_insurance_company(denial_id), "insurance company"
+        optional_awaitables: list[Coroutine[Any, Any, dict]] = [
+            cls._run_extraction_step(
+                cls.extract_set_fax_number(denial_id), EXTRACTION_TASK_FAX
             ),
-            named_task(
-                cls.match_insurance_plan_from_regex(denial_id), "insurance plan"
+            cls._run_extraction_step(
+                cls.extract_set_insurance_company(denial_id),
+                EXTRACTION_TASK_INSURANCE_COMPANY,
             ),
-            named_task(cls.extract_set_plan_id(denial_id), "plan id"),
-            named_task(cls.extract_set_claim_id(denial_id), "claim id"),
-            named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
-            named_task(cls.extract_set_regulator(denial_id), "regulator"),
-            named_task(cls.extract_set_triage(denial_id), "triage"),
-            named_task(
+            cls._run_extraction_step(
+                cls.match_insurance_plan_from_regex(denial_id),
+                EXTRACTION_TASK_INSURANCE_PLAN,
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_plan_id(denial_id), EXTRACTION_TASK_PLAN_ID
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_claim_id(denial_id), EXTRACTION_TASK_CLAIM_ID
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_date_of_service(denial_id),
+                EXTRACTION_TASK_DATE_OF_SERVICE,
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_triage(denial_id), EXTRACTION_TASK_TRIAGE
+            ),
+            cls._run_extraction_step(
                 MLPlanDocHelper.generate_plan_documents_summary(denial_id),
-                "plan document summary",
+                EXTRACTION_TASK_PLAN_DOCUMENTS,
             ),
         ]
 
-        required_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
+        required_awaitables: list[Coroutine[Any, Any, dict]] = [
             # Denial type depends on denial and diagnosis
-            named_task(cls.extract_set_denial_and_diagnosis(denial_id), "diagnosis"),
-            named_task(cls.extract_set_denialtype(denial_id), "type of denial"),
+            cls._run_extraction_step(
+                cls.extract_set_denial_and_diagnosis(denial_id, attempt_spent=retry),
+                EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
+            ),
+            cls._run_extraction_step(
+                cls.extract_set_denialtype(denial_id), EXTRACTION_TASK_DENIAL_TYPE
+            ),
+        ]
+
+        expected_tasks = [
+            EXTRACTION_TASK_FAX,
+            EXTRACTION_TASK_INSURANCE_COMPANY,
+            EXTRACTION_TASK_INSURANCE_PLAN,
+            EXTRACTION_TASK_PLAN_ID,
+            EXTRACTION_TASK_CLAIM_ID,
+            EXTRACTION_TASK_DATE_OF_SERVICE,
+            EXTRACTION_TASK_REGULATOR,
+            EXTRACTION_TASK_TRIAGE,
+            EXTRACTION_TASK_PLAN_DOCUMENTS,
+            EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
+            EXTRACTION_TASK_DENIAL_TYPE,
         ]
 
         logger.debug(
             f"extract_entity({denial_id}): {len(optional_awaitables)} optional + "
             f"{len(required_awaitables)} required tasks"
         )
+        reported: dict[str, str] = {}
         try:
             async for item in execute_critical_optional_fireandforget(
                 optional=optional_awaitables,
                 required=required_awaitables,
                 fire_and_forget=[cls._maybe_dispatch_ucr(denial_id)],
-                done_record=("Extraction complete", None),
+                # The run-level frame is decided below, from what the steps
+                # reported, not from the loop reaching its end.
+                done_record=None,
                 timeout=90,
                 # The optional tasks (fax number, insurer, plan/claim id, date
                 # of service) are LLM roundtrips just like the required ones;
@@ -2319,12 +2762,35 @@ class DenialCreatorHelper:
                 # real window (the overall 90s cap above still bounds it).
                 max_extra_time_for_optional=45,
             ):
-                if item:
-                    yield item[0]
+                if not item:
+                    continue
+                reported[item["task"]] = item["outcome"]
+                yield item
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error during extraction for denial {denial_id}: {e}"
             )
+            yield cls._extraction_run_record(EXTRACTION_RUN_FAILED)
+            return
+
+        # A step that never reported was cancelled by the timeout or the
+        # optional-task grace window.
+        for task in expected_tasks:
+            if task not in reported:
+                yield cls._extraction_record(task, EXTRACTION_OUTCOME_TIMED_OUT)
+                reported[task] = EXTRACTION_OUTCOME_TIMED_OUT
+
+        main_outcome = reported.get(EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS)
+        if main_outcome == EXTRACTION_OUTCOME_FOUND:
+            yield cls._extraction_run_record(EXTRACTION_RUN_FINISHED)
+        elif main_outcome == EXTRACTION_OUTCOME_KEPT_EXISTING:
+            yield cls._extraction_run_record(EXTRACTION_RUN_KEPT_YOUR_DETAILS)
+        elif main_outcome == EXTRACTION_OUTCOME_NOTHING_FOUND:
+            yield cls._extraction_run_record(EXTRACTION_RUN_READ_AND_FOUND_NOTHING)
+        else:
+            # Failed, timed out, or never reported: we did not finish reading
+            # the letter, which is not the same as finding nothing in it.
+            yield cls._extraction_run_record(EXTRACTION_RUN_FAILED)
 
     @classmethod
     async def _maybe_dispatch_ucr(cls, denial_id: int) -> None:
@@ -2370,11 +2836,18 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_denial_and_diagnosis(cls, denial_id: int):
+    async def extract_set_denial_and_diagnosis(
+        cls, denial_id: int, attempt_spent: bool = False
+    ) -> str:
         """
         Asynchronously extracts procedure and diagnosis from a denial's text and updates the denial record.
 
         Attempts to extract the procedure and diagnosis fields using the appeal generator. Updates the denial with the extracted values and marks extraction as finished, regardless of success. If extraction is successful or existing values are present, triggers background tasks to search for related PubMed articles, prefetch ClinicalTrials.gov matches, and build speculative context. All background searches are fire-and-forget with their own timeouts and never block the caller.
+
+        Returns an extraction outcome rather than ``None``: this method
+        swallows every exception out of ``get_procedure_and_diagnosis``, which
+        it has to because a model outage must not break denial creation, so
+        the returned outcome is the only way a model failure reaches the page.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         procedure = None
@@ -2415,13 +2888,18 @@ class DenialCreatorHelper:
                 if field in update_fields:
                     user_facing[field] = update_fields.pop(field)
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
+            filled_in = False
+            kept_existing = False
             for field, value in user_facing.items():
                 updated = await (
                     Denial.objects.filter(denial_id=denial_id)
                     .filter(Q(**{f"{field}__isnull": True}) | Q(**{field: ""}))
                     .aupdate(**{field: value})
                 )
-                if not updated:
+                if updated:
+                    filled_in = True
+                else:
+                    kept_existing = True
                     logger.debug(
                         f"extract_set_denial_and_diagnosis({denial_id}): "
                         f"{field} already set (user or earlier run); keeping it"
@@ -2512,6 +2990,20 @@ class DenialCreatorHelper:
                     f"for denial {denial_id}"
                 )
 
+            # Two questions, both needed. Did the MODEL produce anything? That
+            # is the candidate mirrors, not what the row holds, which may be a
+            # procedure the person typed while this call was in flight. And did
+            # any of it get written down? "found" is the outcome the page turns
+            # into "we filled in what we found", so it needs both.
+            if update_fields.get("candidate_procedure") or update_fields.get(
+                "candidate_diagnosis"
+            ):
+                if filled_in:
+                    return EXTRACTION_OUTCOME_FOUND
+                if kept_existing:
+                    return EXTRACTION_OUTCOME_KEPT_EXISTING
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
@@ -2520,15 +3012,21 @@ class DenialCreatorHelper:
             # subsequent extract_entity call can re-attempt extraction on
             # transient failures. Bump extract_attempts atomically (F()
             # makes concurrent-reconnect increments race-safe) so
-            # extract_entity's gate stops retrying after 3 failures.
-            try:
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    extract_attempts=F("extract_attempts") + 1
-                )
-            except Exception as inner:
-                logger.opt(exception=True).debug(
-                    f"Failed to bump extract_attempts for denial {denial_id}: {inner}"
-                )
+            # extract_entity's gate stops retrying after 3 failures. An
+            # authorized retry spent its attempt up front, in
+            # clear_extraction_for_retry; a failed retry is one attempt,
+            # not two.
+            if not attempt_spent:
+                try:
+                    await Denial.objects.filter(denial_id=denial_id).aupdate(
+                        extract_attempts=F("extract_attempts") + 1
+                    )
+                except Exception as inner:
+                    logger.opt(exception=True).debug(
+                        f"Failed to bump extract_attempts for denial {denial_id}: "
+                        f"{inner}"
+                    )
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def _match_insurance_company(
@@ -2681,7 +3179,7 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_insurance_company(cls, denial_id):
+    async def extract_set_insurance_company(cls, denial_id) -> str:
         """Extract insurance company name from denial text and match to structured models.
 
         Once a company is matched, propagates the company's known appeal-routing
@@ -2689,15 +3187,24 @@ class DenialCreatorHelper:
         one - this means downstream code (PDF cover sheet, fax send) can use
         Anthem/UHC/etc.'s published appeals fax even if the denial letter
         itself didn't include it.
+
+        Returns an extraction outcome, for the reason given on
+        ``extract_set_plan_id``.
         """
         from fighthealthinsurance.models import InsuranceCompany, InsurancePlan
 
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         insurance_company = None
+        reader_failed = False
         try:
-            insurance_company = await appealGenerator.get_insurance_company(
-                denial_text=denial.denial_text
-            )
+            try:
+                insurance_company = await appealGenerator.get_insurance_company(
+                    denial_text=denial.denial_text
+                )
+            except ExtractionUnavailable:
+                # The carrier regexes below need no model. Failed is the
+                # answer only if they find nothing either.
+                reader_failed = True
 
             # Reject obviously hallucinated names early - but still allow the
             # regex-based fallback below to run, since a missing/invalid LLM
@@ -2743,81 +3250,98 @@ class DenialCreatorHelper:
             if matched_company:
                 resolved_name = matched_company.name
 
-            update_fields: dict[str, Any] = {}
+            found_something = False
+            wrote_something = False
             if resolved_name:
-                update_fields["insurance_company"] = resolved_name
+                found_something = True
+                wrote_something |= await cls._fill_if_empty(
+                    denial_id, "insurance_company", resolved_name
+                )
             if matched_company:
-                update_fields["insurance_company_obj"] = matched_company
+                found_something = True
+                if await cls._row_names_another_carrier(denial_id, matched_company):
+                    # The person wrote a different insurer in the box. Their
+                    # words outrank a match in the letter; the structured
+                    # columns stay empty rather than hold the wrong carrier.
+                    logger.debug(
+                        f"Row names a different insurer than the matched "
+                        f"{matched_company.name}; not storing the match"
+                    )
+                    matched_company = None
+                    matched_plan = None
+            if matched_company:
                 logger.debug(f"Matched to structured company: {matched_company.name}")
+                wrote_something |= await cls._fill_if_empty(
+                    denial_id,
+                    "insurance_company_obj",
+                    matched_company,
+                    blank_is_empty=False,
+                )
             if matched_plan:
-                update_fields["insurance_plan_obj"] = matched_plan
+                found_something = True
                 logger.debug(f"Matched to structured plan: {matched_plan}")
-
-            # Propagate the known appeal fax number from the matched plan/company
-            # onto the denial only if the denial doesn't already have one. We
-            # do NOT overwrite a fax number that came directly from the denial
-            # letter or plan documents. Use a single conditional ``aupdate``
-            # so the read+write is atomic - extract_set_fax_number runs
-            # concurrently and could otherwise write between our read and
-            # write.
-            propagated_fax = None
-            if matched_plan and matched_plan.appeal_fax_number:
-                propagated_fax = matched_plan.appeal_fax_number
-            elif matched_company and matched_company.appeal_fax_number:
-                propagated_fax = matched_company.appeal_fax_number
-
-            if update_fields:
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    **update_fields
-                )
-                logger.debug(
-                    f"Successfully extracted insurance company: {resolved_name}"
+                wrote_something |= await cls._store_plan_if_it_is_the_rows_carriers(
+                    denial_id, matched_plan
                 )
 
+            # The rule every carrier writer follows: a plan is stored only for
+            # the carrier the row holds, and the fax is the published fax of
+            # whatever carrier the row holds after the columns are written,
+            # or empty. The writers are this function, extract_set_fax_number
+            # and match_insurance_plan_from_regex. An empty fax number asks the
+            # person for one. A wrong one sends the appeal, with everything in
+            # it, to a company that has nothing to do with the claim.
+            propagated_fax, justified_by = await cls._fax_and_its_justification(
+                denial_id
+            )
             if propagated_fax:
-                rows_updated = (
-                    await Denial.objects.filter(denial_id=denial_id)
-                    .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
-                    .aupdate(appeal_fax_number=propagated_fax)
+                rows_updated = await cls._write_fax_if_the_carrier_still_holds(
+                    denial_id, propagated_fax, justified_by
                 )
                 if rows_updated:
                     logger.debug(
-                        f"Propagated appeal_fax_number {propagated_fax} from carrier"
+                        f"Propagated appeal_fax_number {propagated_fax} from the "
+                        f"carrier on the row"
                     )
 
-            return resolved_name
+            if not found_something:
+                if reader_failed:
+                    return EXTRACTION_OUTCOME_FAILED
+                return EXTRACTION_OUTCOME_NOTHING_FOUND
+            if wrote_something:
+                return EXTRACTION_OUTCOME_FOUND
+            return EXTRACTION_OUTCOME_KEPT_EXISTING
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract insurance company for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
-    async def extract_set_plan_id(cls, denial_id):
-        """Extract plan ID from denial text"""
+    async def extract_set_plan_id(cls, denial_id) -> str:
+        """Extract plan ID from denial text.
+
+        Returns an extraction outcome: this method swallows the model's
+        exceptions, so a returned value cannot tell a read that failed from a
+        letter with no plan ID in it, and the page says one or the other.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        plan_id = None
         try:
-            # Extract plan ID - could be in various formats (alphanumeric)
             plan_id = await appealGenerator.get_plan_id(denial_text=denial.denial_text)
 
-            # Validate that the extracted value looks like a real identifier
             from fighthealthinsurance.generate_appeal import is_plausible_identifier
 
             if plan_id is not None and is_plausible_identifier(plan_id):
-                # Use aupdate to directly update the field at the database level
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    plan_id=plan_id
-                )
-                logger.debug(f"Successfully extracted plan ID: {plan_id}")
-                return plan_id
-            else:
-                logger.debug(f"Rejected plan ID extraction: {plan_id}")
+                if await cls._fill_if_empty(denial_id, "plan_id", plan_id):
+                    return EXTRACTION_OUTCOME_FOUND
+                return EXTRACTION_OUTCOME_KEPT_EXISTING
+            logger.debug(f"Rejected plan ID extraction: {plan_id}")
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract plan ID for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def match_insurance_plan_from_regex(cls, denial_id):
@@ -2827,20 +3351,25 @@ class DenialCreatorHelper:
         """
         from fighthealthinsurance.models import InsurancePlan
 
-        # select_related caches both FKs so the insurance_*_obj reads below
-        # stay async-safe (a lazy read would raise SynchronousOnlyOperation,
-        # silently eaten by the except blocks).
-        denial = await Denial.objects.select_related(
-            "insurance_plan_obj", "insurance_company_obj"
-        ).aget(denial_id=denial_id)
+        # Columns, not a joined instance: a select_related over the plan FK
+        # runs RegexField.from_db_value on the NULL regex columns of a row
+        # with no plan yet, which is every row this is meant to fill, and
+        # that raises before the try below.
+        row = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values("denial_text", "insurance_plan_obj_id")
+            .afirst()
+        )
+        if row is None:
+            return None
 
         try:
             # Only proceed if we don't already have a plan matched
-            if denial.insurance_plan_obj:
+            if row["insurance_plan_obj_id"]:
                 logger.debug(f"Denial {denial_id} already has matched plan, skipping")
-                return denial.insurance_plan_obj
+                return await InsurancePlan.objects.aget(id=row["insurance_plan_obj_id"])
 
-            denial_text = denial.denial_text
+            denial_text = row["denial_text"]
 
             # Try to match plans using regex patterns
             async for plan in InsurancePlan.objects.select_related(
@@ -2857,15 +3386,21 @@ class DenialCreatorHelper:
                             # We found a match!
                             logger.debug(f"Matched denial {denial_id} to plan: {plan}")
 
-                            # Update both plan and company if not already set
-                            update_fields: dict[str, Any] = {"insurance_plan_obj": plan}
-                            if not denial.insurance_company_obj:
-                                update_fields["insurance_company_obj"] = (
-                                    plan.insurance_company
-                                )
-
-                            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                                **update_fields
+                            # Conditional rather than a read-then-write against
+                            # the instance loaded above: the retry runs this
+                            # concurrently with extract_set_insurance_company
+                            # and after the person may have picked a plan on
+                            # the review page.
+                            if not await cls._store_plan_if_it_is_the_rows_carriers(
+                                denial_id, plan
+                            ):
+                                # Another carrier's plan, or one is stored.
+                                continue
+                            await cls._fill_if_empty(
+                                denial_id,
+                                "insurance_company_obj",
+                                plan.insurance_company,
+                                blank_is_empty=False,
                             )
                             return plan
                     except Exception as e:
@@ -2883,60 +3418,58 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
-    async def extract_set_claim_id(cls, denial_id):
-        """Extract claim ID from denial text"""
+    async def extract_set_claim_id(cls, denial_id) -> str:
+        """Extract claim ID from denial text.
+
+        Returns an extraction outcome, for the reason given on
+        ``extract_set_plan_id``.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        claim_id = None
         try:
             claim_id = await appealGenerator.get_claim_id(
                 denial_text=denial.denial_text
             )
 
-            # Validate that the extracted value looks like a real identifier
             from fighthealthinsurance.generate_appeal import is_plausible_identifier
 
             if claim_id is not None and is_plausible_identifier(claim_id):
-                # Use aupdate to directly update the field at the database level
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    claim_id=claim_id
-                )
-                logger.debug(f"Successfully extracted claim ID: {claim_id}")
-                return claim_id
-            else:
-                logger.debug(f"Rejected claim ID extraction: {claim_id}")
+                if await cls._fill_if_empty(denial_id, "claim_id", claim_id):
+                    return EXTRACTION_OUTCOME_FOUND
+                return EXTRACTION_OUTCOME_KEPT_EXISTING
+            logger.debug(f"Rejected claim ID extraction: {claim_id}")
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract claim ID for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
-    async def extract_set_date_of_service(cls, denial_id):
-        """Extract date of service from denial text"""
+    async def extract_set_date_of_service(cls, denial_id) -> str:
+        """Extract date of service from denial text.
+
+        Returns an extraction outcome, for the reason given on
+        ``extract_set_plan_id``.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        date_of_service = None
         try:
             date_of_service = await appealGenerator.get_date_of_service(
                 denial_text=denial.denial_text
             )
 
-            # Validate date of service
             if date_of_service is not None:
-                # Use aupdate to directly update at the database level
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    date_of_service=date_of_service
-                )
-                logger.debug(
-                    f"Successfully extracted date of service: {date_of_service}"
-                )
-                return date_of_service
-            else:
-                logger.debug(f"No date of service found")
+                if await cls._fill_if_empty(
+                    denial_id, "date_of_service", date_of_service
+                ):
+                    return EXTRACTION_OUTCOME_FOUND
+                return EXTRACTION_OUTCOME_KEPT_EXISTING
+            logger.debug("No date of service found")
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract date of service for denial {denial_id}: {e}"
             )
-        return None
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def get_plan_documents_text(cls, denial_id: int) -> str:
@@ -3001,6 +3534,9 @@ class DenialCreatorHelper:
         plan_docs_text = ""
         all_source_text = denial_text
         appeal_fax_number: Optional[str] = None
+        # A reader that could not read is a failure, not a letter with no fax
+        # in it; it only shows if nothing else supplies a number below.
+        reader_failed = False
 
         # First try to extract from denial text
         try:
@@ -3008,6 +3544,7 @@ class DenialCreatorHelper:
                 denial_text=denial_text
             )
         except Exception as e:
+            reader_failed = isinstance(e, ExtractionUnavailable)
             logger.opt(exception=True).warning(
                 f"Failed to extract fax number from denial text for {denial_id}: {e}"
             )
@@ -3026,6 +3563,7 @@ class DenialCreatorHelper:
                             f"Found fax number in plan documents for denial {denial_id}"
                         )
             except Exception as e:
+                reader_failed = reader_failed or isinstance(e, ExtractionUnavailable)
                 logger.opt(exception=True).warning(
                     f"Failed to extract fax number from plan docs for {denial_id}: {e}"
                 )
@@ -3053,55 +3591,25 @@ class DenialCreatorHelper:
                 else:
                     logger.debug(f"Validated fax number {appeal_fax_number}")
 
-        # Final fallback: if we still don't have a fax number but we matched a
-        # carrier (insurance_company_obj or insurance_plan_obj), use that
-        # carrier's published appeal fax. This is a last resort and isn't
-        # validated against source text - it's the carrier's own data.
-        # Re-read the denial under a fresh query in case a concurrent task
-        # (extract_set_insurance_company) has just propagated a fax onto it -
-        # we never want to overwrite an already-stored value here. We avoid
-        # ``select_related`` because the joined regex columns trigger
-        # RegexField.from_db_value on NULL values and raise ValidationError.
+        # Final fallback: the published fax of the carrier the row holds. Same
+        # rule as the carrier extractor (_fax_for_the_carrier_on_the_row), so
+        # a plan belonging to another carrier can never supply it here either.
         if appeal_fax_number is None:
-            current = (
+            already = (
                 await Denial.objects.filter(denial_id=denial_id)
-                .values(
-                    "appeal_fax_number",
-                    "insurance_company_obj_id",
-                    "insurance_plan_obj_id",
-                )
+                .values_list("appeal_fax_number", flat=True)
                 .afirst()
             )
-            if current is not None:
-                if current["appeal_fax_number"]:
-                    return current["appeal_fax_number"]
-                if current["insurance_plan_obj_id"]:
-                    plan_fax = (
-                        await InsurancePlan.objects.filter(
-                            id=current["insurance_plan_obj_id"]
-                        )
-                        .values_list("appeal_fax_number", flat=True)
-                        .afirst()
-                    )
-                    if plan_fax:
-                        appeal_fax_number = plan_fax
-                        logger.debug(
-                            f"Using plan-published appeal fax {appeal_fax_number}"
-                        )
-                if appeal_fax_number is None and current["insurance_company_obj_id"]:
-                    company_fax = (
-                        await InsuranceCompany.objects.filter(
-                            id=current["insurance_company_obj_id"]
-                        )
-                        .values_list("appeal_fax_number", flat=True)
-                        .afirst()
-                    )
-                    if company_fax:
-                        appeal_fax_number = company_fax
-                        logger.debug(
-                            f"Using carrier-published appeal fax {appeal_fax_number}"
-                        )
-
+            if already:
+                return already
+            fallback_fax, justified_by = await cls._fax_and_its_justification(denial_id)
+            if fallback_fax and await cls._write_fax_if_the_carrier_still_holds(
+                denial_id, fallback_fax, justified_by
+            ):
+                return fallback_fax
+            # Nothing, or the carrier moved under the read: the letter's own
+            # verdict stands.
+            appeal_fax_number = None
         if appeal_fax_number is not None:
             # Conditional update: only write if no fax has been set since
             # we started (extract_set_insurance_company runs concurrently
@@ -3121,28 +3629,32 @@ class DenialCreatorHelper:
                 .values_list("appeal_fax_number", flat=True)
                 .afirst()
             )
-        return None
+        return EXTRACTION_OUTCOME_FAILED if reader_failed else None
 
     @classmethod
-    async def extract_set_triage(cls, denial_id):
+    async def extract_set_triage(cls, denial_id) -> str:
         """Triage the denial with TypeSafe (ml/denial_triage.py) and store it.
 
         Optional and fire-and-forget like the other extractors: a missing
         key, a declined external-model consent, a timeout or a malformed
         answer all leave the denial untriaged, never un-created. Idempotent
         on the text hash, so a retry after the letter was triaged is free.
+
+        Returns an extraction outcome. Every path that leaves the row
+        untriaged says ``nothing_found``; the already-current path says
+        ``cached``, being the one path where the work is genuinely done.
         """
         if not denial_triage.enabled():
-            return
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if not denial.use_external:
-            return
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         if denial_triage.is_current(denial):
-            return
+            return EXTRACTION_OUTCOME_CACHED
         text = denial.denial_text
         result = await denial_triage.triage(text, denial.denial_date)
         if result is None:
-            return
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
         values = denial_triage.row_values(result, timezone.now(), text)
         # An anchored window is always resolved against the date on the row
         # at WRITE time, and the write is conditional on that date (and on
@@ -3166,23 +3678,27 @@ class DenialCreatorHelper:
                 denial_date=latest_date,
             ).aupdate(**values)
             if updated:
-                return
+                return EXTRACTION_OUTCOME_FOUND
         logger.info(
             f"denial triage for {denial_id} discarded: letter, consent or date "
             "changed while it was in flight"
         )
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
-    async def extract_set_regulator(cls, denial_id):
+    async def extract_set_regulator(cls, denial_id) -> str:
         """Match the denial text against known regulators and store the match.
 
         Populates ``Denial.regulator`` so downstream flows (outside help,
         the escalation packet's ERISA detection) can surface the right
         regulator along with its complaint phone number.
+
+        Returns an extraction outcome: the row already had a regulator, we
+        matched one, or the letter matched nothing.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if denial.regulator_id is not None:
-            return
+            return EXTRACTION_OUTCOME_CACHED
         regulators = await cls.regex_denial_processor.get_regulator(
             denial.denial_text or ""
         )
@@ -3191,10 +3707,20 @@ class DenialCreatorHelper:
             await Denial.objects.filter(
                 denial_id=denial_id, regulator__isnull=True
             ).aupdate(regulator=regulators[0])
+            return EXTRACTION_OUTCOME_FOUND
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
-    async def extract_set_denialtype(cls, denial_id):
-        # Try and guess at the denial types
+    async def extract_set_denialtype(cls, denial_id) -> str:
+        """Match the denial text against the known denial types and store them.
+
+        Returns an extraction outcome: the page's words for this step are
+        "Reason they gave for the denial", and a bare return reads as
+        nothing-found even on the runs that stored types.
+
+        ``get_or_create``, not ``create``: DenialTypesRelation carries no
+        unique constraint, so a second read adds a second copy of every type.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         denial_types = await cls.regex_denial_processor.get_denialtype(
             denial_text=denial.denial_text,
@@ -3204,14 +3730,29 @@ class DenialCreatorHelper:
         logger.debug(
             f"extract_set_denialtype({denial_id}): processing {len(denial_types)} types"
         )
+        src = await cls.regex_src()
+        created = 0
+        already_stored = 0
+        failed = 0
         for dt in denial_types:
             try:
-                await DenialTypesRelation.objects.acreate(
-                    denial=denial, denial_type=dt, src=await cls.regex_src()
+                _, was_created = await DenialTypesRelation.objects.aget_or_create(
+                    denial=denial, denial_type=dt, src=src
                 )
+                if was_created:
+                    created += 1
+                else:
+                    already_stored += 1
             except Exception as e:
-                # Can fail if relation already exists (duplicate)
+                failed += 1
                 logger.opt(exception=True).debug(f"Failed setting denial type: {e}")
+        if created:
+            return EXTRACTION_OUTCOME_FOUND
+        if failed:
+            return EXTRACTION_OUTCOME_FAILED
+        if already_stored:
+            return EXTRACTION_OUTCOME_CACHED
+        return EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
     def update_denial(
@@ -3258,21 +3799,37 @@ class DenialCreatorHelper:
         # exception boundary, so the journey can never break the user-facing
         # flow. Opt-in for the nudge = store_raw_email, observable as a
         # retained raw_email.
+        # Scoped, so this save cannot revert a concurrent writer's column.
+        changed_fields: set[str] = set()
+
         with _transaction.atomic():
             if plan_documents is not None:
+                # Additive and not idempotent: a second click or a replayed
+                # POST adds another row. PlanDocuments carries no filename or
+                # content hash to dedupe on, so plan_documents.html only shows
+                # a count to discourage it. 2026-09-14: left as is, a dedupe
+                # key is a migration this branch is not making.
                 for plan_document in plan_documents:
                     PlanDocuments.objects.create(
                         plan_document_enc=plan_document, denial=denial
                     )
+            # The contract for all three optional columns below: None means
+            # the caller said nothing and the stored value stands. For
+            # health_history an empty string is a decision, not silence -- it
+            # is how the page deletes what the person wrote, and no other page
+            # can -- so the blank is written rather than refused.
             if health_history is not None:
                 denial.health_history = health_history
+                changed_fields.add("health_history")
             if include_provided_health_history_in_appeal is not None:
                 denial.include_provided_health_history_in_appeal = (
                     include_provided_health_history_in_appeal
                 )
+                changed_fields.add("include_provided_health_history_in_appeal")
             if health_history_anonymized is not None:
                 denial.health_history_anonymized = health_history_anonymized
-            denial.save()
+                changed_fields.add("health_history_anonymized")
+            denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:
             intake_outbox.deliver(intent)
@@ -6057,6 +6614,9 @@ class EscalationPacketHelper:
             r for r in recipients if r.recipient_type not in existing_by_type
         ]
 
+        # ``total`` is every recipient the packet must contain, not just the
+        # ones still needing an ML call, so the page can tell a full packet
+        # from a partial one.
         yield json.dumps(
             {
                 "type": "status",
@@ -6064,7 +6624,9 @@ class EscalationPacketHelper:
                 "message": (
                     f"Generating {len(needing_generation)} regulator letter(s)..."
                 ),
-                "total": len(needing_generation),
+                "total": len(recipients),
+                "cached": len(existing_by_type),
+                "generating": len(needing_generation),
             }
         ) + "\n"
 
@@ -6091,16 +6653,28 @@ class EscalationPacketHelper:
         use_external = bool(getattr(denial, "use_external", False))
 
         async def _draft(recipient):
-            text = await generate_regulator_letter(
-                denial, recipient, use_external=use_external
-            )
+            # One recipient's failure, never the stream's: raising out of
+            # here skips the done frame, and the page is left with no
+            # complete flag and no count for the run.
+            try:
+                text = await generate_regulator_letter(
+                    denial, recipient, use_external=use_external
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"escalation letter for {recipient.recipient_type} raised"
+                )
+                text = None
             return recipient, text
 
         tasks = [asyncio.create_task(_draft(r)) for r in needing_generation]
+        generated = 0
+        failed_names: list[str] = []
         try:
             for fut in asyncio.as_completed(tasks):
                 recipient, letter_text = await fut
                 if not letter_text:
+                    failed_names.append(recipient.name)
                     yield json.dumps(
                         {
                             "type": "status",
@@ -6115,16 +6689,35 @@ class EscalationPacketHelper:
                     ) + "\n"
                     continue
 
-                escalation = await RegulatorEscalation.objects.acreate(
-                    for_denial=denial,
-                    hashed_email=hashed_email,
-                    recipient_type=recipient.recipient_type,
-                    recipient_name=recipient.name,
-                    recipient_address=recipient.address,
-                    recipient_phone=recipient.phone,
-                    recipient_url=recipient.url,
-                    letter_text=letter_text,
-                )
+                try:
+                    escalation = await RegulatorEscalation.objects.acreate(
+                        for_denial=denial,
+                        hashed_email=hashed_email,
+                        recipient_type=recipient.recipient_type,
+                        recipient_name=recipient.name,
+                        recipient_address=recipient.address,
+                        recipient_phone=recipient.phone,
+                        recipient_url=recipient.url,
+                        letter_text=letter_text,
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"could not save the {recipient.recipient_type} letter"
+                    )
+                    failed_names.append(recipient.name)
+                    yield json.dumps(
+                        {
+                            "type": "status",
+                            "phase": "generating",
+                            "substep": recipient.recipient_type,
+                            "state": "error",
+                            "message": (
+                                f"Could not save the letter for "
+                                f"{recipient.name}; skipping."
+                            ),
+                        }
+                    ) + "\n"
+                    continue
 
                 yield json.dumps(
                     {
@@ -6139,6 +6732,7 @@ class EscalationPacketHelper:
                         "content": letter_text,
                     }
                 ) + "\n"
+                generated += 1
         finally:
             # If the consumer disconnected mid-stream, cancel any unfinished
             # drafting tasks so we don't keep paying for ML calls nobody is
@@ -6147,11 +6741,26 @@ class EscalationPacketHelper:
                 if not t.done():
                     t.cancel()
 
+        delivered = generated + len(existing_by_type)
+        complete = delivered == len(recipients) and not failed_names
         yield json.dumps(
             {
                 "type": "status",
                 "phase": "done",
-                "message": "All regulator letters generated.",
+                "total": len(recipients),
+                "generated": generated,
+                "cached": len(existing_by_type),
+                "failed": len(failed_names),
+                "failed_names": failed_names,
+                "complete": complete,
+                "message": (
+                    f"All {len(recipients)} regulator letter(s) are ready."
+                    if complete
+                    else (
+                        f"{delivered} of {len(recipients)} regulator letters are "
+                        f"ready. We could not write the rest."
+                    )
+                ),
             }
         ) + "\n"
 

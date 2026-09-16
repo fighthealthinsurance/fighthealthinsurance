@@ -95,6 +95,14 @@ export function setLocalStorageItemWithTTL(key: string, value: string): void {
   window.localStorage.setItem(storageKey, JSON.stringify(item));
 }
 
+// Both keys: a write is session-scoped only while base.html rendered the
+// session meta tag, and a read falls back from the scoped key to the bare
+// one, so one field can hold two values and a read can return the older.
+export function clearLocalStorageItem(key: string): void {
+  window.localStorage.removeItem(getSessionScopedKey(key));
+  window.localStorage.removeItem(key);
+}
+
 // Helper to setup persistence for a textarea element
 // Options:
 // - alwaysRestore: if true, always restore from localStorage (for PII fill-in page)
@@ -126,6 +134,18 @@ export function setupTextareaPersistence(textareaId: string, options?: { alwaysR
     textarea.addEventListener('input', function() {
       setLocalStorageItemWithTTL(textareaId, textarea.value);
     });
+    // An empty box on submit is a deletion, and the next GET renders it back
+    // empty -- exactly the state shouldRestore() treats as "restore", so a
+    // surviving copy would refill the box the person just cleared.
+    // textarea.form resolves through the form="" attribute this page uses.
+    const owner = textarea.form;
+    if (owner) {
+      owner.addEventListener('submit', function() {
+        if (textarea.value === '') {
+          clearLocalStorageItem(textareaId);
+        }
+      });
+    }
   }
 }
 
@@ -179,6 +199,7 @@ if (typeof window !== 'undefined') {
     setupInputPersistence,
     getLocalStorageItemWithTTL,
     setLocalStorageItemWithTTL,
+    clearLocalStorageItem,
     isPersistenceEnabled,
     getSessionKey,
     isPostResponse,

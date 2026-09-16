@@ -94,10 +94,36 @@ class DenialResponseInfoSerializer(serializers.Serializer):
 
 # Form Serializers
 class HealthHistoryFormSerializer(FormSerializer):
-    """Serializer for patient health history form data."""
+    """Serializer for patient health history form data.
+
+    The two consent flags need "absent" and "false" to mean different things.
+    They have to stay on the form, because drf_braces builds this serializer
+    from it and strips anything the form does not declare, and taking them off
+    stopped the API revoking a consent it was explicitly told to revoke while
+    still answering 201. But a form BooleanField cleans a missing value to
+    False, which update_denial reads as a decision, so leaving it at that would
+    make every caller who says nothing revoke both.
+
+    Redeclaring the fields here does not help: drf_braces regenerates them from
+    the form. So the keys the caller did not actually send are dropped after
+    validation, which is the only place the distinction still exists.
+    """
+
+    CALLER_MUST_ASK_FOR = (
+        "health_history_anonymized",
+        "include_provided_health_history_in_appeal",
+    )
 
     class Meta(object):
         form = core_forms.HealthHistory
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        sent = self.initial_data if isinstance(self.initial_data, dict) else {}
+        for name in self.CALLER_MUST_ASK_FOR:
+            if name not in sent:
+                attrs.pop(name, None)
+        return attrs
 
 
 class ShareAppealFormSerializer(FormSerializer):
