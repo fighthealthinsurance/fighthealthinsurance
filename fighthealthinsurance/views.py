@@ -2183,6 +2183,7 @@ def plan_document_count(denial_id) -> int:
         return 0
     return models.PlanDocuments.objects.filter(denial__denial_id=denial_id).count()
 
+
 # The session holds two things for this scheme: a random per-session secret
 # the reference key is derived from, and, per case, the email the later
 # pages post. A reference is not stored anywhere; it is self-contained.
