@@ -63,6 +63,27 @@
 
        --fhi-text-micro is a floor, not a size to reach for. Nothing a
        patient has to read should be set in it. */
+    /* Spacing. 75 distinct values across the two stylesheets, 134 of the 355
+       declarations off any 4px grid: 3px, 5px, 10px, 11px, 15px, 19px, all
+       sitting next to each other with nothing to say which was meant. These
+       are the values already carrying most of the weight, on a 4px base.
+
+       The shared shell is migrated onto them here. The rest of the site is
+       counted, not converted: a baseline in tests/sync/test_spacing_scale.py
+       records what is still off the scale and lets it fall but not rise, so
+       the scale spreads by attrition instead of by one enormous rewrite that
+       leaves two systems running side by side. */
+    --fhi-space-1: 0.25rem;
+    --fhi-space-2: 0.5rem;
+    --fhi-space-3: 0.75rem;
+    --fhi-space-4: 1rem;
+    --fhi-space-5: 1.25rem;
+    --fhi-space-6: 1.5rem;
+    --fhi-space-7: 2rem;
+    --fhi-space-8: 2.5rem;
+    --fhi-space-9: 3rem;
+    --fhi-space-10: 4rem;
+    --fhi-space-11: 5rem;
     --fhi-text-micro: 0.75rem;
     --fhi-text-small: 0.875rem;
     --fhi-text-body: 1rem;
@@ -168,6 +189,29 @@
     color: #fff;
 }
 
+/* Bootstrap's reboot writes `.h1,...,.h6 {font-weight:500; line-height:1.2}`,
+   and a class beats main.css's `h1,...,h6 {font-weight:600;
+   line-height:inherit}` on specificity, so a heading given a size class to
+   hold its size loses the site's weight and line height with it. .h5 stays
+   out: main.css sets h5 to 500 too, so 600 here would make `.h5` heavier
+   than a real h5. */
+.h2,
+.h3 {
+    font-weight: 600;
+    line-height: inherit;
+}
+
+/* .h5 takes only the line height. main.css gives a real h5 weight 500, which
+   is what Bootstrap's class writes too, so the weight needs no correction and
+   pinning 600 here would make a heading wearing the class heavier than the
+   element it stands in for. Line height is the half that does drift: the
+   element inherits the body's and the class does not. This also loosens the
+   one card title that wore the class before the retagging, on
+   microsite_directory, which is a heading that wraps and reads better for it. */
+.h5 {
+    line-height: inherit;
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;
@@ -176,6 +220,10 @@
     border-left-width: 4px;
     border-left-style: solid;
 }
+/* These callout rules match by element name, and the same callout holds a
+   different level depending on what sits above it, so every level a page can
+   put in one has to be listed or that heading silently loses its styling. */
+.alert-box h2,
 .alert-box h3,
 .alert-box h4 {
     margin: 0 0 0.5rem 0;
@@ -188,6 +236,7 @@
     background: #e8f5e9;
     border-left-color: #4caf50;
 }
+.alert-success h2,
 .alert-success h3,
 .alert-success h4 {
     color: #2e7d32;
@@ -197,7 +246,7 @@
     background: #ffebee;
     border-left-color: #f44336;
 }
-.alert-danger h4,
+.alert-danger h3,
 .alert-danger p {
     color: #c62828;
 }
@@ -206,6 +255,7 @@
     background: #fff3cd;
     border-left-color: #ffc107;
 }
+.alert-warning h2,
 .alert-warning h4,
 .alert-warning li {
     color: #856404;
@@ -215,6 +265,8 @@
     background: #e3f2fd;
     border-left-color: #2196f3;
 }
+.alert-info h2,
+.alert-info h3,
 .alert-info h4 {
     color: #1565c0;
 }
@@ -1344,8 +1396,7 @@ section:not(.slider) .share-subcopy {
     background: #e3f2fd;
     border-left-color: #2196f3;
 }
-.alert-box-info h4 {
-    margin: 0 0 0.5rem 0;
+.alert-box-info h2 {
     color: #1565c0;
 }
 
@@ -2296,4 +2347,14 @@ select,
 textarea,
 .form-control {
     font-size: var(--fhi-text-input);
+}
+
+/* The financial assistance directory's subheadings. They were h4s taking
+   their colour from main.css's h4 rule; the flow promoted them to h3 for
+   document order and the colour did not follow. A class rather than an
+   inline style, so the contrast gate can still see them. */
+/* A class rather than an inline style, so the contrast gate can measure it. */
+.assistance-subheading {
+    color: #454545;
+    margin-bottom: 0.5rem;
 }

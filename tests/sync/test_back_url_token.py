@@ -310,7 +310,11 @@ class BackLinkWalkTest(BackLinkReferenceTestBase):
         for href in flow_hrefs(response):
             self.assertUrlCarriesNoCredential(href)
         back_path = reverse(expect_back_name)
-        matching = [h for h in flow_hrefs(response) if h.split("?")[0] == back_path]
+        # Distinct hrefs: the questions page offers "Ask me some questions
+        # anyway" next to its Back button, and both carry the same reference.
+        matching = sorted(
+            {h for h in flow_hrefs(response) if h.split("?")[0] == back_path}
+        )
         self.assertEqual(
             len(matching),
             1,
