@@ -2258,13 +2258,15 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                 ]
             else:
                 # For guided mode, generate structured questions
-                questions = await MLAppealQuestionsHelper.generate_generic_questions(
-                    procedure=prior_auth.treatment,
-                    diagnosis=prior_auth.diagnosis,
-                    timeout=90,
+                # None means nobody answered; here that is a shorter list.
+                questions = (
+                    await MLAppealQuestionsHelper.generate_generic_questions(
+                        procedure=prior_auth.treatment,
+                        diagnosis=prior_auth.diagnosis,
+                        timeout=90,
+                    )
+                    or []
                 )
-                if questions is None:
-                    questions = []
                 questions.append(
                     (
                         "Please provide any additional health history relevant to this prior authorization request:",
@@ -2287,7 +2289,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
 
                     # Combine questions, removing duplicates
                     existing_questions = {q[0] for q in questions}
-                    for q in specific_questions:
+                    for q in specific_questions or []:
                         if q[0] not in existing_questions:
                             questions.append(q)
 
