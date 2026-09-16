@@ -22,13 +22,13 @@ include it unconditionally.
                     {% for option in pharmacy_suggestion.pharmacy_options %}
                     <div class="card mb-3 pharmacy-coupon-card">
                         <div class="card-body">
-                            <h5 class="card-title mb-2">
+                            <h3 class="h5 card-title mb-2">
                                 <a href="{{ option.url }}" target="_blank" rel="noopener noreferrer" class="pharmacy-coupon-link">
                                     {{ option.name }}
                                     <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i>
                                     <span class="visually-hidden">(opens in a new tab)</span>
                                 </a>
-                            </h5>
+                            </h3>
                             <p class="card-text text-muted mb-0">{{ option.description }}</p>
                         </div>
                     </div>

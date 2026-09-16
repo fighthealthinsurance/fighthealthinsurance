@@ -1042,10 +1042,18 @@ class FindNextStepsHelper:
             semi_sekret=semi_sekret,
         ).get()
 
-        # Snapshot dx/px before the user's confirmed values overwrite them, so
-        # the round-2 speculative dispatch below can tell "user corrected the
-        # extraction" from "user accepted it as-is".
+        # Snapshot for the round-2 dispatch below, which fires on a
+        # correction but not on an unchanged re-POST.
         prior_procedure = denial.procedure
+        # The boundary for the reserve retirement below, taken deliberately
+        # right after the read of the prior values above rather than at the
+        # top of the request. A reserve is written by a background run from a
+        # snapshot it took when it started, so a row created before this
+        # instant was built from inputs no newer than the ones just read, and
+        # is stale once this request changes them. Rows created after it may
+        # belong to a later correction and are kept. Moving this earlier
+        # would keep stale rows written during the read.
+        request_started = timezone.now()
         prior_diagnosis = denial.diagnosis
 
         # Track exactly which fields THIS request assigns so the save below
@@ -1131,7 +1139,12 @@ class FindNextStepsHelper:
         existing_answers: dict[str, str] = load_qa(denial)
 
         if your_state:
+            # your_state is the column of record; state is a mirror some
+            # readers are still on, and doubles as the marker the intake path
+            # checks before inferring a state from the zip again.
+            denial.your_state = your_state
             denial.state = your_state
+            changed_fields.add("your_state")
             changed_fields.add("state")
         if denial_date is not None:
             denial.denial_date = denial_date
@@ -1186,7 +1199,9 @@ class FindNextStepsHelper:
                         appeal_deadline_label=denial.appeal_deadline_label,
                     ).update(appeal_deadline=resolved)
                     denial.appeal_deadline = resolved
-        if date_of_service is not None:
+        # Truthy, not "is not None": the form posts every field on every
+        # submit, so an untouched box arrives as "" rather than absent.
+        if date_of_service:
             denial.date_of_service = date_of_service
             changed_fields.add("date_of_service")
             if "date of service" not in existing_answers:
@@ -1223,7 +1238,7 @@ class FindNextStepsHelper:
         # questions page.
         try:
             cls._maybe_dispatch_confirmed_speculative(
-                denial, prior_procedure, prior_diagnosis
+                denial, prior_procedure, prior_diagnosis, since=request_started
             )
         except Exception:
             logger.opt(exception=True).warning(
@@ -1278,61 +1293,85 @@ class FindNextStepsHelper:
         denial: "Denial",
         prior_procedure: Optional[str],
         prior_diagnosis: Optional[str],
+        since: Optional[datetime.datetime] = None,
     ) -> None:
         """Kick off the round-2 (confirmed-context) speculative precompute.
 
         Called after ``find_next_steps`` saves the user's confirmed
-        procedure/diagnosis. Fires when a dx or px is present AND either the
-        user actually changed a value (their correction supersedes any earlier
-        reserve, including a previous confirmed-context one) or no
-        confirmed-context reserve exists yet. Re-POSTs of the categorize-review
-        form with unchanged values therefore no-op here, and the helper's own
-        guards (skip when live appeals exist, replace only after new drafts
-        persist) bound the rest.
+        procedure, diagnosis and state. Fires when there is something to
+        generate from AND either the user actually changed one of those values
+        (their correction supersedes any earlier reserve, including a previous
+        confirmed-context one) or no confirmed-context reserve exists yet.
+        Re-POSTs of the categorize-review form with unchanged values therefore
+        no-op here, and the helper's own guards (skip when live appeals exist,
+        replace only after new drafts persist) bound the rest.
+
+        The state is not compared before and after like dx/px: the zip step
+        writes it in its own request, so by the time this runs both readings
+        already say the new state. Reserve rows carry the state they were
+        written for instead, and a state with no confirmed reserve written
+        for it gets one.
         """
         confirmed_procedure = (denial.procedure or "").strip()
         confirmed_diagnosis = (denial.diagnosis or "").strip()
-        if not confirmed_procedure and not confirmed_diagnosis:
+        confirmed_state = (denial.your_state or "").strip()
+        if not confirmed_procedure and not confirmed_diagnosis and not confirmed_state:
             logger.debug(
                 f"speculative appeals[dx_px_confirmed]: denial "
-                f"{denial.denial_id} confirmed without procedure or diagnosis; "
-                f"nothing to refresh with"
+                f"{denial.denial_id} confirmed without procedure, diagnosis or "
+                f"state; nothing to refresh with"
             )
             return
-        values_changed = (prior_procedure or "").strip() != confirmed_procedure or (
+        from fighthealthinsurance.context_utils import (
+            CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+        )
+
+        reserve_for_this_state = ProposedAppeal.objects.filter(
+            for_denial=denial,
+            context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+            built_for_state=confirmed_state,
+        ).exists()
+        dx_px_changed = (prior_procedure or "").strip() != confirmed_procedure or (
             prior_diagnosis or ""
         ).strip() != confirmed_diagnosis
+        values_changed = dx_px_changed or not reserve_for_this_state
         if not values_changed:
-            from fighthealthinsurance.context_utils import (
-                CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+            logger.debug(
+                f"speculative appeals[dx_px_confirmed]: denial "
+                f"{denial.denial_id} unchanged dx/px and a confirmed-context "
+                f"reserve for {confirmed_state!r} already exists; skipping"
             )
-
-            # Values unchanged: only fire if this is the FIRST confirmation
-            # (no confirmed-context rows anywhere -- held-back or promoted).
-            # The create-time reserve almost always predates extraction, so
-            # "accepted as-is" still deserves one refresh with dx/px in the
-            # prompt; a second identical POST does not.
-            if ProposedAppeal.objects.filter(
-                for_denial=denial,
-                context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
-            ).exists():
-                logger.debug(
-                    f"speculative appeals[dx_px_confirmed]: denial "
-                    f"{denial.denial_id} unchanged dx/px and confirmed-context "
-                    f"reserve already exists; skipping"
-                )
-                return
+            return
 
         from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
             dispatch_speculative_appeals,
         )
 
-        # force carries "the values changed" into the helper: a stale
-        # confirmed-context reserve from an earlier confirmation must not
-        # veto the refresh there.
+        if dx_px_changed:
+            # A confirmed reserve about the old procedure or diagnosis is
+            # worse than none while the replacement is written: a stalled run
+            # would serve it, and a replacement that produces nothing would
+            # leave it. Retire it now rather than when the replacement lands.
+            # Only rows older than this request: a reserve written since is
+            # a later correction's and is kept.
+            retired, _ = ProposedAppeal.objects.filter(
+                for_denial=denial,
+                speculative=True,
+                chosen=False,
+                context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+                created_at__lt=since or timezone.now(),
+            ).delete()
+            if retired:
+                logger.info(
+                    f"speculative appeals[dx_px_confirmed]: retired {retired} "
+                    f"confirmed reserve row(s) for denial {denial.denial_id} "
+                    f"written for the values before this correction"
+                )
+        # force: a confirmed-context reserve written for other values must
+        # not veto this one in the helper.
         dispatch_speculative_appeals(
             denial.denial_id,
-            force=values_changed,
+            force=True,
             trigger="dx_px_confirmed",
             confirmed_context=True,
         )
@@ -1419,6 +1458,41 @@ class ProfessionalNotificationHelper:
             },
             to_email=email,
         )
+
+
+def reserve_state(denial) -> str:
+    """The state a held-back reserve must have been written for to be served."""
+    return (denial.your_state or "").strip()
+
+
+def state_on_the_row_now():
+    """The row's state as a subquery, for the UPDATE that promotes a reserve.
+
+    Read in the same statement as the promotion, so a correction landing
+    between a separate read and the write cannot slip a wrong-state row
+    through. Matches the stamp's spelling: empty for no state.
+    """
+    from django.db.models import OuterRef, Subquery, Value
+    from django.db.models.functions import Coalesce
+
+    return Subquery(
+        Denial.objects.filter(denial_id=OuterRef("for_denial"))
+        .annotate(now=Coalesce("your_state", Value("")))
+        .values("now")[:1]
+    )
+
+
+def served_reserve_for_another_state(denial) -> Q:
+    """Promoted reserve rows that argue under another state's law.
+
+    A reserve keeps its stamp when it is promoted, so a case that has since
+    named another state does not get it replayed or fed to synthesis unless
+    the person chose it. A row from before the stamp existed is unknown, and
+    unknown is treated as another state.
+    """
+    return Q(context_level__in=SPECULATIVE_CONTEXT_LEVELS, chosen=False) & (
+        ~Q(built_for_state=reserve_state(denial)) | Q(built_for_state__isnull=True)
+    )
 
 
 class DenialCreatorHelper:
@@ -1756,21 +1830,77 @@ class DenialCreatorHelper:
 
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)
-        your_state = None
         if zip is not None and zip != "":
-            try:
-                your_state = cls.zip_engine.by_zipcode(zip).state
-                denial.your_state = your_state
-            except Exception as e:
-                # Default to no state - zip lookup can fail for invalid/unknown zips
-                logger.debug(f"Zip code lookup failed for {zip}: {e}")
-                your_state = None
-            # ZIP3 is HIPAA Safe Harbor de-identified, so it's safe to keep on
-            # the row; UCREnrichmentHelper.resolve_geographic_area uses it.
-            # Persist alongside `your_state` so neither field is silently
-            # dropped on update paths that don't otherwise call save().
-            denial.service_zip = zip[:3]
-            denial.save(update_fields=["service_zip", "your_state"])
+            # A value in denial.state came off the review form, but is NOT
+            # proof the person typed it: that form prefills its state box from
+            # this same zip lookup (views.py, PostInferedForm initial), so
+            # clicking through without touching it posts the guess back. So a
+            # stored state outranks the zip only while the zip is unchanged.
+            # Only ZIP3 is retained, so "unchanged" can only mean the first
+            # three digits; a correction inside the last two is invisible
+            # here and leaves a stored state standing.
+            previous_zip3 = (denial.service_zip or "").strip()
+            zip_changed = bool(previous_zip3) and previous_zip3 != zip[:3]
+            confirmed_state = (denial.state or "").strip()
+            # What this request decided from. The write below is conditional
+            # on the row still holding these, so a review correction landing
+            # meanwhile is kept and this request's decision is dropped.
+            decided_from = {"your_state": denial.your_state, "state": denial.state}
+            # Every column named here is written from this request's copy of
+            # the row, so a column is named only when this request changed
+            # it: a review correction landing meanwhile keeps its value.
+            changed_state_fields = ["service_zip"]
+            if confirmed_state and not zip_changed:
+                # Owner decision 2026-09-13: new cases only, no backfill
+                # migration, so this pass is the only thing that ever brings
+                # a pre-existing mismatched row back into step.
+                if (denial.your_state or "").strip() != confirmed_state:
+                    denial.your_state = confirmed_state
+                    changed_state_fields.append("your_state")
+            else:
+                inferred_state = None
+                try:
+                    inferred_state = cls.zip_engine.by_zipcode(zip).state
+                except Exception as e:
+                    logger.debug(f"Zip code lookup failed for {zip}: {e}")
+                if inferred_state:
+                    denial.your_state = inferred_state
+                    changed_state_fields.append("your_state")
+                    if confirmed_state:
+                        # Reached from the zip they just replaced, so it no
+                        # longer confirms anything; left on the row, the next
+                        # submission would copy it back over the inference.
+                        denial.state = None
+                        changed_state_fields.append("state")
+                elif zip_changed:
+                    # No replacement to offer. Recording the new ZIP3 anyway
+                    # would make the next submit of this same zip read as
+                    # unchanged and skip the lookup, so the correction could
+                    # never be retried. Leave the row exactly as it was.
+                    changed_state_fields = []
+            if changed_state_fields:
+                # Only the first three digits are kept, the Safe Harbor cut
+                # (without the population check Safe Harbor also asks for).
+                # UCREnrichmentHelper.resolve_geographic_area reads it.
+                denial.service_zip = zip[:3]
+                Denial.objects.filter(denial_id=denial.denial_id).update(
+                    service_zip=denial.service_zip
+                )
+                state_columns = {
+                    column: getattr(denial, column)
+                    for column in changed_state_fields
+                    if column != "service_zip"
+                }
+                if state_columns:
+                    moved = not Denial.objects.filter(
+                        denial_id=denial.denial_id, **decided_from
+                    ).update(**state_columns)
+                    if moved:
+                        logger.info(
+                            f"intake: the state on denial {denial.denial_id} moved "
+                            f"while this request ran; its own decision is dropped"
+                        )
+                        denial.refresh_from_db(fields=["your_state", "state"])
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
@@ -1839,6 +1969,23 @@ class DenialCreatorHelper:
                     f"denial {denial_id}"
                 )
 
+        if health_history is None and plan_documents is None:
+            # Nothing for the optional-step save to write. Its full-row save
+            # would put this request's copy of every column back, including
+            # a state the review page corrected while this request ran. The
+            # one thing it does on every call besides the save, recording
+            # the intake-started intent, still happens here.
+            from django.db import transaction as _transaction
+
+            from fighthealthinsurance import intake_outbox
+
+            with _transaction.atomic():
+                intent = intake_outbox.record_intent(
+                    denial, intake_outbox.INTAKE_STARTED
+                )
+            if intent is not None:
+                intake_outbox.deliver(intent)
+            return cls.format_denial_response_info(denial)
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
@@ -3658,6 +3805,7 @@ class AppealsBackendHelper:
         # those rows the whole budget; nulls_last puts them where they belong.
         existing_appeals = (
             ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+            .exclude(served_reserve_for_another_state(denial))
             .order_by(F("created_at").desc(nulls_last=True), "-id")
             .all()
         )
@@ -3871,7 +4019,11 @@ class AppealsBackendHelper:
         try:
             reserve_at_start = 0
             async for _row in deliverable_candidates(
-                ProposedAppeal.objects.filter(for_denial=denial, speculative=True)
+                ProposedAppeal.objects.filter(
+                    for_denial=denial,
+                    speculative=True,
+                    built_for_state=reserve_state(denial),
+                )
             ).only("appeal_text"):
                 if is_real_appeal(_row.appeal_text):
                     reserve_at_start += 1
@@ -3964,7 +4116,10 @@ class AppealsBackendHelper:
                 # since the word rule doesn't fit in SQL.
                 async for row in deliverable_candidates(
                     ProposedAppeal.objects.filter(
-                        for_denial=denial, speculative=True, chosen=False
+                        for_denial=denial,
+                        speculative=True,
+                        chosen=False,
+                        built_for_state=reserve_state(denial),
                     )
                 ).order_by("id"):
                     if (new + old) >= cls.ENOUGH_APPEALS:
@@ -3983,7 +4138,10 @@ class AppealsBackendHelper:
                     # dedupes by content, so the done frame would promise more
                     # appeals than are on screen. The loser of the race skips.
                     if not await ProposedAppeal.objects.filter(
-                        pk=row.pk, speculative=True, chosen=False
+                        pk=row.pk,
+                        speculative=True,
+                        chosen=False,
+                        built_for_state=state_on_the_row_now(),
                     ).aupdate(speculative=False):
                         continue
                     row.speculative = False
@@ -4771,9 +4929,16 @@ class AppealsBackendHelper:
                         # pattern as the reserve flush; if the flush claimed
                         # it first the update is a no-op and the row is
                         # already deliverable.
+                        # Its text is the live run's own, generated from the
+                        # inputs this run started with, so it is stamped for
+                        # the state this run started under. If the state has
+                        # moved meanwhile the replay filter hides it next time,
+                        # as it should: the text argues under the old law.
                         await ProposedAppeal.objects.filter(
                             pk=existing.pk, speculative=True
-                        ).aupdate(speculative=False)
+                        ).aupdate(
+                            speculative=False, built_for_state=reserve_state(denial)
+                        )
                         existing.speculative = False
                     if existing.appeal_text != appeal_text:
                         # A normalized variant collided: stream the DURABLE
@@ -5235,7 +5400,9 @@ class AppealsBackendHelper:
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
             async for pa in deliverable_candidates(
-                ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+                ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=False
+                ).exclude(served_reserve_for_another_state(denial))
             )
             if is_real_appeal(pa.appeal_text)
             and str(pa.appeal_text).strip() not in early_reserve_texts
@@ -5399,7 +5566,15 @@ class AppealsBackendHelper:
             # text the user wrote, which was never a draft) in between that
             # query and this one, leaving it absent from served_keys.
             async for row in deliverable_candidates(
-                ProposedAppeal.objects.filter(for_denial=denial, chosen=False)
+                ProposedAppeal.objects.filter(for_denial=denial, chosen=False).filter(
+                    # A held-back reserve written for another state argues
+                    # under that state's law: only a live row or a reserve
+                    # written for this state is served...
+                    Q(speculative=False)
+                    | Q(built_for_state=reserve_state(denial))
+                )
+                # ...and a reserve already promoted keeps its stamp.
+                .exclude(served_reserve_for_another_state(denial))
             ).order_by("id"):
                 text = row.appeal_text
                 if not is_real_appeal(text):
@@ -5432,7 +5607,10 @@ class AppealsBackendHelper:
                     # reason as the early flush above: a concurrent run must not
                     # serve the same held-back draft, and the loser skips it.
                     if not await ProposedAppeal.objects.filter(
-                        pk=row.pk, speculative=True, chosen=False
+                        pk=row.pk,
+                        speculative=True,
+                        chosen=False,
+                        built_for_state=state_on_the_row_now(),
                     ).aupdate(speculative=False):
                         continue
                     row.speculative = False
