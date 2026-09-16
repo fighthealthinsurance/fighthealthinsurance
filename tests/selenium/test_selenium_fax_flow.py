@@ -68,6 +68,7 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
 
+        self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
         # Manually select denial type since channels doesn't work in test
         self.select_option_by_value("select#id_denial_type", "2")

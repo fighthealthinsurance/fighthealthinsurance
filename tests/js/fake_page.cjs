@@ -1,0 +1,464 @@
+'use strict';
+// A hand-written DOM shim: there is no jsdom in this repo and node_modules is
+// gitignored. It covers exactly what these two pages touch, and anything else
+// throws rather than returning undefined, so a rewrite that starts using a new
+// DOM API fails loudly instead of quietly doing nothing under the test.
+
+function camel(name) {
+  return name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+class Style {
+  set cssText(value) {
+    for (const rule of String(value).split(';')) {
+      const at = rule.indexOf(':');
+      if (at < 0) continue;
+      const prop = camel(rule.slice(0, at).trim());
+      if (!prop) continue;
+      this[prop] = rule.slice(at + 1).trim();
+    }
+  }
+  get cssText() {
+    return Object.keys(this)
+      .map((k) => k + ': ' + this[k])
+      .join('; ');
+  }
+}
+
+class TextNode {
+  constructor(data) {
+    this.nodeType = 3;
+    this.data = data;
+    this.parentNode = null;
+  }
+  get textContent() {
+    return this.data;
+  }
+}
+
+class FakeElement {
+  constructor(tag, page) {
+    this.nodeType = 1;
+    this.tagName = String(tag).toUpperCase();
+    this.page = page;
+    this.childNodes = [];
+    this.parentNode = null;
+    this.attributes = {};
+    this.style = new Style();
+    this.id = '';
+    this.className = '';
+    this.listeners = {};
+  }
+
+  setAttribute(name, value) {
+    if (name === 'id') this.id = value;
+    else if (name === 'class') this.className = value;
+    else if (name === 'style') this.style.cssText = value;
+    else this.attributes[name] = value;
+  }
+
+  getAttribute(name) {
+    if (name === 'id') return this.id;
+    if (name === 'class') return this.className;
+    return this.attributes[name];
+  }
+
+  removeAttribute(name) {
+    if (name === 'id') this.id = '';
+    else if (name === 'class') this.className = '';
+    else if (name === 'style') this.style = new Style();
+    else delete this.attributes[name];
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
+  }
+
+  querySelectorAll(selector) {
+    const match = matcher(selector);
+    const hits = [];
+    const walk = (node) => {
+      for (const child of node.childNodes || []) {
+        if (child.nodeType !== 1) continue;
+        if (match(child)) hits.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return hits;
+  }
+
+  // A real cloneNode does not copy listeners, and neither does this one.
+  cloneNode(deep) {
+    const copy = new FakeElement(this.tagName, this.page);
+    copy.id = this.id;
+    copy.className = this.className;
+    copy.attributes = Object.assign({}, this.attributes);
+    Object.assign(copy.style, this.style);
+    if ('value' in this) copy.value = this.value;
+    if (deep) {
+      for (const child of this.childNodes) {
+        copy.appendChild(
+          child.nodeType === 3 ? new TextNode(child.data) : child.cloneNode(true),
+        );
+      }
+    }
+    return copy;
+  }
+
+  appendChild(node) {
+    if (node.parentNode) node.parentNode.removeChild(node);
+    node.parentNode = this;
+    this.childNodes.push(node);
+    return node;
+  }
+
+  removeChild(node) {
+    const at = this.childNodes.indexOf(node);
+    if (at >= 0) this.childNodes.splice(at, 1);
+    node.parentNode = null;
+    return node;
+  }
+
+  insertBefore(node, reference) {
+    if (reference === null || reference === undefined) return this.appendChild(node);
+    const at = this.childNodes.indexOf(reference);
+    if (at < 0) throw new Error('insertBefore: reference node is not a child');
+    if (node.parentNode) node.parentNode.removeChild(node);
+    node.parentNode = this;
+    this.childNodes.splice(at, 0, node);
+    return node;
+  }
+
+  get nextSibling() {
+    if (!this.parentNode) return null;
+    const at = this.parentNode.childNodes.indexOf(this);
+    return this.parentNode.childNodes[at + 1] || null;
+  }
+
+  get firstChild() {
+    return this.childNodes[0] || null;
+  }
+
+  set innerHTML(html) {
+    this.childNodes = [];
+    for (const node of parseFragment(String(html), this.page)) {
+      this.appendChild(node);
+    }
+  }
+
+  set textContent(value) {
+    this.childNodes = [];
+    this.appendChild(new TextNode(String(value)));
+  }
+
+  get textContent() {
+    return this.childNodes.map((n) => n.textContent).join('');
+  }
+
+  addEventListener(name, handler) {
+    (this.listeners[name] = this.listeners[name] || []).push(handler);
+  }
+
+  dispatch(name, event) {
+    for (const handler of this.listeners[name] || []) handler(event || {});
+  }
+
+  // Every way an element can move the person off this page, recorded rather
+  // than performed, so .click() and .requestSubmit() land in the same log.
+  click() {
+    this.page.movedThePerson.push(describe(this) + '.click()');
+  }
+  submit() {
+    this.page.movedThePerson.push(describe(this) + '.submit()');
+  }
+  requestSubmit() {
+    this.page.movedThePerson.push(describe(this) + '.requestSubmit()');
+  }
+  focus() {}
+}
+
+function describe(el) {
+  return el.id ? '#' + el.id : el.tagName.toLowerCase();
+}
+
+// The selector subset these pages use: a tag name, an id, a class, or a tag
+// with one quoted attribute. Anything else throws, because a querySelector
+// that quietly returns null reads exactly like a page with no such element.
+function matcher(selector) {
+  const sel = String(selector).trim();
+  if (sel.startsWith('#')) {
+    const id = sel.slice(1);
+    return (el) => el.id === id;
+  }
+  if (sel.startsWith('.')) {
+    const cls = sel.slice(1);
+    return (el) => String(el.className).split(/\s+/).indexOf(cls) >= 0;
+  }
+  const parsed = /^([A-Za-z][A-Za-z0-9]*)?(?:\[([A-Za-z_:][-A-Za-z0-9_:.]*)="([^"]*)"\])?$/.exec(
+    sel,
+  );
+  if (!parsed || (!parsed[1] && !parsed[2])) {
+    throw new Error('fake_page: unsupported selector ' + selector);
+  }
+  const tag = parsed[1] ? parsed[1].toUpperCase() : null;
+  const attr = parsed[2];
+  const value = parsed[3];
+  return (el) => {
+    if (tag && el.tagName !== tag) return false;
+    if (attr && el.getAttribute(attr) !== value) return false;
+    return true;
+  };
+}
+
+// A tokenizer for plain nested tags with double quoted attributes. Not an HTML
+// parser: anything it does not understand throws.
+function parseFragment(html, page) {
+  const roots = [];
+  const stack = [];
+  const push = (node) => {
+    if (stack.length) stack[stack.length - 1].appendChild(node);
+    else roots.push(node);
+  };
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) {
+      const tail = html.slice(i);
+      if (tail.trim()) push(new TextNode(tail));
+      break;
+    }
+    if (lt > i) {
+      const text = html.slice(i, lt);
+      if (text.trim()) push(new TextNode(text));
+    }
+    const gt = html.indexOf('>', lt);
+    if (gt < 0) throw new Error('fake_page: unterminated tag');
+    const raw = html.slice(lt + 1, gt).trim();
+    i = gt + 1;
+    if (raw.startsWith('/')) {
+      const open = stack.pop();
+      if (!open || open.tagName !== raw.slice(1).trim().toUpperCase()) {
+        throw new Error('fake_page: mismatched close tag ' + raw);
+      }
+      continue;
+    }
+    const selfClosing = raw.endsWith('/');
+    const body = selfClosing ? raw.slice(0, -1) : raw;
+    const nameMatch = /^([A-Za-z][A-Za-z0-9]*)/.exec(body);
+    if (!nameMatch) throw new Error('fake_page: unreadable tag ' + raw);
+    const el = new FakeElement(nameMatch[1], page);
+    const attrs = body.slice(nameMatch[1].length);
+    const attrRe = /([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*"([^"]*)"/g;
+    let m;
+    while ((m = attrRe.exec(attrs)) !== null) el.setAttribute(m[1], m[2]);
+    push(el);
+    if (!selfClosing) stack.push(el);
+  }
+  if (stack.length) throw new Error('fake_page: unclosed tag ' + stack[0].tagName);
+  return roots;
+}
+
+// The clock the page's timers run on.
+class Clock {
+  constructor() {
+    this.now = 1600000000000;
+    this.seq = 0;
+    this.pending = new Map();
+  }
+  setTimeout(fn, ms) {
+    const id = ++this.seq;
+    this.pending.set(id, {fn, at: this.now + (ms || 0), every: null});
+    return id;
+  }
+  setInterval(fn, ms) {
+    const id = ++this.seq;
+    this.pending.set(id, {fn, at: this.now + (ms || 0), every: ms || 1});
+    return id;
+  }
+  clear(id) {
+    this.pending.delete(id);
+  }
+  advance(ms) {
+    const target = this.now + ms;
+    for (;;) {
+      let next = null;
+      let nextId = null;
+      for (const [id, timer] of this.pending) {
+        if (timer.at <= target && (next === null || timer.at < next.at)) {
+          next = timer;
+          nextId = id;
+        }
+      }
+      if (next === null) break;
+      this.now = next.at;
+      if (next.every === null) this.pending.delete(nextId);
+      else next.at = this.now + next.every;
+      next.fn();
+    }
+    this.now = target;
+  }
+}
+
+class FakeSocket {
+  constructor(url, page) {
+    this.url = url;
+    this.page = page;
+    this.sent = [];
+    this.closedByPage = false;
+    this.closeFired = false;
+    page.sockets.push(this);
+  }
+  send(data) {
+    this.sent.push(data);
+  }
+  close() {
+    this.closedByPage = true;
+    // A browser never fires close synchronously out of close(): the event
+    // arrives after the closing handshake, a network round trip away. Every
+    // bug in this page lives in that gap, so it goes on the clock.
+    this.page.clock.setTimeout(() => this.fireClose(), 0);
+  }
+  fireOpen() {
+    if (this.onopen) this.onopen({});
+  }
+  fireMessage(payload) {
+    if (this.onmessage) {
+      this.onmessage({data: typeof payload === 'string' ? payload : JSON.stringify(payload)});
+    }
+  }
+  fireClose() {
+    if (this.closeFired) return;
+    this.closeFired = true;
+    if (this.onclose) this.onclose({});
+  }
+  fireError() {
+    if (this.onerror) this.onerror({});
+  }
+}
+
+// Mirrors entity_extract.html inside single_optional_question.html: the yellow
+// waiting block, inside the flow's own form next to its Next button. The ids
+// are the real ones and test_entity_fetcher_behaviour.py checks they still
+// are, so an auto-advance has the same things to grab as in a browser.
+const PAGE_MARKUP = `
+<form id="fuck_health_insurance_form">
+  <div id="waiting-msg" class="waiting-msg">
+    <h4>Analyzing your denial...</h4>
+  </div>
+  <div class="form-navigation">
+    <button id="next" type="submit">Next</button>
+  </div>
+</form>
+`;
+
+// Mirrors escalation_packet.html. test_escalation_packet_behaviour.py checks
+// these ids against the rendered template, so a rename cannot leave this
+// fixture testing a page that no longer exists.
+const ESCALATION_MARKUP = `
+<script id="escalation-form-context" type="application/json">{"denial_id": 5}</script>
+<div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
+  <h4>Drafting your regulator letters...</h4>
+  <p style="color:#666;">This usually takes 1 to 2 minutes per recipient.</p>
+</div>
+<div id="escalation-letters"></div>
+<div id="base-letter-form" style="display:none;">
+  <form action="/choose-escalation-letter/" method="post">
+    <input type="hidden" name="escalation_uuid" value="" />
+    <textarea name="letter_text" class="appeal_text"></textarea>
+    <button type="submit" class="btn btn-green">Save and review this letter</button>
+  </form>
+</div>
+`;
+
+function buildPage(markup) {
+  const page = {sockets: [], movedThePerson: [], clock: new Clock()};
+  const body = new FakeElement('body', page);
+  page.body = body;
+  for (const node of parseFragment(markup || PAGE_MARKUP, page)) body.appendChild(node);
+
+  const find = (node, id) => {
+    if (node.nodeType === 1 && node.id === id) return node;
+    for (const child of node.childNodes || []) {
+      const hit = find(child, id);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  page.document = {
+    body,
+    getElementById: (id) => find(body, id),
+    createElement: (tag) => new FakeElement(tag, page),
+    createTextNode: (data) => new TextNode(String(data)),
+    querySelector: (selector) => body.querySelector(selector),
+    querySelectorAll: (selector) => body.querySelectorAll(selector),
+    addEventListener: (name, handler) => {
+      (page.documentListeners = page.documentListeners || {});
+      (page.documentListeners[name] = page.documentListeners[name] || []).push(handler);
+    },
+  };
+  // A scenario that forgets to fire DOMContentLoaded would pass every
+  // assertion against an untouched page, so firing with no listener throws.
+  page.fireDomReady = () => {
+    const handlers = (page.documentListeners || {})['DOMContentLoaded'] || [];
+    if (!handlers.length) {
+      throw new Error('fake_page: nothing registered for DOMContentLoaded');
+    }
+    for (const handler of handlers) handler({});
+  };
+  page.location = {
+    protocol: 'https:',
+    host: 'example.test',
+    get href() {
+      return 'https://example.test/entity/';
+    },
+    set href(value) {
+      page.movedThePerson.push('location.href = ' + value);
+    },
+    assign: (url) => page.movedThePerson.push('location.assign(' + url + ')'),
+    replace: (url) => page.movedThePerson.push('location.replace(' + url + ')'),
+    reload: () => page.movedThePerson.push('location.reload()'),
+  };
+  return page;
+}
+
+// Put the page where a browser would put it, before the module binds globals.
+function install(page) {
+  global.document = page.document;
+  global.location = page.location;
+  global.window = {
+    document: page.document,
+    location: page.location,
+    open: (url) => page.movedThePerson.push('window.open(' + url + ')'),
+    addEventListener: () => {},
+  };
+  global.WebSocket = function (url) {
+    return new FakeSocket(url, page);
+  };
+  global.setTimeout = (fn, ms) => page.clock.setTimeout(fn, ms);
+  global.setInterval = (fn, ms) => page.clock.setInterval(fn, ms);
+  global.clearTimeout = (id) => page.clock.clear(id);
+  global.clearInterval = (id) => page.clock.clear(id);
+  global.Date.now = () => page.clock.now;
+
+  // @sentry/browser is a browser bundle; the page only calls captureMessage.
+  const Module = require('module');
+  const load = Module._load;
+  Module._load = function (request, ...rest) {
+    if (request === '@sentry/browser') {
+      return {captureMessage: (msg) => page.sentry.push(msg)};
+    }
+    return load.call(this, request, ...rest);
+  };
+  page.sentry = [];
+}
+
+module.exports = {
+  buildPage,
+  install,
+  FakeSocket,
+  parseFragment,
+  PAGE_MARKUP,
+  ESCALATION_MARKUP,
+};
