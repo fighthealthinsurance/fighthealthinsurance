@@ -63,6 +63,27 @@
 
        --fhi-text-micro is a floor, not a size to reach for. Nothing a
        patient has to read should be set in it. */
+    /* Spacing. 75 distinct values across the two stylesheets, 134 of the 355
+       declarations off any 4px grid: 3px, 5px, 10px, 11px, 15px, 19px, all
+       sitting next to each other with nothing to say which was meant. These
+       are the values already carrying most of the weight, on a 4px base.
+
+       The shared shell is migrated onto them here. The rest of the site is
+       counted, not converted: a baseline in tests/sync/test_spacing_scale.py
+       records what is still off the scale and lets it fall but not rise, so
+       the scale spreads by attrition instead of by one enormous rewrite that
+       leaves two systems running side by side. */
+    --fhi-space-1: 0.25rem;
+    --fhi-space-2: 0.5rem;
+    --fhi-space-3: 0.75rem;
+    --fhi-space-4: 1rem;
+    --fhi-space-5: 1.25rem;
+    --fhi-space-6: 1.5rem;
+    --fhi-space-7: 2rem;
+    --fhi-space-8: 2.5rem;
+    --fhi-space-9: 3rem;
+    --fhi-space-10: 4rem;
+    --fhi-space-11: 5rem;
     --fhi-text-micro: 0.75rem;
     --fhi-text-small: 0.875rem;
     --fhi-text-body: 1rem;
