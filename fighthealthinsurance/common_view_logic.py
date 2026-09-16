@@ -208,6 +208,7 @@ class NextStepInfo:
                 )
             ),
             semi_sekret=self.semi_sekret,
+            questions_outcome=self.questions_outcome,
         )
 
     def _field_to_dict(self, field_name: str, field: Any) -> dict[str, Any]:
@@ -693,6 +694,11 @@ class NextStepInfoSerializable:
     outside_help_details: list[Tuple[str, str]]
     combined_form: list[Any]
     semi_sekret: str
+    # One of the QUESTIONS_OUTCOME_* values: an empty combined_form is
+    # "no_questions" after a finished run and "generation_unfinished" after
+    # one that did not finish, and a REST client cannot tell those apart
+    # from the form alone.
+    questions_outcome: str
 
 
 def schedule_follow_ups(
@@ -1312,13 +1318,7 @@ class FindNextStepsHelper:
         # Generate questions for better appeal creation if they don't exist yet.
         generation_finished = True
         try:
-            stamp = denial.generated_questions_for
-            current = questions_fingerprint(denial.procedure, denial.diagnosis)
-            if (
-                denial.generated_questions is None
-                or (stamp is None and not denial.generated_questions)
-                or (stamp is not None and stamp != current)
-            ):
+            if not stored_questions_are_current(denial):
                 # Nothing finished for these inputs yet: none stored, a set
                 # stored for a procedure or diagnosis since corrected, or an
                 # empty set from before the stamp, which always regenerated.
@@ -1484,12 +1484,13 @@ class FindNextStepsHelper:
             outside_help_details=outside_help_details,
             combined_form=combined_form,
             semi_sekret=denial.semi_sekret,
-            # Back navigation generates nothing. Whether the last run
-            # finished is on the row: a finished run stores its set, empty
-            # included; a run that never finished stores nothing.
+            # Back navigation generates nothing. Whether a run finished for
+            # the inputs the row holds now is on the row, by the same rule
+            # that starts one: a set stamped for corrected-away inputs, left
+            # behind when its replacement never finished, is not finished.
             questions_outcome=cls._questions_outcome(
                 combined_form,
-                generation_finished=denial.generated_questions is not None,
+                generation_finished=stored_questions_are_current(denial),
             ),
             pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
             financial_assistance=cls._build_financial_assistance(denial),
@@ -1568,6 +1569,25 @@ class ProfessionalNotificationHelper:
 # Continue button at 20 seconds can start a second overlapping run --
 # see claim_generated_questions.
 QUESTION_GENERATION_DEADLINE_SECONDS = 130
+
+
+def stored_questions_are_current(denial) -> bool:
+    """Whether the set on the row is a finished set for the row's inputs now.
+
+    Stamped for the current procedure and diagnosis: finished, empty
+    included, since a run that found nothing to ask stores []. Unstamped,
+    from before the stamp existed: finished only when nonempty, since the
+    code before the stamp wrote [] for a run that never finished. Anything
+    else, a set stamped for inputs since corrected above all, is not a
+    finished set for this row. The one rule for starting a run, reporting
+    one that did not finish, and rendering Back.
+    """
+    if denial.generated_questions is None:
+        return False
+    stamp = denial.generated_questions_for
+    if stamp is None:
+        return bool(denial.generated_questions)
+    return stamp == questions_fingerprint(denial.procedure, denial.diagnosis)
 
 
 def record_derived_medical_context(
@@ -1753,16 +1773,9 @@ class DenialCreatorHelper:
                 f"generation: {e}"
             )
             return None
-        # The inverse of the rule that starts a run: a set stamped for the
-        # current inputs is finished even when it is empty (another run found
-        # nothing to ask), while an unstamped set counts only when nonempty,
-        # since the code before the stamp wrote [] for a run that never
-        # finished.
-        stamp = denial.generated_questions_for
-        current = questions_fingerprint(denial.procedure, denial.diagnosis)
-        if denial.generated_questions is not None and (
-            stamp == current or (stamp is None and denial.generated_questions)
-        ):
+        # The inverse of the rule that starts a run, so a set another run
+        # finished for these inputs, empty included, counts as finished.
+        if stored_questions_are_current(denial):
             return cast(List[Tuple[str, str]], denial.generated_questions)
         if (
             denial.candidate_generated_questions

@@ -631,12 +631,45 @@ class BackAfterAnUnfinishedRunTest(QuestionsStepTestBase):
         self.assertEqual(info.questions_outcome, "generation_unfinished")
 
     def test_back_after_a_finished_empty_run_says_no_questions(self):
+        """A finished run that found nothing to ask stores [] under the
+        stamp for the inputs it ran for."""
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            questions_fingerprint,
+        )
+
         self.denial.generated_questions = []
-        self.denial.save(update_fields=["generated_questions"])
+        self.denial.generated_questions_for = questions_fingerprint(
+            self.denial.procedure, self.denial.diagnosis
+        )
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
 
         info = FindNextStepsHelper.find_next_steps_for_denial(self.denial, self.email)
 
         self.assertEqual(info.questions_outcome, "no_questions")
+
+    def test_back_after_a_correction_whose_regeneration_never_finished(self):
+        """The row holds a set stamped for an MRI; the person corrected the
+        procedure and the regeneration did not finish, so the MRI set is
+        still there. Back hides those questions, and must not call that
+        "no extra questions": nothing finished for the inputs the row holds."""
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            questions_fingerprint,
+        )
+
+        self.denial.generated_questions = [["Q for MRI", ""]]
+        self.denial.generated_questions_for = questions_fingerprint(
+            "MRI", self.denial.diagnosis
+        )
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
+
+        info = FindNextStepsHelper.find_next_steps_for_denial(self.denial, self.email)
+
+        self.assertNotIn("Q for MRI", [f.label for f in info.combined_form.fields.values()])
+        self.assertEqual(info.questions_outcome, "generation_unfinished")
 
 
 class InNetworkOwnershipTest(QuestionsStepTestBase):
@@ -916,8 +949,29 @@ class QuestionsOutcomeTest(QuestionsStepTestBase):
         )
 
     def _no_questions_denial(self):
+        """A finished run that found nothing to ask: [] under the stamp."""
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            questions_fingerprint,
+        )
+
         self.denial.generated_questions = []
-        self.denial.save(update_fields=["generated_questions"])
+        self.denial.generated_questions_for = questions_fingerprint(
+            self.denial.procedure, self.denial.diagnosis
+        )
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
+        self.denial.refresh_from_db()
+        return self.denial
+
+    def _unfinished_denial(self):
+        """Nothing stored: no run has finished for this row, so the review
+        POST starts one and the mocked answer decides the outcome."""
+        self.denial.generated_questions = None
+        self.denial.generated_questions_for = None
+        self.denial.save(
+            update_fields=["generated_questions", "generated_questions_for"]
+        )
         self.denial.refresh_from_db()
         return self.denial
 
@@ -938,7 +992,7 @@ class QuestionsOutcomeTest(QuestionsStepTestBase):
 
     def test_a_run_that_did_not_finish_reports_that(self):
         """generate_appeal_questions returns None when it did not finish."""
-        self._no_questions_denial()
+        self._unfinished_denial()
         with patch(_QUESTIONS, new_callable=AsyncMock, return_value=None):
             info = FindNextStepsHelper.find_next_steps(
                 denial_id=self.denial.denial_id,
@@ -958,7 +1012,7 @@ class QuestionsOutcomeTest(QuestionsStepTestBase):
         """The distinction has to survive the ML helper boundary, not just
         the wrapper's exception handler: an inner deadline or an exhausted
         set of backends is not "we have what we need"."""
-        self._no_questions_denial()
+        self._unfinished_denial()
         with patch(_ML_HELPER, new_callable=AsyncMock, return_value=None):
             info = FindNextStepsHelper.find_next_steps(
                 denial_id=self.denial.denial_id,
@@ -976,7 +1030,7 @@ class QuestionsOutcomeTest(QuestionsStepTestBase):
 
     def test_a_run_that_found_nothing_to_ask_reports_no_questions(self):
         """[] and None are different answers and get different copy."""
-        self._no_questions_denial()
+        self._unfinished_denial()
         with patch(_QUESTIONS, new_callable=AsyncMock, return_value=[]):
             info = FindNextStepsHelper.find_next_steps(
                 denial_id=self.denial.denial_id,

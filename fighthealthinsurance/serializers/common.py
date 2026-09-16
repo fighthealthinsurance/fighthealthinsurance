@@ -16,6 +16,10 @@ class NextStepInfoSerializableSerializer(serializers.Serializer):
     outside_help_details = StringListField()
     combined_form = DictionaryListField()
     semi_sekret = serializers.CharField()
+    # "questions", "no_questions" or "generation_unfinished": whether an
+    # empty combined_form means a finished run found nothing to ask, or a run
+    # that did not finish.
+    questions_outcome = serializers.CharField()
 
 
 class StatusResponseSerializer(serializers.Serializer):
