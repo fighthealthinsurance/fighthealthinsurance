@@ -2535,7 +2535,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     ip_address = models.CharField(max_length=64, null=True, blank=True)
 
     # UCR (Usual & Customary Rate) fields.
-    # service_zip stores ZIP3 (HIPAA Safe Harbor de-identified). Procedure
+    # service_zip stores only the first three digits of the zip. Procedure
     # codes are extracted from free-text via medical_code_extractor, so we
     # don't carry separate procedure_code/modifier columns on Denial.
     service_zip = models.CharField(max_length=5, blank=True, default="")
@@ -2741,6 +2741,12 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # Null for legacy rows and for rows whose save path predates the field.
     text_fingerprint = models.CharField(
         max_length=64, null=True, blank=True, db_index=True
+    )
+    # The state the reserve was written for. A held-back draft argues under
+    # that state's law, so nothing serves it once the case names another
+    # state. Null is a row from before this column: not known, not served.
+    built_for_state = models.CharField(
+        max_length=32, null=True, blank=True, db_index=True
     )
     # Criteria score from ml/letter_quality.py, used to ORDER drafts on the
     # page and to watch draft quality per backend on the staff dashboard.

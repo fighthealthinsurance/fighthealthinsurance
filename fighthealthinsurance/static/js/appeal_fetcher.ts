@@ -270,7 +270,7 @@ function createStatusIndicator(): HTMLElement {
       </div>
       <div id="status-count" style="font-size: 0.85rem; font-weight: 600; color: #7B920A;">0/3</div>
     </div>
-    <div id="appeal-wait-times" style="display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 0.72rem; color: var(--fhi-muted); margin-bottom: 8px;">
+    <div id="appeal-wait-times" style="display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: var(--fhi-text-micro); color: var(--fhi-muted); margin-bottom: 8px;">
       <span>First appeal: <span id="wait-first" style="font-weight: 600; color: #555;">0s</span></span>
       <span>Current appeal: <span id="wait-current" style="font-weight: 600; color: #555;">0s</span></span>
       <span>Total: <span id="wait-total" style="font-weight: 600; color: #555;">0s</span></span>
