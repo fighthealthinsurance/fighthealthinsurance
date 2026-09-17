@@ -547,3 +547,11 @@ if settings.DEBUG:
         )
     if settings.MEDIA_URL:
         urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# The default error views, wrapped so that an error page rendered off the
+# request's thread, which is where Django puts a routing 404 under ASGI,
+# closes the database connection it opens there. See error_views.
+handler400 = "fighthealthinsurance.error_views.bad_request"
+handler403 = "fighthealthinsurance.error_views.permission_denied"
+handler404 = "fighthealthinsurance.error_views.page_not_found"
+handler500 = "fighthealthinsurance.error_views.server_error"

@@ -418,7 +418,10 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
-        # First: /metrics is gated before any session/auth/audit work happens.
+        # First, so every request is stamped with the thread its cleanup
+        # runs on before anything can raise; see error_views.
+        "fighthealthinsurance.middleware.RequestThreadMiddleware",
+        # /metrics is gated before any session/auth/audit work happens.
         "fighthealthinsurance.middleware.MetricsAccessMiddleware",
         "fighthealthinsurance.middleware.DomainRedirectMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
