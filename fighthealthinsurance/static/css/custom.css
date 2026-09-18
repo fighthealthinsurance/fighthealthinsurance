@@ -2358,3 +2358,103 @@ textarea,
     color: #454545;
     margin-bottom: 0.5rem;
 }
+
+/* ---- Glossary -----------------------------------------------------------
+   Lifted out of two template <style> blocks so the pages read from the same
+   palette and scale as the rest of the site. The originals carried
+   Bootstrap's #28a745 and #218838, which no contrast fix reaches, plus their
+   own radius and shadow; all three are tokens here. Spacing is on the 4px
+   scale, so the ratchet next door keeps holding.
+   ------------------------------------------------------------------------ */
+#glossary-index-hero .hero-inner {
+    max-width: 820px;
+    padding: var(--fhi-space-7);
+}
+
+.quick-jump {
+    background: #fff;
+    padding: var(--fhi-space-4);
+    border-radius: var(--fhi-radius);
+    box-shadow: var(--fhi-shadow);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+.letter-btn {
+    margin: var(--fhi-space-1);
+    min-width: var(--fhi-space-7);
+}
+
+.letter-btn.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.letter-header {
+    border-bottom: 2px solid var(--fhi-green-ink);
+    padding-bottom: var(--fhi-space-2);
+    margin-bottom: var(--fhi-space-4);
+    color: var(--fhi-green-ink);
+}
+
+.term-card,
+.term-card:hover {
+    text-decoration: none;
+    color: inherit;
+}
+
+.term-card .card {
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+.term-card:hover .card {
+    box-shadow: var(--fhi-shadow);
+    border-left-color: var(--fhi-green-ink);
+}
+
+.term-article {
+    background: #fff;
+    padding: var(--fhi-space-7);
+    border-radius: var(--fhi-radius);
+    box-shadow: var(--fhi-shadow);
+    border-left: 4px solid var(--fhi-green-ink);
+}
+
+.term-title {
+    color: var(--fhi-green-ink);
+}
+
+.term-definition .lead {
+    line-height: var(--fhi-line-body);
+}
+
+.breadcrumb-item a {
+    color: var(--fhi-green-ink);
+    text-decoration: none;
+}
+
+.breadcrumb-item a:hover {
+    text-decoration: underline;
+}
+
+.disclaimer-box {
+    border-color: var(--fhi-line) !important;
+}
+
+#final-cta {
+    background: var(--fhi-surface);
+}
+
+.letter-section {
+    scroll-margin-top: var(--fhi-space-10);
+}
+
+/* The index's letter jumps glide rather than snap, for anyone who has not
+   asked us not to animate. The original set this on html unconditionally. */
+@media (prefers-reduced-motion: no-preference) {
+    html {
+        scroll-behavior: smooth;
+    }
+}

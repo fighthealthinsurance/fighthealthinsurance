@@ -50,6 +50,7 @@ from PIL import Image
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
+from fighthealthinsurance.structured_data import render_json_ld
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.denial_context import (
     GENERATED_QUESTION_PREFIX,
@@ -3640,4 +3641,137 @@ class StateHelpView(StaticIshView):
             context["state"] = state
             context["title"] = f"{state.name} Health Insurance Help"
 
+        return context
+
+
+# --- Glossary -------------------------------------------------------------
+# Taken from #903 and put on main's own cached page base class rather than
+# the one that PR carried, so these pages get the site's caching rules and
+# whatever those rules learn later, rather than a second copy of them.
+class GlossaryIndexView(StaticIshView):
+    """View for the health-insurance & appeals glossary index page."""
+
+    template_name = "glossary_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.glossary import (
+            get_terms_grouped_by_letter,
+            get_terms_sorted,
+        )
+
+        terms = get_terms_sorted()
+        groups = get_terms_grouped_by_letter()
+        context["letter_groups"] = groups
+        context["active_letters"] = {letter for letter, _ in groups}
+        context["term_count"] = len(terms)
+        context["title"] = "Health Insurance & Appeals Glossary"
+
+        canonical_url = self.request.build_absolute_uri(reverse("glossary_index"))
+        context["canonical_url"] = canonical_url
+
+        # JSON-LD DefinedTermSet describing the whole glossary for search engines.
+        defined_terms = [
+            {
+                "@type": "DefinedTerm",
+                "name": term.term,
+                "description": term.short,
+                "url": self.request.build_absolute_uri(
+                    reverse("glossary_term", kwargs={"slug": term.slug})
+                ),
+            }
+            for term in terms
+        ]
+        json_ld = {
+            "@context": "https://schema.org",
+            "@type": "DefinedTermSet",
+            "name": "Health Insurance & Appeals Glossary",
+            "description": (
+                "Plain-language definitions of health insurance and appeals terms "
+                "to help patients understand and fight coverage denials."
+            ),
+            "url": canonical_url,
+            "hasDefinedTerm": defined_terms,
+        }
+        # render_json_ld emits the full <script type="application/ld+json"> tag
+        # with <, >, & escaped so glossary content can't break out of it.
+        context["json_ld"] = render_json_ld(json_ld)
+        return context
+
+
+class GlossaryView(StaticIshView):
+    """View for an individual glossary term page."""
+
+    template_name = "glossary.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.glossary import get_term
+
+        # Cache the lookup so get_context_data does not repeat it.
+        self._term = get_term(slug)
+        if self._term is None:
+            from django.http import Http404
+
+            raise Http404(f"Glossary term '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.glossary import get_related_terms
+
+        term = getattr(self, "_term", None)
+        if term is None:
+            return context
+
+        context["term"] = term
+        context["related_terms"] = get_related_terms(term)
+        context["title"] = f"{term.term}: Definition & Meaning"
+
+        term_url = self.request.build_absolute_uri(
+            reverse("glossary_term", kwargs={"slug": term.slug})
+        )
+        index_url = self.request.build_absolute_uri(reverse("glossary_index"))
+        context["canonical_url"] = term_url
+
+        # JSON-LD: a DefinedTerm for the entry plus a BreadcrumbList for the
+        # Home > Glossary > Term trail.
+        defined_term = {
+            "@context": "https://schema.org",
+            "@type": "DefinedTerm",
+            "name": term.term,
+            "description": term.definition,
+            "url": term_url,
+            "inDefinedTermSet": index_url,
+        }
+        if term.aliases:
+            defined_term["alternateName"] = list(term.aliases)
+
+        breadcrumbs = {
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": 1,
+                    "name": "Home",
+                    "item": self.request.build_absolute_uri(reverse("root")),
+                },
+                {
+                    "@type": "ListItem",
+                    "position": 2,
+                    "name": "Glossary",
+                    "item": index_url,
+                },
+                {
+                    "@type": "ListItem",
+                    "position": 3,
+                    "name": term.term,
+                    "item": term_url,
+                },
+            ],
+        }
+        # render_json_ld escapes <, >, & so a term's definition/aliases can't
+        # break out of the <script type="application/ld+json"> block.
+        context["json_ld"] = render_json_ld([defined_term, breadcrumbs])
         return context
