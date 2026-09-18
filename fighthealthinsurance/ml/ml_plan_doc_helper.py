@@ -9,6 +9,7 @@ Uses internal ML models to:
 
 import asyncio
 import re
+import threading
 from typing import List, Optional, Set
 
 from loguru import logger
@@ -21,12 +22,21 @@ from fighthealthinsurance.ml.ml_document_extraction import (
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.models import Denial, PlanDocuments
 
+#: Serializes document parsing across this process; see _extract_pages_with_terms.
+_PARSING = threading.Lock()
+
 
 class MLPlanDocHelper:
     """Helper class for ML-powered plan document analysis."""
 
     # Maximum characters to send to the model for summarization
     MAX_CONTEXT_LENGTH = 8000
+    #: The largest decrypted document this will parse. The extractor builds
+    #: the whole text and a page for every page before any of it is filtered,
+    #: so a very large file costs many times its own size in memory, on a
+    #: worker other patients are generating on. Above this the document is
+    #: skipped with a warning rather than gambling the worker on it.
+    MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
     # Maximum time to spend on plan document summarization
     TIMEOUT_SECONDS = 60
 
@@ -184,6 +194,15 @@ Focus on terms that would appear in an insurance plan document."""
                     if not decrypted_bytes:
                         continue
 
+                    if len(decrypted_bytes) > cls.MAX_DOCUMENT_BYTES:
+                        logger.warning(
+                            f"Plan document {file_field.name} is "
+                            f"{len(decrypted_bytes)} bytes, over the "
+                            f"{cls.MAX_DOCUMENT_BYTES} this reads; skipping it "
+                            "rather than risking the worker other patients "
+                            "are generating on"
+                        )
+                        continue
                     pages_text = await asyncio.to_thread(
                         cls._extract_pages_with_terms,
                         decrypted_bytes,
@@ -221,7 +240,13 @@ Focus on terms that would appear in an insurance plan document."""
         one search term. Runs synchronously so callers should invoke it via
         ``asyncio.to_thread``.
         """
-        _full_text, page_dict = extract_text_from_bytes(data, filename)
+        # One document parsed at a time in this process. PyMuPDF is not safe
+        # to drive from several threads, and these calls now run on the
+        # default executor, so two patients generating at once could put two
+        # parses in flight. A native crash there would take the worker down
+        # with every other generation on it.
+        with _PARSING:
+            _full_text, page_dict = extract_text_from_bytes(data, filename)
         if not page_dict:
             return []
         lowered_terms = [term.lower() for term in search_terms if term]
