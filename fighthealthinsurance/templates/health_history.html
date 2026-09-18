@@ -29,11 +29,11 @@ Optional: Health History
   {% endif %}
   <div class="form-check mt-2">
     <input type="checkbox" class="form-check-input"
-           name="include_provided_health_history_in_appeal"
-           id="include_provided_health_history_in_appeal"
+           name="health_history_consent"
+           id="health_history_consent"
            form="fuck_health_insurance_form"
-           {% if form.include_provided_health_history_in_appeal.value %}checked{% endif %}>
-    <label class="form-check-label" for="include_provided_health_history_in_appeal">
+           {% if form.health_history_consent.value %}checked{% endif %}>
+    <label class="form-check-label" for="health_history_consent">
       Use this in my appeal letter
     </label>
     <p class="form-text text-muted">

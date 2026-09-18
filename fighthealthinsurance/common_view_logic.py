@@ -55,6 +55,7 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 
 from fighthealthinsurance import generation_lease
+from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.appeal_fingerprints import fingerprint_text
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -3771,6 +3772,7 @@ class DenialCreatorHelper:
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
+        health_history_consent=None,
         health_history_seen=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
@@ -3783,6 +3785,7 @@ class DenialCreatorHelper:
             plan_documents=plan_documents,
             include_provided_health_history_in_appeal=include_provided_health_history_in_appeal,
             health_history_anonymized=health_history_anonymized,
+            health_history_consent=health_history_consent,
             health_history_seen=health_history_seen,
         )
 
@@ -3794,6 +3797,7 @@ class DenialCreatorHelper:
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
+        health_history_consent=None,
         health_history_seen=None,
     ):
         from django.db import transaction as _transaction
@@ -3828,6 +3832,7 @@ class DenialCreatorHelper:
             # health_history an empty string is a decision, not silence -- it
             # is how the page deletes what the person wrote, and no other page
             # can -- so the blank is written rather than refused.
+            withdrawn = False
             if health_history is not None and not cls._history_submit_is_stale(
                 denial, health_history, health_history_seen, locked=True
             ):
@@ -3841,7 +3846,26 @@ class DenialCreatorHelper:
             if health_history_anonymized is not None:
                 denial.health_history_anonymized = health_history_anonymized
                 changed_fields.add("health_history_anonymized")
+            if health_history_consent is not None:
+                withdrawn = history_may_be_used(denial) and not health_history_consent
+                denial.health_history_consent = health_history_consent
+                changed_fields.add("health_history_consent")
             denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
+            if withdrawn:
+                # Saying no has to reach the drafts that already exist, not
+                # only the next prompt. A held-back or unchosen draft was
+                # written while the history was allowed, so it can carry it,
+                # and replay and synthesis would both put it back in front of
+                # them. Anything they have actually chosen is theirs and is
+                # left alone.
+                retired = ProposedAppeal.objects.filter(
+                    for_denial=denial, chosen=False
+                ).delete()
+                logger.info(
+                    f"Health history consent withdrawn on denial "
+                    f"{denial.denial_id}; retired {retired} unchosen draft(s) "
+                    "that may carry it"
+                )
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:
             intake_outbox.deliver(intent)

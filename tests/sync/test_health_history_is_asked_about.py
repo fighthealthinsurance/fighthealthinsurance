@@ -10,7 +10,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from fighthealthinsurance.denial_context import health_history_digest
-from fighthealthinsurance.models import Denial
+from fighthealthinsurance.models import Denial, ProposedAppeal
 
 EMAIL = "consent@example.com"
 SEMI_SEKRET = "sekret"
@@ -45,21 +45,22 @@ class TheHealthHistoryPageAsksTest(TestCase):
 
     def _answer(self):
         self.denial.refresh_from_db()
-        return self.denial.include_provided_health_history_in_appeal
+        return self.denial.health_history_consent
 
     def test_the_box_is_on_the_page(self):
         response = self.client.get(reverse("hh"), self._ref())
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "include_provided_health_history_in_appeal")
+        self.assertContains(response, "health_history_consent")
         self.assertContains(response, "Use this in my appeal letter")
 
-    def test_the_box_starts_ticked(self):
-        """What the site does with a history today, offered as a choice."""
+    def test_the_box_starts_ticked_while_nobody_has_answered(self):
+        """A row nobody asked carries NULL, and the site uses the history,
+        so the box shows what is actually happening."""
         response = self.client.get(reverse("hh"), self._ref())
 
         body = response.content.decode()
-        box = body[body.index("include_provided_health_history_in_appeal") :][:400]
+        box = body[body.index("health_history_consent") :][:400]
         self.assertIn("checked", box)
 
     def test_the_page_says_where_the_words_go(self):
@@ -69,28 +70,28 @@ class TheHealthHistoryPageAsksTest(TestCase):
 
     def test_unticking_is_saved_as_an_answer(self):
         """An unticked box is absent from the POST, and that is the answer."""
-        self.assertTrue(self._answer())
+        self.assertIsNone(self._answer(), "nobody has been asked yet")
 
         self._post()
 
-        self.assertFalse(self._answer())
+        self.assertIs(self._answer(), False)
 
     def test_ticking_is_saved(self):
-        self.denial.include_provided_health_history_in_appeal = False
-        self.denial.save(update_fields=["include_provided_health_history_in_appeal"])
+        self.denial.health_history_consent = False
+        self.denial.save(update_fields=["health_history_consent"])
 
-        self._post(include_provided_health_history_in_appeal="on")
+        self._post(health_history_consent="on")
 
-        self.assertTrue(self._answer())
+        self.assertIs(self._answer(), True)
 
     def test_the_answer_survives_a_visit_that_changes_nothing_else(self):
-        self._post(include_provided_health_history_in_appeal="on")
+        self._post(health_history_consent="on")
         self.denial.refresh_from_db()
 
         response = self.client.get(reverse("hh"), self._ref())
 
         body = response.content.decode()
-        box = body[body.index("include_provided_health_history_in_appeal") :][:400]
+        box = body[body.index("health_history_consent") :][:400]
         self.assertIn("checked", box)
 
     def test_the_history_itself_is_still_kept_when_the_answer_is_no(self):
@@ -132,3 +133,139 @@ class TheOtherFlagIsStillNotAskedAboutTest(TestCase):
 
         denial.refresh_from_db()
         self.assertEqual(denial.health_history_anonymized, before)
+
+
+class TheOtherColumnIsLeftAloneTest(TestCase):
+    """include_provided_health_history_in_appeal is a different question.
+
+    It decides whether the raw history is attached to the fax as its own
+    document, which is a wider disclosure than using it to write the letter,
+    and it is off unless a caller asks. The page never mentions it, so no
+    submission here may change it in either direction.
+    """
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_id=7303,
+            semi_sekret=SEMI_SEKRET,
+            hashed_email=Denial.get_hashed_email(EMAIL),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+        )
+
+    def _post(self, **extra):
+        payload = {
+            "denial_id": str(self.denial.denial_id),
+            "email": EMAIL,
+            "semi_sekret": SEMI_SEKRET,
+            "health_history": HISTORY,
+            "health_history_seen": health_history_digest(
+                HISTORY, self.denial.denial_id
+            ),
+        }
+        payload.update(extra)
+        return self.client.post(reverse("hh"), payload)
+
+    def test_it_starts_off_and_a_submission_does_not_turn_it_on(self):
+        self.assertFalse(self.denial.include_provided_health_history_in_appeal)
+
+        self._post(health_history_consent="on")
+
+        self.denial.refresh_from_db()
+        self.assertFalse(self.denial.include_provided_health_history_in_appeal)
+
+    def test_a_caller_who_set_it_keeps_it(self):
+        """Set through the API on purpose; a Next here must not clear it."""
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(
+            include_provided_health_history_in_appeal=True
+        )
+
+        self._post(health_history_consent="on")
+
+        self.denial.refresh_from_db()
+        self.assertTrue(self.denial.include_provided_health_history_in_appeal)
+
+    def test_the_page_never_names_it(self):
+        response = self.client.get(
+            reverse("hh"),
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": EMAIL,
+                "semi_sekret": SEMI_SEKRET,
+            },
+        )
+
+        self.assertNotContains(response, "include_provided_health_history_in_appeal")
+
+
+class SayingNoReachesTheDraftsThatExistTest(TestCase):
+    """Guarding the next prompt is not enough.
+
+    A draft written while the history was allowed can carry it, and both
+    replay and synthesis would put it back in front of the person after they
+    asked us not to use it.
+    """
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_id=7304,
+            semi_sekret=SEMI_SEKRET,
+            hashed_email=Denial.get_hashed_email(EMAIL),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+        )
+
+    def _draft(self, chosen):
+        return ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A draft mentioning migraines since 2019.",
+            chosen=chosen,
+        )
+
+    def _post(self, **extra):
+        payload = {
+            "denial_id": str(self.denial.denial_id),
+            "email": EMAIL,
+            "semi_sekret": SEMI_SEKRET,
+            "health_history": HISTORY,
+            "health_history_seen": health_history_digest(
+                HISTORY, self.denial.denial_id
+            ),
+        }
+        payload.update(extra)
+        return self.client.post(reverse("hh"), payload)
+
+    def test_unticking_retires_the_unchosen_drafts(self):
+        held = self._draft(chosen=False)
+
+        self._post()
+
+        self.assertFalse(
+            ProposedAppeal.objects.filter(pk=held.pk).exists(),
+            "a draft that can carry the history survived the refusal",
+        )
+
+    def test_a_draft_they_chose_is_theirs_and_stays(self):
+        mine = self._draft(chosen=True)
+
+        self._post()
+
+        self.assertTrue(ProposedAppeal.objects.filter(pk=mine.pk).exists())
+
+    def test_saying_yes_retires_nothing(self):
+        held = self._draft(chosen=False)
+
+        self._post(health_history_consent="on")
+
+        self.assertTrue(ProposedAppeal.objects.filter(pk=held.pk).exists())
+
+    def test_a_second_no_does_not_thrash(self):
+        self._post()
+        held = self._draft(chosen=False)
+
+        self._post()
+
+        self.assertTrue(
+            ProposedAppeal.objects.filter(pk=held.pk).exists(),
+            "nothing was withdrawn this time, so nothing should be retired",
+        )

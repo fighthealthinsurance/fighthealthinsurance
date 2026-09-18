@@ -1,19 +1,28 @@
-"""Whether a case's health history may be used in the letter.
+"""Whether a case's health history may be used in writing its appeal.
 
-The site has always put a history somebody typed into the appeal, and until
-now the column that was supposed to govern that was never asked about and
-never read on the drafting path. One function, so the page that asks, the
-prompt that uses it and the scan that reads it cannot drift apart again.
+One question, one column, one function. It is deliberately separate from
+``include_provided_health_history_in_appeal``, which decides whether the raw
+history is attached to the fax as its own document: that is a wider
+disclosure, it is off by default, and a caller can set it through the API, so
+its value cannot be read as an answer to this question.
+
+``health_history_consent`` is NULL until somebody is asked. A row from before
+the question existed keeps the behaviour it was created under, which is that
+the history is used, because that is what the site has always done with a
+history typed into a box labelled for it and silently dropping it would make
+those letters worse without telling anyone. Once asked, the answer is the
+answer.
 """
 
 
 def history_may_be_used(denial) -> bool:
-    """The person's answer, defaulting to yes for a row nobody ever asked.
+    """The person's answer, or the status quo for a row nobody asked."""
+    answer = getattr(denial, "health_history_consent", None)
+    if answer is None:
+        return True
+    return bool(answer)
 
-    A row predating the question carries ``False`` only because that was the
-    old column default, never because anybody chose it; migration 0211 turns
-    those into the answer they were actually given, which is the history they
-    typed on purpose. After that, ``False`` here means somebody unticked the
-    box.
-    """
-    return bool(getattr(denial, "include_provided_health_history_in_appeal", True))
+
+def has_been_asked(denial) -> bool:
+    """Whether this case has an answer on record at all."""
+    return getattr(denial, "health_history_consent", None) is not None

@@ -528,14 +528,12 @@ class PressingNextDecidesNothingItCannotAskTest(OptionalStepsTestCase):
     so declaring a field health_history.html does not render turned every Next
     into a reset of that column.
 
-    The page now renders a box for
-    ``include_provided_health_history_in_appeal``, so its absence IS an
-    answer and is saved as one. ``health_history_anonymized`` still has no
-    box anywhere, so the rule above still holds for it and this class still
-    guards it.
+    The page renders a box for ``health_history_consent``, so its absence IS
+    an answer and is saved as one. The two older flags still have no box
+    anywhere, so the rule above holds for both and this class guards them.
     """
 
-    def test_a_plain_next_does_not_reset_the_flag_nobody_asks_about(self):
+    def test_a_plain_next_does_not_reset_the_flags_nobody_asks_about(self):
         Denial.objects.filter(denial_id=self.denial.denial_id).update(
             health_history_anonymized=True,
             include_provided_health_history_in_appeal=True,
@@ -548,11 +546,16 @@ class PressingNextDecidesNothingItCannotAskTest(OptionalStepsTestCase):
         self.assertEqual(response.status_code, 200)
         fresh = Denial.objects.get(denial_id=self.denial.denial_id)
         self.assertTrue(fresh.health_history_anonymized)
+        self.assertTrue(
+            fresh.include_provided_health_history_in_appeal,
+            "a Next cleared the fax attachment flag, which this page never "
+            "asks about",
+        )
 
     def test_a_next_with_the_box_unticked_is_that_answer(self):
-        """The page asks now, so saying nothing means no, not "leave it"."""
+        """The page asks about consent now, so saying nothing means no."""
         Denial.objects.filter(denial_id=self.denial.denial_id).update(
-            include_provided_health_history_in_appeal=True,
+            health_history_consent=True,
         )
         payload = self.denial_ref()
         payload["health_history"] = STORED
@@ -560,7 +563,7 @@ class PressingNextDecidesNothingItCannotAskTest(OptionalStepsTestCase):
         self.client.post(reverse("hh"), payload)
 
         fresh = Denial.objects.get(denial_id=self.denial.denial_id)
-        self.assertFalse(fresh.include_provided_health_history_in_appeal)
+        self.assertIs(fresh.health_history_consent, False)
 
     def test_a_field_the_page_cannot_render_is_dropped_before_the_save(self):
         """The rule behind the test above.

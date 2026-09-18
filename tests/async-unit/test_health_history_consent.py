@@ -38,7 +38,7 @@ class _Answered:
     """Just enough of a row for the predicate, with no database behind it."""
 
     def __init__(self, may_use):
-        self.include_provided_health_history_in_appeal = may_use
+        self.health_history_consent = may_use
 
 
 def _denial(*, history=HISTORY, may_use=True):
@@ -49,13 +49,13 @@ def _denial(*, history=HISTORY, may_use=True):
         hashed_email=Denial.get_hashed_email("consent@example.com"),
         denial_text="Coverage denied",
         health_history=history,
-        include_provided_health_history_in_appeal=may_use,
+        health_history_consent=may_use,
         use_external=False,
     )
 
 
-def _patient_context_for(denial):
-    """Run a generation far enough to see what the model is handed."""
+def _calls_for(denial):
+    """Every call the backend was actually asked to make."""
     backend = _RecordingBackend()
     generator = AppealGenerator()
     template = AppealTemplateGenerator("", "", "")
@@ -80,9 +80,20 @@ def _patient_context_for(denial):
                     plan_context=None,
                 )
             )
-        except Exception:
-            pass
-    return "\n".join(str(call.get("patient_context") or "") for call in backend.seen)
+        except Exception as e:
+            # A generation that fails for an unrelated reason would leave
+            # backend.seen empty, and then every "the history is not here"
+            # assertion below would pass for the wrong reason.
+            raise AssertionError(f"the generation failed before the model: {e}")
+    assert backend.seen, "the model was never called, so nothing was proven"
+    return backend.seen
+
+
+def _patient_context_for(denial):
+    """What the model was handed as the patient's context."""
+    return "\n".join(
+        str(call.get("patient_context") or "") for call in _calls_for(denial)
+    )
 
 
 class TestTheAnswerItself:
@@ -109,6 +120,70 @@ class TestWhatTheModelIsHanded:
 
     @pytest.mark.django_db
     def test_the_model_is_still_asked_something(self):
-        """The guard must leave the case out, not the generation."""
-        backend_saw = _patient_context_for(_denial(may_use=False))
-        assert backend_saw is not None
+        """The guard must leave the case out, not the generation.
+
+        Asserting the returned string is not None proved nothing: it is
+        always a string, empty included, so this passed when no call was made
+        at all. _calls_for now fails if the backend was never reached.
+        """
+        calls = _calls_for(_denial(may_use=False))
+
+        assert calls, "no model call was made"
+        assert any(call.get("prompt") for call in calls), "nothing was asked"
+
+
+class TestEveryReaderAsks:
+    """Four things read the history. Gating one is not gating it.
+
+    The drafting prompt is the obvious one. The medication scan chooses the
+    guidance the letter carries. Question generation and citation lookup both
+    hand it to a model as patient context, and with an external backend that
+    leaves the building.
+    """
+
+    @pytest.mark.django_db
+    def test_the_medication_scan_asks(self):
+        from fighthealthinsurance.generate_appeal import AppealGenerator
+        from fighthealthinsurance.models import MedicationContext
+
+        MedicationContext.objects.all().delete()
+        MedicationContext.objects.create(
+            drug_class="Anti-CGRP monoclonal antibody",
+            regex=r"(aimovig|ajovy|emgality|vyepti)",
+            appeal_context="Cite American Headache Society 2024 guidance.",
+        )
+
+        allowed = AppealGenerator._collect_medication_context(_denial(may_use=True))
+        refused = AppealGenerator._collect_medication_context(_denial(may_use=False))
+
+        assert allowed is not None and "Anti-CGRP" in allowed
+        assert refused is None, "the refused history still chose the guidance"
+
+    def test_question_generation_asks(self):
+        """The call site hands patient_context, so read the source it runs."""
+        import inspect
+
+        from fighthealthinsurance.ml import ml_appeal_questions_helper
+
+        source = inspect.getsource(ml_appeal_questions_helper)
+        assert "history_may_be_used(denial)" in source
+        assert "patient_context=denial.health_history," not in source
+
+    def test_citation_lookup_asks(self):
+        import inspect
+
+        from fighthealthinsurance.ml import ml_citations_helper
+
+        source = inspect.getsource(ml_citations_helper)
+        assert "patient_context = denial.health_history\n" not in source
+        assert source.count("history_may_be_used(denial)") >= 3
+
+
+class TestARowNobodyAsked:
+    """NULL is not a refusal. It is every case written before the question."""
+
+    def test_it_keeps_the_behaviour_it_was_created_under(self):
+        assert history_may_be_used(_Answered(None)) is True
+
+    def test_and_a_row_with_no_such_attribute_at_all(self):
+        assert history_may_be_used(object()) is True

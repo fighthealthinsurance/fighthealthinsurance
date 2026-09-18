@@ -2492,11 +2492,19 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     verified_procedure = models.TextField(primary_key=False, null=True, default="")
     verified_diagnosis = models.TextField(primary_key=False, null=True, default="")
     flag_for_exclude = models.BooleanField(default=False, null=True)
-    # The person's answer to "may we put this in the letter", asked on the
-    # health history page. Defaults to True because that is what the site has
-    # always done with a history somebody typed into a box labelled for it;
-    # the value only becomes a decision once they are asked and untick.
-    include_provided_health_history_in_appeal = models.BooleanField(default=True)
+    # Whether the RAW health history is attached to the fax as its own
+    # document. That is what this column has always driven, at
+    # common_view_logic's _assemble_appeal_pdf, and it is off unless a caller
+    # asks for it. It is deliberately NOT the answer to "may the letter use
+    # my history": see health_history_consent below, which is a different
+    # question with a different blast radius.
+    include_provided_health_history_in_appeal = models.BooleanField(default=False)
+    # The person's answer to "may we use this in the letter", asked on the
+    # health history page. NULL means nobody has ever asked, which is every
+    # row written before that question existed; those keep the behaviour they
+    # were created under. False only ever means somebody was asked and said
+    # no, so nothing has to guess whether a stored value was a decision.
+    health_history_consent = models.BooleanField(null=True, default=None)
     # Used to mark claims related to dental services
     dental_claim = models.BooleanField(default=False)
     # Used to mark claims not related to human patients (e.g., pet insurance)
