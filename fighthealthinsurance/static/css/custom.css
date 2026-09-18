@@ -180,6 +180,19 @@ textarea.fhi-field {
     min-height: var(--fhi-space-11);
 }
 
+/* Bootstrap's .form-check reserves 1.5em of left padding and expects the
+   box to float back into it. Ours has to do the same for as long as that
+   wrapper is still in the templates, or the label wraps under the box it
+   belongs to. Goes when .form-check does. */
+.form-check .fhi-check {
+    float: left;
+    margin-left: -1.5em;
+}
+
+.form-check .fhi-check:disabled ~ .form-check-label {
+    opacity: 0.5;
+}
+
 /* A tick box is a box too, just square and sized to the text beside it. */
 .fhi-check {
     width: var(--fhi-space-4);

@@ -29,6 +29,40 @@ class MultipleFileField(forms.FileField):
         return result
 
 
+#: Widget types that are not text boxes and take the tick-box class.
+_TICKABLE = (forms.CheckboxInput, forms.RadioSelect, forms.CheckboxSelectMultiple)
+#: Widget types that get no class at all.
+_UNTOUCHED = (forms.HiddenInput, forms.MultipleHiddenInput)
+
+FIELD_CLASS = "fhi-field"
+CHECK_CLASS = "fhi-check"
+
+
+def style_widgets(fields) -> None:
+    """Give each field's visible widget the site's own input class.
+
+    A function rather than only a mixin, because not every form the flow
+    renders is a class anybody can inherit from: the questions page builds
+    one at runtime and copies fields into it, so the fields have to be
+    stamped where they land.
+
+    Appends rather than replaces, so a widget that already carries a class of
+    its own keeps it, and skips a field already stamped so a field copied
+    between forms does not collect the class twice.
+    """
+    for field in fields:
+        widget = field.widget
+        if isinstance(widget, _UNTOUCHED):
+            continue
+        if widget.__class__.__module__.startswith("django_recaptcha"):
+            continue
+        wanted = CHECK_CLASS if isinstance(widget, _TICKABLE) else FIELD_CLASS
+        existing = widget.attrs.get("class", "")
+        if wanted in existing.split():
+            continue
+        widget.attrs["class"] = f"{existing} {wanted}".strip()
+
+
 class StyledWidgetsMixin(_StyledWidgetsMixinBase):
     """Give every visible control on a form the site's own input class.
 
@@ -45,31 +79,14 @@ class StyledWidgetsMixin(_StyledWidgetsMixinBase):
     is a box anybody types in, and the captcha's markup is not ours.
     """
 
-    #: Widget types that are not text boxes and take the tick-box class.
-    _TICKABLE = (forms.CheckboxInput, forms.RadioSelect, forms.CheckboxSelectMultiple)
-    #: Widget types that get no class at all.
-    _UNTOUCHED = (forms.HiddenInput, forms.MultipleHiddenInput)
-
-    FIELD_CLASS = "fhi-field"
-    CHECK_CLASS = "fhi-check"
+    #: Kept as attributes so tests and subclasses can read them off the
+    #: mixin; the values live at module level, with style_widgets.
+    FIELD_CLASS: str = FIELD_CLASS
+    CHECK_CLASS: str = CHECK_CLASS
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        for field in self.fields.values():
-            widget = field.widget
-            if isinstance(widget, self._UNTOUCHED):
-                continue
-            if widget.__class__.__module__.startswith("django_recaptcha"):
-                continue
-            wanted = (
-                self.CHECK_CLASS
-                if isinstance(widget, self._TICKABLE)
-                else self.FIELD_CLASS
-            )
-            existing = widget.attrs.get("class", "")
-            if wanted in existing.split():
-                continue
-            widget.attrs["class"] = f"{existing} {wanted}".strip()
+        style_widgets(self.fields.values())
 
 
 def magic_combined_form(
@@ -115,4 +132,8 @@ def magic_combined_form(
                 ):
                     kept.initial = source_initial
 
+    # The fields came from forms that may or may not carry the mixin, and
+    # some are added at runtime, so the merged form is stamped here: this is
+    # the one the questions page actually renders.
+    style_widgets(combined_form.fields.values())
     return combined_form

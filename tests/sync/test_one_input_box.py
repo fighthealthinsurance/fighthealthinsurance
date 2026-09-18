@@ -86,13 +86,42 @@ class EveryControlInTheFlowIsOursTest(TestCase):
         self.assertNotIn("class", Hidden().fields["ref"].widget.attrs)
 
     def test_stamping_twice_does_not_repeat_the_class(self):
-        form = core_forms.HealthHistory()
-        again = core_forms.HealthHistory(data={})
-        for widget in (
-            form.fields["health_history"].widget,
-            again.fields["health_history"].widget,
-        ):
-            self.assertEqual(widget.attrs.get("class", "").split().count(FIELD), 1)
+        """Two forms is not two stamps. A field copied between forms is.
+
+        The questions page builds its form at runtime out of fields from
+        other forms, so a field genuinely arrives already carrying the class
+        and is stamped again. Constructing two fresh forms exercises none of
+        that: each gets one stamp, and the guard could be gone.
+        """
+        from fighthealthinsurance.form_utils import style_widgets
+
+        field = forms.CharField(widget=forms.TextInput(attrs={"class": FIELD}))
+
+        style_widgets([field])
+        style_widgets([field])
+
+        self.assertEqual(field.widget.attrs["class"].split().count(FIELD), 1)
+
+    def test_a_field_carried_into_the_questions_form_is_styled_once(self):
+        """The real path: merged at runtime, out of forms of mixed origin."""
+        from fighthealthinsurance.form_utils import magic_combined_form
+
+        class Asked(StyledWidgetsMixin, forms.Form):
+            already = forms.CharField()
+
+        class Plain(forms.Form):
+            never_stamped = forms.CharField()
+            ticked = forms.BooleanField(required=False)
+
+        combined = magic_combined_form([Asked(), Plain()], {})
+
+        self.assertEqual(
+            combined.fields["already"].widget.attrs["class"].split().count(FIELD), 1
+        )
+        self.assertIn(
+            FIELD, combined.fields["never_stamped"].widget.attrs["class"].split()
+        )
+        self.assertIn(CHECK, combined.fields["ticked"].widget.attrs["class"].split())
 
 
 class TheStylesheetDefinesThemTest(TestCase):
