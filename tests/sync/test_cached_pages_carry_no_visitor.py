@@ -13,6 +13,9 @@ not enumerate the pages, so a cached route added later is covered without
 anyone remembering to add it.
 """
 
+from pathlib import Path
+from unittest.mock import patch
+
 from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
 from django.urls import get_resolver, reverse
@@ -73,15 +76,33 @@ class ACachedPageCarriesNoVisitorTest(TestCase):
                 )
 
     def test_the_page_is_still_cached(self):
-        """Emptying the values must not be done by turning the cache off."""
+        """Emptying the values must not be done by turning the cache off.
+
+        Counting queries proves nothing here: once the banner cache is warm
+        an uncached render also does none. What proves a cache hit is the
+        view never being asked to render the second time.
+        """
         url = reverse("faq")
         cache.clear()
 
-        first = Client().get(url)
-        self.assertEqual(first.status_code, 200)
-        with self.assertNumQueries(0):
+        with patch.object(
+            StaticIshView,
+            "render_to_response",
+            autospec=True,
+            side_effect=StaticIshView.render_to_response,
+        ) as rendered:
+            first = Client().get(url)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(rendered.call_count, 1, "the first request must render")
+
             second = Client().get(url)
-        self.assertEqual(second.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(
+                rendered.call_count,
+                1,
+                "the second request rendered again, so it was not served "
+                "from the cache",
+            )
         self.assertEqual(first.content, second.content)
 
     def test_two_visitors_are_served_the_same_bytes(self):
@@ -106,19 +127,32 @@ class ACachedPageCarriesNoVisitorTest(TestCase):
 
 
 class EveryPubliclyCacheablePageTest(TestCase):
-    """The sweep: no enumeration, so a new cached route cannot slip past.
+    """The sweep, over the pages the site actually caches.
 
-    Runs without the cache override on purpose. It asks each page what it
-    claims about itself, and a page that says ``Cache-Control: public`` is
-    making a promise about who may be served it.
+    It asks each page what it claims about itself, and a page that says
+    ``Cache-Control: public`` is making a promise about who may be served it.
+
+    It reaches those pages through ``StaticIshView``, which is where the
+    site's whole-response caching lives, rather than by requesting every
+    route it can reverse. The wider version was not hermetic: among the
+    routes it walked was the resources page, which fetches news feeds over
+    the network, so a cache privacy test made live outbound calls. The
+    source guard below is what keeps the narrower sweep honest, by refusing
+    a cached page that does not come through that base class.
     """
 
-    def _no_argument_routes(self):
+    def _cached_pages(self):
+        """Every no-argument route served by a StaticIshView subclass."""
         seen = set()
         for pattern in get_resolver().url_patterns:
             for entry in getattr(pattern, "url_patterns", [pattern]):
                 name = getattr(entry, "name", None)
                 if not name or name in seen:
+                    continue
+                view_class = getattr(
+                    getattr(entry, "callback", None), "view_class", None
+                )
+                if view_class is None or not issubclass(view_class, StaticIshView):
                     continue
                 seen.add(name)
                 try:
@@ -126,26 +160,22 @@ class EveryPubliclyCacheablePageTest(TestCase):
                 except Exception:
                     continue
 
-    def test_nothing_publicly_cacheable_can_carry_a_case_id(self):
+    def test_no_cached_page_can_carry_a_case_id(self):
         checked, cacheable = [], []
-        for name, url in self._no_argument_routes():
+        for name, url in self._cached_pages():
             # A fresh visitor per page. Reusing one client silently defeats
             # this test: some routes clear the case out of the session, and
             # every page after that would be checked with nothing to find.
-            try:
-                response = mid_appeal_client().get(url)
-            except Exception:
-                continue
+            response = mid_appeal_client().get(url)
             if response.status_code != 200:
                 continue
             checked.append(name)
             if "public" not in response.headers.get("Cache-Control", ""):
                 continue
             cacheable.append(name)
-            body = response.content.decode(errors="replace")
             self.assertNotIn(
                 CASE_UUID,
-                body,
+                response.content.decode(errors="replace"),
                 msg=(
                     f"{name} is served with Cache-Control: public and carries "
                     "the case id of the visitor who asked for it"
@@ -154,8 +184,32 @@ class EveryPubliclyCacheablePageTest(TestCase):
 
         # Floors, so a sweep that silently stops finding pages fails instead
         # of passing empty.
-        self.assertGreater(len(checked), 20, f"only reached {checked}")
-        self.assertGreater(len(cacheable), 10, f"only found {cacheable} cacheable")
+        self.assertGreater(len(checked), 15, f"only reached {checked}")
+        self.assertGreater(len(cacheable), 15, f"only found {cacheable} cacheable")
+
+    def test_nothing_else_caches_a_whole_page(self):
+        """The tripwire under the sweep above.
+
+        A page cached anywhere but ``StaticIshView`` would not be swept, so
+        adding one has to be a decision somebody makes on purpose. The
+        sitemap is the one exception: it renders no template and carries no
+        visitor context.
+        """
+        urls_source = (
+            Path(__file__).resolve().parent.parent.parent
+            / "fighthealthinsurance"
+            / "urls.py"
+        ).read_text()
+
+        wrapped = urls_source.count("cache_page(")
+        self.assertEqual(
+            wrapped,
+            1,
+            "urls.py wraps %d routes in cache_page. Only the sitemap should: "
+            "a cached page belongs on StaticIshView, which blanks the "
+            "visitor's context and is covered by the sweep above." % wrapped,
+        )
+        self.assertIn("sitemap_view", urls_source)
 
 
 class TheMixinIsWiredTest(TestCase):
