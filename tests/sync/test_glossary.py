@@ -9,6 +9,8 @@ Covers:
    are no duplicate slugs, and the term count is within the intended range.
 """
 
+import re
+
 from django.test import TestCase, Client
 from django.urls import reverse
 
@@ -20,8 +22,21 @@ from fighthealthinsurance.glossary import (
     get_related_terms,
     get_term,
     get_terms_grouped_by_letter,
+    get_terms_sorted,
     validate_glossary,
 )
+
+JSON_LD = re.compile(r'<script type="application/ld\+json">.*?</script>', re.S)
+
+
+def visible_html(response) -> str:
+    """The page with its structured data removed.
+
+    Several assertions here passed on the JSON-LD alone: the full definition,
+    every term URL and the index URL all appear in it, so a test could say
+    "the definition is on the page" while the visible paragraph was gone.
+    """
+    return JSON_LD.sub("", response.content.decode())
 
 
 class GlossaryDataIntegrityTest(TestCase):
@@ -134,7 +149,11 @@ class GlossaryTermViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "glossary.html")
         self.assertContains(response, term.term)
-        self.assertContains(response, "independent")
+        self.assertIn(
+            "independent",
+            visible_html(response),
+            "the definition is only in the structured data, not on the page",
+        )
 
     def test_term_shows_related_links(self):
         """A term page links to each of its related terms."""
@@ -143,10 +162,13 @@ class GlossaryTermViewTest(TestCase):
             reverse("glossary_term", kwargs={"slug": "prior-authorization"})
         )
         self.assertEqual(response.status_code, 200)
+        visible = visible_html(response)
         for related in get_related_terms(term):
-            self.assertContains(
-                response,
-                reverse("glossary_term", kwargs={"slug": related.slug}),
+            url = reverse("glossary_term", kwargs={"slug": related.slug})
+            self.assertIn(
+                'href="%s"' % url,
+                visible,
+                "%s is in the structured data but not a link on the page" % url,
             )
 
     def test_term_includes_defined_term_and_breadcrumb_json_ld(self):
@@ -177,7 +199,10 @@ class GlossarySitemapTest(TestCase):
         response = self.client.get(reverse("django.contrib.sitemaps.views.sitemap"))
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
-        self.assertIn("/glossary/", content)
+        # The index's own entry, not merely a term URL that starts with it:
+        # every term URL contains "/glossary/", so the looser assertion
+        # passed with the index dropped from the sitemap entirely.
+        self.assertIn("/glossary/</loc>", content)
         self.assertIn("/glossary/prior-authorization/", content)
 
 
@@ -224,3 +249,52 @@ class TheGlossaryIsReachableTest(TestCase):
 
         self.assertTrue(issubclass(GlossaryIndexView, StaticIshView))
         self.assertTrue(issubclass(GlossaryView, StaticIshView))
+
+
+class TheContractTheGlossaryClaimsTest(TestCase):
+    """Cardinality, asserted exactly, so a regression is visible.
+
+    The earlier version accepted a range, so a glossary that lost nineteen
+    terms still passed, and permitted a term with no cross-links at all.
+    """
+
+    def test_there_are_fifty_nine_terms(self):
+        self.assertEqual(len(get_terms_sorted()), 59)
+
+    def test_every_term_carries_at_least_three_cross_links(self):
+        thin = {
+            term.slug: len(term.related)
+            for term in get_terms_sorted()
+            if len(term.related) < 3
+        }
+        self.assertEqual(thin, {}, "these terms have fewer than three related")
+
+    def test_every_term_has_a_short_form_and_a_definition(self):
+        empty = [
+            term.slug
+            for term in get_terms_sorted()
+            if not term.short.strip() or not term.definition.strip()
+        ]
+        self.assertEqual(empty, [])
+
+
+class TheDeadlineItPrintsTest(TestCase):
+    """A number a patient counts days against.
+
+    The definition said Medicare Advantage and Part D "allow 60 days" without
+    saying from when. The statute runs 60 days from receipt and Medicare
+    presumes receipt five days after the notice date, so somebody counting
+    from the date printed on their letter would think they were two days late
+    when they had three days left.
+    """
+
+    def test_it_says_what_the_sixty_days_run_from(self):
+        definition = get_term("internal-appeal").definition
+
+        self.assertIn("from when you received the notice", definition)
+        self.assertIn("65 days", definition)
+
+    def test_it_still_tells_them_to_check_their_own_letter(self):
+        self.assertIn(
+            "check the deadline", get_term("internal-appeal").definition.lower()
+        )

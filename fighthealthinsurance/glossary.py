@@ -470,7 +470,7 @@ GLOSSARY_TERMS: tuple[GlossaryTerm, ...] = (
             "clinicians the insurer already trusts. Several states have passed laws "
             "encouraging or requiring gold-carding programs."
         ),
-        related=("prior-authorization", "utilization-management"),
+        related=("prior-authorization", "utilization-management", "step-therapy"),
     ),
     GlossaryTerm(
         slug="grievance",
@@ -528,11 +528,14 @@ GLOSSARY_TERMS: tuple[GlossaryTerm, ...] = (
             "An internal appeal is your request for the plan itself to reconsider a "
             "denial, and it is usually the required first step before an outside "
             "review. Commercial and employer plans commonly give you at least 180 "
-            "days from the denial to file, but public programs can be much shorter "
-            "— Medicare Advantage and Part D allow 60 days (42 CFR 422.582(b) / "
-            "423.582(b)) and Medicaid managed care generally 60 days (42 CFR "
-            "438.402(c)(2)(ii)), sometimes less. Always check the deadline printed "
-            "on your denial letter. "
+            "days from the denial to file, but public programs can be much "
+            "shorter. Medicare Advantage and Part D give you 60 days from when "
+            "you received the notice (42 CFR 422.582(b) / 423.582(b)), and "
+            "Medicare treats you as having received it five days after the date "
+            "printed on it, so counting from that printed date you have about "
+            "65 days. Medicaid managed care is generally 60 days (42 CFR "
+            "438.402(c)(2)(ii)), sometimes less. Always check the deadline "
+            "printed on your denial letter. "
             "Completing the internal appeal, even when you expect it to fail, is "
             "often necessary to unlock your right to external review."
         ),
