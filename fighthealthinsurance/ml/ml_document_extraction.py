@@ -148,7 +148,12 @@ def extract_text_from_html_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
     try:
         from bs4 import BeautifulSoup
 
-        soup = BeautifulSoup(data.decode("utf-8", errors="replace"), "html.parser")
+        # The bytes, not a string: a plan document saved from an insurer's
+        # portal can be Latin-1, and decoding it as UTF-8 first turns
+        # "autorizacion" with its accent into a replacement character, which
+        # then matches no search term. BeautifulSoup reads the document's own
+        # declared encoding.
+        soup = BeautifulSoup(data, "html.parser")
         for tag in soup(["script", "style"]):
             tag.decompose()
         content = soup.get_text("\n", strip=True)

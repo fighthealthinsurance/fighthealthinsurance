@@ -126,7 +126,8 @@ class EveryAcceptedUploadIsReadTest(TransactionTestCase):
         doc.plan_document_enc.save(name, ContentFile(body), save=True)
         return asyncio.run(
             MLPlanDocHelper.extract_relevant_text(
-                denial.denial_id, ["medical necessity"]
+                denial.denial_id,
+                ["medical necessity", "necesidad", "autorizaci\u00f3n"],
             )
         )
 
@@ -143,6 +144,27 @@ class EveryAcceptedUploadIsReadTest(TransactionTestCase):
         self.assertIn("medical necessity", text.lower())
         self.assertNotIn("var x", text, "script contents are not document text")
         self.assertNotIn("color:red", text, "style contents are not document text")
+
+    def test_a_page_in_another_encoding_keeps_its_words(self):
+        """A plan document from a Spanish-language portal is often Latin-1.
+
+        Decoding as UTF-8 first turns the accented letter into a replacement
+        character, and then the search term does not match the text it is in.
+        """
+        html = (
+            (
+                '<html><head><meta charset="ISO-8859-1"></head><body>'
+                "<p>Se requiere autorizacion previa por necesidad medica.</p>"
+                "</body></html>"
+            )
+            .replace("autorizacion", "autorizaci\u00f3n")
+            .replace("medica", "m\u00e9dica")
+        )
+
+        text = self._text_from("plan.html", html.encode("latin-1"))
+
+        self.assertIn("autorizaci\u00f3n", text)
+        self.assertNotIn("\ufffd", text, "a character was lost decoding the file")
 
     def test_markdown_is_read(self):
         text = self._text_from(
