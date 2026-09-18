@@ -13,6 +13,9 @@
        5.08:1 and 5.74:1. */
     --fhi-ok: #1a7f37;
     --fhi-line: #e0e0e0;
+    /* A control's boundary, which has to be findable: 3:1 on white, where
+       --fhi-line is a hairline between blocks and much fainter. */
+    --fhi-field-line: #8a8a8a;
     --fhi-surface: #f9f9f9;
     --fhi-radius: 10px;
     --fhi-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
@@ -137,6 +140,57 @@
     outline-offset: 2px;
 }
 
+/* ---- The site's own input box -------------------------------------------
+   First component owned outright rather than borrowed from Bootstrap, built
+   from the tokens above. The form layer is the right place to start: the
+   site uses a thin slice of Bootstrap's (no selects, no validation states,
+   no input groups), so this is about twenty lines against four hundred uses
+   of its grid.
+
+   The border is darker than Bootstrap's #ced4da on purpose. A control's
+   boundary is what tells somebody where to type, and WCAG 1.4.11 asks 3:1
+   of it against what it sits on; Bootstrap's manages about 1.5:1 on white.
+   ------------------------------------------------------------------------ */
+.fhi-field {
+    display: block;
+    width: 100%;
+    padding: var(--fhi-space-2) var(--fhi-space-3);
+    font-family: inherit;
+    font-size: var(--fhi-text-input);
+    line-height: var(--fhi-line-body);
+    color: var(--fhi-ink);
+    background-color: #fff;
+    border: 1px solid var(--fhi-field-line);
+    border-radius: var(--fhi-radius);
+}
+
+.fhi-field::placeholder {
+    color: var(--fhi-ink-2);
+    opacity: 1;
+}
+
+.fhi-field:disabled,
+.fhi-field[readonly] {
+    background-color: var(--fhi-surface);
+}
+
+/* Height belongs to the content, not to the box. */
+textarea.fhi-field {
+    resize: vertical;
+    min-height: var(--fhi-space-11);
+}
+
+/* A tick box is a box too, just square and sized to the text beside it. */
+.fhi-check {
+    width: var(--fhi-space-4);
+    height: var(--fhi-space-4);
+    /* Sits on the text's own baseline rather than being nudged off the
+       scale: the label beside it is the thing to line up with. */
+    vertical-align: baseline;
+    accent-color: var(--fhi-green-ink);
+    border: 1px solid var(--fhi-field-line);
+}
+
 /* Bootstrap clears the outline on its own controls with `.btn:focus-visible
    {outline: 0}` and `.form-control:focus {outline: 0}`, and those beat a bare
    `:focus-visible` on specificity whatever order the sheets load in. Its
@@ -149,7 +203,9 @@
 .btn-check:focus-visible + .btn,
 .form-control:focus-visible,
 .form-select:focus-visible,
-.form-check-input:focus-visible {
+.form-check-input:focus-visible,
+.fhi-field:focus-visible,
+.fhi-check:focus-visible {
     outline: 2px solid var(--fhi-green-ink);
     outline-offset: 2px;
 }
