@@ -10,6 +10,7 @@ Covers:
 """
 
 import re
+from pathlib import Path
 
 from django.test import TestCase, Client
 from django.urls import reverse
@@ -298,3 +299,49 @@ class TheDeadlineItPrintsTest(TestCase):
         self.assertIn(
             "check the deadline", get_term("internal-appeal").definition.lower()
         )
+
+
+class TheGlossaryStylesStayOnTheGlossaryTest(TestCase):
+    """Page-local CSS became site-wide when it moved into custom.css.
+
+    /state-help/ already had a .quick-jump of its own. The glossary's version
+    is sticky, and that page's letter targets clear only twenty pixels, so an
+    unscoped rule put the alphabet bar on top of the heading it had just
+    jumped to.
+    """
+
+    def _css(self):
+        return (
+            Path(__file__).resolve().parent.parent.parent
+            / "fighthealthinsurance"
+            / "static"
+            / "css"
+            / "custom.css"
+        ).read_text()
+
+    def test_the_sticky_bar_is_not_claimed_site_wide(self):
+        css = self._css()
+
+        self.assertIn(".glossary-quick-jump {", css)
+        self.assertNotIn(
+            "\n.quick-jump {",
+            css,
+            "custom.css claims .quick-jump for the whole site, and "
+            "state_help_index.html already has one",
+        )
+
+    def test_the_index_uses_the_scoped_class(self):
+        response = self.client.get(reverse("glossary_index"))
+
+        self.assertContains(response, "glossary-quick-jump")
+
+    def test_the_hover_animation_asks_first(self):
+        css = self._css()
+
+        start = css.index(".term-card .card {")
+        resting = css[start : css.index("}", start)]
+        self.assertNotIn("transition", resting, "the resting rule animates")
+
+        after = css[css.index("}", start) :][:200]
+        self.assertIn("prefers-reduced-motion: no-preference", after)
+        self.assertIn("transition", after, "the animation went away entirely")

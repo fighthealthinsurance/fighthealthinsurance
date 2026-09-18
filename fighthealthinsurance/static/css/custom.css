@@ -2371,7 +2371,10 @@ textarea,
     padding: var(--fhi-space-7);
 }
 
-.quick-jump {
+/* Scoped to this page. /state-help/ already has a .quick-jump and does not
+   want a sticky one: its own letter targets clear only 20px, so a bar that
+   follows the scroll sits on top of the heading it just jumped to. */
+.glossary-quick-jump {
     background: #fff;
     padding: var(--fhi-space-4);
     border-radius: var(--fhi-radius);
@@ -2405,8 +2408,13 @@ textarea,
 }
 
 .term-card .card {
-    transition: all 0.2s ease;
     border-left: 3px solid transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .term-card .card {
+        transition: all 0.2s ease;
+    }
 }
 
 .term-card:hover .card {
