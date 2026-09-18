@@ -187,29 +187,61 @@ class EveryPubliclyCacheablePageTest(TestCase):
         self.assertGreater(len(checked), 15, f"only reached {checked}")
         self.assertGreater(len(cacheable), 15, f"only found {cacheable} cacheable")
 
-    def test_nothing_else_caches_a_whole_page(self):
+    def test_nothing_else_caches_a_whole_page_of_html(self):
         """The tripwire under the sweep above.
 
         A page cached anywhere but ``StaticIshView`` would not be swept, so
-        adding one has to be a decision somebody makes on purpose. The
-        sitemap is the one exception: it renders no template and carries no
-        visitor context.
-        """
-        urls_source = (
-            Path(__file__).resolve().parent.parent.parent
-            / "fighthealthinsurance"
-            / "urls.py"
-        ).read_text()
+        adding one has to be a decision somebody makes on purpose rather
+        than a page nobody checks. Counting only in urls.py was not enough:
+        llms.txt and robots.txt carry their own cache_page decorators in
+        agent_docs.py, so the whole package is searched.
 
-        wrapped = urls_source.count("cache_page(")
+        The exceptions are all endpoints that render no template, so they
+        cannot carry base.html's visitor metadata whatever the cache does.
+        The test below proves that rather than trusting it.
+        """
+        package = Path(__file__).resolve().parent.parent.parent / "fighthealthinsurance"
+
+        found = {
+            str(path.relative_to(package)): path.read_text().count("cache_page(")
+            for path in package.rglob("*.py")
+            if "cache_page(" in path.read_text()
+        }
+
         self.assertEqual(
-            wrapped,
-            1,
-            "urls.py wraps %d routes in cache_page. Only the sitemap should: "
-            "a cached page belongs on StaticIshView, which blanks the "
-            "visitor's context and is covered by the sweep above." % wrapped,
+            found,
+            {
+                # StaticIshView's own wrapping, which the sweep covers.
+                "views.py": 1,
+                # The sitemap: XML, no template, no visitor context.
+                "urls.py": 1,
+                # llms.txt and robots.txt: markdown and plain text.
+                "agent_docs.py": 2,
+            },
+            "something new caches a whole response. If it renders a template "
+            "it belongs on StaticIshView, which blanks the visitor's context "
+            "and is covered by the sweep above; if it does not, add it here "
+            "and to the content-type test below.",
         )
-        self.assertIn("sitemap_view", urls_source)
+
+    def test_the_cached_endpoints_outside_that_base_class_are_not_html(self):
+        """Why those exceptions are safe, asserted rather than assumed.
+
+        base.html is where the visitor's case id is emitted, so an endpoint
+        that renders no HTML cannot leak it however long it is cached.
+        """
+        for name in ("llms_txt", "robots_txt", "django.contrib.sitemaps.views.sitemap"):
+            with self.subTest(route=name):
+                response = mid_appeal_client().get(reverse(name))
+
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn(
+                    "text/html",
+                    response.headers.get("Content-Type", ""),
+                    f"{name} is cached and now serves HTML, so it can carry "
+                    "the visitor's case id",
+                )
+                self.assertNotIn(CASE_UUID, response.content.decode(errors="replace"))
 
 
 class TheMixinIsWiredTest(TestCase):
