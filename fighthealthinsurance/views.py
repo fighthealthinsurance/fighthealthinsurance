@@ -50,6 +50,7 @@ from PIL import Image
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
+from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.denial_context import (
     GENERATED_QUESTION_PREFIX,
@@ -2165,6 +2166,21 @@ class InitialProcessView(generic.FormView):
 DENIAL_REF_QUERY_PARAM = "ref"
 
 
+def stored_history_consent(denial_id) -> bool:
+    """Whether this case says its health history may go in the letter.
+
+    health_history.html renders this as the state of the box. Defaults to
+    yes when the denial cannot be resolved, which is what the box shows on a
+    fresh case and what the site does with a history either way.
+    """
+    if not denial_id:
+        return True
+    denial = models.Denial.objects.filter(denial_id=denial_id).first()
+    if denial is None:
+        return True
+    return history_may_be_used(denial)
+
+
 def stored_health_history(denial_id) -> str:
     """What is already saved in ``Denial.health_history`` for this case.
 
@@ -2649,6 +2665,9 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         initial["health_history_seen"] = health_history_digest(
             stored, denial_ref.get("denial_id")
         )
+        initial["include_provided_health_history_in_appeal"] = stored_history_consent(
+            denial_ref.get("denial_id")
+        )
         return initial
 
     def get_context_data(self, **kwargs):
@@ -2659,14 +2678,13 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         context["back_url"] = reverse("scan")  # Scan doesn't need denial ref
         return context
 
-    # Neither consent flag has a checkbox on this page, so "unticked" and
-    # "never offered" look identical in the POST and a plain Next would decide
-    # both by omission. They stay on the form because the REST serializer is
-    # built from it; the page that cannot ask drops them instead.
-    UNRENDERED_CONSENT_FIELDS = (
-        "health_history_anonymized",
-        "include_provided_health_history_in_appeal",
-    )
+    # The page now asks whether the history may go in the letter, so an
+    # unticked box is an answer and is saved as one. health_history_anonymized
+    # is still not asked about anywhere, so "unticked" and "never offered"
+    # remain indistinguishable in its POST and a plain Next must not decide it
+    # by omission. It stays on the form because the REST serializer is built
+    # from it, and the page that cannot ask drops it instead.
+    UNRENDERED_CONSENT_FIELDS = ("health_history_anonymized",)
 
     def form_valid(self, form):
         submitted = dict(form.cleaned_data)

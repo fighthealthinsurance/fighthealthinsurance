@@ -27,6 +27,21 @@ Optional: Health History
     This is what is saved for this appeal. To remove it, clear the box and press Next.
   </p>
   {% endif %}
+  <div class="form-check mt-2">
+    <input type="checkbox" class="form-check-input"
+           name="include_provided_health_history_in_appeal"
+           id="include_provided_health_history_in_appeal"
+           form="fuck_health_insurance_form"
+           {% if form.include_provided_health_history_in_appeal.value %}checked{% endif %}>
+    <label class="form-check-label" for="include_provided_health_history_in_appeal">
+      Use this in my appeal letter
+    </label>
+    <p class="form-text text-muted">
+      Ticked, what you wrote here is given to the AI that writes your letter,
+      along with the rest of your case. Unticked, it is still saved for this
+      appeal but is left out of the letter and out of what the AI is shown.
+    </p>
+  </div>
   <br>
 </div>
 <script src="{% static 'js/dist/formPersistence.bundle.js' %}"></script>

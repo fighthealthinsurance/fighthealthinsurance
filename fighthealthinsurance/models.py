@@ -2492,7 +2492,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     verified_procedure = models.TextField(primary_key=False, null=True, default="")
     verified_diagnosis = models.TextField(primary_key=False, null=True, default="")
     flag_for_exclude = models.BooleanField(default=False, null=True)
-    include_provided_health_history_in_appeal = models.BooleanField(default=False)
+    # The person's answer to "may we put this in the letter", asked on the
+    # health history page. Defaults to True because that is what the site has
+    # always done with a history somebody typed into a box labelled for it;
+    # the value only becomes a decision once they are asked and untick.
+    include_provided_health_history_in_appeal = models.BooleanField(default=True)
     # Used to mark claims related to dental services
     dental_claim = models.BooleanField(default=False)
     # Used to mark claims not related to human patients (e.g., pet insurance)
