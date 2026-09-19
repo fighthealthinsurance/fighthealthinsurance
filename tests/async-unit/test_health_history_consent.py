@@ -245,3 +245,32 @@ class TestARefusalMidGeneration:
 
         assert async_to_sync(ahistory_may_be_used)(_Answered(False)) is False
         assert async_to_sync(ahistory_may_be_used)(_Answered(None)) is True
+
+
+class TestWhenTheAnswerCannotBeRead:
+    """A refusal lives in the database, so a read that fails may be failing
+    to see one. The snapshot is the thing that cannot be trusted."""
+
+    @pytest.mark.django_db
+    def test_it_fails_closed(self):
+        from unittest.mock import patch
+
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.denial_history_consent import (
+            ahistory_may_be_used,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("unreadable@example.com"),
+            denial_text="Denied.",
+            health_history_consent=True,
+        )
+
+        with patch.object(
+            Denial.objects, "filter", side_effect=RuntimeError("database is away")
+        ):
+            answer = async_to_sync(ahistory_may_be_used)(denial)
+
+        assert answer is False, "a failed read used the stale in-memory yes"

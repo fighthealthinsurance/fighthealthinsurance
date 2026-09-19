@@ -14,6 +14,8 @@ those letters worse without telling anyone. Once asked, the answer is the
 answer.
 """
 
+from loguru import logger
+
 
 def history_may_be_used(denial) -> bool:
     """The person's answer, or the status quo for a row nobody asked."""
@@ -52,10 +54,18 @@ async def ahistory_may_be_used(denial) -> bool:
             .values_list("health_history_consent", flat=True)
             .afirst()
         )
-    except Exception:
-        # Never let a consent check take a generation down; the snapshot is
-        # what it was a moment ago.
-        return history_may_be_used(denial)
+    except Exception as e:
+        # Fail closed. The snapshot is exactly what cannot be trusted here:
+        # a refusal is written to the database, so a read that fails may be
+        # failing to see one, and the in-memory copy would still say yes.
+        # The cost of being wrong this way is a letter without a history the
+        # person would have allowed; the cost of the other way is using one
+        # they refused.
+        logger.opt(exception=True).warning(
+            f"Could not re-read health history consent for denial "
+            f"{denial_id}, so treating it as refused: {e}"
+        )
+        return False
     if answer is None:
         return True
     return bool(answer)
