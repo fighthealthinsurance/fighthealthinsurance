@@ -6,6 +6,8 @@ Also provides encrypted file decryption for EncryptedFileField.
 """
 
 import re
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
 import threading
 import io
 from typing import Any, Dict, Optional
@@ -209,14 +211,24 @@ def extract_text_from_html_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
     return _as_sections(content)
 
 
+#: An actual encoding declaration, rather than the word appearing in prose.
+#: Matching "charset" anywhere marked ordinary documents as declared and sent
+#: them to the guesser, which is the thing this exists to avoid.
+_DECLARED_ENCODING = re.compile(
+    rb"""<\?xml[^>]*encoding\s*=|"""
+    rb"""<meta[^>]*charset\s*=|"""
+    rb"""<meta[^>]*http-equiv\s*=\s*["']?content-type["']?[^>]*charset\s*=""",
+    re.I,
+)
+
+
 def _declares_an_encoding(data: bytes) -> bool:
     """Whether the document says what encoding it is in.
 
     Only the head is examined, which is where a declaration is valid and
     where a parser looks for one.
     """
-    head = data[:2048].lower()
-    return b"charset" in head or data[:3] == b"\xef\xbb\xbf"
+    return bool(_DECLARED_ENCODING.search(data[:2048])) or data[:3] == b"\xef\xbb\xbf"
 
 
 #: How much text goes in one section. A section is the unit a caller keeps or
@@ -224,6 +236,10 @@ def _declares_an_encoding(data: bytes) -> bool:
 #: mentions the search term once was being parsed successfully and then
 #: dropped whole for exceeding the caller's budget.
 SECTION_CHARS = 2000
+
+#: Carried from the end of one hard cut into the next, so a search term that
+#: straddles the cut is whole in the second one.
+SECTION_OVERLAP = 200
 
 
 def _as_sections(content: str) -> tuple[str, Dict[int, str]]:
@@ -241,7 +257,11 @@ def _as_sections(content: str) -> tuple[str, Dict[int, str]]:
             continue
         while len(paragraph) > SECTION_CHARS:
             sections[len(sections) + 1] = paragraph[:SECTION_CHARS]
-            paragraph = paragraph[SECTION_CHARS:]
+            # Overlap, because a caller searches each section on its own and
+            # a hard cut through "medical necessity" leaves neither half
+            # containing it. The overlap is longer than any phrase anybody
+            # searches for.
+            paragraph = paragraph[SECTION_CHARS - SECTION_OVERLAP :]
         if len(buffer) + len(paragraph) + 1 > SECTION_CHARS and buffer:
             sections[len(sections) + 1] = buffer
             buffer = paragraph
@@ -261,14 +281,35 @@ def _as_sections(content: str) -> tuple[str, Dict[int, str]]:
 TEXTUAL_EXTENSIONS = (".pdf", ".docx", ".txt", ".md", ".markdown", ".html", ".htm")
 
 
-#: Serializes every document parse in this process. PyMuPDF documents that
-#: driving it from several threads can crash the interpreter, and these
-#: parsers run on executor threads, so two patients generating at once could
-#: put two parses in flight. A crash there does not raise: it takes the
-#: worker down with every other generation on it. The lock lives here rather
-#: than at a call site because there is more than one caller, and the one
-#: that is not covered is the one that crashes the worker.
+#: The one thread documents are parsed on in this process.
+#:
+#: PyMuPDF documents that driving it from several threads can crash the
+#: interpreter, and a crash there does not raise: it takes the worker down
+#: with every other generation on it. A single-worker pool serializes them.
+#:
+#: A pool rather than a lock on the shared executor, because a lock there
+#: pins one of its threads for the whole parse while it waits. The default
+#: executor is what every other asyncio.to_thread call in the process uses,
+#: so a few large documents could occupy all of it and stall work that has
+#: nothing to do with documents. Waiting on this pool costs a coroutine, not
+#: a thread.
+_PARSER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fhi-doc-parse")
+
+#: Still held for a caller that reaches the parser synchronously, which the
+#: pool does not serialize on its own.
 _PARSING = threading.Lock()
+
+
+async def aextract_text_from_bytes(
+    data: bytes, filename: str
+) -> tuple[str, Dict[int, str]]:
+    """Parse a document on the parser's own thread.
+
+    The way an async caller should reach the parser: it holds no thread from
+    the shared executor while the parse runs.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_PARSER, extract_text_from_bytes, data, filename)
 
 
 def extract_text_from_bytes(data: bytes, filename: str) -> tuple[str, Dict[int, str]]:

@@ -139,11 +139,11 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
 
         read_and_decrypt_file(field, 1024)
 
-        self.assertTrue(watched.asked_for, "the file was never read")
-        self.assertNotIn(
-            None,
+        self.assertEqual(
             watched.asked_for,
-            "the whole file was read before its size was judged",
+            [1025],
+            "the read has to stop one byte past the ceiling: anything larger "
+            "still allocates whatever the file happens to be",
         )
 
     def test_two_parses_never_overlap(self):
@@ -187,6 +187,35 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
                 thread.join()
 
         self.assertEqual(overlapped, [], "two parses ran at the same time")
+
+    def test_the_parse_does_not_occupy_the_shared_executor(self):
+        """A lock held on the default executor pins one of its threads.
+
+        Every asyncio.to_thread call in the process shares that pool, so a
+        few large documents could stall work with nothing to do with
+        documents. Parsing has its own thread.
+        """
+        import asyncio
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        seen = {}
+
+        def note(data, filename):
+            import threading
+
+            seen["thread"] = threading.current_thread().name
+            return "", {}
+
+        async def run():
+            with mock.patch.object(
+                ml_document_extraction, "extract_text_from_bytes", note
+            ):
+                await ml_document_extraction.aextract_text_from_bytes(b"x", "a.txt")
+
+        asyncio.run(run())
+
+        self.assertIn("fhi-doc-parse", seen["thread"], seen)
 
     def test_every_caller_of_the_parser_is_covered(self):
         """The lock is at the parser, not at one of its call sites.
@@ -264,6 +293,37 @@ class EveryAcceptedUploadIsReadTest(TransactionTestCase):
         text = self._text_from("long.html", html)
 
         self.assertIn("medical necessity", text.lower())
+
+    def test_a_phrase_across_a_hard_cut_is_still_found(self):
+        """Sections are searched one at a time.
+
+        A cut through "medical necessity" leaves neither half containing it,
+        so a long document could be parsed, sectioned, and then match
+        nothing it actually says.
+        """
+        from fighthealthinsurance.ml.ml_document_extraction import SECTION_CHARS
+
+        filler = "a" * (SECTION_CHARS - 8)
+        html = f"<html><body><p>{filler}medical necessity applies.</p></body></html>"
+
+        text = self._text_from("cut.html", html.encode())
+
+        self.assertIn("medical necessity", text.lower())
+
+    def test_the_word_charset_in_prose_is_not_a_declaration(self):
+        """Matching it anywhere sent ordinary documents to the guesser."""
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            _declares_an_encoding,
+        )
+
+        self.assertFalse(
+            _declares_an_encoding(
+                b"<html><body><p>Our portal charset settings changed.</p></body></html>"
+            )
+        )
+        self.assertTrue(
+            _declares_an_encoding(b'<html><head><meta charset="ISO-8859-1">')
+        )
 
     def test_undeclared_utf8_is_not_guessed_at(self):
         """Mostly ASCII with one accent loses a single-byte guess."""

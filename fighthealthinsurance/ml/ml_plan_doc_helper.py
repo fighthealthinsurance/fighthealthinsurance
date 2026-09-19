@@ -15,7 +15,7 @@ from loguru import logger
 
 from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.ml.ml_document_extraction import (
-    extract_text_from_bytes,
+    aextract_text_from_bytes,
     read_and_decrypt_file,
 )
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
@@ -195,8 +195,7 @@ Focus on terms that would appear in an insurance plan document."""
                     )
                     if not decrypted_bytes:
                         continue
-                    pages_text = await asyncio.to_thread(
-                        cls._extract_pages_with_terms,
+                    pages_text = await cls._extract_pages_with_terms(
                         decrypted_bytes,
                         file_field.name or "",
                         search_terms,
@@ -222,7 +221,7 @@ Focus on terms that would appear in an insurance plan document."""
         return "\n\n---\n\n".join(relevant_sections)
 
     @classmethod
-    def _extract_pages_with_terms(
+    async def _extract_pages_with_terms(
         cls, data: bytes, filename: str, search_terms: List[str]
     ) -> List[str]:
         """Extract pages from decrypted document bytes that contain any term.
@@ -232,9 +231,9 @@ Focus on terms that would appear in an insurance plan document."""
         one search term. Runs synchronously so callers should invoke it via
         ``asyncio.to_thread``.
         """
-        # Serialized inside extract_text_from_bytes, which is where every
-        # caller of the parser goes through.
-        _full_text, page_dict = extract_text_from_bytes(data, filename)
+        # The parse runs on the parser's own thread; the filtering below is
+        # cheap string work and stays here.
+        _full_text, page_dict = await aextract_text_from_bytes(data, filename)
         if not page_dict:
             return []
         lowered_terms = [term.lower() for term in search_terms if term]
