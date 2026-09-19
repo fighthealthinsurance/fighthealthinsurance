@@ -3835,6 +3835,19 @@ class DenialCreatorHelper:
             # health_history an empty string is a decision, not silence -- it
             # is how the page deletes what the person wrote, and no other page
             # can -- so the blank is written rather than refused.
+            # Read before the write below, because the same submit can
+            # clear the box and untick the consent: by the time the consent
+            # branch runs, the history it would ask about is the empty
+            # string it just wrote, and the case would look like one that
+            # never had a history to derive anything from.
+            history_before_this_submit: Optional[str] = None
+            if health_history_consent is False:
+                history_before_this_submit = (
+                    Denial.objects.select_for_update()
+                    .filter(pk=denial.pk)
+                    .values_list("health_history", flat=True)
+                    .first()
+                )
             if health_history is not None and not cls._history_submit_is_stale(
                 denial, health_history, health_history_seen, locked=True
             ):
@@ -3855,7 +3868,7 @@ class DenialCreatorHelper:
                 if (
                     health_history_consent is False
                     and previous_consent is not False
-                    and denial.health_history
+                    and history_before_this_submit
                 ):
                     # Questions and citations produced while the history was
                     # allowed were chosen out of it, and both are reused

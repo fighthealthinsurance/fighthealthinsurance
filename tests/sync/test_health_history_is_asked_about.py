@@ -366,6 +366,39 @@ class WhatSayingNoDoesAndDoesNotDoTest(TestCase):
         self.assertIsNone(self.denial.generated_questions_for)
         self.assertIsNone(self.denial.candidate_generated_questions)
 
+    def test_clearing_the_box_and_refusing_in_one_submit_still_drops_it(self):
+        """The page can do both at once, and that is the strongest refusal.
+
+        The history is written before the consent is read, so by then the
+        stored value is the empty box that was just saved, and the case
+        looks like one that never had a history for anything to be derived
+        from. The value from before the submit is what the question is
+        about.
+        """
+        Denial.objects.filter(pk=self.denial.pk).update(
+            ml_citation_context=["Chosen because of the Aimovig history"],
+            generated_questions=[["How long on Aimovig?", ""]],
+        )
+
+        self.client.post(
+            reverse("hh"),
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": EMAIL,
+                "semi_sekret": SEMI_SEKRET,
+                "health_history": "",
+                "health_history_seen": health_history_digest(
+                    HISTORY, self.denial.denial_id
+                ),
+            },
+        )
+
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.health_history, "")
+        self.assertIs(self.denial.health_history_consent, False)
+        self.assertIsNone(self.denial.ml_citation_context)
+        self.assertIsNone(self.denial.generated_questions)
+
     def test_a_case_with_no_history_keeps_its_cached_material(self):
         """Nothing here came out of a history, so nothing here is dropped.
 
