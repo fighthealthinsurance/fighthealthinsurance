@@ -399,6 +399,33 @@ class WhatSayingNoDoesAndDoesNotDoTest(TestCase):
         self.assertIsNone(self.denial.ml_citation_context)
         self.assertIsNone(self.denial.generated_questions)
 
+    def test_a_cache_written_after_the_page_loaded_is_still_cleared(self):
+        """The instance the request holds is not what has to be cleared.
+
+        A run in flight can write its result between the row being read for
+        this request and this request saving it. Clearing only the columns
+        that look full on the copy in hand would leave that one behind, and
+        it is the copy in hand that shows nothing.
+        """
+        from fighthealthinsurance import common_view_logic
+
+        stale = Denial.objects.get(pk=self.denial.pk)
+        self.assertIsNone(stale.ml_citation_context, "the copy in hand is empty")
+
+        # The worker finishes here, after the request read the row.
+        Denial.objects.filter(pk=self.denial.pk).update(
+            ml_citation_context=["Written after this request read the row"],
+            candidate_generated_questions=[["And this one too", ""]],
+        )
+
+        common_view_logic.DenialCreatorHelper._update_denial(
+            stale, health_history_consent=False
+        )
+
+        self.denial.refresh_from_db()
+        self.assertIsNone(self.denial.ml_citation_context)
+        self.assertIsNone(self.denial.candidate_generated_questions)
+
     def test_a_history_deleted_in_an_earlier_visit_is_still_covered(self):
         """Clearing the box and refusing can be two visits, not one.
 

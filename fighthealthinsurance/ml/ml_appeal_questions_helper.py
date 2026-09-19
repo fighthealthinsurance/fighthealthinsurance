@@ -26,10 +26,26 @@ def questions_fingerprint(procedure: Optional[str], diagnosis: Optional[str]) ->
 
 
 def _claim_generated_questions_sync(
-    denial_id: int, questions: List[Tuple[str, str]], generated_for: str
+    denial_id: int,
+    questions: List[Tuple[str, str]],
+    generated_for: str,
+    used_history: bool = False,
 ) -> Optional[List[Tuple[str, str]]]:
     with transaction.atomic():
         fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
+        if used_history and fresh.health_history_consent is False:
+            # The answer changed while this ran. Read here rather than
+            # before the call, because the row is locked here and the store
+            # happens here: a check outside this block can be overtaken by
+            # the refusal between the two. Treated the way this function
+            # already treats a run whose inputs were corrected mid-run:
+            # what it produced is not stored and not handed back.
+            logger.info(
+                f"Health history consent was withdrawn while questions for "
+                f"denial {denial_id} were being generated; keeping neither "
+                "the result nor a copy of it"
+            )
+            return None
         current = questions_fingerprint(fresh.procedure, fresh.diagnosis)
         # A row from before the stamp existed holds a set of unknown origin;
         # a nonempty one is kept, as it always was, rather than replaced under
@@ -59,7 +75,10 @@ def _claim_generated_questions_sync(
 
 
 async def claim_generated_questions(
-    denial_id: int, questions: List[Tuple[str, str]], generated_for: str
+    denial_id: int,
+    questions: List[Tuple[str, str]],
+    generated_for: str,
+    used_history: bool = False,
 ) -> Optional[List[Tuple[str, str]]]:
     """Store ``questions`` for the inputs they were generated for, and return
     what stands for the row's current inputs.
@@ -73,7 +92,7 @@ async def claim_generated_questions(
     under a row lock; ``select_for_update`` is a plain read on sqlite.
     """
     stored = await database_sync_to_async(_claim_generated_questions_sync)(
-        denial_id, questions, generated_for
+        denial_id, questions, generated_for, used_history
     )
     return cast(Optional[List[Tuple[str, str]]], stored)
 
@@ -434,25 +453,30 @@ class MLAppealQuestionsHelper:
         logger.debug(
             f"Generated {len(questions)} questions for denial {denial.denial_id}"
         )
-        if used_history and not await ahistory_may_be_used(denial):
-            # The answer changed while this ran. Treated the same way as
-            # inputs corrected mid-run, which this function already discards:
-            # questions chosen out of a history the person has since asked us
-            # not to use are not stored, and a stored copy would be read back
-            # ahead of the consent check by the next run.
-            logger.info(
-                f"Health history consent was withdrawn while questions for "
-                f"denial {denial.denial_id} were being generated; keeping "
-                "neither the result nor a copy of it"
-            )
-            return None
         if speculative:
             if questions:
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                # Conditional in one statement rather than a check and then
+                # a write: a refusal landing between the two would be
+                # overwritten by the write. A row whose answer is no takes
+                # nothing from a run that was allowed to use the history.
+                candidates = Denial.objects.filter(denial_id=denial.denial_id)
+                if used_history:
+                    candidates = candidates.filter(
+                        health_history_consent__in=[True, None]
+                    )
+                if not await candidates.aupdate(
                     candidate_generated_questions=questions
-                )
+                ):
+                    if used_history:
+                        logger.info(
+                            f"Health history consent was withdrawn while "
+                            f"questions for denial {denial.denial_id} were "
+                            "being generated; keeping neither the result nor "
+                            "a copy of it"
+                        )
+                        return None
             return questions
         # Empty included: a finished run with nothing to ask is stored as [].
         return await claim_generated_questions(
-            denial.denial_id, questions, generated_for
+            denial.denial_id, questions, generated_for, used_history
         )

@@ -3863,18 +3863,19 @@ class DenialCreatorHelper:
                     # shown is removed: these are stored model inputs, not
                     # letters.
                     #
-                    # Every refusal clears, not only the first, and whether
-                    # or not a history is stored now. Somebody can clear the
-                    # box in one visit and untick it in the next, and a run
-                    # still in flight can write a cache back after a
-                    # refusal, so asking "did this case have a history" at
-                    # this moment gets the wrong answer in both directions.
-                    # The cost of clearing a cache that owes nothing to a
-                    # history is that the next run recomputes it.
+                    # Every refusal clears, not only the first, whether or
+                    # not a history is stored now, and whether or not this
+                    # copy of the row shows anything in the columns.
+                    # Somebody can clear the box in one visit and untick it
+                    # in the next, and a run still in flight can write a
+                    # cache back between this instance being loaded and
+                    # this save, which a "only if it holds something" test
+                    # would then leave in place. The cost of clearing a
+                    # cache that owes nothing to a history is that the next
+                    # run recomputes it.
                     for cache_field in DERIVED_FROM_HEALTH_HISTORY:
-                        if getattr(denial, cache_field, None) is not None:
-                            setattr(denial, cache_field, None)
-                            changed_fields.add(cache_field)
+                        setattr(denial, cache_field, None)
+                        changed_fields.add(cache_field)
             denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:
