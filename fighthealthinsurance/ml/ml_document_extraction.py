@@ -120,32 +120,55 @@ def extract_text_from_pdf_path(
 #: The stored-bytes limit bounds the archive, not what comes out of it: zip
 #: is free to turn a few hundred kilobytes into gigabytes, and this is the
 #: first path that hands a patient's upload to a real document parser rather
-#: than decoding it as text. Deflate cannot fabricate more than the member
-#: headers declare -- the reader stops at the declared size -- so adding the
-#: declared sizes up before unpacking is a true bound. Generous: a real plan
-#: document runs to a few megabytes of text and some scanned pages.
+#: than decoding it as text. Generous: a real plan document runs to a few
+#: megabytes of text and some scanned pages.
 MAX_DOCX_UNPACKED_BYTES = 200 * 1024 * 1024
+
+#: How much is decompressed at a time while measuring. Each read is what
+#: bounds the allocation, so it has to stay small next to the total.
+_UNPACK_CHUNK = 1024 * 1024
 
 
 def _docx_unpacks_too_large(data: bytes) -> bool:
-    """Would this archive's declared contents exceed what we will unpack?"""
+    """Does this archive unpack to more than we are willing to hold?
+
+    Measured by unpacking it, a chunk at a time, and stopping at the first
+    chunk that takes the running total over the limit.
+
+    The declared member sizes are not a bound and cannot be used as one: the
+    reader truncates a member's output to its declared size, but only after
+    decompressing, and a chunk of arbitrary size. A crafted archive declares
+    a tiny member and the allocation happens before the truncation does.
+    Reading it ourselves in fixed chunks is what actually bounds it, because
+    each read decompresses at most a chunk.
+    """
     import zipfile
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            declared = sum(entry.file_size for entry in archive.infolist())
+            unpacked = 0
+            for entry in archive.infolist():
+                if entry.is_dir():
+                    continue
+                with archive.open(entry) as member:
+                    while True:
+                        chunk = member.read(_UNPACK_CHUNK)
+                        if not chunk:
+                            break
+                        unpacked += len(chunk)
+                        if unpacked > MAX_DOCX_UNPACKED_BYTES:
+                            logger.warning(
+                                f"DOCX unpacks to more than the "
+                                f"{MAX_DOCX_UNPACKED_BYTES} bytes this will "
+                                "hold; skipping it rather than risking the "
+                                "worker other patients are generating on"
+                            )
+                            return True
     except Exception as e:
         # Not a readable archive. Let the parser produce the empty result
         # and log it, rather than inventing a second failure mode here.
         logger.debug(f"Could not read the DOCX archive to size it: {e}")
         return False
-    if declared > MAX_DOCX_UNPACKED_BYTES:
-        logger.warning(
-            f"DOCX declares {declared} bytes unpacked, over the "
-            f"{MAX_DOCX_UNPACKED_BYTES} this will unpack; skipping it rather "
-            "than risking the worker other patients are generating on"
-        )
-        return True
     return False
 
 
@@ -156,19 +179,39 @@ def _iter_docx_text(doc) -> Any:
     criteria or appeal deadline sit in a table loses exactly the provisions
     the letter needs. Walking the body element keeps a table's rows where
     they were written instead of appending them somewhere else.
+
+    Tables nest: a layout table holding a real one is ordinary in a plan
+    document, and a cell's own ``text`` stops at its immediate paragraphs,
+    so the walk recurses through cells rather than reading them flat.
     """
+    yield from _iter_docx_block_text(doc.element.body, doc)
+
+
+def _iter_docx_block_text(parent, doc) -> Any:
+    """Paragraph and table text under one element, in document order."""
     from docx.oxml.ns import qn
     from docx.table import Table
     from docx.text.paragraph import Paragraph
 
-    body = doc.element.body
-    for child in body.iterchildren():
+    for child in parent.iterchildren():
         if child.tag == qn("w:p"):
             yield Paragraph(child, doc).text
         elif child.tag == qn("w:tbl"):
             for row in Table(child, doc).rows:
-                cells = [cell.text.strip() for cell in row.cells]
-                yield " | ".join(cell for cell in cells if cell)
+                cells = []
+                for cell in row.cells:
+                    # cell._tc is the cell's own element. Private, and the
+                    # only way to keep a nested table in the order it was
+                    # written; cell.text stops at immediate paragraphs.
+                    parts = [
+                        part.strip()
+                        for part in _iter_docx_block_text(cell._tc, doc)
+                        if part and part.strip()
+                    ]
+                    if parts:
+                        cells.append(" ".join(parts))
+                if cells:
+                    yield " | ".join(cells)
 
 
 def extract_text_from_docx_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
@@ -259,6 +302,11 @@ class _Payload:
     dequeues it, which is behind however long the parse in front of it
     takes. Passing the bytes inside this instead means a request that gives
     up can empty it, and what stays on the queue is an empty holder.
+
+    What this does not do, because a thread cannot be cancelled: a parse
+    already running keeps its copy until it finishes. That is bounded by the
+    document, which is bounded by the read, and it is why the parse is on
+    its own thread rather than somewhere a stuck one would be inherited.
     """
 
     __slots__ = ("data",)

@@ -146,6 +146,40 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
             "still allocates whatever the file happens to be",
         )
 
+    def test_the_real_path_asks_for_a_bounded_read(self):
+        """The bound has to be at the production call, not only available.
+
+        The test above proves the helper stops reading when it is given a
+        ceiling. It would still pass if the plan-document path stopped
+        handing it one and went back to reading the file whole and checking
+        the length afterwards, which is the cost this exists to avoid.
+        """
+        from fighthealthinsurance.ml import ml_plan_doc_helper
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("bounded@example.com"),
+            denial_text="Denied.",
+        )
+        doc = PlanDocuments(denial=denial)
+        doc.plan_document_enc.save("plan.pdf", ContentFile(b"%PDF-1.4 tiny"), save=True)
+
+        asked = []
+
+        def watched(file_field, max_bytes=None):
+            asked.append(max_bytes)
+            return None
+
+        with mock.patch.object(
+            ml_plan_doc_helper, "read_and_decrypt_file", watched
+        ):
+            asyncio.run(
+                MLPlanDocHelper.extract_relevant_text(
+                    denial.denial_id, ["medical necessity"]
+                )
+            )
+
+        self.assertEqual(asked, [MLPlanDocHelper.MAX_DOCUMENT_BYTES], asked)
+
     def test_two_parses_never_overlap(self):
         """PyMuPDF is not safe to drive from several threads at once.
 
@@ -224,6 +258,11 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
 
         self.assertTrue(pages, "the parse never happened, so nothing was proven")
         self.assertIn("fhi-doc-parse", seen["thread"], seen)
+        self.assertEqual(
+            ml_document_extraction._PARSER._max_workers,
+            1,
+            "a second parser thread is a second thread inside PyMuPDF",
+        )
 
     def test_the_pdf_branch_itself_runs_under_the_lock(self):
         """The branch that crashes the worker is the one that must be held.
@@ -393,8 +432,12 @@ class EveryAcceptedUploadIsReadTest(TransactionTestCase):
         self.assertIn("medical necessity", text.lower())
 
 
-def _make_docx_bytes() -> bytes:
-    """A document whose deadline is in a table, as real plans write them."""
+def _make_docx_bytes(nested: bool = False) -> bytes:
+    """A document whose deadline is in a table, as real plans write them.
+
+    With ``nested``, the real table sits inside a layout table, which is how
+    a plan document laid out in Word usually arrives.
+    """
     import io as _io
 
     import docx
@@ -402,6 +445,11 @@ def _make_docx_bytes() -> bytes:
     document = docx.Document()
     document.add_paragraph("Plan overview for medical necessity review.")
     table = document.add_table(rows=1, cols=2)
+    if nested:
+        outer = document.add_table(rows=1, cols=1)
+        inner = outer.rows[0].cells[0].add_table(rows=1, cols=2)
+        inner.rows[0].cells[0].text = "Nested deadline"
+        inner.rows[0].cells[1].text = "30 days from receipt of this notice"
     table.rows[0].cells[0].text = "Appeal deadline"
     table.rows[0].cells[1].text = "60 days from receipt of this notice"
     buffer = _io.BytesIO()
@@ -428,6 +476,27 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
         self.assertIn("Appeal deadline", full)
         self.assertIn("60 days from receipt", full)
         self.assertTrue(pages)
+        self.assertLess(
+            full.index("medical necessity"),
+            full.index("Appeal deadline"),
+            "the table was appended rather than left where it was written",
+        )
+
+    def test_a_table_inside_a_table_is_read(self):
+        """Plans laid out in Word nest a real table in a layout one.
+
+        A cell's own text stops at its immediate paragraphs, so reading
+        cells flat loses whatever is nested inside them, which is where the
+        deadline tends to be.
+        """
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            extract_text_from_docx_bytes,
+        )
+
+        full, _pages = extract_text_from_docx_bytes(_make_docx_bytes(nested=True))
+
+        self.assertIn("Nested deadline", full)
+        self.assertIn("30 days from receipt", full)
 
     def test_an_archive_that_unpacks_too_large_is_not_opened(self):
         """Zip turns a small upload into an arbitrarily large one.
@@ -440,13 +509,93 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
 
         data = _make_docx_bytes()
 
+        import docx
+
+        opened = []
+        real_document = docx.Document
+
+        def watched(*args, **kwargs):
+            opened.append(args)
+            return real_document(*args, **kwargs)
+
         with mock.patch.object(
             ml_document_extraction, "MAX_DOCX_UNPACKED_BYTES", 16
-        ):
+        ), mock.patch.object(docx, "Document", watched):
             full, pages = ml_document_extraction.extract_text_from_docx_bytes(data)
 
         self.assertEqual(full, "")
         self.assertEqual(pages, {})
+        self.assertEqual(
+            opened, [], "the archive was opened before it was measured"
+        )
+
+    def test_the_measurement_never_unpacks_more_than_a_chunk(self):
+        """The declared sizes are not a bound, so they are not used as one.
+
+        A zip member's output is truncated to its declared size only after
+        it has been decompressed, and a crafted archive declares a tiny
+        member to get an arbitrarily large allocation first. What bounds it
+        is asking for a chunk at a time and stopping at the first chunk that
+        goes over, so that is what this asserts.
+        """
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        chunk = ml_document_extraction._UNPACK_CHUNK
+
+        class Member:
+            def __init__(self, total):
+                self.left = total
+                self.reads = []
+
+            def read(self, size=-1):
+                self.reads.append(size)
+                if size is None or size < 0:
+                    size = self.left
+                taken = min(size, self.left)
+                self.left -= taken
+                return b"0" * taken
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        member = Member(100 * chunk)
+
+        class Entry:
+            def is_dir(self):
+                return False
+
+        class Archive:
+            def infolist(self):
+                return [Entry()]
+
+            def open(self, entry):
+                return member
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with mock.patch("zipfile.ZipFile", return_value=Archive()), mock.patch.object(
+            ml_document_extraction, "MAX_DOCX_UNPACKED_BYTES", 4 * chunk
+        ):
+            too_large = ml_document_extraction._docx_unpacks_too_large(b"not read")
+
+        self.assertTrue(too_large)
+        self.assertTrue(member.reads, "nothing was unpacked, so nothing was proven")
+        self.assertTrue(
+            all(size == chunk for size in member.reads),
+            f"a read was not bounded by a chunk: {member.reads}",
+        )
+        self.assertLessEqual(
+            len(member.reads),
+            6,
+            "it kept unpacking after it knew the answer",
+        )
 
     def test_an_ordinary_document_is_still_read(self):
         """The bound is not a wall in front of real documents."""
