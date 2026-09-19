@@ -239,7 +239,14 @@ def _templates():
 #: A class attribute, anchored on the whitespace that must precede any
 #: attribute name. Matching "class=" wherever it appears also matched the
 #: tail of another attribute, so "x.class=" counted as one.
-CLASS_ATTR = re.compile(r"""(?:^|[\s])class\s*=\s*["']([^"']*)["']""")
+#: An opening tag, and inside it one attribute. Read as two steps rather
+#: than one, because a `class="..."` inside another attribute's value, such
+#: as <div data-label='use class="btn"'>, is not a class the browser puts on
+#: anything, and a single pattern over the whole file counts it as one.
+OPENING_TAG = re.compile(r"<[a-zA-Z][^>]*>")
+ATTRIBUTE = re.compile(
+    r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"""
+)
 
 
 #: Markup that never reaches a browser. Django's comment tag takes an
@@ -281,9 +288,12 @@ def _classes_in(text: str):
     a quote inside the tag ended the attribute early and lost the rest of
     it.
     """
-    for attr in CLASS_ATTR.findall(TEMPLATE_TAGS.sub(" ", text)):
-        for name in attr.split():
-            yield name
+    for tag in OPENING_TAG.findall(TEMPLATE_TAGS.sub(" ", text)):
+        for attribute, value in ATTRIBUTE.findall(tag):
+            if attribute.lower() != "class":
+                continue
+            for name in value.strip("\"'").split():
+                yield name
 
 
 # Known limits, so nobody reads more into a green run than is there. A class
@@ -403,6 +413,31 @@ def test_only_a_real_class_attribute_counts() -> None:
     assert list(_classes_in('<b class="btn row">')) == ["btn", "row"]
     assert list(_classes_in('<b x.class="btn">')) == []
     assert list(_classes_in('<div\n  class="row">')) == ["row"]
+
+
+def test_a_class_inside_another_attribute_is_not_a_class() -> None:
+    """Reading the whole file counted text nobody sees as markup.
+
+    An attribute value can contain the word, and so can prose and a
+    stylesheet. None of those put a class on an element.
+    """
+    assert list(_classes_in("""<div data-label='use class="btn"'>x</div>""")) == []
+    assert list(_classes_in('prose mentioning class="btn" in it')) == []
+    assert list(_classes_in("<style>.btn { color: red }</style>")) == []
+
+
+def test_a_class_behind_a_condition_counts() -> None:
+    """The page can render it, so it is a use.
+
+    Left as raw text, the tag's own words were counted and the class was
+    not, and a quote inside the tag ended the attribute early.
+    """
+    assert list(_classes_in('<input class="{% if x %}form-control{% endif %}">')) == [
+        "form-control"
+    ]
+    assert list(
+        _classes_in("""<a class="{% if x %}btn{% else %}card{% endif %}">x</a>""")
+    ) == ["btn", "card"]
 
 
 def test_a_commented_block_with_a_note_is_still_ignored() -> None:
