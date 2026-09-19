@@ -16,8 +16,9 @@ anyone remembering to add it.
 from pathlib import Path
 from unittest.mock import patch
 
+from django.conf import settings
 from django.core.cache import cache
-from django.test import Client, TestCase, override_settings
+from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import get_resolver, reverse
 
 from fighthealthinsurance.views import (
@@ -109,12 +110,14 @@ class ACachedPageCarriesNoVisitorTest(TestCase):
         """Rendered, not cached: catches anything visitor-shaped added later.
 
         A csrf token, a signed-in name or a flash message would all fail here
-        before they could ever reach the cache.
+        before they could ever reach the cache. The visitor is carrying all
+        three, because two anonymous clients with nothing to show would
+        compare equal however much the template leaked.
         """
         for name in NAMED_CACHED_ROUTES:
             with self.subTest(route=name):
                 cache.clear()
-                theirs = mid_appeal_client().get(reverse(name))
+                theirs = self._a_visitor_with_something_to_lose().get(reverse(name))
                 cache.clear()
                 anybodys = Client().get(reverse(name))
 
@@ -124,6 +127,33 @@ class ACachedPageCarriesNoVisitorTest(TestCase):
                     anybodys.content,
                     msg=f"{name} renders differently for the visitor who asks",
                 )
+
+    def _a_visitor_with_something_to_lose(self):
+        """Signed in, mid appeal, and carrying a flash message."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.messages.storage.session import SessionStorage
+
+        # One per call: this runs once per route in a subTest loop.
+        users = get_user_model().objects
+        user = users.create_user(
+            username=f"cached-page-visitor-{users.count()}",
+            email="visitor@example.com",
+            password="not-a-real-password",
+        )
+        client = Client()
+        client.force_login(user)
+        session = client.session
+        session["denial_uuid"] = CASE_UUID
+        session.save()
+
+        request = RequestFactory().get("/")
+        request.session = client.session
+        storage = SessionStorage(request)
+        storage.add(40, "Your appeal draft is ready, visitor@example.com")
+        storage.update(None)
+        request.session.save()
+        client.cookies[settings.SESSION_COOKIE_NAME] = request.session.session_key
+        return client
 
 
 class EveryPubliclyCacheablePageTest(TestCase):
@@ -222,6 +252,45 @@ class EveryPubliclyCacheablePageTest(TestCase):
             "it belongs on StaticIshView, which blanks the visitor's context "
             "and is covered by the sweep above; if it does not, add it here "
             "and to the content-type test below.",
+        )
+
+    def test_no_cached_page_renders_around_the_mixin(self):
+        """Parameterized pages are cached too, and the sweep cannot reach them.
+
+        Blog posts, microsites and state help are all StaticIshView
+        subclasses, and reverse() skips them because they take arguments. A
+        subclass that defines its own render_to_response would therefore
+        bypass the blanking with nothing to notice. They all inherit it, and
+        this says so, which covers the pages the sweep cannot request.
+        """
+        from fighthealthinsurance import views as site_views
+
+        own = [
+            cls.__name__
+            for cls in vars(site_views).values()
+            if isinstance(cls, type)
+            and issubclass(cls, StaticIshView)
+            and "render_to_response" in vars(cls)
+        ]
+
+        self.assertEqual(
+            own,
+            [],
+            "these cached views render their own way, around the blanking: " "%s" % own,
+        )
+
+    def test_the_decorator_is_not_imported_under_another_name(self):
+        """The count above is textual, so an alias would walk past it."""
+        package = Path(__file__).resolve().parent.parent.parent / "fighthealthinsurance"
+
+        aliased = [
+            str(path.relative_to(package))
+            for path in package.rglob("*.py")
+            if "cache_page as " in path.read_text()
+        ]
+
+        self.assertEqual(
+            aliased, [], "cache_page is imported under an alias in %s" % aliased
         )
 
     def test_the_cached_endpoints_outside_that_base_class_are_not_html(self):
