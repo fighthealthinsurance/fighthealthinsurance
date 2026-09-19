@@ -322,6 +322,20 @@ class TheDeadlineItPrintsTest(TestCase):
         self.assertIn("from when you received the notice", definition)
         self.assertIn("65 days", definition)
 
+    def test_the_medicaid_sixty_days_say_it_too(self):
+        """The other sixty in the same paragraph, and a different anchor.
+
+        Medicare runs from receipt and Medicaid managed care runs from the
+        date on the notice, so a definition that gives one number twice
+        without saying which is which is worse than giving neither. The test
+        above only held the Medicare half, so the Medicaid sentence could
+        lose its anchor and stay green.
+        """
+        definition = get_term("internal-appeal").definition
+
+        self.assertIn("60 calendar days from the ", definition)
+        self.assertIn("date on the notice", definition)
+
     def test_it_still_tells_them_to_check_their_own_letter(self):
         self.assertIn(
             "check the deadline", get_term("internal-appeal").definition.lower()
