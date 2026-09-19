@@ -243,7 +243,11 @@ def _templates():
 #: than one, because a `class="..."` inside another attribute's value, such
 #: as <div data-label='use class="btn"'>, is not a class the browser puts on
 #: anything, and a single pattern over the whole file counts it as one.
-OPENING_TAG = re.compile(r"<[a-zA-Z][^>]*>")
+#:
+#: The tag pattern skips over quoted values rather than stopping at the
+#: first ">", because a ">" inside an earlier attribute would otherwise end
+#: the tag there and hide every attribute after it, the class included.
+OPENING_TAG = re.compile(r"""<[a-zA-Z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>""")
 ATTRIBUTE = re.compile(
     r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"""
 )
@@ -424,6 +428,17 @@ def test_a_class_inside_another_attribute_is_not_a_class() -> None:
     assert list(_classes_in("""<div data-label='use class="btn"'>x</div>""")) == []
     assert list(_classes_in('prose mentioning class="btn" in it')) == []
     assert list(_classes_in("<style>.btn { color: red }</style>")) == []
+
+
+def test_a_greater_than_in_an_earlier_value_does_not_end_the_tag() -> None:
+    """A ">" is ordinary inside an attribute value.
+
+    Stopping the tag at the first ">" hid every attribute after it,
+    including the class, so a page could add Bootstrap behind one and the
+    ratchet would never see it.
+    """
+    assert list(_classes_in('<div data-tip="a > b" class="btn">x</div>')) == ["btn"]
+    assert list(_classes_in("<a title='5 > 4' class='card'>x</a>")) == ["card"]
 
 
 def test_a_class_behind_a_condition_counts() -> None:
