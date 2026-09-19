@@ -25,7 +25,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES = REPO_ROOT / "fighthealthinsurance" / "templates"
 
-# Counted on 2026-09-18, after the input box moved to the site's own class.
+# Counted on 2026-09-18, after the input box moved to the site's own class,
+# and recounted on 2026-09-19 once classes behind a template condition became
+# visible. That recount moved "alert" from 16 to 33, all seventeen of them in
+# admin_status.html, where ".stat-card.alert" is that page's own class,
+# defined in its own style block, that happens to share Bootstrap's name.
 # Lower these as uses go; never raise one.
 BASELINE = {
     "form-control": 2,
@@ -35,7 +39,7 @@ BASELINE = {
     "row": 136,
     "col-": 208,
     "container": 113,
-    "alert": 16,
+    "alert": 33,
     "d-flex": 58,
 }
 
@@ -57,6 +61,8 @@ INSTEAD = {
 PER_TEMPLATE = {
     "404.html": {"btn": 1, "container": 1},
     "about_ai.html": {"container": 1},
+    # Not Bootstrap's alert: this page defines .stat-card.alert itself.
+    "admin_status.html": {"alert": 17},
     "about_us.html": {"card": 3, "col-": 11, "container": 1, "row": 4},
     "appeal.html": {"btn": 7, "col-": 2, "container": 1, "d-flex": 2},
     "appeals.html": {"btn": 4, "col-": 1, "container": 2, "d-flex": 1},
@@ -240,6 +246,10 @@ CLASS_ATTR = re.compile(r"""(?:^|[\s])class\s*=\s*["']([^"']*)["']""")
 #: optional note, {% comment "why this is here" %}, and a pattern that
 #: insisted on nothing between the word and the closing brace left those
 #: blocks counted.
+#: ``{% ... %}`` and ``{{ ... }}``, replaced by a space rather than removed
+#: so two names either side of one do not become a single word.
+TEMPLATE_TAGS = re.compile(r"{%.*?%}|{{.*?}}", re.S)
+
 COMMENTS = re.compile(
     r"<!--.*?-->|{#.*?#}|{%\s*comment\b[^%]*%}.*?{%\s*endcomment\s*%}", re.S
 )
@@ -263,17 +273,23 @@ def _classes_in(text: str):
     named inside a comment, and a word in prose. Counting those made the
     numbers wrong in both directions: three of the form-control matches were
     CSS selectors, and a commented-out button counted as a live one.
+
+    Template tags are taken out first, each replaced by a space. A class
+    behind a condition is a class the page can render, so
+    ``class="{% if x %}form-control{% endif %}"`` has to count as one; left
+    in, the tag's own words were counted instead and the class was not, and
+    a quote inside the tag ended the attribute early and lost the rest of
+    it.
     """
-    for attr in CLASS_ATTR.findall(text):
+    for attr in CLASS_ATTR.findall(TEMPLATE_TAGS.sub(" ", text)):
         for name in attr.split():
             yield name
 
 
 # Known limits, so nobody reads more into a green run than is there. A class
-# assembled by template logic ({% if %} inside the attribute, or a variable
-# holding the name) is not seen, and neither is one added by JavaScript. This
-# counts what is written literally in the markup, which is where Bootstrap
-# actually sits in this codebase.
+# whose name arrives in a variable is not seen, and neither is one added by
+# JavaScript. This counts what is written literally in the markup, inside a
+# condition or not, which is where Bootstrap actually sits in this codebase.
 
 
 def bootstrap_counts() -> "dict[str, Counter]":

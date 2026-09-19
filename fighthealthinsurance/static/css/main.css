@@ -55,6 +55,12 @@ label,
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     min-width: 0;
+    /* Room for a focus ring. The fields inside fill their cells and the
+       table fills this box, so a ring drawn 4px outside a field's edge lands
+       outside this box, and a box that scrolls in x clips what leaves it in
+       either direction. A keyboard user would see three sides of the ring on
+       the last column. */
+    padding: 4px;
 }
 
 /*---
