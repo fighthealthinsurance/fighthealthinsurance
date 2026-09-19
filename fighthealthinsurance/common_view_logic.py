@@ -1854,6 +1854,13 @@ class DenialCreatorHelper:
                 denial_id,
                 questions,
                 generated_for=questions_fingerprint(denial.procedure, denial.diagnosis),
+                # Conservative on purpose: this claim does not know whether
+                # the run that produced these used the history, and a
+                # refusal can land between the helper's own claim and this
+                # one. A case with a history is treated as though it did, so
+                # a no here means nothing new is written; a set already
+                # standing is still handed back.
+                used_history=bool(denial.health_history),
             )
             if questions is None:
                 return await cls._questions_already_on_the_row(denial_id)
@@ -1903,6 +1910,10 @@ class DenialCreatorHelper:
                 generated_for=questions_fingerprint(
                     denial.candidate_procedure, denial.candidate_diagnosis
                 ),
+                # These came off the speculative pass, which may well have
+                # read the history, and this instance can be holding a copy
+                # a refusal has since cleared from the row.
+                used_history=bool(denial.health_history),
             )
             if questions is None:
                 return None

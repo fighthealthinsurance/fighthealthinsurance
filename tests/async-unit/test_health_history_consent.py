@@ -587,3 +587,216 @@ class TestARefusalThatLandsWhileAWorkerRuns:
         denial.refresh_from_db()
         assert answer == [], "the run's citations were handed back anyway"
         assert denial.ml_citation_context is None, "a copy was left on the row"
+
+
+class TestARowNobodyHasBeenAskedIsNotARefusal:
+    """NULL is the common case, and the guard has to match it.
+
+    Every row created before the column existed holds NULL, so does every
+    row whose caller never sent the field, and NULL means the history may be
+    used. Written as ``__in=[True, None]`` the guard compiled to
+    ``IN (True)``, because SQL NULL is not equal to anything and Django
+    drops None out of an IN list, so the store matched no row: the work was
+    thrown away on every run and the letter went out with no citations at
+    all.
+    """
+
+    @pytest.mark.django_db
+    def test_the_filter_matches_a_row_with_no_answer(self):
+        from fighthealthinsurance.denial_history_consent import still_allowed
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("neverasked-filter@example.com"),
+            denial_text="Denied.",
+            health_history=HISTORY,
+        )
+        assert denial.health_history_consent is None
+
+        rows = Denial.objects.filter(denial_id=denial.denial_id)
+
+        assert rows.filter(still_allowed()).count() == 1
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            health_history_consent=False
+        )
+        assert rows.filter(still_allowed()).count() == 0
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            health_history_consent=True
+        )
+        assert rows.filter(still_allowed()).count() == 1
+
+    @pytest.mark.django_db
+    def test_citations_are_kept_for_a_row_nobody_asked(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.ml import ml_citations_helper as helper
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("neverasked-cites@example.com"),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+        )
+
+        class _Backend:
+            async def get_citations(self, **kwargs):
+                return ["Chosen because of the Aimovig history"]
+
+        with patch.object(
+            helper.ml_router, "full_find_citation_backends", return_value=[_Backend()]
+        ):
+            answer = async_to_sync(
+                helper.MLCitationsHelper.generate_citations_for_denial
+            )(denial=denial, speculative=False)
+
+        denial.refresh_from_db()
+        assert answer, "the run's citations were thrown away"
+        assert denial.ml_citation_context, "nothing was stored for a row nobody asked"
+
+    @pytest.mark.django_db
+    def test_candidate_questions_are_kept_for_a_row_nobody_asked(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.ml import ml_appeal_questions_helper as helper
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("neverasked-q@example.com"),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+        )
+
+        async def answer(**kwargs):
+            return [("How long on Aimovig?", "")]
+
+        with patch.object(
+            helper.MLAppealQuestionsHelper, "generate_specific_questions", answer
+        ), patch.object(
+            helper.MLAppealQuestionsHelper, "generate_generic_questions", answer
+        ):
+            questions = async_to_sync(
+                helper.MLAppealQuestionsHelper.generate_questions_for_denial
+            )(denial, speculative=True)
+
+        denial.refresh_from_db()
+        assert questions, "the speculative run's questions were thrown away"
+        assert (
+            denial.candidate_generated_questions
+        ), "the warm cache was never filled for a row nobody asked"
+
+
+class TestPromotingWhatTheSpeculativePassFound:
+    """The promotion path writes too, so it is governed too.
+
+    Candidate questions come off a pass that may well have read the
+    history, and the object doing the promoting can be holding a copy a
+    refusal has since cleared off the row. Claiming them without saying so
+    put them back.
+    """
+
+    @pytest.mark.django_db
+    def test_a_refusal_stops_the_promotion(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            claim_generated_questions,
+            questions_fingerprint,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("promote@example.com"),
+            denial_text="Denied an MRI.",
+            procedure="MRI",
+            diagnosis="Migraine",
+            health_history=HISTORY,
+            health_history_consent=False,
+        )
+
+        stored = async_to_sync(claim_generated_questions)(
+            denial.denial_id,
+            [("How long on Aimovig?", "")],
+            questions_fingerprint(denial.procedure, denial.diagnosis),
+            used_history=bool(denial.health_history),
+        )
+
+        denial.refresh_from_db()
+        assert stored is None, "the promotion handed the questions back"
+        assert denial.generated_questions is None, "they were written to the row"
+
+    @pytest.mark.django_db
+    def test_the_promotion_path_itself_says_so(self):
+        """Through the code that promotes, not the claim it calls.
+
+        The claim takes the decision as an argument and defaults it to
+        False, so a call site that leaves it out skips the check entirely.
+        Both outer call sites pass it now, and this drives one of them.
+        """
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            questions_fingerprint,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("promotepath@example.com"),
+            denial_text="Denied an MRI.",
+            procedure="MRI",
+            diagnosis="Migraine",
+            health_history=HISTORY,
+            health_history_consent=False,
+            candidate_procedure="MRI",
+            candidate_diagnosis="Migraine",
+            candidate_generated_questions=[["How long on Aimovig?", ""]],
+        )
+
+        promoted = async_to_sync(DenialCreatorHelper._questions_already_on_the_row)(
+            denial.denial_id
+        )
+
+        denial.refresh_from_db()
+        assert promoted is None, "the candidate set was promoted after a refusal"
+        assert (
+            denial.generated_questions is None
+        ), "a set chosen out of a refused history was written to the row"
+
+    @pytest.mark.django_db
+    def test_a_set_already_standing_is_still_handed_back(self):
+        """A refusal governs the write, not the read.
+
+        Somebody has already been shown these and may have answered them.
+        Refusing to hand them back would strand those answers, and they are
+        on the row either way until the refusal clears it.
+        """
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+            claim_generated_questions,
+            questions_fingerprint,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("standing@example.com"),
+            denial_text="Denied an MRI.",
+            procedure="MRI",
+            diagnosis="Migraine",
+            health_history=HISTORY,
+            health_history_consent=False,
+        )
+        fingerprint = questions_fingerprint(denial.procedure, denial.diagnosis)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            generated_questions=[["What did the letter say?", ""]],
+            generated_questions_for=fingerprint,
+        )
+
+        stood = async_to_sync(claim_generated_questions)(
+            denial.denial_id,
+            [("A different question", "")],
+            fingerprint,
+            used_history=True,
+        )
+
+        assert stood == [["What did the letter say?", ""]]

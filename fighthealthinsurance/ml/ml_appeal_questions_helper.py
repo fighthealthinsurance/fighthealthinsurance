@@ -7,7 +7,10 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 from loguru import logger
 
-from fighthealthinsurance.denial_history_consent import ahistory_may_be_used
+from fighthealthinsurance.denial_history_consent import (
+    ahistory_may_be_used,
+    still_allowed,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
@@ -33,19 +36,6 @@ def _claim_generated_questions_sync(
 ) -> Optional[List[Tuple[str, str]]]:
     with transaction.atomic():
         fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
-        if used_history and fresh.health_history_consent is False:
-            # The answer changed while this ran. Read here rather than
-            # before the call, because the row is locked here and the store
-            # happens here: a check outside this block can be overtaken by
-            # the refusal between the two. Treated the way this function
-            # already treats a run whose inputs were corrected mid-run:
-            # what it produced is not stored and not handed back.
-            logger.info(
-                f"Health history consent was withdrawn while questions for "
-                f"denial {denial_id} were being generated; keeping neither "
-                "the result nor a copy of it"
-            )
-            return None
         current = questions_fingerprint(fresh.procedure, fresh.diagnosis)
         # A row from before the stamp existed holds a set of unknown origin;
         # a nonempty one is kept, as it always was, rather than replaced under
@@ -68,6 +58,21 @@ def _claim_generated_questions_sync(
             # First writer for these inputs keeps the slot: answers are filed
             # against the questions the person was shown.
             return cast(List[Tuple[str, str]], fresh.generated_questions)
+        if used_history and fresh.health_history_consent is False:
+            # The answer changed while this ran. Read on the row this block
+            # already holds locked, and after the two reads above, because
+            # what a refusal governs is the write: a set already standing
+            # for these inputs is handed back as it always was, and only
+            # putting a new one in is refused. A check made outside this
+            # block would be overtaken by the refusal landing between it and
+            # the write. Treated the way this function already treats a run
+            # whose inputs were corrected mid-run.
+            logger.info(
+                f"Health history consent was withdrawn while questions for "
+                f"denial {denial_id} were being generated; keeping neither "
+                "the result nor a copy of it"
+            )
+            return None
         fresh.generated_questions = questions
         fresh.generated_questions_for = generated_for
         fresh.save(update_fields=["generated_questions", "generated_questions_for"])
@@ -461,9 +466,7 @@ class MLAppealQuestionsHelper:
                 # nothing from a run that was allowed to use the history.
                 candidates = Denial.objects.filter(denial_id=denial.denial_id)
                 if used_history:
-                    candidates = candidates.filter(
-                        health_history_consent__in=[True, None]
-                    )
+                    candidates = candidates.filter(still_allowed())
                 if not await candidates.aupdate(
                     candidate_generated_questions=questions
                 ):

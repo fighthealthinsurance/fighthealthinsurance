@@ -8,6 +8,7 @@ from loguru import logger
 from fighthealthinsurance.denial_history_consent import (
     ahistory_may_be_used,
     history_may_be_used,
+    still_allowed,
 )
 from fighthealthinsurance.cms_coverage_api import get_cms_coverage_citations
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
@@ -650,7 +651,7 @@ class MLCitationsHelper:
             # a case its cache for good.
             rows = Denial.objects.filter(denial_id=denial.denial_id)
             if used_history:
-                rows = rows.filter(health_history_consent__in=[True, None])
+                rows = rows.filter(still_allowed())
             field = (
                 "candidate_ml_citation_context"
                 if speculative

@@ -14,7 +14,22 @@ those letters worse without telling anyone. Once asked, the answer is the
 answer.
 """
 
+from django.db.models import Q
 from loguru import logger
+
+
+def still_allowed() -> Q:
+    """Matches a row whose answer still permits the history.
+
+    Written as an explicit NULL arm rather than ``__in=[True, None]``:
+    Django drops None out of an ``IN`` list, because SQL NULL is not equal
+    to anything, so that spelling compiles to ``IN (True)`` and silently
+    misses every row nobody has been asked. NULL is the common case, being
+    the default and what every row created before the column existed holds,
+    and here it means the history may be used.
+    """
+    return Q(health_history_consent=True) | Q(health_history_consent__isnull=True)
+
 
 # Columns holding material a model produced with the history as its input.
 # Both are read back ahead of the consent check on the next run -- cached
