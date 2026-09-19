@@ -30,6 +30,37 @@ def has_been_asked(denial) -> bool:
     return getattr(denial, "health_history_consent", None) is not None
 
 
+def history_may_be_used_now(denial) -> bool:
+    """The answer as the database holds it, for a synchronous caller.
+
+    The drafting path builds its prompt inside a worker thread, off the
+    event loop, so it cannot await. It is also the reader that matters most,
+    being the one that writes the letter, so it asks again rather than
+    trusting the row its generation started with.
+    """
+    from fighthealthinsurance.models import Denial
+
+    denial_id = getattr(denial, "denial_id", None)
+    if denial_id is None:
+        return history_may_be_used(denial)
+    try:
+        answer = (
+            Denial.objects.filter(denial_id=denial_id)
+            .values_list("health_history_consent", flat=True)
+            .first()
+        )
+    except Exception as e:
+        # Fail closed, for the reason given in the async twin below.
+        logger.opt(exception=True).warning(
+            f"Could not re-read health history consent for denial "
+            f"{denial_id}, so treating it as refused: {e}"
+        )
+        return False
+    if answer is None:
+        return True
+    return bool(answer)
+
+
 async def ahistory_may_be_used(denial) -> bool:
     """The answer as the database holds it right now.
 

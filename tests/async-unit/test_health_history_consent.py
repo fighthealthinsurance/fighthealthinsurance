@@ -119,6 +119,29 @@ class TestWhatTheModelIsHanded:
         assert "Aimovig" not in handed
 
     @pytest.mark.django_db
+    def test_a_refusal_during_the_run_reaches_the_drafting_prompt(self):
+        """The reader that writes the letter asks again too.
+
+        A generation carries the row it started with for tens of seconds.
+        The two async readers re-read; this is the one that matters most,
+        and it runs in a worker thread where it cannot await.
+        """
+        from fighthealthinsurance.models import Denial
+
+        denial = _denial(may_use=True)
+        # The patient unticks the box while this run is in flight. The
+        # object in hand still says yes.
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            health_history_consent=False
+        )
+        assert denial.health_history_consent is True, "the snapshot is stale"
+
+        handed = _patient_context_for(denial)
+
+        assert HISTORY not in handed
+        assert "Aimovig" not in handed
+
+    @pytest.mark.django_db
     def test_the_model_is_still_asked_something(self):
         """The guard must leave the case out, not the generation.
 
@@ -159,15 +182,50 @@ class TestEveryReaderAsks:
         assert allowed is not None and "Anti-CGRP" in allowed
         assert refused is None, "the refused history still chose the guidance"
 
+    @pytest.mark.django_db
     def test_question_generation_asks(self):
-        """The call site hands patient_context, so read the source it runs."""
-        import inspect
+        """Behavioural: what the generator is actually handed.
 
-        from fighthealthinsurance.ml import ml_appeal_questions_helper
+        Reading the source proved nothing. Changing the refusal branch from
+        None to the history itself left both spelling assertions passing,
+        and that change discloses the very thing this guards.
+        """
+        from asgiref.sync import async_to_sync
 
-        source = inspect.getsource(ml_appeal_questions_helper)
-        assert "history_may_be_used(denial)" in source
-        assert "patient_context=denial.health_history," not in source
+        from fighthealthinsurance.ml import ml_appeal_questions_helper as helper
+        from fighthealthinsurance.models import Denial
+
+        seen = {}
+
+        async def recorder(**kwargs):
+            seen.update(kwargs)
+            return []
+
+        def run(may_use):
+            seen.clear()
+            denial = Denial.objects.create(
+                hashed_email=Denial.get_hashed_email(f"q{may_use}@example.com"),
+                denial_text="Denied an MRI.",
+                health_history=HISTORY,
+                health_history_consent=may_use,
+            )
+            with patch.object(
+                helper.MLAppealQuestionsHelper,
+                "generate_specific_questions",
+                recorder,
+            ), patch.object(
+                helper.MLAppealQuestionsHelper,
+                "generate_generic_questions",
+                recorder,
+            ):
+                async_to_sync(
+                    helper.MLAppealQuestionsHelper.generate_questions_for_denial
+                )(denial, speculative=False)
+            assert "patient_context" in seen, "the generator was never reached"
+            return seen["patient_context"]
+
+        assert run(True) == HISTORY
+        assert run(False) is None
 
     def test_citation_lookup_asks(self):
         import inspect

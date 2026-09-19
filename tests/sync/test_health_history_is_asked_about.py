@@ -10,7 +10,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from fighthealthinsurance.denial_context import health_history_digest
-from fighthealthinsurance.models import Denial, ProposedAppeal
+from fighthealthinsurance.models import Denial
 
 EMAIL = "consent@example.com"
 SEMI_SEKRET = "sekret"
@@ -198,104 +198,6 @@ class TheOtherColumnIsLeftAloneTest(TestCase):
         self.assertNotContains(response, "include_provided_health_history_in_appeal")
 
 
-class SayingNoReachesTheDraftsThatExistTest(TestCase):
-    """Guarding the next prompt is not enough.
-
-    A draft written while the history was allowed can carry it, and both
-    replay and synthesis would put it back in front of the person after they
-    asked us not to use it.
-    """
-
-    def setUp(self):
-        self.denial = Denial.objects.create(
-            denial_id=7304,
-            semi_sekret=SEMI_SEKRET,
-            hashed_email=Denial.get_hashed_email(EMAIL),
-            denial_text="Denied an MRI.",
-            health_history=HISTORY,
-        )
-
-    def _draft(self, chosen):
-        return ProposedAppeal.objects.create(
-            for_denial=self.denial,
-            appeal_text="A draft mentioning migraines since 2019.",
-            chosen=chosen,
-        )
-
-    def _post(self, **extra):
-        payload = {
-            "denial_id": str(self.denial.denial_id),
-            "email": EMAIL,
-            "semi_sekret": SEMI_SEKRET,
-            "health_history": HISTORY,
-            "health_history_seen": health_history_digest(
-                HISTORY, self.denial.denial_id
-            ),
-        }
-        payload.update(extra)
-        return self.client.post(reverse("hh"), payload)
-
-    def test_unticking_retires_the_unchosen_drafts(self):
-        held = self._draft(chosen=False)
-
-        self._post()
-
-        self.assertFalse(
-            ProposedAppeal.objects.filter(pk=held.pk).exists(),
-            "a draft that can carry the history survived the refusal",
-        )
-
-    def test_another_case_keeps_its_drafts(self):
-        """The retirement is scoped to this denial.
-
-        A regression deleting every unchosen draft in the table would pass
-        every other test in this class.
-        """
-        somebody_else = Denial.objects.create(
-            denial_id=7305,
-            semi_sekret="other",
-            hashed_email=Denial.get_hashed_email("other@example.com"),
-            denial_text="A different case.",
-        )
-        theirs = ProposedAppeal.objects.create(
-            for_denial=somebody_else,
-            appeal_text="Nothing to do with the case being edited.",
-            chosen=False,
-        )
-
-        self._post()
-
-        self.assertTrue(
-            ProposedAppeal.objects.filter(pk=theirs.pk).exists(),
-            "another patient's draft was retired",
-        )
-
-    def test_a_draft_they_chose_is_theirs_and_stays(self):
-        mine = self._draft(chosen=True)
-
-        self._post()
-
-        self.assertTrue(ProposedAppeal.objects.filter(pk=mine.pk).exists())
-
-    def test_saying_yes_retires_nothing(self):
-        held = self._draft(chosen=False)
-
-        self._post(health_history_consent="on")
-
-        self.assertTrue(ProposedAppeal.objects.filter(pk=held.pk).exists())
-
-    def test_a_second_no_does_not_thrash(self):
-        self._post()
-        held = self._draft(chosen=False)
-
-        self._post()
-
-        self.assertTrue(
-            ProposedAppeal.objects.filter(pk=held.pk).exists(),
-            "nothing was withdrawn this time, so nothing should be retired",
-        )
-
-
 class TheApiCannotRevokeByOmissionTest(TestCase):
     """An omitted BooleanField cleans to False, which is not an answer.
 
@@ -339,3 +241,67 @@ class TheApiCannotRevokeByOmissionTest(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
 
         self.assertNotIn("health_history_consent", serializer.validated_data)
+
+
+class WhatSayingNoDoesAndDoesNotDoTest(TestCase):
+    """The answer governs what is written from here, and says so.
+
+    It does not reach back into work already done. A draft written while the
+    history was allowed can carry it, and so can the question and citation
+    material cached on the row, and a model already running will finish and
+    save. Retiring the rows that exist at the moment of the click looked
+    like withdrawal and was not: it missed everything in flight and
+    everything derived, while deleting drafts on cases that never had a
+    history at all. Doing it properly needs each draft to record whether it
+    used the history, so replay and synthesis can filter on that, and that
+    is its own change.
+    """
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_id=7307,
+            semi_sekret=SEMI_SEKRET,
+            hashed_email=Denial.get_hashed_email(EMAIL),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+        )
+
+    def _post(self, **extra):
+        payload = {
+            "denial_id": str(self.denial.denial_id),
+            "email": EMAIL,
+            "semi_sekret": SEMI_SEKRET,
+            "health_history": HISTORY,
+            "health_history_seen": health_history_digest(
+                HISTORY, self.denial.denial_id
+            ),
+        }
+        payload.update(extra)
+        return self.client.post(reverse("hh"), payload)
+
+    def test_it_is_recorded(self):
+        self._post()
+
+        self.denial.refresh_from_db()
+        self.assertIs(self.denial.health_history_consent, False)
+
+    def test_the_history_itself_is_kept(self):
+        """Saying no leaves it out of the letter; it does not delete it."""
+        self._post()
+
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.health_history, HISTORY)
+
+    def test_nothing_already_written_is_deleted(self):
+        """Stated as a limit, so nobody reads the checkbox as a recall."""
+        from fighthealthinsurance.models import ProposedAppeal
+
+        existing = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Written while the history was allowed.",
+            chosen=False,
+        )
+
+        self._post()
+
+        self.assertTrue(ProposedAppeal.objects.filter(pk=existing.pk).exists())
