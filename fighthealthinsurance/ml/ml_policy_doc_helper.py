@@ -21,7 +21,7 @@ from django.db import IntegrityError
 from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_document_extraction import (
-    extract_text_from_bytes,
+    aextract_text_from_bytes,
     read_and_decrypt_file,
 )
 
@@ -289,8 +289,10 @@ class MLPolicyDocHelper:
                     )
                     return None
 
-                full_text, page_dict = await asyncio.to_thread(
-                    extract_text_from_bytes,
+                # The parser's own thread, not one of the shared pool's:
+                # parses are serialized and a long one holds no thread that
+                # unrelated asyncio.to_thread work needs.
+                full_text, page_dict = await aextract_text_from_bytes(
                     decrypted_bytes,
                     policy_document.filename,
                 )
