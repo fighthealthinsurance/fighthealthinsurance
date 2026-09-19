@@ -220,7 +220,7 @@ class ProDenialForm(BaseDenialForm):
     denial_id = forms.IntegerField(required=False)
 
 
-class DenialRefForm(forms.Form):
+class DenialRefForm(StyledWidgetsMixin, forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
     semi_sekret = forms.CharField(required=True, widget=forms.HiddenInput())

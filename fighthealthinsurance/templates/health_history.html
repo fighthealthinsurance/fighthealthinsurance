@@ -21,7 +21,7 @@ Optional: Health History
     newline or indent here would arrive in the POST as typed content.
   {% endcomment %}
   <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
-	    placeholder="Related Health History Goes Here" class="form-control">{{ form.health_history.value|default_if_none:"" }}</textarea>
+	    placeholder="Related Health History Goes Here" class="fhi-field">{{ form.health_history.value|default_if_none:"" }}</textarea>
   {% if form.health_history.value and not form.errors %}
   <p id="health_history_removal_note" class="form-text text-muted">
     This is what is saved for this appeal. To remove it, clear the box and press Next.

@@ -81,6 +81,7 @@ TEXT_INPUT_SELECTOR = re.compile(
     r"input\[type=[\"']?(?:text|email|tel|number|search|password|date)[\"']?\]"
     r"|(?<![\w.-])(?:textarea|select)(?![\w-])"
     r"|\.form-control(?![\w-])"
+    r"|\.fhi-field(?![\w-])"
 )
 _CLAMP = re.compile(r"clamp\(\s*([^,]+),\s*([^,]+),\s*([^)]+)\)")
 

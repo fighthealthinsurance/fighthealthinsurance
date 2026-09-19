@@ -3,6 +3,8 @@ import urllib
 
 from django import forms
 
+from fighthealthinsurance.form_utils import StyledWidgetsMixin
+
 import requests
 from bs4 import BeautifulSoup
 from loguru import logger
@@ -11,7 +13,7 @@ from fighthealthinsurance.models import Denial, PlanDocuments
 from fighthealthinsurance.utils import extract_file_text
 
 
-class InsuranceQuestions(forms.Form):
+class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
     """Insurance Questions"""
 
     in_network = forms.BooleanField(required=False, label="In-network visit")

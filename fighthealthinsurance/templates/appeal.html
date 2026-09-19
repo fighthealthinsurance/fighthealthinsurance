@@ -54,7 +54,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
   
-  <textarea class="appeal_text" name="appeal_text" id="scrubbed_appeal_text">
+  <textarea class="appeal_text fhi-field" name="appeal_text" id="scrubbed_appeal_text">
     {{appeal}}
   </textarea>
 
@@ -66,45 +66,45 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem 1.5rem;">
     <div>
       <label for="pii_fname" class="form-label" style="font-weight:600; font-size:0.9rem;">First Name</label>
-      <input type="text" id="pii_fname" class="form-control" placeholder="Your first name">
+      <input type="text" id="pii_fname" class="fhi-field" placeholder="Your first name">
     </div>
     <div>
       <label for="pii_lname" class="form-label" style="font-weight:600; font-size:0.9rem;">Last Name</label>
-      <input type="text" id="pii_lname" class="form-control" placeholder="Your last name">
+      <input type="text" id="pii_lname" class="fhi-field" placeholder="Your last name">
     </div>
     <div>
       <label for="pii_phone" class="form-label" style="font-weight:600; font-size:0.9rem;">Phone Number</label>
-      <input type="tel" id="pii_phone" class="form-control" placeholder="e.g. (555) 123-4567">
+      <input type="tel" id="pii_phone" class="fhi-field" placeholder="e.g. (555) 123-4567">
     </div>
     <div>
       <label for="pii_email" class="form-label" style="font-weight:600; font-size:0.9rem;">Email</label>
-      <input type="email" id="pii_email" class="form-control" placeholder="your@email.com">
+      <input type="email" id="pii_email" class="fhi-field" placeholder="your@email.com">
     </div>
     <div style="grid-column: 1 / -1;">
       <label for="pii_street" class="form-label" style="font-weight:600; font-size:0.9rem;">Street Address</label>
-      <input type="text" id="pii_street" class="form-control" placeholder="123 Main St">
+      <input type="text" id="pii_street" class="fhi-field" placeholder="123 Main St">
     </div>
     <div>
       <label for="pii_city" class="form-label" style="font-weight:600; font-size:0.9rem;">City</label>
-      <input type="text" id="pii_city" class="form-control" placeholder="City">
+      <input type="text" id="pii_city" class="fhi-field" placeholder="City">
     </div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
       <div>
         <label for="pii_state" class="form-label" style="font-weight:600; font-size:0.9rem;">State</label>
-        <input type="text" id="pii_state" class="form-control" placeholder="CA">
+        <input type="text" id="pii_state" class="fhi-field" placeholder="CA">
       </div>
       <div>
         <label for="pii_zip" class="form-label" style="font-weight:600; font-size:0.9rem;">Zip</label>
-        <input type="text" id="pii_zip" class="form-control" placeholder="94103">
+        <input type="text" id="pii_zip" class="fhi-field" placeholder="94103">
       </div>
     </div>
     <div>
       <label for="pii_subscriber_id" class="form-label" style="font-weight:600; font-size:0.9rem;">Subscriber ID</label>
-      <input type="text" id="pii_subscriber_id" class="form-control" placeholder="From your insurance card">
+      <input type="text" id="pii_subscriber_id" class="fhi-field" placeholder="From your insurance card">
     </div>
     <div>
       <label for="pii_group_id" class="form-label" style="font-weight:600; font-size:0.9rem;">Group ID</label>
-      <input type="text" id="pii_group_id" class="form-control" placeholder="From your insurance card">
+      <input type="text" id="pii_group_id" class="fhi-field" placeholder="From your insurance card">
     </div>
   </div>
 </div>
