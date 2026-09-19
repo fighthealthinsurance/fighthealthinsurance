@@ -176,8 +176,12 @@ class TestEveryReaderAsks:
             appeal_context="Cite American Headache Society 2024 guidance.",
         )
 
-        allowed = AppealGenerator._collect_medication_context(_denial(may_use=True))
-        refused = AppealGenerator._collect_medication_context(_denial(may_use=False))
+        allowed = AppealGenerator._collect_medication_context(
+            _denial(may_use=True), True
+        )
+        refused = AppealGenerator._collect_medication_context(
+            _denial(may_use=False), False
+        )
 
         assert allowed is not None and "Anti-CGRP" in allowed
         assert refused is None, "the refused history still chose the guidance"
@@ -227,14 +231,47 @@ class TestEveryReaderAsks:
         assert run(True) == HISTORY
         assert run(False) is None
 
+    @pytest.mark.django_db
     def test_citation_lookup_asks(self):
-        import inspect
+        """Behavioural, for the same reason as the one above.
 
-        from fighthealthinsurance.ml import ml_citations_helper
+        Counting spellings in the source proved nothing: the refusal branch
+        could be changed to hand over the history and every string assertion
+        still passed. This records what the citation backend is given.
+        """
+        from asgiref.sync import async_to_sync
 
-        source = inspect.getsource(ml_citations_helper)
-        assert "patient_context = denial.health_history\n" not in source
-        assert source.count("history_may_be_used(denial)") >= 3
+        from fighthealthinsurance.ml import ml_citations_helper as helper
+        from fighthealthinsurance.models import Denial
+
+        seen = {}
+
+        class _Recorder:
+            async def get_citations(self, **kwargs):
+                seen.update(kwargs)
+                return []
+
+        def run(may_use):
+            seen.clear()
+            denial = Denial.objects.create(
+                hashed_email=Denial.get_hashed_email(f"c{may_use}@example.com"),
+                denial_text="Denied an MRI.",
+                health_history=HISTORY,
+                health_history_consent=may_use,
+            )
+            with patch.object(
+                helper.ml_router,
+                "full_find_citation_backends",
+                return_value=[_Recorder()],
+            ):
+                async_to_sync(
+                    helper.MLCitationsHelper.generate_specific_citations
+                )(denial=denial)
+            assert "patient_context" in seen, "the backend was never reached"
+            return seen["patient_context"]
+
+        assert run(True) == HISTORY
+        assert run(False) is None
 
 
 class TestARowNobodyAsked:
@@ -332,3 +369,117 @@ class TestWhenTheAnswerCannotBeRead:
             answer = async_to_sync(ahistory_may_be_used)(denial)
 
         assert answer is False, "a failed read used the stale in-memory yes"
+
+
+class TestACaseThatIsGone:
+    """A deleted row is not an unanswered question.
+
+    Both helpers read the column back, and a flat value list returns None
+    for a row that does not exist and for a row whose answer is NULL. Those
+    mean opposite things: the second is nobody asked, the first is a case
+    that has been removed, most likely on request.
+    """
+
+    @pytest.mark.django_db
+    def test_a_missing_row_is_treated_as_refused(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.denial_history_consent import (
+            ahistory_may_be_used,
+            history_may_be_used_now,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("deleted@example.com"),
+            denial_text="Denied.",
+            health_history=HISTORY,
+            health_history_consent=True,
+        )
+        # The generation still holds the object; the case is gone.
+        Denial.objects.filter(denial_id=denial.denial_id).delete()
+
+        assert history_may_be_used_now(denial) is False
+        assert async_to_sync(ahistory_may_be_used)(denial) is False
+
+    @pytest.mark.django_db
+    def test_a_row_that_exists_with_no_answer_is_still_yes(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.denial_history_consent import (
+            ahistory_may_be_used,
+            history_may_be_used_now,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("unasked@example.com"),
+            denial_text="Denied.",
+            health_history=HISTORY,
+        )
+
+        assert history_may_be_used_now(denial) is True
+        assert async_to_sync(ahistory_may_be_used)(denial) is True
+
+
+class TestOneDecisionForEverythingDerived:
+    """Consent is read once per generation, not once per use.
+
+    Two reads let it change in between, so the raw history came out of the
+    prompt while the drug-class guidance that was chosen because of the
+    history stayed in.
+    """
+
+    def test_the_medication_scan_takes_the_decision_it_is_given(self):
+        import inspect
+
+        from fighthealthinsurance.generate_appeal import AppealGenerator
+
+        signature = inspect.signature(AppealGenerator._collect_medication_context)
+
+        assert "may_use_history" in signature.parameters, (
+            "the scan reads consent itself, so it can disagree with the "
+            "prompt built beside it"
+        )
+
+    @pytest.mark.django_db
+    def test_a_whole_generation_asks_once(self):
+        """The mechanism, not the signature.
+
+        The reader is made to say yes once and no afterwards. If anything
+        downstream asks a second time it gets the opposite answer, and the
+        letter carries drug-class guidance that was chosen out of a history
+        the prompt no longer contains.
+        """
+        from fighthealthinsurance import generate_appeal as ga
+        from fighthealthinsurance.models import MedicationContext
+
+        MedicationContext.objects.all().delete()
+        MedicationContext.objects.create(
+            drug_class="Anti-CGRP monoclonal antibody",
+            regex=r"(aimovig|ajovy|emgality|vyepti)",
+            appeal_context="Cite American Headache Society 2024 guidance.",
+        )
+
+        answers = [True]
+
+        def one_yes_then_no(denial):
+            return answers.pop(0) if answers else False
+
+        denial = _denial(may_use=True)
+        with patch.object(
+            ga, "history_may_be_used_now", side_effect=one_yes_then_no
+        ) as reader:
+            calls = _calls_for(denial)
+
+        assert reader.call_count == 1, (
+            f"consent was read {reader.call_count} times in one generation, "
+            "so two uses of the history can disagree"
+        )
+
+        everything = "\n".join(
+            f"{call.get('prompt') or ''}\n{call.get('patient_context') or ''}"
+            for call in calls
+        )
+        assert HISTORY in everything, "the one yes did not reach the prompt"
+        assert "Anti-CGRP" in everything, "the one yes did not reach the scan"

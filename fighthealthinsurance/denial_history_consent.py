@@ -44,9 +44,14 @@ def history_may_be_used_now(denial) -> bool:
     if denial_id is None:
         return history_may_be_used(denial)
     try:
-        answer = (
+        # values() rather than values_list(): a missing row and a row
+        # whose answer is NULL both come back as None from a flat
+        # list, and they mean opposite things. No row is not an
+        # unanswered question, it is a case that is gone, most likely
+        # deleted on request, and its history goes nowhere.
+        row = (
             Denial.objects.filter(denial_id=denial_id)
-            .values_list("health_history_consent", flat=True)
+            .values("health_history_consent")
             .first()
         )
     except Exception as e:
@@ -56,6 +61,13 @@ def history_may_be_used_now(denial) -> bool:
             f"{denial_id}, so treating it as refused: {e}"
         )
         return False
+    if row is None:
+        logger.warning(
+            f"No denial {denial_id} to read health history consent from; "
+            "treating it as refused"
+        )
+        return False
+    answer = row["health_history_consent"]
     if answer is None:
         return True
     return bool(answer)
@@ -80,9 +92,14 @@ async def ahistory_may_be_used(denial) -> bool:
     if denial_id is None:
         return history_may_be_used(denial)
     try:
-        answer = (
+        # values() rather than values_list(): a missing row and a row
+        # whose answer is NULL both come back as None from a flat
+        # list, and they mean opposite things. No row is not an
+        # unanswered question, it is a case that is gone, most likely
+        # deleted on request, and its history goes nowhere.
+        row = (
             await Denial.objects.filter(denial_id=denial_id)
-            .values_list("health_history_consent", flat=True)
+            .values("health_history_consent")
             .afirst()
         )
     except Exception as e:
@@ -97,6 +114,13 @@ async def ahistory_may_be_used(denial) -> bool:
             f"{denial_id}, so treating it as refused: {e}"
         )
         return False
+    if row is None:
+        logger.warning(
+            f"No denial {denial_id} to read health history consent from; "
+            "treating it as refused"
+        )
+        return False
+    answer = row["health_history_consent"]
     if answer is None:
         return True
     return bool(answer)
