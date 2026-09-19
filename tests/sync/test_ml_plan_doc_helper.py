@@ -14,6 +14,7 @@ where the ``asyncio.run()``-from-a-sync-test pattern belongs.
 """
 
 import asyncio
+from unittest import mock
 
 import pymupdf
 import pytest
@@ -103,14 +104,103 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
         extracted.assert_not_called()
         self.assertEqual(result, "")
 
-    def test_parsing_is_serialized(self):
-        """PyMuPDF is not safe to drive from several threads at once."""
-        from fighthealthinsurance.ml import ml_plan_doc_helper
+    def test_an_oversized_document_is_never_read_whole(self):
+        """Skipping it after reading it costs the memory anyway.
 
-        self.assertIsNotNone(ml_plan_doc_helper._PARSING)
-        held = ml_plan_doc_helper._PARSING.acquire(blocking=False)
-        self.assertTrue(held, "the lock should be free between parses")
-        ml_plan_doc_helper._PARSING.release()
+        Rejecting on the length of what came back still allocates the whole
+        file, and decryption allocates a second copy, on a worker other
+        patients are generating on. So the limit has to reach the read.
+        """
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            read_and_decrypt_file,
+        )
+
+        class WatchedFile:
+            """Stands in for the stored file and records how it is read."""
+
+            def __init__(self, body):
+                self.body = body
+                self.asked_for = []
+
+            def read(self, size=None):
+                self.asked_for.append(size)
+                return self.body if size is None else self.body[:size]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        watched = WatchedFile(b"y" * 4096)
+        field = mock.Mock()
+        field.name = "huge.pdf"
+        field.open.return_value = watched
+
+        read_and_decrypt_file(field, 1024)
+
+        self.assertTrue(watched.asked_for, "the file was never read")
+        self.assertNotIn(
+            None,
+            watched.asked_for,
+            "the whole file was read before its size was judged",
+        )
+
+    def test_two_parses_never_overlap(self):
+        """PyMuPDF is not safe to drive from several threads at once.
+
+        Asserting the lock object exists proved nothing: removing the `with`
+        around the parse left both assertions passing. This runs two parses
+        from two threads and records when each is inside, so an unguarded
+        parser overlaps and fails.
+        """
+        import threading
+        import time
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        inside = []
+        overlapped = []
+        real = ml_document_extraction.extract_text_from_plaintext_bytes
+
+        def slow(data):
+            inside.append(1)
+            if len(inside) > 1:
+                overlapped.append(1)
+            time.sleep(0.05)
+            inside.pop()
+            return real(data)
+
+        with mock.patch.object(
+            ml_document_extraction, "extract_text_from_plaintext_bytes", slow
+        ):
+            threads = [
+                threading.Thread(
+                    target=ml_document_extraction.extract_text_from_bytes,
+                    args=(b"plan text", "plan.txt"),
+                )
+                for _ in range(4)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        self.assertEqual(overlapped, [], "two parses ran at the same time")
+
+    def test_every_caller_of_the_parser_is_covered(self):
+        """The lock is at the parser, not at one of its call sites.
+
+        Two helpers parse documents. Guarding only the plan-document one
+        leaves the other free to enter the parser at the same time, which is
+        the case that crashes the worker.
+        """
+        import inspect
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        source = inspect.getsource(ml_document_extraction.extract_text_from_bytes)
+        self.assertIn("with _PARSING:", source)
 
 
 class EveryAcceptedUploadIsReadTest(TransactionTestCase):
@@ -144,6 +234,46 @@ class EveryAcceptedUploadIsReadTest(TransactionTestCase):
         self.assertIn("medical necessity", text.lower())
         self.assertNotIn("var x", text, "script contents are not document text")
         self.assertNotIn("color:red", text, "style contents are not document text")
+
+    def test_an_inline_tag_does_not_split_a_phrase(self):
+        """A term spanning markup still matches.
+
+        Insurers bold half a phrase all the time, and joining the pieces
+        with a newline made "medical <strong>necessity</strong>" stop
+        matching a search for "medical necessity".
+        """
+        html = b"<html><body><p>Requires medical <strong>necessity</strong> review.</p></body></html>"
+
+        text = self._text_from("bolded.html", html)
+
+        self.assertIn("medical necessity", text.lower())
+
+    def test_a_long_page_is_not_dropped_whole(self):
+        """One giant section is all or nothing against the caller's budget.
+
+        A policy page that mentions the term once was parsed successfully
+        and then discarded entirely for being longer than the budget, so the
+        patient's document contributed nothing.
+        """
+        filler = "Plan information. " * 800
+        html = (
+            "<html><body><p>Coverage requires medical necessity review.</p>"
+            f"<p>{filler}</p></body></html>"
+        ).encode()
+
+        text = self._text_from("long.html", html)
+
+        self.assertIn("medical necessity", text.lower())
+
+    def test_undeclared_utf8_is_not_guessed_at(self):
+        """Mostly ASCII with one accent loses a single-byte guess."""
+        html = ("<p>" + "Plan information. " * 100 + "autorizaci\u00f3n</p>").encode(
+            "utf-8"
+        )
+
+        text = self._text_from("undeclared.html", html)
+
+        self.assertIn("autorizaci\u00f3n", text)
 
     def test_a_page_in_another_encoding_keeps_its_words(self):
         """A plan document from a Spanish-language portal is often Latin-1.
