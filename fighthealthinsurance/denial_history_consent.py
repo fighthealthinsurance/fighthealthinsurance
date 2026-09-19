@@ -16,6 +16,21 @@ answer.
 
 from loguru import logger
 
+# Columns holding material a model produced with the history as its input.
+# Both are read back ahead of the consent check on the next run -- cached
+# citations go straight into the drafting prompt, cached questions are reused
+# as they are -- so a refusal that left them in place would take the raw
+# history out and keep what was chosen because of it. Caches of model input,
+# all recomputable from the denial alone; no letter and nothing a person has
+# been shown is in here.
+DERIVED_FROM_HEALTH_HISTORY = (
+    "ml_citation_context",
+    "candidate_ml_citation_context",
+    "generated_questions",
+    "generated_questions_for",
+    "candidate_generated_questions",
+)
+
 
 def history_may_be_used(denial) -> bool:
     """The person's answer, or the status quo for a row nobody asked."""

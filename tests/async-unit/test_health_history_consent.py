@@ -430,17 +430,37 @@ class TestOneDecisionForEverythingDerived:
     history stayed in.
     """
 
-    def test_the_medication_scan_takes_the_decision_it_is_given(self):
-        import inspect
+    @pytest.mark.django_db
+    def test_a_refused_history_steers_nothing_in_the_prompt(self):
+        """The drug-class guidance is derived, so it is governed too.
 
-        from fighthealthinsurance.generate_appeal import AppealGenerator
+        Checking the patient context alone left a way through: the drafting
+        call could pass the scan a hardcoded yes, the history would still be
+        absent from the patient context, and the guidance chosen out of the
+        history would ride into the prompt anyway. The drug name here
+        appears only in the history.
+        """
+        from fighthealthinsurance.models import MedicationContext
 
-        signature = inspect.signature(AppealGenerator._collect_medication_context)
-
-        assert "may_use_history" in signature.parameters, (
-            "the scan reads consent itself, so it can disagree with the "
-            "prompt built beside it"
+        MedicationContext.objects.all().delete()
+        MedicationContext.objects.create(
+            drug_class="Anti-CGRP monoclonal antibody",
+            regex=r"(aimovig|ajovy|emgality|vyepti)",
+            appeal_context="Cite American Headache Society 2024 guidance.",
         )
+
+        everything = "\n".join(
+            f"{call.get('prompt') or ''}\n{call.get('patient_context') or ''}"
+            for call in _calls_for(_denial(may_use=False))
+        )
+
+        assert HISTORY not in everything
+        assert "Aimovig" not in everything
+        assert "Anti-CGRP" not in everything, (
+            "the letter carries guidance chosen out of a history they asked "
+            "us not to use"
+        )
+        assert "American Headache Society" not in everything
 
     @pytest.mark.django_db
     def test_a_whole_generation_asks_once(self):

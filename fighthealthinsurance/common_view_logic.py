@@ -55,7 +55,10 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 
 from fighthealthinsurance import generation_lease
-from fighthealthinsurance.denial_history_consent import history_may_be_used
+from fighthealthinsurance.denial_history_consent import (
+    DERIVED_FROM_HEALTH_HISTORY,
+    history_may_be_used,
+)
 from fighthealthinsurance.appeal_fingerprints import fingerprint_text
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -3846,8 +3849,27 @@ class DenialCreatorHelper:
                 denial.health_history_anonymized = health_history_anonymized
                 changed_fields.add("health_history_anonymized")
             if health_history_consent is not None:
+                previous_consent = denial.health_history_consent
                 denial.health_history_consent = health_history_consent
                 changed_fields.add("health_history_consent")
+                if (
+                    health_history_consent is False
+                    and previous_consent is not False
+                    and denial.health_history
+                ):
+                    # Questions and citations produced while the history was
+                    # allowed were chosen out of it, and both are reused
+                    # ahead of the consent check on the next run. Without
+                    # this, a refusal took the history out of the prompt and
+                    # left material derived from it in, citations included,
+                    # which go to an external provider when use_external is
+                    # set. Dropping the caches makes the next run recompute
+                    # them from the denial alone. Nothing anybody has been
+                    # shown is removed: these are stored model inputs, not
+                    # letters.
+                    for cache_field in DERIVED_FROM_HEALTH_HISTORY:
+                        setattr(denial, cache_field, None)
+                        changed_fields.add(cache_field)
             denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:

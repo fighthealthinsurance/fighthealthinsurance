@@ -206,15 +206,44 @@ class TheApiCannotRevokeByOmissionTest(TestCase):
     whatever it is handed, so the serializer has to drop what was not sent.
     """
 
-    def test_the_serializer_drops_a_consent_it_was_not_given(self):
+    def test_an_api_update_that_omits_it_does_not_revoke_it(self):
+        """The whole way through, not just the serializer's own dict.
+
+        Asserting membership in the drop list passed even if nothing acted
+        on that list. This runs a validated API payload with no consent in
+        it through the update the REST view calls, and reads the column
+        back.
+        """
+        from fighthealthinsurance import common_view_logic
         from fighthealthinsurance.rest_serializers import (
             HealthHistoryFormSerializer,
         )
 
-        self.assertIn(
-            "health_history_consent",
-            HealthHistoryFormSerializer.CALLER_MUST_ASK_FOR,
+        denial = Denial.objects.create(
+            denial_id=7305,
+            semi_sekret=SEMI_SEKRET,
+            hashed_email=Denial.get_hashed_email(EMAIL),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+            health_history_consent=True,
         )
+
+        serializer = HealthHistoryFormSerializer(
+            data={
+                "denial_id": str(denial.denial_id),
+                "email": EMAIL,
+                "semi_sekret": SEMI_SEKRET,
+                "health_history": HISTORY,
+            }
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+        common_view_logic.DenialCreatorHelper.update_denial(
+            **serializer.validated_data
+        )
+
+        denial.refresh_from_db()
+        self.assertIs(denial.health_history_consent, True)
 
     def test_a_submission_that_never_mentions_it_leaves_it_alone(self):
         denial = Denial.objects.create(
@@ -246,15 +275,21 @@ class TheApiCannotRevokeByOmissionTest(TestCase):
 class WhatSayingNoDoesAndDoesNotDoTest(TestCase):
     """The answer governs what is written from here, and says so.
 
+    What it governs is what is written from here. The cached question and
+    citation material is part of that: both are read back ahead of the
+    consent check on the next run, and the citations go straight into the
+    drafting prompt, so leaving them would take the history out and keep
+    what was chosen because of it. They are dropped, and the next run
+    recomputes them from the denial alone.
+
     It does not reach back into work already done. A draft written while the
-    history was allowed can carry it, and so can the question and citation
-    material cached on the row, and a model already running will finish and
-    save. Retiring the rows that exist at the moment of the click looked
-    like withdrawal and was not: it missed everything in flight and
-    everything derived, while deleting drafts on cases that never had a
-    history at all. Doing it properly needs each draft to record whether it
-    used the history, so replay and synthesis can filter on that, and that
-    is its own change.
+    history was allowed can carry it, and a model already running will
+    finish and save. Retiring the drafts that exist at the moment of the
+    click looked like withdrawal and was not: it missed everything in
+    flight, while deleting drafts on cases that never had a history at all.
+    Doing it properly needs each draft to record whether it used the
+    history, so replay and synthesis can filter on that, and that is its own
+    change.
     """
 
     def setUp(self):
@@ -305,3 +340,63 @@ class WhatSayingNoDoesAndDoesNotDoTest(TestCase):
         self._post()
 
         self.assertTrue(ProposedAppeal.objects.filter(pk=existing.pk).exists())
+
+    def test_the_material_derived_from_it_is_dropped(self):
+        """Cached model input chosen out of the history does not survive.
+
+        Both caches are read back before the consent check, and the
+        citations one is put straight into the next drafting prompt, so a
+        refusal that left them in place would remove the history and keep
+        the material that came from it.
+        """
+        Denial.objects.filter(pk=self.denial.pk).update(
+            ml_citation_context=["Chosen because of the Aimovig history"],
+            candidate_ml_citation_context=["Also chosen because of it"],
+            generated_questions=[["How long on Aimovig?", ""]],
+            generated_questions_for="abc123",
+            candidate_generated_questions=[["And before that?", ""]],
+        )
+
+        self._post()
+
+        self.denial.refresh_from_db()
+        self.assertIsNone(self.denial.ml_citation_context)
+        self.assertIsNone(self.denial.candidate_ml_citation_context)
+        self.assertIsNone(self.denial.generated_questions)
+        self.assertIsNone(self.denial.generated_questions_for)
+        self.assertIsNone(self.denial.candidate_generated_questions)
+
+    def test_a_case_with_no_history_keeps_its_cached_material(self):
+        """Nothing here came out of a history, so nothing here is dropped.
+
+        The first attempt at withdrawal threw away work on cases that never
+        had a history at all. Refusing a question about something you never
+        typed should cost you nothing.
+        """
+        empty = Denial.objects.create(
+            denial_id=7308,
+            semi_sekret=SEMI_SEKRET,
+            hashed_email=Denial.get_hashed_email(EMAIL),
+            denial_text="Denied an MRI.",
+            health_history="",
+            ml_citation_context=["From the denial text alone"],
+            generated_questions=[["What did the letter say?", ""]],
+        )
+
+        self.client.post(
+            reverse("hh"),
+            {
+                "denial_id": str(empty.denial_id),
+                "email": EMAIL,
+                "semi_sekret": SEMI_SEKRET,
+                "health_history": "",
+                "health_history_seen": health_history_digest("", empty.denial_id),
+            },
+        )
+
+        empty.refresh_from_db()
+        self.assertIs(empty.health_history_consent, False)
+        self.assertEqual(empty.ml_citation_context, ["From the denial text alone"])
+        self.assertEqual(
+            empty.generated_questions, [["What did the letter say?", ""]]
+        )
