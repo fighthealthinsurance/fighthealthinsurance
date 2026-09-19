@@ -166,121 +166,6 @@ def extract_text_from_plaintext_bytes(data: bytes) -> tuple[str, Dict[int, str]]
     return full_text, page_dict
 
 
-def extract_text_from_html_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
-    """Extract the readable text from an HTML document's bytes.
-
-    Plan documents arrive as whatever the insurer's portal hands the person,
-    and a saved web page is common. Without this the upload is accepted and
-    then silently contributes nothing to the appeal.
-    """
-    try:
-        from bs4 import BeautifulSoup
-
-        # The bytes, so a document that declares its own encoding is read in
-        # it: a plan document saved from an insurer's portal is often
-        # Latin-1, and decoding as UTF-8 first turns the accent in
-        # "autorizacion" into a replacement character that then matches no
-        # search term.
-        #
-        # But an undeclared document is guessed at, and on mostly-ASCII text
-        # with one accented word the guess loses to a single-byte encoding
-        # and corrupts exactly that word. So valid UTF-8 with no declaration
-        # is decoded as UTF-8 rather than guessed.
-        markup: Any = data
-        if not _declares_an_encoding(data):
-            try:
-                markup = data.decode("utf-8")
-            except UnicodeDecodeError:
-                markup = data
-
-        soup = BeautifulSoup(markup, "html.parser")
-        # get_text already leaves script and style contents out, so this is
-        # belt and braces: it also drops them from the tree, which keeps
-        # them out of anything that later walks it.
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-        # A space, not a newline: inline markup splits a phrase, and
-        # "medical <strong>necessity</strong>" has to still read as "medical
-        # necessity" or a search for it finds nothing.
-        content = re.sub(r"[ \t]*\n[ \t]*", "\n", soup.get_text(" ", strip=True))
-    except Exception as e:
-        logger.warning(f"Error reading HTML bytes: {e}")
-        return "", {}
-    if not content.strip():
-        return "", {}
-    return _as_sections(content)
-
-
-#: An actual encoding declaration, rather than the word appearing in prose.
-#: Matching "charset" anywhere marked ordinary documents as declared and sent
-#: them to the guesser, which is the thing this exists to avoid.
-_DECLARED_ENCODING = re.compile(
-    rb"""<\?xml[^>]*encoding\s*=|"""
-    rb"""<meta[^>]*charset\s*=|"""
-    rb"""<meta[^>]*http-equiv\s*=\s*["']?content-type["']?[^>]*charset\s*=""",
-    re.I,
-)
-
-
-def _declares_an_encoding(data: bytes) -> bool:
-    """Whether the document says what encoding it is in.
-
-    Only the head is examined, which is where a declaration is valid and
-    where a parser looks for one.
-    """
-    return bool(_DECLARED_ENCODING.search(data[:2048])) or data[:3] == b"\xef\xbb\xbf"
-
-
-#: How much text goes in one section. A section is the unit a caller keeps or
-#: discards, so one giant section is all or nothing: a long policy page that
-#: mentions the search term once was being parsed successfully and then
-#: dropped whole for exceeding the caller's budget.
-SECTION_CHARS = 2000
-
-#: Carried from the end of one hard cut into the next, so a search term that
-#: straddles the cut is whole in the second one.
-SECTION_OVERLAP = 200
-
-
-def _as_sections(content: str) -> tuple[str, Dict[int, str]]:
-    """Cut flat text into sections a caller can take some of.
-
-    Split on blank lines first, so a section is a run of related lines, and
-    only fall back to a hard cut for a single run that is longer than the
-    limit on its own.
-    """
-    sections: Dict[int, str] = {}
-    buffer = ""
-    for paragraph in re.split(r"\n\s*\n", content):
-        paragraph = paragraph.strip()
-        if not paragraph:
-            continue
-        while len(paragraph) > SECTION_CHARS:
-            sections[len(sections) + 1] = paragraph[:SECTION_CHARS]
-            # Overlap, because a caller searches each section on its own and
-            # a hard cut through "medical necessity" leaves neither half
-            # containing it. The overlap is longer than any phrase anybody
-            # searches for.
-            paragraph = paragraph[SECTION_CHARS - SECTION_OVERLAP :]
-        if len(buffer) + len(paragraph) + 1 > SECTION_CHARS and buffer:
-            sections[len(sections) + 1] = buffer
-            buffer = paragraph
-        else:
-            buffer = f"{buffer}\n{paragraph}".strip()
-    if buffer:
-        sections[len(sections) + 1] = buffer
-    full = "".join(
-        f"\n\n[Section {number}]\n{text}" for number, text in sorted(sections.items())
-    )
-    return full, sections
-
-
-#: What ``extract_text_from_bytes`` knows how to read. A plan document in any
-#: other format is accepted at upload and then contributes nothing, so a gap
-#: here is a patient whose document was taken and not used.
-TEXTUAL_EXTENSIONS = (".pdf", ".docx", ".txt", ".md", ".markdown", ".html", ".htm")
-
-
 #: The one thread documents are parsed on in this process.
 #:
 #: PyMuPDF documents that driving it from several threads can crash the
@@ -315,8 +200,10 @@ async def aextract_text_from_bytes(
 def extract_text_from_bytes(data: bytes, filename: str) -> tuple[str, Dict[int, str]]:
     """Dispatch text extraction by filename extension.
 
-    Serialized: see _PARSING. Holding a lock across a slow parse makes other
-    patients wait, which is the trade against a crash that loses all of them.
+    Serialized: see _PARSER and _PARSING. An extension this does not know
+    yields nothing, which callers are entitled to rely on: the policy
+    document path treats an empty result as "this file gave us nothing".
+    A caller that would rather guess can read the bytes as text itself.
     """
     lower_name = filename.lower()
     with _PARSING:
@@ -324,11 +211,7 @@ def extract_text_from_bytes(data: bytes, filename: str) -> tuple[str, Dict[int, 
             return extract_text_from_pdf_bytes(data)
         elif lower_name.endswith(".docx"):
             return extract_text_from_docx_bytes(data)
-        elif lower_name.endswith((".html", ".htm")):
-            return extract_text_from_html_bytes(data)
-        elif lower_name.endswith((".txt", ".md", ".markdown")):
-            # Markdown is read as what it is: text a person can read, with
-            # its punctuation left in place.
+        elif lower_name.endswith(".txt"):
             return extract_text_from_plaintext_bytes(data)
     logger.warning(f"Unsupported file type for text extraction: {filename}")
     return "", {}

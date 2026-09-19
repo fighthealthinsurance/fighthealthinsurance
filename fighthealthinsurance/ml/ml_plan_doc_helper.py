@@ -235,7 +235,16 @@ Focus on terms that would appear in an insurance plan document."""
         # cheap string work and stays here.
         _full_text, page_dict = await aextract_text_from_bytes(data, filename)
         if not page_dict:
-            return []
+            # What this path did before it decrypted anything: read whatever
+            # it does not recognise as text. A legacy upload named .text or
+            # .rtf contributes what it says rather than nothing, silently.
+            # Reading a patient's file as text costs its own size; building a
+            # document tree from it does not, which is why a real parser for
+            # those formats is a separate question.
+            guessed = data.decode("utf-8", errors="ignore")
+            if not guessed.strip():
+                return []
+            page_dict = {1: guessed}
         lowered_terms = [term.lower() for term in search_terms if term]
         matching_pages: List[str] = []
         for num, text in sorted(page_dict.items()):

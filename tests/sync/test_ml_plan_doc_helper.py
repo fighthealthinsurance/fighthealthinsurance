@@ -233,8 +233,14 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
 
 
 class EveryAcceptedUploadIsReadTest(TransactionTestCase):
-    """The upload form takes any file. A format the extractor cannot read is
-    a document the patient handed over and the appeal never saw."""
+    """The upload form takes any file.
+
+    Anything the extractor does not recognise is read as text, which is what
+    this path did before it started decrypting. A format that needs its own
+    parser, a saved web page above all, is worth doing properly and is not
+    done here: building a document tree from a patient's file is its own
+    memory question and belongs in its own change.
+    """
 
     def _text_from(self, name, body):
         denial = Denial.objects.create(
@@ -250,120 +256,43 @@ class EveryAcceptedUploadIsReadTest(TransactionTestCase):
             )
         )
 
-    def test_a_saved_web_page_is_read(self):
-        html = (
-            b"<html><head><style>p{color:red}</style></head><body>"
-            b"<script>var x=1</script>"
-            b"<p>Coverage requires medical necessity review.</p>"
-            b"</body></html>"
-        )
+    def test_a_binary_file_reads_as_nothing_useful_without_raising(self):
+        """A scanned page is bytes, not words, and needs OCR this does not do.
 
-        text = self._text_from("plan.html", html)
-
-        self.assertIn("medical necessity", text.lower())
-        self.assertNotIn("var x", text, "script contents are not document text")
-        self.assertNotIn("color:red", text, "style contents are not document text")
-
-    def test_an_inline_tag_does_not_split_a_phrase(self):
-        """A term spanning markup still matches.
-
-        Insurers bold half a phrase all the time, and joining the pieces
-        with a newline made "medical <strong>necessity</strong>" stop
-        matching a search for "medical necessity".
+        Read as text it simply matches no term. What it must not do is throw,
+        because the caller would swallow that and the patient would get the
+        same empty result with no idea why.
         """
-        html = b"<html><body><p>Requires medical <strong>necessity</strong> review.</p></body></html>"
-
-        text = self._text_from("bolded.html", html)
-
-        self.assertIn("medical necessity", text.lower())
-
-    def test_a_long_page_is_not_dropped_whole(self):
-        """One giant section is all or nothing against the caller's budget.
-
-        A policy page that mentions the term once was parsed successfully
-        and then discarded entirely for being longer than the budget, so the
-        patient's document contributed nothing.
-        """
-        filler = "Plan information. " * 800
-        html = (
-            "<html><body><p>Coverage requires medical necessity review.</p>"
-            f"<p>{filler}</p></body></html>"
-        ).encode()
-
-        text = self._text_from("long.html", html)
-
-        self.assertIn("medical necessity", text.lower())
-
-    def test_a_phrase_across_a_hard_cut_is_still_found(self):
-        """Sections are searched one at a time.
-
-        A cut through "medical necessity" leaves neither half containing it,
-        so a long document could be parsed, sectioned, and then match
-        nothing it actually says.
-        """
-        from fighthealthinsurance.ml.ml_document_extraction import SECTION_CHARS
-
-        filler = "a" * (SECTION_CHARS - 8)
-        html = f"<html><body><p>{filler}medical necessity applies.</p></body></html>"
-
-        text = self._text_from("cut.html", html.encode())
-
-        self.assertIn("medical necessity", text.lower())
-
-    def test_the_word_charset_in_prose_is_not_a_declaration(self):
-        """Matching it anywhere sent ordinary documents to the guesser."""
         from fighthealthinsurance.ml.ml_document_extraction import (
-            _declares_an_encoding,
+            extract_text_from_bytes,
         )
 
-        self.assertFalse(
-            _declares_an_encoding(
-                b"<html><body><p>Our portal charset settings changed.</p></body></html>"
-            )
-        )
-        self.assertTrue(
-            _declares_an_encoding(b'<html><head><meta charset="ISO-8859-1">')
+        full, pages = extract_text_from_bytes(
+            b"\xff\xd8\xff\xe0 not text at all", "scan.jpeg"
         )
 
-    def test_undeclared_utf8_is_not_guessed_at(self):
-        """Mostly ASCII with one accent loses a single-byte guess."""
-        html = ("<p>" + "Plan information. " * 100 + "autorizaci\u00f3n</p>").encode(
-            "utf-8"
+        self.assertIsInstance(full, str)
+        self.assertIsInstance(pages, dict)
+        self.assertEqual(
+            self._text_from("scan.jpeg", b"\xff\xd8\xff\xe0 not text at all"), ""
         )
 
-        text = self._text_from("undeclared.html", html)
+    def test_an_unrecognised_extension_is_read_as_text(self):
+        """A legacy upload named .text used to be read and stopped being.
 
-        self.assertIn("autorizaci\u00f3n", text)
-
-    def test_a_page_in_another_encoding_keeps_its_words(self):
-        """A plan document from a Spanish-language portal is often Latin-1.
-
-        Decoding as UTF-8 first turns the accented letter into a replacement
-        character, and then the search term does not match the text it is in.
+        The path had a catch-all that opened anything non-PDF as text. An
+        extension list replaced it, so a file it did not name contributed
+        nothing at all, silently.
         """
-        html = (
-            (
-                '<html><head><meta charset="ISO-8859-1"></head><body>'
-                "<p>Se requiere autorizacion previa por necesidad medica.</p>"
-                "</body></html>"
-            )
-            .replace("autorizacion", "autorizaci\u00f3n")
-            .replace("medica", "m\u00e9dica")
+        text = self._text_from(
+            "benefits.text", b"Coverage requires medical necessity review."
         )
 
-        text = self._text_from("plan.html", html.encode("latin-1"))
+        self.assertIn("medical necessity", text.lower())
 
-        self.assertIn("autorizaci\u00f3n", text)
-        self.assertNotIn("\ufffd", text, "a character was lost decoding the file")
-
-    def test_markdown_is_read(self):
+    def test_markdown_is_read_as_the_text_it_is(self):
         text = self._text_from(
             "plan.md", b"# Plan\n\nServices need **medical necessity** review.\n"
         )
 
         self.assertIn("medical necessity", text.lower())
-
-    def test_a_format_it_cannot_read_yields_nothing_rather_than_raising(self):
-        text = self._text_from("scan.jpeg", b"\xff\xd8\xff\xe0 not text at all")
-
-        self.assertEqual(text, "")
