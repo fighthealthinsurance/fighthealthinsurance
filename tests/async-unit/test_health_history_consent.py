@@ -187,3 +187,61 @@ class TestARowNobodyAsked:
 
     def test_and_a_row_with_no_such_attribute_at_all(self):
         assert history_may_be_used(object()) is True
+
+
+class TestARefusalMidGeneration:
+    """A generation runs for tens of seconds carrying the row it started
+    with. Somebody can untick the box in the middle of that."""
+
+    @pytest.mark.django_db
+    def test_the_answer_is_read_again_at_the_handover(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.denial_history_consent import (
+            ahistory_may_be_used,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("midflight@example.com"),
+            denial_text="Denied.",
+            health_history=HISTORY,
+            health_history_consent=True,
+        )
+        # The task still holds the row as it was when it started.
+        assert history_may_be_used(denial) is True
+
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            health_history_consent=False
+        )
+
+        assert history_may_be_used(denial) is True, "the snapshot is stale, as expected"
+        assert async_to_sync(ahistory_may_be_used)(denial) is False
+
+    @pytest.mark.django_db
+    def test_a_row_nobody_asked_still_reads_as_yes(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.denial_history_consent import (
+            ahistory_may_be_used,
+        )
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("neverasked@example.com"),
+            denial_text="Denied.",
+            health_history=HISTORY,
+        )
+
+        assert async_to_sync(ahistory_may_be_used)(denial) is True
+
+    def test_something_with_no_row_behind_it_falls_back(self):
+        """A mock or a detached object must not take a generation down."""
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.denial_history_consent import (
+            ahistory_may_be_used,
+        )
+
+        assert async_to_sync(ahistory_may_be_used)(_Answered(False)) is False
+        assert async_to_sync(ahistory_may_be_used)(_Answered(None)) is True

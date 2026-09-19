@@ -26,3 +26,36 @@ def history_may_be_used(denial) -> bool:
 def has_been_asked(denial) -> bool:
     """Whether this case has an answer on record at all."""
     return getattr(denial, "health_history_consent", None) is not None
+
+
+async def ahistory_may_be_used(denial) -> bool:
+    """The answer as the database holds it right now.
+
+    A generation runs for tens of seconds and carries the row it started
+    with. Somebody can untick the box in the middle of that, and the
+    in-memory copy would still say yes, so the history would reach a model
+    after they asked us not to use it. This re-reads the one column at the
+    point of use, which is as close to the handover as it is worth getting.
+
+    A refusal that lands after this read still races the call it is racing;
+    the point is that the window is one query wide rather than the length of
+    a generation.
+    """
+    from fighthealthinsurance.models import Denial
+
+    denial_id = getattr(denial, "denial_id", None)
+    if denial_id is None:
+        return history_may_be_used(denial)
+    try:
+        answer = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values_list("health_history_consent", flat=True)
+            .afirst()
+        )
+    except Exception:
+        # Never let a consent check take a generation down; the snapshot is
+        # what it was a moment ago.
+        return history_may_be_used(denial)
+    if answer is None:
+        return True
+    return bool(answer)

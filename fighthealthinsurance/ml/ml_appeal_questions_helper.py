@@ -7,7 +7,7 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 from loguru import logger
 
-from fighthealthinsurance.denial_history_consent import history_may_be_used
+from fighthealthinsurance.denial_history_consent import ahistory_may_be_used
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
@@ -351,15 +351,18 @@ class MLAppealQuestionsHelper:
                     timeout=model_timeout,
                 ),
             )
+            may_use_history = await ahistory_may_be_used(denial)
             context_awaitable = watched(
                 "specific",
                 MLAppealQuestionsHelper.generate_specific_questions(
                     denial_text=denial.denial_text,
                     # Only if they said it could be used; see
                     # denial_history_consent. This goes to a model, and with
-                    # use_external it can go to an outside one.
+                    # use_external it can go to an outside one, so the answer
+                    # is re-read at the handover rather than trusted from the
+                    # row this run started with tens of seconds ago.
                     patient_context=(
-                        denial.health_history if history_may_be_used(denial) else None
+                        denial.health_history if may_use_history else None
                     ),
                     procedure=denial.procedure,
                     diagnosis=denial.diagnosis,

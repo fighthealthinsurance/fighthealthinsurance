@@ -245,6 +245,31 @@ class SayingNoReachesTheDraftsThatExistTest(TestCase):
             "a draft that can carry the history survived the refusal",
         )
 
+    def test_another_case_keeps_its_drafts(self):
+        """The retirement is scoped to this denial.
+
+        A regression deleting every unchosen draft in the table would pass
+        every other test in this class.
+        """
+        somebody_else = Denial.objects.create(
+            denial_id=7305,
+            semi_sekret="other",
+            hashed_email=Denial.get_hashed_email("other@example.com"),
+            denial_text="A different case.",
+        )
+        theirs = ProposedAppeal.objects.create(
+            for_denial=somebody_else,
+            appeal_text="Nothing to do with the case being edited.",
+            chosen=False,
+        )
+
+        self._post()
+
+        self.assertTrue(
+            ProposedAppeal.objects.filter(pk=theirs.pk).exists(),
+            "another patient's draft was retired",
+        )
+
     def test_a_draft_they_chose_is_theirs_and_stays(self):
         mine = self._draft(chosen=True)
 
@@ -269,3 +294,48 @@ class SayingNoReachesTheDraftsThatExistTest(TestCase):
             ProposedAppeal.objects.filter(pk=held.pk).exists(),
             "nothing was withdrawn this time, so nothing should be retired",
         )
+
+
+class TheApiCannotRevokeByOmissionTest(TestCase):
+    """An omitted BooleanField cleans to False, which is not an answer.
+
+    The page renders a box, so there absence is a decision. An API caller
+    who never mentions consent has decided nothing, and the update persists
+    whatever it is handed, so the serializer has to drop what was not sent.
+    """
+
+    def test_the_serializer_drops_a_consent_it_was_not_given(self):
+        from fighthealthinsurance.rest_serializers import (
+            HealthHistoryFormSerializer,
+        )
+
+        self.assertIn(
+            "health_history_consent",
+            HealthHistoryFormSerializer.CALLER_MUST_ASK_FOR,
+        )
+
+    def test_a_submission_that_never_mentions_it_leaves_it_alone(self):
+        denial = Denial.objects.create(
+            denial_id=7306,
+            semi_sekret=SEMI_SEKRET,
+            hashed_email=Denial.get_hashed_email(EMAIL),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+            health_history_consent=True,
+        )
+
+        from fighthealthinsurance.rest_serializers import (
+            HealthHistoryFormSerializer,
+        )
+
+        serializer = HealthHistoryFormSerializer(
+            data={
+                "denial_id": str(denial.denial_id),
+                "email": EMAIL,
+                "semi_sekret": SEMI_SEKRET,
+                "health_history": HISTORY,
+            }
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+        self.assertNotIn("health_history_consent", serializer.validated_data)

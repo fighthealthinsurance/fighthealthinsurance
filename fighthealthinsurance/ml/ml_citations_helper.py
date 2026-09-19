@@ -5,7 +5,10 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, cast
 from django.utils import timezone
 from loguru import logger
 
-from fighthealthinsurance.denial_history_consent import history_may_be_used
+from fighthealthinsurance.denial_history_consent import (
+    ahistory_may_be_used,
+    history_may_be_used,
+)
 from fighthealthinsurance.cms_coverage_api import get_cms_coverage_citations
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
@@ -92,7 +95,9 @@ class MLCitationsHelper:
         plan_context = denial.plan_context
         # The history only if they said it could be used. Citations go to a
         # model and, with use_external, to an outside provider.
-        patient_context = denial.health_history if history_may_be_used(denial) else None
+        patient_context = (
+            denial.health_history if await ahistory_may_be_used(denial) else None
+        )
 
         if (
             (not denial_text or denial_text == "")
