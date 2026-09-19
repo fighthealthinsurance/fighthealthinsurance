@@ -40,6 +40,26 @@ def visible_html(response) -> str:
     return JSON_LD.sub("", response.content.decode())
 
 
+def inside(response, css_class: str) -> str:
+    """What one element of the page contains.
+
+    Removing the structured data was not enough on its own: a word from the
+    definition also appears in the page's own meta description, so an
+    assertion about "the definition" could still pass with the paragraph
+    gone. This reads the element the reader actually sees.
+    """
+    body = visible_html(response)
+    opening = re.search(rf'<[a-z]+[^>]*class="[^"]*{css_class}[^"]*"[^>]*>', body)
+    if opening is None:
+        return ""
+    return body[opening.end() : body.index("</div>", opening.end())]
+
+
+def links_in(response) -> list[str]:
+    """Every href the visible page offers, structured data excluded."""
+    return re.findall(r'href="([^"]+)"', visible_html(response))
+
+
 class GlossaryDataIntegrityTest(TestCase):
     """Tests that the glossary data is internally consistent."""
 
@@ -150,10 +170,12 @@ class GlossaryTermViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "glossary.html")
         self.assertContains(response, term.term)
+        from django.utils.html import escape
+
         self.assertIn(
-            "independent",
-            visible_html(response),
-            "the definition is only in the structured data, not on the page",
+            escape(term.definition),
+            inside(response, "term-definition"),
+            "the definition is not in the paragraph the reader sees",
         )
 
     def test_term_shows_related_links(self):
@@ -225,10 +247,11 @@ class TheGlossaryIsReachableTest(TestCase):
     def test_the_index_links_out_to_the_terms(self):
         response = self.client.get(reverse("glossary_index"))
 
-        body = response.content.decode()
         self.assertEqual(response.status_code, 200)
         self.assertIn(
-            reverse("glossary_term", kwargs={"slug": "prior-authorization"}), body
+            reverse("glossary_term", kwargs={"slug": "prior-authorization"}),
+            links_in(response),
+            "the index carries the term's address but offers no link to it",
         )
 
     def test_a_term_page_links_back_to_the_index(self):
@@ -237,7 +260,11 @@ class TheGlossaryIsReachableTest(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(reverse("glossary_index"), response.content.decode())
+        self.assertIn(
+            reverse("glossary_index"),
+            links_in(response),
+            "the way back is in the markup but not as a link",
+        )
 
     def test_the_pages_are_cached_like_the_site_s_other_content_pages(self):
         """On StaticIshView, so they follow the site's caching rules rather

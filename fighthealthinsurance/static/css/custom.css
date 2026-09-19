@@ -2447,7 +2447,9 @@ textarea,
     text-decoration: underline;
 }
 
-.disclaimer-box {
+/* Scoped to the glossary: the same class is on three other pages that never
+   asked for this border, and !important would have taken theirs too. */
+.glossary-disclaimer.disclaimer-box {
     border-color: var(--fhi-line) !important;
 }
 
