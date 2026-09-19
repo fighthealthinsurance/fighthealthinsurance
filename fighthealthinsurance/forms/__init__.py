@@ -247,6 +247,13 @@ class HealthHistory(DenialRefForm):
     health_history_seen = forms.CharField(required=False, widget=forms.HiddenInput)
     health_history_anonymized = forms.BooleanField(required=False)
     include_provided_health_history_in_appeal = forms.BooleanField(required=False)
+    # The answer to the box this page renders. Declared here and not on
+    # DenialRefForm on purpose: ProPostInferedForm also descends from that
+    # base, its optional booleans clean to False when a caller omits them,
+    # and find_next_steps persists what it is given, so a professional
+    # posting next steps would silently revoke a consent nobody asked them
+    # about.
+    health_history_consent = forms.BooleanField(required=False)
 
 
 class PlanDocumentsForm(DenialRefForm):

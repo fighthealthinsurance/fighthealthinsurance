@@ -38,6 +38,7 @@ class GeneratedAppeal:
     context_level: Optional[str] = None
 
 
+from fighthealthinsurance.denial_history_consent import history_may_be_used_now
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_FULL,
     CONTEXT_LEVEL_TEMPLATE,
@@ -2479,7 +2480,7 @@ class AppealGenerator(object):
             return None
 
     @staticmethod
-    def _collect_medication_context(denial) -> Optional[str]:
+    def _collect_medication_context(denial, may_use_history: bool) -> Optional[str]:
         """Find curated MedicationContext entries that match the denial's
         text/diagnosis/procedure and return a single rendered block to inject
         into the appeal prompt. Returns None if no matches.
@@ -2503,14 +2504,13 @@ class AppealGenerator(object):
             logger.opt(exception=True).debug(f"MedicationContext unavailable: {e}")
             return None
 
-        haystack = collect_denial_text(
-            denial,
-            "denial_text",
-            "diagnosis",
-            "procedure",
-            "health_history",
-            "qa_context",
-        )
+        # Same answer governs this scan. The patient's words never leave, but
+        # the guidance a match adds to the letter was chosen because of them,
+        # so a history they asked us not to use must not steer it either.
+        scanned_fields = ["denial_text", "diagnosis", "procedure", "qa_context"]
+        if may_use_history:
+            scanned_fields.insert(3, "health_history")
+        haystack = collect_denial_text(denial, *scanned_fields)
         if not haystack.strip():
             return None
 
@@ -2652,7 +2652,12 @@ class AppealGenerator(object):
                 )
                 payer_policy_context = ""
 
-        medication_context = self._collect_medication_context(denial)
+        # One decision for everything the history touches, read once here.
+        # Reading it separately for each use let consent change in between,
+        # so the raw history came out of the prompt while the guidance that
+        # was chosen because of it stayed in.
+        may_use_history = history_may_be_used_now(denial)
+        medication_context = self._collect_medication_context(denial, may_use_history)
         regulatory_citation_context = self._collect_regulatory_context(denial)
         plan_law_context = self._collect_plan_law_context(denial)
 
@@ -2877,7 +2882,7 @@ class AppealGenerator(object):
             except (json.JSONDecodeError, TypeError) as e:
                 # Fall back to original string if JSON parsing fails
                 medical_context += denial.qa_context
-        if denial.health_history is not None:
+        if denial.health_history is not None and may_use_history:
             medical_context += denial.health_history
         prof_pov = denial.professional_to_finish
         # Combine plan_context (from forms like WPATH detection) with plan_documents_summary

@@ -88,14 +88,14 @@ class CollectMedicationContextTests(TestCase):
             denial_text="Claim denied for routine wellness visit",
             hashed_email="x@example.com",
         )
-        self.assertIsNone(AppealGenerator._collect_medication_context(denial))
+        self.assertIsNone(AppealGenerator._collect_medication_context(denial, True))
 
     def test_matches_drug_in_denial_text(self):
         denial = Denial.objects.create(
             denial_text="We are denying your request for Ozempic.",
             hashed_email="x@example.com",
         )
-        result = AppealGenerator._collect_medication_context(denial)
+        result = AppealGenerator._collect_medication_context(denial, True)
         self.assertIsNotNone(result)
         self.assertIn("GLP-1 receptor agonist", result)
         self.assertIn("AMA 2013", result)
@@ -106,7 +106,7 @@ class CollectMedicationContextTests(TestCase):
             health_history="Patient has been on Aimovig for 6 months",
             hashed_email="x@example.com",
         )
-        result = AppealGenerator._collect_medication_context(denial)
+        result = AppealGenerator._collect_medication_context(denial, True)
         self.assertIsNotNone(result)
         self.assertIn("Anti-CGRP", result)
 
@@ -115,7 +115,7 @@ class CollectMedicationContextTests(TestCase):
             denial_text="Wegovy is not covered.",
             hashed_email="x@example.com",
         )
-        result = AppealGenerator._collect_medication_context(denial)
+        result = AppealGenerator._collect_medication_context(denial, True)
         self.assertIn("FDA-approved indications:", result)
         self.assertIn("Type 2 diabetes", result)
 
@@ -124,7 +124,7 @@ class CollectMedicationContextTests(TestCase):
             denial_text="Vyepti was denied.",
             hashed_email="x@example.com",
         )
-        result = AppealGenerator._collect_medication_context(denial)
+        result = AppealGenerator._collect_medication_context(denial, True)
         self.assertNotIn("FDA-approved indications:", result)
 
     def test_multiple_classes_concatenated(self):
@@ -132,7 +132,7 @@ class CollectMedicationContextTests(TestCase):
             denial_text="Patient takes both Ozempic and Aimovig.",
             hashed_email="x@example.com",
         )
-        result = AppealGenerator._collect_medication_context(denial)
+        result = AppealGenerator._collect_medication_context(denial, True)
         self.assertIn("GLP-1 receptor agonist", result)
         self.assertIn("Anti-CGRP", result)
 
@@ -144,11 +144,11 @@ class CollectMedicationContextTests(TestCase):
             denial_text="Ozempic was denied.",
             hashed_email="x@example.com",
         )
-        self.assertIsNone(AppealGenerator._collect_medication_context(denial))
+        self.assertIsNone(AppealGenerator._collect_medication_context(denial, True))
 
     def test_returns_none_when_all_inputs_blank(self):
         denial = Denial.objects.create(denial_text="", hashed_email="x@example.com")
-        self.assertIsNone(AppealGenerator._collect_medication_context(denial))
+        self.assertIsNone(AppealGenerator._collect_medication_context(denial, True))
 
     def test_empty_regex_row_is_skipped(self):
         # The collector pushes an ``exclude(regex="")`` filter to the
@@ -165,7 +165,7 @@ class CollectMedicationContextTests(TestCase):
             denial_text="Patient is on Ozempic; mention Empty Regex Class verbatim.",
             hashed_email="x@example.com",
         )
-        result = AppealGenerator._collect_medication_context(denial)
+        result = AppealGenerator._collect_medication_context(denial, True)
         self.assertIsNotNone(result)
         # The well-formed GLP-1 row still matches via its regex.
         self.assertIn("GLP-1 receptor agonist", result)
@@ -235,6 +235,6 @@ class MedicationContextSeedDataTests(TestCase):
             denial_text="We are denying coverage for Wegovy.",
             hashed_email="seed-test@example.com",
         )
-        result = AppealGenerator._collect_medication_context(denial)
+        result = AppealGenerator._collect_medication_context(denial, True)
         self.assertIsNotNone(result)
         self.assertIn("GLP-1 receptor agonist", result)

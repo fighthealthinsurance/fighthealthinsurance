@@ -55,6 +55,10 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 
 from fighthealthinsurance import generation_lease
+from fighthealthinsurance.denial_history_consent import (
+    DERIVED_FROM_HEALTH_HISTORY,
+    history_may_be_used,
+)
 from fighthealthinsurance.appeal_fingerprints import fingerprint_text
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -1850,6 +1854,13 @@ class DenialCreatorHelper:
                 denial_id,
                 questions,
                 generated_for=questions_fingerprint(denial.procedure, denial.diagnosis),
+                # Conservative on purpose: this claim does not know whether
+                # the run that produced these used the history, and a
+                # refusal can land between the helper's own claim and this
+                # one. A case with a history is treated as though it did, so
+                # a no here means nothing new is written; a set already
+                # standing is still handed back.
+                used_history=bool(denial.health_history),
             )
             if questions is None:
                 return await cls._questions_already_on_the_row(denial_id)
@@ -1899,6 +1910,10 @@ class DenialCreatorHelper:
                 generated_for=questions_fingerprint(
                     denial.candidate_procedure, denial.candidate_diagnosis
                 ),
+                # These came off the speculative pass, which may well have
+                # read the history, and this instance can be holding a copy
+                # a refusal has since cleared from the row.
+                used_history=bool(denial.health_history),
             )
             if questions is None:
                 return None
@@ -3771,6 +3786,7 @@ class DenialCreatorHelper:
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
+        health_history_consent=None,
         health_history_seen=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
@@ -3783,6 +3799,7 @@ class DenialCreatorHelper:
             plan_documents=plan_documents,
             include_provided_health_history_in_appeal=include_provided_health_history_in_appeal,
             health_history_anonymized=health_history_anonymized,
+            health_history_consent=health_history_consent,
             health_history_seen=health_history_seen,
         )
 
@@ -3794,6 +3811,7 @@ class DenialCreatorHelper:
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
         health_history_anonymized=None,
+        health_history_consent=None,
         health_history_seen=None,
     ):
         from django.db import transaction as _transaction
@@ -3841,6 +3859,34 @@ class DenialCreatorHelper:
             if health_history_anonymized is not None:
                 denial.health_history_anonymized = health_history_anonymized
                 changed_fields.add("health_history_anonymized")
+            if health_history_consent is not None:
+                denial.health_history_consent = health_history_consent
+                changed_fields.add("health_history_consent")
+                if health_history_consent is False:
+                    # Questions and citations produced while the history was
+                    # allowed were chosen out of it, and both are reused
+                    # ahead of the consent check on the next run. Without
+                    # this, a refusal took the history out of the prompt and
+                    # left material derived from it in, citations included,
+                    # which go to an external provider when use_external is
+                    # set. Dropping the caches makes the next run recompute
+                    # them from the denial alone. Nothing anybody has been
+                    # shown is removed: these are stored model inputs, not
+                    # letters.
+                    #
+                    # Every refusal clears, not only the first, whether or
+                    # not a history is stored now, and whether or not this
+                    # copy of the row shows anything in the columns.
+                    # Somebody can clear the box in one visit and untick it
+                    # in the next, and a run still in flight can write a
+                    # cache back between this instance being loaded and
+                    # this save, which a "only if it holds something" test
+                    # would then leave in place. The cost of clearing a
+                    # cache that owes nothing to a history is that the next
+                    # run recomputes it.
+                    for cache_field in DERIVED_FROM_HEALTH_HISTORY:
+                        setattr(denial, cache_field, None)
+                        changed_fields.add(cache_field)
             denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:
