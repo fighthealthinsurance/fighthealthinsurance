@@ -28,15 +28,15 @@ TEMPLATES = REPO_ROOT / "fighthealthinsurance" / "templates"
 # Counted on 2026-09-18, after the input box moved to the site's own class.
 # Lower these as uses go; never raise one.
 BASELINE = {
-    "form-control": 4,
+    "form-control": 2,
     "form-check-input": 5,
     "card": 106,
-    "btn": 120,
+    "btn": 118,
     "row": 136,
-    "col-": 211,
+    "col-": 208,
     "container": 113,
     "alert": 16,
-    "d-flex": 63,
+    "d-flex": 58,
 }
 
 # Where each one should end up instead, for whoever reads a failure.
@@ -58,10 +58,10 @@ PER_TEMPLATE = {
     "404.html": {"btn": 1, "container": 1},
     "about_ai.html": {"container": 1},
     "about_us.html": {"card": 3, "col-": 11, "container": 1, "row": 4},
-    "appeal.html": {"btn": 8, "col-": 2, "container": 1, "d-flex": 2},
+    "appeal.html": {"btn": 7, "col-": 2, "container": 1, "d-flex": 2},
     "appeals.html": {"btn": 4, "col-": 1, "container": 2, "d-flex": 1},
     "as_seen_on_pbs.html": {"btn": 1, "container": 1},
-    "base.html": {"col-": 4, "container": 2, "row": 1},
+    "base.html": {"col-": 2, "container": 2, "row": 1},
     "brb.html": {"container": 1},
     "categorize.html": {"btn": 2, "container": 1},
     "chat_consent.html": {
@@ -183,13 +183,7 @@ PER_TEMPLATE = {
     "scrub.html": {"btn": 3, "col-": 1, "container": 1},
     "server_side_ocr.html": {"btn": 1},
     "server_side_ocr_error.html": {"btn": 1},
-    "share_denial.html": {
-        "btn": 1,
-        "col-": 3,
-        "d-flex": 7,
-        "form-control": 2,
-        "row": 1,
-    },
+    "share_denial.html": {"col-": 2, "d-flex": 2, "row": 1},
     "single_optional_question.html": {"alert": 1, "btn": 2, "container": 1},
     "state_help.html": {
         "btn": 9,
@@ -239,6 +233,21 @@ def _templates():
 CLASS_ATTR = re.compile(r"""class\s*=\s*["']([^"']*)["']""")
 
 
+COMMENTS = re.compile(
+    r"<!--.*?-->|{#.*?#}|{%\s*comment\s*%}.*?{%\s*endcomment\s*%}", re.S
+)
+
+
+def _live_markup(text: str) -> str:
+    """The template with its commented-out markup removed.
+
+    A commented-out button counted as a use, which is wrong in both
+    directions: it inflated the baseline, it blocked tidying the comment
+    away, and uncommenting it changed no count at all.
+    """
+    return COMMENTS.sub("", text)
+
+
 def _classes_in(text: str):
     """Every class name the markup actually puts on an element.
 
@@ -253,6 +262,13 @@ def _classes_in(text: str):
             yield name
 
 
+# Known limits, so nobody reads more into a green run than is there. A class
+# assembled by template logic ({% if %} inside the attribute, or a variable
+# holding the name) is not seen, and neither is one added by JavaScript. This
+# counts what is written literally in the markup, which is where Bootstrap
+# actually sits in this codebase.
+
+
 def bootstrap_counts() -> "dict[str, Counter]":
     """How often each watched class is used, per template.
 
@@ -263,7 +279,7 @@ def bootstrap_counts() -> "dict[str, Counter]":
     for path in _templates():
         key = str(path.relative_to(TEMPLATES))
         here: Counter = Counter()
-        for name in _classes_in(path.read_text(errors="replace")):
+        for name in _classes_in(_live_markup(path.read_text(errors="replace"))):
             for watched in BASELINE:
                 if watched == "col-":
                     if name.startswith("col-"):
