@@ -251,22 +251,30 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
             held.get("locked"), "the PDF parser ran with the lock free"
         )
 
-    def test_a_cancelled_request_never_reaches_the_parser(self):
+    def test_a_cancelled_request_lets_go_of_its_document(self):
         """A queued work item keeps a decrypted document alive.
 
-        Cancelling the future stops the parse, but the work item itself
-        stays on the executor's queue until a worker dequeues it, and that
-        item holds the decrypted bytes. A request that gave up waiting could
-        therefore leave somebody's plan document in memory behind a parse
-        still running. Waiting for the parser in the coroutine keeps the
-        bytes in the request that owns them, so the queue is what this
-        checks: nothing of a cancelled request is sitting in it.
+        Cancelling the future stops the parse, but the work item stays on
+        the executor's queue until a worker dequeues it, which is behind
+        however long the parse in front of it takes, and that item holds its
+        arguments. A request that gave up waiting could therefore leave
+        somebody's plan document in memory. The bytes travel in a holder the
+        cancelled request empties, and this reads the holder the queued item
+        is still carrying.
         """
         import asyncio
         import contextlib
         import threading
 
         from fighthealthinsurance.ml import ml_document_extraction
+
+        holders = []
+        real_holder = ml_document_extraction._Payload
+
+        class Recording(real_holder):
+            def __init__(self, data):
+                super().__init__(data)
+                holders.append(self)
 
         parsed: list[bytes] = []
         running = threading.Event()
@@ -281,7 +289,7 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
         async def run():
             with mock.patch.object(
                 ml_document_extraction, "extract_text_from_bytes", blocking
-            ):
+            ), mock.patch.object(ml_document_extraction, "_Payload", Recording):
                 first = asyncio.create_task(
                     ml_document_extraction.aextract_text_from_bytes(
                         b"the first document", "a.txt"
@@ -297,21 +305,20 @@ class WhatItWillAndWillNotParseTest(TransactionTestCase):
                 second.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await second
-                # Reaching into the executor's queue on purpose: it is the
-                # thing that holds the bytes, and the public surface cannot
-                # show what is waiting in it.
-                queued = ml_document_extraction._PARSER._work_queue.qsize()
+                abandoned = holders[-1].data
                 release.set()
                 await first
+                # Long enough for a queued item to have been picked up.
                 await asyncio.sleep(0.2)
-                return queued
+                return abandoned
 
-        queued = asyncio.run(run())
+        abandoned = asyncio.run(run())
 
+        self.assertEqual(len(holders), 2, holders)
         self.assertEqual(
-            queued,
-            0,
-            "a cancelled request left a decrypted document on the queue",
+            abandoned,
+            b"",
+            "a cancelled request's document is still waiting in the queue",
         )
         self.assertEqual(
             parsed,

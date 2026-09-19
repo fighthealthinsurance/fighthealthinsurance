@@ -249,16 +249,38 @@ _PARSING = threading.Lock()
 #: parser for this" and which mean "the parser tried and got nothing".
 PARSED_EXTENSIONS = (".pdf", ".docx", ".txt")
 
-#: One document queued at a time, for the whole process.
-#:
-#: The bytes handed to the executor are a decrypted patient document, and a
-#: work item sitting in the queue keeps them alive: cancelling the future
-#: does not take the item out, so a request that times out waiting can leave
-#: somebody's plan document in memory behind a parse that is still running.
-#: Waiting here instead keeps the bytes in the request that owns them, where
-#: cancelling the task drops them. The parser is one thread, so nothing is
-#: lost by queueing in the coroutine rather than in the executor.
-_SUBMIT = asyncio.Semaphore(1)
+
+class _Payload:
+    """A decrypted document, held so it can be let go.
+
+    What is handed to the executor is somebody's plan document in the
+    clear. Cancelling the future stops the parse but does not take the work
+    item off the queue, and that item holds its arguments until a worker
+    dequeues it, which is behind however long the parse in front of it
+    takes. Passing the bytes inside this instead means a request that gives
+    up can empty it, and what stays on the queue is an empty holder.
+    """
+
+    __slots__ = ("data",)
+
+    def __init__(self, data: bytes):
+        self.data = data
+
+    def take(self) -> bytes:
+        """The bytes, and the holder lets go of them."""
+        data, self.data = self.data, b""
+        return data
+
+    def drop(self) -> None:
+        self.data = b""
+
+
+def _parse_payload(payload: "_Payload", filename: str) -> tuple[str, Dict[int, str]]:
+    data = payload.take()
+    if not data:
+        # Nobody is waiting for this any more.
+        return "", {}
+    return extract_text_from_bytes(data, filename)
 
 
 async def aextract_text_from_bytes(
@@ -270,10 +292,12 @@ async def aextract_text_from_bytes(
     the shared executor while the parse runs.
     """
     loop = asyncio.get_running_loop()
-    async with _SUBMIT:
-        return await loop.run_in_executor(
-            _PARSER, extract_text_from_bytes, data, filename
-        )
+    payload = _Payload(data)
+    try:
+        return await loop.run_in_executor(_PARSER, _parse_payload, payload, filename)
+    except asyncio.CancelledError:
+        payload.drop()
+        raise
 
 
 def extract_text_from_bytes(data: bytes, filename: str) -> tuple[str, Dict[int, str]]:
