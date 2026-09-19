@@ -474,7 +474,33 @@ class ExternalProSignupView(View):
 STATIC_ISH_PAGE_CACHE_SECONDS = 60 * 30
 
 
-class StaticIshView(generic.TemplateView):
+# Context values that belong to one visitor. A page cached as a whole response
+# is served to everybody, so anything here has to be emptied before the render
+# or the first visitor's copy becomes everyone's copy. Only formPersistence.ts
+# reads these, and only to scope a form's saved values; no cached page has a
+# form on it.
+VISITOR_CONTEXT_KEYS = ("fhi_session_key", "fhi_request_method")
+
+
+class PublicCachedPageMixin:
+    """Render with nothing on the page that belongs to the visitor asking.
+
+    ``form_persistence_context`` puts the session's denial UUID into every
+    template, and ``base.html`` emits it as a meta tag. On a page wrapped in
+    ``cache_page`` that tag is stored with the response: the first visitor to
+    warm the entry writes their own case id into HTML that every later visitor
+    is then served. Emptying the values in ``render_to_response`` rather than
+    in ``get_context_data`` is deliberate, because a subclass is free to build
+    its context without chaining up, and several do.
+    """
+
+    def render_to_response(self, context, **response_kwargs):  # type: ignore[no-untyped-def]
+        for key in VISITOR_CONTEXT_KEYS:
+            context[key] = ""
+        return super().render_to_response(context, **response_kwargs)  # type: ignore[misc]
+
+
+class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
     """Base class for marketing/content pages cached as whole responses.
 
     "Static-ish": the page content itself is fixed, but pages still render
