@@ -70,10 +70,12 @@ def _pages_that_take_a_slug():
         for slug in slugs:
             if not slug:
                 continue
-            try:
-                yield route, reverse(route, kwargs={"slug": slug})
-            except Exception:
-                continue
+            # Not wrapped: a route that will not reverse for a slug the site
+            # itself published is a broken page, and swallowing that would
+            # take it out of the sweep and out of the check below that the
+            # sweep reached it, which is the silence this whole function
+            # exists to end.
+            yield route, reverse(route, kwargs={"slug": slug})
             # One of each is the point: this is a privacy guard on the
             # template, not a content sweep.
             break
