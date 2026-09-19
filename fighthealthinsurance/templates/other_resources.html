@@ -96,6 +96,12 @@ Other Resources
                 <form action="{% url 'microsite_directory' %}" method="get" style="display:inline;">
                     <button type="submit" class="fhi-btn">Treatment Resources</button>
                 </form>
+                {% comment %}
+                  The glossary's only way in. Without this the index and all
+                  59 term pages are reachable from the sitemap and nowhere a
+                  person can click.
+                {% endcomment %}
+                <a href="{% url 'glossary_index' %}" class="fhi-btn ms-2">Glossary</a>
             </div>
         </div>
     </div>

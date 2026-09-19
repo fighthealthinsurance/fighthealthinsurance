@@ -357,6 +357,18 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.StateHelpView.as_view(),
         name="state_help",
     ),
+    # Bare, not wrapped in cache decorators: StaticIshView does the caching
+    # in as_view so urls.py stays free of per-route decorator stacks.
+    path(
+        "glossary/",
+        views.GlossaryIndexView.as_view(),
+        name="glossary_index",
+    ),
+    path(
+        "glossary/<slug:slug>/",
+        views.GlossaryView.as_view(),
+        name="glossary_term",
+    ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     # Cross-origin classic-form intake for the interested-professional lead form
     # hosted on the static site (fightpaperwork.com). csrf_exempt because that

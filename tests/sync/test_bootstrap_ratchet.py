@@ -30,17 +30,21 @@ TEMPLATES = REPO_ROOT / "fighthealthinsurance" / "templates"
 # visible. That recount moved "alert" from 16 to 33, all seventeen of them in
 # admin_status.html, where ".stat-card.alert" is that page's own class,
 # defined in its own style block, that happens to share Bootstrap's name.
-# Lower these as uses go; never raise one.
+# Lower these as uses go. The only thing that raises one is a page arriving
+# that was written before this existed, and then by exactly what that page
+# brings, with the page named in PER_TEMPLATE below, so no page can grow
+# under cover of a total. 2026-09-19: the two glossary pages, written before
+# the ratchet landed.
 BASELINE = {
     "form-control": 2,
     "form-check-input": 5,
-    "card": 106,
-    "btn": 118,
-    "row": 136,
-    "col-": 208,
-    "container": 113,
+    "card": 108,
+    "btn": 126,
+    "row": 148,
+    "col-": 219,
+    "container": 122,
     "alert": 33,
-    "d-flex": 58,
+    "d-flex": 61,
 }
 
 # Where each one should end up instead, for whoever reads a failure.
@@ -92,6 +96,26 @@ PER_TEMPLATE = {
     },
     "escalation_packet.html": {"btn": 3, "col-": 1, "container": 1, "d-flex": 1},
     "escalation_packet_review.html": {"btn": 2, "container": 1},
+    # Written before this ratchet existed, and counted here so they cannot
+    # grow. Converting them to our own classes is its own change: the
+    # col- and row uses are the Bootstrap grid, so it is a layout edit
+    # that wants somebody looking at the rendered page.
+    "glossary.html": {
+        "btn": 4,
+        "card": 1,
+        "col-": 7,
+        "container": 6,
+        "d-flex": 1,
+        "row": 7,
+    },
+    "glossary_index.html": {
+        "btn": 4,
+        "card": 1,
+        "col-": 4,
+        "container": 3,
+        "d-flex": 2,
+        "row": 5,
+    },
     "explain_denial.html": {
         "alert": 1,
         "btn": 1,
