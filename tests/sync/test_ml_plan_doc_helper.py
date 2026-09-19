@@ -14,6 +14,7 @@ where the ``asyncio.run()``-from-a-sync-test pattern belongs.
 """
 
 import asyncio
+import io
 from unittest import mock
 
 import pymupdf
@@ -446,12 +447,16 @@ def _make_docx_bytes(nested: bool = False) -> bytes:
     document.add_paragraph("Plan overview for medical necessity review.")
     table = document.add_table(rows=1, cols=2)
     if nested:
-        outer = document.add_table(rows=1, cols=1)
-        inner = outer.rows[0].cells[0].add_table(rows=1, cols=2)
+        outer = document.add_table(rows=1, cols=2)
+        merged = outer.rows[0].cells[0].merge(outer.rows[0].cells[1])
+        inner = merged.add_table(rows=1, cols=2)
         inner.rows[0].cells[0].text = "Nested deadline"
         inner.rows[0].cells[1].text = "30 days from receipt of this notice"
     table.rows[0].cells[0].text = "Appeal deadline"
     table.rows[0].cells[1].text = "60 days from receipt of this notice"
+    # After the table, so a walk that reads all paragraphs first and appends
+    # the tables afterwards puts this in the wrong place.
+    document.add_paragraph("Exclusions follow the criteria above.")
     buffer = _io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
@@ -481,6 +486,11 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
             full.index("Appeal deadline"),
             "the table was appended rather than left where it was written",
         )
+        self.assertLess(
+            full.index("Appeal deadline"),
+            full.index("Exclusions follow"),
+            "a paragraph written after the table came out before it",
+        )
 
     def test_a_table_inside_a_table_is_read(self):
         """Plans laid out in Word nest a real table in a layout one.
@@ -497,6 +507,14 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
 
         self.assertIn("Nested deadline", full)
         self.assertIn("30 days from receipt", full)
+        # The nested table sits in a cell merged across two columns, which
+        # python-docx hands back once per column it spans. Walking each copy
+        # repeated everything inside it, and repeated again a level down.
+        self.assertEqual(
+            full.count("Nested deadline"),
+            1,
+            "a merged cell's contents were read once per column it spans",
+        )
 
     def test_an_archive_that_unpacks_too_large_is_not_opened(self):
         """Zip turns a small upload into an arbitrarily large one.
@@ -529,14 +547,15 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
             opened, [], "the archive was opened before it was measured"
         )
 
-    def test_the_measurement_never_unpacks_more_than_a_chunk(self):
+    def test_the_document_is_unpacked_a_chunk_at_a_time(self):
         """The declared sizes are not a bound, so they are not used as one.
 
         A zip member's output is truncated to its declared size only after
         it has been decompressed, and a crafted archive declares a tiny
         member to get an arbitrarily large allocation first. What bounds it
         is asking for a chunk at a time and stopping at the first chunk that
-        goes over, so that is what this asserts.
+        takes the total over, which is why the parser is handed a copy
+        rebuilt from those reads rather than the archive it was sent.
         """
         from fighthealthinsurance.ml import ml_document_extraction
 
@@ -580,12 +599,25 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
             def __exit__(self, *exc):
                 return False
 
-        with mock.patch("zipfile.ZipFile", return_value=Archive()), mock.patch.object(
+        class Copy:
+            def writestr(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_zipfile(target, mode="r", *args, **kwargs):
+            return Archive() if mode == "r" else Copy()
+
+        with mock.patch("zipfile.ZipFile", fake_zipfile), mock.patch.object(
             ml_document_extraction, "MAX_DOCX_UNPACKED_BYTES", 4 * chunk
         ):
-            too_large = ml_document_extraction._docx_unpacks_too_large(b"not read")
+            bounded = ml_document_extraction._bounded_docx(b"not read")
 
-        self.assertTrue(too_large)
+        self.assertIsNone(bounded, "an oversized archive was handed on anyway")
         self.assertTrue(member.reads, "nothing was unpacked, so nothing was proven")
         self.assertTrue(
             all(size == chunk for size in member.reads),
@@ -596,6 +628,48 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
             6,
             "it kept unpacking after it knew the answer",
         )
+
+    def test_the_parser_is_handed_the_rebuilt_copy(self):
+        """Measuring the original and then parsing it bounds nothing.
+
+        The parser reads each member itself, in a chunk of its own
+        choosing, and a member's output is truncated to its declared size
+        only after it has been decompressed. So what it is given has to be
+        the copy rebuilt from bounded reads, not the upload.
+        """
+        import zipfile
+
+        import docx
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        handed = {}
+        real_document = docx.Document
+
+        def watched(stream, *args, **kwargs):
+            handed["bytes"] = stream.getvalue()
+            stream.seek(0)
+            return real_document(stream, *args, **kwargs)
+
+        original = _make_docx_bytes()
+        with mock.patch.object(docx, "Document", watched):
+            full, _pages = ml_document_extraction.extract_text_from_docx_bytes(
+                original
+            )
+
+        self.assertIn("Appeal deadline", full, "the document was not read")
+        self.assertIn("bytes", handed, "the parser was never reached")
+        self.assertNotEqual(
+            handed["bytes"], original, "the parser was handed the upload itself"
+        )
+        with zipfile.ZipFile(io.BytesIO(handed["bytes"])) as rebuilt:
+            self.assertTrue(rebuilt.infolist(), "the copy is empty")
+            for entry in rebuilt.infolist():
+                self.assertEqual(
+                    entry.compress_type,
+                    zipfile.ZIP_STORED,
+                    f"{entry.filename} did not come from the rebuild",
+                )
 
     def test_an_ordinary_document_is_still_read(self):
         """The bound is not a wall in front of real documents."""

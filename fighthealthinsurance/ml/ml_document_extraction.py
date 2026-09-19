@@ -115,41 +115,48 @@ def extract_text_from_pdf_path(
     return full_text, page_dict
 
 
-#: What a .docx may weigh once it is unpacked.
-#:
-#: The stored-bytes limit bounds the archive, not what comes out of it: zip
-#: is free to turn a few hundred kilobytes into gigabytes, and this is the
-#: first path that hands a patient's upload to a real document parser rather
-#: than decoding it as text. Generous: a real plan document runs to a few
-#: megabytes of text and some scanned pages.
-MAX_DOCX_UNPACKED_BYTES = 200 * 1024 * 1024
+#: What a .docx may weigh once it is unpacked. Generous for a real plan
+#: document, which is a few megabytes of text and some scanned pages.
+MAX_DOCX_UNPACKED_BYTES = 64 * 1024 * 1024
 
-#: How much is decompressed at a time while measuring. Each read is what
-#: bounds the allocation, so it has to stay small next to the total.
+#: How much is unpacked at a time. Each read is what bounds the allocation,
+#: so it has to stay small next to the total.
 _UNPACK_CHUNK = 1024 * 1024
 
 
-def _docx_unpacks_too_large(data: bytes) -> bool:
-    """Does this archive unpack to more than we are willing to hold?
+def _bounded_docx(data: bytes) -> Optional[bytes]:
+    """The same document, rebuilt from bounded reads, or None if it is too big.
 
-    Measured by unpacking it, a chunk at a time, and stopping at the first
-    chunk that takes the running total over the limit.
+    The stored-bytes limit bounds the archive, not what comes out of it. Zip
+    turns a few hundred kilobytes into gigabytes, and this is the first path
+    that hands a patient's upload to a real document parser rather than
+    decoding it as text.
 
-    The declared member sizes are not a bound and cannot be used as one: the
-    reader truncates a member's output to its declared size, but only after
-    decompressing, and a chunk of arbitrary size. A crafted archive declares
-    a tiny member and the allocation happens before the truncation does.
-    Reading it ourselves in fixed chunks is what actually bounds it, because
-    each read decompresses at most a chunk.
+    Measuring the archive and then handing the original to the parser does
+    not bound anything: the parser reads each member itself, in a chunk of
+    its own choosing, and a member's output is truncated to its declared
+    size only after it has been decompressed. A declared size that lies is
+    free, so the allocation happens inside the parser either way.
+
+    So the archive is unpacked here, a megabyte at a time, stopping at the
+    first chunk that takes the total over the limit, and rebuilt from what
+    came out. The parser then reads a copy whose headers were written from
+    the bytes they describe. Stored rather than deflated, because the point
+    is to avoid work, not to save space; the copy is what the limit above
+    bounds.
     """
     import zipfile
 
+    rebuilt = io.BytesIO()
+    unpacked = 0
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            unpacked = 0
+        with zipfile.ZipFile(io.BytesIO(data)) as archive, zipfile.ZipFile(
+            rebuilt, "w", zipfile.ZIP_STORED
+        ) as copy:
             for entry in archive.infolist():
                 if entry.is_dir():
                     continue
+                parts: list[bytes] = []
                 with archive.open(entry) as member:
                     while True:
                         chunk = member.read(_UNPACK_CHUNK)
@@ -163,13 +170,15 @@ def _docx_unpacks_too_large(data: bytes) -> bool:
                                 "hold; skipping it rather than risking the "
                                 "worker other patients are generating on"
                             )
-                            return True
+                            return None
+                        parts.append(chunk)
+                copy.writestr(entry.filename, b"".join(parts))
     except Exception as e:
-        # Not a readable archive. Let the parser produce the empty result
-        # and log it, rather than inventing a second failure mode here.
-        logger.debug(f"Could not read the DOCX archive to size it: {e}")
-        return False
-    return False
+        # Not a readable archive. Let the parser produce the empty result and
+        # log it, rather than inventing a second failure mode here.
+        logger.debug(f"Could not unpack the DOCX archive: {e}")
+        return data
+    return rebuilt.getvalue()
 
 
 def _iter_docx_text(doc) -> Any:
@@ -199,7 +208,15 @@ def _iter_docx_block_text(parent, doc) -> Any:
         elif child.tag == qn("w:tbl"):
             for row in Table(child, doc).rows:
                 cells = []
+                # A merged cell is returned once per column it spans, and
+                # each copy holds whatever is nested in it. Walking every
+                # copy repeated that content once per span, which with a
+                # nested table repeats again a level down.
+                seen_cells = set()
                 for cell in row.cells:
+                    if id(cell._tc) in seen_cells:
+                        continue
+                    seen_cells.add(id(cell._tc))
                     # cell._tc is the cell's own element. Private, and the
                     # only way to keep a nested table in the order it was
                     # written; cell.text stops at immediate paragraphs.
@@ -224,13 +241,14 @@ def extract_text_from_docx_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
     full_text = ""
     page_dict: Dict[int, str] = {}
 
-    if _docx_unpacks_too_large(data):
+    bounded = _bounded_docx(data)
+    if bounded is None:
         return full_text, page_dict
 
     try:
         import docx
 
-        doc = docx.Document(io.BytesIO(data))
+        doc = docx.Document(io.BytesIO(bounded))
         current_section = 1
         current_text = ""
         for para_text in _iter_docx_text(doc):
