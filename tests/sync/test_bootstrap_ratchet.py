@@ -230,11 +230,18 @@ def _templates():
     return sorted(TEMPLATES.rglob("*.html"))
 
 
-CLASS_ATTR = re.compile(r"""class\s*=\s*["']([^"']*)["']""")
+#: A class attribute, anchored on the whitespace that must precede any
+#: attribute name. Matching "class=" wherever it appears also matched the
+#: tail of another attribute, so "x.class=" counted as one.
+CLASS_ATTR = re.compile(r"""(?:^|[\s])class\s*=\s*["']([^"']*)["']""")
 
 
+#: Markup that never reaches a browser. Django's comment tag takes an
+#: optional note, {% comment "why this is here" %}, and a pattern that
+#: insisted on nothing between the word and the closing brace left those
+#: blocks counted.
 COMMENTS = re.compile(
-    r"<!--.*?-->|{#.*?#}|{%\s*comment\s*%}.*?{%\s*endcomment\s*%}", re.S
+    r"<!--.*?-->|{#.*?#}|{%\s*comment\b[^%]*%}.*?{%\s*endcomment\s*%}", re.S
 )
 
 
@@ -369,3 +376,28 @@ def test_the_per_template_baseline_has_no_stale_numbers() -> None:
     assert (
         not stale
     ), "lower these to what the templates actually have:\n  %s" % "\n  ".join(stale)
+
+
+def test_only_a_real_class_attribute_counts() -> None:
+    """The tail of another attribute is not a class attribute.
+
+    "class=" matched wherever it appeared, so markup like x.class="btn"
+    counted a use that no browser would apply.
+    """
+    assert list(_classes_in('<b class="btn row">')) == ["btn", "row"]
+    assert list(_classes_in('<b x.class="btn">')) == []
+    assert list(_classes_in('<div\n  class="row">')) == ["row"]
+
+
+def test_a_commented_block_with_a_note_is_still_ignored() -> None:
+    """Django's comment tag takes an optional note.
+
+    A pattern that allowed nothing between the word and the brace left
+    {% comment "why this is here" %} blocks counted.
+    """
+    plain = '{% comment %}<a class="btn">x</a>{% endcomment %}'
+    noted = '{% comment "kept for reference" %}<a class="btn">x</a>{% endcomment %}'
+
+    assert list(_classes_in(_live_markup(plain))) == []
+    assert list(_classes_in(_live_markup(noted))) == []
+    assert list(_classes_in(_live_markup('<a class="btn">x</a>'))) == ["btn"]
