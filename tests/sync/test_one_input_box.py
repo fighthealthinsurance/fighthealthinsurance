@@ -124,6 +124,28 @@ class EveryControlInTheFlowIsOursTest(TestCase):
         self.assertIn(CHECK, combined.fields["ticked"].widget.attrs["class"].split())
 
 
+class AHandWrittenBoxCarriesItTooTest(TestCase):
+    """The mixin stamps what a form renders, and nothing else.
+
+    A control written straight into a template never passes through it, so
+    it keeps whatever class was typed there. The consent box on the health
+    history page was written by hand with Bootstrap's, which is how two
+    branches that were each green separately failed the ratchet together
+    once both had landed.
+    """
+
+    def test_the_consent_box_is_ours(self):
+        from pathlib import Path
+
+        from django.conf import settings
+
+        templates = Path(settings.BASE_DIR) / "fighthealthinsurance" / "templates"
+        markup = (templates / "health_history.html").read_text()
+
+        self.assertIn('class="fhi-check"', markup)
+        self.assertNotIn("form-check-input", markup)
+
+
 class TheStylesheetDefinesThemTest(TestCase):
     def test_both_classes_are_styled_from_the_tokens(self):
         from pathlib import Path
