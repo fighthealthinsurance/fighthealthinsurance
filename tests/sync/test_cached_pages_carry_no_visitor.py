@@ -37,10 +37,46 @@ LOCMEM_CACHE = {
 }
 
 CASE_UUID = "11111111-2222-3333-4444-555555555555"
+VISITOR_EMAIL = "visitor@example.com"
+FLASH_TEXT = f"Your appeal draft is ready, {VISITOR_EMAIL}"
 
 # Enough of the cached set to fail loudly on the common pages, with the sweep
 # below covering the rest.
 NAMED_CACHED_ROUTES = ("root", "faq", "privacy_policy", "tos", "about", "about-ai")
+
+
+def _pages_that_take_a_slug():
+    """The cached routes ``reverse`` cannot build without an argument.
+
+    Three of the site's cached pages are per-slug: a blog post, a state help
+    page, a microsite. The sweep below walks named routes, so without this
+    they were the pages it silently skipped, and a leak on one of them would
+    have looked like a clean run. The slugs come from the site's own
+    registries rather than being typed here, so a rename cannot quietly
+    empty this list.
+    """
+    from fighthealthinsurance.agent_docs import _blog_posts
+    from fighthealthinsurance.microsites import get_microsite_slugs
+    from fighthealthinsurance.state_help import get_state_help_slugs
+
+    blog_slugs = [
+        post.get("slug") for post in _blog_posts() if isinstance(post, dict)
+    ]
+    for route, slugs in (
+        ("blog-post", blog_slugs),
+        ("state_help", get_state_help_slugs()),
+        ("microsite", get_microsite_slugs()),
+    ):
+        for slug in slugs:
+            if not slug:
+                continue
+            try:
+                yield route, reverse(route, kwargs={"slug": slug})
+            except Exception:
+                continue
+            # One of each is the point: this is a privacy guard on the
+            # template, not a content sweep.
+            break
 
 
 def mid_appeal_client() -> Client:
@@ -137,7 +173,7 @@ class ACachedPageCarriesNoVisitorTest(TestCase):
         users = get_user_model().objects
         user = users.create_user(
             username=f"cached-page-visitor-{users.count()}",
-            email="visitor@example.com",
+            email=VISITOR_EMAIL,
             password="not-a-real-password",
         )
         client = Client()
@@ -149,7 +185,7 @@ class ACachedPageCarriesNoVisitorTest(TestCase):
         request = RequestFactory().get("/")
         request.session = client.session
         storage = SessionStorage(request)
-        storage.add(40, "Your appeal draft is ready, visitor@example.com")
+        storage.add(40, FLASH_TEXT)
         storage.update(None)
         request.session.save()
         client.cookies[settings.SESSION_COOKIE_NAME] = request.session.session_key
@@ -188,7 +224,10 @@ class EveryPubliclyCacheablePageTest(TestCase):
                 try:
                     yield name, reverse(name)
                 except Exception:
+                    # Takes an argument. Those are picked up below, with a
+                    # real slug, rather than skipped.
                     continue
+        yield from _pages_that_take_a_slug()
 
     def test_no_cached_page_can_carry_a_case_id(self):
         checked, cacheable = [], []
@@ -216,6 +255,75 @@ class EveryPubliclyCacheablePageTest(TestCase):
         # of passing empty.
         self.assertGreater(len(checked), 15, f"only reached {checked}")
         self.assertGreater(len(cacheable), 15, f"only found {cacheable} cacheable")
+        # And every per-slug page the site has content for, because those
+        # are the ones this sweep used to miss entirely. A route whose
+        # registry is empty in this environment yields no URL and is not
+        # required; one that yields a URL has to answer.
+        for route, _url in _pages_that_take_a_slug():
+            self.assertIn(
+                route,
+                checked,
+                f"{route} has content and was not reached by the sweep",
+            )
+
+    def test_no_cached_page_can_carry_who_is_signed_in(self):
+        """A case id is not the only thing a visitor brings.
+
+        The sweep above carries a case in the session. This one carries a
+        signed-in account and a flash message naming it, because a page
+        added later that greets somebody by name would be served to
+        everybody who followed them, and nothing in the sweep above would
+        have noticed.
+        """
+        checked = []
+        for name, url in self._cached_pages():
+            with self.subTest(route=name):
+                cache.clear()
+                response = self._a_visitor_with_something_to_lose().get(url)
+                if response.status_code != 200:
+                    continue
+                if "public" not in response.headers.get("Cache-Control", ""):
+                    continue
+                checked.append(name)
+                body = response.content.decode(errors="replace")
+                self.assertNotIn(
+                    VISITOR_EMAIL,
+                    body,
+                    msg=f"{name} is cached publicly and names the visitor",
+                )
+                self.assertNotIn(
+                    FLASH_TEXT,
+                    body,
+                    msg=f"{name} is cached publicly and carries their message",
+                )
+
+        self.assertGreater(len(checked), 15, f"only found {checked} cacheable")
+
+    def _a_visitor_with_something_to_lose(self):
+        """Signed in, mid appeal, and carrying a flash message."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.messages.storage.session import SessionStorage
+
+        users = get_user_model().objects
+        user = users.create_user(
+            username=f"swept-page-visitor-{users.count()}",
+            email=VISITOR_EMAIL,
+            password="not-a-real-password",
+        )
+        client = Client()
+        client.force_login(user)
+        session = client.session
+        session["denial_uuid"] = CASE_UUID
+        session.save()
+
+        request = RequestFactory().get("/")
+        request.session = client.session
+        storage = SessionStorage(request)
+        storage.add(40, FLASH_TEXT)
+        storage.update(None)
+        request.session.save()
+        client.cookies[settings.SESSION_COOKIE_NAME] = request.session.session_key
+        return client
 
     def test_nothing_else_caches_a_whole_page_of_html(self):
         """The tripwire under the sweep above.
