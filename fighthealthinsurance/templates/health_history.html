@@ -21,12 +21,27 @@ Optional: Health History
     newline or indent here would arrive in the POST as typed content.
   {% endcomment %}
   <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
-	    placeholder="Related Health History Goes Here" class="form-control">{{ form.health_history.value|default_if_none:"" }}</textarea>
+	    placeholder="Related Health History Goes Here" class="fhi-field">{{ form.health_history.value|default_if_none:"" }}</textarea>
   {% if form.health_history.value and not form.errors %}
   <p id="health_history_removal_note" class="form-text text-muted">
     This is what is saved for this appeal. To remove it, clear the box and press Next.
   </p>
   {% endif %}
+  <div class="form-check mt-2">
+    <input type="checkbox" class="form-check-input"
+           name="health_history_consent"
+           id="health_history_consent"
+           form="fuck_health_insurance_form"
+           {% if form.health_history_consent.value %}checked{% endif %}>
+    <label class="form-check-label" for="health_history_consent">
+      Use this in my appeal letter
+    </label>
+    <p class="form-text text-muted">
+      Ticked, what you wrote here is given to the AI that writes your letter,
+      along with the rest of your case. Unticked, it is still saved for this
+      appeal but is left out of the letter and out of what the AI is shown.
+    </p>
+  </div>
   <br>
 </div>
 <script src="{% static 'js/dist/formPersistence.bundle.js' %}"></script>

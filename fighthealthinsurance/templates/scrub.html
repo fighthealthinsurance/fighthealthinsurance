@@ -67,11 +67,11 @@ Upload your Health Insurance Denial
 	<div class="together-form-group">
 	  <div>
 	    <label for="store_fname" class="form-label">First name*</label><br>
-	    <input type="text" id="store_fname" class="form-control">
+	    <input type="text" id="store_fname" class="fhi-field">
 	  </div>
 	  <div>
 	    <label for="store_lname" class="form-label">Last name*</label><br>
-	    <input type="text" id="store_lname" class="form-control">
+	    <input type="text" id="store_lname" class="fhi-field">
 	  </div>
 	</div>
 	<div class="form-group">
@@ -81,7 +81,7 @@ Upload your Health Insurance Denial
 	      <span class="d-block small text-muted">
 	      </span>
 	    </label><br>
-	    <input type="email" id="email" name="email" class="form-control"><br>
+	    <input type="email" id="email" name="email" class="fhi-field"><br>
 	  </div>
 	</div>
 	<div class="together-form-group">
@@ -90,20 +90,20 @@ Upload your Health Insurance Denial
 	      Street Address*
 	      <small class="text-muted">(e.g. 283 24th St)</small>
 	    </label><br>
-	    <input type="text" id="store_street" name="street" class="form-control"><br>
+	    <input type="text" id="store_street" name="street" class="fhi-field"><br>
 	  </div>
 	  <div>
 	    <label for="store_zip" class="form-label">
 	      Zip Code
 	      <small class="text-muted">(e.g. 94103)</small>
 	    </label><br>
-	    <input type="text" id="store_zip" name="zip" class="form-control"><br>
+	    <input type="text" id="store_zip" name="zip" class="fhi-field"><br>
 	  </div>
 	</div>
 	{% if upload_more %}
 	{% if advanced_ocr_offered %}
 	<div class="form-check mt-2 mb-2" id="advanced_ocr_section">
-	    <input type="checkbox" id="advanced_ocr_enabled" class="form-check-input">
+	    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
 	    <label for="advanced_ocr_enabled" class="form-check-label">
 		<b>Better text recognition for photos and scans</b> <span class="text-muted">(experimental)</span>
 		<small class="text-muted d-block">A small AI model that reads bad photos and faint scans much better.
@@ -132,7 +132,7 @@ Upload your Health Insurance Denial
 			   getElementById("uploader"), so the id is all it needs. Do not
 			   add a name back without also changing what the copy below
 			   promises. {% endcomment %}
-			<input id="uploader" type="file" multiple="true" class="form-control mt-2"><br>
+			<input id="uploader" type="file" multiple="true" class="fhi-field mt-2"><br>
 	    </div>
 	</div>
 	{% comment %} Sits right under the uploader, where the read is triggered: on a
@@ -155,7 +155,7 @@ Upload your Health Insurance Denial
 		</label><br>
 	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
 		placeholder="Your denial goes here"
-		class="form-control">{{ocr_result}}</textarea><br>
+		class="fhi-field">{{ocr_result}}</textarea><br>
 		<small class="text-muted">This scrubbed version of your denial is transferred to our servers.</small><br>
 	    <button type="button" id="scrub-2" class="btn btn-green">
 	      Remove PII
@@ -164,38 +164,38 @@ Upload your Health Insurance Denial
 		</div>
 	    <b>Policies</b>:
 	    <div class="form-check">
-	        <input type="checkbox" id="personalonly" name="personalonly" class="form-check-input">
+	        <input type="checkbox" id="personalonly" name="personalonly" class="fhi-check">
 	        <label for="personalonly" class="form-check-label">I am aware that <b>this is for personal use only</b>. <a href="{% url 'pro_version' %}">Click here for those interested in a professional version (doctor/therapist/practitioner/office/hospital).</a></label>
 		</div>
 		<div class="form-check">
-		<input type="checkbox" id="privacy" name="privacy" class="form-check-input">
+		<input type="checkbox" id="privacy" name="privacy" class="fhi-check">
 		<label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
 		    policy.</a>
 		</label>
 		</div>
 		<div class="form-check">
-		<input type="checkbox" id="pii" name="pii" class="form-check-input">
+		<input type="checkbox" id="pii" name="pii" class="fhi-check">
 		<label for="pii" class="form-check-label">I have removed my personal identifiable information (PII) from the text areas above.</label>
 		</div>
 		<div class="form-check">
-		<input type="checkbox" id="tos" name="tos" class="form-check-input">
+		<input type="checkbox" id="tos" name="tos" class="fhi-check">
 		<label for="tos" class="form-check-label">I agree to the <a href="{% url 'tos' %}">terms of service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.</label>
 		</div>
 		<b>Optional</b>:
 			<div class="form-check">
-			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
+			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="fhi-check">
 				<label for="store_raw_email" class="form-check-label">
 					Store my email to follow-up with me (for the duration of automated follow ups + 30 days)**
 				</label>
 			</div>
 			<div class="form-check">
-			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" checked class="form-check-input">
+			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" checked class="fhi-check">
 				<label for="use_external_models" class="form-check-label">
 					Increase the number of possible appeals and use external models. <b>This is not required and involves sharing your data with third parties</b>, including Anthropic, Microsoft Azure, DeepInfra, Perplexity, TypeSafe, etc., subject to their own terms of service.
 				</label>
 			</div>
 			<div class="form-check">
-			<input type="checkbox" id="subscribe" name="subscribe" value="checked" checked class="form-check-input">
+			<input type="checkbox" id="subscribe" name="subscribe" value="checked" checked class="fhi-check">
 				<label for="subscribe" class="form-check-label">
 					Subscribe to our mailing list for updates and news from Fight Health Insurance. We will store your e-mail for this option if selected.
 				</label>
@@ -205,7 +205,7 @@ Upload your Health Insurance Denial
 					How did you hear about us? (Optional)
 				</label>
 				<!-- Note: These options should match REFERRAL_SOURCE_CHOICES in forms/__init__.py -->
-				<select id="referral_source" name="referral_source" class="form-control">
+				<select id="referral_source" name="referral_source" class="fhi-field">
 					<option value="">-- Please select --</option>
 					<option value="Search Engine (Google, Bing, etc.)">Search Engine (Google, Bing, etc.)</option>
 					<option value="Social Media (Facebook, Twitter, etc.)">Social Media (Facebook, Twitter, etc.)</option>
@@ -219,11 +219,11 @@ Upload your Health Insurance Denial
 				<label for="referral_source_details" class="form-label">
 					Details (Optional)
 				</label>
-				<input type="text" id="referral_source_details" name="referral_source_details" class="form-control" placeholder="E.g., which search engine, social media platform, or person's name">
+				<input type="text" id="referral_source_details" name="referral_source_details" class="fhi-field" placeholder="E.g., which search engine, social media platform, or person's name">
 				<small class="form-text text-muted">Please provide specific details about your referral source if applicable</small>
 			</div>
 			<div class="form-check mt-3 alert-box alert-warning">
-			<input type="checkbox" id="persistence_enabled" checked class="form-check-input">
+			<input type="checkbox" id="persistence_enabled" checked class="fhi-check">
 				<label for="persistence_enabled" class="form-check-label">
 					<b>Remember form data</b> - Keep your entered information when navigating back (data stored locally in your browser).
 					<br><small class="text-muted"><strong>Warning:</strong> Uncheck this if using a public or shared computer. Your sensitive information should not be stored on shared devices.</small>

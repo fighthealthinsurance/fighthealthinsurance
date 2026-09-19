@@ -7,6 +7,10 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 from loguru import logger
 
+from fighthealthinsurance.denial_history_consent import (
+    ahistory_may_be_used,
+    still_allowed,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
@@ -25,7 +29,10 @@ def questions_fingerprint(procedure: Optional[str], diagnosis: Optional[str]) ->
 
 
 def _claim_generated_questions_sync(
-    denial_id: int, questions: List[Tuple[str, str]], generated_for: str
+    denial_id: int,
+    questions: List[Tuple[str, str]],
+    generated_for: str,
+    used_history: bool = False,
 ) -> Optional[List[Tuple[str, str]]]:
     with transaction.atomic():
         fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
@@ -51,6 +58,21 @@ def _claim_generated_questions_sync(
             # First writer for these inputs keeps the slot: answers are filed
             # against the questions the person was shown.
             return cast(List[Tuple[str, str]], fresh.generated_questions)
+        if used_history and fresh.health_history_consent is False:
+            # The answer changed while this ran. Read on the row this block
+            # already holds locked, and after the two reads above, because
+            # what a refusal governs is the write: a set already standing
+            # for these inputs is handed back as it always was, and only
+            # putting a new one in is refused. A check made outside this
+            # block would be overtaken by the refusal landing between it and
+            # the write. Treated the way this function already treats a run
+            # whose inputs were corrected mid-run.
+            logger.info(
+                f"Health history consent was withdrawn while questions for "
+                f"denial {denial_id} were being generated; keeping neither "
+                "the result nor a copy of it"
+            )
+            return None
         fresh.generated_questions = questions
         fresh.generated_questions_for = generated_for
         fresh.save(update_fields=["generated_questions", "generated_questions_for"])
@@ -58,7 +80,10 @@ def _claim_generated_questions_sync(
 
 
 async def claim_generated_questions(
-    denial_id: int, questions: List[Tuple[str, str]], generated_for: str
+    denial_id: int,
+    questions: List[Tuple[str, str]],
+    generated_for: str,
+    used_history: bool = False,
 ) -> Optional[List[Tuple[str, str]]]:
     """Store ``questions`` for the inputs they were generated for, and return
     what stands for the row's current inputs.
@@ -72,7 +97,7 @@ async def claim_generated_questions(
     under a row lock; ``select_for_update`` is a plain read on sqlite.
     """
     stored = await database_sync_to_async(_claim_generated_questions_sync)(
-        denial_id, questions, generated_for
+        denial_id, questions, generated_for, used_history
     )
     return cast(Optional[List[Tuple[str, str]]], stored)
 
@@ -297,6 +322,10 @@ class MLAppealQuestionsHelper:
             person which of those happened.
         """
         questions: Optional[List[Tuple[str, str]]] = None
+        # Whether this run is allowed to look at the history, asked before
+        # it starts, so a refusal that lands while it runs can be told from
+        # one that was already in place.
+        used_history = False
         # The inputs this run is for, taken now: the claim at the end compares
         # them with the row's inputs then, and a run for inputs since corrected
         # stores nothing.
@@ -350,11 +379,20 @@ class MLAppealQuestionsHelper:
                     timeout=model_timeout,
                 ),
             )
+            may_use_history = await ahistory_may_be_used(denial)
+            used_history = bool(denial.health_history) and may_use_history
             context_awaitable = watched(
                 "specific",
                 MLAppealQuestionsHelper.generate_specific_questions(
                     denial_text=denial.denial_text,
-                    patient_context=denial.health_history,  # Using health_history as patient_context
+                    # Only if they said it could be used; see
+                    # denial_history_consent. This goes to a model, and with
+                    # use_external it can go to an outside one, so the answer
+                    # is re-read at the handover rather than trusted from the
+                    # row this run started with tens of seconds ago.
+                    patient_context=(
+                        denial.health_history if may_use_history else None
+                    ),
                     procedure=denial.procedure,
                     diagnosis=denial.diagnosis,
                     timeout=model_timeout,
@@ -422,11 +460,26 @@ class MLAppealQuestionsHelper:
         )
         if speculative:
             if questions:
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                # Conditional in one statement rather than a check and then
+                # a write: a refusal landing between the two would be
+                # overwritten by the write. A row whose answer is no takes
+                # nothing from a run that was allowed to use the history.
+                candidates = Denial.objects.filter(denial_id=denial.denial_id)
+                if used_history:
+                    candidates = candidates.filter(still_allowed())
+                if not await candidates.aupdate(
                     candidate_generated_questions=questions
-                )
+                ):
+                    if used_history:
+                        logger.info(
+                            f"Health history consent was withdrawn while "
+                            f"questions for denial {denial.denial_id} were "
+                            "being generated; keeping neither the result nor "
+                            "a copy of it"
+                        )
+                        return None
             return questions
         # Empty included: a finished run with nothing to ask is stored as [].
         return await claim_generated_questions(
-            denial.denial_id, questions, generated_for
+            denial.denial_id, questions, generated_for, used_history
         )

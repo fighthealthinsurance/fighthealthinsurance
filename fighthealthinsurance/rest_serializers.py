@@ -112,6 +112,11 @@ class HealthHistoryFormSerializer(FormSerializer):
     CALLER_MUST_ASK_FOR = (
         "health_history_anonymized",
         "include_provided_health_history_in_appeal",
+        # An omitted BooleanField cleans to False, and the update persists
+        # what it is given, so without this an API caller who never mentions
+        # consent revokes it. Sending False explicitly still revokes it,
+        # which is the point of the distinction.
+        "health_history_consent",
     )
 
     class Meta(object):

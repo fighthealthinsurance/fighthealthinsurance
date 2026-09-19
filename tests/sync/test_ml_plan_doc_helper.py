@@ -1,0 +1,808 @@
+"""Regression tests for ``MLPlanDocHelper.extract_relevant_text`` decryption.
+
+Before this fix, ``extract_relevant_text`` read ``plan_document_enc`` via
+``file_field.path`` and handed the raw *ciphertext* file to the PDF parser, so
+extraction always failed, the exception was swallowed, and the feature silently
+yielded "".  These tests save a real encrypted PDF to ``plan_document_enc`` and
+assert the decrypted text is returned instead.
+
+These live in ``tests/sync/`` rather than ``tests/async/`` on purpose: they are
+synchronous ``TransactionTestCase`` methods that drive the async helper via
+``asyncio.run()``. ``TransactionTestCase`` truncates tables and cannot run under
+the async suite's parallel (``-n auto``) xdist workers, and the sync suite is
+where the ``asyncio.run()``-from-a-sync-test pattern belongs.
+"""
+
+import asyncio
+import io
+from unittest import mock
+
+import pymupdf
+import pytest
+from django.core.files.base import ContentFile
+from django.test import TransactionTestCase
+
+from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
+from fighthealthinsurance.models import Denial, PlanDocuments
+
+
+def _make_pdf_bytes(text: str) -> bytes:
+    """Build a one-page PDF containing *text* and return its raw bytes."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text)
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+@pytest.mark.django_db
+class ExtractRelevantTextDecryptionTests(TransactionTestCase):
+    def _make_denial(self) -> Denial:
+        return Denial.objects.create(
+            hashed_email="hash:plan-doc",
+            denial_text="Sample denial for plan document extraction.",
+        )
+
+    def test_extract_relevant_text_decrypts_encrypted_pdf(self):
+        """An encrypted PDF whose text matches a term yields decrypted text."""
+        denial = self._make_denial()
+        pdf_bytes = _make_pdf_bytes(
+            "This plan covers services subject to medical necessity review."
+        )
+        doc = PlanDocuments(denial=denial)
+        # EncryptedFileField encrypts the bytes on save.
+        doc.plan_document_enc.save("plan.pdf", ContentFile(pdf_bytes), save=True)
+
+        result = asyncio.run(
+            MLPlanDocHelper.extract_relevant_text(
+                denial.denial_id, ["medical necessity"]
+            )
+        )
+
+        # Prior to the decryption fix this returned "" because the ciphertext
+        # was handed to the PDF parser. The decrypted text must now come back
+        # (assertIn also proves the result is non-empty).
+        self.assertIn("medical necessity", result.lower())
+
+    def test_extract_relevant_text_skips_docs_without_matching_terms(self):
+        """A decrypted doc with no matching term contributes no text."""
+        denial = self._make_denial()
+        pdf_bytes = _make_pdf_bytes("This document is only about dental cleanings.")
+        doc = PlanDocuments(denial=denial)
+        doc.plan_document_enc.save("plan.pdf", ContentFile(pdf_bytes), save=True)
+
+        result = asyncio.run(
+            MLPlanDocHelper.extract_relevant_text(
+                denial.denial_id, ["prior authorization"]
+            )
+        )
+
+        self.assertEqual(result, "")
+
+
+class WhatItWillAndWillNotParseTest(TransactionTestCase):
+    """The parser runs on a shared worker, so what reaches it is bounded."""
+
+    def test_a_document_over_the_ceiling_is_skipped_not_parsed(self):
+        from unittest.mock import patch
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("big@example.com"),
+            denial_text="Denied.",
+        )
+        oversized = b"%PDF-1.4\n" + b"x" * (MLPlanDocHelper.MAX_DOCUMENT_BYTES + 1)
+        doc = PlanDocuments(denial=denial)
+        doc.plan_document_enc.save("huge.pdf", ContentFile(oversized), save=True)
+
+        with patch.object(MLPlanDocHelper, "_extract_pages_with_terms") as extracted:
+            result = asyncio.run(
+                MLPlanDocHelper.extract_relevant_text(
+                    denial.denial_id, ["medical necessity"]
+                )
+            )
+
+        extracted.assert_not_called()
+        self.assertEqual(result, "")
+
+    def test_an_oversized_document_is_never_read_whole(self):
+        """Skipping it after reading it costs the memory anyway.
+
+        Rejecting on the length of what came back still allocates the whole
+        file, and decryption allocates a second copy, on a worker other
+        patients are generating on. So the limit has to reach the read.
+        """
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            read_and_decrypt_file,
+        )
+
+        class WatchedFile:
+            """Stands in for the stored file and records how it is read."""
+
+            def __init__(self, body):
+                self.body = body
+                self.asked_for = []
+
+            def read(self, size=None):
+                self.asked_for.append(size)
+                return self.body if size is None else self.body[:size]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        watched = WatchedFile(b"y" * 4096)
+        field = mock.Mock()
+        field.name = "huge.pdf"
+        field.open.return_value = watched
+
+        read_and_decrypt_file(field, 1024)
+
+        self.assertEqual(
+            watched.asked_for,
+            [1025],
+            "the read has to stop one byte past the ceiling: anything larger "
+            "still allocates whatever the file happens to be",
+        )
+
+    def test_the_real_path_asks_for_a_bounded_read(self):
+        """The bound has to be at the production call, not only available.
+
+        The test above proves the helper stops reading when it is given a
+        ceiling. It would still pass if the plan-document path stopped
+        handing it one and went back to reading the file whole and checking
+        the length afterwards, which is the cost this exists to avoid.
+        """
+        from fighthealthinsurance.ml import ml_plan_doc_helper
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("bounded@example.com"),
+            denial_text="Denied.",
+        )
+        doc = PlanDocuments(denial=denial)
+        doc.plan_document_enc.save("plan.pdf", ContentFile(b"%PDF-1.4 tiny"), save=True)
+
+        asked = []
+
+        def watched(file_field, max_bytes=None):
+            asked.append(max_bytes)
+            return None
+
+        with mock.patch.object(
+            ml_plan_doc_helper, "read_and_decrypt_file", watched
+        ):
+            asyncio.run(
+                MLPlanDocHelper.extract_relevant_text(
+                    denial.denial_id, ["medical necessity"]
+                )
+            )
+
+        self.assertEqual(asked, [MLPlanDocHelper.MAX_DOCUMENT_BYTES], asked)
+
+    def test_two_parses_never_overlap(self):
+        """PyMuPDF is not safe to drive from several threads at once.
+
+        Asserting the lock object exists proved nothing: removing the `with`
+        around the parse left both assertions passing. This runs two parses
+        from two threads and records when each is inside, so an unguarded
+        parser overlaps and fails.
+        """
+        import threading
+        import time
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        inside = []
+        overlapped = []
+        real = ml_document_extraction.extract_text_from_plaintext_bytes
+
+        def slow(data):
+            inside.append(1)
+            if len(inside) > 1:
+                overlapped.append(1)
+            time.sleep(0.05)
+            inside.pop()
+            return real(data)
+
+        with mock.patch.object(
+            ml_document_extraction, "extract_text_from_plaintext_bytes", slow
+        ):
+            threads = [
+                threading.Thread(
+                    target=ml_document_extraction.extract_text_from_bytes,
+                    args=(b"plan text", "plan.txt"),
+                )
+                for _ in range(4)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        self.assertEqual(overlapped, [], "two parses ran at the same time")
+
+    def test_the_parse_does_not_occupy_the_shared_executor(self):
+        """A lock held on the default executor pins one of its threads.
+
+        Every asyncio.to_thread call in the process shares that pool, so a
+        few large documents could stall work with nothing to do with
+        documents. Parsing has its own thread.
+
+        Driven through the helper a plan document actually goes through, not
+        through the wrapper directly: putting the production call back on the
+        shared executor has to fail this, and calling the wrapper myself
+        would not have noticed.
+        """
+        import asyncio
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        seen = {}
+
+        def note(data, filename):
+            import threading
+
+            seen["thread"] = threading.current_thread().name
+            return "", {1: "medical necessity review"}
+
+        async def run():
+            with mock.patch.object(
+                ml_document_extraction, "extract_text_from_bytes", note
+            ):
+                return await MLPlanDocHelper._extract_pages_with_terms(
+                    b"plan bytes", "plan.pdf", ["medical necessity"]
+                )
+
+        pages = asyncio.run(run())
+
+        self.assertTrue(pages, "the parse never happened, so nothing was proven")
+        self.assertIn("fhi-doc-parse", seen["thread"], seen)
+        self.assertEqual(
+            ml_document_extraction._PARSER._max_workers,
+            1,
+            "a second parser thread is a second thread inside PyMuPDF",
+        )
+
+    def test_the_pdf_branch_itself_runs_under_the_lock(self):
+        """The branch that crashes the worker is the one that must be held.
+
+        Finding the `with` in the source proved nothing about where the
+        parse happens: moving the PDF branch outside it left the string,
+        and the overlap test above, both intact, because that test parses
+        text. This asks the PDF parser whether the lock is held while it
+        runs.
+        """
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        held = {}
+
+        def note(data):
+            held["locked"] = ml_document_extraction._PARSING.locked()
+            return "", {}
+
+        with mock.patch.object(
+            ml_document_extraction, "extract_text_from_pdf_bytes", note
+        ):
+            ml_document_extraction.extract_text_from_bytes(b"%PDF-1.4", "plan.pdf")
+
+        self.assertTrue(
+            held.get("locked"), "the PDF parser ran with the lock free"
+        )
+
+    def test_a_cancelled_request_lets_go_of_its_document(self):
+        """A queued work item keeps a decrypted document alive.
+
+        Cancelling the future stops the parse, but the work item stays on
+        the executor's queue until a worker dequeues it, which is behind
+        however long the parse in front of it takes, and that item holds its
+        arguments. A request that gave up waiting could therefore leave
+        somebody's plan document in memory. The bytes travel in a holder the
+        cancelled request empties, and this reads the holder the queued item
+        is still carrying.
+        """
+        import asyncio
+        import contextlib
+        import threading
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        holders = []
+        real_holder = ml_document_extraction._Payload
+
+        class Recording(real_holder):
+            def __init__(self, data):
+                super().__init__(data)
+                holders.append(self)
+
+        parsed: list[bytes] = []
+        running = threading.Event()
+        release = threading.Event()
+
+        def blocking(data, filename):
+            parsed.append(data)
+            running.set()
+            release.wait(10)
+            return "", {}
+
+        async def run():
+            with mock.patch.object(
+                ml_document_extraction, "extract_text_from_bytes", blocking
+            ), mock.patch.object(ml_document_extraction, "_Payload", Recording):
+                first = asyncio.create_task(
+                    ml_document_extraction.aextract_text_from_bytes(
+                        b"the first document", "a.txt"
+                    )
+                )
+                await asyncio.to_thread(running.wait, 10)
+                second = asyncio.create_task(
+                    ml_document_extraction.aextract_text_from_bytes(
+                        b"the document nobody is waiting for", "b.txt"
+                    )
+                )
+                await asyncio.sleep(0.05)
+                second.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await second
+                abandoned = holders[-1].data
+                release.set()
+                await first
+                # Long enough for a queued item to have been picked up.
+                await asyncio.sleep(0.2)
+                return abandoned
+
+        abandoned = asyncio.run(run())
+
+        self.assertEqual(len(holders), 2, holders)
+        self.assertEqual(
+            abandoned,
+            b"",
+            "a cancelled request's document is still waiting in the queue",
+        )
+        self.assertEqual(
+            parsed,
+            [b"the first document"],
+            "a cancelled request's document was parsed anyway",
+        )
+
+
+class EveryAcceptedUploadIsReadTest(TransactionTestCase):
+    """The upload form takes any file.
+
+    Anything the extractor does not recognise is read as text, which is what
+    this path did before it started decrypting. A format that needs its own
+    parser, a saved web page above all, is worth doing properly and is not
+    done here: building a document tree from a patient's file is its own
+    memory question and belongs in its own change.
+    """
+
+    def _text_from(self, name, body):
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email(f"{name}@example.com"),
+            denial_text="Denied.",
+        )
+        doc = PlanDocuments(denial=denial)
+        doc.plan_document_enc.save(name, ContentFile(body), save=True)
+        return asyncio.run(
+            MLPlanDocHelper.extract_relevant_text(
+                denial.denial_id,
+                ["medical necessity", "necesidad", "autorizaci\u00f3n"],
+            )
+        )
+
+    def test_a_binary_file_reads_as_nothing_useful_without_raising(self):
+        """A scanned page is bytes, not words, and needs OCR this does not do.
+
+        Read as text it simply matches no term. What it must not do is throw,
+        because the caller would swallow that and the patient would get the
+        same empty result with no idea why.
+        """
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            extract_text_from_bytes,
+        )
+
+        full, pages = extract_text_from_bytes(
+            b"\xff\xd8\xff\xe0 not text at all", "scan.jpeg"
+        )
+
+        self.assertIsInstance(full, str)
+        self.assertIsInstance(pages, dict)
+        self.assertEqual(
+            self._text_from("scan.jpeg", b"\xff\xd8\xff\xe0 not text at all"), ""
+        )
+
+    def test_an_unrecognised_extension_is_read_as_text(self):
+        """A legacy upload named .text used to be read and stopped being.
+
+        The path had a catch-all that opened anything non-PDF as text. An
+        extension list replaced it, so a file it did not name contributed
+        nothing at all, silently.
+        """
+        text = self._text_from(
+            "benefits.text", b"Coverage requires medical necessity review."
+        )
+
+        self.assertIn("medical necessity", text.lower())
+
+    def test_markdown_is_read_as_the_text_it_is(self):
+        text = self._text_from(
+            "plan.md", b"# Plan\n\nServices need **medical necessity** review.\n"
+        )
+
+        self.assertIn("medical necessity", text.lower())
+
+
+def _make_docx_bytes(nested: bool = False) -> bytes:
+    """A document whose deadline is in a table, as real plans write them.
+
+    With ``nested``, the real table sits inside a layout table, which is how
+    a plan document laid out in Word usually arrives.
+    """
+    import io as _io
+
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("Plan overview for medical necessity review.")
+    table = document.add_table(rows=1, cols=2)
+    if nested:
+        outer = document.add_table(rows=1, cols=2)
+        merged = outer.rows[0].cells[0].merge(outer.rows[0].cells[1])
+        inner = merged.add_table(rows=1, cols=2)
+        inner.rows[0].cells[0].text = "Nested deadline"
+        inner.rows[0].cells[1].text = "30 days from receipt of this notice"
+    table.rows[0].cells[0].text = "Appeal deadline"
+    table.rows[0].cells[1].text = "60 days from receipt of this notice"
+    # After the table, so a walk that reads all paragraphs first and appends
+    # the tables afterwards puts this in the wrong place.
+    document.add_paragraph("Exclusions follow the criteria above.")
+    buffer = _io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _io_bytes_with_a_bad_member(data: bytes) -> bytes:
+    """The same archive plus one member whose stored CRC does not match.
+
+    Written by hand rather than by corrupting a byte, because the point is a
+    member that raises while unpacking, which is what a decoy in a crafted
+    upload does.
+    """
+    import io as _io
+    import zipfile
+
+    out = _io.BytesIO()
+    with zipfile.ZipFile(_io.BytesIO(data)) as src, zipfile.ZipFile(
+        out, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+        for entry in src.infolist():
+            dst.writestr(entry.filename, src.read(entry.filename))
+        info = zipfile.ZipInfo("decoy.bin")
+        dst.writestr(info, b"decoy payload")
+    raw = bytearray(out.getvalue())
+    # Flip a byte of the decoy's stored data so its CRC no longer matches.
+    marker = raw.index(b"decoy payload")
+    raw[marker] ^= 0xFF
+    return bytes(raw)
+
+
+class WhatComesOutOfADocxTest(TransactionTestCase):
+    """A .docx is an archive, and most of a plan's rules are in its tables."""
+
+    def test_a_table_is_read(self):
+        """``doc.paragraphs`` walks the top level only.
+
+        A plan that states its appeal deadline in a table, which is how
+        plans state them, lost exactly the provision the letter needs.
+        """
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            extract_text_from_docx_bytes,
+        )
+
+        full, pages = extract_text_from_docx_bytes(_make_docx_bytes())
+
+        self.assertIn("medical necessity", full.lower())
+        self.assertIn("Appeal deadline", full)
+        self.assertIn("60 days from receipt", full)
+        self.assertTrue(pages)
+        self.assertLess(
+            full.index("medical necessity"),
+            full.index("Appeal deadline"),
+            "the table was appended rather than left where it was written",
+        )
+        self.assertLess(
+            full.index("Appeal deadline"),
+            full.index("Exclusions follow"),
+            "a paragraph written after the table came out before it",
+        )
+
+    def test_a_table_inside_a_table_is_read(self):
+        """Plans laid out in Word nest a real table in a layout one.
+
+        A cell's own text stops at its immediate paragraphs, so reading
+        cells flat loses whatever is nested inside them, which is where the
+        deadline tends to be.
+        """
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            extract_text_from_docx_bytes,
+        )
+
+        full, _pages = extract_text_from_docx_bytes(_make_docx_bytes(nested=True))
+
+        self.assertIn("Nested deadline", full)
+        self.assertIn("30 days from receipt", full)
+        # The nested table sits in a cell merged across two columns, which
+        # python-docx hands back once per column it spans. Walking each copy
+        # repeated everything inside it, and repeated again a level down.
+        self.assertEqual(
+            full.count("Nested deadline"),
+            1,
+            "a merged cell's contents were read once per column it spans",
+        )
+
+    def test_an_archive_that_unpacks_too_large_is_not_opened(self):
+        """Zip turns a small upload into an arbitrarily large one.
+
+        The stored-bytes ceiling bounds the archive, not its contents, and
+        this is the first path that hands a patient's upload to a real
+        document parser rather than decoding it as text.
+        """
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        data = _make_docx_bytes()
+
+        import docx
+
+        opened = []
+        real_document = docx.Document
+
+        def watched(*args, **kwargs):
+            opened.append(args)
+            return real_document(*args, **kwargs)
+
+        with mock.patch.object(
+            ml_document_extraction, "MAX_DOCX_UNPACKED_BYTES", 16
+        ), mock.patch.object(docx, "Document", watched):
+            full, pages = ml_document_extraction.extract_text_from_docx_bytes(data)
+
+        self.assertEqual(full, "")
+        self.assertEqual(pages, {})
+        self.assertEqual(
+            opened, [], "the archive was opened before it was measured"
+        )
+
+    def test_the_document_is_unpacked_a_chunk_at_a_time(self):
+        """The declared sizes are not a bound, so they are not used as one.
+
+        A zip member's output is truncated to its declared size only after
+        it has been decompressed, and a crafted archive declares a tiny
+        member to get an arbitrarily large allocation first. What bounds it
+        is asking for a chunk at a time and stopping at the first chunk that
+        takes the total over, which is why the parser is handed a copy
+        rebuilt from those reads rather than the archive it was sent.
+        """
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        chunk = ml_document_extraction._UNPACK_CHUNK
+
+        class Member:
+            def __init__(self, total):
+                self.left = total
+                self.reads = []
+
+            def read(self, size=-1):
+                self.reads.append(size)
+                if size is None or size < 0:
+                    size = self.left
+                taken = min(size, self.left)
+                self.left -= taken
+                return b"0" * taken
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        member = Member(100 * chunk)
+
+        class Entry:
+            def is_dir(self):
+                return False
+
+        class Archive:
+            def infolist(self):
+                return [Entry()]
+
+            def open(self, entry):
+                return member
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class Copy:
+            def writestr(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_zipfile(target, mode="r", *args, **kwargs):
+            return Archive() if mode == "r" else Copy()
+
+        with mock.patch("zipfile.ZipFile", fake_zipfile), mock.patch.object(
+            ml_document_extraction, "MAX_DOCX_UNPACKED_BYTES", 4 * chunk
+        ):
+            bounded = ml_document_extraction._bounded_docx(b"not read")
+
+        self.assertIsNone(bounded, "an oversized archive was handed on anyway")
+        self.assertTrue(member.reads, "nothing was unpacked, so nothing was proven")
+        self.assertTrue(
+            all(size == chunk for size in member.reads),
+            f"a read was not bounded by a chunk: {member.reads}",
+        )
+        self.assertLessEqual(
+            len(member.reads),
+            6,
+            "it kept unpacking after it knew the answer",
+        )
+
+    def test_the_parser_is_handed_the_rebuilt_copy(self):
+        """Measuring the original and then parsing it bounds nothing.
+
+        The parser reads each member itself, in a chunk of its own
+        choosing, and a member's output is truncated to its declared size
+        only after it has been decompressed. So what it is given has to be
+        the copy rebuilt from bounded reads, not the upload.
+        """
+        import zipfile
+
+        import docx
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        handed = {}
+        real_document = docx.Document
+
+        def watched(stream, *args, **kwargs):
+            handed["bytes"] = stream.getvalue()
+            stream.seek(0)
+            return real_document(stream, *args, **kwargs)
+
+        original = _make_docx_bytes()
+        with mock.patch.object(docx, "Document", watched):
+            full, _pages = ml_document_extraction.extract_text_from_docx_bytes(
+                original
+            )
+
+        self.assertIn("Appeal deadline", full, "the document was not read")
+        self.assertIn("bytes", handed, "the parser was never reached")
+        self.assertNotEqual(
+            handed["bytes"], original, "the parser was handed the upload itself"
+        )
+        with zipfile.ZipFile(io.BytesIO(handed["bytes"])) as rebuilt:
+            self.assertTrue(rebuilt.infolist(), "the copy is empty")
+            for entry in rebuilt.infolist():
+                self.assertEqual(
+                    entry.compress_type,
+                    zipfile.ZIP_STORED,
+                    f"{entry.filename} did not come from the rebuild",
+                )
+
+    def test_a_vertically_merged_cell_is_read_once(self):
+        """A merge down the page repeats across rows, not within one.
+
+        python-docx hands back a vertically merged cell once per row it
+        covers, walking up to the row the merge started in. A set kept per
+        row never saw the second copy, so the criteria in a merged cell came
+        out once per row it spanned, and anything nested in it came out
+        again a level down.
+        """
+        import io as _io
+
+        import docx
+
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            extract_text_from_docx_bytes,
+        )
+
+        document = docx.Document()
+        table = document.add_table(rows=3, cols=2)
+        merged = table.cell(0, 0).merge(table.cell(2, 0))
+        merged.text = "MEDICAL NECESSITY CRITERIA"
+        table.cell(0, 1).text = "Row one"
+        table.cell(1, 1).text = "Row two"
+        table.cell(2, 1).text = "Row three"
+        buffer = _io.BytesIO()
+        document.save(buffer)
+
+        full, _pages = extract_text_from_docx_bytes(buffer.getvalue())
+
+        self.assertIn("MEDICAL NECESSITY CRITERIA", full)
+        self.assertEqual(
+            full.count("MEDICAL NECESSITY CRITERIA"),
+            1,
+            "the merged cell was read once per row it spans",
+        )
+        for row in ("Row one", "Row two", "Row three"):
+            self.assertIn(row, full)
+
+    def test_a_member_that_will_not_unpack_is_skipped_not_handed_on(self):
+        """Handing the original back would undo the whole bound.
+
+        One member with a bad CRC is enough: the unpack raises, and an
+        except that hands the upload back gives the parser exactly the bytes
+        this exists to keep away from it.
+        """
+        import zipfile
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        good = _make_docx_bytes()
+        broken = _io_bytes_with_a_bad_member(good)
+
+        self.assertIsNone(
+            ml_document_extraction._bounded_docx(broken),
+            "a bad member handed the upload on unbounded",
+        )
+
+        # And the parser is never reached with it.
+        full, pages = ml_document_extraction.extract_text_from_docx_bytes(broken)
+        self.assertEqual(full, "")
+        self.assertEqual(pages, {})
+
+    def test_an_ordinary_document_is_still_read(self):
+        """The bound is not a wall in front of real documents."""
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            extract_text_from_docx_bytes,
+        )
+
+        full, _pages = extract_text_from_docx_bytes(_make_docx_bytes())
+
+        self.assertIn("Plan overview", full)
+
+
+class ADamagedDocumentDoesNotBecomeGarbageTest(TransactionTestCase):
+    """The text guess is for formats with no parser, not for failed parses."""
+
+    def test_a_pdf_that_parses_to_nothing_is_not_decoded_as_text(self):
+        """A scanned or damaged PDF must not contribute PDF syntax.
+
+        Falling back on an empty result regardless of extension put the
+        file's own internals into the summary whenever a search term
+        happened to appear in them, which is the bug this branch exists to
+        fix arriving by a different door.
+        """
+        broken = (
+            b"%PDF-1.4\n% not a real pdf\n"
+            b"/Title (medical necessity coverage policy)\n"
+            b"endobj trailer"
+        )
+
+        pages = asyncio.run(
+            MLPlanDocHelper._extract_pages_with_terms(
+                broken, "plan.pdf", ["medical necessity"]
+            )
+        )
+
+        self.assertEqual(pages, [])
+
+    def test_a_format_with_no_parser_is_still_read_as_text(self):
+        """The guess itself stays, for the uploads it was there for."""
+        pages = asyncio.run(
+            MLPlanDocHelper._extract_pages_with_terms(
+                b"Coverage requires medical necessity review.",
+                "benefits.text",
+                ["medical necessity"],
+            )
+        )
+
+        self.assertEqual(len(pages), 1)
+        self.assertIn("medical necessity", pages[0].lower())

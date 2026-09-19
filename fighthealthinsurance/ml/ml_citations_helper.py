@@ -5,6 +5,11 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, cast
 from django.utils import timezone
 from loguru import logger
 
+from fighthealthinsurance.denial_history_consent import (
+    ahistory_may_be_used,
+    history_may_be_used,
+    still_allowed,
+)
 from fighthealthinsurance.cms_coverage_api import get_cms_coverage_citations
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
@@ -71,6 +76,7 @@ class MLCitationsHelper:
         cls,
         denial: Denial,
         timeout: int = 60,
+        used_history_sink: Optional[dict] = None,
     ) -> List[str]:
         """
         Generates patient-specific citations for an insurance denial using ML models.
@@ -89,7 +95,17 @@ class MLCitationsHelper:
         diagnosis = denial.diagnosis.strip().lower() if denial.diagnosis else ""
         denial_text = denial.denial_text
         plan_context = denial.plan_context
-        patient_context = denial.health_history
+        # The history only if they said it could be used. Citations go to a
+        # model and, with use_external, to an outside provider.
+        patient_context = (
+            denial.health_history if await ahistory_may_be_used(denial) else None
+        )
+        # The decision this call actually used, for the caller deciding
+        # whether the result may be stored. Reading consent again somewhere
+        # else can disagree with this one: a read that fails comes back as a
+        # refusal, and the next may not.
+        if used_history_sink is not None:
+            used_history_sink["used"] = bool(patient_context)
 
         if (
             (not denial_text or denial_text == "")
@@ -474,6 +490,7 @@ class MLCitationsHelper:
         cls,
         denial: Denial,
         timeout: int = 45,
+        used_history_sink: Optional[dict] = None,
     ) -> List[str]:
         """
         Chooses the best citations for a denial object based on the available context.
@@ -504,14 +521,18 @@ class MLCitationsHelper:
             )
 
             # If we have context look for it otherwise short circuit:
+            usable_history = (
+                denial.health_history if history_may_be_used(denial) else None
+            )
             if (not denial.denial_text or len(denial.denial_text) < 5) and (
-                not denial.health_history or len(denial.health_history) < 5
+                not usable_history or len(usable_history) < 5
             ):
                 ml_result = await no_context_awaitable
             else:
                 context_awaitable = cls.generate_specific_citations(
                     denial=denial,
                     timeout=model_timeout,
+                    used_history_sink=used_history_sink,
                 )
 
                 def is_full_backend(awaitable: Coroutine) -> int:
@@ -564,6 +585,10 @@ class MLCitationsHelper:
         # Check if we already have citations for this denial
         logger.debug(f"Generating citations for {denial}")
         citations: List[str] = []
+        # Filled in by the call that builds the patient context, so this is
+        # the decision that call used rather than a second read of the
+        # column that can disagree with it.
+        used_history_sink: dict = {}
         if (
             denial.ml_citation_context is not None
             and len(denial.ml_citation_context) > 0
@@ -591,7 +616,7 @@ class MLCitationsHelper:
             try:
                 if (
                     denial.denial_text
-                    or denial.health_history
+                    or (denial.health_history and history_may_be_used(denial))
                     or denial.procedure
                     or denial.diagnosis
                 ):
@@ -600,6 +625,7 @@ class MLCitationsHelper:
                     citations = await cls._generate_citations_for_denial(
                         denial=denial,
                         timeout=timeout,
+                        used_history_sink=used_history_sink,
                     )
 
                     if citations:
@@ -616,17 +642,31 @@ class MLCitationsHelper:
 
         # Store citations in the denial object directly using aupdate
         if citations:
-            # Atomically update the appropriate field
-            if not speculative:
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                    ml_citation_context=citations
-                )
-            else:
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                    candidate_ml_citation_context=citations
-                )
-            logger.debug(
-                f"Stored {len(citations)} citations for denial {denial.denial_id}"
+            used_history = bool(used_history_sink.get("used"))
+            # The consent test goes inside the write rather than in front of
+            # it: a refusal landing between a check and an update would be
+            # overwritten by the update, and the material chosen out of the
+            # history would be back on the row. A run that never had the
+            # history is written unconditionally, so saying no does not cost
+            # a case its cache for good.
+            rows = Denial.objects.filter(denial_id=denial.denial_id)
+            if used_history:
+                rows = rows.filter(still_allowed())
+            field = (
+                "candidate_ml_citation_context"
+                if speculative
+                else "ml_citation_context"
             )
+            if await rows.aupdate(**{field: citations}):
+                logger.debug(
+                    f"Stored {len(citations)} citations for denial {denial.denial_id}"
+                )
+            elif used_history:
+                logger.info(
+                    f"Health history consent was withdrawn while citations for "
+                    f"denial {denial.denial_id} were being generated; keeping "
+                    "neither the result nor a copy of it"
+                )
+                return []
 
         return citations

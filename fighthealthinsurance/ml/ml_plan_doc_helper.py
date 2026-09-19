@@ -14,7 +14,11 @@ from typing import List, Optional, Set
 from loguru import logger
 
 from fighthealthinsurance.context_utils import truncate_at_boundary
-from fighthealthinsurance.ml.ml_document_extraction import extract_text_from_pdf_path
+from fighthealthinsurance.ml.ml_document_extraction import (
+    PARSED_EXTENSIONS,
+    aextract_text_from_bytes,
+    read_and_decrypt_file,
+)
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.models import Denial, PlanDocuments
 
@@ -24,6 +28,15 @@ class MLPlanDocHelper:
 
     # Maximum characters to send to the model for summarization
     MAX_CONTEXT_LENGTH = 8000
+    #: The largest stored document this will open. Checked before the read,
+    #: since reading is where the memory goes.
+    #:
+    #: This bounds the INPUT, not what a parser makes of it. A compressed
+    #: format expands far beyond its stored size, which is a pre-existing
+    #: exposure for the Word documents this has always accepted and not
+    #: something this number fixes. Bounding decompressed members is its own
+    #: change.
+    MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
     # Maximum time to spend on plan document summarization
     TIMEOUT_SECONDS = 60
 
@@ -165,13 +178,29 @@ Focus on terms that would appear in an insurance plan document."""
             plan_docs = PlanDocuments.objects.filter(denial_id=denial_id)
             async for doc in plan_docs.aiterator():
                 try:
-                    # Get file path
+                    # Try encrypted field first, fall back to unencrypted
                     file_field = doc.plan_document_enc or doc.plan_document
                     if not file_field:
                         continue
 
-                    path = file_field.path
-                    pages_text = cls._extract_pages_with_terms(path, search_terms)
+                    # Read and decrypt the file off the event loop. We must
+                    # decrypt the bytes rather than read file_field.path:
+                    # plan_document_enc is an EncryptedFileField whose on-disk
+                    # bytes are ciphertext, and .path also raises
+                    # NotImplementedError on remote/S3 storage backends.
+                    # The ceiling goes in, so an oversized document is never
+                    # read rather than read and then rejected: reading is
+                    # where the memory goes.
+                    decrypted_bytes = await asyncio.to_thread(
+                        read_and_decrypt_file, file_field, cls.MAX_DOCUMENT_BYTES
+                    )
+                    if not decrypted_bytes:
+                        continue
+                    pages_text = await cls._extract_pages_with_terms(
+                        decrypted_bytes,
+                        file_field.name or "",
+                        search_terms,
+                    )
 
                     for page_text in pages_text:
                         if total_length + len(page_text) > cls.MAX_CONTEXT_LENGTH:
@@ -193,20 +222,43 @@ Focus on terms that would appear in an insurance plan document."""
         return "\n\n---\n\n".join(relevant_sections)
 
     @classmethod
-    def _extract_pages_with_terms(cls, path: str, search_terms: List[str]) -> List[str]:
-        """Extract pages from a document that contain any of the search terms."""
-        if path.lower().endswith(".pdf"):
-            _full_text, page_dict = extract_text_from_pdf_path(path, search_terms)
-            return [f"[Page {num}]\n{text}" for num, text in sorted(page_dict.items())]
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-                content_lower = content.lower()
-                if any(term.lower() in content_lower for term in search_terms):
-                    return [content]
-        except Exception as e:
-            logger.debug(f"Could not read {path} as text: {e}")
-        return []
+    async def _extract_pages_with_terms(
+        cls, data: bytes, filename: str, search_terms: List[str]
+    ) -> List[str]:
+        """Extract pages from decrypted document bytes that contain any term.
+
+        Text extraction is dispatched by *filename* extension (PDF, DOCX,
+        plaintext) and each page/section is kept only if it contains at least
+        one search term. Runs synchronously so callers should invoke it via
+        ``asyncio.to_thread``.
+        """
+        # The parse runs on the parser's own thread; the filtering below is
+        # cheap string work and stays here.
+        _full_text, page_dict = await aextract_text_from_bytes(data, filename)
+        parser_knows_this = filename.lower().endswith(PARSED_EXTENSIONS)
+        if not page_dict and not parser_knows_this:
+            # What this path did before it decrypted anything: read whatever
+            # it does not recognise as text. A legacy upload named .text or
+            # .rtf contributes what it says rather than nothing, silently.
+            # Reading a patient's file as text costs its own size; building a
+            # document tree from it does not, which is why a real parser for
+            # those formats is a separate question.
+            #
+            # Only for a format with no parser. A PDF that came back empty is
+            # damaged or scanned, and decoding a PDF as text yields its
+            # syntax and metadata, which is the bug this branch exists to
+            # fix, arriving by a different door.
+            guessed = data.decode("utf-8", errors="ignore")
+            if not guessed.strip():
+                return []
+            page_dict = {1: guessed}
+        lowered_terms = [term.lower() for term in search_terms if term]
+        matching_pages: List[str] = []
+        for num, text in sorted(page_dict.items()):
+            text_lower = text.lower()
+            if any(term in text_lower for term in lowered_terms):
+                matching_pages.append(f"[Page {num}]\n{text}")
+        return matching_pages
 
     @classmethod
     async def summarize_relevant_sections(
