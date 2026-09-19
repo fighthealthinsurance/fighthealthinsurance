@@ -298,6 +298,10 @@ class MLAppealQuestionsHelper:
             person which of those happened.
         """
         questions: Optional[List[Tuple[str, str]]] = None
+        # Whether this run is allowed to look at the history, asked before
+        # it starts, so a refusal that lands while it runs can be told from
+        # one that was already in place.
+        used_history = False
         # The inputs this run is for, taken now: the claim at the end compares
         # them with the row's inputs then, and a run for inputs since corrected
         # stores nothing.
@@ -352,6 +356,7 @@ class MLAppealQuestionsHelper:
                 ),
             )
             may_use_history = await ahistory_may_be_used(denial)
+            used_history = bool(denial.health_history) and may_use_history
             context_awaitable = watched(
                 "specific",
                 MLAppealQuestionsHelper.generate_specific_questions(
@@ -429,6 +434,18 @@ class MLAppealQuestionsHelper:
         logger.debug(
             f"Generated {len(questions)} questions for denial {denial.denial_id}"
         )
+        if used_history and not await ahistory_may_be_used(denial):
+            # The answer changed while this ran. Treated the same way as
+            # inputs corrected mid-run, which this function already discards:
+            # questions chosen out of a history the person has since asked us
+            # not to use are not stored, and a stored copy would be read back
+            # ahead of the consent check by the next run.
+            logger.info(
+                f"Health history consent was withdrawn while questions for "
+                f"denial {denial.denial_id} were being generated; keeping "
+                "neither the result nor a copy of it"
+            )
+            return None
         if speculative:
             if questions:
                 await Denial.objects.filter(denial_id=denial.denial_id).aupdate(

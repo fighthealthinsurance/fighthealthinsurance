@@ -3835,19 +3835,6 @@ class DenialCreatorHelper:
             # health_history an empty string is a decision, not silence -- it
             # is how the page deletes what the person wrote, and no other page
             # can -- so the blank is written rather than refused.
-            # Read before the write below, because the same submit can
-            # clear the box and untick the consent: by the time the consent
-            # branch runs, the history it would ask about is the empty
-            # string it just wrote, and the case would look like one that
-            # never had a history to derive anything from.
-            history_before_this_submit: Optional[str] = None
-            if health_history_consent is False:
-                history_before_this_submit = (
-                    Denial.objects.select_for_update()
-                    .filter(pk=denial.pk)
-                    .values_list("health_history", flat=True)
-                    .first()
-                )
             if health_history is not None and not cls._history_submit_is_stale(
                 denial, health_history, health_history_seen, locked=True
             ):
@@ -3862,14 +3849,9 @@ class DenialCreatorHelper:
                 denial.health_history_anonymized = health_history_anonymized
                 changed_fields.add("health_history_anonymized")
             if health_history_consent is not None:
-                previous_consent = denial.health_history_consent
                 denial.health_history_consent = health_history_consent
                 changed_fields.add("health_history_consent")
-                if (
-                    health_history_consent is False
-                    and previous_consent is not False
-                    and history_before_this_submit
-                ):
+                if health_history_consent is False:
                     # Questions and citations produced while the history was
                     # allowed were chosen out of it, and both are reused
                     # ahead of the consent check on the next run. Without
@@ -3880,9 +3862,19 @@ class DenialCreatorHelper:
                     # them from the denial alone. Nothing anybody has been
                     # shown is removed: these are stored model inputs, not
                     # letters.
+                    #
+                    # Every refusal clears, not only the first, and whether
+                    # or not a history is stored now. Somebody can clear the
+                    # box in one visit and untick it in the next, and a run
+                    # still in flight can write a cache back after a
+                    # refusal, so asking "did this case have a history" at
+                    # this moment gets the wrong answer in both directions.
+                    # The cost of clearing a cache that owes nothing to a
+                    # history is that the next run recomputes it.
                     for cache_field in DERIVED_FROM_HEALTH_HISTORY:
-                        setattr(denial, cache_field, None)
-                        changed_fields.add(cache_field)
+                        if getattr(denial, cache_field, None) is not None:
+                            setattr(denial, cache_field, None)
+                            changed_fields.add(cache_field)
             denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
             intent = intake_outbox.record_intent(denial, intake_outbox.INTAKE_STARTED)
         if intent is not None:

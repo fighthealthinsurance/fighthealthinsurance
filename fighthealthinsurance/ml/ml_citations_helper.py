@@ -575,6 +575,7 @@ class MLCitationsHelper:
         # Check if we already have citations for this denial
         logger.debug(f"Generating citations for {denial}")
         citations: List[str] = []
+        used_history = False
         if (
             denial.ml_citation_context is not None
             and len(denial.ml_citation_context) > 0
@@ -598,6 +599,16 @@ class MLCitationsHelper:
         else:
             # Setup timeout based on whether this is speculative or not
             timeout = 75 if speculative else 30
+
+            # Whether this run is allowed to look at the history, asked
+            # before it starts. If the answer changes while it runs, what it
+            # produced is not stored and not returned: it was chosen out of
+            # a history the person has since asked us not to use, and a
+            # stored copy is read back ahead of the consent check by the
+            # next run.
+            used_history = bool(denial.health_history) and await ahistory_may_be_used(
+                denial
+            )
 
             try:
                 if (
@@ -627,6 +638,13 @@ class MLCitationsHelper:
 
         # Store citations in the denial object directly using aupdate
         if citations:
+            if used_history and not await ahistory_may_be_used(denial):
+                logger.info(
+                    f"Health history consent was withdrawn while citations for "
+                    f"denial {denial.denial_id} were being generated; keeping "
+                    "neither the result nor a copy of it"
+                )
+                return []
             # Atomically update the appropriate field
             if not speculative:
                 await Denial.objects.filter(denial_id=denial.denial_id).aupdate(

@@ -503,3 +503,87 @@ class TestOneDecisionForEverythingDerived:
         )
         assert HISTORY in everything, "the one yes did not reach the prompt"
         assert "Anti-CGRP" in everything, "the one yes did not reach the scan"
+
+
+class TestARefusalThatLandsWhileAWorkerRuns:
+    """A run that started with a yes finishes after the no.
+
+    Both helpers store what they produce on the row, and both read that
+    store back ahead of the consent check on the next run. So a worker
+    finishing after a refusal could put the material back and have it used,
+    and clearing the caches at the moment of the click would not catch it.
+    What a run produced under a consent that has since changed is kept
+    neither on the row nor in the answer it returns.
+    """
+
+    @pytest.mark.django_db
+    def test_questions_are_not_stored_or_returned(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.ml import ml_appeal_questions_helper as helper
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("midq@example.com"),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+            health_history_consent=True,
+        )
+
+        async def refuse_then_answer(**kwargs):
+            # The person unticks the box while the model is answering.
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                health_history_consent=False
+            )
+            return [("How long on Aimovig?", "")]
+
+        with patch.object(
+            helper.MLAppealQuestionsHelper,
+            "generate_specific_questions",
+            refuse_then_answer,
+        ), patch.object(
+            helper.MLAppealQuestionsHelper,
+            "generate_generic_questions",
+            refuse_then_answer,
+        ):
+            answer = async_to_sync(
+                helper.MLAppealQuestionsHelper.generate_questions_for_denial
+            )(denial, speculative=False)
+
+        denial.refresh_from_db()
+        assert answer is None, "the run's questions were handed back anyway"
+        assert denial.generated_questions is None, "a copy was left on the row"
+
+    @pytest.mark.django_db
+    def test_citations_are_not_stored_or_returned(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.ml import ml_citations_helper as helper
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("midc@example.com"),
+            denial_text="Denied an MRI.",
+            health_history=HISTORY,
+            health_history_consent=True,
+        )
+
+        class _RefusesMidRun:
+            async def get_citations(self, **kwargs):
+                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                    health_history_consent=False
+                )
+                return ["Chosen because of the Aimovig history"]
+
+        with patch.object(
+            helper.ml_router,
+            "full_find_citation_backends",
+            return_value=[_RefusesMidRun()],
+        ):
+            answer = async_to_sync(
+                helper.MLCitationsHelper.generate_citations_for_denial
+            )(denial=denial, speculative=False)
+
+        denial.refresh_from_db()
+        assert answer == [], "the run's citations were handed back anyway"
+        assert denial.ml_citation_context is None, "a copy was left on the row"

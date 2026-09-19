@@ -399,37 +399,53 @@ class WhatSayingNoDoesAndDoesNotDoTest(TestCase):
         self.assertIsNone(self.denial.ml_citation_context)
         self.assertIsNone(self.denial.generated_questions)
 
-    def test_a_case_with_no_history_keeps_its_cached_material(self):
-        """Nothing here came out of a history, so nothing here is dropped.
+    def test_a_history_deleted_in_an_earlier_visit_is_still_covered(self):
+        """Clearing the box and refusing can be two visits, not one.
 
-        The first attempt at withdrawal threw away work on cases that never
-        had a history at all. Refusing a question about something you never
-        typed should cost you nothing.
+        Asking whether this case has a history at the moment of the refusal
+        answers no for somebody who deleted it last week, and their cached
+        citations and questions were derived from it while it was there. So
+        every refusal clears, and the cost of clearing a cache that owes
+        nothing to a history is that the next run recomputes it.
         """
-        empty = Denial.objects.create(
-            denial_id=7308,
+        emptied = Denial.objects.create(
+            denial_id=7309,
             semi_sekret=SEMI_SEKRET,
             hashed_email=Denial.get_hashed_email(EMAIL),
             denial_text="Denied an MRI.",
             health_history="",
-            ml_citation_context=["From the denial text alone"],
-            generated_questions=[["What did the letter say?", ""]],
+            ml_citation_context=["Chosen because of a history since deleted"],
+            generated_questions=[["How long on Aimovig?", ""]],
         )
 
         self.client.post(
             reverse("hh"),
             {
-                "denial_id": str(empty.denial_id),
+                "denial_id": str(emptied.denial_id),
                 "email": EMAIL,
                 "semi_sekret": SEMI_SEKRET,
                 "health_history": "",
-                "health_history_seen": health_history_digest("", empty.denial_id),
+                "health_history_seen": health_history_digest("", emptied.denial_id),
             },
         )
 
-        empty.refresh_from_db()
-        self.assertIs(empty.health_history_consent, False)
-        self.assertEqual(empty.ml_citation_context, ["From the denial text alone"])
-        self.assertEqual(
-            empty.generated_questions, [["What did the letter say?", ""]]
+        emptied.refresh_from_db()
+        self.assertIs(emptied.health_history_consent, False)
+        self.assertIsNone(emptied.ml_citation_context)
+        self.assertIsNone(emptied.generated_questions)
+
+    def test_a_second_refusal_clears_what_arrived_after_the_first(self):
+        """A run in flight can write a cache back after the refusal.
+
+        If only the first no cleared anything, the way to get rid of what
+        landed afterwards would be to say yes and then no again.
+        """
+        self._post()
+        Denial.objects.filter(pk=self.denial.pk).update(
+            ml_citation_context=["Written by a run that was already going"],
         )
+
+        self._post()
+
+        self.denial.refresh_from_db()
+        self.assertIsNone(self.denial.ml_citation_context)
