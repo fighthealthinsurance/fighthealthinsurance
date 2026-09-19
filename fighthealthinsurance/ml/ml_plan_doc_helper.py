@@ -15,6 +15,7 @@ from loguru import logger
 
 from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.ml.ml_document_extraction import (
+    PARSED_EXTENSIONS,
     aextract_text_from_bytes,
     read_and_decrypt_file,
 )
@@ -234,13 +235,19 @@ Focus on terms that would appear in an insurance plan document."""
         # The parse runs on the parser's own thread; the filtering below is
         # cheap string work and stays here.
         _full_text, page_dict = await aextract_text_from_bytes(data, filename)
-        if not page_dict:
+        parser_knows_this = filename.lower().endswith(PARSED_EXTENSIONS)
+        if not page_dict and not parser_knows_this:
             # What this path did before it decrypted anything: read whatever
             # it does not recognise as text. A legacy upload named .text or
             # .rtf contributes what it says rather than nothing, silently.
             # Reading a patient's file as text costs its own size; building a
             # document tree from it does not, which is why a real parser for
             # those formats is a separate question.
+            #
+            # Only for a format with no parser. A PDF that came back empty is
+            # damaged or scanned, and decoding a PDF as text yields its
+            # syntax and metadata, which is the bug this branch exists to
+            # fix, arriving by a different door.
             guessed = data.decode("utf-8", errors="ignore")
             if not guessed.strip():
                 return []
