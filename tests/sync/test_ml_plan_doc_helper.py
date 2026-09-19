@@ -462,6 +462,31 @@ def _make_docx_bytes(nested: bool = False) -> bytes:
     return buffer.getvalue()
 
 
+def _io_bytes_with_a_bad_member(data: bytes) -> bytes:
+    """The same archive plus one member whose stored CRC does not match.
+
+    Written by hand rather than by corrupting a byte, because the point is a
+    member that raises while unpacking, which is what a decoy in a crafted
+    upload does.
+    """
+    import io as _io
+    import zipfile
+
+    out = _io.BytesIO()
+    with zipfile.ZipFile(_io.BytesIO(data)) as src, zipfile.ZipFile(
+        out, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+        for entry in src.infolist():
+            dst.writestr(entry.filename, src.read(entry.filename))
+        info = zipfile.ZipInfo("decoy.bin")
+        dst.writestr(info, b"decoy payload")
+    raw = bytearray(out.getvalue())
+    # Flip a byte of the decoy's stored data so its CRC no longer matches.
+    marker = raw.index(b"decoy payload")
+    raw[marker] ^= 0xFF
+    return bytes(raw)
+
+
 class WhatComesOutOfADocxTest(TransactionTestCase):
     """A .docx is an archive, and most of a plan's rules are in its tables."""
 
@@ -670,6 +695,68 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
                     zipfile.ZIP_STORED,
                     f"{entry.filename} did not come from the rebuild",
                 )
+
+    def test_a_vertically_merged_cell_is_read_once(self):
+        """A merge down the page repeats across rows, not within one.
+
+        python-docx hands back a vertically merged cell once per row it
+        covers, walking up to the row the merge started in. A set kept per
+        row never saw the second copy, so the criteria in a merged cell came
+        out once per row it spanned, and anything nested in it came out
+        again a level down.
+        """
+        import io as _io
+
+        import docx
+
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            extract_text_from_docx_bytes,
+        )
+
+        document = docx.Document()
+        table = document.add_table(rows=3, cols=2)
+        merged = table.cell(0, 0).merge(table.cell(2, 0))
+        merged.text = "MEDICAL NECESSITY CRITERIA"
+        table.cell(0, 1).text = "Row one"
+        table.cell(1, 1).text = "Row two"
+        table.cell(2, 1).text = "Row three"
+        buffer = _io.BytesIO()
+        document.save(buffer)
+
+        full, _pages = extract_text_from_docx_bytes(buffer.getvalue())
+
+        self.assertIn("MEDICAL NECESSITY CRITERIA", full)
+        self.assertEqual(
+            full.count("MEDICAL NECESSITY CRITERIA"),
+            1,
+            "the merged cell was read once per row it spans",
+        )
+        for row in ("Row one", "Row two", "Row three"):
+            self.assertIn(row, full)
+
+    def test_a_member_that_will_not_unpack_is_skipped_not_handed_on(self):
+        """Handing the original back would undo the whole bound.
+
+        One member with a bad CRC is enough: the unpack raises, and an
+        except that hands the upload back gives the parser exactly the bytes
+        this exists to keep away from it.
+        """
+        import zipfile
+
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        good = _make_docx_bytes()
+        broken = _io_bytes_with_a_bad_member(good)
+
+        self.assertIsNone(
+            ml_document_extraction._bounded_docx(broken),
+            "a bad member handed the upload on unbounded",
+        )
+
+        # And the parser is never reached with it.
+        full, pages = ml_document_extraction.extract_text_from_docx_bytes(broken)
+        self.assertEqual(full, "")
+        self.assertEqual(pages, {})
 
     def test_an_ordinary_document_is_still_read(self):
         """The bound is not a wall in front of real documents."""

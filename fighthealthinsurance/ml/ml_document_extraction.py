@@ -147,12 +147,19 @@ def _bounded_docx(data: bytes) -> Optional[bytes]:
     """
     import zipfile
 
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except Exception as e:
+        # Not an archive at all. Hand it on unchanged: the parser will fail
+        # on it and produce the empty result, which is the existing
+        # behaviour for a file that is not what its name says.
+        logger.debug(f"Not a readable DOCX archive: {e}")
+        return data
+
     rebuilt = io.BytesIO()
     unpacked = 0
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive, zipfile.ZipFile(
-            rebuilt, "w", zipfile.ZIP_STORED
-        ) as copy:
+        with archive, zipfile.ZipFile(rebuilt, "w", zipfile.ZIP_STORED) as copy:
             for entry in archive.infolist():
                 if entry.is_dir():
                     continue
@@ -174,10 +181,16 @@ def _bounded_docx(data: bytes) -> Optional[bytes]:
                         parts.append(chunk)
                 copy.writestr(entry.filename, b"".join(parts))
     except Exception as e:
-        # Not a readable archive. Let the parser produce the empty result and
-        # log it, rather than inventing a second failure mode here.
-        logger.debug(f"Could not unpack the DOCX archive: {e}")
-        return data
+        # A member that will not unpack: a bad CRC, a truncated stream, a
+        # compression method we do not have. Skipped rather than handed on,
+        # because handing the original back would give the parser the very
+        # bytes this bound exists to keep away from it, and one decoy member
+        # is all it would take.
+        logger.warning(
+            f"A member of this DOCX would not unpack, so it is skipped "
+            f"rather than parsed unbounded: {e}"
+        )
+        return None
     return rebuilt.getvalue()
 
 
@@ -196,11 +209,25 @@ def _iter_docx_text(doc) -> Any:
     yield from _iter_docx_block_text(doc.element.body, doc)
 
 
-def _iter_docx_block_text(parent, doc) -> Any:
+def _iter_docx_block_text(parent, doc, seen_cells=None) -> Any:
     """Paragraph and table text under one element, in document order."""
     from docx.oxml.ns import qn
     from docx.table import Table
     from docx.text.paragraph import Paragraph
+
+    # A merged cell is handed back once per position it covers: once per
+    # column for a horizontal span, and once per row for a vertical one,
+    # where python-docx walks up to the cell the merge started in. Each copy
+    # holds everything nested in it, so walking every copy repeated that
+    # content once per position, and again a level down for a nested table.
+    #
+    # Kept for the whole walk rather than per row, because a vertical merge
+    # repeats across rows and a per-row set never sees it twice. Identified
+    # by its path in the document rather than by the id of the object: the
+    # same underlying element is handed back as a new wrapper each time it
+    # is reached, so the ids differ for what is one cell.
+    if seen_cells is None:
+        seen_cells = set()
 
     for child in parent.iterchildren():
         if child.tag == qn("w:p"):
@@ -208,21 +235,17 @@ def _iter_docx_block_text(parent, doc) -> Any:
         elif child.tag == qn("w:tbl"):
             for row in Table(child, doc).rows:
                 cells = []
-                # A merged cell is returned once per column it spans, and
-                # each copy holds whatever is nested in it. Walking every
-                # copy repeated that content once per span, which with a
-                # nested table repeats again a level down.
-                seen_cells = set()
                 for cell in row.cells:
-                    if id(cell._tc) in seen_cells:
+                    where = cell._tc.getroottree().getpath(cell._tc)
+                    if where in seen_cells:
                         continue
-                    seen_cells.add(id(cell._tc))
+                    seen_cells.add(where)
                     # cell._tc is the cell's own element. Private, and the
                     # only way to keep a nested table in the order it was
                     # written; cell.text stops at immediate paragraphs.
                     parts = [
                         part.strip()
-                        for part in _iter_docx_block_text(cell._tc, doc)
+                        for part in _iter_docx_block_text(cell._tc, doc, seen_cells)
                         if part and part.strip()
                     ]
                     if parts:
