@@ -6,19 +6,31 @@ to alert on "backend X's failure rate jumped" or "p95 latency doubled"
 without log archaeology. These metrics are label-bounded (the model's
 registry name -- the identity ProposedAppeal, ModelCallAttempt and the staff
 dashboard key on, so the series can be joined to them -- a primary/backup
-leg, and a small outcome enum; never denial/chat ids or free text) and
-exported through the same django_prometheus endpoint the DB metrics already
-use. Only processes that serve that endpoint are scraped: the Temporal
-worker serves this registry too (run_temporal_worker.app_metrics_server, on
-FHI_APP_METRICS_BIND), but generation that runs on the Ray actors (the
-speculative precompute, the chooser refill) records into a registry nothing
-reads yet.
+leg, why the call was made (appeal, chat, probe, other), and a small outcome
+enum; never denial/chat ids or free text) and exported through the same
+django_prometheus endpoint the DB metrics already use. Only processes that
+serve that endpoint are scraped: the Temporal worker serves this registry too
+(run_temporal_worker.app_metrics_server, on FHI_APP_METRICS_BIND), but
+generation that runs on the Ray actors (the speculative precompute, the
+chooser refill) records into a registry nothing reads yet.
 
 All recording helpers are no-op safe: a metrics failure must never break an
 inference call.
 """
 
-from typing import Iterable
+import contextlib
+import contextvars
+import functools
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Iterator,
+    ParamSpec,
+    TypeVar,
+)
 
 from loguru import logger
 from prometheus_client import Counter, Histogram
@@ -29,11 +41,18 @@ from prometheus_client.registry import Collector, REGISTRY
 # call returned nothing), timeout, or error (the transport raised -- an HTTP
 # 4xx/5xx re-raised for status-specific handling). Every call lands here
 # exactly once, so failures / calls is always a rate.
+#
+# ``purpose`` is why the call was made (see ML_CALL_PURPOSE). Appeal
+# generation shares its backend instances with chat, the health probes,
+# entity extraction and summaries, so without it an appeal-only outage (a
+# redeploy that shrinks the context window under long appeal prompts while
+# short chat turns keep succeeding) was diluted by the traffic that kept
+# succeeding, and the appeal latency quantile by the probes' "Hello"s.
 ML_CALLS_TOTAL = Counter(
     "fhi_ml_calls_total",
     "Model backend calls by outcome (ok = non-empty completion, none, timeout, "
     "error).",
-    labelnames=("model", "leg", "outcome"),
+    labelnames=("model", "leg", "purpose", "outcome"),
 )
 
 # Failure *reasons* observed inside the transport layer. Deliberately a
@@ -44,14 +63,33 @@ ML_CALLS_TOTAL = Counter(
 ML_CALL_FAILURES_TOTAL = Counter(
     "fhi_ml_call_failures_total",
     "Classified model call failures (transport, http, bad body...).",
-    labelnames=("model", "leg", "reason"),
+    labelnames=("model", "leg", "purpose", "reason"),
 )
 
 ML_CALL_SECONDS = Histogram(
     "fhi_ml_call_seconds",
     "Wall-clock duration of model backend calls.",
-    labelnames=("model", "leg"),
+    labelnames=("model", "leg", "purpose"),
     buckets=(1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 240, 300, 420),
+)
+
+# What the appeal path made of a completion, once per _checked_infer
+# invocation. ML_CALLS_TOTAL's "ok" is transport-level (a non-empty body):
+# a backend that is up but answers every appeal prompt with a refusal, a
+# runt or runaway repetition read as 100% ok there while every draft it
+# produced was rejected and filed as a no_output attempt, so the failure
+# rate the call series exists to alert on never moved. Results: accepted;
+# rejected_bad_result (a refusal / severe repetition / runt, after the one
+# retry); rejected_repetition (the cleaners removed everything);
+# skipped_deadline (the requester's budget had passed).
+ML_RESULTS_TOTAL = Counter(
+    "fhi_ml_results_total",
+    "Checked appeal inferences by what became of the completion (accepted, "
+    "rejected_bad_result, rejected_repetition, skipped_deadline).",
+    labelnames=("model", "infer_type", "result"),
+)
+_RESULTS = frozenset(
+    {"accepted", "rejected_bad_result", "rejected_repetition", "skipped_deadline"}
 )
 
 CHAT_TURNS_TOTAL = Counter(
@@ -104,17 +142,75 @@ def _leg_label(leg: object) -> str:
     return leg if isinstance(leg, str) and leg in _LEGS else "primary"
 
 
+# Why a model call was made. Bounded here so a caller cannot widen the label
+# set: appeal (letter generation through _checked_infer -- appeals,
+# escalation and prior-auth letters -- and the synthesis pass), chat (a chat
+# turn), probe (the reachability probes), other (everything else: entity
+# extraction, summaries, the chooser refill, model_query ...).
+_PURPOSES = frozenset({"appeal", "chat", "probe", "other"})
+
+# The purpose of the calls in flight on this task/thread. A ContextVar rather
+# than an argument threaded through the _infer signatures (three of them,
+# plus the tests that patch them): it reaches every call awaited inside the
+# labelled entry point, including the temperature legs and the primary/
+# backup race, which copy the context when they are spawned.
+ML_CALL_PURPOSE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "fhi_ml_call_purpose", default="other"
+)
+
+
+def _purpose_label(purpose: object) -> str:
+    return purpose if isinstance(purpose, str) and purpose in _PURPOSES else "other"
+
+
+@contextlib.contextmanager
+def ml_call_purpose(purpose: str) -> Iterator[None]:
+    """Record every model call made inside this block under ``purpose``."""
+    token = ML_CALL_PURPOSE.set(_purpose_label(purpose))
+    try:
+        yield
+    finally:
+        ML_CALL_PURPOSE.reset(token)
+
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def labelled_ml_calls(
+    purpose: str,
+) -> Callable[[Callable[_P, Awaitable[_T]]], Callable[_P, Coroutine[Any, Any, _T]]]:
+    """Decorate an async entry point so every model call awaited inside it is
+    recorded under ``purpose``."""
+
+    def decorate(
+        fn: Callable[_P, Awaitable[_T]],
+    ) -> Callable[_P, Coroutine[Any, Any, _T]]:
+        @functools.wraps(fn)
+        async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+            with ml_call_purpose(purpose):
+                return await fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
 def record_ml_call(
     model: object, outcome: str, seconds: float, leg: str = "primary"
 ) -> None:
     """Record one completed model call. ``model`` is the registry name when the
     router stamped one (RemoteModelLike._metric_identity), ``leg`` the
-    endpoint of a primary/backup pair. Never raises."""
+    endpoint of a primary/backup pair; the purpose comes from the
+    ML_CALL_PURPOSE in scope. Never raises."""
     try:
         name = _safe_label(model)
         leg = _leg_label(leg)
-        ML_CALLS_TOTAL.labels(model=name, leg=leg, outcome=outcome).inc()
-        ML_CALL_SECONDS.labels(model=name, leg=leg).observe(seconds)
+        purpose = ML_CALL_PURPOSE.get()
+        ML_CALLS_TOTAL.labels(
+            model=name, leg=leg, purpose=purpose, outcome=outcome
+        ).inc()
+        ML_CALL_SECONDS.labels(model=name, leg=leg, purpose=purpose).observe(seconds)
     except Exception:  # pragma: no cover - metrics must never break calls
         logger.opt(exception=True).debug("Failed to record ml call metric")
 
@@ -123,10 +219,26 @@ def record_ml_failure(model: object, reason: str, leg: str = "primary") -> None:
     """Record a classified failure reason. Never raises."""
     try:
         ML_CALL_FAILURES_TOTAL.labels(
-            model=_safe_label(model), leg=_leg_label(leg), reason=reason
+            model=_safe_label(model),
+            leg=_leg_label(leg),
+            purpose=ML_CALL_PURPOSE.get(),
+            reason=reason,
         ).inc()
     except Exception:  # pragma: no cover
         logger.opt(exception=True).debug("Failed to record ml failure metric")
+
+
+def record_ml_result(model: object, infer_type: object, result: str) -> None:
+    """Record what _checked_infer made of a completion (see ML_RESULTS_TOTAL).
+    Never raises."""
+    try:
+        ML_RESULTS_TOTAL.labels(
+            model=_safe_label(model),
+            infer_type=_safe_label(infer_type),
+            result=result if result in _RESULTS else "other",
+        ).inc()
+    except Exception:  # pragma: no cover
+        logger.opt(exception=True).debug("Failed to record ml result metric")
 
 
 def record_chat_turn(outcome: str) -> None:

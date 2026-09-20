@@ -44,6 +44,7 @@ class GeneratedAppeal:
 
 
 from fighthealthinsurance.denial_history_consent import history_may_be_used_now
+from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_FULL,
@@ -3343,11 +3344,14 @@ class AppealGenerator(object):
             model: RemoteModelLike,
         ) -> Optional[Tuple[str, RemoteModelLike]]:
             try:
-                result = await model._infer_no_context(
-                    system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
-                    prompt=prompt,
-                    temperature=0.3,
-                )
+                # The synthesis pass is appeal generation too: its calls
+                # belong in the appeal series, not under "other".
+                with ml_call_purpose("appeal"):
+                    result = await model._infer_no_context(
+                        system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
+                        prompt=prompt,
+                        temperature=0.3,
+                    )
                 if result and len(result.strip()) > 50:
                     logger.debug(
                         f"Synthesis candidate from {model}: {len(result)} chars"

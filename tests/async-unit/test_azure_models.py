@@ -588,6 +588,7 @@ class TestAzureClaudeMessages(unittest.TestCase):
 
         def counter(name, **labels):
             labels.setdefault("leg", "primary")
+            labels.setdefault("purpose", "other")
             return REGISTRY.get_sample_value(name, labels) or 0.0
 
         async def run():

@@ -31,7 +31,12 @@ def _is_verbose_logging() -> bool:
 
 
 from fighthealthinsurance.env_utils import get_env_variable
-from fighthealthinsurance.ml.ml_metrics import record_ml_call, record_ml_failure
+from fighthealthinsurance.ml.ml_metrics import (
+    labelled_ml_calls,
+    record_ml_call,
+    record_ml_failure,
+    record_ml_result,
+)
 from fighthealthinsurance.ml.response_similarity import (
     is_canned_reply,
     is_mostly_repeated,
@@ -1268,6 +1273,7 @@ class RemoteModelLike(DenialBase):
             return result[0]
         return result
 
+    @labelled_ml_calls("probe")
     async def probe(self, timeout: float = 20.0) -> Tuple[bool, Optional[str]]:
         """One-off "Hello" reachability probe, used at startup.
 
@@ -1328,6 +1334,7 @@ class RemoteModelLike(DenialBase):
             return result[0]
         return None
 
+    @labelled_ml_calls("chat")
     async def generate_chat_response(
         self,
         current_message_for_llm: Optional[str],
@@ -2527,6 +2534,7 @@ class RemoteOpenLike(RemoteModel):
             deadline=deadline,
         )
 
+    @labelled_ml_calls("appeal")
     async def _checked_infer(
         self,
         prompt: str,
@@ -2552,7 +2560,14 @@ class RemoteOpenLike(RemoteModel):
                 return True
             return False
 
+        # The fhi_ml_call* series say whether the transport answered; this
+        # says what the appeal path made of the answer, once per invocation
+        # (ML_RESULTS_TOTAL). A backend that was up but answered every prompt
+        # with a refusal or a runt read as 100% ok in the call series while
+        # every draft it produced was rejected right here.
+        metric_model, _leg = self._metric_identity()
         if _past_deadline():
+            record_ml_result(metric_model, infer_type, "skipped_deadline")
             return []
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
@@ -2589,6 +2604,7 @@ class RemoteOpenLike(RemoteModel):
         # One retry
         if self.bad_result(result, infer_type):
             if _past_deadline():
+                record_ml_result(metric_model, infer_type, "skipped_deadline")
                 return []
             result = await self._infer_no_context(
                 prompt=prompt,
@@ -2601,6 +2617,7 @@ class RemoteOpenLike(RemoteModel):
             )
             # Ok just an empty list, we failed
             if self.bad_result(result, infer_type):
+                record_ml_result(metric_model, infer_type, "rejected_bad_result")
                 return []
 
         # If professional_to_finish then check if the result is a professional response | One retry
@@ -2666,10 +2683,12 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"Result rejected due to severe repetition on type {infer_type}"
             )
+            record_ml_result(metric_model, infer_type, "rejected_repetition")
             return []
 
         logger.debug(f"Cleaned {cleaned} on type {infer_type}")
 
+        record_ml_result(metric_model, infer_type, "accepted")
         return [
             (
                 infer_type,

@@ -6,7 +6,8 @@ outcomes) and Sentry messages for the total-failure cases.
 """
 
 import asyncio
-from unittest.mock import MagicMock, patch
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 
@@ -14,6 +15,8 @@ import pytest
 from prometheus_client import REGISTRY
 
 from fighthealthinsurance.ml.ml_metrics import (
+    ML_CALL_PURPOSE,
+    ml_call_purpose,
     record_chat_turn,
     record_ml_call,
     record_ml_failure,
@@ -23,11 +26,31 @@ from fighthealthinsurance.reliability_events import capture_reliability_event
 
 
 def _counter_value(name, **labels):
-    # Every fhi_ml_* series carries the primary/backup leg label.
-    if name.startswith("fhi_ml_"):
+    # Every fhi_ml_call* series carries the primary/backup leg and the
+    # purpose of the call (a bare helper call has no purpose in scope).
+    if name.startswith("fhi_ml_call"):
         labels.setdefault("leg", "primary")
+        labels.setdefault("purpose", "other")
     val = REGISTRY.get_sample_value(name, labels)
     return val or 0.0
+
+
+def _completion(text):
+    return {"object": "chat.completion", "choices": [{"message": {"content": text}}]}
+
+
+def _checked_infer_kwargs(infer_type="medically_necessary", **overrides):
+    kwargs = dict(
+        prompt="denial text",
+        patient_context=None,
+        plan_context=None,
+        infer_type=infer_type,
+        pubmed_context=None,
+        system_prompt="sys",
+        temperature=0.5,
+    )
+    kwargs.update(overrides)
+    return kwargs
 
 
 class TestMetricHelpers:
@@ -43,7 +66,7 @@ class TestMetricHelpers:
         assert (
             REGISTRY.get_sample_value(
                 "fhi_ml_call_seconds_count",
-                {"model": "metrics-model", "leg": "primary"},
+                {"model": "metrics-model", "leg": "primary", "purpose": "other"},
             )
             >= 1
         )
@@ -333,4 +356,259 @@ class TestMetricIdentity:
                 "fhi_ml_call_failures_total", model="obs-wire-x", reason="transport_error"
             )
             == 0
+        )
+
+class TestCallPurpose:
+    """Every fhi_ml_call* series says why the call was made. Appeal generation
+    shares its backend instances with chat, the health probes, entity
+    extraction and summaries, so without the label an appeal-only outage was
+    diluted by the traffic that kept succeeding, and the appeal latency
+    quantile by the probes' "Hello"s."""
+
+    def test_default_is_other_and_unknown_purposes_collapse_to_it(self):
+        assert ML_CALL_PURPOSE.get() == "other"
+        with ml_call_purpose("appeal"):
+            assert ML_CALL_PURPOSE.get() == "appeal"
+            with ml_call_purpose("brand-new-purpose"):
+                assert ML_CALL_PURPOSE.get() == "other"
+            assert ML_CALL_PURPOSE.get() == "appeal"
+        assert ML_CALL_PURPOSE.get() == "other"
+
+    def test_recording_helpers_read_the_purpose_in_scope(self):
+        model_name = "obs-purpose-helper"
+        calls_before = _counter_value(
+            "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="chat"
+        )
+        failures_before = _counter_value(
+            "fhi_ml_call_failures_total",
+            model=model_name,
+            reason="http_error",
+            purpose="chat",
+        )
+        with ml_call_purpose("chat"):
+            record_ml_call(model_name, "ok", 0.1)
+            record_ml_failure(model_name, "http_error")
+        assert (
+            _counter_value(
+                "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="chat"
+            )
+            == calls_before + 1
+        )
+        assert (
+            _counter_value(
+                "fhi_ml_call_failures_total",
+                model=model_name,
+                reason="http_error",
+                purpose="chat",
+            )
+            == failures_before + 1
+        )
+        assert (
+            REGISTRY.get_sample_value(
+                "fhi_ml_call_seconds_count",
+                {"model": model_name, "leg": "primary", "purpose": "chat"},
+            )
+            >= 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_checked_infer_calls_land_in_the_appeal_series(
+        self, make_fake_model_post
+    ):
+        model_name = "obs-purpose-appeal"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        appeal_before = _counter_value(
+            "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="appeal"
+        )
+        other_before = _counter_value(
+            "fhi_ml_calls_total", model=model_name, outcome="ok"
+        )
+        fake_post = make_fake_model_post(
+            200,
+            json_data=_completion(
+                "The denied service is medically necessary for this patient."
+            ),
+        )
+        with patch("aiohttp.ClientSession.post", fake_post):
+            result = await m._checked_infer(**_checked_infer_kwargs())
+        assert result and result[0][0] == "medically_necessary"
+        assert (
+            _counter_value(
+                "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="appeal"
+            )
+            == appeal_before + 1
+        )
+        assert (
+            _counter_value("fhi_ml_calls_total", model=model_name, outcome="ok")
+            == other_before
+        )
+
+    @pytest.mark.asyncio
+    async def test_probe_calls_land_in_the_probe_series(self, make_fake_model_post):
+        model_name = "obs-purpose-probe"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        before = _counter_value(
+            "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="probe"
+        )
+        fake_post = make_fake_model_post(200, json_data=_completion("Hello there."))
+        with patch("aiohttp.ClientSession.post", fake_post):
+            ok, error = await m.probe(timeout=10.0)
+        assert ok, error
+        assert (
+            _counter_value(
+                "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="probe"
+            )
+            == before + 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_chat_turns_run_under_the_chat_purpose(self):
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", "obs-chat")
+        seen = []
+
+        async def fake_infer(*args, **kwargs):
+            seen.append(ML_CALL_PURPOSE.get())
+            return ("Happy to help with that.🐼Greeting.", None)
+
+        m._infer = fake_infer  # type: ignore[method-assign]
+        reply = await m.generate_chat_response("hello there")
+        assert reply
+        assert seen and set(seen) == {"chat"}
+        assert ML_CALL_PURPOSE.get() == "other"
+
+
+class TestCheckedResultsAreCounted:
+    """fhi_ml_calls_total's ok means the transport returned a body. Whether the
+    appeal path could USE the body was decided later, in _checked_infer, and
+    exported nowhere: a backend that was up but answered every prompt with a
+    refusal read as 100% ok while every draft it produced was rejected and
+    filed as a no_output attempt. fhi_ml_results_total records that
+    decision, once per invocation."""
+
+    @pytest.mark.asyncio
+    async def test_a_usable_completion_is_accepted(self, make_fake_model_post):
+        model_name = "obs-result-accepted"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        before = _counter_value(
+            "fhi_ml_results_total",
+            model=model_name,
+            infer_type="medically_necessary",
+            result="accepted",
+        )
+        fake_post = make_fake_model_post(
+            200,
+            json_data=_completion(
+                "The denied service is medically necessary for this patient."
+            ),
+        )
+        with patch("aiohttp.ClientSession.post", fake_post):
+            result = await m._checked_infer(**_checked_infer_kwargs())
+        assert result
+        assert (
+            _counter_value(
+                "fhi_ml_results_total",
+                model=model_name,
+                infer_type="medically_necessary",
+                result="accepted",
+            )
+            == before + 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_is_rejected_while_its_calls_read_ok(
+        self, make_fake_model_post
+    ):
+        model_name = "obs-result-refusal"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        ok_before = _counter_value(
+            "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="appeal"
+        )
+        rejected_before = _counter_value(
+            "fhi_ml_results_total",
+            model=model_name,
+            infer_type="medically_necessary",
+            result="rejected_bad_result",
+        )
+        fake_post = make_fake_model_post(
+            200,
+            json_data=_completion(
+                "I cannot directly create an appeal letter for you."
+            ),
+        )
+        with patch("aiohttp.ClientSession.post", fake_post):
+            result = await m._checked_infer(**_checked_infer_kwargs())
+        assert result == []
+        # The call and its one retry both answered: two ok calls ...
+        assert (
+            _counter_value(
+                "fhi_ml_calls_total", model=model_name, outcome="ok", purpose="appeal"
+            )
+            == ok_before + 2
+        )
+        # ... and one rejected result, which is what the alert needs.
+        assert (
+            _counter_value(
+                "fhi_ml_results_total",
+                model=model_name,
+                infer_type="medically_necessary",
+                result="rejected_bad_result",
+            )
+            == rejected_before + 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_passed_deadline_is_a_skip_and_makes_no_call(self):
+        model_name = "obs-result-deadline"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            return_value="unused"
+        )
+        before = _counter_value(
+            "fhi_ml_results_total",
+            model=model_name,
+            infer_type="full",
+            result="skipped_deadline",
+        )
+        result = await m._checked_infer(
+            **_checked_infer_kwargs(infer_type="full", deadline=time.monotonic() - 1)
+        )
+        assert result == []
+        m._infer_no_context.assert_not_called()
+        assert (
+            _counter_value(
+                "fhi_ml_results_total",
+                model=model_name,
+                infer_type="full",
+                result="skipped_deadline",
+            )
+            == before + 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_completion_the_cleaners_empty_is_rejected_for_repetition(self):
+        model_name = "obs-result-repetition"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            return_value="The denied service is medically necessary for this patient."
+        )
+        before = _counter_value(
+            "fhi_ml_results_total",
+            model=model_name,
+            infer_type="medically_necessary",
+            result="rejected_repetition",
+        )
+        with patch(
+            "fighthealthinsurance.ml.ml_models.remove_repeated_sentences",
+            return_value=None,
+        ):
+            result = await m._checked_infer(**_checked_infer_kwargs())
+        assert result == []
+        assert (
+            _counter_value(
+                "fhi_ml_results_total",
+                model=model_name,
+                infer_type="medically_necessary",
+                result="rejected_repetition",
+            )
+            == before + 1
         )
