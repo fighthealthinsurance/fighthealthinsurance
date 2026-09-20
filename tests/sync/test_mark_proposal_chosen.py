@@ -383,6 +383,31 @@ class MarkProposalChosenTest(TestCase):
         )
         self.assertIsNone(pa.model_name)
 
+    def test_presented_ids_are_kept_filtered_to_the_denials_own_drafts(self):
+        # The browser reports what was on screen; a stray id from another
+        # denial (or a typo) must not credit that draft with a presentation.
+        shown = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="shown", chosen=False, model_name="m"
+        )
+        other_denial = Denial.objects.create(
+            hashed_email="other",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+        foreign = ProposedAppeal.objects.create(
+            for_denial=other_denial, appeal_text="foreign", chosen=False, model_name="m"
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "shown", presented_ids=[shown.id, foreign.id, 999999]
+        )
+        self.assertEqual(pa.presented_ids, [shown.id])
+
+    def test_no_report_leaves_presented_ids_null(self):
+        pa = mark_proposal_chosen(self.denial, "anything")
+        self.assertIsNone(pa.presented_ids)
+
     def test_edited_main_flow_pick_is_recorded_and_still_inferred(self):
         # editted only records the edit now; a draft edited from the sole
         # model's output is still that model's.
@@ -421,14 +446,29 @@ class ChooseAppealCarriesTheBrowserFlagsTest(TestCase):
                 "proposed_appeal_id": "",
                 "draft_unsaved": "1",
                 "editted": "1",
+                "presented_ids": "[12, 7, \"x\", 7]",
             }
         )
         self.assertTrue(form.is_valid(), form.errors)
         self.assertTrue(form.cleaned_data["draft_unsaved"])
         self.assertTrue(form.cleaned_data["editted"])
         self.assertIsNone(form.cleaned_data["proposed_appeal_id"])
+        # Parsed to ints; junk entries dropped, nothing else rejected.
+        self.assertEqual(form.cleaned_data["presented_ids"], [12, 7, 7])
         params = inspect.signature(ChooseAppealHelper.choose_appeal).parameters
         self.assertTrue(set(form.cleaned_data) <= set(params), form.cleaned_data)
+
+    def test_unparseable_presented_ids_are_dropped_not_fatal(self):
+        base = {
+            "denial_id": str(self.denial.denial_id),
+            "email": "user@example.com",
+            "semi_sekret": "sekret",
+            "appeal_text": "the letter",
+        }
+        for raw in ("not json", "{\"a\": 1}", "", "[]"):
+            form = core_forms.ChooseAppealForm({**base, "presented_ids": raw})
+            self.assertTrue(form.is_valid(), (raw, form.errors))
+            self.assertIsNone(form.cleaned_data["presented_ids"], raw)
 
     def test_helper_stamps_the_flags_on_the_chosen_row(self):
         ProposedAppeal.objects.create(

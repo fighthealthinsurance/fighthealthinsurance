@@ -2773,6 +2773,13 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     grounding_score = models.FloatField(null=True, blank=True)
     quality_scorer = models.CharField(max_length=80, null=True, blank=True)
     quality_scored_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Chosen rows only: the ids of the drafts that were on screen when the
+    # user picked (the browser reports them). The appeals page folds every
+    # draft past its visible limit behind a button, so "generated for the
+    # denial" is not "shown": counting the folded ones as presented deflated
+    # the win rate of whatever landed fourth. Null for picks recorded before
+    # this existed and for flows that cannot say (share, professional).
+    presented_ids = models.JSONField(null=True, blank=True)
 
     class Meta:
         constraints = [

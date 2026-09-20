@@ -611,6 +611,7 @@ def mark_proposal_chosen(
     proposed_appeal_id: Optional[int] = None,
     draft_unsaved: bool = False,
     arbitrary_text: bool = False,
+    presented_ids: Optional[List[int]] = None,
 ) -> ProposedAppeal:
     """Create a chosen=True ProposedAppeal, copying model_name from the original
     generated row when we can identify which draft was picked.
@@ -639,6 +640,11 @@ def mark_proposal_chosen(
          model produced it).
       4. model_name=None - the user edited the draft heavily and multiple
          models were in play, or the proposal predates the model_name field.
+
+    ``presented_ids`` are the drafts that were on screen when the pick was
+    made (the browser reports them), kept on the chosen row for the usage
+    dashboard's denominator; they are filtered to this denial's own rows so
+    a stray id cannot credit another denial's draft with a presentation.
 
     ``editted`` records only whether the user changed the draft before
     picking it (the browser reports it from the textarea). It used to double
@@ -702,6 +708,13 @@ def mark_proposal_chosen(
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
             model_name, synthesized, context_level = inferred
+    shown: Optional[List[int]] = None
+    if presented_ids:
+        shown = sorted(
+            ProposedAppeal.objects.filter(
+                for_denial=denial, id__in=presented_ids
+            ).values_list("id", flat=True)
+        )
     pa = ProposedAppeal(
         appeal_text=appeal_text,
         for_denial=denial,
@@ -710,6 +723,7 @@ def mark_proposal_chosen(
         model_name=model_name,
         synthesized=synthesized,
         context_level=context_level,
+        presented_ids=shown or None,
     )
     pa.save()
     return pa
@@ -757,6 +771,7 @@ class ChooseAppealHelper:
         proposed_appeal_id: Optional[int] = None,
         draft_unsaved: bool = False,
         editted: bool = False,
+        presented_ids: Optional[List[int]] = None,
     ) -> Tuple[
         Optional[str], Optional[str], Optional[QuerySet[PubMedArticleSummarized]]
     ]:
@@ -773,6 +788,7 @@ class ChooseAppealHelper:
             editted=editted,
             proposed_appeal_id=proposed_appeal_id,
             draft_unsaved=draft_unsaved,
+            presented_ids=presented_ids,
         )
         articles = None
         article_ids = None

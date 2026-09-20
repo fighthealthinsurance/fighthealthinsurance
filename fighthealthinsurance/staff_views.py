@@ -1455,10 +1455,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         drafts generated for denials picked in the window (a draft generated
         on day 0 and picked on day 1 still counts as presented in a 1-day
         window anchored on the pick).
-      * Presented counts once per denial and model (or level), and only
-        drafts stored before the pick: one generation persists several rows
-        per model on a denial, and counting rows capped a model picked every
-        time at 1/(rows per denial) while single-row buckets were not.
+      * Presented counts each draft shown, once per draft (a model producing
+        several drafts on one denial is counted once per draft, the
+        fan-out-neutral unit the chooser tables also use): the drafts the
+        browser reported on screen at the pick, or, for picks recorded before
+        that report, every deliverable draft stored before the pick.
 
     All stored model names pass through normalize_model_label so historical
     object-repr values aggregate per class (without memory addresses) even
@@ -1592,29 +1593,62 @@ class ModelUsageDashboardView(generic.TemplateView):
         if unattributed_count:
             chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
         presented: Counter = Counter()
-        # Presented = the number of DENIALS on which the model had a draft on
-        # offer, not the number of its draft rows: one generation persists
-        # several rows per model on a denial (two temperature legs of every
-        # full call, the specialized-hint call, the medically_necessary draft,
-        # a shed sibling) against one chosen copy per pick, so counting rows
-        # capped a model picked every single time at 1/(rows per denial)
-        # while single-row buckets (synthesized, template, one-leg backends)
-        # were not. Labels are normalized before deduping so legacy spellings
-        # of one model collapse to one presentation.
-        seen_pairs: set = set()
-        for denial_id, name in presented_qs.values_list(
-            "for_denial_id", "model_name"
-        ).distinct():
+        # Presented counts each draft shown, once per draft. On one denial
+        # every draft competes with every other, so the per-draft pick rate is
+        # the fan-out-neutral comparison (a model contributing two of three
+        # cards is picked two thirds of the time per denial but one third per
+        # draft, the same as a single-card model; counting per denial would
+        # reward fan-out instead), and it is the unit the chooser tables use.
+        # What was shown comes from the pick itself when the browser reported
+        # it (presented_ids): the appeals page folds drafts past its visible
+        # limit behind a button, so the drafts generated for a denial are not
+        # the drafts the user saw, and counting the folded ones charged
+        # whatever landed fourth with a loss. Picks recorded before that
+        # report count every deliverable draft stored before the pick.
+        shown, reported_denials = ModelUsageDashboardView._shown_on_picks(chosen_qs)
+        id_to_model = dict(
+            ProposedAppeal.objects.filter(
+                id__in=list(shown), model_name__isnull=False
+            ).values_list("id", "model_name")
+        )
+        for draft_id, times in shown.items():
+            presented_label = normalize_model_label(id_to_model.get(draft_id))
+            if presented_label is not None:
+                presented[presented_label] += times
+        for name, count in (
+            presented_qs.exclude(for_denial_id__in=list(reported_denials))
+            .values_list("model_name")
+            .annotate(c=Count("id"))
+        ):
             presented_label = normalize_model_label(name)
             if presented_label is not None:
-                seen_pairs.add((denial_id, presented_label))
-        for _denial_id, presented_label in seen_pairs:
-            presented[presented_label] += 1
+                presented[presented_label] += count
         return _merge_stats(
             dict(chosen),
             dict(presented),
             ModelUsageDashboardView._draft_quality_stats(since),
         )
+
+    @staticmethod
+    def _shown_on_picks(chosen_qs: QuerySet) -> Tuple[Counter, set]:
+        """What the in-window picks reported was on screen: a Counter of draft
+        id -> number of picks it was shown on, and the denials whose picks
+        carried the report (their presented set is exactly that, and the
+        stored-before-the-pick fallback must not count them again)."""
+        shown: Counter = Counter()
+        reported: set = set()
+        for denial_id, ids in (
+            chosen_qs.exclude(presented_ids__isnull=True)
+            .values_list("for_denial_id", "presented_ids")
+            .iterator()
+        ):
+            if not ids:
+                continue
+            reported.add(denial_id)
+            # A draft was on screen once per pick; a duplicated id in a
+            # report must not inflate the denominator.
+            shown.update({int(i) for i in ids if isinstance(i, int)})
+        return shown, reported
 
     @staticmethod
     def _presented_before_pick(presented_qs: QuerySet, chosen_qs: QuerySet) -> QuerySet:
@@ -1770,11 +1804,26 @@ class ModelUsageDashboardView(generic.TemplateView):
         if unattributed_count:
             chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
         presented: Counter = Counter()
-        # Once per denial and level, for the same reason as the model table.
-        for _denial_id, level in presented_qs.values_list(
-            "for_denial_id", "context_level"
-        ).distinct():
-            presented[level] += 1
+        # Per draft shown, as the model table counts (see there): the drafts
+        # the pick reported on screen when it carries them, else every
+        # deliverable draft stored before the pick.
+        shown, reported_denials = ModelUsageDashboardView._shown_on_picks(chosen_qs)
+        id_to_level = dict(
+            ProposedAppeal.objects.filter(id__in=list(shown))
+            .exclude(context_level__isnull=True)
+            .exclude(context_level="")
+            .values_list("id", "context_level")
+        )
+        for draft_id, times in shown.items():
+            level = id_to_level.get(draft_id)
+            if level:
+                presented[level] += times
+        for level, count in (
+            presented_qs.exclude(for_denial_id__in=list(reported_denials))
+            .values_list("context_level")
+            .annotate(c=Count("id"))
+        ):
+            presented[level] += count
         # _merge_stats labels the bucket key "model_name"; the value here is the
         # context level. Reusing the shared table partial (which reads
         # model_name) keeps the key -- the template passes a "Context level"

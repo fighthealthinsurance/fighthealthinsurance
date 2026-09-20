@@ -1612,6 +1612,20 @@ function processResponseChunk(chunk: string): void {
         const submitButton = clonedForm.find("button");
         submitButton.prop("id", `submit${appealId}`);
 
+        // Reported with the pick: which stored drafts were actually on
+        // screen at that moment. The final ranking pass folds drafts past
+        // the visible limit behind a button, so the drafts generated for the
+        // denial are not the drafts the person could choose between, and
+        // the usage dashboard was charging the folded ones as candidates
+        // that lost.
+        formElement.on("submit", () => {
+          const visible = (outputContainer.children('[id^="magic"]').toArray() as HTMLElement[])
+            .filter((el) => !el.hidden)
+            .map((el) => el.getAttribute("data-proposed-id"))
+            .filter((id): id is string => !!id);
+          clonedForm.find("input.presented_ids").val(JSON.stringify(visible));
+        });
+
         const appealTextElem = clonedForm.find("textarea");
         // The score was for the text as generated; once a person edits a
         // draft the label no longer describes what they will send.

@@ -1,4 +1,6 @@
 import os
+import json
+import typing
 from typing import TYPE_CHECKING
 
 from django import forms
@@ -275,6 +277,31 @@ class ChooseAppealForm(DenialRefForm):
     # Set by the browser once the textarea is changed, so the chosen row can
     # say whether the draft was sent as generated (ProposedAppeal.editted).
     editted = forms.BooleanField(required=False, widget=forms.HiddenInput())
+    # The ids of the drafts on screen when the pick was made (a JSON list of
+    # ints), so the usage dashboard's "presented" can count what was shown
+    # rather than everything generated. Anything unparseable is dropped.
+    presented_ids = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    # Bounded: a page never shows more than a few dozen drafts.
+    MAX_PRESENTED_IDS = 100
+
+    def clean_presented_ids(self) -> typing.Optional[typing.List[int]]:
+        raw = (self.cleaned_data.get("presented_ids") or "").strip()
+        if not raw:
+            return None
+        try:
+            values = json.loads(raw)
+        except ValueError:
+            return None
+        if not isinstance(values, list):
+            return None
+        ids: typing.List[int] = []
+        for value in values[: self.MAX_PRESENTED_IDS]:
+            try:
+                ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return ids or None
 
 
 class ChooseEscalationLetterForm(DenialRefForm):

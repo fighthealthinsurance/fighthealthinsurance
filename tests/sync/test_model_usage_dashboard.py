@@ -914,25 +914,76 @@ class PresentedCountsOnlyDraftsBeforeThePickTest(_StaffDashboardCase):
         self.assertEqual(rows["full"]["presented"], 1)
         self.assertNotIn("tier1_shed", rows)
 
-    def test_several_drafts_from_one_model_on_a_denial_are_one_presentation(self):
-        # Two temperature legs plus the medically_necessary draft: the model
-        # was on offer once, and a pick of it is a 100% win, not 33%.
+    def test_several_drafts_from_one_model_are_counted_once_per_draft(self):
+        # Pinned on purpose: per draft is the fan-out-neutral unit. On one
+        # denial every draft competes with every other, so a model with two
+        # of three cards is picked two thirds of the time per denial but one
+        # third per draft, the same as a single-card model. Counting per
+        # denial instead would reward fan-out.
         self._draft("m1", "temperature 0.6 leg")
         self._draft("m1", "temperature 0.1 leg")
         self._draft("m1", "medically necessary draft")
         self._draft("m2", "the other model")
         self._pick("m1", "temperature 0.6 leg")
         rows = self._rows()
-        self.assertEqual(rows["m1"]["presented"], 1)
-        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertEqual(rows["m1"]["presented"], 3)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0 / 3)
         self.assertEqual(rows["m2"]["presented"], 1)
 
-    def test_context_level_counts_once_per_denial_and_level(self):
-        self._draft("m1", "leg one", context_level="full")
-        self._draft("m1", "leg two", context_level="full")
-        self._pick("m1", "leg one", context_level="full")
+
+class PresentedIsWhatThePickSawTest(_StaffDashboardCase):
+    """The appeals page folds drafts past its visible limit behind a button,
+    so a pick reports the ids that were on screen; those, not everything
+    generated for the denial, are the drafts that lost."""
+
+    def test_folded_drafts_the_pick_did_not_see_are_not_presented(self):
+        seen_a = self._draft("m1", "seen a")
+        seen_b = self._draft("m2", "seen b")
+        self._draft("m3", "folded behind show more")
+        self._pick("m1", "seen a", presented_ids=[seen_a.id, seen_b.id])
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertEqual(rows["m2"]["presented"], 1)
+        self.assertNotIn("m3", rows)
+
+    def test_a_pick_that_reported_nothing_falls_back_to_drafts_before_it(self):
+        self._draft("m1", "one")
+        self._draft("m2", "two")
+        self._pick("m1", "one")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+    def test_reported_and_unreported_denials_are_not_double_counted(self):
+        other = Denial.objects.create(
+            hashed_email="hash2",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+        a = self._draft("m1", "reported denial, seen")
+        self._draft("m1", "reported denial, folded")
+        self._pick("m1", "reported denial, seen", presented_ids=[a.id])
+        ProposedAppeal.objects.create(
+            for_denial=other, appeal_text="old style", chosen=False, model_name="m1"
+        )
+        ProposedAppeal.objects.create(
+            for_denial=other, appeal_text="old style", chosen=True, model_name="m1"
+        )
+        rows = self._rows()
+        # One from the report, one from the fallback; the folded draft and
+        # the reported denial's fallback never count.
+        self.assertEqual(rows["m1"]["presented"], 2)
+        self.assertEqual(rows["m1"]["chosen"], 2)
+
+    def test_context_level_table_uses_the_report_too(self):
+        seen = self._draft("m1", "seen", context_level="full")
+        self._draft("m1", "folded", context_level="tier1_shed")
+        self._pick("m1", "seen", context_level="full", presented_ids=[seen.id])
         rows = self._rows(source="context_level")
         self.assertEqual(rows["full"]["presented"], 1)
+        self.assertNotIn("tier1_shed", rows)
 
 
 class TemplateDraftsAreAModelBucketTest(_StaffDashboardCase):
