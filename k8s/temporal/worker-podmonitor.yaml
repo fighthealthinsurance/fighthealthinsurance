@@ -30,3 +30,9 @@ spec:
       path: /metrics
       scheme: http
       interval: 30s
+    # "app-metrics" (9465) is prometheus_client's registry from the same
+    # process: the fhi_ml_* call counters for generation run on the worker.
+    - port: app-metrics
+      path: /metrics
+      scheme: http
+      interval: 30s

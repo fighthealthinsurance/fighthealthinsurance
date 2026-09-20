@@ -613,20 +613,6 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
         self.assertEqual(crow["chosen"], 1)
         self.assertEqual(crow["presented"], 1)
 
-    def test_two_candidates_from_one_model_are_one_presentation_per_vote(self):
-        # The refill's retry pass can seat two candidates from one model in a
-        # task; the model was on offer once per vote, not twice, or its win
-        # rate is capped below every single-candidate model.
-        task = self._make_task()
-        a1 = self._make_candidate(task, 0, "model-a")
-        a2 = self._make_candidate(task, 1, "model-a", metadata={"retry": True})
-        b = self._make_candidate(task, 2, "model-b")
-        self._vote(task, chosen=a1, presented=[a1, a2, b])
-        by_name = {r["model_name"]: r for r in self._rows()}
-        self.assertEqual(by_name["model-a"]["presented"], 1)
-        self.assertEqual(by_name["model-a"]["chosen"], 1)
-        self.assertAlmostEqual(by_name["model-a"]["win_rate"], 100.0)
-        self.assertEqual(by_name["model-b"]["presented"], 1)
 
 
 class ModelUsageDashboardWindowTest(ChooserStatsHelperMixin, TestCase):

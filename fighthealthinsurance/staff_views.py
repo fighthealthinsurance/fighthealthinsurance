@@ -1770,10 +1770,9 @@ class ModelUsageDashboardView(generic.TemplateView):
     ) -> List[Dict[str, Any]]:
         # Both chosen and presented derive from the same vote set (filtered
         # by ChooserVote.created_at), so a window's win rates compare like
-        # with like: every vote event contributes its chosen candidate's
-        # model once and each distinct presented model once. Candidate
-        # creation time is irrelevant — candidates are generated ahead of
-        # votes.
+        # with like: every vote event contributes its chosen candidate once
+        # and each distinct presented candidate once. Candidate creation
+        # time is irrelevant — candidates are generated ahead of votes.
         chosen_qs = ChooserVote.objects.filter(chosen_candidate__kind=kind)
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
@@ -1784,35 +1783,32 @@ class ModelUsageDashboardView(generic.TemplateView):
             label = normalize_model_label(name) or UNKNOWN_MODEL_LABEL
             chosen[label] += count
 
-        # Presented: the number of votes in which the MODEL was on offer,
-        # from the votes' presented_candidate_ids JSON lists. We reuse
-        # chosen_qs (same filter) and call .iterator() so the All Time window
-        # doesn't load every vote into a result cache. Counted per model, not
-        # per candidate: the refill's retry pass can seat two candidates from
-        # one model in a task (see chooser_tasks), and per-candidate counting
-        # charged that model two presentations per vote it could win at most
-        # once, capping its win rate below every single-candidate model it
-        # was compared against. Duplicated ids (buggy/hostile client,
-        # pre-dedupe historical rows) collapse the same way.
-        shown_per_vote: List[set] = []
-        all_ids: set = set()
+        # Presented: walk votes' presented_candidate_ids JSON lists into a
+        # counter. We reuse chosen_qs (same filter) and call .iterator() so
+        # the All Time window doesn't load every vote into a result cache.
+        # Dedupe ids within a vote: a candidate was shown once per vote
+        # event, and a duplicated id (buggy/hostile client, pre-dedupe
+        # historical rows) must not inflate the denominator. Counted per
+        # DRAFT shown, as the page defines it: a model the refill seated
+        # twice in one task is charged two presentations, which is what it
+        # got (the refill now asks the models still owed a candidate first,
+        # so that stays rare).
+        counter: Counter = Counter()
         for ids in chosen_qs.values_list(
             "presented_candidate_ids", flat=True
         ).iterator():
             if ids:
-                shown = set(ids)
-                shown_per_vote.append(shown)
-                all_ids |= shown
+                counter.update(set(ids))
         cand_to_model = dict(
             ChooserCandidate.objects.filter(
-                id__in=list(all_ids), kind=kind
+                id__in=list(counter.keys()), kind=kind
             ).values_list("id", "model_name")
         )
         presented: Counter = Counter()
-        for shown in shown_per_vote:
-            labels = {normalize_model_label(cand_to_model.get(cid)) for cid in shown}
-            labels.discard(None)
-            presented.update(labels)
+        for cid, n in counter.items():
+            presented_label = normalize_model_label(cand_to_model.get(cid))
+            if presented_label is not None:
+                presented[presented_label] += n
         return _merge_stats(dict(chosen), dict(presented))
 
 

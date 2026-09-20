@@ -8,9 +8,11 @@ registry name -- the identity ProposedAppeal, ModelCallAttempt and the staff
 dashboard key on, so the series can be joined to them -- a primary/backup
 leg, and a small outcome enum; never denial/chat ids or free text) and
 exported through the same django_prometheus endpoint the DB metrics already
-use. Only processes that serve that endpoint are scraped: generation that
-runs on the Ray actors or the Temporal worker records into a registry nobody
-reads unless those processes export it too.
+use. Only processes that serve that endpoint are scraped: the Temporal
+worker serves this registry too (run_temporal_worker.app_metrics_server, on
+FHI_APP_METRICS_BIND), but generation that runs on the Ray actors (the
+speculative precompute, the chooser refill) records into a registry nothing
+reads yet.
 
 All recording helpers are no-op safe: a metrics failure must never break an
 inference call.

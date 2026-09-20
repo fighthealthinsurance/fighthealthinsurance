@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import random
 import typing
 from typing import Optional
 
@@ -2592,6 +2593,13 @@ class ChooserViewSet(viewsets.ViewSet):
             for c in candidates
         ]
 
+        # Served in random order, so the voter is blind to model class: the
+        # stored order (internal model first, synthesized last) is otherwise
+        # perfectly correlated with the position on the page, and a vote for
+        # "Option A" cannot be told from a vote for the internal model. The
+        # client sends presented_candidate_ids in the order it rendered, so
+        # the display order is persisted per vote for later analysis.
+        random.shuffle(candidate_data)
         response_data = {
             "task_id": task.id,
             "task_type": task.task_type,

@@ -60,6 +60,29 @@ def metrics_runtime() -> Any:
     )
 
 
+# Scrape endpoint for the APP's own Prometheus registry: the fhi_ml_* call
+# counters (ml/ml_metrics.py) and the DB pool gauges. Appeal generation that
+# runs on this worker records into prometheus_client's default registry,
+# which only the web pods served, so a backend failing only under the
+# journey's calls showed no failures anywhere. A second port, because the
+# SDK's Rust exporter owns the first. Set by the worker manifests; unset
+# (dev, tests) means no endpoint.
+APP_METRICS_BIND_ENV = "FHI_APP_METRICS_BIND"
+
+
+def app_metrics_server() -> str | None:
+    """Serve prometheus_client's registry on ``FHI_APP_METRICS_BIND``
+    (``host:port``). Returns the bind, or None when unset/blank."""
+    bind = (os.environ.get(APP_METRICS_BIND_ENV) or "").strip()
+    if not bind:
+        return None
+    from prometheus_client import start_http_server
+
+    host, _, port = bind.rpartition(":")
+    start_http_server(int(port), addr=host or "0.0.0.0")
+    return bind
+
+
 def install_shutdown_handlers(workers, stop, log, tasks=None) -> None:
     """Make SIGTERM/SIGINT stop polling and drain, instead of being dropped.
 
@@ -254,6 +277,7 @@ class Command(BaseCommand):
         # connection is still pending must not be discarded (review), and a
         # terminating pod must not start polling afterwards.
         runtime = metrics_runtime()
+        app_metrics = app_metrics_server()
         connect = asyncio.ensure_future(get_temporal_client(runtime=runtime))
         stopped = asyncio.ensure_future(stop.wait())
         await asyncio.wait({connect, stopped}, return_when=asyncio.FIRST_COMPLETED)
@@ -267,7 +291,8 @@ class Command(BaseCommand):
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
             f"journey {'ENABLED' if journey_enabled else 'disabled'}; metrics "
-            f"{os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}"
+            f"{os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}; app "
+            f"metrics {app_metrics or 'off'}"
         )
 
         with ThreadPoolExecutor(max_workers=max_workers) as activity_executor:
