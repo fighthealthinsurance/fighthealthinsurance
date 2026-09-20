@@ -445,6 +445,10 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
     denial_uuid = serializers.CharField(required=False, allow_blank=True)
     denial_id = serializers.CharField(required=False, allow_blank=True)
     completed_appeal_text = serializers.CharField(required=True)
+    # Optional id of the ProposedAppeal draft the text was built from (the id
+    # on its streaming frame), so the pick keeps its model attribution even
+    # after edits. See common_view_logic.record_professional_pick.
+    proposed_appeal_id = serializers.IntegerField(required=False, allow_null=True)
     insurance_company = serializers.CharField(required=False, allow_blank=True)
     fax_phone = serializers.CharField(required=False, allow_blank=True)
     pubmed_articles_to_include = serializers.ListField(

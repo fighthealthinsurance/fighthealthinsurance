@@ -284,6 +284,22 @@ def _log_abandoned_task_quietly(task: "asyncio.Task[Any]") -> None:
         )
 
 
+def _endpoint_label(url: Any) -> str:
+    """``host[:port]`` of an endpoint URL, for attempt-log labels: never the
+    path, the query, or credentials embedded in the URL."""
+    if not url:
+        return "none"
+    try:
+        parsed = urllib.parse.urlparse(str(url))
+        host = parsed.hostname
+        port = parsed.port
+    except Exception:
+        return "?"
+    if not host:
+        return "?"
+    return f"{host}:{port}" if port else host
+
+
 def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
     """True when an error payload says the endpoint doesn't serve the model.
 
@@ -1039,6 +1055,49 @@ class RemoteModelLike(DenialBase):
     def __repr__(self) -> str:
         """Same as ``__str__`` (friendly name / descriptor, never an object id)."""
         return self.__str__()
+
+    def backend_descriptor(self) -> str:
+        """Identity of THIS backend instance for the per-attempt log
+        (``ModelCallAttempt.backend``): class, wire model id and endpoint
+        host(s).
+
+        ``str(self)`` is the router-stamped friendly name, which several
+        instances share (``models_by_name["fhi-2025"]`` -> [server1,
+        server2]), so it cannot say which one answered. Host and port only:
+        never the path, the query, or the token, which travels in a header
+        and is not part of ``api_base``.
+        """
+        model = getattr(self, "model", None) or "?"
+        api_base = getattr(self, "api_base", None)
+        label = f"{type(self).__name__}({model} @ {_endpoint_label(api_base)})"
+        backup_base = getattr(self, "backup_api_base", None)
+        backup_model = getattr(self, "backup_model", None) or model
+        if backup_base and (backup_base != api_base or backup_model != model):
+            label += f" +backup({backup_model} @ {_endpoint_label(backup_base)})"
+        return label
+
+    def _metric_identity(self, api_base: Any = None) -> Tuple[str, str]:
+        """``(model, leg)`` labels for the fhi_ml_* Prometheus series.
+
+        ``model`` is the router-stamped registry name when there is one --
+        the identity ProposedAppeal, ModelCallAttempt, ChooserCandidate and
+        the staff dashboard all key on, so the series can be joined to them
+        -- else the wire model id. Labelling with the wire id alone collapsed
+        two registry models that share a provider model into one series and
+        split one registry model across its primary and backup wire ids.
+        ``leg`` says which endpoint of a primary/backup pair the call went
+        to, which the wire id could not tell apart either.
+        """
+        name = getattr(self, "name", None)
+        if name:
+            label = str(name)
+        else:
+            label = str(getattr(self, "model", None) or type(self).__name__)
+        primary = getattr(self, "api_base", None)
+        backup = getattr(self, "backup_api_base", None)
+        is_backup = bool(api_base and backup and api_base == backup)
+        leg = "backup" if is_backup and api_base != primary else "primary"
+        return label, leg
 
     def quality(self) -> int:
         return 100
@@ -3192,6 +3251,8 @@ class RemoteOpenLike(RemoteModel):
         """
         effective_timeout = timeout if timeout is not None else self._timeout
         call_model = kwargs.get("model") or self.model
+        # api_base is passed only for the backup leg (see _infer).
+        metric_model, leg = self._metric_identity(kwargs.get("api_base"))
         started = time.monotonic()
         if effective_timeout is not None:
             try:
@@ -3201,16 +3262,19 @@ class RemoteOpenLike(RemoteModel):
                         *args, request_timeout=effective_timeout, **kwargs
                     )
                 record_ml_call(
-                    call_model,
+                    metric_model,
                     "ok" if result and result[0] else "none",
                     time.monotonic() - started,
+                    leg=leg,
                 )
                 return result
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
-                record_ml_call(call_model, "timeout", time.monotonic() - started)
+                record_ml_call(
+                    metric_model, "timeout", time.monotonic() - started, leg=leg
+                )
                 failures = kwargs.get("transport_failures")
                 if failures is not None:
                     failures.append(
@@ -3253,12 +3317,42 @@ class RemoteOpenLike(RemoteModel):
                             f"{effective_timeout:.0f}s window",
                         )
                 return None
+            except Exception:
+                # __infer re-raises HTTP errors so _infer and the opted-in
+                # subclasses can act on the status. That call still happened:
+                # count it, or the failure counter climbs while the call
+                # counter stands still and failures / calls reads over 100%.
+                record_ml_call(
+                    metric_model, "error", time.monotonic() - started, leg=leg
+                )
+                raise
+            except asyncio.CancelledError:
+                # The losing leg of a dual-mode race is cancelled once its
+                # sibling answers. It was a real request on the wire, and a
+                # backup that accepts-then-hangs would otherwise never show
+                # in any series for as long as the primary keeps winning.
+                record_ml_call(
+                    metric_model, "cancelled", time.monotonic() - started, leg=leg
+                )
+                raise
         else:
-            result = await self.__infer(*args, **kwargs)
+            try:
+                result = await self.__infer(*args, **kwargs)
+            except asyncio.CancelledError:
+                record_ml_call(
+                    metric_model, "cancelled", time.monotonic() - started, leg=leg
+                )
+                raise
+            except Exception:
+                record_ml_call(
+                    metric_model, "error", time.monotonic() - started, leg=leg
+                )
+                raise
             record_ml_call(
-                call_model,
+                metric_model,
                 "ok" if result and result[0] else "none",
                 time.monotonic() - started,
+                leg=leg,
             )
             return result
 
@@ -3291,6 +3385,7 @@ class RemoteOpenLike(RemoteModel):
         # the log line below, which otherwise prints "at None".
         if api_base is None:
             return None
+        metric_model, leg = self._metric_identity(api_base)
         logger.debug(
             f"Calling {model} at {api_base} (prompt_len={len(prompt) if prompt else 0}, "
             f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
@@ -3305,6 +3400,9 @@ class RemoteOpenLike(RemoteModel):
             )
             if transport_failures is not None:
                 transport_failures.append(f"{model} via {api_base}: not served here")
+            # Nothing went on the wire, but __timeout_infer still files this
+            # as outcome=none; give that "none" its reason.
+            record_ml_failure(metric_model, "skipped_missing_model", leg=leg)
             return None
         # Same idea for repeated transport failures (refused/DNS/timeout):
         # skip quietly while the short cooldown lasts; probes bypass this so
@@ -3482,6 +3580,9 @@ class RemoteOpenLike(RemoteModel):
                                 )
                                 if raise_http_errors:
                                     raise
+                                record_ml_failure(
+                                    metric_model, "context_overflow", leg=leg
+                                )
                                 return None
 
                             if e.status == 404 and _error_text_indicates_missing_model(
@@ -3503,6 +3604,9 @@ class RemoteOpenLike(RemoteModel):
                                     transport_failures.append(
                                         f"{model} via {api_base}: not served here"
                                     )
+                                record_ml_failure(
+                                    metric_model, "missing_model", leg=leg
+                                )
                                 return None
 
                             response_body_preview = response_body[:2000]
@@ -3546,6 +3650,9 @@ class RemoteOpenLike(RemoteModel):
                                         status=404,
                                         message=error_message,
                                     )
+                                record_ml_failure(
+                                    metric_model, "missing_model", leg=leg
+                                )
                                 return None
                             logger.warning(
                                 f"Bad response from {self} with {model}: "
@@ -3557,6 +3664,7 @@ class RemoteOpenLike(RemoteModel):
             # error page). Must be caught before ClientResponseError (it's a
             # subclass) or it would be re-raised as a status error below.
             logger.warning(f"{self}: {model} via {api_base}: {describe_model_error(e)}")
+            record_ml_failure(metric_model, "bad_body", leg=leg)
             if raise_http_errors or self._propagate_http_errors:
                 # ContentTypeError is a ClientResponseError: probes and
                 # status-handling subclasses get it (with its status) exactly
@@ -3570,7 +3678,7 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
-            record_ml_failure(model, "http_error")
+            record_ml_failure(metric_model, "http_error", leg=leg)
             raise
         except MODEL_TRANSPORT_ERRORS as e:
             # Expected operational failures (backend down, unreachable, slow,
@@ -3581,7 +3689,7 @@ class RemoteOpenLike(RemoteModel):
             # and a stall would only slow failover to the backup backend.
             described = describe_model_error(e)
             logger.warning(f"{self}: {model} via {api_base} failed -- {described}")
-            record_ml_failure(model, "transport_error")
+            record_ml_failure(metric_model, "transport_error", leg=leg)
             # Record the cause even when raising is requested. A transport
             # error deliberately does NOT raise here -- returning None is what
             # lets the caller fall through to the backup endpoint -- but that
@@ -3604,7 +3712,7 @@ class RemoteOpenLike(RemoteModel):
             logger.opt(exception=True).warning(
                 f"Unexpected error calling {api_base} for model {model}"
             )
-            record_ml_failure(model, "unexpected_error")
+            record_ml_failure(metric_model, "unexpected_error", leg=leg)
             await asyncio.sleep(1)
             return None
         try:
@@ -3619,7 +3727,7 @@ class RemoteOpenLike(RemoteModel):
                     f"Response from {url} for {model} had no choices; "
                     f"body starts: {body_snippet}"
                 )
-                record_ml_failure(model, "bad_body")
+                record_ml_failure(metric_model, "bad_body", leg=leg)
                 return None
 
             # Extract message content
@@ -5275,16 +5383,49 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                     json_result = await response.json()
             return self._parse_messages_response(json_result)
 
-        if effective_timeout is not None:
-            try:
-                async with async_timeout(effective_timeout):
-                    return await _post()
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Timed out querying {self} after {effective_timeout:.0f}s"
-                )
-                return None
-        return await _post()
+        # This transport bypasses RemoteOpenLike.__timeout_infer, so it feeds
+        # the fhi_ml_* series itself: without this the priciest external
+        # backend was a blind spot in the per-backend failure-rate alerts.
+        metric_model, leg = self._metric_identity(self.api_base)
+        started = time.monotonic()
+
+        def _count(outcome: str) -> None:
+            record_ml_call(metric_model, outcome, time.monotonic() - started, leg=leg)
+
+        try:
+            if effective_timeout is not None:
+                try:
+                    async with async_timeout(effective_timeout):
+                        result = await _post()
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Timed out querying {self} after {effective_timeout:.0f}s"
+                    )
+                    _count("timeout")
+                    return None
+            else:
+                result = await _post()
+        except asyncio.CancelledError:
+            _count("cancelled")
+            raise
+        except aiohttp.ContentTypeError:
+            record_ml_failure(metric_model, "bad_body", leg=leg)
+            _count("error")
+            raise
+        except aiohttp.ClientResponseError:
+            record_ml_failure(metric_model, "http_error", leg=leg)
+            _count("error")
+            raise
+        except MODEL_TRANSPORT_ERRORS:
+            record_ml_failure(metric_model, "transport_error", leg=leg)
+            _count("error")
+            raise
+        except Exception:
+            record_ml_failure(metric_model, "unexpected_error", leg=leg)
+            _count("error")
+            raise
+        _count("ok" if result and result[0] else "none")
+        return result
 
     def _parse_messages_response(
         self, json_result: dict

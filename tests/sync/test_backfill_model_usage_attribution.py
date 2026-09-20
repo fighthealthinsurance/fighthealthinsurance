@@ -110,6 +110,50 @@ class BackfillProposedAppealTest(TestCase):
         pick.refresh_from_db()
         self.assertEqual(pick.model_name, "only-model")
 
+    def test_recovers_text_match_across_crlf_line_endings(self):
+        # A chosen row holds the text as the browser submitted it (CRLF);
+        # the draft it came from is stored with LF.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Dear Reviewer,\nI appeal.",
+            chosen=False,
+            model_name="model-x",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="another draft",
+            chosen=False,
+            model_name="model-y",
+        )
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Dear Reviewer,\r\nI appeal.",
+            chosen=True,
+            model_name=None,
+        )
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertEqual(pick.model_name, "model-x")
+
+    def test_drafts_stored_after_the_pick_are_not_sole_draft_evidence(self):
+        # The only drafts arrived after the pick (a later regeneration), so
+        # they were not on the screen when the user chose.
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="picked text",
+            chosen=True,
+            model_name=None,
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="later draft",
+            chosen=False,
+            model_name="later-model",
+        )
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertIsNone(pick.model_name)
+
     def test_does_not_guess_across_multiple_models(self):
         ProposedAppeal.objects.create(
             for_denial=self.denial,

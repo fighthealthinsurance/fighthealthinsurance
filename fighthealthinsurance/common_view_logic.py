@@ -72,6 +72,7 @@ from fighthealthinsurance.context_barrier import warm_then_fetch
 from fighthealthinsurance.exec import bridge_executor
 from fighthealthinsurance.context_utils import (
     attach_supplemental_to_citations,
+    CONTEXT_LEVEL_TEMPLATE,
     CONTEXT_LEVEL_SPECULATIVE,
     CONTEXT_LEVEL_SYNTHESIZED,
     CONTEXT_LEVEL_TIER1_SHED,
@@ -100,6 +101,12 @@ from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
+from fighthealthinsurance.generate_appeal import backend_label
+from fighthealthinsurance.ml.model_attempt_log import (
+    ModelAttemptRecord,
+    ModelAttemptRecorder,
+)
+from fighthealthinsurance.ml.model_identity import canonical_model_name
 from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import (
     MLAppealQuestionsHelper,
@@ -560,11 +567,50 @@ class AppealAssemblyHelper:
         return target
 
 
+async def _record_synthesis_attempt(
+    *,
+    denial_id: int,
+    generation_id: Optional[str],
+    model: Any,
+    text: str,
+    started: float,
+    started_wall: Any,
+) -> None:
+    """Persist which backend wrote a synthesized letter, as a ModelCallAttempt
+    row at stage "synthesis". The ProposedAppeal row keeps the reserved
+    "synthesized" model name -- that is the dashboard's bucket -- so this row
+    is the only record of the model that actually produced the text the user
+    may go on to send. Best-effort, like every attempt write."""
+    try:
+        recorder = ModelAttemptRecorder(
+            denial_id=denial_id, generation_id=generation_id, run_kind="live"
+        )
+        recorder.record(
+            ModelAttemptRecord(
+                model_name=canonical_model_name(model),
+                outcome="ok",
+                stage="synthesis",
+                context_level=CONTEXT_LEVEL_SYNTHESIZED,
+                infer_type="synthesis",
+                backend=backend_label(model),
+                response_text=text,
+                response_chars=len(text),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                started_at=started_wall,
+            )
+        )
+        await recorder.aflush()
+    except Exception:
+        logger.opt(exception=True).debug("Could not record the synthesis attempt")
+
+
 def mark_proposal_chosen(
     denial: Denial,
     appeal_text: str,
     editted: bool = False,
     proposed_appeal_id: Optional[int] = None,
+    draft_unsaved: bool = False,
+    arbitrary_text: bool = False,
 ) -> ProposedAppeal:
     """Create a chosen=True ProposedAppeal, copying model_name from the original
     generated row when we can identify which draft was picked.
@@ -573,17 +619,32 @@ def mark_proposal_chosen(
       1. proposed_appeal_id (preferred) - the id returned by save_appeal in
          the streaming JSON frame. Survives sub_in_appeals rewriting the
          displayed text (e.g. {claim_id} -> "ABC123") since it does not
-         depend on string equality.
-      2. exact appeal_text match against a chosen=False row for the same
-         denial. Useful as a fallback when the frontend did not echo the id
-         (older clients, share-appeal flow).
+         depend on string equality. The id may name an earlier chosen=True
+         copy: the appeals page replays a user's pick under the copy's id,
+         and the copy carries the attribution copied from its draft.
+      2. text match against a chosen=False row for the same denial, on the
+         whitespace-normalized fingerprint (browsers submit textarea content
+         with CRLF line endings while drafts are stored with LF, so a
+         byte-for-byte comparison failed for every multi-line letter), with
+         an exact match kept for legacy rows whose fingerprint is NULL.
+         Useful as a fallback when the frontend did not echo the id (older
+         clients, share-appeal flow).
       3. sole-draft inference - when every draft generated for the denial
          came from one model, the pick necessarily did too (even after
-         edits or sub_in_appeals rewrites). Skipped for editted=True calls:
-         the share-appeal flow submits arbitrary text that may never have
-         been a draft.
+         edits or sub_in_appeals rewrites). Skipped for arbitrary_text=True
+         calls (the share-appeal flow submits text that may never have been
+         a draft) and for draft_unsaved=True calls (the browser says
+         the picked draft was streamed but never stored -- save_appeal's
+         save_failed frames -- so the stored drafts say nothing about which
+         model produced it).
       4. model_name=None - the user edited the draft heavily and multiple
          models were in play, or the proposal predates the model_name field.
+
+    ``editted`` records only whether the user changed the draft before
+    picking it (the browser reports it from the textarea). It used to double
+    as the share flow's marker AND the inference gate, which left the column
+    constantly False for the main flow: verbatim-vs-edited per model was
+    unmeasurable, and the admin filter on it showed a flow with no edits.
     """
     # speculative=False throughout: a held-back precompute row was never shown
     # to the user, so it can't be the pick. Served speculative rows are flipped
@@ -594,17 +655,33 @@ def mark_proposal_chosen(
     # whose coincidentally-identical text would otherwise mislabel the pick.
     original: Optional[ProposedAppeal] = None
     if proposed_appeal_id is not None:
+        # No chosen=False here: a re-submit after a page revisit echoes the
+        # id of the user's earlier chosen copy (the replay serves it newest
+        # first and dedupes the draft under it). Refusing the copy sent every
+        # such pick to sole-draft inference, which gives up the moment two
+        # models were in play -- a correctly attributed pick degraded to
+        # "(unattributed)" by ordinary back-navigation. A copy that carries
+        # no model is no evidence, though, and falls through like a miss.
         original = ProposedAppeal.objects.filter(
             id=proposed_appeal_id,
             for_denial=denial,
-            chosen=False,
             speculative=False,
         ).first()
+        if (
+            original is not None
+            and original.chosen
+            and not (original.model_name or "").strip()
+        ):
+            original = None
     if original is None:
+        fingerprint = ProposedAppeal.fingerprint(appeal_text)
+        text_match = Q(appeal_text=appeal_text)
+        if fingerprint is not None:
+            text_match |= Q(text_fingerprint=fingerprint)
         original = (
             ProposedAppeal.objects.filter(
+                text_match,
                 for_denial=denial,
-                appeal_text=appeal_text,
                 chosen=False,
                 speculative=False,
             )
@@ -621,7 +698,7 @@ def mark_proposal_chosen(
         # dashboard/RL export (which read only chosen rows) would be blind to
         # which context level users actually pick.
         context_level = original.context_level
-    elif not editted:
+    elif not arbitrary_text and not draft_unsaved:
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
             model_name, synthesized, context_level = inferred
@@ -638,6 +715,37 @@ def mark_proposal_chosen(
     return pa
 
 
+def record_professional_pick(
+    denial: Denial,
+    appeal_text: Optional[str],
+    proposed_appeal_id: Optional[int] = None,
+) -> Optional[ProposedAppeal]:
+    """Record the text a professional assembled as their pick, for the same
+    model-usage reporting the consumer flow feeds through ChooseAppealHelper.
+
+    assemble_appeal is also how a professional regenerates the document, so
+    unchanged text is not a new pick: one chosen row per distinct text per
+    denial. Best-effort -- reporting must never cost the professional their
+    appeal document, so a failure here is logged and swallowed.
+    """
+    try:
+        if not appeal_text or not appeal_text.strip():
+            return None
+        if ProposedAppeal.objects.filter(
+            for_denial=denial, chosen=True, appeal_text=appeal_text
+        ).exists():
+            return None
+        return mark_proposal_chosen(
+            denial, appeal_text, proposed_appeal_id=proposed_appeal_id
+        )
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"Could not record the professional's pick for denial "
+            f"{denial.denial_id}; the appeal document itself is unaffected"
+        )
+        return None
+
+
 class ChooseAppealHelper:
     @classmethod
     def choose_appeal(
@@ -647,6 +755,8 @@ class ChooseAppealHelper:
         email: str,
         semi_sekret: str,
         proposed_appeal_id: Optional[int] = None,
+        draft_unsaved: bool = False,
+        editted: bool = False,
     ) -> Tuple[
         Optional[str], Optional[str], Optional[QuerySet[PubMedArticleSummarized]]
     ]:
@@ -657,7 +767,13 @@ class ChooseAppealHelper:
         ).get()
         denial.appeal_text = appeal_text
         denial.save()
-        mark_proposal_chosen(denial, appeal_text, proposed_appeal_id=proposed_appeal_id)
+        mark_proposal_chosen(
+            denial,
+            appeal_text,
+            editted=editted,
+            proposed_appeal_id=proposed_appeal_id,
+            draft_unsaved=draft_unsaved,
+        )
         articles = None
         article_ids = None
 
@@ -5706,9 +5822,15 @@ class AppealsBackendHelper:
             nonlocal first_model, superseded
             appeal_text = item.text
             model_name = item.model_name
-            if first_model is None and model_name:
+            if (
+                first_model is None
+                and model_name
+                and item.context_level != CONTEXT_LEVEL_TEMPLATE
+            ):
                 # First deliverable draft's model — recorded for the done frame
                 # and zero-appeal diagnostics so we can see which backend won.
+                # Template rows carry a pseudo-model name and no backend won
+                # anything for them, so they never claim this.
                 first_model = str(model_name)
             t = time.time()
             logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
@@ -5794,12 +5916,25 @@ class AppealsBackendHelper:
                         # the state this run started under. If the state has
                         # moved meanwhile the replay filter hides it next time,
                         # as it should: the text argues under the old law.
-                        await ProposedAppeal.objects.filter(
+                        # The live run produced this very text under ITS
+                        # context, and that is the draft the user is about to
+                        # see: the row carries the live provenance the counters
+                        # and attempt rows already credit, not the reserve's
+                        # (which left the stored draft, and any pick of it,
+                        # labelled speculative while the done frame counted it
+                        # as live output).
+                        claimed = await ProposedAppeal.objects.filter(
                             pk=existing.pk, speculative=True
                         ).aupdate(
-                            speculative=False, built_for_state=reserve_state(denial)
+                            speculative=False,
+                            built_for_state=reserve_state(denial),
+                            model_name=model_name,
+                            context_level=item.context_level,
                         )
                         existing.speculative = False
+                        if claimed:
+                            existing.model_name = model_name
+                            existing.context_level = item.context_level
                     if existing.appeal_text != appeal_text:
                         # A normalized variant collided: stream the DURABLE
                         # text under the stored row's id. Sending the variant
@@ -6300,6 +6435,12 @@ class AppealsBackendHelper:
                 }
             ) + "\n"
             try:
+                # Which backend's synthesis wins, for the attempt log: the
+                # stored row keeps the reserved "synthesized" name, so this is
+                # the only record of who actually wrote the letter.
+                synthesis_provenance: dict[str, Any] = {}
+                synthesis_started = time.monotonic()
+                synthesis_started_wall = timezone.now()
                 synthesis_task = asyncio.ensure_future(
                     appealGenerator.synthesize_appeals(
                         appeal_texts=saved_appeal_texts,
@@ -6308,6 +6449,7 @@ class AppealsBackendHelper:
                         ),
                         procedure=(str(denial.procedure) if denial.procedure else None),
                         diagnosis=(str(denial.diagnosis) if denial.diagnosis else None),
+                        provenance=synthesis_provenance,
                     )
                 )
                 # Emit keepalives while synthesis is running, up to 120s
@@ -6361,6 +6503,16 @@ class AppealsBackendHelper:
                                     context_level=CONTEXT_LEVEL_SYNTHESIZED,
                                 )
                             )
+                            winner = synthesis_provenance.get("model")
+                            if winner is not None:
+                                await _record_synthesis_attempt(
+                                    denial_id=denial.denial_id,
+                                    generation_id=generation_id,
+                                    model=winner,
+                                    text=synthesized,
+                                    started=synthesis_started,
+                                    started_wall=synthesis_started_wall,
+                                )
                             subbed = await sub_in_appeals(saved)
                             subbed["synthesized"] = "true"
                             yield await format_response(subbed)
@@ -6513,6 +6665,16 @@ class AppealsBackendHelper:
                     f"[gen_id={generation_id}] persisted {written} late model "
                     f"attempt record(s) for denial {denial_id}"
                 )
+            # Runts the ladder's peek rejected never reach keep(), the only
+            # place `runts` was counted, so a run where EVERY model answered
+            # with a runt logged runt_count=0 -- which the comment below
+            # defines as "models were silent". Add the peek rejections so the
+            # diag line says what the attempt rows say.
+            runts += sum(
+                1
+                for _, outcome in attempt_recorder.outcome_pairs()
+                if outcome == "rejected_at_peek"
+            )
         # runt_count=0 means models were silent; >0 means models produced only
         # undeliverable outputs (too short, or not made of words) —
         # different root causes for incident review.

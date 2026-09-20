@@ -7,6 +7,7 @@ from loguru import logger as loguru_logger
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.ml.model_attempt_log import ModelAttemptRecorder
 from fighthealthinsurance.generate_appeal import (
+    backend_label,
     AppealGenerator,
     AppealTemplateGenerator,
     GeneratedAppeal,
@@ -1103,6 +1104,58 @@ class TestGeneratedToAppealsTextRecording:
         (record,) = recorder._records
         assert record.duration_ms is not None
         assert record.duration_ms >= 1400
+
+    def test_deadline_abandonment_is_filed_as_abandoned_not_error(self):
+        """A call the requester's deadline cut off is a budget problem, not a
+        backend fault; it used to be filed as outcome=error."""
+        recorder = self._recorder()
+        future = MagicMock()
+        future.done.return_value = False
+
+        self._drain(recorder, future, deadline=time.monotonic() - 20)
+
+        (record,) = recorder._records
+        assert record.outcome == "abandoned"
+        assert "deadline" in record.error_detail
+
+
+class TestBackendLabel:
+    """backend_label / RemoteModelLike.backend_descriptor: the value the
+    attempt row's backend column carries. str(model) is the registry name,
+    the same string as model_name, so it cannot name an endpoint."""
+
+    def test_descriptor_names_class_wire_model_and_host_but_never_the_token(self):
+        m = RemoteFullOpenLike("http://h1.internal:8000/v1", "sekrit-token", "wire-model")
+        m.name = "fhi-2025"  # what the router stamps
+        label = m.backend_descriptor()
+        assert label == "RemoteFullOpenLike(wire-model @ h1.internal:8000)"
+        assert "sekrit-token" not in label
+        assert label != str(m)
+
+    def test_descriptor_names_a_distinct_backup_endpoint(self):
+        m = RemoteFullOpenLike(
+            "http://h1:8000/v1",
+            "tok",
+            "wire-model",
+            backup_api_base="http://h2:9000/v1",
+            backup_model="backup-wire",
+        )
+        assert m.backend_descriptor() == (
+            "RemoteFullOpenLike(wire-model @ h1:8000) +backup(backup-wire @ h2:9000)"
+        )
+
+    def test_two_instances_under_one_registry_name_get_distinct_labels(self):
+        a = RemoteFullOpenLike("http://h1:8000/v1", "tok", "wire-model")
+        b = RemoteFullOpenLike("http://h2:8000/v1", "tok", "wire-model")
+        a.name = b.name = "fhi-2025"
+        assert str(a) == str(b) == "fhi-2025"
+        assert backend_label(a) != backend_label(b)
+
+    def test_label_falls_back_to_str_for_stand_ins(self):
+        # A MagicMock's backend_descriptor() is a MagicMock, not a str.
+        stub = MagicMock()
+        stub.__str__ = lambda self: "FakeBackend"
+        assert backend_label(stub) == "FakeBackend"
 
 
 class TestSummarizeModelOutcomes:

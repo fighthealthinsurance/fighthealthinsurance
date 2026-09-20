@@ -2878,6 +2878,7 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     @staticmethod
     def sole_draft_attribution(
         denial_id,
+        before_id: typing.Optional[int] = None,
     ) -> typing.Optional[typing.Tuple[str, bool, typing.Optional[str]]]:
         """Return ``(model_name, synthesized, context_level)`` when every
         generated draft for the denial is attributed to exactly one model, else
@@ -2890,7 +2891,10 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         attribution is returned in that case. A blank/whitespace model_name
         (the field is ``blank=True``) is treated as missing for the same
         reason. Used by mark_proposal_chosen as a fallback and by the
-        attribution backfill; must never guess.
+        attribution backfill; must never guess. ``before_id`` bounds the
+        evidence to drafts stored before that row id (the backfill passes the
+        pick's own id): a draft generated after the pick was not on the
+        screen when the user chose, so it says nothing about the pick.
 
         ``context_level`` is inferred SEPARATELY and only when all drafts share
         exactly one level -- the model inference deliberately tolerates drafts
@@ -2901,6 +2905,8 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         base_qs = ProposedAppeal.objects.filter(
             for_denial_id=denial_id, chosen=False, speculative=False
         )
+        if before_id is not None:
+            base_qs = base_qs.filter(id__lt=before_id)
         pairs = list(base_qs.values_list("model_name", "synthesized").distinct()[:2])
         if len(pairs) != 1:
             return None
@@ -4395,9 +4401,13 @@ class ModelCallAttempt(models.Model):
     # Friendly registry name (matches ProposedAppeal.model_name /
     # ModelBackendHealthCheckResult.model_name), or "unknown".
     model_name = models.CharField(max_length=200, blank=True, default="", db_index=True)
-    # repr of the specific backend the call went to, when one was reached.
+    # Which backend INSTANCE the call went to, when one was reached: class,
+    # wire model id and endpoint host(s) (RemoteModelLike.backend_descriptor).
+    # Several instances can share one registry name, which is why this is
+    # not just model_name again.
     backend = models.CharField(max_length=300, blank=True, default="")
-    # Ladder stage: primary / backup / retry_tier_1 / retry_tier_2.
+    # Ladder stage: primary / backup / retry_tier_1 / retry_tier_2, or
+    # synthesis (the backend whose synthesis of the drafts won).
     stage = models.CharField(max_length=32, blank=True, default="")
     # context_utils.CONTEXT_LEVEL_* for the context this call was given.
     context_level = models.CharField(max_length=32, blank=True, default="")
@@ -4409,6 +4419,7 @@ class ModelCallAttempt(models.Model):
     # ok, runt_only, rejected_at_peek (the undeliverable first item that made
     # the ladder fall through to the next stage), no_output (the model answered
     # with nothing), error (the call itself failed -- see error_detail),
+    # abandoned (the requester's deadline passed before the call answered),
     # not_registered, no_prompt, all_backends_failed.
     outcome = models.CharField(max_length=64, db_index=True)
     # Classified failure reason (describe_model_error) or exception text.

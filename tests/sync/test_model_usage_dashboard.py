@@ -11,6 +11,7 @@ from django.utils import timezone
 from fighthealthinsurance.ml.model_identity import (
     LEGACY_UNATTRIBUTED_LABEL,
     SYNTHESIZED_MODEL_NAME,
+    TEMPLATE_MODEL_NAME,
     legacy_unresolved_label,
 )
 from fighthealthinsurance.models import (
@@ -201,17 +202,19 @@ class ModelUsageDashboardContentTest(TestCase):
         )
         ProposedAppeal.objects.create(
             for_denial=d,
-            appeal_text="full-chosen",
-            chosen=True,
-            model_name="m1",
-            context_level="full",
-        )
-        ProposedAppeal.objects.create(
-            for_denial=d,
             appeal_text="shed-draft",
             chosen=False,
             model_name="m1",
             context_level="tier1_shed",
+        )
+        # The pick comes last: presented counts only what existed when the
+        # user chose.
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="full-chosen",
+            chosen=True,
+            model_name="m1",
+            context_level="full",
         )
 
         response = self.client.get(reverse("model_usage_dashboard"))
@@ -610,6 +613,21 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
         self.assertEqual(crow["chosen"], 1)
         self.assertEqual(crow["presented"], 1)
 
+    def test_two_candidates_from_one_model_are_one_presentation_per_vote(self):
+        # The refill's retry pass can seat two candidates from one model in a
+        # task; the model was on offer once per vote, not twice, or its win
+        # rate is capped below every single-candidate model.
+        task = self._make_task()
+        a1 = self._make_candidate(task, 0, "model-a")
+        a2 = self._make_candidate(task, 1, "model-a", metadata={"retry": True})
+        b = self._make_candidate(task, 2, "model-b")
+        self._vote(task, chosen=a1, presented=[a1, a2, b])
+        by_name = {r["model_name"]: r for r in self._rows()}
+        self.assertEqual(by_name["model-a"]["presented"], 1)
+        self.assertEqual(by_name["model-a"]["chosen"], 1)
+        self.assertAlmostEqual(by_name["model-a"]["win_rate"], 100.0)
+        self.assertEqual(by_name["model-b"]["presented"], 1)
+
 
 class ModelUsageDashboardWindowTest(ChooserStatsHelperMixin, TestCase):
     """Rolling-window boundary behavior for 1d / 7d / 30d / All Time."""
@@ -840,3 +858,111 @@ class DraftQualityColumnsTest(TestCase):
         rows = _merge_stats({"a": 1}, {"a": 2})
         self.assertIsNone(rows[0]["quality_avg"])
         self.assertEqual(rows[0]["quality_scored"], 0)
+
+
+class _StaffDashboardCase(TestCase):
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        self.denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def _rows(self, source="proposed_appeal"):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        return {r["model_name"]: r for r in response.context["windows"][0][source]}
+
+    def _draft(self, model_name, text, **kwargs):
+        return ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text=text,
+            chosen=False,
+            model_name=model_name,
+            **kwargs,
+        )
+
+    def _pick(self, model_name, text, **kwargs):
+        return ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text=text,
+            chosen=True,
+            model_name=model_name,
+            **kwargs,
+        )
+
+
+class PresentedCountsOnlyDraftsBeforeThePickTest(_StaffDashboardCase):
+    """Every visit to the appeals page reruns generation, so a denial keeps
+    accumulating drafts after the user chose; those were never in the
+    running and must not count as presented."""
+
+    def test_drafts_stored_after_the_pick_are_not_presented(self):
+        self._draft("m1", "seen")
+        self._pick("m1", "seen")
+        # A later visit regenerated: never shown before the pick.
+        self._draft("m2", "later")
+        self._draft("m1", "later too")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertNotIn("m2", rows)
+
+    def test_a_second_pick_widens_the_window_to_what_it_saw(self):
+        self._draft("m1", "first round")
+        self._pick("m1", "first round")
+        self._draft("m2", "second round")
+        self._pick("m2", "second round")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+    def test_context_level_table_uses_the_same_bound(self):
+        self._draft("m1", "seen", context_level="full")
+        self._pick("m1", "seen", context_level="full")
+        self._draft("m1", "later", context_level="tier1_shed")
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows["full"]["presented"], 1)
+        self.assertNotIn("tier1_shed", rows)
+
+
+class TemplateDraftsAreAModelBucketTest(_StaffDashboardCase):
+    """Non-AI template drafts are presented and picked like any model's; with
+    model_name NULL their picks read as attribution misses and they never
+    counted as presented."""
+
+    def test_template_pick_is_bucketed_as_template_not_unattributed(self):
+        self._draft(TEMPLATE_MODEL_NAME, "template letter", context_level="template")
+        self._draft("m1", "model letter")
+        self._pick(TEMPLATE_MODEL_NAME, "template letter", context_level="template")
+        rows = self._rows()
+        self.assertEqual(rows[TEMPLATE_MODEL_NAME]["chosen"], 1)
+        self.assertEqual(rows[TEMPLATE_MODEL_NAME]["presented"], 1)
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertNotIn(UNKNOWN_MODEL_LABEL, rows)
+
+
+class ContextLevelLegacyBucketTest(_StaffDashboardCase):
+    """The context-level table follows the model table's rules for rows
+    without a level, so the two tables agree on what a bucket means."""
+
+    def test_pre_tracking_pick_is_legacy_and_level_less_drafts_are_not_presented(
+        self,
+    ):
+        self._draft(None, "old draft", context_level=None)
+        pick = self._pick(None, "old pick", context_level=None)
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows[LEGACY_UNATTRIBUTED_LABEL]["chosen"], 1)
+        self.assertEqual(rows[LEGACY_UNATTRIBUTED_LABEL]["presented"], 0)
+        self.assertIsNone(rows[LEGACY_UNATTRIBUTED_LABEL]["win_rate"])
+        self.assertNotIn(UNKNOWN_MODEL_LABEL, rows)
+
+    def test_post_tracking_pick_without_a_level_stays_unattributed(self):
+        self._pick(None, "recent pick", context_level=None)
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows[UNKNOWN_MODEL_LABEL]["chosen"], 1)
+        self.assertNotIn(LEGACY_UNATTRIBUTED_LABEL, rows)

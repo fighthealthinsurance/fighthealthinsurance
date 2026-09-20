@@ -268,6 +268,13 @@ class ChooseAppealForm(DenialRefForm):
     # When present, ChooseAppealHelper uses it to preserve model attribution
     # even after sub_in_appeals rewrites the raw text the user sees.
     proposed_appeal_id = forms.IntegerField(required=False, widget=forms.HiddenInput())
+    # Set by the browser when the draft's streaming frame said it was never
+    # stored (id "unknown" / save_failed): the stored drafts are then no
+    # evidence of which model produced it, so sole-draft inference is off.
+    draft_unsaved = forms.BooleanField(required=False, widget=forms.HiddenInput())
+    # Set by the browser once the textarea is changed, so the chosen row can
+    # say whether the draft was sent as generated (ProposedAppeal.editted).
+    editted = forms.BooleanField(required=False, widget=forms.HiddenInput())
 
 
 class ChooseEscalationLetterForm(DenialRefForm):

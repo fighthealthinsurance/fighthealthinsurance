@@ -71,7 +71,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
         mock_router.internal_models_by_cost = [mock_model]
 
         synthesized_text = "This is a well-crafted synthesized appeal letter that combines all the best arguments from the drafts provided."
-        mock_best_within.return_value = synthesized_text
+        mock_best_within.return_value = (synthesized_text, mock_router.internal_models_by_cost[0])
 
         result = asyncio.run(
             self._run_synthesize(
@@ -116,7 +116,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
         model_c = MagicMock(spec=RemoteModelLike)
         mock_router.internal_models_by_cost = [model_a, model_b, model_c]
 
-        mock_best_within.return_value = "A" * 100
+        mock_best_within.return_value = ("A" * 100, mock_router.internal_models_by_cost[0])
 
         asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
 

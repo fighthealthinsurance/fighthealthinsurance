@@ -3,9 +3,14 @@
 The July 2026 reliability work added rich per-attempt DB rows and log
 classification for APPEAL generation, but no aggregate view: there was no way
 to alert on "backend X's failure rate jumped" or "p95 latency doubled"
-without log archaeology. These metrics are label-bounded (model name and a
-small outcome enum -- never denial/chat ids or free text) and exported
-through the same django_prometheus endpoint the DB metrics already use.
+without log archaeology. These metrics are label-bounded (the model's
+registry name -- the identity ProposedAppeal, ModelCallAttempt and the staff
+dashboard key on, so the series can be joined to them -- a primary/backup
+leg, and a small outcome enum; never denial/chat ids or free text) and
+exported through the same django_prometheus endpoint the DB metrics already
+use. Only processes that serve that endpoint are scraped: generation that
+runs on the Ray actors or the Temporal worker records into a registry nobody
+reads unless those processes export it too.
 
 All recording helpers are no-op safe: a metrics failure must never break an
 inference call.
@@ -18,26 +23,32 @@ from prometheus_client import Counter, Histogram
 from prometheus_client.core import GaugeMetricFamily, Metric
 from prometheus_client.registry import Collector, REGISTRY
 
-# One outcome per completed __timeout_infer call.
+# One outcome per __timeout_infer call: ok (non-empty completion), none (the
+# call returned nothing), timeout, or error (the transport raised -- an HTTP
+# 4xx/5xx re-raised for status-specific handling). Every call lands here
+# exactly once, so failures / calls is always a rate.
 ML_CALLS_TOTAL = Counter(
     "fhi_ml_calls_total",
-    "Model backend calls by outcome (ok = non-empty completion).",
-    labelnames=("model", "outcome"),
+    "Model backend calls by outcome (ok = non-empty completion, none, timeout, "
+    "error).",
+    labelnames=("model", "leg", "outcome"),
 )
 
 # Failure *reasons* observed inside the transport layer. Deliberately a
 # separate counter from ML_CALLS_TOTAL: a failed call shows up once there
-# (outcome=none/timeout) and once here with its classified reason.
+# (outcome=none/timeout/error) and once here with its classified reason
+# (transport_error, http_error, bad_body, context_overflow, missing_model,
+# skipped_missing_model, unexpected_error).
 ML_CALL_FAILURES_TOTAL = Counter(
     "fhi_ml_call_failures_total",
     "Classified model call failures (transport, http, bad body...).",
-    labelnames=("model", "reason"),
+    labelnames=("model", "leg", "reason"),
 )
 
 ML_CALL_SECONDS = Histogram(
     "fhi_ml_call_seconds",
     "Wall-clock duration of model backend calls.",
-    labelnames=("model",),
+    labelnames=("model", "leg"),
     buckets=(1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 240, 300, 420),
 )
 
@@ -82,20 +93,36 @@ def _safe_label(value: object, limit: int = 80) -> str:
     return str(value)[:limit] if value else "unknown"
 
 
-def record_ml_call(model: object, outcome: str, seconds: float) -> None:
-    """Record one completed model call. Never raises."""
+# Which endpoint of a primary/backup pair a call went to. Bounded here so a
+# caller cannot widen the label set by accident.
+_LEGS = frozenset({"primary", "backup"})
+
+
+def _leg_label(leg: object) -> str:
+    return leg if isinstance(leg, str) and leg in _LEGS else "primary"
+
+
+def record_ml_call(
+    model: object, outcome: str, seconds: float, leg: str = "primary"
+) -> None:
+    """Record one completed model call. ``model`` is the registry name when the
+    router stamped one (RemoteModelLike._metric_identity), ``leg`` the
+    endpoint of a primary/backup pair. Never raises."""
     try:
         name = _safe_label(model)
-        ML_CALLS_TOTAL.labels(model=name, outcome=outcome).inc()
-        ML_CALL_SECONDS.labels(model=name).observe(seconds)
+        leg = _leg_label(leg)
+        ML_CALLS_TOTAL.labels(model=name, leg=leg, outcome=outcome).inc()
+        ML_CALL_SECONDS.labels(model=name, leg=leg).observe(seconds)
     except Exception:  # pragma: no cover - metrics must never break calls
         logger.opt(exception=True).debug("Failed to record ml call metric")
 
 
-def record_ml_failure(model: object, reason: str) -> None:
+def record_ml_failure(model: object, reason: str, leg: str = "primary") -> None:
     """Record a classified failure reason. Never raises."""
     try:
-        ML_CALL_FAILURES_TOTAL.labels(model=_safe_label(model), reason=reason).inc()
+        ML_CALL_FAILURES_TOTAL.labels(
+            model=_safe_label(model), leg=_leg_label(leg), reason=reason
+        ).inc()
     except Exception:  # pragma: no cover
         logger.opt(exception=True).debug("Failed to record ml failure metric")
 

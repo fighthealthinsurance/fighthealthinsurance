@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db import connection
-from django.db.models import Avg, Count, F, Max, Min, QuerySet
+from django.db.models import Avg, Count, F, Max, Min, OuterRef, QuerySet, Subquery
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
@@ -1562,11 +1562,14 @@ class ModelUsageDashboardView(generic.TemplateView):
         # real internal model_name, so counting them would silently pad that
         # model's presented denominator and deflate its win rate). Matches the
         # speculative=False guard in _context_level_stats and the serving path.
-        presented_qs = ProposedAppeal.objects.filter(
-            chosen=False,
-            model_name__isnull=False,
-            speculative=False,
-            for_denial_id__in=chosen_denial_ids,
+        presented_qs = ModelUsageDashboardView._presented_before_pick(
+            ProposedAppeal.objects.filter(
+                chosen=False,
+                model_name__isnull=False,
+                speculative=False,
+                for_denial_id__in=chosen_denial_ids,
+            ),
+            chosen_qs,
         )
 
         chosen: Counter = Counter()
@@ -1596,6 +1599,30 @@ class ModelUsageDashboardView(generic.TemplateView):
             dict(presented),
             ModelUsageDashboardView._draft_quality_stats(since),
         )
+
+    @staticmethod
+    def _presented_before_pick(presented_qs: QuerySet, chosen_qs: QuerySet) -> QuerySet:
+        """Narrow ``presented_qs`` to drafts that existed when the denial's
+        latest in-window pick was made.
+
+        Every visit to the appeals page reruns generation, and a pick can
+        land mid-stream, so a denial keeps accumulating drafts after the user
+        chose. Counting those as candidates that lost deflated every model's
+        win rate in proportion to how often the page was reopened, and
+        charged models added later with phantom losses. Row ids are
+        monotonic and the chosen copy is always written after the drafts it
+        was picked from, so "id below the pick's id" means "on the screen at
+        pick time" without leaning on created_at (NULL on legacy rows).
+        """
+        latest_pick = (
+            chosen_qs.filter(for_denial_id=OuterRef("for_denial_id"))
+            .order_by("-id")
+            .values("id")[:1]
+        )
+        bounded: QuerySet = presented_qs.annotate(pick_id=Subquery(latest_pick)).filter(
+            id__lt=F("pick_id")
+        )
+        return bounded
 
     @staticmethod
     def _draft_quality_stats(
@@ -1690,26 +1717,47 @@ class ModelUsageDashboardView(generic.TemplateView):
         synthesized / template). Shows whether users end up choosing shed or
         speculative appeals as often as full-context ones. Speculative drafts
         that were never promoted are excluded from the presented denominator
-        (they were held back, not shown)."""
+        (they were held back, not shown).
+
+        Rows without a level follow the model table's rules, so the two
+        tables on the page agree on what a bucket means: a chosen row from
+        before timestamp tracking is LEGACY_UNATTRIBUTED_LABEL, a later one is
+        UNKNOWN_MODEL_LABEL, and level-less drafts are left out of the
+        presented denominator rather than fabricating a win rate for the
+        legacy volume."""
         chosen_qs = ProposedAppeal.objects.filter(chosen=True)
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
         chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
-        presented_qs = ProposedAppeal.objects.filter(
-            chosen=False,
-            speculative=False,
-            for_denial_id__in=chosen_denial_ids,
+        presented_qs = ModelUsageDashboardView._presented_before_pick(
+            ProposedAppeal.objects.filter(
+                chosen=False,
+                speculative=False,
+                context_level__isnull=False,
+                for_denial_id__in=chosen_denial_ids,
+            ).exclude(context_level=""),
+            chosen_qs,
         )
         chosen: Counter = Counter()
-        for level, count in chosen_qs.values_list("context_level").annotate(
-            c=Count("id")
+        for level, count in (
+            chosen_qs.filter(context_level__isnull=False)
+            .exclude(context_level="")
+            .values_list("context_level")
+            .annotate(c=Count("id"))
         ):
-            chosen[level or UNKNOWN_MODEL_LABEL] += count
+            chosen[level] += count
+        no_level = chosen_qs.filter(Q(context_level__isnull=True) | Q(context_level=""))
+        legacy_count = no_level.filter(created_at__isnull=True).count()
+        unattributed_count = no_level.filter(created_at__isnull=False).count()
+        if legacy_count:
+            chosen[LEGACY_UNATTRIBUTED_LABEL] += legacy_count
+        if unattributed_count:
+            chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
         presented: Counter = Counter()
         for level, count in presented_qs.values_list("context_level").annotate(
             c=Count("id")
         ):
-            presented[level or UNKNOWN_MODEL_LABEL] += count
+            presented[level] += count
         # _merge_stats labels the bucket key "model_name"; the value here is the
         # context level. Reusing the shared table partial (which reads
         # model_name) keeps the key -- the template passes a "Context level"
@@ -1722,9 +1770,10 @@ class ModelUsageDashboardView(generic.TemplateView):
     ) -> List[Dict[str, Any]]:
         # Both chosen and presented derive from the same vote set (filtered
         # by ChooserVote.created_at), so a window's win rates compare like
-        # with like: every vote event contributes its chosen candidate once
-        # and each distinct presented candidate once. Candidate creation
-        # time is irrelevant — candidates are generated ahead of votes.
+        # with like: every vote event contributes its chosen candidate's
+        # model once and each distinct presented model once. Candidate
+        # creation time is irrelevant — candidates are generated ahead of
+        # votes.
         chosen_qs = ChooserVote.objects.filter(chosen_candidate__kind=kind)
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
@@ -1735,28 +1784,35 @@ class ModelUsageDashboardView(generic.TemplateView):
             label = normalize_model_label(name) or UNKNOWN_MODEL_LABEL
             chosen[label] += count
 
-        # Presented: walk votes' presented_candidate_ids JSON lists into a
-        # counter. We reuse chosen_qs (same filter) and call .iterator() so
-        # the All Time window doesn't load every vote into a result cache.
-        # Dedupe ids within a vote: a candidate was shown once per vote
-        # event, and a duplicated id (buggy/hostile client, pre-dedupe
-        # historical rows) must not inflate the denominator.
-        counter: Counter = Counter()
+        # Presented: the number of votes in which the MODEL was on offer,
+        # from the votes' presented_candidate_ids JSON lists. We reuse
+        # chosen_qs (same filter) and call .iterator() so the All Time window
+        # doesn't load every vote into a result cache. Counted per model, not
+        # per candidate: the refill's retry pass can seat two candidates from
+        # one model in a task (see chooser_tasks), and per-candidate counting
+        # charged that model two presentations per vote it could win at most
+        # once, capping its win rate below every single-candidate model it
+        # was compared against. Duplicated ids (buggy/hostile client,
+        # pre-dedupe historical rows) collapse the same way.
+        shown_per_vote: List[set] = []
+        all_ids: set = set()
         for ids in chosen_qs.values_list(
             "presented_candidate_ids", flat=True
         ).iterator():
             if ids:
-                counter.update(set(ids))
+                shown = set(ids)
+                shown_per_vote.append(shown)
+                all_ids |= shown
         cand_to_model = dict(
             ChooserCandidate.objects.filter(
-                id__in=list(counter.keys()), kind=kind
+                id__in=list(all_ids), kind=kind
             ).values_list("id", "model_name")
         )
         presented: Counter = Counter()
-        for cid, n in counter.items():
-            presented_label = normalize_model_label(cand_to_model.get(cid))
-            if presented_label is not None:
-                presented[presented_label] += n
+        for shown in shown_per_vote:
+            labels = {normalize_model_label(cand_to_model.get(cid)) for cid in shown}
+            labels.discard(None)
+            presented.update(labels)
         return _merge_stats(dict(chosen), dict(presented))
 
 
@@ -1974,8 +2030,12 @@ class ModelBackendStatusView(generic.TemplateView):
         last: Dict[str, datetime.datetime] = {}
         # .order_by() clears any Meta ordering, which would otherwise leak
         # into the GROUP BY and break the aggregation.
+        # chosen=False: a chosen row is the copy written when a user PICKS a
+        # draft (mark_proposal_chosen), stamped with the draft's model at
+        # pick time. Counting it kept a retired backend looking alive for
+        # as long as anyone kept picking its old drafts.
         for name, ts in (
-            ProposedAppeal.objects.filter(model_name__in=names)
+            ProposedAppeal.objects.filter(model_name__in=names, chosen=False)
             .order_by()
             .values_list("model_name")
             .annotate(latest=Max("created_at"))

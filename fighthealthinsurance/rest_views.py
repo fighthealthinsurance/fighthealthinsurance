@@ -1361,6 +1361,14 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             include_cover=include_cover,  # for now -- make this a flag on appeal
         )
         appeal.save()
+        # The professional's pick, for the model-usage reporting the consumer
+        # flow feeds through ChooseAppealHelper: without this no professional
+        # pick ever reached ProposedAppeal.chosen=True.
+        common_view_logic.record_professional_pick(
+            denial,
+            completed_appeal_text,
+            proposed_appeal_id=serializer.validated_data.get("proposed_appeal_id"),
+        )
         return Response(
             serializers.AssembleAppealResponseSerializer({"appeal_id": appeal.id}).data,
             status=status.HTTP_201_CREATED,

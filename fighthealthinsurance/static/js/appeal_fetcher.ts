@@ -1617,6 +1617,9 @@ function processResponseChunk(chunk: string): void {
         // draft the label no longer describes what they will send.
         appealTextElem.on("input", () => {
           clonedForm.attr("data-dirty", "1");
+          // Reported with the pick: the server records whether the draft
+          // was changed before it was chosen (ProposedAppeal.editted).
+          clonedForm.find("input.editted").val("1");
           clonedForm.find(".appeal-recommended-badge").remove();
         });
         appealTextElem.text(appealText);
@@ -1631,6 +1634,13 @@ function processResponseChunk(chunk: string): void {
         if (proposedId !== undefined && proposedId !== null && proposedId !== "unknown") {
           clonedForm.find("input.proposed_appeal_id").val(String(proposedId));
           clonedForm.attr("data-proposed-id", String(proposedId));
+        } else if (proposedId === "unknown" || parsedLine.save_failed) {
+          // The server could not store this draft (no generation lease, or
+          // the insert failed), so nothing stored can be matched to it. Say
+          // so: otherwise a pick of it is attributed by inference to
+          // whichever model's drafts DID get stored.
+          clonedForm.find("input.draft_unsaved").val("1");
+          clonedForm.attr("data-draft-unsaved", "1");
         }
 
         outputContainer.append(clonedForm);

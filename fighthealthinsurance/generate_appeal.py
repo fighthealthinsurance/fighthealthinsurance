@@ -39,6 +39,7 @@ class GeneratedAppeal:
 
 
 from fighthealthinsurance.denial_history_consent import history_may_be_used_now
+from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_FULL,
     CONTEXT_LEVEL_TEMPLATE,
@@ -1160,6 +1161,25 @@ def _peek_or_none(
         return None, iter([])
 
 
+def backend_label(model: Any) -> str:
+    """What to persist as ``ModelCallAttempt.backend`` for a backend instance.
+
+    ``str(model)`` is the router-stamped friendly name -- the very string
+    stored as ``model_name`` -- and several instances share it, so it cannot
+    say which endpoint answered. Prefer the instance's endpoint descriptor;
+    anything without one (hand-built stand-ins) falls back to ``str``.
+    """
+    describe = getattr(model, "backend_descriptor", None)
+    if callable(describe):
+        try:
+            label = describe()
+        except Exception:
+            label = None
+        if isinstance(label, str) and label.strip():
+            return label
+    return str(model)
+
+
 def _generated_to_appeals_text(
     model_name: Optional[str],
     k_text_future: Future,
@@ -1193,6 +1213,7 @@ def _generated_to_appeals_text(
     produced = False
     runt_only = False
     failed = False
+    abandoned = False
     error_detail = ""
     # What this model returned, kept so the persisted row shows what was said
     # even when nothing was deliverable. Capped as we go rather than at write
@@ -1233,6 +1254,7 @@ def _generated_to_appeals_text(
                     # every leftover mapper SERIALLY, so N pending models
                     # would eat N extra seconds out of the margin that
                     # exists to flush attempt rows and error frames.
+                    abandoned = True
                     error_detail = "abandoned: requester deadline passed"
                     logger.warning(
                         f"Appeal generation via {model_name} abandoned -- "
@@ -1241,6 +1263,7 @@ def _generated_to_appeals_text(
                     return
                 _done, not_done = futures_wait([k_text_future], timeout=remaining)
                 if not_done:
+                    abandoned = True
                     error_detail = "abandoned: requester deadline passed"
                     logger.warning(
                         f"Appeal generation via {model_name} abandoned -- "
@@ -1335,6 +1358,11 @@ def _generated_to_appeals_text(
         if recorder is not None:
             if produced:
                 outcome = "ok"
+            elif abandoned:
+                # Deadline pressure is a budget/capacity problem, not a
+                # backend fault: its own outcome, so a triage query over
+                # error rows does not mix the two.
+                outcome = "abandoned"
             elif failed:
                 # An actual raised failure outranks runt_only: a model that
                 # yielded a runt and THEN crashed mid-results should read as
@@ -2718,13 +2746,13 @@ class AppealGenerator(object):
             run_kind=run_kind,
         )
 
-        # Which backend answered for a given model name on the most recent
-        # call, so the attempt row can name the endpoint rather than just the
-        # registry name. Written by get_model_result as it walks the backend
-        # list; read when the future's results are consumed.
-        winning_backend_by_model: dict[str, str] = {}
-
-        # For any model that we have a prompt for try to call it and return futures
+        # For any model that we have a prompt for, try to call it and return
+        # its futures plus the label of the backend instance that accepted
+        # the call (backend_label), so the attempt rows for those futures
+        # name the endpoint rather than just the registry name. Returned per
+        # call rather than kept in a map keyed by model name: several calls
+        # share a name (full + medically_necessary, the specialized-hint
+        # call), and a shared map could hand one call another's backend.
         def get_model_result(
             model_name: str,
             prompt: str,
@@ -2736,7 +2764,7 @@ class AppealGenerator(object):
             prof_pov: bool = False,
             stage: str = "",
             context_level: Optional[str] = None,
-        ) -> List[Future[Tuple[str, Optional[str]]]]:
+        ) -> Tuple[List[Future[Tuple[str, Optional[str]]]], str]:
             if model_name not in ml_router.models_by_name:
                 sample = list(itertools.islice(ml_router.models_by_name.keys(), 10))
                 logger.warning(
@@ -2757,7 +2785,7 @@ class AppealGenerator(object):
                         ),
                     )
                 )
-                return []
+                return [], ""
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
                 logger.debug(f"get_model_result: no prompt for {model_name}, skipping")
@@ -2770,7 +2798,7 @@ class AppealGenerator(object):
                         infer_type=infer_type,
                     )
                 )
-                return []
+                return [], ""
             # Per-backend failures on the way to a working one. Kept so the
             # all_backends_failed row says which endpoints failed and how,
             # rather than just "all of them".
@@ -2793,11 +2821,14 @@ class AppealGenerator(object):
                     # the whole model_name's attempt with zero futures and no
                     # attempt row, one of the silent zero-appeal causes.
                     if result:
-                        winning_backend_by_model[model_name] = str(model)
-                        return result
-                    backend_errors.append(f"{model}: returned no futures")
+                        return result, backend_label(model)
+                    backend_errors.append(
+                        f"{backend_label(model)}: returned no futures"
+                    )
                 except Exception as e:
-                    backend_errors.append(f"{model}: {describe_model_error(e)}")
+                    backend_errors.append(
+                        f"{backend_label(model)}: {describe_model_error(e)}"
+                    )
                     logger.opt(exception=True).warning(
                         f"get_model_result: backend {model} "
                         f"(for model_name={model_name}) failed: {e}"
@@ -2816,7 +2847,7 @@ class AppealGenerator(object):
                     error_detail="; ".join(backend_errors),
                 )
             )
-            return []
+            return [], ""
 
         def _get_model_result(
             model: RemoteModelLike,
@@ -3028,9 +3059,10 @@ class AppealGenerator(object):
                 prompt_tokens_est = estimate_tokens(prompt) if prompt else None
                 submitted_at = time.monotonic()
                 submitted_wall = timezone.now()
-                for fut in get_model_result(
+                futures, backend = get_model_result(
                     **call_kwargs, stage=stage, context_level=context_level
-                ):
+                )
+                for fut in futures:
                     model_futures.append(
                         (
                             {
@@ -3038,9 +3070,7 @@ class AppealGenerator(object):
                                 "context_level": context_level,
                                 "stage": stage,
                                 "infer_type": call.get("infer_type") or "",
-                                "backend": winning_backend_by_model.get(
-                                    str(call.get("model_name")), ""
-                                ),
+                                "backend": backend,
                                 "prompt_tokens_est": prompt_tokens_est,
                                 "submitted_at": submitted_at,
                                 "submitted_wall": submitted_wall,
@@ -3208,9 +3238,17 @@ class AppealGenerator(object):
         recorder.flush()
         # Wrap template-based / non-AI appeals (plain strings) as
         # GeneratedAppeal so the downstream pipeline has a uniform type.
+        # Template rows carry a reserved pseudo-model name, as synthesized
+        # rows do: stored with model_name NULL they were dropped from the
+        # dashboard's presented counts, a pick of one landed in
+        # "(unattributed)" as if attribution had failed, and the NULL made
+        # sole-draft inference give up for every denial that matched a
+        # template.
         initial_appeals_wrapped: Iterator[GeneratedAppeal] = (
             GeneratedAppeal(
-                text=t, model_name=None, context_level=CONTEXT_LEVEL_TEMPLATE
+                text=t,
+                model_name=TEMPLATE_MODEL_NAME,
+                context_level=CONTEXT_LEVEL_TEMPLATE,
             )
             for t in initial_appeals
             if t is not None
@@ -3224,6 +3262,7 @@ class AppealGenerator(object):
         denial_text: Optional[str] = None,
         procedure: Optional[str] = None,
         diagnosis: Optional[str] = None,
+        provenance: Optional[dict] = None,
     ) -> Optional[str]:
         """
         Synthesize multiple appeal drafts into one best appeal by trying ALL
@@ -3234,6 +3273,11 @@ class AppealGenerator(object):
             denial_text: Original denial letter text for context.
             procedure: The denied procedure, if known.
             diagnosis: The diagnosis, if known.
+            provenance: Optional dict that receives ``{"model": <backend>}``
+                for the backend whose synthesis won, so the caller can record
+                which model actually wrote the letter. The stored row keeps
+                the reserved ``synthesized`` name (the dashboard's bucket);
+                without this the author's identity was simply dropped.
 
         Returns:
             The synthesized appeal text, or None if synthesis fails.
@@ -3282,7 +3326,9 @@ class AppealGenerator(object):
             f"{numbered_drafts}"
         )
 
-        async def try_model(model: RemoteModelLike) -> Optional[str]:
+        async def try_model(
+            model: RemoteModelLike,
+        ) -> Optional[Tuple[str, RemoteModelLike]]:
             try:
                 result = await model._infer_no_context(
                     system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
@@ -3293,7 +3339,7 @@ class AppealGenerator(object):
                     logger.debug(
                         f"Synthesis candidate from {model}: {len(result)} chars"
                     )
-                    return str(result)
+                    return str(result), model
             except Exception as e:
                 if isinstance(e, MODEL_TRANSPORT_ERRORS):
                     logger.debug(
@@ -3309,27 +3355,33 @@ class AppealGenerator(object):
 
         # Build tasks and map each coroutine to its model's quality score
         task_quality: dict[int, float] = {}
-        tasks: List[Coroutine[Any, Any, Optional[str]]] = []
+        tasks: List[Coroutine[Any, Any, Optional[Tuple[str, RemoteModelLike]]]] = []
         for m in all_internal:
             coro = try_model(m)
             task_quality[id(coro)] = float(m.quality())
             tasks.append(coro)
 
-        def score_fn(result: Optional[str], awaitable: Any) -> float:
+        def score_fn(
+            result: Optional[Tuple[str, RemoteModelLike]], awaitable: Any
+        ) -> float:
             if result is None:
                 return -1.0
-            text_score = self._score_appeal_text(result, diagnosis)
+            text_score = self._score_appeal_text(result[0], diagnosis)
             model_score = task_quality.get(id(awaitable), 100.0)
             return text_score + model_score * 0.3
 
         try:
             best = await best_within_timelimit(tasks, score_fn=score_fn, timeout=60)
             if best:
+                text, winner = best
+                if provenance is not None:
+                    provenance["model"] = winner
                 logger.info(
                     f"Synthesized {len(appeal_texts)} appeals into one "
-                    f"({len(best)} chars) using best of {len(all_internal)} models"
+                    f"({len(text)} chars) via {winner}, best of "
+                    f"{len(all_internal)} models"
                 )
-                return str(best)
+                return str(text)
         except Exception as e:
             logger.warning(f"All synthesis models failed within time limit: {e}")
         return None
