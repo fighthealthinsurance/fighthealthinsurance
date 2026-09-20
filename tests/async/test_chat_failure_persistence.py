@@ -85,7 +85,9 @@ class _FrameRecorder:
 
 
 class ChatFailurePersistenceTest(APITestCase):
-    async def _run_failing_turn(self, username, npi, side_effect):
+    async def _run_failing_turn(
+        self, username, npi, side_effect, message="Why was my MRI claim denied?"
+    ):
         user, chat = await _make_professional_chat(username, npi)
         recorder = _FrameRecorder()
         interface = ChatInterface(
@@ -94,7 +96,7 @@ class ChatFailurePersistenceTest(APITestCase):
             user=user,
         )
         with _llm_call_fails(side_effect):
-            await interface.handle_chat_message("Why was my MRI claim denied?")
+            await interface.handle_chat_message(message)
         return chat, recorder
 
     async def test_user_message_persisted_when_llm_raises(self):
@@ -168,6 +170,107 @@ class ChatFailurePersistenceTest(APITestCase):
         self.assertEqual(
             len(user_msgs), 1, f"history grew duplicates: {fresh.chat_history}"
         )
+
+
+class ChatFailureLoggingTest(APITestCase):
+    """What a failed turn is allowed to say, and about whom.
+
+    The failure log used to interpolate the user's own message:
+
+        logger.error(f"Failed to generate response for user_message: '{...}'")
+
+    Sentry fingerprints an issue by its message text, so one failure mode
+    arrived as a new High-priority issue per distinct thing anybody typed --
+    with their health situation, in their own words, as the issue title
+    (PYTHON-DJANGO-00-MH and -MV are two of them).
+    """
+
+    _run_failing_turn = ChatFailurePersistenceTest._run_failing_turn
+
+    async def test_the_users_own_words_stay_out_of_the_logs(self):
+        private = "my daughter's gender-affirming surgery was denied"
+        records = []
+        sink_id = logger.add(lambda msg: records.append(msg.record), level="INFO")
+        try:
+            await self._run_failing_turn(
+                "faillog1", "9999910011", RuntimeError("down"), message=private
+            )
+        finally:
+            logger.remove(sink_id)
+        leaked = [r["message"] for r in records if private in r["message"]]
+        self.assertEqual(leaked, [], f"the user's message reached the logs: {leaked}")
+
+    async def test_the_failure_log_still_says_enough_to_triage(self):
+        records = []
+        sink_id = logger.add(lambda msg: records.append(msg.record), level="ERROR")
+        try:
+            chat, _ = await self._run_failing_turn(
+                "faillog2", "9999910012", lambda *a, **k: (None, None)
+            )
+        finally:
+            logger.remove(sink_id)
+        totals = [
+            r["message"]
+            for r in records
+            if "Failed to generate response" in r["message"]
+        ]
+        self.assertTrue(totals, f"expected a total-failure ERROR, got: {records}")
+        self.assertIn(str(chat.id), totals[0])
+        self.assertIn("message_chars=", totals[0])
+
+
+class ChatClientHangupTest(APITestCase):
+    """A user who closes the tab mid-turn is not a failure to report.
+
+    Status and heartbeat frames go down the same socket as the reply, so a
+    hangup surfaces here as a failed generation. Reporting it produced four
+    more Sentry issues on top of the send itself, including a
+    ``chat_turn_total_failure`` reliability event that pages (-M8).
+    """
+
+    _run_failing_turn = ChatFailurePersistenceTest._run_failing_turn
+
+    @staticmethod
+    def _hangup():
+        from uvicorn.protocols.utils import ClientDisconnected
+
+        return ClientDisconnected()
+
+    async def test_a_hangup_is_not_logged_at_error(self):
+        records = []
+        sink_id = logger.add(lambda msg: records.append(msg.record), level="ERROR")
+        try:
+            await self._run_failing_turn("hangup1", "9999910021", self._hangup())
+        finally:
+            logger.remove(sink_id)
+        self.assertEqual([r["message"] for r in records], [])
+
+    async def test_a_hangup_does_not_fire_the_reliability_event(self):
+        with patch(
+            "fighthealthinsurance.chat_interface.capture_reliability_event"
+        ) as mock_capture:
+            await self._run_failing_turn("hangup2", "9999910022", self._hangup())
+        mock_capture.assert_not_called()
+
+    async def test_a_hangup_still_keeps_what_the_user_typed(self):
+        """They may well reconnect; their message has to survive."""
+        chat, _ = await self._run_failing_turn(
+            "hangup3", "9999910023", self._hangup(), message="Please appeal this"
+        )
+        fresh = await OngoingChat.objects.aget(id=chat.id)
+        user_msgs = [m for m in (fresh.chat_history or []) if m.get("role") == "user"]
+        self.assertEqual(len(user_msgs), 1)
+        self.assertEqual(user_msgs[0]["content"], "Please appeal this")
+
+    async def test_a_genuine_failure_still_fires_the_reliability_event(self):
+        """The exemption must be narrow."""
+        with patch(
+            "fighthealthinsurance.chat_interface.capture_reliability_event"
+        ) as mock_capture:
+            await self._run_failing_turn(
+                "hangup4", "9999910024", RuntimeError("all models down")
+            )
+        mock_capture.assert_called_once()
 
 
 class PersistChatTurnHelperTest(APITestCase):

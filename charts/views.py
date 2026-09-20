@@ -775,28 +775,34 @@ def pro_signups_csv_single_lines(request):
     return response
 
 
-@staff_member_required
-def signups_by_day(request):
-    # Query to count unique email signups per day, separated by paid status
-    try:
-        signups_per_day = (
-            _interested_professionals_excluding_test_emails()
-            .distinct("email")
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email"))
-        )
-        # Convert query results to a DataFrame
-        df = pd.DataFrame(list(signups_per_day))
-    except NotSupportedError:
-        signups_per_day = (
+def _unique_signups_per_day_df() -> "pd.DataFrame":
+    """Unique-email signup counts per day, split by paid status.
+
+    Postgres can do the per-email dedupe in SQL, but ONLY without an
+    aggregate: ``distinct(*fields)`` combined with ``annotate()`` raises
+    ``NotImplementedError("annotate() + distinct(fields) is not
+    implemented.")`` from the SQL compiler. That is not the
+    ``NotSupportedError`` SQLite raises for ``distinct(*fields)`` at all, so
+    the fallback this code has always had was unreachable in production and
+    the staff chart 500'd on every load (issue PYTHON-DJANGO-00-J1).
+
+    Both backends therefore land on the same query: group by day and paid
+    status, and count distinct emails within each group.
+    """
+    return pd.DataFrame(
+        list(
             _interested_professionals_excluding_test_emails()
             .order_by("signup_date")
             .values("signup_date", "clicked_for_paid")
             .annotate(count=Count("email", distinct=True))
         )
-        # Convert query results to a DataFrame
-        df = pd.DataFrame(list(signups_per_day))
+    )
+
+
+@staff_member_required
+def signups_by_day(request):
+    # Count unique email signups per day, separated by paid status.
+    df = _unique_signups_per_day_df()
 
     logger.debug(f"Signup DataFrame: {len(df)} rows")
     if df.empty or "signup_date" not in df.columns:
@@ -1251,23 +1257,7 @@ def _render_pro_category_chart(request, *, field, title, axis_label, color, top_
 @staff_member_required
 def pro_signups_cumulative(request):
     """Cumulative growth of unique InterestedProfessional signups over time."""
-    try:
-        signups_per_day = (
-            _interested_professionals_excluding_test_emails()
-            .distinct("email")
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email"))
-        )
-        df = pd.DataFrame(list(signups_per_day))
-    except NotSupportedError:
-        signups_per_day = (
-            _interested_professionals_excluding_test_emails()
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email", distinct=True))
-        )
-        df = pd.DataFrame(list(signups_per_day))
+    df = _unique_signups_per_day_df()
 
     if df.empty or "signup_date" not in df.columns:
         return HttpResponse("No signup data available.", content_type="text/plain")

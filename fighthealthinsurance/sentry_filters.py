@@ -39,6 +39,24 @@ RAY_MESSAGE_MARKERS = (
     ("Unrecoverable error in data channel", "Ray data channel error"),
 )
 
+# gRPC's channel-state watcher runs on a thread of its own and races Ray's
+# client teardown: when the channel closes first, cygrpc raises
+# ValueError("Cannot monitor channel state: Channel closed!") out of that
+# thread, unhandled. Same class as RAY_MESSAGE_MARKERS above -- Ray reconnects
+# and there is nothing to action -- but it arrives under the "threading"
+# mechanism with no Ray logger name, so neither ignore_logger nor the markers
+# above can see it. Narrow on purpose: paired with the ValueError type, this
+# string is grpc's own and appears nowhere in this codebase.
+GRPC_CHANNEL_WATCHER_MARKER = "Cannot monitor channel state"
+
+# uvloop refuses to close a loop that is still running, which is precisely
+# what asyncio's Runner attempts while unwinding a SIGTERM -- the event
+# carries a chained SystemExit: 15. A pod being told to stop (deploy,
+# scale-down, node drain) is routine, and this artifact of the shutdown path
+# says nothing about why it stopped. A crash that is NOT an orderly shutdown
+# surfaces as its own exception before the loop is ever torn down.
+EVENT_LOOP_SHUTDOWN_MARKER = "Cannot close a running event loop"
+
 # Channels raises this for a websocket path that matches no route. It escapes
 # the ASGI app, uvicorn logs it at ERROR with exc_info, and the default
 # LoggingIntegration turns that into an event -- one new issue per probe path,
@@ -148,6 +166,18 @@ def before_send_filter(event: Any, hint: Any) -> Any:
             logger.warning(
                 f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
             )
+            return None
+        if exc.get("type") == "ValueError" and GRPC_CHANNEL_WATCHER_MARKER in exc_value:
+            logger.warning(
+                f"gRPC channel watcher race (filtered from Sentry): "
+                f"{exc_value[:200]}"
+            )
+            return None
+        if (
+            exc.get("type") == "RuntimeError"
+            and EVENT_LOOP_SHUTDOWN_MARKER in exc_value
+        ):
+            logger.debug("Event loop shutdown artifact (filtered from Sentry)")
             return None
         # Narrow on purpose: only channels' own "nothing matched" ValueError,
         # never a ValueError raised inside a consumer.

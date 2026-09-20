@@ -83,6 +83,7 @@ from fighthealthinsurance.ml.ml_models import (
     remove_repeated_blocks,
     remove_repeated_sentences,
 )
+from fighthealthinsurance.client_gone import client_is_gone
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -1358,6 +1359,10 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
+        # A turn can also end because the user left. That is not a generation
+        # failure and must not be counted, reported or apologised for -- see
+        # the failure branch below.
+        client_hung_up = False
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -1411,10 +1416,23 @@ class ChatInterface:
             turn_timed_out = True
             record_chat_turn("timeout")
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Chat generation failed for chat {chat.id}: {e}"
-            )
-            logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
+            # The status/heartbeat frames this turn writes go down the same
+            # socket as the reply, so a user who closes the tab mid-turn
+            # surfaces here as a failed generation. It isn't one: nothing
+            # broke and nobody is waiting.
+            if client_is_gone(e):
+                client_hung_up = True
+                logger.warning(
+                    f"Chat {chat.id}: client disconnected mid-turn; "
+                    f"abandoning the turn"
+                )
+            else:
+                logger.opt(exception=True).error(
+                    f"Chat generation failed for chat {chat.id}: {e}"
+                )
+                logger.debug(
+                    f"Models tried for failed chat {chat.id}: {primary_models}"
+                )
         finally:
             heartbeat_task.cancel()
             # Backstop for the once-per-turn loop metric. The depth-0 exits
@@ -1535,6 +1553,24 @@ class ChatInterface:
                 logger.opt(exception=True).error(
                     f"Could not persist user message for failed turn in chat {chat.id}"
                 )
+            if client_hung_up:
+                # The user's message is persisted above, so a reconnect
+                # replays it. Everything below reports "a user got NOTHING",
+                # which is only true when there was a user left to get it:
+                # counting, paging and apologising to an absent client turned
+                # every closed tab into four separate Sentry issues, one of
+                # them fingerprinted by the message text itself.
+                logger.info(
+                    f"Chat {chat.id}: turn abandoned because the client left; "
+                    f"not counted as a generation failure"
+                )
+                # Still counted, under its own outcome: the thing worth
+                # alerting on is the RATE of hangups climbing (which would
+                # mean we got slow, or a proxy started reaping sockets), and
+                # that is a metric question, not one issue per user.
+                record_chat_turn("client_gone")
+                return
+
             # Provide more helpful error message based on context
             err_msg = (
                 "Sorry, all available models (including backup models) are currently "
@@ -1547,9 +1583,15 @@ class ChatInterface:
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
+            # The user's message is NOT logged: it is their health situation
+            # in their own words, and Sentry fingerprints an issue by message
+            # text, so one failure mode arrived as a new issue per distinct
+            # thing anyone typed. Length and ids are what triage actually
+            # needs; the text is already in the chat row.
             logger.error(
-                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
-                f"after trying all models. use_external_models={self.use_external_models}"
+                f"Failed to generate response in chat {chat.id} after trying all "
+                f"models (message_chars={len(user_message or '')}, "
+                f"use_external_models={self.use_external_models})"
             )
             if not turn_timed_out:
                 record_chat_turn("failed")

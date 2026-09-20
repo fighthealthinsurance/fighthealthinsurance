@@ -973,6 +973,51 @@ def interleave_iterator_for_keep_alive(
     )
 
 
+def _discard_task_outcome(task: "asyncio.Future") -> None:
+    """Mark a finished task's result/exception as retrieved, and drop it.
+
+    asyncio's Task destructor logs "Task exception was never retrieved" for a
+    task that finished with an exception nobody ever read. ``task.exception()``
+    is what marks it read; it raises for a cancelled task, hence the guard.
+    """
+    if task.cancelled():
+        return
+    try:
+        task.exception()
+    except Exception:  # pragma: no cover - defensive; see docstring
+        pass
+
+
+def _retire_anext_task(task: "Optional[asyncio.Future]") -> None:
+    """Make an abandoned ``__anext__()`` task harmless.
+
+    ``_interleave_iterator_for_keep_alive`` drives its source with an explicit
+    Task so a keep-alive timeout doesn't lose the in-flight item. Any exit
+    that is not "the loop ran to completion" can leave that Task pending with
+    nobody left to await it: above all ``aclose()``, which throws
+    ``GeneratorExit`` -- a BaseException, so no ``except Exception`` sees it --
+    at the suspension point. The websocket consumers close the appeal stream
+    exactly that way when a client hangs up mid-generation.
+
+    The orphan then finishes on its own, usually with ``StopAsyncIteration``,
+    and asyncio reports the unread exception at GC. That is issue
+    PYTHON-DJANGO-00-4Z: a stack-less ``StopAsyncIteration`` from ``asyncio``
+    arriving a minute or two after a mid-stream disconnect, which is exactly
+    how long the abandoned model call took to finish.
+
+    Cancels rather than awaits: this runs from teardown paths (including GC
+    finalisation) where awaiting is either unavailable or unbounded. The
+    done-callback retrieves whatever the task ends up holding.
+    """
+    if task is None:
+        return
+    if task.done():
+        _discard_task_outcome(task)
+        return
+    task.cancel()
+    task.add_done_callback(_discard_task_outcome)
+
+
 async def _interleave_iterator_for_keep_alive(
     iterator: AsyncIterator[str], timeout: int = 20
 ) -> AsyncIterator[str]:
@@ -993,38 +1038,43 @@ async def _interleave_iterator_for_keep_alive(
     yield "\n"
     await asyncio.sleep(0)
     task: Optional[asyncio.Task[str]] = None
-    while True:
-        try:
-            if task is None:
-                task = asyncio.ensure_future(iterator.__anext__())
-            await asyncio.sleep(0)
-            yield "\n"
-            # Create a fresh shield each time so a previous cancellation
-            # doesn't poison subsequent waits on the same task.
-            record = await asyncio.wait_for(asyncio.shield(task), timeout)
-            task = None
-            yield record
-            await asyncio.sleep(0)
-            yield "\n"
-        except asyncio.TimeoutError:
-            # Shield was cancelled but the task is still running.
-            # Loop back and create a fresh shield for the same task.
-            yield "\n"
-            continue
-        except StopAsyncIteration:
-            break
-        except asyncio.CancelledError:
-            logger.debug("Cancellation of task in interleaved generator")
-            if task is not None and not task.done():
-                task.cancel()
-            task = None
-            raise
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error in generator: {e}")
-            yield "\n"
-            if task is not None and not task.done():
-                task.cancel()
-            task = None
+    try:
+        while True:
+            try:
+                if task is None:
+                    task = asyncio.ensure_future(iterator.__anext__())
+                await asyncio.sleep(0)
+                yield "\n"
+                # Create a fresh shield each time so a previous cancellation
+                # doesn't poison subsequent waits on the same task.
+                record = await asyncio.wait_for(asyncio.shield(task), timeout)
+                task = None
+                yield record
+                await asyncio.sleep(0)
+                yield "\n"
+            except asyncio.TimeoutError:
+                # Shield was cancelled but the task is still running.
+                # Loop back and create a fresh shield for the same task.
+                yield "\n"
+                continue
+            except StopAsyncIteration:
+                break
+            except asyncio.CancelledError:
+                logger.debug("Cancellation of task in interleaved generator")
+                _retire_anext_task(task)
+                task = None
+                raise
+            except Exception as e:
+                logger.opt(exception=True).error(f"Error in generator: {e}")
+                yield "\n"
+                _retire_anext_task(task)
+                task = None
+    finally:
+        # Every exit, including the one no except clause can see: aclose()
+        # throws GeneratorExit here, and without this the in-flight
+        # __anext__() task outlives the generator and reports its unread
+        # StopAsyncIteration at GC. See _retire_anext_task.
+        _retire_anext_task(task)
 
 
 # A heartbeat that lands more than this far past its scheduled interval was
