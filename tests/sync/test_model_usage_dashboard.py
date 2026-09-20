@@ -914,6 +914,26 @@ class PresentedCountsOnlyDraftsBeforeThePickTest(_StaffDashboardCase):
         self.assertEqual(rows["full"]["presented"], 1)
         self.assertNotIn("tier1_shed", rows)
 
+    def test_several_drafts_from_one_model_on_a_denial_are_one_presentation(self):
+        # Two temperature legs plus the medically_necessary draft: the model
+        # was on offer once, and a pick of it is a 100% win, not 33%.
+        self._draft("m1", "temperature 0.6 leg")
+        self._draft("m1", "temperature 0.1 leg")
+        self._draft("m1", "medically necessary draft")
+        self._draft("m2", "the other model")
+        self._pick("m1", "temperature 0.6 leg")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+    def test_context_level_counts_once_per_denial_and_level(self):
+        self._draft("m1", "leg one", context_level="full")
+        self._draft("m1", "leg two", context_level="full")
+        self._pick("m1", "leg one", context_level="full")
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows["full"]["presented"], 1)
+
 
 class TemplateDraftsAreAModelBucketTest(_StaffDashboardCase):
     """Non-AI template drafts are presented and picked like any model's; with

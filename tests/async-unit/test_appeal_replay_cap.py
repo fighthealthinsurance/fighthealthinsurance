@@ -233,6 +233,98 @@ class AppealReplayCapTest(TestCase):
 
         async_to_sync(test)()
 
+    async def _collect_frames(self, data):
+        frames = []
+        async for chunk in AppealsBackendHelper.generate_appeals(data):
+            if not chunk or not chunk.strip():
+                continue
+            try:
+                parsed = json.loads(chunk)
+            except json.JSONDecodeError:
+                continue
+            if "content" in parsed:
+                frames.append(parsed)
+        return frames
+
+    def _eighteen_stored_drafts(self, model_name="model-x"):
+        email, denial = self._create_denial()
+        texts = [
+            (
+                f"Stored draft {i} for this denial, long enough to be a "
+                "deliverable appeal rather than a runt row."
+            )
+            for i in range(18)
+        ]
+        for text in texts:
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=text,
+                speculative=False,
+                model_name=model_name,
+            )
+        return email, denial, texts
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_synthesis_that_reproduces_a_held_back_draft_is_served_as_that_draft(
+        self, mock_appeal_generator
+    ):
+        """The frame says what the row says. The synthesis landed on a stored
+        draft (the fingerprint constraint hands back the twin), so what is
+        served is that draft under its own model; badging it as a synthesis
+        had a pick of it recorded under the draft's model while the user saw
+        "synthesized"."""
+        email, denial, texts = self._eighteen_stored_drafts()
+        mock_appeal_generator.make_appeals.return_value = iter([])
+        mock_appeal_generator.synthesize_appeals = AsyncMock(return_value=texts[5])
+
+        async def test():
+            try:
+                frames = await self._collect_frames(
+                    {
+                        "denial_id": self.DENIAL_ID,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                echo = [f for f in frames if "Stored draft 5 " in f["content"]]
+                self.assertEqual(len(echo), 1, [f["content"][:20] for f in frames])
+                self.assertNotEqual(echo[0].get("synthesized"), "true", echo[0])
+                # The row's own flag is private to the flow, never a frame key.
+                self.assertTrue(all("synthesized_row" not in f for f in frames))
+            finally:
+                await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_genuine_synthesis_is_still_badged(self, mock_appeal_generator):
+        email, denial, _texts = self._eighteen_stored_drafts()
+        mock_appeal_generator.make_appeals.return_value = iter([])
+        fresh = (
+            "A brand new synthesized letter combining the drafts, long enough "
+            "to be a deliverable appeal rather than a runt row."
+        )
+        mock_appeal_generator.synthesize_appeals = AsyncMock(return_value=fresh)
+
+        async def test():
+            try:
+                frames = await self._collect_frames(
+                    {
+                        "denial_id": self.DENIAL_ID,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                synth = [f for f in frames if f["content"] == fresh]
+                self.assertEqual(len(synth), 1)
+                self.assertEqual(synth[0].get("synthesized"), "true", synth[0])
+            finally:
+                await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
+
+        async_to_sync(test)()
+
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_a_synthesis_result_matching_a_held_back_draft_is_still_delivered(

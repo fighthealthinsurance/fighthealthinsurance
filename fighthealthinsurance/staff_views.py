@@ -1455,6 +1455,10 @@ class ModelUsageDashboardView(generic.TemplateView):
         drafts generated for denials picked in the window (a draft generated
         on day 0 and picked on day 1 still counts as presented in a 1-day
         window anchored on the pick).
+      * Presented counts once per denial and model (or level), and only
+        drafts stored before the pick: one generation persists several rows
+        per model on a denial, and counting rows capped a model picked every
+        time at 1/(rows per denial) while single-row buckets were not.
 
     All stored model names pass through normalize_model_label so historical
     object-repr values aggregate per class (without memory addresses) even
@@ -1588,12 +1592,24 @@ class ModelUsageDashboardView(generic.TemplateView):
         if unattributed_count:
             chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
         presented: Counter = Counter()
-        for name, count in presented_qs.values_list("model_name").annotate(
-            c=Count("id")
-        ):
+        # Presented = the number of DENIALS on which the model had a draft on
+        # offer, not the number of its draft rows: one generation persists
+        # several rows per model on a denial (two temperature legs of every
+        # full call, the specialized-hint call, the medically_necessary draft,
+        # a shed sibling) against one chosen copy per pick, so counting rows
+        # capped a model picked every single time at 1/(rows per denial)
+        # while single-row buckets (synthesized, template, one-leg backends)
+        # were not. Labels are normalized before deduping so legacy spellings
+        # of one model collapse to one presentation.
+        seen_pairs: set = set()
+        for denial_id, name in presented_qs.values_list(
+            "for_denial_id", "model_name"
+        ).distinct():
             presented_label = normalize_model_label(name)
             if presented_label is not None:
-                presented[presented_label] += count
+                seen_pairs.add((denial_id, presented_label))
+        for _denial_id, presented_label in seen_pairs:
+            presented[presented_label] += 1
         return _merge_stats(
             dict(chosen),
             dict(presented),
@@ -1754,10 +1770,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         if unattributed_count:
             chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
         presented: Counter = Counter()
-        for level, count in presented_qs.values_list("context_level").annotate(
-            c=Count("id")
-        ):
-            presented[level] += count
+        # Once per denial and level, for the same reason as the model table.
+        for _denial_id, level in presented_qs.values_list(
+            "for_denial_id", "context_level"
+        ).distinct():
+            presented[level] += 1
         # _merge_stats labels the bucket key "model_name"; the value here is the
         # context level. Reusing the shared table partial (which reads
         # model_name) keeps the key -- the template passes a "Context level"

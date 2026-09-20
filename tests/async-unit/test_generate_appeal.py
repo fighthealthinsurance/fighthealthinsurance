@@ -1389,6 +1389,27 @@ class TestPeekRealOrNone:
         assert [r.outcome for r in recorded] == ["rejected_at_peek"]
         assert recorded[0].response_text == "no."
 
+    def test_scan_records_the_call_variant_and_backend_of_the_rejected_item(self):
+        """The peek row is the one that explains a stage fall-through; it used
+        to carry only the model, so it could not say whether the runt came
+        from the full or the medically_necessary call, nor from which
+        backend."""
+        from fighthealthinsurance.generate_appeal import GeneratedAppeal
+
+        recorded = []
+        recorder = MagicMock()
+        recorder.record.side_effect = lambda rec: recorded.append(rec)
+        runt = GeneratedAppeal(
+            text="no.",
+            model_name="m",
+            infer_type="medically_necessary",
+            backend="Fake(wire @ h:1)",
+        )
+        _peek_real_or_none(iter([runt]), denial_id=1, stage="backup", recorder=recorder)
+        (rec,) = recorded
+        assert rec.infer_type == "medically_necessary"
+        assert rec.backend == "Fake(wire @ h:1)"
+
     def test_wordless_first_returns_none(self):
         """A long but wordless first item (e.g. a model echoing back the claim
         number and date of service) must trigger fallback just like a runt

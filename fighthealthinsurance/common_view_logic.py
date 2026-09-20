@@ -4764,6 +4764,7 @@ class AppealsBackendHelper:
                 escaped = str_value.replace("\\", r"\\")
                 content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
             appeal["content"] = content
+            appeal.pop("synthesized_row", None)
             return appeal
 
         # If we've had a timeout on the initial call and we're on round 2
@@ -5837,6 +5838,7 @@ class AppealsBackendHelper:
             await asyncio.sleep(0)
             id = "unknown"
             save_failed = False
+            stored_row: Optional[ProposedAppeal] = None
             if lease_unavailable or lease_epoch is None:
                 # No epoch, no durable row -- whatever the reason: the
                 # interactive steal raised twice (lease_unavailable), or a
@@ -5935,6 +5937,7 @@ class AppealsBackendHelper:
                     # connections and retry once before giving up.
                     await database_sync_to_async(close_old_connections)()
                     await database_sync_to_async(_insert_fenced)()
+                stored_row = pa
                 id = str(pa.id)
                 if scoring_active and letter_quality.needs_scoring(pa):
                     _start_scoring(id, appeal_text)
@@ -6001,6 +6004,15 @@ class AppealsBackendHelper:
             result: dict[str, Any] = {"id": id, "content": appeal_text}
             if save_failed:
                 result["save_failed"] = True
+            # Whether the ROW behind this frame is a synthesis. A synthesis
+            # result can land on a stored draft (the fingerprint constraint
+            # hands back the twin), and the frame must then say what the row
+            # says: badged as a synthesis, a pick of it was recorded under the
+            # twin's model. Private to the streaming flow; sub_in_appeals
+            # drops it before the frame goes out.
+            result["synthesized_row"] = bool(
+                stored_row.synthesized if stored_row is not None else item.synthesized
+            )
             return result
 
         # (The form_completed intake event was recorded right after the
@@ -6500,8 +6512,21 @@ class AppealsBackendHelper:
                                     started=synthesis_started,
                                     started_wall=synthesis_started_wall,
                                 )
+                            synthesized_row = saved.get("synthesized_row", True)
                             subbed = await sub_in_appeals(saved)
-                            subbed["synthesized"] = "true"
+                            if synthesized_row:
+                                subbed["synthesized"] = "true"
+                            else:
+                                # The synthesis reproduced a stored draft the
+                                # replay cap held back: what is served is that
+                                # draft, under its own model, so the frame is
+                                # not badged as a synthesis that a pick would
+                                # then be credited to the draft's model for.
+                                logger.info(
+                                    f"[gen_id={generation_id}] synthesis for "
+                                    f"denial {denial_id} reproduced a stored "
+                                    f"draft; serving it as that draft"
+                                )
                             yield await format_response(subbed)
                             served_keys.add(_served_key(normalized))
                             new += 1

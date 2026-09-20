@@ -36,6 +36,11 @@ class GeneratedAppeal:
     model_name: Optional[str]
     synthesized: bool = False
     context_level: Optional[str] = None
+    # The call variant and backend instance that produced this draft, stamped
+    # by _generated_to_appeals_text, so an item the ladder's peek rejects is
+    # recorded with the same attribution as the mapper's own row.
+    infer_type: str = ""
+    backend: str = ""
 
 
 from fighthealthinsurance.denial_history_consent import history_may_be_used_now
@@ -1312,7 +1317,11 @@ def _generated_to_appeals_text(
                         if not error_detail:
                             error_detail = describe_unusable_appeal(text)
                     yield GeneratedAppeal(
-                        text=text, model_name=model_name, context_level=context_level
+                        text=text,
+                        model_name=model_name,
+                        context_level=context_level,
+                        infer_type=infer_type,
+                        backend=backend,
                     )
                 else:
                     _note_returned(text)
@@ -1328,6 +1337,8 @@ def _generated_to_appeals_text(
                             text=templated,
                             model_name=model_name,
                             context_level=context_level,
+                            infer_type=infer_type,
+                            backend=backend,
                         )
         except Exception as e:
             # The containment this function promises must cover the mapping
@@ -1493,6 +1504,8 @@ def _peek_real_or_none(
                     outcome="rejected_at_peek",
                     stage=stage,
                     context_level=first.context_level,
+                    infer_type=first.infer_type,
+                    backend=first.backend,
                     error_detail=reason,
                     response_text=first.text,
                     response_chars=len(first.text) if first.text else 0,
