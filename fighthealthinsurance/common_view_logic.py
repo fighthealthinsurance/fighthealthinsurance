@@ -5916,25 +5916,12 @@ class AppealsBackendHelper:
                         # the state this run started under. If the state has
                         # moved meanwhile the replay filter hides it next time,
                         # as it should: the text argues under the old law.
-                        # The live run produced this very text under ITS
-                        # context, and that is the draft the user is about to
-                        # see: the row carries the live provenance the counters
-                        # and attempt rows already credit, not the reserve's
-                        # (which left the stored draft, and any pick of it,
-                        # labelled speculative while the done frame counted it
-                        # as live output).
-                        claimed = await ProposedAppeal.objects.filter(
+                        await ProposedAppeal.objects.filter(
                             pk=existing.pk, speculative=True
                         ).aupdate(
-                            speculative=False,
-                            built_for_state=reserve_state(denial),
-                            model_name=model_name,
-                            context_level=item.context_level,
+                            speculative=False, built_for_state=reserve_state(denial)
                         )
                         existing.speculative = False
-                        if claimed:
-                            existing.model_name = model_name
-                            existing.context_level = item.context_level
                     if existing.appeal_text != appeal_text:
                         # A normalized variant collided: stream the DURABLE
                         # text under the stored row's id. Sending the variant
