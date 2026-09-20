@@ -824,3 +824,71 @@ class TestDeniedItemsAnalysisDispatchGuard:
         ) as mock_ref:
             await enqueue_denied_items_analysis(chat_id="chat-1")
         mock_ref.get.run_analysis.remote.assert_called_once_with(chat_id="chat-1")
+
+
+class TestClientDisconnectedOverridesTextMatching:
+    """uvicorn's ClientDisconnected carries no message, so the caller's
+    type-based verdict has to be able to reach the classification.
+
+    Before this, a hangup mid-stream had an empty `stream_error`, matched no
+    marker, and was filed at ERROR as a delivery failure -- one Sentry issue
+    per closed tab (PYTHON-DJANGO-00-M4).
+    """
+
+    @pytest.mark.asyncio
+    async def test_message_less_disconnect_is_a_disconnect_when_caller_says_so(self):
+        objects = _make_count_mock(return_value=3)
+        p1, p2 = _patch_models(objects)
+        warn_cm, warnings = _captured_warning()
+        err_cm, errors = _captured_logger()
+        with p1, p2, warn_cm, err_cm:
+            await log_zero_appeal_diagnostics(
+                denial_id=42,
+                status_count=5,
+                last_status_phase="generating",
+                transport="websocket",
+                stream_error="",
+                error_from_send=True,
+                client_disconnected=True,
+            )
+        assert any("client disconnected" in msg for msg in warnings)
+        assert errors == []
+
+    @pytest.mark.asyncio
+    async def test_a_generator_failure_is_still_an_error(self):
+        """error_from_send=False keeps the final say: a disconnect-shaped
+        failure raised inside generation is a server fault."""
+        objects = _make_count_mock(return_value=0)
+        p1, p2 = _patch_models(objects)
+        err_cm, errors = _captured_logger()
+        with p1, p2, err_cm, patch(
+            "fighthealthinsurance.websockets.capture_reliability_event"
+        ):
+            await log_zero_appeal_diagnostics(
+                denial_id=42,
+                status_count=5,
+                last_status_phase="generating",
+                transport="websocket",
+                stream_error="connection reset by peer",
+                error_from_send=False,
+                client_disconnected=False,
+            )
+        assert any("Generation produced nothing" in msg for msg in errors)
+
+    @pytest.mark.asyncio
+    async def test_callers_without_the_exception_still_fall_back_to_text(self):
+        """A caller holding only a stored string keeps the old behaviour."""
+        objects = _make_count_mock(return_value=1)
+        p1, p2 = _patch_models(objects)
+        warn_cm, warnings = _captured_warning()
+        err_cm, errors = _captured_logger()
+        with p1, p2, warn_cm, err_cm:
+            await log_zero_appeal_diagnostics(
+                denial_id=42,
+                status_count=5,
+                last_status_phase="generating",
+                transport="rest",
+                stream_error="[Errno 104] Connection reset by peer",
+            )
+        assert any("client disconnected" in msg for msg in warnings)
+        assert errors == []
