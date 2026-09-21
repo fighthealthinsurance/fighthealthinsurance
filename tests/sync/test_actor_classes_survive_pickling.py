@@ -97,8 +97,26 @@ class TheLogHandlerItselfPicklesTest(SimpleTestCase):
         self.assertEqual(revived.level, logging.INFO)
         # A handler with no lock raises the moment anything logs through it.
         self.assertIsNotNone(revived.lock)
-        revived.acquire()
-        revived.release()
+
+        # And it has to survive being logged through, not merely exist.
+        # handle() is what a sink actually calls, and it takes the lock,
+        # formats the record and emits; a half-restored handler dies there
+        # rather than here, leaving an operator with no logs and no clue.
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="after the round trip",
+            args=(),
+            exc_info=None,
+        )
+        revived.handle(record)
+        self.assertEqual(
+            revived.format(record),
+            "after the round trip",
+            "the revived handler cannot format a record",
+        )
 
     def test_a_logger_carrying_it_pickles(self):
         """The shape that actually broke: the sink reachable from the logger."""

@@ -132,7 +132,14 @@ class StripeWebhookHelper:
             # would strand a fax the user paid for. See the note in fax_helpers.
             from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 
-            fax_actor_ref.get.do_send_fax.remote(fax.hashed_email, str(fax.uuid))
+            try:
+                fax_actor_ref.get.do_send_fax.remote(fax.hashed_email, str(fax.uuid))
+            except Exception:
+                # First use of the handle; see BaseActorRef.invalidate. This
+                # one is a fax somebody paid for, so a handle that stays dead
+                # strands it.
+                fax_actor_ref.invalidate()
+                raise
 
     @staticmethod
     def _build_recovery_link(

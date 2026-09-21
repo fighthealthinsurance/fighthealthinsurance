@@ -118,10 +118,24 @@ class ARefThatFailedRetriesTest(SimpleTestCase):
         ref._actor_instance = None
         self.assertIs(ref.get, first, "the cached entry still answers")
 
-        # What relaunch_actors actually does.
-        ref._actor_instance = None
-        del ref.__dict__["get"]
-        second = ref.get
+        # Driven through the production code, not by clearing it here: a
+        # test that does the clearing itself stays green if relaunch_actors
+        # stops doing it, which is the regression worth catching.
+        from unittest.mock import patch
+
+        from fighthealthinsurance import actor_health_status
+
+        ref.has_run_method = True  # relaunch_actors unpacks (actor, task)
+
+        with patch(
+            "fighthealthinsurance.email_polling_actor_ref.email_polling_actor_ref",
+            ref,
+        ), patch.object(
+            actor_health_status.ray, "get_actor", side_effect=ValueError("gone")
+        ):
+            actor_health_status.relaunch_actors(force=True)
+
+        second, _task = ref.get
 
         self.assertIsNot(second, first)
         self.assertEqual(fake.creations, 2)
@@ -215,3 +229,79 @@ class TheFirstUseIsOutsideGetTest(SimpleTestCase):
             ref._actor_instance, "the disconnect path kept the dead handle"
         )
         self.assertNotIn("get", ref.__dict__, "the cached value is still there")
+
+
+class RaysOwnCacheIsClearedTest(SimpleTestCase):
+    """The poisoned state is Ray's, not ours.
+
+    ``ClientActorClass._ensure_ref`` sets ``_ref`` to an ``InProgressSentinel``
+    before pickling the class, so a pickle that raises leaves that sentinel
+    behind, and its retry guard is ``if self._ref is None``. Nothing tries
+    again: every later call reads ``_ref.id`` and raises. That stub is cached
+    by Ray and reached through an attribute Ray sets on the decorated class,
+    so clearing our own handle does not touch it, which is why the fix needs
+    to reach in.
+    """
+
+    def _stub_with(self, ref):
+        import threading
+
+        class Stub:
+            def __init__(self):
+                self._ref = ref
+                self._lock = threading.Lock()
+
+        return Stub()
+
+    def _run_against(self, stub, key="k"):
+        from unittest.mock import patch
+
+        from fighthealthinsurance import base_actor_ref
+
+        class Klass:
+            pass
+
+        setattr(Klass, "__ray_client_mode_key__", key)
+
+        client_ray = type(
+            "ClientRay",
+            (),
+            {
+                "_converted_key_exists": staticmethod(lambda k: k == key),
+                "_get_converted": staticmethod(lambda k: stub),
+            },
+        )()
+
+        with patch.dict(
+            "sys.modules",
+            {"ray.util.client": type("M", (), {"ray": client_ray})()},
+        ):
+            base_actor_ref.clear_poisoned_client_class(Klass)
+
+    def test_a_half_finished_export_is_cleared(self):
+        from ray.util.client.common import InProgressSentinel
+
+        stub = self._stub_with(InProgressSentinel())
+
+        self._run_against(stub)
+
+        self.assertIsNone(stub._ref, "the sentinel was left in place")
+
+    def test_a_real_reference_is_left_alone(self):
+        """A working export must not be thrown away."""
+        real = object()
+        stub = self._stub_with(real)
+
+        self._run_against(stub)
+
+        self.assertIs(stub._ref, real)
+
+    def test_it_does_nothing_when_ray_looks_different(self):
+        """Ray's private surface, so a shape change must be harmless."""
+        from fighthealthinsurance import base_actor_ref
+
+        class Klass:
+            pass
+
+        # No client-mode key at all: nothing to clear, and no exception.
+        base_actor_ref.clear_poisoned_client_class(Klass)

@@ -25,7 +25,12 @@ class PayerPolicyPrefetchActorRef(BaseActorRef):
             Tuple of (actor_ref, task_ref)
         """
         actor = self.get
-        task = actor.prefetch_all.remote()
+        try:
+            task = actor.prefetch_all.remote()
+        except Exception:
+            # First use of the handle; see BaseActorRef.invalidate.
+            self.invalidate()
+            raise
         logger.info(f"Started payer-policy pre-fetch task: {task}")
 
         return (actor, task)
