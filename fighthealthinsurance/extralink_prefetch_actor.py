@@ -11,7 +11,13 @@ import time
 from typing import List, Set
 
 import ray
-from loguru import logger
+
+# loguru is imported inside the methods below, not at module scope. Ray
+# pickles an actor class by value to send it to the cluster, so a module-level
+# ``logger`` travels with it, carrying whatever sinks the process has attached.
+# A stdlib logging.Handler owns a threading RLock, which does not pickle, and
+# the actor then cannot be created at all. See
+# tests/sync/test_actor_classes_survive_pickling.py.
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -28,6 +34,8 @@ class ExtraLinkPrefetchActor:
 
     def __init__(self):
         """Initialize the actor and Django application."""
+        from loguru import logger
+
         logger.info("Starting ExtraLink Pre-fetch Actor")
 
         # Initialize Django WSGI application inside the actor
@@ -56,6 +64,8 @@ class ExtraLinkPrefetchActor:
                 'total_fetched': int,
             }
         """
+        from loguru import logger
+
         logger.info("Starting pre-fetch operation")
         start_time = time.time()
 
@@ -106,6 +116,8 @@ class ExtraLinkPrefetchActor:
         Returns:
             Dict with fetch statistics
         """
+        from loguru import logger
+
         logger.info("Starting extralink pre-fetch")
 
         try:
@@ -142,6 +154,8 @@ class ExtraLinkPrefetchActor:
         Returns:
             Dict with fetch statistics
         """
+        from loguru import logger
+
         logger.info("Starting PubMed pre-fetch")
 
         try:

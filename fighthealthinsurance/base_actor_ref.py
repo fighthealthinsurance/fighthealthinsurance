@@ -65,16 +65,36 @@ class BaseActorRef:
             For actors without run_method: Just the actor instance
         """
         if self._actor_instance is None:
-            self._actor_instance = self.actor_class.options(  # type: ignore
-                name=self.actor_name,
-                lifetime="detached",
-                namespace="fhi",
-                get_if_exists=True,
-            ).remote()
+            try:
+                self._actor_instance = self.actor_class.options(  # type: ignore
+                    name=self.actor_name,
+                    lifetime="detached",
+                    namespace="fhi",
+                    get_if_exists=True,
+                ).remote()
+            except Exception:
+                # Nothing usable is kept. In client mode this call returns
+                # before the server has confirmed the actor exists, so a
+                # creation that fails part way can otherwise leave the
+                # process holding a handle to an actor that was never made;
+                # every later call then raises "'InProgressSentinel' object
+                # has no attribute 'id'" rather than trying again, and one
+                # bad disconnect disables the feature for the life of the
+                # pod. Clearing here means the next caller retries.
+                self._actor_instance = None
+                self.__dict__.pop("get", None)
+                raise
 
         if self.has_run_method:
-            # Kick off the remote task
-            remote_result = self._actor_instance.run.remote()
+            try:
+                # Kick off the remote task
+                remote_result = self._actor_instance.run.remote()
+            except Exception:
+                # Same reasoning: a handle whose first use fails is no good
+                # to the next caller either.
+                self._actor_instance = None
+                self.__dict__.pop("get", None)
+                raise
             logger.info(f"Remote run of {self.actor_name} actor {remote_result}")
             return (self._actor_instance, remote_result)
 

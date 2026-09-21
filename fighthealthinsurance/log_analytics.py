@@ -252,6 +252,31 @@ class LogAnalyticsHandler(logging.Handler):
         self._log_type = log_type
         self._timeout = timeout
 
+    def __getstate__(self) -> dict:
+        """Everything except the lock, which cannot be pickled.
+
+        Nothing here is meant to be sent anywhere. The reason this exists is
+        that a handler attached to loguru is reachable from the module-level
+        ``logger``, and anything that pickles a class which closes over that
+        logger drags the handler along with it. Every logging.Handler owns a
+        ``threading.RLock``, so the pickle fails and takes the caller's
+        feature with it. That is how the denied-items analysis actor stopped
+        being created in production: Ray pickles an actor class by value to
+        ship it to the cluster.
+
+        The actors no longer capture the logger, so this is the second line
+        rather than the first, and it means a future one that does cannot
+        break the same way.
+        """
+        state = self.__dict__.copy()
+        state.pop("lock", None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        # A lock does not survive the trip, so the other side gets a new one.
+        self.createLock()
+
     def emit(self, record: logging.LogRecord) -> None:
         if not is_log_analytics_enabled():
             return

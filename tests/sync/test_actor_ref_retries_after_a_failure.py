@@ -1,0 +1,147 @@
+"""A creation that fails must not be remembered.
+
+``BaseActorRef.get`` used to be a ``cached_property`` that stored whatever
+``.remote()`` returned. In client mode that call returns before the server has
+confirmed the actor exists, so a creation that then failed left the process
+holding a handle to an actor that was never made, and every later call raised
+``'InProgressSentinel' object has no attribute 'id'`` instead of trying again.
+
+In production that meant one bad websocket disconnect disabled the denied-items
+analysis for the whole life of that pod.
+"""
+
+from django.test import SimpleTestCase
+
+from fighthealthinsurance.base_actor_ref import BaseActorRef
+
+
+class _Options:
+    def __init__(self, owner):
+        self._owner = owner
+
+    def remote(self):
+        self._owner.creations += 1
+        if self._owner.fail_creations:
+            raise RuntimeError("cannot pickle '_thread.RLock' object")
+        return _Handle(self._owner)
+
+
+class _Handle:
+    def __init__(self, owner):
+        self._owner = owner
+
+    @property
+    def run(self):
+        return self
+
+    def remote(self):
+        self._owner.runs += 1
+        if self._owner.fail_runs:
+            raise AttributeError("'InProgressSentinel' object has no attribute 'id'")
+        return "task-handle"
+
+
+class _FakeActorClass:
+    """Stands in for a @ray.remote class without needing a cluster."""
+
+    def __init__(self):
+        self.creations = 0
+        self.runs = 0
+        self.fail_creations = False
+        self.fail_runs = False
+
+    def options(self, **kwargs):
+        return _Options(self)
+
+
+class ARefThatFailedRetriesTest(SimpleTestCase):
+    def _ref(self, *, has_run_method=False):
+        fake = _FakeActorClass()
+
+        class Ref(BaseActorRef):
+            actor_class = fake  # type: ignore[assignment]
+            actor_name = "test_actor"
+
+        Ref.has_run_method = has_run_method
+        ref = Ref()
+        ref._actor_instance = None
+        return ref, fake
+
+    def test_a_failed_creation_is_not_remembered(self):
+        """Holds on the old code too, and is here so it keeps holding.
+
+        The old version assigned the result of ``.remote()``, so a call that
+        raised never reached the assignment. A refactor that reserves the
+        slot before calling would break that quietly, which is what this
+        pins. The test below is the one that fails on the old code.
+        """
+        ref, fake = self._ref()
+        fake.fail_creations = True
+
+        with self.assertRaises(RuntimeError):
+            ref.get
+
+        self.assertIsNone(
+            ref._actor_instance, "a handle to an actor that was never made was kept"
+        )
+
+        # The next caller gets a working actor rather than the dead handle.
+        fake.fail_creations = False
+        handle = ref.get
+
+        self.assertIsInstance(handle, _Handle)
+        self.assertEqual(fake.creations, 2, "the second call did not retry")
+
+    def test_a_successful_creation_is_reused(self):
+        ref, fake = self._ref()
+
+        first = ref.get
+        second = ref.get
+
+        self.assertIs(first, second)
+        self.assertEqual(fake.creations, 1, "the actor was created twice")
+
+    def test_the_relaunch_path_clears_both_places(self):
+        """``get`` is a cached_property, so there are two things to clear.
+
+        ``relaunch_actors`` clears ``_actor_instance`` and deletes the
+        cached entry after killing an actor. Both are needed: the handle
+        lives in one and the value ``get`` last returned lives in the other.
+        This pins that, because clearing only one hands back the dead
+        handle, which is the bug the kill path exists to avoid.
+        """
+        ref, fake = self._ref()
+
+        first = ref.get
+        self.assertEqual(fake.creations, 1)
+
+        ref._actor_instance = None
+        self.assertIs(ref.get, first, "the cached entry still answers")
+
+        # What relaunch_actors actually does.
+        ref._actor_instance = None
+        del ref.__dict__["get"]
+        second = ref.get
+
+        self.assertIsNot(second, first)
+        self.assertEqual(fake.creations, 2)
+
+    def test_a_failed_run_clears_the_handle_too(self):
+        """The handle is no good to the next caller either.
+
+        This is the shape the production failure actually took: creation
+        appeared to succeed and the failure surfaced on the call after it.
+        """
+        ref, fake = self._ref(has_run_method=True)
+        fake.fail_runs = True
+
+        with self.assertRaises(AttributeError):
+            ref.get
+
+        self.assertIsNone(ref._actor_instance)
+
+        fake.fail_runs = False
+        actor, task = ref.get
+
+        self.assertEqual(task, "task-handle")
+        self.assertEqual(fake.creations, 2, "it reused the handle whose run failed")
