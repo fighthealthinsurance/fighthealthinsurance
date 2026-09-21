@@ -145,3 +145,73 @@ class ARefThatFailedRetriesTest(SimpleTestCase):
 
         self.assertEqual(task, "task-handle")
         self.assertEqual(fake.creations, 2, "it reused the handle whose run failed")
+
+
+class TheFirstUseIsOutsideGetTest(SimpleTestCase):
+    """``get`` cannot see the call that actually proves the actor exists.
+
+    Every ref without a run method hands the handle back and the caller makes
+    the first call on it. In client mode that is where a creation that only
+    half succeeded surfaces, and the handle is cached by then, so without a
+    way to forget it the whole process keeps calling the dead one. That is
+    the shape the production failure took on the websocket disconnect path.
+    """
+
+    def _ref(self):
+        fake = _FakeActorClass()
+
+        class Ref(BaseActorRef):
+            actor_class = fake  # type: ignore[assignment]
+            actor_name = "test_actor"
+
+        ref = Ref()
+        ref._actor_instance = None
+        return ref, fake
+
+    def test_invalidate_clears_both_places(self):
+        ref, fake = self._ref()
+
+        first = ref.get
+        self.assertEqual(fake.creations, 1)
+
+        ref.invalidate()
+        second = ref.get
+
+        self.assertIsNot(second, first, "the dead handle came back")
+        self.assertEqual(fake.creations, 2)
+
+    def test_the_disconnect_path_forgets_a_handle_whose_first_call_failed(self):
+        """Driven through the function the disconnect handler calls."""
+        from unittest.mock import patch
+
+        from fighthealthinsurance import websockets
+
+        ref, fake = self._ref()
+        handle = ref.get
+
+        def explode(**kwargs):
+            raise AttributeError(
+                "'InProgressSentinel' object has no attribute 'id'"
+            )
+
+        handle.run_analysis = type("M", (), {"remote": staticmethod(explode)})()
+
+        with patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref."
+            "denied_items_analysis_actor_ref",
+            ref,
+        ), patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=True,
+        ):
+            from asgiref.sync import async_to_sync
+
+            with self.assertRaises(AttributeError):
+                async_to_sync(websockets.enqueue_denied_items_analysis)(
+                    chat_id="chat-1"
+                )
+
+        self.assertIsNone(
+            ref._actor_instance, "the disconnect path kept the dead handle"
+        )
+        self.assertNotIn("get", ref.__dict__, "the cached value is still there")

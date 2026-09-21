@@ -26,7 +26,14 @@ class ExtraLinkPrefetchActorRef(BaseActorRef):
         """
         # ``BaseActorRef.get`` is a ``cached_property``; access without parens.
         actor = self.get
-        task = actor.prefetch_all.remote()
+        try:
+            task = actor.prefetch_all.remote()
+        except Exception:
+            # The dispatch is the first use of the handle, so it is where a
+            # creation that only half succeeded surfaces. Forget it rather
+            # than keeping a dead handle for the life of the process.
+            self.invalidate()
+            raise
         logger.info(f"Started extralink pre-fetch task: {task}")
 
         return (actor, task)

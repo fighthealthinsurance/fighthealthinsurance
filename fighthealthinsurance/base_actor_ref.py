@@ -55,6 +55,24 @@ class BaseActorRef:
     has_run_method: bool = False
     _actor_instance: Optional[Any] = None
 
+    def invalidate(self) -> None:
+        """Forget the handle, so the next ``get`` builds a new one.
+
+        There are two places to clear: ``_actor_instance`` holds the handle
+        and ``cached_property`` keeps whatever ``get`` last returned in the
+        instance ``__dict__``. Clearing one and not the other hands the dead
+        handle straight back.
+
+        Callers need this because ``get`` cannot see their first use of the
+        handle. In client mode ``.remote()`` returns before the server has
+        confirmed the actor exists, so a creation that failed part way looks
+        fine here and only surfaces when somebody calls a method on it, which
+        happens in the caller for every ref without a run method. Without
+        this, that one failure is remembered for the life of the process.
+        """
+        self._actor_instance = None
+        self.__dict__.pop("get", None)
+
     @cached_property
     def get(self) -> Any:
         """
