@@ -20,6 +20,7 @@ like, and pickle what Ray would pickle.
 import importlib
 import logging
 import pkgutil
+from unittest import mock
 
 from django.test import SimpleTestCase
 from loguru import logger
@@ -111,7 +112,18 @@ class TheLogHandlerItselfPicklesTest(SimpleTestCase):
             args=(),
             exc_info=None,
         )
-        revived.handle(record)
+        # With the integration switched off for the duration: handle() still
+        # takes the restored lock and formats, which is what is under test,
+        # but emit() returns before starting the shipping worker. Otherwise
+        # this test would queue an HTTPS delivery wherever Log Analytics
+        # happens to be configured, and a unit test that talks to a provider
+        # is a bug even when it passes.
+        with mock.patch(
+            "fighthealthinsurance.log_analytics.is_log_analytics_enabled",
+            return_value=False,
+        ):
+            revived.handle(record)
+
         self.assertEqual(
             revived.format(record),
             "after the round trip",
