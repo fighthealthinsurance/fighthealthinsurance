@@ -132,24 +132,45 @@ def process_gone(process: Optional[Process]) -> bool:
     return False
 
 
+def _final_workers(
+    before: Optional[Process], after: Optional[Process]
+) -> "set[Process]":
+    """The worker identities to wait on.
+
+    The same PID after the kill is the same worker, and the start time
+    captured earlier is the one to trust: read again now, it could belong
+    to a process that has since reused the number. A different PID is a
+    replacement the actor started in between, and both are waited on.
+    """
+    workers: "set[Process]" = set()
+    if before is not None:
+        workers.add(before)
+    if after is not None and (before is None or after[0] != before[0]):
+        workers.add(after)
+    return workers
+
+
 def stop_actor(handle: Any, timeout: float = 30.0) -> None:
     """Kill the actor and return only once it is dead and its worker has exited."""
     deadline = time.monotonic() + timeout
+
+    def out_of_time(stage: str) -> TimeoutError:
+        return TimeoutError(f"{handle}: {stage} after {timeout}s")
+
     before = _bounded(lambda: worker_process(handle), deadline, "actor lookup")
     _bounded(lambda: ray.kill(handle, no_restart=True), deadline, "ray.kill")
-    # Restarts are off now, so this is the last worker there will be. It may
-    # differ from `before` if the actor restarted in between; both are waited on.
-    after = _bounded(lambda: worker_process(handle), deadline, "actor lookup")
-    workers = {worker for worker in (before, after) if worker is not None}
-    dead = False
-    while True:
-        dead = dead or _reported_dead(handle)
-        if dead and all(process_gone(worker) for worker in workers):
-            return
+    # ray.kill only queues the request. Only once the GCS reports the actor
+    # dead are restarts truly off, and only then is the worker the table
+    # records the last one there will be.
+    while not _bounded(lambda: _reported_dead(handle), deadline, "actor status"):
         if time.monotonic() > deadline:
-            raise TimeoutError(
-                f"{handle}: reported dead={dead}, workers still running="
-                f"{[w for w in workers if not process_gone(w)]} after {timeout}s"
+            raise out_of_time("still reported alive")
+    after = _bounded(lambda: worker_process(handle), deadline, "actor lookup")
+    workers = _final_workers(before, after)
+    while not all(process_gone(worker) for worker in workers):
+        if time.monotonic() > deadline:
+            raise out_of_time(
+                f"workers still running: {[w for w in workers if not process_gone(w)]}"
             )
         time.sleep(0.05)
 
@@ -160,8 +181,11 @@ def stop_named_actor(name: str, namespace: str, timeout: float = 30.0) -> None:
     Nothing to do if it was never made: a child appears only once the
     parent has run.
     """
+    deadline = time.monotonic() + timeout
     try:
-        handle = ray.get_actor(name, namespace=namespace)
+        handle = _bounded(
+            lambda: ray.get_actor(name, namespace=namespace), deadline, "named lookup"
+        )
     except ValueError:
         return
-    stop_actor(handle, timeout)
+    stop_actor(handle, max(0.0, deadline - time.monotonic()))

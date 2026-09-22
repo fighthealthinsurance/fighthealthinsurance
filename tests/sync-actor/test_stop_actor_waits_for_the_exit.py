@@ -77,6 +77,23 @@ class StopActorTest(SimpleTestCase):
             with self.assertRaises(RuntimeError):
                 stop_actor(looper)
 
+    def test_the_same_pid_after_the_kill_keeps_the_identity_captured_before(self):
+        """Read again after the kill, a PID could belong to a process that
+        reused the number; a different PID is a replacement and is waited on."""
+        self.assertEqual(
+            ray_actor_cleanup._final_workers((123, "a"), (123, "reused")), {(123, "a")}
+        )
+        self.assertEqual(
+            ray_actor_cleanup._final_workers((123, "a"), (456, "b")),
+            {(123, "a"), (456, "b")},
+        )
+        self.assertEqual(
+            ray_actor_cleanup._final_workers(None, (456, "b")), {(456, "b")}
+        )
+        self.assertEqual(
+            ray_actor_cleanup._final_workers((123, "a"), None), {(123, "a")}
+        )
+
     def test_a_reused_pid_is_not_mistaken_for_the_worker(self):
         """A process with the same PID but a different start time is a
         different process, so it counts as gone."""
