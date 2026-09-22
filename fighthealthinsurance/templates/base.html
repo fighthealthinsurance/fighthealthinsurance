@@ -172,9 +172,12 @@
                 if (!menu) { return; }
                 var wide = window.matchMedia('(min-width: 992px)');
                 if (!wide.matches) { menu.open = false; }
-                function reopen(change) { if (change.matches) { menu.open = true; } }
-                if (wide.addEventListener) { wide.addEventListener('change', reopen); }
-                else { wide.addListener(reopen); }
+                // Crossing the breakpoint either way: a tablet turned to
+                // portrait gets a closed menu behind the toggle, turned back
+                // it gets the open row again.
+                function follow(change) { menu.open = change.matches; }
+                if (wide.addEventListener) { wide.addEventListener('change', follow); }
+                else { wide.addListener(follow); }
               })();
             </script>
 

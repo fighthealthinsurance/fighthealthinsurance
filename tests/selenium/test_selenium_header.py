@@ -160,6 +160,25 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
         assert state["shown"] == [], f"visible before Menu is tapped: {state['shown']}"
         assert state["toggle"] is True, "the Menu toggle is not visible on a phone"
 
+    def test_turning_a_tablet_closes_the_menu_and_turning_it_back_opens_it(self):
+        """The inline script follows the 992px breakpoint in both directions."""
+        self.set_window_size(*DESKTOP)
+        self.open(f"{self.live_server_url}/")
+        self.wait_for_ready_state_complete()
+        assert self._phone_menu_state()["open"] is True, "desktop menu not open"
+
+        self.set_window_size(*PHONE)
+        self.wait_for_ready_state_complete()
+        narrow = self._phone_menu_state()
+        assert narrow["open"] is False, "menu stayed open after narrowing"
+        assert narrow["toggle"] is True, "the Menu toggle is not visible"
+
+        self.set_window_size(*DESKTOP)
+        self.wait_for_ready_state_complete()
+        assert (
+            self._phone_menu_state()["open"] is True
+        ), "menu stayed closed after widening"
+
     def test_with_scripts_blocked_the_phone_menu_is_open_not_missing(self):
         """The failure mode without JavaScript is a tall header, not no nav.
 
