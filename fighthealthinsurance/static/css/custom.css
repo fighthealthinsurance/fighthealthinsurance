@@ -1,3 +1,14 @@
+/* The box model is ours, not the CDN's. Bootstrap's stylesheet carries the
+   same rule, so nothing changes while it loads; without it every element
+   that pairs width:100% with padding (the intake wrapper, .fhi-field) would
+   overflow a phone by its padding, and a 390px page would scroll sideways
+   because a download failed. */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
 :root {
     /* Palette already in use across this file, named once. */
     --fhi-green: #a5c422;
@@ -1715,10 +1726,6 @@ section:not(.slider) .share-subcopy {
 
 /* Container utilities */
 .container-narrow {
-    /* Our own wrapper owns its box: without this it fits a phone only while
-       Bootstrap's border-box reset has arrived from its CDN, and at 390px
-       the padding would push it past the viewport. */
-    box-sizing: border-box;
     width: 100%;
     max-width: 760px;
     padding-left: 16px;

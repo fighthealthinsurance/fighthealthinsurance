@@ -34,10 +34,9 @@ SHORT_BY_DESIGN = ("form-input-state",)  # the two-letter state code
 MEASURE_JS = """
 const round = (n) => Math.round(n * 10) / 10;
 const rect = (el) => el ? el.getBoundingClientRect() : null;
-// The wrapper's content box: 728px with Bootstrap's border-box reset (760
-// less 32px of padding), 760px without it. The requirement is "760 or
-// less, and the same on every step", which holds whether or not the reset
-// arrived from its CDN.
+// The wrapper's content box: 728px (760 less 32px of padding) now that
+// custom.css owns the border-box reset, with or without Bootstrap's copy
+// of it. The requirement is "760 or less, and the same on every step".
 const contentWidth = (el) => {
     const cs = getComputedStyle(el);
     return round(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
@@ -68,7 +67,11 @@ const rows = Array.from(document.querySelectorAll('.fhi-form-table tr')).map(tr 
 }).filter(Boolean);
 return {
     innerWidth: window.innerWidth,
-    scrollsSideways: document.documentElement.scrollWidth > window.innerWidth + 1,
+    // Against the document's own client width, not window.innerWidth: the
+    // latter includes a scrollbar gutter, which would hide an overflow of
+    // a few pixels.
+    scrollsSideways: document.documentElement.scrollWidth
+        > document.documentElement.clientWidth + 1,
     bound: bound ? contentWidth(bound) : null,
     form: form ? round(rect(form).width) : null,
     email: email ? round(rect(email).width) : null,
