@@ -9,6 +9,8 @@ library involved, which is what the reported "Resources doesn't always work"
 was about.
 """
 
+import time
+
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from seleniumbase import BaseCase
 
@@ -141,6 +143,20 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
             };
             """)
 
+    def _menu_once_it_is(self, open_: bool, timeout: float = 5.0):
+        """The state, once the breakpoint has caught up with a resize.
+
+        The matchMedia change callback that opens or closes the menu runs
+        after the resize, not with it, so reading straight away could see
+        the old state and fail for no reason.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            state = self._phone_menu_state()
+            if state["open"] is open_ or time.monotonic() > deadline:
+                return state
+            time.sleep(0.05)
+
     def test_the_phone_menu_starts_closed_and_takes_no_room(self):
         """Nothing but the Menu toggle is on screen until it is tapped.
 
@@ -165,18 +181,16 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
         self.set_window_size(*DESKTOP)
         self.open(f"{self.live_server_url}/")
         self.wait_for_ready_state_complete()
-        assert self._phone_menu_state()["open"] is True, "desktop menu not open"
+        assert self._menu_once_it_is(True)["open"] is True, "desktop menu not open"
 
         self.set_window_size(*PHONE)
-        self.wait_for_ready_state_complete()
-        narrow = self._phone_menu_state()
+        narrow = self._menu_once_it_is(False)
         assert narrow["open"] is False, "menu stayed open after narrowing"
         assert narrow["toggle"] is True, "the Menu toggle is not visible"
 
         self.set_window_size(*DESKTOP)
-        self.wait_for_ready_state_complete()
         assert (
-            self._phone_menu_state()["open"] is True
+            self._menu_once_it_is(True)["open"] is True
         ), "menu stayed closed after widening"
 
     def test_with_scripts_blocked_the_phone_menu_is_open_not_missing(self):
