@@ -13,8 +13,13 @@ real browser and reads the numbers back, so a page that drifts onto another
 wrapper fails here rather than in someone's screenshot.
 """
 
+from unittest.mock import AsyncMock, patch
+
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from seleniumbase import BaseCase
+
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
+from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 
 from .fhi_selenium_base import FHISeleniumBase
 
@@ -29,6 +34,13 @@ SHORT_BY_DESIGN = ("form-input-state",)  # the two-letter state code
 MEASURE_JS = """
 const round = (n) => Math.round(n * 10) / 10;
 const rect = (el) => el ? el.getBoundingClientRect() : null;
+// The wrapper's content box, so the number does not depend on whether
+// Bootstrap's border-box reset arrived from its CDN: 760px of content is
+// the requirement either way.
+const contentWidth = (el) => {
+    const cs = getComputedStyle(el);
+    return round(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+};
 const bound = document.querySelector('.container-narrow');
 const form = document.querySelector('#main-content form');
 const email = document.querySelector('input#email');
@@ -56,7 +68,7 @@ const rows = Array.from(document.querySelectorAll('.fhi-form-table tr')).map(tr 
 return {
     innerWidth: window.innerWidth,
     scrollsSideways: document.documentElement.scrollWidth > window.innerWidth + 1,
-    bound: bound ? round(rect(bound).width) : null,
+    bound: bound ? contentWidth(bound) : null,
     form: form ? round(rect(form).width) : null,
     email: email ? round(rect(email).width) : null,
     pair: (first && last) ? round(rect(last).right - rect(first).left) : null,
@@ -77,6 +89,23 @@ class SeleniumTestFlowWidths(FHISeleniumBase, StaticLiveServerTestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Reaching the questions page runs question generation and starts
+        # citation generation for real. This walk is about widths, so both
+        # answer at once with fixed results: no model, no environment-
+        # configured backend, and no forty-second window behind a
+        # fifteen-second wait.
+        cls.questions_patcher = patch.object(
+            MLAppealQuestionsHelper,
+            "generate_questions_for_denial",
+            new=AsyncMock(return_value=[("Was the visit in network?", "")]),
+        )
+        cls.citations_patcher = patch.object(
+            MLCitationsHelper,
+            "generate_citations_for_denial",
+            new=AsyncMock(return_value=None),
+        )
+        cls.questions_patcher.start()
+        cls.citations_patcher.start()
         super(StaticLiveServerTestCase, cls).setUpClass()
         super(BaseCase, cls).setUpClass()
 
@@ -84,6 +113,8 @@ class SeleniumTestFlowWidths(FHISeleniumBase, StaticLiveServerTestCase):
     def tearDownClass(cls):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
+        cls.citations_patcher.stop()
+        cls.questions_patcher.stop()
 
     def _measure(self, step, results):
         """Measure a step at both widths and check it against the first step

@@ -1235,8 +1235,10 @@ a.link:hover::after {
     flex-wrap: nowrap; /* Keep items on one line */
     /* The space between the two fields is the row's, not each cell's: a
        side margin on the cells pulled the pair 10px in from either edge,
-       which is why the email box below them was 20px wider. */
-    gap: var(--fhi-space-5);
+       which is why the email box below them was 20px wider. column-gap,
+       not gap: below 768px the row becomes a column, and a row gap there
+       would double the space between the stacked fields. */
+    column-gap: var(--fhi-space-5);
 }
 
 .together-form-group > div {
