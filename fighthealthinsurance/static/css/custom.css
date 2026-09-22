@@ -1715,6 +1715,10 @@ section:not(.slider) .share-subcopy {
 
 /* Container utilities */
 .container-narrow {
+    /* Our own wrapper owns its box: without this it fits a phone only while
+       Bootstrap's border-box reset has arrived from its CDN, and at 390px
+       the padding would push it past the viewport. */
+    box-sizing: border-box;
     width: 100%;
     max-width: 760px;
     padding-left: 16px;
