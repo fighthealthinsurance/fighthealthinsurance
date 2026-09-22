@@ -38,9 +38,10 @@ class TestFaxPollingActor(TestCase):
 
         fax_polling_actor = FaxPollingActor.remote()
         self.addCleanup(stop_actor, fax_polling_actor)
-        # run() makes a named child FaxActor of its own. Ray destroys a dead
-        # owner's children asynchronously, so the child is stopped on its own
-        # account, and first: cleanups run last-in first-out.
+        # The constructor makes a named child FaxActor of its own. Ray
+        # destroys a dead owner's children asynchronously, so the child is
+        # stopped on its own account, and first: cleanups run last-in
+        # first-out.
         self.addCleanup(stop_named_actor, "fpa-worker", "fhi")
 
         # Say "hi" -- mostly make sure the actor started OK

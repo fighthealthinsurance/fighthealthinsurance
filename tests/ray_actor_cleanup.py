@@ -25,7 +25,6 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any, Callable, Optional, Tuple, TypeVar
 
 import ray
-from ray.exceptions import GetTimeoutError, RayActorError
 
 T = TypeVar("T")
 
@@ -98,19 +97,6 @@ def _gcs_state(handle: Any) -> str:
     if not isinstance(info, dict) or not info:
         raise RuntimeError(f"no actor table entry for {handle}")
     return str(info.get("State"))
-
-
-def _reported_dead(handle: Any) -> bool:
-    try:
-        # Every actor has __ray_ready__. While the actor is alive and busy in
-        # a loop this waits behind that loop and times out; once the GCS has
-        # it dead it raises straight away.
-        ray.get(handle.__ray_ready__.remote(), timeout=1.0)
-    except RayActorError:
-        return True
-    except GetTimeoutError:
-        return False
-    return False
 
 
 def process_gone(process: Optional[Process]) -> bool:
