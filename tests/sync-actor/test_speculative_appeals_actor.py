@@ -26,6 +26,7 @@ from django.test import TransactionTestCase
 
 from fighthealthinsurance.models import Denial, ProposedAppeal
 from fighthealthinsurance.speculative_appeals_actor import SpeculativeAppealsActor
+from tests.ray_actor_cleanup import stop_actor
 
 # The actor bootstraps Django inside a fresh Ray worker (settings, urlconf, app
 # registry) before it can serve anything, and a cold start in CI can take 20+s.
@@ -62,7 +63,7 @@ class TestSpeculativeAppealsActorRay(TransactionTestCase):
         self.actor = SpeculativeAppealsActor.remote()
         # Registered before the boot check below: if that assertion fails,
         # tearDown would not run, but cleanups do.
-        self.addCleanup(ray.kill, self.actor, no_restart=True)
+        self.addCleanup(stop_actor, self.actor)
         # Boot once here rather than per-test so a slow cold start is not
         # mistaken for a slow prefetch.
         assert (

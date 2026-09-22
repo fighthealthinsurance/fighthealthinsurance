@@ -27,6 +27,7 @@ from fighthealthinsurance.ucr_refresh_actor import (
     UCRRefreshActor,
     UCRRefreshController,
 )
+from tests.ray_actor_cleanup import stop_actor
 
 
 @pytest.mark.django_db
@@ -63,8 +64,9 @@ class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
 
     def test_run_method_starts_and_loops(self):
         actor = UCRRefreshActor.remote()
-        # no_restart because this actor carries max_restarts=-1.
-        self.addCleanup(ray.kill, actor, no_restart=True)
+        # stop_actor kills with no_restart (this actor carries max_restarts=-1)
+        # and waits until the actor is gone; ray.kill alone only queues it.
+        self.addCleanup(stop_actor, actor)
 
         self.assertEqual("Hi", ray.get(actor.hello.remote()))
         actor.run.remote()

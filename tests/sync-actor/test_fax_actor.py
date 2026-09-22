@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.db import connection
 
 from fighthealthinsurance.fax_actor import FaxActor
+from tests.ray_actor_cleanup import stop_actor
 
 runtime_env = dict(os.environ)
 
@@ -32,7 +33,7 @@ class TestFaxActor(TransactionTestCase):
         # SQLite file is what "database is locked" in the next class was.
         self.addCleanup(ray.shutdown)
         self.fax_actor = FaxActor.remote()
-        self.addCleanup(ray.kill, self.fax_actor, no_restart=True)
+        self.addCleanup(stop_actor, self.fax_actor)
         self.maxDiff = None
 
     def test_init(self):

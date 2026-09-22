@@ -6,6 +6,7 @@ import ray
 from django.test import TestCase
 
 from fighthealthinsurance.fax_polling_actor import FaxPollingActor
+from tests.ray_actor_cleanup import stop_actor
 
 
 @pytest.mark.django_db
@@ -38,7 +39,7 @@ class TestFaxPollingActor(TestCase):
         fax_polling_actor = FaxPollingActor.remote()
         # run() is a polling loop, and it makes a child FaxActor of its own;
         # killing the parent takes the child with it.
-        self.addCleanup(ray.kill, fax_polling_actor, no_restart=True)
+        self.addCleanup(stop_actor, fax_polling_actor)
 
         # Say "hi" -- mostly make sure the actor started OK
         r = fax_polling_actor.hello.remote()
