@@ -2661,9 +2661,19 @@ textarea,
 
     .fhi-nav-list {
         flex-direction: row;
+        /* Seven items and the button do not fit beside the logo on a small
+           laptop. Whole items move to a second row; a link never breaks
+           mid-word into "Explain" over "Denial". */
+        flex-wrap: wrap;
         align-items: center;
         justify-content: flex-end;
         gap: var(--fhi-space-2);
+    }
+
+    .fhi-nav-list > li > .nav-link,
+    .fhi-nav-group > summary.nav-link,
+    .fhi-nav-cta a {
+        white-space: nowrap;
     }
 
     .fhi-nav-group {
