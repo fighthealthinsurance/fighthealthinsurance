@@ -65,17 +65,30 @@ class StopActorTest(SimpleTestCase):
             ray.get(looper.hello.remote(), timeout=10)
         self.assertTrue(process_gone(recorded), f"worker {pid} is still running")
 
-    def test_a_failed_lookup_is_an_error_not_evidence(self):
+    def test_a_failed_lookup_is_an_error_but_the_actor_is_still_stopped(self):
         """If the worker cannot be identified, the cleanup fails loudly
-        rather than passing on the GCS's word alone."""
+        rather than passing on the GCS's word alone, and the kill is sent
+        all the same: a skipped kill would hand ray.shutdown a running actor."""
         looper = Looper.remote()
         self.addCleanup(stop_actor, looper)
         self.assertEqual("Hi", ray.get(looper.hello.remote(), timeout=60))
+        real = ray_actor_cleanup.worker_process
+        attempts: list = []
+
+        def first_lookup_fails(handle):
+            attempts.append(handle)
+            if len(attempts) == 1:
+                raise RuntimeError("no table")
+            return real(handle)
+
         with patch.object(
-            ray_actor_cleanup, "worker_process", side_effect=RuntimeError("no table")
+            ray_actor_cleanup, "worker_process", side_effect=first_lookup_fails
         ):
             with self.assertRaises(RuntimeError):
                 stop_actor(looper)
+        with self.assertRaises(RayActorError):
+            ray.get(looper.hello.remote(), timeout=10)
+        self.assertEqual(ray_actor_cleanup._gcs_state(looper), "DEAD")
 
     def test_the_same_pid_after_the_kill_keeps_the_identity_captured_before(self):
         """Read again after the kill, a PID could belong to a process that

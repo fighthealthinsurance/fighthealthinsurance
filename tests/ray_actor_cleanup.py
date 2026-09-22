@@ -90,6 +90,16 @@ def worker_process(handle: Any) -> Optional[Process]:
     return (pid, _start_ticks(pid))
 
 
+def _gcs_state(handle: Any) -> str:
+    """The actor's state as the GCS records it: ALIVE, RESTARTING, DEAD..."""
+    from ray._private.state import actors as actor_table  # pinned Ray 2.53
+
+    info = actor_table(handle._actor_id.hex())
+    if not isinstance(info, dict) or not info:
+        raise RuntimeError(f"no actor table entry for {handle}")
+    return str(info.get("State"))
+
+
 def _reported_dead(handle: Any) -> bool:
     try:
         # Every actor has __ray_ready__. While the actor is alive and busy in
@@ -157,14 +167,23 @@ def stop_actor(handle: Any, timeout: float = 30.0) -> None:
     def out_of_time(stage: str) -> TimeoutError:
         return TimeoutError(f"{handle}: {stage} after {timeout}s")
 
-    before = _bounded(lambda: worker_process(handle), deadline, "actor lookup")
+    # Whatever the lookup does, the kill is sent: a lookup that fails and
+    # skips it would hand the registered ray.shutdown a running actor.
+    lookup_error: Optional[BaseException] = None
+    before: Optional[Process] = None
+    try:
+        before = _bounded(lambda: worker_process(handle), deadline, "actor lookup")
+    except BaseException as e:  # noqa: BLE001 - re-raised once the actor is stopped
+        lookup_error = e
     _bounded(lambda: ray.kill(handle, no_restart=True), deadline, "ray.kill")
-    # ray.kill only queues the request. Only once the GCS reports the actor
-    # dead are restarts truly off, and only then is the worker the table
-    # records the last one there will be.
-    while not _bounded(lambda: _reported_dead(handle), deadline, "actor status"):
+    # ray.kill only queues the request. Only once the GCS has the actor DEAD
+    # are restarts truly off, and only then is the worker the table records
+    # the last one there will be. The GCS state, not a failing call: a call
+    # also fails while an actor is merely unavailable mid-restart.
+    while _bounded(lambda: _gcs_state(handle), deadline, "actor status") != "DEAD":
         if time.monotonic() > deadline:
-            raise out_of_time("still reported alive")
+            raise out_of_time("still not DEAD in the GCS")
+        time.sleep(0.05)
     after = _bounded(lambda: worker_process(handle), deadline, "actor lookup")
     workers = _final_workers(before, after)
     while not all(process_gone(worker) for worker in workers):
@@ -173,6 +192,11 @@ def stop_actor(handle: Any, timeout: float = 30.0) -> None:
                 f"workers still running: {[w for w in workers if not process_gone(w)]}"
             )
         time.sleep(0.05)
+    if lookup_error is not None:
+        raise RuntimeError(
+            f"{handle} was stopped, but its worker could not be identified before "
+            "the kill, so a worker it replaced in between was not waited on"
+        ) from lookup_error
 
 
 def stop_named_actor(name: str, namespace: str, timeout: float = 30.0) -> None:
