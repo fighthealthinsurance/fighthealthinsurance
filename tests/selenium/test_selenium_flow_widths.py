@@ -34,9 +34,10 @@ SHORT_BY_DESIGN = ("form-input-state",)  # the two-letter state code
 MEASURE_JS = """
 const round = (n) => Math.round(n * 10) / 10;
 const rect = (el) => el ? el.getBoundingClientRect() : null;
-// The wrapper's content box, so the number does not depend on whether
-// Bootstrap's border-box reset arrived from its CDN: 760px of content is
-// the requirement either way.
+// The wrapper's content box: 728px with Bootstrap's border-box reset (760
+// less 32px of padding), 760px without it. The requirement is "760 or
+// less, and the same on every step", which holds whether or not the reset
+// arrived from its CDN.
 const contentWidth = (el) => {
     const cs = getComputedStyle(el);
     return round(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
@@ -104,8 +105,13 @@ class SeleniumTestFlowWidths(FHISeleniumBase, StaticLiveServerTestCase):
             "generate_citations_for_denial",
             new=AsyncMock(return_value=None),
         )
+        # Class cleanups run even when the live server fails to start or a
+        # teardown raises, which is when a patch left running would hand
+        # these fixed answers to every later test in the process.
         cls.questions_patcher.start()
+        cls.addClassCleanup(cls.questions_patcher.stop)
         cls.citations_patcher.start()
+        cls.addClassCleanup(cls.citations_patcher.stop)
         super(StaticLiveServerTestCase, cls).setUpClass()
         super(BaseCase, cls).setUpClass()
 
@@ -113,8 +119,6 @@ class SeleniumTestFlowWidths(FHISeleniumBase, StaticLiveServerTestCase):
     def tearDownClass(cls):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
-        cls.citations_patcher.stop()
-        cls.questions_patcher.stop()
 
     def _measure(self, step, results):
         """Measure a step at both widths and check it against the first step
