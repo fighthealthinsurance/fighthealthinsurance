@@ -240,6 +240,13 @@
 
 {% block extra_style %}
 <style>
+    /* Three lines of copy do not need the home page's 650px band; the
+       band is only as tall as the copy plus a margin, and the image
+       crops rather than the page scrolling past empty colour. */
+    #understand-policy-hero .item {
+        min-height: 380px;
+    }
+
     #understand-policy-hero .hero-inner {
         max-width: 800px;
         padding: 2rem;
