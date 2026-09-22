@@ -15,7 +15,10 @@ import ray
 from django.test import SimpleTestCase
 from ray.exceptions import RayActorError
 
-from tests.ray_actor_cleanup import process_gone, stop_actor
+from unittest.mock import patch
+
+from tests import ray_actor_cleanup
+from tests.ray_actor_cleanup import process_gone, stop_actor, worker_process
 
 
 @ray.remote(max_restarts=-1)
@@ -49,7 +52,10 @@ class StopActorTest(SimpleTestCase):
         self.addCleanup(stop_actor, looper)
         self.assertEqual("Hi", ray.get(looper.hello.remote(), timeout=60))
         pid = ray.get(looper.pid.remote(), timeout=10)
-        self.assertFalse(process_gone(pid), "no worker process to begin with")
+        recorded = worker_process(looper)
+        self.assertIsNotNone(recorded)
+        self.assertEqual(recorded[0], pid, "the GCS records a different worker")
+        self.assertFalse(process_gone(recorded), "no worker process to begin with")
         looper.run.remote()
         time.sleep(0.5)
 
@@ -57,4 +63,23 @@ class StopActorTest(SimpleTestCase):
 
         with self.assertRaises(RayActorError):
             ray.get(looper.hello.remote(), timeout=10)
-        self.assertTrue(process_gone(pid), f"worker {pid} is still running")
+        self.assertTrue(process_gone(recorded), f"worker {pid} is still running")
+
+    def test_a_failed_lookup_is_an_error_not_evidence(self):
+        """If the worker cannot be identified, the cleanup fails loudly
+        rather than passing on the GCS's word alone."""
+        looper = Looper.remote()
+        self.addCleanup(stop_actor, looper)
+        self.assertEqual("Hi", ray.get(looper.hello.remote(), timeout=60))
+        with patch.object(
+            ray_actor_cleanup, "worker_process", side_effect=RuntimeError("no table")
+        ):
+            with self.assertRaises(RuntimeError):
+                stop_actor(looper)
+
+    def test_a_reused_pid_is_not_mistaken_for_the_worker(self):
+        """A process with the same PID but a different start time is a
+        different process, so it counts as gone."""
+        pid = os.getpid()
+        self.assertFalse(process_gone((pid, ray_actor_cleanup._start_ticks(pid))))
+        self.assertTrue(process_gone((pid, "not-our-start-time")))
