@@ -17,10 +17,15 @@ CI fails somewhere unrelated with "database is locked".
 
 from django.conf import settings
 from django.db import connection
-from django.test import SimpleTestCase
+from django.test import TestCase
+
+# Seconds a writer waits for the lock before "database is locked". The
+# default is five, and a Ray worker mid-write plus a test class starting its
+# own writes has been seen to need more than that.
+BUSY_WAIT_SECONDS = 30
 
 
-class TheConfiguredTimeoutReachesSqliteTest(SimpleTestCase):
+class TheConfiguredTimeoutReachesSqliteTest(TestCase):
     def test_it_is_in_options_where_django_reads_it(self):
         options = settings.DATABASES["default"].get("OPTIONS", {})
 
@@ -30,13 +35,17 @@ class TheConfiguredTimeoutReachesSqliteTest(SimpleTestCase):
             "a top-level TIMEOUT is ignored by the SQLite backend; it has to "
             "be in OPTIONS",
         )
-        self.assertGreaterEqual(options["timeout"], 10)
+        self.assertEqual(options["timeout"], BUSY_WAIT_SECONDS)
 
-    def test_the_live_connection_actually_got_it(self):
-        """Read it back off the connection rather than the settings dict."""
-        params = connection.get_connection_params()
+    def test_the_open_connection_actually_got_it(self):
+        """Ask SQLite itself, on a connection Django opened.
 
-        self.assertIn("timeout", params)
-        self.assertEqual(
-            params["timeout"], settings.DATABASES["default"]["OPTIONS"]["timeout"]
-        )
+        get_connection_params() only builds the arguments; nothing is proved
+        until sqlite3.connect has run with them. busy_timeout is the value
+        that call installed, in milliseconds.
+        """
+        with connection.cursor() as cursor:
+            cursor.execute("PRAGMA busy_timeout")
+            (milliseconds,) = cursor.fetchone()
+
+        self.assertEqual(milliseconds, BUSY_WAIT_SECONDS * 1000)

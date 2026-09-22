@@ -34,7 +34,6 @@ class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
-        self._actors: list = []
         if not ray.is_initialized():
             environ = dict(os.environ)
             # TestActor (not Test) so the Ray worker process and the test
@@ -48,31 +47,24 @@ class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
                 runtime_env={"env_vars": environ},
                 num_cpus=1,
             )
-
-    def tearDown(self):
-        # Kill the actors before tearing the cluster down, and do it with
-        # no_restart because this actor carries max_restarts=-1.
+        # Cleanups run last-in first-out, and they run even when setUp fails
+        # partway, so every actor registered after this line is killed before
+        # the cluster is shut down.
         #
         # run() is a polling loop, and under the TestActor configuration it
         # writes to a FILE-based SQLite database shared with this process
-        # (see the note in setUp). ray.shutdown() asks the cluster to go away
+        # (see the note above). ray.shutdown() asks the cluster to go away
         # but does not wait for the worker to die, so the loop could still be
         # holding SQLite's single write lock while the next test class ran
         # its own ORM writes. That is the "database is locked" failure this
         # file has been producing in CI: not a slow machine, a loop nobody
         # stopped.
-        for actor in getattr(self, "_actors", []):
-            try:
-                ray.kill(actor, no_restart=True)
-            except Exception:
-                pass
-        self._actors = []
-        if ray.is_initialized():
-            ray.shutdown()
+        self.addCleanup(ray.shutdown)
 
     def test_run_method_starts_and_loops(self):
         actor = UCRRefreshActor.remote()
-        self._actors.append(actor)
+        # no_restart because this actor carries max_restarts=-1.
+        self.addCleanup(ray.kill, actor, no_restart=True)
 
         self.assertEqual("Hi", ray.get(actor.hello.remote()))
         actor.run.remote()

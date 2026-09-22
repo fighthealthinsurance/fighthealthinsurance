@@ -53,16 +53,21 @@ class TestSpeculativeAppealsActorRay(TransactionTestCase):
                 runtime_env={"env_vars": environ},
                 num_cpus=1,
             )
+        # Cleanups run last-in first-out, and they run even when setUp fails
+        # partway, so every actor registered after this line is killed before
+        # the cluster is shut down. ray.shutdown() alone does not wait for a
+        # worker to die, and a polling loop left running against the shared
+        # SQLite file is what "database is locked" in the next class was.
+        self.addCleanup(ray.shutdown)
         self.actor = SpeculativeAppealsActor.remote()
+        # Registered before the boot check below: if that assertion fails,
+        # tearDown would not run, but cleanups do.
+        self.addCleanup(ray.kill, self.actor, no_restart=True)
         # Boot once here rather than per-test so a slow cold start is not
         # mistaken for a slow prefetch.
         assert (
             ray.get(self.actor.hello.remote(), timeout=ACTOR_BOOT_TIMEOUT) == "Hi"
         ), "actor failed to bootstrap Django"
-
-    def tearDown(self):
-        if ray.is_initialized():
-            ray.shutdown()
 
     def _denial(self, **overrides) -> Denial:
         defaults = dict(
