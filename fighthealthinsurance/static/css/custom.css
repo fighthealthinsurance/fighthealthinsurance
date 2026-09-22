@@ -2582,6 +2582,7 @@ textarea,
     padding: var(--fhi-space-2) var(--fhi-space-3);
     /* 44px minimum row, the same rule the rest of the nav follows. */
     min-height: 44px;
+    font-size: 1rem;
     line-height: 1.6;
     cursor: pointer;
     list-style: none;
@@ -2605,25 +2606,51 @@ textarea,
     display: block;
     padding: var(--fhi-space-2) var(--fhi-space-3);
     min-height: 44px;
+    font-size: 1rem;
     line-height: 1.6;
 }
 
-/* Generate Appeal is the one thing most people are here to do. */
+/* Generate Appeal is the one thing most people are here to do, so it is the
+   brand button at its small size: the same lime sweep, ink and size tokens
+   as every other call to action on the site, sitting in a row of links
+   rather than on a page. inline-flex is what lets the height apply, since
+   the anchor is otherwise an inline box. */
 .fhi-nav-cta a {
-    display: inline-block;
-    padding: var(--fhi-space-2) var(--fhi-space-5);
-    border-radius: var(--fhi-radius);
-    background: var(--fhi-green-ink);
-    color: #fff;
-    font-weight: 600;
-    min-height: 44px;
-    line-height: 1.9;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
+    background-size: 200% auto;
+    background-position: left center;
+    transition: background-position 0.3s;
+    border-radius: 3px;
+    color: var(--fhi-btn-ink);
+    font-weight: 700;
+    font-size: var(--fhi-btn-font-sm);
+    line-height: 1.5;
+    min-height: var(--fhi-btn-height-sm);
+    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm);
 }
 
+/* main.css turns every a:hover, a:active and a:focus the brand green, and on
+   a green fill that is green on green. a:active ties this rule's base
+   specificity, so each state names its own ink here. */
 .fhi-nav-cta a:hover,
-.fhi-nav-cta a:focus {
-    color: #fff;
-    text-decoration: underline;
+.fhi-nav-cta a:focus,
+.fhi-nav-cta a:active {
+    color: var(--fhi-btn-ink);
+}
+
+/* The sweep is twice the width of the button, so moving it is what draws
+   the dark end across and turns the fill over. */
+.fhi-nav-cta a:hover {
+    background-position: right center;
+}
+
+.fhi-nav-cta a:focus-visible {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 3px;
 }
 
 @media (min-width: 992px) {
@@ -2674,8 +2701,11 @@ textarea,
     min-height: 44px;
 }
 
+/* a:active in main.css outranks a lone class, so without :active here the
+   label went green on green for as long as the button was pressed. */
 .fhi-chat-button:hover,
-.fhi-chat-button:focus {
+.fhi-chat-button:focus,
+.fhi-chat-button:active {
     color: #fff;
     text-decoration: underline;
 }

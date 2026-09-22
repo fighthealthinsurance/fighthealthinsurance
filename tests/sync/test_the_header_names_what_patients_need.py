@@ -92,6 +92,16 @@ class NothingInTheHeaderNeedsJavaScriptTest(TestCase):
         self.assertNotIn("dropdown-toggle", nav)
         self.assertNotIn("navbar-collapse", nav)
 
+    def test_the_menu_is_open_in_the_markup_and_closed_on_phones_by_a_script(self):
+        """A closed <details> renders nothing whatever CSS says, and desktop
+        hides the toggle, so `open` has to be in the markup for a desktop
+        to have a nav at all. The four lines that close it on phones are
+        inline, not a library: blocked, the menu is open, not missing."""
+        html = self.client.get("/").content.decode()
+        self.assertIn('<details class="fhi-nav" id="navbar" open>', html)
+        self.assertIn("menu.open = false", html)
+        self.assertIn("(min-width: 992px)", html)
+
     def test_the_menu_and_both_dropdowns_are_details(self):
         html = self.client.get(reverse("root")).content.decode()
         nav = _nav(html)

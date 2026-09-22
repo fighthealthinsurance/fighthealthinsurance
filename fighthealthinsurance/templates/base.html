@@ -125,7 +125,7 @@
                  respond, so a blocked or slow script left the toggle and the
                  dropdowns dead with nothing to click. Keyboard and screen
                  readers get open/closed state for free. -->
-            <details class="fhi-nav" id="navbar">
+            <details class="fhi-nav" id="navbar" open>
                 <summary class="fhi-nav-toggle" aria-label="Menu">
                     <span class="navbar-toggler-icon"></span>
                     <span class="fhi-nav-toggle-word">Menu</span>
@@ -161,6 +161,21 @@
                     <li class="fhi-nav-cta"><a href="{% url 'scan' %}">Generate Appeal</a></li>
                 </ul>
             </details>
+            <script>
+              // The menu is open in the markup because a closed <details>
+              // renders nothing whatever CSS says, and desktop hides the
+              // toggle: without this a desktop would have no nav. Phones
+              // start closed. If this never runs, the menu is open, which
+              // is a tall header rather than a missing one.
+              (function () {
+                var menu = document.getElementById('navbar');
+                var wide = window.matchMedia('(min-width: 992px)');
+                if (!wide.matches) { menu.open = false; }
+                function reopen(change) { if (change.matches) { menu.open = true; } }
+                if (wide.addEventListener) { wide.addEventListener('change', reopen); }
+                else { wide.addListener(reopen); }
+              })();
+            </script>
 
         </div>
     </section>

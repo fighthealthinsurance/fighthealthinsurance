@@ -1,9 +1,12 @@
 """The header, in a real browser, at both widths.
 
-Two things this has to establish and neither can be read off the CSS:
-whether a closed <details> can be shown by author CSS on desktop, and
-whether the menu and its dropdowns open with no JavaScript at all, which is
-what the reported "Resources doesn't always work" was about.
+Two things this has to establish and neither can be read off the CSS.
+First, that the desktop actually shows the menu: a closed <details> renders
+none of its content whatever author CSS says, and the desktop hides the
+toggle, so the markup carries `open` and a short inline script closes it on
+phones. Second, that the menu and its dropdowns open by tapping, with no
+library involved, which is what the reported "Resources doesn't always work"
+was about.
 """
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
@@ -40,15 +43,16 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
         super(BaseCase, cls).tearDownClass()
 
     def _visible_nav_words(self):
-        return self.execute_script(
-            """
+        return self.execute_script("""
             const nav = document.querySelector('.fhi-nav-list');
             if (!nav) { return ['NO NAV']; }
             return Array.from(nav.querySelectorAll('a, summary'))
-                .filter(el => el.getClientRects().length > 0)
+                // checkVisibility, not getClientRects: a closed <details>
+                // keeps stale rects for its children, so rects say
+                // 'visible' about things nobody can see.
+                .filter(el => el.checkVisibility())
                 .map(el => el.textContent.trim());
-            """
-        )
+            """)
 
     def test_desktop_shows_every_nav_item_without_opening_anything(self):
         self.set_window_size(*DESKTOP)
@@ -63,20 +67,18 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
                 f"Visible: {visible}"
             )
 
-    def test_the_phone_menu_opens_with_no_javascript(self):
+    def test_the_phone_menu_opens_by_tapping_menu(self):
         self.set_window_size(*PHONE)
         self.open(f"{self.live_server_url}/")
         self.wait_for_ready_state_complete()
 
-        opened = self.execute_script(
-            """
+        opened = self.execute_script("""
             const menu = document.querySelector('details.fhi-nav');
             if (!menu) { return 'NO MENU'; }
             const before = menu.open;
             menu.querySelector('summary').click();
             return [before, menu.open];
-            """
-        )
+            """)
         assert opened[0] is False, "the phone menu starts open"
         assert opened[1] is True, "clicking the toggle did not open the menu"
 
@@ -85,8 +87,7 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
         self.open(f"{self.live_server_url}/")
         self.wait_for_ready_state_complete()
 
-        result = self.execute_script(
-            """
+        result = self.execute_script("""
             const groups = document.querySelectorAll('details.fhi-nav-group');
             let resources = null;
             groups.forEach(g => {
@@ -97,11 +98,10 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
             if (!resources) { return 'NO RESOURCES'; }
             resources.querySelector('summary').click();
             const links = Array.from(resources.querySelectorAll('a'))
-                .filter(a => a.getClientRects().length > 0)
+                .filter(a => a.checkVisibility())
                 .map(a => a.textContent.trim());
             return [resources.open, links];
-            """
-        )
+            """)
         assert result[0] is True, "Resources did not open"
         for label in ("Guides", "Blog", "How to help"):
             assert label in result[1], f"{label} not reachable: {result[1]}"
@@ -126,6 +126,66 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
                 )
                 assert widths[0] <= widths[1], widths
 
+    def _phone_menu_state(self):
+        return self.execute_script("""
+            const menu = document.querySelector('details.fhi-nav');
+            if (!menu) { return {open: 'NO MENU', shown: [], toggle: false}; }
+            const items = Array.from(
+                document.querySelectorAll('.fhi-nav-list a, .fhi-nav-list summary')
+            );
+            return {
+                open: menu.open,
+                shown: items.filter(el => el.checkVisibility())
+                            .map(el => el.textContent.trim()),
+                toggle: document.querySelector('.fhi-nav-toggle').checkVisibility(),
+            };
+            """)
+
+    def test_the_phone_menu_starts_closed_and_takes_no_room(self):
+        """Nothing but the Menu toggle is on screen until it is tapped.
+
+        A review asked whether display:flex on the list could show it
+        through a closed <details>. It cannot, a closed <details> renders no
+        content whatever author CSS says, so this guards the two things that
+        would actually change the answer: the markup stopping being a
+        <details>, and the inline script that closes it on phones going
+        missing, which would leave the open-in-markup menu open.
+        """
+        self.set_window_size(*PHONE)
+        self.open(f"{self.live_server_url}/")
+        self.wait_for_ready_state_complete()
+
+        state = self._phone_menu_state()
+        assert state["open"] is False, "the phone menu starts open"
+        assert state["shown"] == [], f"visible before Menu is tapped: {state['shown']}"
+        assert state["toggle"] is True, "the Menu toggle is not visible on a phone"
+
+    def test_with_scripts_blocked_the_phone_menu_is_open_not_missing(self):
+        """The failure mode without JavaScript is a tall header, not no nav.
+
+        The header this replaced needed bootstrap.bundle.min.js from a CDN;
+        with that blocked the toggle did nothing and no link was reachable.
+        Now the markup is open and only the closing on phones is scripted,
+        so with every script blocked each link is on screen and tappable.
+        """
+        self.set_window_size(*PHONE)
+        self.driver.execute_cdp_cmd(
+            "Emulation.setScriptExecutionDisabled", {"value": True}
+        )
+        try:
+            self.open(f"{self.live_server_url}/")
+            state = self._phone_menu_state()
+        finally:
+            self.driver.execute_cdp_cmd(
+                "Emulation.setScriptExecutionDisabled", {"value": False}
+            )
+        assert state["open"] is True, "with scripts blocked the menu is closed"
+        shown = " ".join(state["shown"])
+        for word in NAV_WORDS:
+            assert (
+                word in shown
+            ), f"{word} is not on screen with scripts blocked: {shown}"
+
     def test_every_header_link_is_actually_tappable_on_a_phone(self):
         """The reported bug: the open menu painted under the hero.
 
@@ -137,8 +197,7 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
         self.open(f"{self.live_server_url}/")
         self.wait_for_ready_state_complete()
 
-        covered = self.execute_script(
-            """
+        covered = self.execute_script("""
             // Everything a person would have open after tapping through:
             // the menu itself and both dropdowns. A closed <details> still
             // reports rects for its children in this browser, so checking
@@ -161,6 +220,5 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
                 }
             });
             return covered;
-            """
-        )
+            """)
         assert covered == [], f"something is painted over these header items: {covered}"

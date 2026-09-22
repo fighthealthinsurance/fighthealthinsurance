@@ -131,58 +131,50 @@ class SeleniumTestPatientAccessNavigation(FHISeleniumBase, StaticLiveServerTestC
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def test_homepage_has_professional_dropdown(self):
-        """Test that the homepage has the Professional dropdown."""
+    PROFESSIONAL = 'summary.nav-link:contains("Professional")'
+    OPEN_MENU = "details.fhi-nav-group[open] .fhi-nav-submenu"
+
+    def _open_home(self):
+        # Desktop width: the header menu is open and the toggle hidden, so
+        # the Professional summary is the only thing to click.
+        self.set_window_size(1440, 900)
         self.open(f"{self.live_server_url}/")
-        self.assert_element("#professionalDropdown")
-        self.assert_text("Professional", "#professionalDropdown")
+        self.wait_for_ready_state_complete()
 
-    def test_dropdown_opens_on_click(self):
-        """Test that clicking the dropdown toggle opens the menu."""
-        self.open(f"{self.live_server_url}/")
+    def _open_professional(self):
+        self.click(self.PROFESSIONAL)
+        self.wait_for_element_visible(f"{self.OPEN_MENU} a[href*='patient-access']")
 
-        # Click the dropdown toggle
-        self.click("#professionalDropdown")
-        self.wait_for_clickable(".dropdown-menu.show")
+    def test_homepage_has_the_professional_menu(self):
+        self._open_home()
+        self.assert_element(self.PROFESSIONAL)
 
-        # Dropdown menu should be visible
-        self.assert_element(".dropdown-menu.show")
+    def test_the_professional_menu_opens_on_click(self):
+        self._open_home()
+        self._open_professional()
+        self.assert_element(self.OPEN_MENU)
 
-    def test_dropdown_contains_practices_link(self):
-        """Test that dropdown contains Practices & Hospitals link."""
-        self.open(f"{self.live_server_url}/")
-        self.click("#professionalDropdown")
-        self.wait_for_clickable(".dropdown-menu.show")
+    def test_the_professional_menu_holds_practices(self):
+        self._open_home()
+        self._open_professional()
+        self.assert_text("Practices", self.OPEN_MENU)
 
-        self.assert_text("Practices", ".dropdown-menu")
+    def test_the_professional_menu_holds_patient_access(self):
+        self._open_home()
+        self._open_professional()
+        self.assert_text("Patient", self.OPEN_MENU)
+        self.assert_text("Market Access", self.OPEN_MENU)
 
-    def test_dropdown_contains_patient_access_link(self):
-        """Test that dropdown contains Patient & Market Access link."""
-        self.open(f"{self.live_server_url}/")
-        self.click("#professionalDropdown")
-        self.wait_for_clickable(".dropdown-menu.show")
-
-        self.assert_text("Patient", ".dropdown-menu")
-        self.assert_text("Market Access", ".dropdown-menu")
-
-    def test_navigate_to_patient_access_from_dropdown(self):
-        """Test navigating to patient access page via dropdown."""
-        self.open(f"{self.live_server_url}/")
-
-        # Open dropdown
-        self.click("#professionalDropdown")
-        self.wait_for_clickable(".dropdown-menu.show")
-
-        # Click patient access link
-        self.click("a.dropdown-item[href*='patient-access']")
+    def test_navigate_to_patient_access_from_the_menu(self):
+        self._open_home()
+        self._open_professional()
+        self.click(f"{self.OPEN_MENU} a[href*='patient-access']")
         self.wait_for_url_contains("patient-access")
-
-        # Should be on patient access page
-        current_url = self.get_current_url()
-        self.assertIn("patient-access", current_url)
+        self.assertIn("patient-access", self.get_current_url())
         self.assert_element("#patient-access-hero")
 
-    def test_patient_access_page_has_dropdown(self):
-        """Test that the patient access page also has the navigation dropdown."""
+    def test_patient_access_page_has_the_same_menu(self):
+        self.set_window_size(1440, 900)
         self.open(f"{self.live_server_url}/professionals/patient-access")
-        self.assert_element("#professionalDropdown")
+        self.wait_for_ready_state_complete()
+        self.assert_element(self.PROFESSIONAL)

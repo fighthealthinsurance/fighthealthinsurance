@@ -42,6 +42,7 @@ LENGTH = re.compile(r"(-?[\d.]+)(px|rem|em)\b", re.IGNORECASE)
 # Every page renders this. It is migrated, and a literal here is a regression.
 SHELL_SELECTOR = re.compile(
     r"(^|[\s,>])(header|\.navbar|\.nav(?![\w-])|#nav(?![\w-])"
+    r"|\.fhi-nav|\.fhi-chat-button"
     r"|footer(?![\w-])|\.footer|\.copyright)"
 )
 
@@ -49,9 +50,7 @@ SHELL_SELECTOR = re.compile(
 # padding is what gives it a 44px touch target, and 11.2px/17.6px are the
 # sizes that produce it. Naming it here keeps it out of the shell check
 # without weakening the check for everything else.
-SHELL_SPACED_BY_THE_BUTTON_SCALE = frozenset(
-    (".navbar-default .navbar-nav li.appointment-btn a",)
-)
+SHELL_SPACED_BY_THE_BUTTON_SCALE = frozenset((".fhi-nav-cta a",))
 
 # 10px is exactly between two steps and this row holds nine links across.
 # Rounding down narrows nine tap targets including Delete your Data; rounding
