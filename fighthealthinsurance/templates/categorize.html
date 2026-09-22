@@ -28,7 +28,7 @@ Categorize Your Denial
   <form action="{% url 'find_next_steps_loading' %}" method="post">
     {% csrf_token %}
     <div class="scroll-x">
-      <table class="post-infered-table">
+      <table class="post-infered-table fhi-form-table">
         {{ post_infered_form.as_table }}
       </table>
     </div>

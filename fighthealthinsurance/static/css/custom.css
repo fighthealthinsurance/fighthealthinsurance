@@ -1233,11 +1233,15 @@ a.link:hover::after {
     /* Default layout for desktop */
     display: flex;
     flex-wrap: nowrap; /* Keep items on one line */
+    /* The space between the two fields is the row's, not each cell's: a
+       side margin on the cells pulled the pair 10px in from either edge,
+       which is why the email box below them was 20px wider. */
+    gap: var(--fhi-space-5);
 }
 
 .together-form-group > div {
   /* Individual prompt container */
-    margin: 10px;
+    margin: 10px 0;
     flex: 1;
 }
 
@@ -2735,5 +2739,33 @@ textarea,
        ones people print. */
     .fhi-chat-button {
         display: none;
+    }
+}
+
+/* ---- Form tables on a phone ----------------------------------------------
+   Details and Questions are Django as_table forms: a label cell beside a
+   field cell. On a 390px phone the two split the row and the field is left
+   with half of it. Below the phone breakpoint each cell becomes a block, so
+   the label sits above its field and the field has the whole width. Desktop
+   keeps the two columns.
+   -------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+    .fhi-form-table,
+    .fhi-form-table tbody,
+    .fhi-form-table tr,
+    .fhi-form-table th,
+    .fhi-form-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .fhi-form-table th {
+        padding: var(--fhi-space-3) 0 var(--fhi-space-1);
+        background: transparent;
+        border-bottom: 0;
+    }
+
+    .fhi-form-table td {
+        padding: 0 0 var(--fhi-space-4);
     }
 }

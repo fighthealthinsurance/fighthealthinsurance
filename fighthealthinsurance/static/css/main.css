@@ -22,7 +22,7 @@ body {
    chain around a .scroll-x give way. :where() keeps it at zero specificity so
    any real rule still wins; a browser without :has() simply behaves as it did
    before, which is the thing being fixed rather than a new failure. */
-:where(form, div, section, li):has(.scroll-x) {
+:where(form, div, section, li):where(:has(.scroll-x)) {
     min-width: 0;
     max-width: 100%;
 }
