@@ -499,6 +499,22 @@ class HealthNewsTest(TestCase):
                     [a["title"] for a in found["insurance"]["articles"]], ["t"]
                 )
 
+    def test_a_document_broken_after_its_newest_items_is_not_a_feed(self):
+        """Three good items and then a broken tail: read to the end, and
+        refused, rather than cached on the strength of the first three."""
+        before = self._primed()
+        good = RSS.format(name="uninsured", slug="uninsured")
+        items = "".join(
+            f"<item><title>h{n}</title><link>https://kffhealthnews.org/u/{n}</link></item>"
+            for n in range(3)
+        )
+        broken = good.replace("</channel>", items + "<item><title>unclosed</channel>")
+        with patch.object(health_news, "_send") as send:
+            send.side_effect = lambda url, timeout: FakeResponse(200, broken.encode())
+            after = health_news.get_health_news()
+        self.assertEqual(after["uninsured"], before["uninsured"])
+        self.assertTrue(cache.get(health_news._failed_key("uninsured")))
+
     def test_a_document_nested_deeper_than_a_feed_is_refused(self):
         deep = '<?xml version="1.0"?>' + "<a>" * 5000 + "</a>" * 5000
         with faking(FakeKff()):

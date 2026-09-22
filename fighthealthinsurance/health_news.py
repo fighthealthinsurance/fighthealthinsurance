@@ -189,10 +189,6 @@ def _as_text(body: bytes) -> str:
     return _UTF8_DECLARATION + text
 
 
-class _Enough(Exception):
-    """Raised from inside the parser once the newest items are in hand."""
-
-
 def _articles(text: str) -> List[Dict[str, Any]]:
     """The newest ARTICLES_PER_FEED items of an RSS 2.0 document.
 
@@ -201,9 +197,11 @@ def _articles(text: str) -> List[Dict[str, Any]]:
     builder copies a namespace's URI into every name that uses it, and
     keeps every name, so a body under the byte limit could still balloon.
     Here nothing is kept but the three fields of the item being read, each
-    in a bounded buffer, and the parse stops once enough items are in hand.
-    expat is linear and has no regular expressions; with entity
-    declarations refused before it sees the text, nothing expands.
+    in a bounded buffer; once enough items are in hand the rest is read and
+    not kept, so a document that is malformed after its newest items is a
+    failure rather than a cached success. expat is linear and has no
+    regular expressions; with entity declarations refused before it sees
+    the text, nothing expands.
     """
     articles: List[Dict[str, Any]] = []
     path: List[str] = []
@@ -219,7 +217,7 @@ def _articles(text: str) -> List[Dict[str, Any]]:
         if len(path) > MAX_DEPTH:
             raise ValueError("deeper than a feed")
         if item is None:
-            if path == ["rss", "channel", "item"]:
+            if len(articles) < ARTICLES_PER_FEED and path == ["rss", "channel", "item"]:
                 item = {"title": "", "link": "", "pubDate": ""}
         elif len(path) == 4 and name in item:
             field, buffer, buffered = name, [], 0
@@ -246,8 +244,6 @@ def _articles(text: str) -> List[Dict[str, Any]]:
             article = _article(finished)
             if article is not None:
                 articles.append(article)
-                if len(articles) >= ARTICLES_PER_FEED:
-                    raise _Enough
         path.pop()
 
     parser = xml.parsers.expat.ParserCreate()  # no namespace_separator: none processed
@@ -257,8 +253,6 @@ def _articles(text: str) -> List[Dict[str, Any]]:
     parser.CharacterDataHandler = data
     try:
         parser.Parse(text.encode("utf-8"), True)
-    except _Enough:
-        pass
     except xml.parsers.expat.ExpatError as e:
         raise ValueError(f"not well-formed XML: {e}") from None
     if not articles:
