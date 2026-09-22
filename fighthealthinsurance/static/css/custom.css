@@ -1725,11 +1725,16 @@ section:not(.slider) .share-subcopy {
 }
 
 /* Container utilities */
+/* The intake flow's wrapper, on its own: it used to ride on Bootstrap's
+   .container for centering, and every page that carried both counted as
+   one more use of Bootstrap on the way out. */
 .container-narrow {
     width: 100%;
     max-width: 760px;
     padding-left: 16px;
     padding-right: 16px;
+    margin-left: auto;
+    margin-right: auto;
     margin-top: 2.5rem !important;
 }
 
