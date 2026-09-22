@@ -194,42 +194,43 @@ class PatientAccessLinksTest(TestCase):
         self.assertContains(response, "mailto:support42@fighthealthinsurance.com")
 
 
+PROFESSIONAL_MENU = '<summary class="nav-link">Professional</summary>'
+
+
 class PatientAccessNavigationTest(TestCase):
-    """Tests for the navigation dropdown including patient access."""
+    """The Professional menu in the header, which is a native <details>."""
 
     def setUp(self):
         self.client = Client()
 
-    def test_homepage_has_professional_dropdown(self):
-        """Test that the homepage has the Professional dropdown."""
+    def test_homepage_has_the_professional_menu(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        # Check for Bootstrap dropdown markup
-        self.assertContains(response, "dropdown")
-        self.assertContains(response, "Professional")
+        self.assertContains(response, PROFESSIONAL_MENU)
 
-    def test_dropdown_contains_patient_access_link(self):
-        """Test that the dropdown contains Patient Access link."""
+    def test_the_professional_menu_holds_patient_access(self):
         response = self.client.get("/")
         self.assertContains(response, reverse("patient_access"))
         self.assertContains(response, "Patient &amp; Market Access")
 
-    def test_dropdown_contains_practices_link(self):
-        """Test that the dropdown contains Practices & Hospitals link."""
+    def test_the_professional_menu_holds_practices(self):
         response = self.client.get("/")
+        self.assertContains(response, reverse("pro_version"))
         self.assertContains(response, "Practices &amp; Hospitals")
 
-    def test_patient_access_page_has_dropdown(self):
-        """Test that the patient access page also has the dropdown."""
+    def test_patient_access_page_has_the_same_menu(self):
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "dropdown")
-        self.assertContains(response, "professionalDropdown")
+        self.assertContains(response, PROFESSIONAL_MENU)
 
-    def test_dropdown_has_correct_bootstrap_attributes(self):
-        """Test that the dropdown has correct Bootstrap 5 attributes."""
+    def test_the_menu_opens_without_bootstraps_javascript(self):
+        """A <details> opens by itself. The Bootstrap dropdown it replaced
+        needed bootstrap.bundle.min.js from a CDN before it would respond,
+        so a blocked or slow script left it dead. None of those hooks may
+        come back."""
         response = self.client.get("/")
-        self.assertContains(response, 'data-bs-toggle="dropdown"')
-        self.assertContains(response, 'aria-expanded="false"')
+        self.assertContains(response, '<details class="fhi-nav-group">')
+        self.assertNotContains(response, 'data-bs-toggle="dropdown"')
+        self.assertNotContains(response, "dropdown-toggle")
 
 
 class PatientAccessAccessibilityTest(TestCase):
@@ -246,11 +247,13 @@ class PatientAccessAccessibilityTest(TestCase):
         self.assertIn("<h1", content)
         self.assertIn("<h2", content)
 
-    def test_dropdown_has_aria_attributes(self):
-        """Test that the dropdown has proper ARIA attributes."""
+    def test_the_menu_is_a_native_disclosure(self):
+        """<details>/<summary> is a button with an open and closed state
+        to a screen reader with no ARIA written by hand, which is what the
+        aria-expanded and aria-labelledby on the old dropdown were for."""
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "aria-labelledby")
-        self.assertContains(response, "aria-expanded")
+        self.assertContains(response, '<details class="fhi-nav-group">')
+        self.assertContains(response, PROFESSIONAL_MENU)
 
 
 class PatientAccessMetadataTest(TestCase):

@@ -102,7 +102,7 @@
     </script>
 </head>
 
-<body id="top" data-spy="scroll" data-target=".navbar-collapse" data-offset="50">
+<body id="top">
   <!-- Skip link for keyboard navigation (accessibility) -->
   <a href="#main-content" class="skip-link">Skip to main content</a>
 <!--  <div class="betaribbon"><a href="https://inc42.com/glossary/alpha-release-beta-release/#:~:text=An%20alpha%20release%20is%20an,caught%20during%20the%20previous%20tests.">Alpha</a> <a href="{% url 'contact' %}">Feedback welcome</a></div>-->
@@ -118,34 +118,69 @@
                 <img src="{% static '/images/better-logo-150.png' %}" alt="Fight Health Insurance" class="img-fluid logo" width="150" height="150">
             </a>
 
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar"
-                aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
+            <!-- The menu is a <details>, not a Bootstrap collapse, and each
+                 dropdown is one too. Native HTML opens and closes these with
+                 no JavaScript at all, which is the point: the nav used to
+                 need bootstrap.bundle.min.js from a CDN before it would
+                 respond, so a blocked or slow script left the toggle and the
+                 dropdowns dead with nothing to click. Keyboard and screen
+                 readers get open/closed state for free. -->
+            <details class="fhi-nav" id="navbar" open>
+                <summary class="fhi-nav-toggle" aria-label="Menu">
+                    <span class="navbar-toggler-icon"></span>
+                    <span class="fhi-nav-toggle-word">Menu</span>
+                </summary>
 
-            <!-- MENU LINKS -->
-            <div class="collapse navbar-collapse justify-content-end" id="navbar">
-                <ul class="nav navbar-nav navbar-right">
-                    <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>
-                    <li class="nav-item"><a href="{% url 'explain_denial' %}" class="nav-link">Explain Denial</a></li>
-                    <li class="nav-item"><a href="{% url 'understand_policy' %}" class="nav-link">Understand Policy</a></li>
-                    <li class="nav-item"><a href="{% url 'about-ai' %}" class="nav-link">About Our AI</a></li>
-                    <li class="nav-item"><a href="{% url 'how-to-help' %}" class="nav-link">How to Help</a></li>
-                    <li class="nav-item"><a href="{% url 'other-resources' %}" class="nav-link">Resources/Blogs</a></li>
-		            <li class="nav-item"><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Remove Your Data</a></li>
-        		    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" id="professionalDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            Professional
-                        </a>
-                        <ul class="dropdown-menu" aria-labelledby="professionalDropdown">
-                            <li><a class="dropdown-item" href="{% url 'pro_version' %}">Practices &amp; Hospitals</a></li>
-                            <li><a class="dropdown-item" href="{% url 'patient_access' %}">Patient &amp; Market Access</a></li>
-                        </ul>
+                <ul class="fhi-nav-list">
+                    <li><a href="{% url 'about' %}" class="nav-link">About</a></li>
+                    <li><a href="{% url 'explain_denial' %}" class="nav-link">Explain Denial</a></li>
+                    <li><a href="{% url 'understand_policy' %}" class="nav-link">Explain Policy</a></li>
+
+                    <li>
+                        <details class="fhi-nav-group">
+                            <summary class="nav-link">Resources</summary>
+                            <ul class="fhi-nav-submenu">
+                                <li><a href="{% url 'other-resources' %}">Guides</a></li>
+                                <li><a href="{% url 'blog' %}">Blog</a></li>
+                                <li><a href="{% url 'how-to-help' %}">How to help</a></li>
+                            </ul>
+                        </details>
                     </li>
-            <li class="nav-item appointment-btn"><a href="{% url 'scan' %}">Generate Appeal</a></li>
-                    
+
+                    <li><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Delete Data</a></li>
+
+                    <li>
+                        <details class="fhi-nav-group">
+                            <summary class="nav-link">Professional</summary>
+                            <ul class="fhi-nav-submenu">
+                                <li><a href="{% url 'pro_version' %}">Practices &amp; Hospitals</a></li>
+                                <li><a href="{% url 'patient_access' %}">Patient &amp; Market Access</a></li>
+                            </ul>
+                        </details>
+                    </li>
+
+                    <li class="fhi-nav-cta"><a href="{% url 'scan' %}">Generate Appeal</a></li>
                 </ul>
-            </div>
+            </details>
+            <script>
+              // The menu is open in the markup because a closed <details>
+              // renders nothing whatever CSS says, and desktop hides the
+              // toggle: without this a desktop would have no nav. Phones
+              // start closed. If this never runs, the menu is open, which
+              // is a tall header rather than a missing one.
+              (function () {
+                var menu = document.getElementById('navbar');
+                if (!menu) { return; }
+                var wide = window.matchMedia('(min-width: 992px)');
+                if (!wide.matches) { menu.open = false; }
+                // Crossing the breakpoint either way: a tablet turned to
+                // portrait gets a closed menu behind the toggle, turned back
+                // it gets the open row again.
+                function follow(change) { menu.open = change.matches; }
+                if (wide.addEventListener) { wide.addEventListener('change', follow); }
+                else { wide.addListener(follow); }
+              })();
+            </script>
 
         </div>
     </section>
@@ -166,6 +201,13 @@
     {% endblock foot-roll %}
     <!-- ***** Footer Start ***** -->
     <!-- FOOTER -->
+    <!-- Chat left the nav and became this. One door, in the corner, on
+         every page, rather than a ninth thing competing in the header. -->
+    <a href="{% url 'chat' %}" class="fhi-chat-button" id="fhi-chat-button" aria-label="Chat">
+        <span aria-hidden="true">&#128172;</span>
+        <span class="fhi-chat-button-word">Chat</span>
+    </a>
+
     <footer data-stellar-background-ratio="5" style="text-align: center;">
         <div class="container">
             <div class="row">
@@ -173,6 +215,7 @@
                         <div class="footer-link">
                             <a href="{% url 'root' %}">Home</a>
                             <a href="{% url 'about' %}">About Us</a>
+                            <a href="{% url 'about-ai' %}">About Our AI</a>
                             <a href="{% url 'contact' %}">Contact</a>
                             <a href="{% url 'tos' %}">Terms of Service</a>
                             <a href="{% url 'remove_data' %}">Delete your Data</a>

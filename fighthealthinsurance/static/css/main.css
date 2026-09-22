@@ -365,116 +365,22 @@ header span i {
     border: none;
     margin-bottom: 0;
     padding: var(--fhi-space-3);
+    /* The open menu has to paint above the page, and it did not.
+       jquery.sticky wraps the header and freezes that wrapper at the closed
+       height, so an opened menu overhangs the page rather than pushing it
+       down; and .hero-inner carries a backdrop-filter, which makes it a
+       stacking context at the z-index:0 level. With no z-index here the two
+       sit on the same level and DOM order decides, so the hero, being later,
+       covered the menu. Measured on a phone: two of the nine links could be
+       tapped, and Resources was not one of them. That is the "Resources
+       doesn't always work" report, and it is intermittent because it depends
+       on whether the page behind has a hero at all.
+
+       1030 is Bootstrap's sticky layer. The site banner sets 1031 on purpose
+       and still wins. */
+    position: relative;
+    z-index: 1030;
 }
-
-.navbar-default .navbar-brand {
-    color: #393939;
-    font-weight: 500;
-}
-
-.navbar-default .navbar-brand .fa {
-    color: #a5c422;
-}
-
-.navbar-default .navbar-nav li.appointment-btn {
-    margin: var(--fhi-space-1) 0 0 var(--fhi-space-5);
-}
-
-/* The nav call to action is the small size: it sits in a row of links, not in
-   the page. The !important flags are not decoration, they are what it takes
-   to beat `.navbar-default .navbar-nav li a`, which sets 12px type and 20px
-   side padding with !important of its own. inline-flex is what lets the
-   height apply at all, since the anchor is otherwise an inline box. */
-.navbar-default .navbar-nav li.appointment-btn a {
-    /* The same sweep every other brand button wears, so the call to action in
-       the nav reads as the small version of the one on the page rather than
-       as a differently coloured control that happens to sit nearby. */
-    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
-    background-size: 200% auto;
-    background-position: left center;
-    transition: background-position 0.3s;
-    border-radius: 3px;
-    color: var(--fhi-btn-ink) !important;
-    font-weight: 700;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: var(--fhi-btn-font-sm) !important;
-    line-height: 1.5;
-    min-height: var(--fhi-btn-height-sm);
-    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm)!important;
-}
-
-/* The sweep is twice the width of the button, so moving it is what draws the
-   dark end across and turns the fill over. What was here before was #4267b2,
-   Facebook's blue, left in by the bought theme: the site's main call to
-   action turned blue when a pointer touched it. */
-.navbar-default .navbar-nav li.appointment-btn a:hover {
-    background-position: right center;
-    color: var(--fhi-btn-ink) !important;
-}
-
-.navbar-default .navbar-nav li.appointment-btn a:focus-visible {
-    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
-    outline: 3px solid var(--fhi-green-deep);
-    outline-offset: 3px;
-}
-
-.navbar-default .navbar-nav li a {
-    color: #555555 !important;
-    font-size: 15px !important;
-    font-weight: 500 !important;
-    padding-right: var(--fhi-space-5) !important;
-    padding-left: var(--fhi-space-5) !important;
-    /* 44px is the smallest target a thumb hits reliably, and one of these
-       rows is Remove Your Data. min-height is what makes the row 44px;
-       display is here because min-height does not apply to a plain inline
-       box, and the Generate Appeal anchor (li.appointment-btn a) carries no
-       Bootstrap class, so it is inline unless we say otherwise. inline-block
-       rather than flex on purpose: the phone breakpoint further down this
-       file forces display:inline-block !important on this same selector, so
-       a flex box here would be dead on exactly the screens this is for, and
-       it would also turn Bootstrap's .dropdown-toggle::after caret into a
-       flex item on desktop. */
-    display: inline-block;
-    min-height: 44px;
-    -webkit-transition: all ease-in-out 0.4s !important;
-    transition: all ease-in-out 0.4s !important;
-}
-
-.navbar-default .navbar-nav>li a:hover {
-    color: #393939 !important;
-}
-
-.navbar-default .navbar-nav>li>a:hover,
-.navbar-default .navbar-nav>li>a:focus {
-    color: #555555;
-    background-color: transparent;
-}
-
-.navbar-default .navbar-nav>.active>a,
-.navbar-default .navbar-nav>.active>a:hover,
-.navbar-default .navbar-nav>.active>a:focus {
-    color: #393939;
-    background-color: transparent;
-}
-
-.navbar-default .navbar-toggle {
-    border: none;
-    padding-top: var(--fhi-space-3);
-}
-
-.navbar-default .navbar-toggle .icon-bar {
-    background: #393939;
-    border-color: transparent;
-}
-
-.navbar-default .navbar-toggle:hover,
-.navbar-default .navbar-toggle:focus {
-    background-color: transparent;
-}
-
-
 
 /*---------------------------------------
       HOME
@@ -1082,11 +988,7 @@ footer a:hover {
 	padding-top: 0;
     }
 
-    .navbar-default .navbar-nav li a {
-	padding-right: var(--fhi-space-4) !important;
-	padding-left: var(--fhi-space-4) !important;
     }
-}
 
 @media only screen and (max-width: 992px) {
     .slider .item {
@@ -1109,21 +1011,6 @@ footer a:hover {
 }
 
 @media only screen and (max-width: 767px) {
-
-    .navbar-default .navbar-collapse,
-    .navbar-default .navbar-form {
-	border-color: transparent;
-    }
-
-    .navbar-default .navbar-nav li.appointment-btn {
-	margin-left: var(--fhi-space-4);
-    }
-
-    .navbar-default .navbar-nav li a {
-	display: inline-block !important;
-	padding-top: var(--fhi-space-2) !important;
-	padding-bottom: var(--fhi-space-2) !important;
-    }
 
     .news-sidebar {
 	margin-top: 2em;

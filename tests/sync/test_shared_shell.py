@@ -230,7 +230,9 @@ def full_viewport_overlay_classes():
             width = declared(body, "width") or ""
             height = declared(body, "height") or ""
             covers_width = width in {"100%", "100vw"} or declared(body, "inset") == "0"
-            covers_height = height in {"100%", "100vh"} or declared(body, "inset") == "0"
+            covers_height = (
+                height in {"100%", "100vh"} or declared(body, "inset") == "0"
+            )
             if covers_width and covers_height:
                 overlays.update(re.findall(r"\.([A-Za-z0-9_-]+)", selector))
     return overlays
@@ -379,7 +381,9 @@ class NothingCoversThePageTest(TestCase):
         # font lands. 'sans-serif' on its own is the browser's default, not
         # a fallback anyone chose.
         body = dict(css_rules(MAIN_CSS))["body"]
-        stack = [part.strip() for part in (declared(body, "font-family") or "").split(",")]
+        stack = [
+            part.strip() for part in (declared(body, "font-family") or "").split(",")
+        ]
         self.assertGreater(
             len(stack), 2, f"body has no real fallback stack behind Poppins: {stack}"
         )
@@ -401,9 +405,7 @@ class ShellAssetWeightTest(TestCase):
         response = self.client.get("/favicon.ico")
         self.assertEqual(response.status_code, 302)
         size = self._static_bytes(response["Location"])
-        self.assertLess(
-            size, 5 * 1024, f"/favicon.ico redirects to a {size} byte file"
-        )
+        self.assertLess(size, 5 * 1024, f"/favicon.ico redirects to a {size} byte file")
 
     def test_navbar_logo_is_small_and_requested_at_its_display_size(self):
         home = self.client.get(reverse("root")).content.decode()
@@ -417,9 +419,7 @@ class ShellAssetWeightTest(TestCase):
         # .logo renders the mark in a 75px box; twice that covers a 2x screen
         # and anything beyond it is downloaded for nothing.
         box = to_px(declared(dict(css_rules(CUSTOM_CSS))[".logo"], "width"))
-        self.assertLessEqual(
-            width, box * 2, f"a {width}px image in a {box:.0f}px box"
-        )
+        self.assertLessEqual(width, box * 2, f"a {width}px image in a {box:.0f}px box")
 
 
 class ShellTypographyTest(TestCase):
@@ -439,7 +439,9 @@ class ShellTypographyTest(TestCase):
     def test_the_bold_weight_asked_for_is_the_weight_requested(self):
         requested = set()
         source = BASE_HTML.read_text(encoding="utf-8")
-        for href in re.findall(r'href="(https://fonts\.googleapis\.com/[^"]+)"', source):
+        for href in re.findall(
+            r'href="(https://fonts\.googleapis\.com/[^"]+)"', source
+        ):
             family = re.search(r"family=Poppins:([0-9,]+)", href)
             if family:
                 requested.update(family.group(1).split(","))
@@ -491,8 +493,18 @@ class ShellTypographyTest(TestCase):
         self.assertEqual(offenders, [], f"inputs smaller than 1rem: {offenders}")
 
 
+# The two rules that make a nav row: the seven top-level items and the two
+# group summaries share one, the five links under Resources and Professional
+# have their own. Both live in custom.css since the header stopped being
+# Bootstrap's navbar.
+NAV_ROW_RULES = (
+    ".fhi-nav-list > li > .nav-link, .fhi-nav-group > summary.nav-link",
+    ".fhi-nav-submenu a",
+)
+
+
 class ShellTapTargetTest(TestCase):
-    """Nine stacked nav rows, one of which is Remove Your Data."""
+    """Twelve nav rows once both groups are open, one of which is Delete Data."""
 
     def _rule(self, path, selector):
         for found, body in css_rules(path):
@@ -501,67 +513,63 @@ class ShellTapTargetTest(TestCase):
         self.fail(f"{selector} is gone from {path.name}")
 
     def test_nav_rows_are_at_least_44px_tall(self):
-        body = self._rule(MAIN_CSS, ".navbar-default .navbar-nav li a")
-        self.assertGreaterEqual(to_px(declared(body, "min-height") or "0px"), 44)
-        self.assertGreaterEqual(to_px(declared(body, "font-size") or "0px"), 15)
-
-    def test_nav_rows_are_still_44px_on_a_phone_and_on_a_desktop(self):
-        """The tap target has to survive the media queries below it.
-
-        min-height is what makes the row 44px, and it only applies to a box
-        type that has a height at all: a non-replaced inline box ignores it.
-        Two things make that a live question here rather than a pedantic one.
-        main.css re-declares this selector inside @media (max-width: 767px)
-        with display:inline-block !important, so a display chosen for desktop
-        is simply absent on a phone. And li.appointment-btn a, the Generate
-        Appeal button, carries no Bootstrap class of its own, so with no
-        display from this rule it is a plain inline anchor and the 44px never
-        lands on the biggest call to action in the navbar.
-
-        _rule() above cannot see any of this -- it returns the first selector
-        match and never the override -- so this one resolves the cascade at a
-        phone width and a desktop width instead.
-        """
-        selector = ".navbar-default .navbar-nav li a"
-        for width in (390, 1280):
-            min_height = effective(MAIN_CSS, selector, width, "min-height")
-            self.assertIsNotNone(
-                min_height, f"{width}px: nav links declare no min-height"
+        for selector in NAV_ROW_RULES:
+            body = self._rule(CUSTOM_CSS, selector)
+            self.assertGreaterEqual(
+                to_px(declared(body, "min-height") or "0px"), 44, selector
             )
             self.assertGreaterEqual(
-                to_px(min_height),
-                44,
-                f"{width}px: nav rows are only {min_height} tall",
+                to_px(declared(body, "font-size") or "0px"), 15, selector
             )
-            display = effective(MAIN_CSS, selector, width, "display")
-            self.assertIn(
-                display,
-                MIN_HEIGHT_APPLIES_TO,
-                f"{width}px: nav links resolve to display:{display}, which a "
-                "min-height does not apply to, so the 44px row never lands",
-            )
+
+    def test_nav_rows_are_still_44px_on_a_phone_and_on_a_desktop(self):
+        """The tap target has to survive the media query below it.
+
+        min-height only applies to a box type that has a height at all: a
+        non-replaced inline box ignores it. custom.css re-lays the whole
+        list inside @media (min-width: 992px), turning the column into a
+        row and floating the submenus, so this resolves the cascade at a
+        phone width and a desktop width rather than reading the first
+        rule and trusting it.
+        """
+        for selector in NAV_ROW_RULES:
+            for width in (390, 1280):
+                min_height = effective(CUSTOM_CSS, selector, width, "min-height")
+                self.assertIsNotNone(
+                    min_height, f"{width}px: {selector} declares no min-height"
+                )
+                self.assertGreaterEqual(
+                    to_px(min_height),
+                    44,
+                    f"{width}px: {selector} rows are only {min_height} tall",
+                )
+                display = effective(CUSTOM_CSS, selector, width, "display")
+                self.assertIn(
+                    display,
+                    MIN_HEIGHT_APPLIES_TO,
+                    f"{width}px: {selector} resolves to display:{display}, "
+                    "which a min-height does not apply to, so the 44px row "
+                    "never lands",
+                )
 
     def test_a_nav_link_is_the_same_kind_of_box_at_every_width(self):
         """So that a fix checked on one screen is true on the other.
 
-        This is the trap the rule above walked into once already. A display
-        written into the base rule and then contradicted by
-        display:inline-block !important inside @media (max-width: 767px)
-        reads, in the file, as though it applied everywhere, while on a
-        phone it applies nowhere. Keeping one box type across the
-        breakpoints is what makes an eyeball check on a laptop worth
-        anything on a phone.
+        The old navbar walked into this once: a display written into the
+        base rule and contradicted by display:inline-block !important
+        inside a phone media query read, in the file, as though it applied
+        everywhere, while on a phone it applied nowhere.
         """
-        selector = ".navbar-default .navbar-nav li a"
-        phone = effective(MAIN_CSS, selector, 390, "display")
-        desktop = effective(MAIN_CSS, selector, 1280, "display")
-        self.assertEqual(
-            phone,
-            desktop,
-            f"nav links are display:{desktop} on a desktop and display:{phone} "
-            "on a phone, so whichever one was reasoned about is wrong on the "
-            "other",
-        )
+        for selector in NAV_ROW_RULES:
+            phone = effective(CUSTOM_CSS, selector, 390, "display")
+            desktop = effective(CUSTOM_CSS, selector, 1280, "display")
+            self.assertEqual(
+                phone,
+                desktop,
+                f"{selector} is display:{desktop} on a desktop and "
+                f"display:{phone} on a phone, so whichever one was reasoned "
+                "about is wrong on the other",
+            )
 
     def test_footer_rows_are_at_least_44px_tall(self):
         body = self._rule(MAIN_CSS, ".footer-link a")

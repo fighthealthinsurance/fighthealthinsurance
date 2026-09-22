@@ -524,9 +524,7 @@ _BLOCK_CLOSE = re.compile(r"\{%\s*endblock[^%]*%\}")
 _TAG = re.compile(r"<\s*(/?)\s*([a-zA-Z][\w-]*)([^>]*?)(/?)>", re.S)
 _ATTR_IN_TAG = re.compile(r"([\w:@-]+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s\"'>]+)")
 _CLASS_NAME = re.compile(r"-?[A-Za-z_][\w-]*")
-_BRANCH = re.compile(
-    r"\{%\s*if\b.*?%\}(.*?)\{%\s*endif\s*%\}", re.S
-)
+_BRANCH = re.compile(r"\{%\s*if\b.*?%\}(.*?)\{%\s*endif\s*%\}", re.S)
 _BRANCH_SPLIT = re.compile(r"\{%\s*(?:elif\b.*?|else)\s*%\}", re.S)
 
 
@@ -787,7 +785,11 @@ def selector_matches(
 
 def selector_states(steps: Sequence[Step]) -> frozenset[str]:
     """The states the reader has to be in for this selector to paint."""
-    return frozenset().union(*(compound.states for _, compound in steps)) if steps else frozenset()
+    return (
+        frozenset().union(*(compound.states for _, compound in steps))
+        if steps
+        else frozenset()
+    )
 
 
 class TemplateDom:
@@ -937,9 +939,7 @@ class Painter:
         ] = []
         for rule in rules:
             important_colour = [
-                important
-                for prop, _, important in rule.declarations
-                if prop == "color"
+                important for prop, _, important in rule.declarations if prop == "color"
             ]
             for selector in rule.selectors:
                 steps = split_selector(selector)
@@ -956,13 +956,15 @@ class Painter:
                     self.foregrounds.append(
                         (steps, states, (int(important),) + weight, pseudo)
                     )
-        self._cache: dict[tuple[int, Optional[frozenset[str]], frozenset[str]], list[Ground]] = {}
+        self._cache: dict[
+            tuple[int, Optional[frozenset[str]], frozenset[str]], list[Ground]
+        ] = {}
 
     # -- the states a reader can put an element into ----------------------
 
-    def states_on(self, node: Node, variant: Optional[frozenset[str]]) -> list[
-        frozenset[str]
-    ]:
+    def states_on(
+        self, node: Node, variant: Optional[frozenset[str]]
+    ) -> list[frozenset[str]]:
         """Resting, plus every state the stylesheets repaint this element in."""
         found = {frozenset()}
         for steps, states, _ in self.backgrounds:
@@ -1046,8 +1048,10 @@ class Painter:
         A ::before rule and the rule on the element it hangs off colour
         different boxes, so neither overrides the other.
         """
-        if not pseudo and not active and "color" in _split_property_names(
-            node.inline_style
+        if (
+            not pseudo
+            and not active
+            and "color" in _split_property_names(node.inline_style)
         ):
             return False
         for steps, states, other, other_pseudo in self.foregrounds:
@@ -1057,7 +1061,9 @@ class Painter:
                 return False
         return True
 
-    def grounds_under(self, base: Sequence[Ground], own: Sequence[Layer]) -> list[Ground]:
+    def grounds_under(
+        self, base: Sequence[Ground], own: Sequence[Layer]
+    ) -> list[Ground]:
         """The grounds for a box that paints its own fill over the element."""
         if not own:
             return list(base)
@@ -1331,14 +1337,10 @@ EXCEPTIONS: tuple[Exempt, ...] = (
         WHITE_ON_BRAND_LIME,
     ),
     Exempt("main.css", ".section-btn", WHITE_ON_BRAND_LIME),
+    Exempt("custom.css", ".fhi-nav-cta a", WHITE_ON_BRAND_LIME),
     Exempt(
-        "main.css",
-        ".navbar-default .navbar-nav li.appointment-btn a",
-        WHITE_ON_BRAND_LIME,
-    ),
-    Exempt(
-        "main.css",
-        ".navbar-default .navbar-nav li.appointment-btn a:hover",
+        "custom.css",
+        ".fhi-nav-cta a:hover, .fhi-nav-cta a:focus, .fhi-nav-cta a:active",
         WHITE_ON_BRAND_LIME,
     ),
 )
@@ -1417,11 +1419,6 @@ UNREACHED: tuple[Exempt, ...] = (
     Exempt("main.css", "header a", BOUGHT_THEME),
     Exempt("main.css", "header span", BOUGHT_THEME),
     Exempt("main.css", "header span i", BOUGHT_THEME),
-    Exempt("main.css", ".navbar-default .navbar-brand", BOUGHT_THEME),
-    Exempt("main.css", ".navbar-default .navbar-brand .fa", BOUGHT_THEME),
-    Exempt("main.css", ".navbar-default .navbar-nav>.active>a", BOUGHT_THEME),
-    Exempt("main.css", ".navbar-default .navbar-nav>.active>a:hover", BOUGHT_THEME),
-    Exempt("main.css", ".navbar-default .navbar-nav>.active>a:focus", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a:visited", BOUGHT_THEME),
     Exempt("main.css", ".team-contact-info a", BOUGHT_THEME),
@@ -1774,9 +1771,10 @@ def test_the_inks_recorded_beside_the_token_measure_what_they_claim() -> None:
         assert colour is not None, ink
         for claimed, stop in zip((on_bright, on_dark), stops):
             actual = contrast_ratio(colour[:3], stop)
-            assert round(actual, 2) == float(claimed), (
-                "the table says %s is %s:1 on #%02x%02x%02x; it is %.2f:1"
-                % ((ink, claimed) + stop + (actual,))
+            assert round(actual, 2) == float(
+                claimed
+            ), "the table says %s is %s:1 on #%02x%02x%02x; it is %.2f:1" % (
+                (ink, claimed) + stop + (actual,)
             )
     named = {ink.lower() for ink, _, _ in recorded}
     for candidate in DARK_INK_CANDIDATES:
@@ -1818,11 +1816,15 @@ def test_the_white_label_is_excused_by_a_dated_decision() -> None:
             "%s now measures above %.1f:1 on the lime, but these brand rules "
             "still fail, so something other than the token is writing their "
             "label:\n  %s"
-            % (INK_TOKEN, MINIMUM_RATIO, "\n  ".join("%s  %s" % k for k in brand_failing))
+            % (
+                INK_TOKEN,
+                MINIMUM_RATIO,
+                "\n  ".join("%s  %s" % k for k in brand_failing),
+            )
         )
-        assert not [e for e in active_exceptions() if e.reason in BRAND_INK_REASONS], (
-            "the ink was swapped and the white-on-lime excuses are still live"
-        )
+        assert not [
+            e for e in active_exceptions() if e.reason in BRAND_INK_REASONS
+        ], "the ink was swapped and the white-on-lime excuses are still live"
         return
     assert brand_failing, (
         "no brand button measures as failing any more, yet %s still measures "
@@ -1904,9 +1906,14 @@ def test_hover_still_slides_the_fill_across_the_button() -> None:
     rules = load_rules()
     variables = custom_properties(rules)
     for name in GRADIENT_BUTTON_CLASSES:
-        resting = [rule for rule in _rules_on(rules, name, "") if _sweep_stops(rule, variables)]
+        resting = [
+            rule for rule in _rules_on(rules, name, "") if _sweep_stops(rule, variables)
+        ]
         assert resting, ".%s does not carry the sweep any more" % name
-        sizes = {_last_declaration(rule, "background-size") for rule in _rules_on(rules, name, "")}
+        sizes = {
+            _last_declaration(rule, "background-size")
+            for rule in _rules_on(rules, name, "")
+        }
         assert "200% auto" in sizes, (
             ".%s no longer paints a fill twice its own width, so there is "
             "nothing for hover to slide" % name
@@ -1924,7 +1931,10 @@ def test_focus_on_a_gradient_button_flips_the_gradient() -> None:
     rules = load_rules()
     variables = custom_properties(rules)
     swap = {}
-    for one, other in (("--fhi-btn-fill-a", "--fhi-btn-fill-b"), ("--fhi-btn-fill-b", "--fhi-btn-fill-a")):
+    for one, other in (
+        ("--fhi-btn-fill-a", "--fhi-btn-fill-b"),
+        ("--fhi-btn-fill-b", "--fhi-btn-fill-a"),
+    ):
         here, there = parse_colour(variables[one]), parse_colour(variables[other])
         assert here is not None and there is not None
         swap[here] = there
@@ -1945,15 +1955,13 @@ def test_focus_on_a_gradient_button_flips_the_gradient() -> None:
             "flipping the gradient" % name
         )
         wanted = [swap[stop] for stop in resting[-1]]
-        assert focused[-1] == wanted, (
-            ".%s:focus-visible paints %s; flipping the resting sweep %s gives "
-            "%s"
-            % (
-                name,
-                ["#%02x%02x%02x" % stop[:3] for stop in focused[-1]],
-                ["#%02x%02x%02x" % stop[:3] for stop in resting[-1]],
-                ["#%02x%02x%02x" % stop[:3] for stop in wanted],
-            )
+        assert (
+            focused[-1] == wanted
+        ), ".%s:focus-visible paints %s; flipping the resting sweep %s gives " "%s" % (
+            name,
+            ["#%02x%02x%02x" % stop[:3] for stop in focused[-1]],
+            ["#%02x%02x%02x" % stop[:3] for stop in resting[-1]],
+            ["#%02x%02x%02x" % stop[:3] for stop in wanted],
         )
 
 
@@ -2036,14 +2044,17 @@ def test_the_controls_that_carry_no_gradient_keep_a_ring() -> None:
         for selector in rule.selectors:
             if ":focus-visible" in selector:
                 rings.add(_normalise(selector))
-    for wanted in (".form-control:focus-visible", ".form-select:focus-visible", ".form-check-input:focus-visible"):
+    for wanted in (
+        ".form-control:focus-visible",
+        ".form-select:focus-visible",
+        ".form-check-input:focus-visible",
+    ):
         assert any(wanted in ring for ring in rings), (
             "%s lost its focus ring; only the gradient buttons trade the ring "
             "for a flip" % wanted
         )
     assert any(ring == ":focus-visible" for ring in rings), (
-        "the site-wide :focus-visible ring is gone, so a plain link has "
-        "nothing"
+        "the site-wide :focus-visible ring is gone, so a plain link has " "nothing"
     )
 
 
@@ -2058,7 +2069,7 @@ ROOT_FONT_PX = 16.0
 BUTTON_SIZES = ("sm", "md", "lg")
 # Where each size is applied, and the role that decides it.
 SIZE_ROLES = (
-    ("main.css", ".navbar-default .navbar-nav li.appointment-btn a", "sm"),
+    ("custom.css", ".fhi-nav-cta a", "sm"),
     ("custom.css", ".primary-cta", "lg"),
     ("custom.css", ".hero-primary-cta", "lg"),
     ("custom.css", ".fhi-btn-sm", "sm"),
@@ -2115,9 +2126,9 @@ def test_a_buttons_size_comes_from_its_role_not_from_a_literal() -> None:
     by_selector: dict[tuple[str, str], list[Rule]] = {}
     for rule in rules:
         for selector in (rule.selector,) + tuple(rule.selectors):
-            by_selector.setdefault(
-                (rule.stylesheet, _normalise(selector)), []
-            ).append(rule)
+            by_selector.setdefault((rule.stylesheet, _normalise(selector)), []).append(
+                rule
+            )
     for stylesheet, selector, size in SIZE_ROLES:
         found = by_selector.get((stylesheet, _normalise(selector)))
         assert found, "%s  %s is not in the stylesheet any more" % (
@@ -2161,9 +2172,11 @@ def test_the_primary_action_on_a_page_is_marked_large() -> None:
         # The outline buttons wear the brand too: white or transparent fill
         # with a lime edge, so they are measured differently from the filled
         # ones but take their size from the same scale.
-        assert node.classes & (BRAND_BUTTON_CLASSES | OUTLINE_BUTTON_CLASSES), (
-            "%s in %s is marked large but is not one of our buttons"
-            % (node.ident or node.tag, node.template)
+        assert node.classes & (
+            BRAND_BUTTON_CLASSES | OUTLINE_BUTTON_CLASSES
+        ), "%s in %s is marked large but is not one of our buttons" % (
+            node.ident or node.tag,
+            node.template,
         )
 
 
@@ -2230,9 +2243,9 @@ def test_the_focus_ring_outranks_bootstraps_button_reset() -> None:
     for selector, outline in winners:
         colour = next(iter(colours_in(outline)), None)
         assert colour is not None, selector
-        assert contrast_ratio(colour[:3], WHITE) >= 3.0, (
-            "%s draws its ring in %s, under 3:1 on white" % (selector, outline)
-        )
+        assert (
+            contrast_ratio(colour[:3], WHITE) >= 3.0
+        ), "%s draws its ring in %s, under 3:1 on white" % (selector, outline)
 
 
 def test_nothing_switches_the_focus_ring_off() -> None:
@@ -2487,7 +2500,8 @@ def _spreading_shadows(rules: Sequence[Rule], name: str) -> list[tuple[str, str]
         if any(state in rule.selector for state in STATE_PSEUDO):
             continue
         if not any(
-            name in step[1].classes for selector in rule.selectors
+            name in step[1].classes
+            for selector in rule.selectors
             for step in split_selector(selector)[-1:]
         ):
             continue
@@ -2579,10 +2593,17 @@ def test_no_brand_button_takes_its_size_from_bootstrap() -> None:
                 continue
             for size in BOOTSTRAP_SIZE_CLASSES:
                 if size in classes:
-                    line = path.read_text(errors="replace")[: match.start()].count("\n") + 1
+                    line = (
+                        path.read_text(errors="replace")[: match.start()].count("\n")
+                        + 1
+                    )
                     offenders.append(
                         "%s:%d  %s"
-                        % (path.relative_to(TEMPLATE_DIR).as_posix(), line, match.group(1)[:70])
+                        % (
+                            path.relative_to(TEMPLATE_DIR).as_posix(),
+                            line,
+                            match.group(1)[:70],
+                        )
                     )
     assert not offenders, (
         "these brand buttons are sized by Bootstrap rather than by the scale. "
