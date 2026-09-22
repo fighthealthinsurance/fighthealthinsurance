@@ -1,11 +1,11 @@
-"""The header, after nine links became six.
+"""The header, after nine links became seven.
 
 The nav asked a person in the middle of a denial to choose between Chat,
 Explain Denial, Understand Policy, About Our AI, How to Help, Resources/Blogs,
 Remove Your Data, Professional and Generate Appeal. On a phone that is the
 whole first screen before any of the page.
 
-It is six now: Explain Denial, Explain Policy, Resources, Delete Data,
+It is seven now: About, Explain Denial, Explain Policy, Resources, Delete Data,
 Professional, and Generate Appeal as the one highlighted thing. Chat became a
 button in the corner on every page. About Our AI moved to the footer, which is
 why one of these tests checks the footer rather than the header: removing it
@@ -34,13 +34,14 @@ def _nav(html: str) -> str:
     return html[start : html.index("</details>", html.index("fhi-nav-cta"))]
 
 
-class TheNavIsSixThingsTest(TestCase):
+class TheNavIsSevenThingsTest(TestCase):
     def setUp(self):
         self.html = self.client.get(reverse("root")).content.decode()
 
-    def test_the_six_are_there_in_order(self):
+    def test_the_seven_are_there_in_order(self):
         nav = _nav(self.html)
         wanted = [
+            "About",
             "Explain Denial",
             "Explain Policy",
             "Resources",
@@ -50,6 +51,7 @@ class TheNavIsSixThingsTest(TestCase):
         ]
         found = [w for w in wanted if w in nav]
         self.assertEqual(found, wanted, "a nav item is missing")
+        self.assertIn(reverse("about"), nav, "About does not go to the about page")
 
         positions = [nav.index(w) for w in wanted]
         self.assertEqual(

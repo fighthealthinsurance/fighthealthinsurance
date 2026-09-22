@@ -22,6 +22,7 @@ DESKTOP = (1440, 900)
 PHONE = (390, 844)
 
 NAV_WORDS = (
+    "About",
     "Explain Denial",
     "Explain Policy",
     "Resources",

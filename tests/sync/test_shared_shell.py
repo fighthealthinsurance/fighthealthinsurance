@@ -493,7 +493,7 @@ class ShellTypographyTest(TestCase):
         self.assertEqual(offenders, [], f"inputs smaller than 1rem: {offenders}")
 
 
-# The two rules that make a nav row: the six top-level items and the two
+# The two rules that make a nav row: the seven top-level items and the two
 # group summaries share one, the five links under Resources and Professional
 # have their own. Both live in custom.css since the header stopped being
 # Bootstrap's navbar.
@@ -504,7 +504,7 @@ NAV_ROW_RULES = (
 
 
 class ShellTapTargetTest(TestCase):
-    """Eleven nav rows once both groups are open, one of which is Delete Data."""
+    """Twelve nav rows once both groups are open, one of which is Delete Data."""
 
     def _rule(self, path, selector):
         for found, body in css_rules(path):
