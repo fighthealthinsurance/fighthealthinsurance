@@ -977,8 +977,18 @@ class TestActor(Dev):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "TIMEOUT": 10,
             "NAME": dbname,
+            # In OPTIONS, which is the only place Django's SQLite backend
+            # looks: get_connection_params passes **settings_dict["OPTIONS"]
+            # to sqlite3.connect and ignores a top-level TIMEOUT entirely, so
+            # the 10 that used to sit up there never reached SQLite and the
+            # actual wait was sqlite3's own five-second default.
+            #
+            # It matters here because this configuration deliberately shares
+            # one file-based database between this process and the Ray actor
+            # processes, and SQLite allows a single writer. A writer that
+            # arrives mid-write should wait rather than raise.
+            "OPTIONS": {"timeout": 30},
             "TEST": {
                 "NAME": dbname,
             },

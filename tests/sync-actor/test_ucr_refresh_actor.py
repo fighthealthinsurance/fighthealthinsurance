@@ -34,6 +34,7 @@ class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
+        self._actors: list = []
         if not ray.is_initialized():
             environ = dict(os.environ)
             # TestActor (not Test) so the Ray worker process and the test
@@ -49,11 +50,29 @@ class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
             )
 
     def tearDown(self):
+        # Kill the actors before tearing the cluster down, and do it with
+        # no_restart because this actor carries max_restarts=-1.
+        #
+        # run() is a polling loop, and under the TestActor configuration it
+        # writes to a FILE-based SQLite database shared with this process
+        # (see the note in setUp). ray.shutdown() asks the cluster to go away
+        # but does not wait for the worker to die, so the loop could still be
+        # holding SQLite's single write lock while the next test class ran
+        # its own ORM writes. That is the "database is locked" failure this
+        # file has been producing in CI: not a slow machine, a loop nobody
+        # stopped.
+        for actor in getattr(self, "_actors", []):
+            try:
+                ray.kill(actor, no_restart=True)
+            except Exception:
+                pass
+        self._actors = []
         if ray.is_initialized():
             ray.shutdown()
 
     def test_run_method_starts_and_loops(self):
         actor = UCRRefreshActor.remote()
+        self._actors.append(actor)
 
         self.assertEqual("Hi", ray.get(actor.hello.remote()))
         actor.run.remote()
