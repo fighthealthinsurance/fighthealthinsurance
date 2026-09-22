@@ -1419,8 +1419,6 @@ UNREACHED: tuple[Exempt, ...] = (
     Exempt("main.css", "header a", BOUGHT_THEME),
     Exempt("main.css", "header span", BOUGHT_THEME),
     Exempt("main.css", "header span i", BOUGHT_THEME),
-    Exempt("main.css", ".navbar-default .navbar-brand", BOUGHT_THEME),
-    Exempt("main.css", ".navbar-default .navbar-brand .fa", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a:visited", BOUGHT_THEME),
     Exempt("main.css", ".team-contact-info a", BOUGHT_THEME),

@@ -2712,8 +2712,18 @@ textarea,
 
 @media (max-width: 575px) {
     /* On the narrowest screens the word goes and the mark stays, so the
-       button never sits on top of what somebody is reading. */
+       button never sits on top of what somebody is reading. The anchor
+       carries aria-label="Chat" so it keeps its name when the word is
+       hidden and the icon is aria-hidden. */
     .fhi-chat-button-word {
+        display: none;
+    }
+}
+
+@media print {
+    /* A fixed control has no place on paper, and the policy pages are the
+       ones people print. */
+    .fhi-chat-button {
         display: none;
     }
 }

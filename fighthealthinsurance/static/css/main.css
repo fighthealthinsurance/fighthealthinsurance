@@ -382,15 +382,6 @@ header span i {
     z-index: 1030;
 }
 
-.navbar-default .navbar-brand {
-    color: #393939;
-    font-weight: 500;
-}
-
-.navbar-default .navbar-brand .fa {
-    color: #a5c422;
-}
-
 /*---------------------------------------
       HOME
   -----------------------------------------*/

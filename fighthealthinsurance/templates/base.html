@@ -102,7 +102,7 @@
     </script>
 </head>
 
-<body id="top" data-spy="scroll" data-target=".navbar-collapse" data-offset="50">
+<body id="top">
   <!-- Skip link for keyboard navigation (accessibility) -->
   <a href="#main-content" class="skip-link">Skip to main content</a>
 <!--  <div class="betaribbon"><a href="https://inc42.com/glossary/alpha-release-beta-release/#:~:text=An%20alpha%20release%20is%20an,caught%20during%20the%20previous%20tests.">Alpha</a> <a href="{% url 'contact' %}">Feedback welcome</a></div>-->
@@ -169,6 +169,7 @@
               // is a tall header rather than a missing one.
               (function () {
                 var menu = document.getElementById('navbar');
+                if (!menu) { return; }
                 var wide = window.matchMedia('(min-width: 992px)');
                 if (!wide.matches) { menu.open = false; }
                 function reopen(change) { if (change.matches) { menu.open = true; } }
@@ -198,7 +199,7 @@
     <!-- FOOTER -->
     <!-- Chat left the nav and became this. One door, in the corner, on
          every page, rather than a ninth thing competing in the header. -->
-    <a href="{% url 'chat' %}" class="fhi-chat-button" id="fhi-chat-button">
+    <a href="{% url 'chat' %}" class="fhi-chat-button" id="fhi-chat-button" aria-label="Chat">
         <span aria-hidden="true">&#128172;</span>
         <span class="fhi-chat-button-word">Chat</span>
     </a>

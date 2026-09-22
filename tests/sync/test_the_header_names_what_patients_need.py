@@ -20,6 +20,14 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 
+def _static(*parts):
+    from pathlib import Path
+
+    from django.conf import settings
+
+    return Path(settings.BASE_DIR, "fighthealthinsurance", "static", *parts)
+
+
 def _nav(html: str) -> str:
     """Just the header, so a footer link cannot satisfy a nav assertion."""
     start = html.index('<details class="fhi-nav"')
@@ -91,6 +99,23 @@ class NothingInTheHeaderNeedsJavaScriptTest(TestCase):
         self.assertNotIn("data-bs-toggle", nav)
         self.assertNotIn("dropdown-toggle", nav)
         self.assertNotIn("navbar-collapse", nav)
+        # Nor anywhere else: the body carried Bootstrap 3 scrollspy attributes
+        # aimed at .navbar-collapse, and custom.js a click handler for it.
+        self.assertNotIn("data-spy", html)
+        custom_js = _static("js", "custom.js").read_text()
+        self.assertNotIn("navbar-collapse", custom_js)
+
+    def test_the_chat_button_keeps_its_name_and_stays_off_paper(self):
+        """Below 575px the word is hidden and the icon is aria-hidden, which
+        left an unnamed link; aria-label carries the name at every width.
+        And a fixed control has no place in a printed privacy policy."""
+        html = self.client.get("/").content.decode()
+        self.assertIn(
+            'class="fhi-chat-button" id="fhi-chat-button" aria-label="Chat"', html
+        )
+        css = _static("css", "custom.css").read_text()
+        printed = css[css.index("@media print") :]
+        self.assertIn(".fhi-chat-button", printed[: printed.index("}") + 1])
 
     def test_the_menu_is_open_in_the_markup_and_closed_on_phones_by_a_script(self):
         """A closed <details> renders nothing whatever CSS says, and desktop

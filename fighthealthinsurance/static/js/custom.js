@@ -2,12 +2,6 @@
 
   "use strict";
 
-    //Navigation Section
-    $('.navbar-collapse a').on('click',function(){
-      $(".navbar-collapse").collapse('hide');
-    });
-
-
     // Owl Carousel
     $('.owl-carousel').owlCarousel({
       animateOut: 'fadeOut',
