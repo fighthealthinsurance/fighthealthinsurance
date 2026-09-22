@@ -9,7 +9,13 @@ import time
 
 import ray
 from asgiref.sync import async_to_sync
-from loguru import logger
+
+# loguru is imported inside the methods below, not at module scope. Ray
+# pickles an actor class by value to send it to the cluster, so a module-level
+# ``logger`` travels with it, carrying whatever sinks the process has attached.
+# A stdlib logging.Handler owns a threading RLock, which does not pickle, and
+# the actor then cannot be created at all. See
+# tests/sync/test_actor_classes_survive_pickling.py.
 
 
 @ray.remote(max_restarts=-1, max_task_retries=2)
@@ -17,6 +23,8 @@ class DeniedItemsAnalysisActor:
     """Ray actor to process denied-items analysis jobs asynchronously."""
 
     def __init__(self) -> None:
+        from loguru import logger
+
         logger.info("Starting DeniedItemsAnalysisActor")
         time.sleep(1)
         # Initialize Django inside the actor (same pattern as the other

@@ -565,12 +565,20 @@ def dispatch_speculative_appeals(
             )
 
             actor = speculative_appeals_actor_ref.get
-            actor.prefetch_for_denial.remote(
-                denial_id,
-                force=force,
-                trigger=trigger,
-                confirmed_context=confirmed_context,
-            )
+            try:
+                actor.prefetch_for_denial.remote(
+                    denial_id,
+                    force=force,
+                    trigger=trigger,
+                    confirmed_context=confirmed_context,
+                )
+            except Exception:
+                # First use of the handle; see BaseActorRef.invalidate.
+                # Without this the fallback to a local thread becomes
+                # permanent for this process, and the durability the actor
+                # exists for is quietly gone.
+                speculative_appeals_actor_ref.invalidate()
+                raise
             logger.info(
                 f"speculative appeals[{trigger}]: dispatched denial {denial_id} "
                 f"to actor (force={force}, confirmed_context={confirmed_context})"

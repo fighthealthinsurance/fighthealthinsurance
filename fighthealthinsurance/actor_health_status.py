@@ -189,16 +189,11 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
                     results[actor_name]["kill_error"] = str(e)
 
                 # Reset the actor reference so the next .get builds a fresh
-                # handle. BaseActorRef caches the live handle in
-                # _actor_instance and the cached_property in __dict__["get"];
-                # both must be cleared or .get returns the dead handle.
-                actor_ref._actor_instance = None  # type: ignore
-                try:
-                    if hasattr(actor_ref, "get"):
-                        delattr(actor_ref, "get")
-                except AttributeError:
-                    # Already cleared or never cached
-                    pass
+                # handle. There are three things to forget, and invalidate
+                # knows all of them: the live handle, the cached_property
+                # entry, and Ray's own export of the class, which an actor
+                # we just killed can also have left in a bad state.
+                actor_ref.invalidate()  # type: ignore[attr-defined]
 
             # Launch the actor
             actor, task = actor_ref.get  # type: ignore

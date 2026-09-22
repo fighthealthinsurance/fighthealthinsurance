@@ -177,7 +177,15 @@ async def enqueue_denied_items_analysis(*, chat_id: str) -> None:
         denied_items_analysis_actor_ref,
     )
 
-    denied_items_analysis_actor_ref.get.run_analysis.remote(chat_id=chat_id)
+    actor = denied_items_analysis_actor_ref.get
+    try:
+        actor.run_analysis.remote(chat_id=chat_id)
+    except Exception:
+        # First use of the handle, and the first place a creation that only
+        # half succeeded shows itself. Forget it so the next disconnect
+        # builds a new one rather than calling this same dead handle.
+        denied_items_analysis_actor_ref.invalidate()
+        raise
 
 
 def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:

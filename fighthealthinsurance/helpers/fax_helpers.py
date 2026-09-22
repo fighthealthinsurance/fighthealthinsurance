@@ -48,13 +48,22 @@ def _dispatch_or_ray_fax(
     (an explicit resend) supersedes any in-flight workflow for this fax.
     """
     if not dispatch_fax_send(hashed_email, str(fax_uuid), force_restart=force_restart):
-        fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid))
+        try:
+            fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid))
+        except Exception:
+            # First use of the handle; see BaseActorRef.invalidate.
+            fax_actor_ref.invalidate()
+            raise
 
 
 def _blocking_dispatch_or_ray_fax(hashed_email: str, fax_uuid: str) -> None:
     """Send a fax and block until it finishes, via Temporal when enabled else Ray."""
     if dispatch_fax_send_blocking(hashed_email, str(fax_uuid)) is None:
-        ray.get(fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid)))
+        try:
+            ray.get(fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid)))
+        except Exception:
+            fax_actor_ref.invalidate()
+            raise
 
 
 @dataclass

@@ -1305,9 +1305,14 @@ class _SendBulkMailView(generic.FormView):
             # Use ray actor for sending emails
             actor = mailing_list_actor_ref.get
             remote_method = getattr(actor, self.actor_method_name)
-            future = remote_method.remote(
-                subject, html_content, text_content, test_email
-            )
+            try:
+                future = remote_method.remote(
+                    subject, html_content, text_content, test_email
+                )
+            except Exception:
+                # First use of the handle; see BaseActorRef.invalidate.
+                mailing_list_actor_ref.invalidate()
+                raise
             sent_count, failed_count, blocked_count = ray.get(future)
 
             if test_email:
