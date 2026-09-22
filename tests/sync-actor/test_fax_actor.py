@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.db import connection
 
 from fighthealthinsurance.fax_actor import FaxActor
+from tests.ray_actor_cleanup import stop_actor
 
 runtime_env = dict(os.environ)
 
@@ -25,13 +26,15 @@ class TestFaxActor(TransactionTestCase):
                 # local_mode=True,
                 runtime_env=runtime_env,
             )
+        # Cleanups run last-in first-out, and they run even when setUp fails
+        # partway, so every actor registered after this line is killed before
+        # the cluster is shut down. ray.shutdown() alone does not wait for a
+        # worker to die, and a polling loop left running against the shared
+        # SQLite file is what "database is locked" in the next class was.
+        self.addCleanup(ray.shutdown)
         self.fax_actor = FaxActor.remote()
+        self.addCleanup(stop_actor, self.fax_actor)
         self.maxDiff = None
-
-    def tearDown(self):
-        # Clean up Ray
-        if ray.is_initialized():
-            ray.shutdown()
 
     def test_init(self):
         """Test that the actor initializes correctly."""

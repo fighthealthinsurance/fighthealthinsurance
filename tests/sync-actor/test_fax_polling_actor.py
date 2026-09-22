@@ -6,6 +6,7 @@ import ray
 from django.test import TestCase
 
 from fighthealthinsurance.fax_polling_actor import FaxPollingActor
+from tests.ray_actor_cleanup import stop_actor, stop_named_actor
 
 
 @pytest.mark.django_db
@@ -25,16 +26,23 @@ class TestFaxPollingActor(TestCase):
                 runtime_env={"env_vars": environ},
                 num_cpus=1,
             )
-
-    def tearDown(self):
-        # Clean up Ray
-        if ray.is_initialized():
-            ray.shutdown()
+        # Cleanups run last-in first-out, and they run even when setUp fails
+        # partway, so every actor registered after this line is killed before
+        # the cluster is shut down. ray.shutdown() alone does not wait for a
+        # worker to die, and a polling loop left running against the shared
+        # SQLite file is what "database is locked" in the next class was.
+        self.addCleanup(ray.shutdown)
 
     def test_run_method_handles_errors(self):
         """Test that the fax polling actor starts and runs."""
 
         fax_polling_actor = FaxPollingActor.remote()
+        self.addCleanup(stop_actor, fax_polling_actor)
+        # The constructor makes a named child FaxActor of its own. Ray
+        # destroys a dead owner's children asynchronously, so the child is
+        # stopped on its own account, and first: cleanups run last-in
+        # first-out.
+        self.addCleanup(stop_named_actor, "fpa-worker", "fhi")
 
         # Say "hi" -- mostly make sure the actor started OK
         r = fax_polling_actor.hello.remote()

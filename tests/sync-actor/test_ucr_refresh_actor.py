@@ -27,6 +27,7 @@ from fighthealthinsurance.ucr_refresh_actor import (
     UCRRefreshActor,
     UCRRefreshController,
 )
+from tests.ray_actor_cleanup import stop_actor
 
 
 @pytest.mark.django_db
@@ -47,13 +48,25 @@ class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
                 runtime_env={"env_vars": environ},
                 num_cpus=1,
             )
-
-    def tearDown(self):
-        if ray.is_initialized():
-            ray.shutdown()
+        # Cleanups run last-in first-out, and they run even when setUp fails
+        # partway, so every actor registered after this line is killed before
+        # the cluster is shut down.
+        #
+        # run() is a polling loop, and under the TestActor configuration it
+        # writes to a FILE-based SQLite database shared with this process
+        # (see the note above). ray.shutdown() asks the cluster to go away
+        # but does not wait for the worker to die, so the loop could still be
+        # holding SQLite's single write lock while the next test class ran
+        # its own ORM writes. That is the "database is locked" failure this
+        # file has been producing in CI: not a slow machine, a loop nobody
+        # stopped.
+        self.addCleanup(ray.shutdown)
 
     def test_run_method_starts_and_loops(self):
         actor = UCRRefreshActor.remote()
+        # stop_actor kills with no_restart (this actor carries max_restarts=-1)
+        # and waits until the actor is gone; ray.kill alone only queues it.
+        self.addCleanup(stop_actor, actor)
 
         self.assertEqual("Hi", ray.get(actor.hello.remote()))
         actor.run.remote()
