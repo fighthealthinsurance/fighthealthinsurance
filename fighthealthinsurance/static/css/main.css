@@ -365,6 +365,21 @@ header span i {
     border: none;
     margin-bottom: 0;
     padding: var(--fhi-space-3);
+    /* The open menu has to paint above the page, and it did not.
+       jquery.sticky wraps the header and freezes that wrapper at the closed
+       height, so an opened menu overhangs the page rather than pushing it
+       down; and .hero-inner carries a backdrop-filter, which makes it a
+       stacking context at the z-index:0 level. With no z-index here the two
+       sit on the same level and DOM order decides, so the hero, being later,
+       covered the menu. Measured on a phone: two of the nine links could be
+       tapped, and Resources was not one of them. That is the "Resources
+       doesn't always work" report, and it is intermittent because it depends
+       on whether the page behind has a hero at all.
+
+       1030 is Bootstrap's sticky layer. The site banner sets 1031 on purpose
+       and still wins. */
+    position: relative;
+    z-index: 1030;
 }
 
 .navbar-default .navbar-brand {

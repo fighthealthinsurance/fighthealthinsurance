@@ -2537,3 +2537,153 @@ textarea,
         scroll-behavior: smooth;
     }
 }
+
+/* ---- The header -----------------------------------------------------------
+   Nine links became six, and the two that carry sub-pages are <details>
+   rather than Bootstrap dropdowns. No JavaScript is involved in opening
+   anything here: the nav used to sit behind bootstrap.bundle.min.js from a
+   CDN, so a blocked or slow script left the mobile toggle and both dropdowns
+   dead, which is what "Resources doesn't always work" was.
+
+   Desktop opens the menu with CSS and hides the toggle; the phone keeps the
+   real disclosure behaviour.
+   -------------------------------------------------------------------------- */
+.fhi-nav {
+    width: 100%;
+}
+
+.fhi-nav-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--fhi-space-2);
+    padding: var(--fhi-space-2) var(--fhi-space-3);
+    cursor: pointer;
+    /* The marker is the icon and the word, not a disclosure triangle. */
+    list-style: none;
+    min-height: 44px;
+}
+
+.fhi-nav-toggle::-webkit-details-marker {
+    display: none;
+}
+
+.fhi-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.fhi-nav-list > li > .nav-link,
+.fhi-nav-group > summary.nav-link {
+    display: block;
+    padding: var(--fhi-space-2) var(--fhi-space-3);
+    /* 44px minimum row, the same rule the rest of the nav follows. */
+    min-height: 44px;
+    line-height: 1.6;
+    cursor: pointer;
+    list-style: none;
+}
+
+.fhi-nav-group > summary.nav-link::-webkit-details-marker {
+    display: none;
+}
+
+.fhi-nav-group > summary.nav-link::after {
+    content: " \25BE";
+}
+
+.fhi-nav-submenu {
+    margin: 0;
+    padding: 0 0 0 var(--fhi-space-4);
+    list-style: none;
+}
+
+.fhi-nav-submenu a {
+    display: block;
+    padding: var(--fhi-space-2) var(--fhi-space-3);
+    min-height: 44px;
+    line-height: 1.6;
+}
+
+/* Generate Appeal is the one thing most people are here to do. */
+.fhi-nav-cta a {
+    display: inline-block;
+    padding: var(--fhi-space-2) var(--fhi-space-5);
+    border-radius: var(--fhi-radius);
+    background: var(--fhi-green-ink);
+    color: #fff;
+    font-weight: 600;
+    min-height: 44px;
+    line-height: 1.9;
+}
+
+.fhi-nav-cta a:hover,
+.fhi-nav-cta a:focus {
+    color: #fff;
+    text-decoration: underline;
+}
+
+@media (min-width: 992px) {
+    /* Desktop: always open, laid out in a row, no toggle. */
+    .fhi-nav-toggle {
+        display: none;
+    }
+
+    .fhi-nav-list {
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-end;
+        gap: var(--fhi-space-2);
+    }
+
+    .fhi-nav-group {
+        position: relative;
+    }
+
+    .fhi-nav-submenu {
+        position: absolute;
+        right: 0;
+        z-index: 20;
+        min-width: 240px;
+        padding: var(--fhi-space-2);
+        background: #fff;
+        border: 1px solid var(--fhi-line);
+        border-radius: var(--fhi-radius);
+        box-shadow: var(--fhi-shadow);
+    }
+}
+
+/* Chat, which left the nav. */
+.fhi-chat-button {
+    position: fixed;
+    right: var(--fhi-space-4);
+    bottom: var(--fhi-space-4);
+    z-index: 30;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--fhi-space-2);
+    padding: var(--fhi-space-3) var(--fhi-space-4);
+    border-radius: 999px;
+    background: var(--fhi-green-ink);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: var(--fhi-shadow);
+    min-height: 44px;
+}
+
+.fhi-chat-button:hover,
+.fhi-chat-button:focus {
+    color: #fff;
+    text-decoration: underline;
+}
+
+@media (max-width: 575px) {
+    /* On the narrowest screens the word goes and the mark stays, so the
+       button never sits on top of what somebody is reading. */
+    .fhi-chat-button-word {
+        display: none;
+    }
+}
