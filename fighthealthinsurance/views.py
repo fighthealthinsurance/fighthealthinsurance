@@ -666,100 +666,16 @@ class OtherResourcesView(generic.TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-
-        # Fetch RSS feeds synchronously to avoid async issues
+        # The headlines come from the cache once any request has filled it;
+        # on a miss the feeds are fetched together under one short budget.
+        # See health_news.py. Nothing here may keep the page from rendering.
         try:
-            from datetime import datetime
-            import feedparser
-            import requests
+            from fighthealthinsurance.health_news import get_health_news
 
-            # KFF Health News RSS feeds
-            kff_feeds = {
-                "insurance": {
-                    "name": "KFF Health News - Insurance",
-                    "url": "https://kffhealthnews.org/topics/insurance/feed/",
-                    "description": "Insurance-related health policy news",
-                },
-                "uninsured": {
-                    "name": "KFF Health News - Uninsured",
-                    "url": "https://kffhealthnews.org/topics/uninsured/feed/",
-                    "description": "News about uninsured populations and coverage",
-                },
-                "health-industry": {
-                    "name": "KFF Health News - Health Industry",
-                    "url": "https://kffhealthnews.org/topics/health-industry/feed/",
-                    "description": "Health industry news and analysis",
-                },
-            }
-
-            rss_feeds = {}
-
-            for feed_key, feed_info in kff_feeds.items():
-                try:
-                    # Fetch RSS feed synchronously
-                    response = requests.get(
-                        feed_info["url"],
-                        headers={
-                            "User-Agent": "Mozilla/5.0 (compatible; HealthPolicyRSSBot/1.0)"
-                        },
-                        timeout=10,
-                    )
-
-                    if response.status_code == 200:
-                        feed = feedparser.parse(response.content)
-
-                        articles = []
-                        for entry in feed.entries[
-                            :3
-                        ]:  # Limit to 3 most recent articles
-                            title = entry.get("title", "").strip()
-                            url = entry.get("link", "")
-
-                            if title and url:
-                                # Parse date
-                                published_date = datetime.now()
-                                if (
-                                    hasattr(entry, "published_parsed")
-                                    and entry.published_parsed
-                                ):
-                                    try:
-                                        published_date = datetime(
-                                            *entry.published_parsed[:6]
-                                        )
-                                    except (ValueError, TypeError):
-                                        pass
-
-                                articles.append(
-                                    {
-                                        "title": title,
-                                        "url": url,
-                                        "published_date": published_date,
-                                        "formatted_date": published_date.strftime(
-                                            "%b %d, %Y"
-                                        ),
-                                    }
-                                )
-
-                        rss_feeds[feed_key] = {
-                            "name": feed_info["name"],
-                            "description": feed_info["description"],
-                            "articles": articles,
-                        }
-                    else:
-                        logger.error(
-                            f"Failed to fetch {feed_info['url']}: {response.status_code}"
-                        )
-
-                except Exception as e:
-                    logger.error(f"Error fetching RSS feed {feed_info['url']}: {e}")
-                    continue
-
-            context["rss_feeds"] = rss_feeds
-
+            context["rss_feeds"] = get_health_news()
         except Exception as e:
             logger.error(f"Error setting up RSS feeds: {e}")
             context["rss_feeds"] = {}
-
         return context
 
 

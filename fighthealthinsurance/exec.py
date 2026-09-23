@@ -63,3 +63,12 @@ cleaner_executor = ThreadPoolExecutor(
     max_workers=_pool_size("FHI_CLEANER_EXECUTOR_WORKERS", 8),
     thread_name_prefix="fhi-cleaner",
 )
+
+# The KFF headlines on the resources page: three feeds fetched together on a
+# cache miss, each bounded by its own timeout and all of them by one budget.
+# Its own pool so a slow kffhealthnews.org can never occupy a thread that
+# generation, bridging or cleaning depends on.
+health_news_executor = ThreadPoolExecutor(
+    max_workers=_pool_size("FHI_HEALTH_NEWS_EXECUTOR_WORKERS", 3),
+    thread_name_prefix="fhi-health-news",
+)

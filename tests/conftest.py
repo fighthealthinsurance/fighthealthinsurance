@@ -71,7 +71,9 @@ def _stripe_e2e_skip_reason_lazy() -> str | None:
     global _stripe_e2e_decided, _stripe_e2e_skip_reason
     if not _stripe_e2e_decided:
         if not os.environ.get("STRIPE_TEST_SECRET_KEY"):
-            _stripe_e2e_skip_reason = "Stripe not configured (STRIPE_TEST_SECRET_KEY unset)"
+            _stripe_e2e_skip_reason = (
+                "Stripe not configured (STRIPE_TEST_SECRET_KEY unset)"
+            )
         elif _has_ssl_intercepting_proxy():
             _stripe_e2e_skip_reason = "SSL-intercepting proxy blocks api.stripe.com"
         else:
@@ -95,6 +97,7 @@ def pytest_runtest_setup(item):
     reason = _stripe_e2e_skip_reason_lazy()
     if reason:
         pytest.skip(reason)
+
 
 skip_if_no_pandoc = pytest.mark.skipif(
     shutil.which("pandoc") is None,
@@ -256,3 +259,19 @@ def _drain_fire_and_forget_threads(_settle_thread_sensitive_db_work):
     except Exception:
         return
     join_fire_and_forget_threads(timeout=10.0)
+
+
+@pytest.fixture(autouse=True)
+def _no_health_news_feeds():
+    """No page load in any suite reaches kffhealthnews.org.
+
+    Several tests load /other-resources on the way to something else, and
+    the test configurations use DummyCache, so each of those would fetch
+    three feeds for real. With the feed table emptied there is nothing to
+    fetch. tests/sync/test_health_news.py puts the real table back for
+    itself and fakes the network.
+    """
+    from unittest.mock import patch
+
+    with patch("fighthealthinsurance.health_news.FEEDS", {}):
+        yield
