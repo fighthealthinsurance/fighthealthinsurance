@@ -2870,6 +2870,10 @@ class RemoteOpenLike(RemoteModel):
                 # First HTTP error swallowed by the dual-mode race for this
                 # prompt; surfaced after all fallbacks fail (see below).
                 first_http_error: Optional[aiohttp.ClientResponseError] = None
+                # The primary's HTTP error in sequential mode, held while the
+                # backup gets its turn and raised afterwards if it did not
+                # rescue the call.
+                primary_http_error: Optional[aiohttp.ClientResponseError] = None
                 if self.dual_mode and self.backup_api_base:
                     # In dual mode, run primary and backup concurrently and return the first result
                     primary_task = asyncio.create_task(
@@ -3004,15 +3008,16 @@ class RemoteOpenLike(RemoteModel):
                         # whole prompt loop, so the backup endpoint below was
                         # never tried and the legacy backend's "a retry against
                         # the same endpoint still rescues a single 502" did not
-                        # hold. Remember it, as the dual-mode race does, and
-                        # let the backup answer; it is re-raised below when
-                        # nothing answers and the caller wants HTTP errors.
-                        if first_http_error is None:
-                            first_http_error = e
-                        logger.debug(
-                            f"{self}: {self.model} at {self.api_base} failed -- "
-                            f"{describe_model_error(e)}; trying the backup"
-                        )
+                        # hold. Hold it while the backup answers; if the backup
+                        # does not, it is raised below and handled exactly as
+                        # before (logged by status, or re-raised for callers
+                        # that asked for HTTP errors).
+                        primary_http_error = e
+                        if self.backup_api_base:
+                            logger.debug(
+                                f"{self}: {self.model} at {self.api_base} failed "
+                                f"-- {describe_model_error(e)}; trying the backup"
+                            )
                         raw_response = None
                 if raw_response and raw_response[0]:
                     return raw_response
@@ -3040,6 +3045,10 @@ class RemoteOpenLike(RemoteModel):
                     )
                     if backup_response and backup_response[0]:
                         return backup_response
+                if primary_http_error is not None:
+                    # The backup did not rescue it: the primary's HTTP error
+                    # is the outcome of this call.
+                    raise primary_http_error
                 # Every fallback for this prompt struck out. If the dual-mode
                 # race swallowed an HTTP error above, surface it now to
                 # callers that opted in -- the startup probe reports the real
