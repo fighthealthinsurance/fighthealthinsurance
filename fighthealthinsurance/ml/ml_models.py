@@ -2754,7 +2754,20 @@ class RemoteOpenLike(RemoteModel):
             )
         )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float, Optional[List[str]]]]]]
         pool = submit_executor if submit_executor is not None else executor
-        futures = list(map(lambda x: pool.submit(x[0], **x[1]), calls))
+        # The attempt deadline (attempt_deadline / ml_task_timeout) lives in a
+        # ContextVar, and a raw executor submit does not carry the context
+        # into the worker thread, so the clamp read there saw no deadline and
+        # every appeal-path call ran on the full configured timeout. Run each
+        # call inside a copy of the submitting context.
+        futures: List[Future[Tuple[str, Optional[str]]]] = []
+        for fn, kwargs in calls:
+            # One copy per submission, taken here in the submitting thread: a
+            # Context cannot be entered by two threads at once, and a copy
+            # taken inside the worker would be the worker's empty one.
+            run_in_context: Callable[..., Tuple[str, Optional[str]]] = (
+                contextvars.copy_context().run
+            )
+            futures.append(pool.submit(run_in_context, fn, **kwargs))
         return futures
 
     def _blocking_checked_infer(
@@ -2854,6 +2867,14 @@ class RemoteOpenLike(RemoteModel):
 
         if _past_deadline():
             return "skipped_deadline", []
+
+        def _call_timeout() -> float:
+            # Re-read per call: inside an attempt_deadline block this is what
+            # is left of the budget, not the configured value. These calls
+            # used to pass no timeout and ran on the instance default, outside
+            # the clamp the attempt relies on to stop spending.
+            return ml_task_timeout("appeal")
+
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -2879,6 +2900,7 @@ class RemoteOpenLike(RemoteModel):
             pubmed_context=pubmed_context,
             temperature=temperature,
             ml_citations_context=ml_citations_context,
+            timeout=_call_timeout(),
         )
         if _is_verbose_logging():
             logger.debug(f"Got result from {self}: {result}")
@@ -2898,6 +2920,7 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
+                timeout=_call_timeout(),
             )
             # Ok just an empty list, we failed. Nothing back at all is an
             # outage (the call series classify it), not a content rejection.
@@ -2929,6 +2952,7 @@ class RemoteOpenLike(RemoteModel):
                     pubmed_context=pubmed_context,
                     temperature=temperature,
                     ml_citations_context=ml_citations_context,
+                    timeout=_call_timeout(),
                 )
                 if self.bad_result(result, infer_type):
                     result = last_okish
@@ -3229,10 +3253,28 @@ class RemoteOpenLike(RemoteModel):
                         )
                     )
 
+                    legs = (primary_task, backup_task)
+
+                    def _abandon_legs() -> None:
+                        # The caller was cancelled (a probe's or a chat turn's
+                        # wait_for). Cancelling this coroutine did not cancel
+                        # the legs it created, so both ran on to their own
+                        # timeout holding sockets and a GPU slot, and a leg
+                        # that then raised logged "Task exception was never
+                        # retrieved".
+                        for leg in legs:
+                            if not leg.done():
+                                leg.cancel()
+                                leg.add_done_callback(_log_abandoned_task_quietly)
+
                     # Wait for the first task to complete
-                    done, pending = await asyncio.wait(
-                        [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
-                    )
+                    try:
+                        done, pending = await asyncio.wait(
+                            legs, return_when=asyncio.FIRST_COMPLETED
+                        )
+                    except asyncio.CancelledError:
+                        _abandon_legs()
+                        raise
 
                     # Get the result from the completed task(s). Every done
                     # task is retrieved (they have already finished, so this
@@ -3270,6 +3312,9 @@ class RemoteOpenLike(RemoteModel):
                                 if result and result[0]:
                                     raw_response = result
                                     break
+                            except asyncio.CancelledError:
+                                _abandon_legs()
+                                raise
                             except Exception as e:
                                 if (
                                     isinstance(e, aiohttp.ClientResponseError)
@@ -3285,20 +3330,36 @@ class RemoteOpenLike(RemoteModel):
                             task.cancel()
                             task.add_done_callback(_log_abandoned_task_quietly)
                 else:
-                    raw_response = await self.__timeout_infer(
-                        system_prompt=system_prompt,
-                        prompt=prompt,
-                        patient_context=patient_context,
-                        plan_context=plan_context,
-                        pubmed_context=pubmed_context,
-                        ml_citations_context=ml_citations_context,
-                        temperature=temperature,
-                        history=history,
-                        model=self.model,
-                        raise_http_errors=raise_http_errors,
-                        transport_failures=transport_failures,
-                        timeout=timeout,
-                    )
+                    try:
+                        raw_response = await self.__timeout_infer(
+                            system_prompt=system_prompt,
+                            prompt=prompt,
+                            patient_context=patient_context,
+                            plan_context=plan_context,
+                            pubmed_context=pubmed_context,
+                            ml_citations_context=ml_citations_context,
+                            temperature=temperature,
+                            history=history,
+                            model=self.model,
+                            raise_http_errors=raise_http_errors,
+                            transport_failures=transport_failures,
+                            timeout=timeout,
+                        )
+                    except aiohttp.ClientResponseError as e:
+                        # An HTTP error from the primary used to escape the
+                        # whole prompt loop, so the backup endpoint below was
+                        # never tried and the legacy backend's "a retry against
+                        # the same endpoint still rescues a single 502" did not
+                        # hold. Remember it, as the dual-mode race does, and
+                        # let the backup answer; it is re-raised below when
+                        # nothing answers and the caller wants HTTP errors.
+                        if first_http_error is None:
+                            first_http_error = e
+                        logger.debug(
+                            f"{self}: {self.model} at {self.api_base} failed -- "
+                            f"{describe_model_error(e)}; trying the backup"
+                        )
+                        raw_response = None
                 if raw_response and raw_response[0]:
                     return raw_response
 
@@ -5706,6 +5767,24 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         if prompt is None:
             logger.debug("No prompt supplied; skipping inference")
             return None
+        # The same skips as the shared transport. This one consulted neither,
+        # and the router trusts its in-memory signal over the sweep, so a
+        # dead or misdeployed Foundry endpoint kept its fan-out slot until
+        # the process restarted. Probes bypass both so they report reality.
+        if not raise_http_errors and self._model_marked_missing(
+            self.api_base, self.model
+        ):
+            logger.debug(
+                f"{self}: skipping {self.model} at {self.api_base} -- flagged as "
+                "not served here"
+            )
+            return None
+        if not raise_http_errors and self._transport_cooling(self.api_base, self.model):
+            logger.debug(
+                f"{self}: skipping {self.model} at {self.api_base} -- "
+                "transport-failure cooldown"
+            )
+            return None
         # The native Anthropic Messages API caps temperature at 1.0 (vs the
         # OpenAI surface's 2.0); clamp so a shared router temperature that's
         # valid for other providers can't trigger a 400 here.
@@ -5766,7 +5845,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             started = time.monotonic()
             try:
                 result = await self._messages_request(
-                    url, headers, body, timeout=attempt_timeout
+                    url,
+                    headers,
+                    body,
+                    timeout=attempt_timeout,
+                    note_failures=not raise_http_errors,
                 )
             except aiohttp.ClientResponseError as e:
                 if send_temperature and _http_error_indicates_unsupported_temperature(
@@ -5798,7 +5881,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                             )
                             return None
                     result = await self._messages_request(
-                        url, headers, body, timeout=retry_timeout
+                        url,
+                        headers,
+                        body,
+                        timeout=retry_timeout,
+                        note_failures=not raise_http_errors,
                     )
                 else:
                     raise
@@ -5812,12 +5899,46 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         headers: dict,
         body: dict,
         timeout: Optional[float] = None,
+        note_failures: bool = True,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """POST a single Messages API request (honoring ``timeout`` /
         ``self._timeout``) and parse the response. ``raise_for_status``
         surfaces HTTP errors as ``aiohttp.ClientResponseError`` so 429s reach
-        the shared back-off."""
+        the shared back-off.
+
+        Keeps the shared transport's bookkeeping too: a transport-failure
+        strike (``note_failures``, off for probes) and the missing-model flag
+        for a 404 naming the model. Without them the provider never entered a
+        cooldown. ``_messages_post`` records the call metrics.
+        """
         effective_timeout = timeout if timeout is not None else self._timeout
+        try:
+            return await self._messages_post(url, headers, body, effective_timeout)
+        except aiohttp.ClientResponseError as e:
+            body_text = _error_body_of(e)
+            if (
+                note_failures
+                and e.status == 404
+                and _error_text_indicates_missing_model(body_text)
+            ):
+                self._note_missing_model(self.api_base, self.model, body_text[:200])
+            raise
+        except MODEL_TRANSPORT_ERRORS as e:
+            if note_failures:
+                self._note_transport_failure(
+                    self.api_base, self.model, describe_model_error(e)
+                )
+            raise
+
+    async def _messages_post(
+        self,
+        url: str,
+        headers: dict,
+        body: dict,
+        effective_timeout: Optional[float],
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """The request itself and its fhi_ml_* call metrics; None on a
+        timeout."""
 
         async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
             # Same rationale as RemoteOpenLike.__infer: fail fast on
@@ -5865,6 +5986,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                         f"Timed out querying {self} after {effective_timeout:.0f}s"
                     )
                     _count("timeout")
+                    # For a probe: nothing answered the socket, which is not a
+                    # malformed response (see _PROBE_OBSERVATIONS).
+                    _note_probe_transport_error(
+                        f"{self.model}: no answer within {effective_timeout:.0f}s"
+                    )
                     return None
             else:
                 result = await _post()
