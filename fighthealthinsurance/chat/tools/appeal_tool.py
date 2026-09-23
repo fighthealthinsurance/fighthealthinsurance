@@ -17,6 +17,7 @@ from .base_tool import (
     BaseTool,
     is_safe_tool_field,
     parse_anchored_json_payload,
+    set_tool_field,
     settable_model_fields,
     strip_anchored_calls,
 )
@@ -232,11 +233,11 @@ class AppealTool(BaseTool):
 
             if is_safe_tool_field(key, appeal_allowed):
                 set_field = True
-                setattr(appeal, key, value)
+                set_tool_field(appeal, key, value)
 
             if is_safe_tool_field(key, denial_allowed):
                 set_field = True
-                setattr(denial, key, value)
+                set_tool_field(denial, key, value)
 
             if not set_field:
                 logger.warning(

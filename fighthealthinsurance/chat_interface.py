@@ -1678,7 +1678,10 @@ class ChatInterface:
                 chat_id=str(chat.id),
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
-                letter_fallback_attempted=letter_request,
+                letter_request=letter_request,
+                # Ran and failed, vs. never ran (no letter-capable appeal):
+                # letter_appeal is set exactly when the fallback was tried.
+                letter_fallback_attempted=letter_appeal is not None,
             )
             await self.send_error_message(err_msg)
 

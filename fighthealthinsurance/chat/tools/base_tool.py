@@ -8,8 +8,9 @@ Each tool can detect its pattern in text, execute the tool action, and format re
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, List, Optional, Set, Tuple
 
+from django.db import models
 from loguru import logger
 
 from .patterns import next_tool_call_start
@@ -50,6 +51,40 @@ def is_safe_tool_field(key: str, allowed: Set[str]) -> bool:
     if not key or key.startswith("_") or key.endswith("_id"):
         return False
     return key in allowed
+
+
+def set_tool_field(instance: Any, key: str, value: Any) -> None:
+    """Set an LLM-payload value on ``instance``, giving text columns text.
+
+    ``key`` must already have passed is_safe_tool_field. Payloads are
+    untrusted JSON: a CPT code arrives as a number, a diagnosis list as an
+    array. Django converts on save, but a plain setattr leaves the raw value
+    on the in-memory instance, and code reading it before any refetch --
+    the letter tool's context gate and template detection call str methods
+    on it -- crashes. So for a text column, a number is stringified and a
+    list of plain values is joined; a boolean or a nested object, never
+    meaningful there, is skipped. Other columns keep Django's conversion on
+    save (stringifying a bool would make False truthy in memory).
+    """
+    field = instance._meta.get_field(key)
+    if isinstance(field, (models.CharField, models.TextField)) and not (
+        value is None or isinstance(value, str)
+    ):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = str(value)
+        elif isinstance(value, list) and all(
+            isinstance(item, (str, int, float)) and not isinstance(item, bool)
+            for item in value
+        ):
+            value = ", ".join(str(item) for item in value)
+        else:
+            # The type only: payload values can carry medical detail.
+            logger.info(
+                f"Skipping tool payload field {key}: a {type(value).__name__} "
+                f"can't fill a text column"
+            )
+            return
+    setattr(instance, key, value)
 
 
 def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, str]:
