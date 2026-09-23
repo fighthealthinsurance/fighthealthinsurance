@@ -34,9 +34,18 @@
     and by manual runs of <code>python manage.py check_model_backends</code> —
     this page never invokes models itself.
     &ldquo;In selection UI&rdquo; = registered in the router pools the
-    chooser/appeal flows draw from; &ldquo;In reporting&rdquo; = the name usage
-    reporting records on generations.
+    chooser/appeal flows draw from (a backend outside the router&rsquo;s
+    top-N external fan-out is registered but not asked for drafts;
+    &ldquo;context only&rdquo; backends build citations and never draft);
+    &ldquo;In reporting&rdquo; = the name usage reporting records on
+    generations. &ldquo;Last stored generation&rdquo; counts drafts and
+    chooser candidates the backend produced, not the copies made when a
+    user picks a draft.
     See also the <a href="{% url 'model_usage_dashboard' %}">ML Model Usage Dashboard</a>.
+  </p>
+  <p class="summary-note">
+    {{ healthy_count }} of {{ enabled_count }} enabled backend{{ enabled_count|pluralize }}
+    passed the most recent health check.
   </p>
 
   <table class="status">
@@ -65,13 +74,19 @@
           {% if r.enabled %}<span class="pill pill-ok">enabled</span>
           {% else %}<span class="pill pill-off">{{ r.config_category|default:"disabled" }}</span>{% endif %}
         </td>
-        <td>{% if r.ui_registered %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</td>
+        <td>
+          {% if r.context_only %}<span class="muted">context only</span>
+          {% elif r.ui_registered %}<span class="yes">yes</span>{% if r.in_default_fanout is False %} <span class="muted">(outside top-N fan-out)</span>{% endif %}
+          {% else %}<span class="no">no</span>{% endif %}
+        </td>
         <td>{% if r.reporting_registered %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</td>
         <td>
-          {% if r.last_check %}
+          {% if r.last_check and r.last_check.enabled %}
+            {# A real probe result. A row persisted for a disabled or unconfigured backend is its static classification, not a probe, and is not shown as one. #}
             {% if r.last_check.ok %}<span class="pill pill-ok">{{ r.last_check.category }}</span>
             {% else %}<span class="pill pill-fail">{{ r.last_check.category }}</span>{% endif %}
-          {% elif r.config_category and not r.enabled %}
+            {% if not r.enabled %}<span class="muted">(now {{ r.config_category|default:"disabled"|lower }})</span>{% endif %}
+          {% elif not r.enabled %}
             <span class="muted">not checked</span>
           {% elif r.config_category %}
             <span class="pill pill-warn">{{ r.config_category }}</span>
@@ -79,11 +94,15 @@
             <span class="muted">never checked</span>
           {% endif %}
         </td>
-        <td>{% if r.last_check and r.last_check.latency_ms is not None %}{{ r.last_check.latency_ms }} ms{% else %}&mdash;{% endif %}</td>
-        <td>{% if r.last_check %}{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC{% else %}&mdash;{% endif %}</td>
-        <td>{% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC{% else %}<span class="muted">none recorded</span>{% endif %}</td>
+        <td>{% if r.last_check and r.last_check.enabled and r.last_check.latency_ms is not None %}{{ r.last_check.latency_ms }} ms{% else %}&mdash;{% endif %}</td>
+        <td>{% if r.last_check and r.last_check.enabled %}{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC{% else %}&mdash;{% endif %}</td>
+        <td>
+          {% if r.context_only %}<span class="muted">n/a (citations only)</span>
+          {% elif r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC
+          {% else %}<span class="muted">none recorded</span>{% endif %}
+        </td>
         <td class="err">
-          {% if r.last_check and r.last_check.error %}{{ r.last_check.error }}
+          {% if r.last_check and r.last_check.enabled and r.last_check.error %}{{ r.last_check.error }}
           {% elif r.config_detail %}{{ r.config_detail }}{% endif %}
         </td>
       </tr>

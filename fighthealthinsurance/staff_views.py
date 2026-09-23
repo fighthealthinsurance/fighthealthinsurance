@@ -795,9 +795,14 @@ class AdminStatusView(generic.TemplateView):
             # numbers describe one population and a scored draft that is
             # speculative or unconsented cannot make the level SCORING by
             # itself (review).
+            # chosen=False on both: choosing a draft inserts an unscored copy
+            # stamped with the pick time, which read as an eligible draft the
+            # scorer had missed and flipped the badge to NOT SCORING while
+            # scoring worked.
             out["scored"] = ProposedAppeal.objects.filter(
                 quality_scored_at__gte=since,
                 speculative=False,
+                chosen=False,
                 for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
@@ -808,6 +813,7 @@ class AdminStatusView(generic.TemplateView):
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
+                chosen=False,
                 for_denial__use_external=True,
                 quality_score__isnull=True,
             )
@@ -1790,50 +1796,101 @@ class ModelBackendStatusView(generic.TemplateView):
         names = [r.model_name for r in entries]
         latest_checks = self._latest_check_by_model(names)
         last_generation = self._last_generation_by_model(names)
+        fanout = self._default_fanout_by_name(checkable)
 
-        rows: List[Dict[str, Any]] = []
-        for r in entries:
-            check = latest_checks.get(r.model_name)
-            rows.append(
-                {
-                    "provider": r.provider,
-                    "model_name": r.model_name,
-                    "internal_name": r.internal_name,
-                    "enabled": r.enabled,
-                    # Static category from configuration classification (e.g.
-                    # NOT_CONFIGURED / DISABLED / FAIL_MISSING_CREDENTIALS);
-                    # empty for backends that need a live probe to judge.
-                    "config_category": (
-                        r.category if r.category != mhc.CATEGORY_OTHER else ""
-                    ),
-                    "config_detail": r.error,
-                    "ui_registered": r.ui_registered,
-                    "reporting_registered": r.reporting_registered,
-                    "last_check": check,
-                    "last_generation": last_generation.get(r.model_name),
-                }
+        rows: List[Dict[str, Any]] = [
+            self._row(
+                r,
+                latest_checks.get(r.model_name),
+                last_generation.get(r.model_name),
+                fanout.get(r.model_name),
             )
+            for r in entries
+        ]
 
         ctx["title"] = "Model Backend Status"
         ctx["rows"] = rows
+        ctx["enabled_count"] = sum(1 for row in rows if row["enabled"])
         ctx["healthy_count"] = sum(
-            1 for row in rows if row["last_check"] is not None and row["last_check"].ok
+            1
+            for row in rows
+            if row["enabled"] and row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
+
+    @staticmethod
+    def _row(
+        r: Any,
+        check: Optional[ModelBackendHealthCheckResult],
+        last_generation: Optional[datetime.datetime],
+        in_default_fanout: Optional[bool],
+    ) -> Dict[str, Any]:
+        """One table row from an enumerated backend and its stored evidence."""
+        from fighthealthinsurance.ml import model_health_check as mhc
+
+        return {
+            "provider": r.provider,
+            "model_name": r.model_name,
+            "internal_name": r.internal_name,
+            "enabled": r.enabled,
+            # Static category from configuration classification (e.g.
+            # NOT_CONFIGURED / DISABLED / FAIL_MISSING_CREDENTIALS);
+            # empty for backends that need a live probe to judge.
+            "config_category": (r.category if r.category != mhc.CATEGORY_OTHER else ""),
+            "config_detail": r.error,
+            "ui_registered": r.ui_registered,
+            "reporting_registered": r.reporting_registered,
+            # Citations only: never a generation candidate, so "none
+            # recorded" would be the wrong reading of an empty column.
+            "context_only": r.context_only,
+            # For an enabled external generation model: whether it is in the
+            # router's default external fan-out right now. The router keeps
+            # the best few externals; one outside that slice is registered
+            # and healthy yet never asked for a draft, which is the other
+            # way an empty column is structural rather than a symptom.
+            "in_default_fanout": in_default_fanout,
+            "last_check": check,
+            "last_generation": last_generation,
+        }
+
+    @staticmethod
+    def _default_fanout_by_name(checkable: Any) -> Dict[str, bool]:
+        """``{model_name: in_default_fanout}`` for the enabled external
+        generation backends. Best-effort and in-memory; on any router error
+        the page just omits the annotation."""
+        try:
+            from fighthealthinsurance.ml.ml_router import ml_router
+
+            chosen = {id(m) for m in ml_router.best_external_models()}
+        except Exception:
+            logger.opt(exception=True).debug("Could not compute the default fan-out")
+            return {}
+        out: Dict[str, bool] = {}
+        for pending, instance in checkable:
+            if not getattr(instance, "external", False) or pending.context_only:
+                continue
+            out[pending.model_name] = id(instance) in chosen
+        return out
 
     @staticmethod
     def _latest_check_by_model(
         names: List[str],
     ) -> Dict[str, ModelBackendHealthCheckResult]:
-        """Most recent health-check row per model name (one query, newest
-        first, first-seen wins)."""
+        """Most recent health-check row per model name.
+
+        One small query per model rather than a newest-N slice over all of
+        them: the slice let a backend whose rows had been pushed out by
+        repeated single-model runs of another read as "never checked".
+        """
         latest: Dict[str, ModelBackendHealthCheckResult] = {}
-        qs = ModelBackendHealthCheckResult.objects.filter(
-            model_name__in=names
-        ).order_by("-created_at")[:2000]
-        for row in qs:
-            if row.model_name not in latest:
-                latest[row.model_name] = row
+        for name in names:
+            row = (
+                ModelBackendHealthCheckResult.objects.filter(model_name=name)
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            if row is not None:
+                latest[name] = row
         return latest
 
     @staticmethod
@@ -1842,14 +1899,19 @@ class ModelBackendStatusView(generic.TemplateView):
     ) -> Dict[str, datetime.datetime]:
         """Latest stored generation per model across ProposedAppeal and
         ChooserCandidate — evidence the model was actually invoked (and its
-        metadata persisted) in a real flow."""
+        metadata persisted) in a real flow.
+
+        Un-chosen rows only: choosing a draft inserts a copy stamped with the
+        original's model name and the pick time, so with the copies counted
+        a backend read as generating on the day a user picked its old draft.
+        """
         from django.db.models import Max
 
         last: Dict[str, datetime.datetime] = {}
         # .order_by() clears any Meta ordering, which would otherwise leak
         # into the GROUP BY and break the aggregation.
         for name, ts in (
-            ProposedAppeal.objects.filter(model_name__in=names)
+            ProposedAppeal.objects.filter(model_name__in=names, chosen=False)
             .order_by()
             .values_list("model_name")
             .annotate(latest=Max("created_at"))

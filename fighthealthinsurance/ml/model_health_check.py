@@ -214,6 +214,9 @@ class BackendCheckResult:
     latency_ms: Optional[int] = None
     ui_registered: bool = False
     reporting_registered: bool = False
+    # Reserved for building context (citations); never a generation candidate,
+    # so it can never produce a stored draft or a chooser candidate.
+    context_only: bool = False
     started_at: Optional[datetime] = None
 
     @property
@@ -329,31 +332,38 @@ def _registered_instance(
 
 def _registry_flags(
     desc: ModelDescription, instance: Optional[RemoteModelLike]
-) -> Tuple[bool, bool]:
-    """(ui_registered, reporting_registered) for a model description.
+) -> Tuple[bool, bool, bool]:
+    """(ui_registered, reporting_registered, context_only) for a description.
 
-    * ``ui_registered``: the registered instance is in one of the pools the
-      router offers for generation/context work — i.e. it can actually be
-      selected and can therefore show up in the chooser / selection UI.
+    * ``ui_registered``: the registered instance is in the pool the router
+      draws from for its kind of work: the generation pools for a generation
+      model (what the chooser and the appeal flows select from), the
+      context-only pool for a context-only one (citations). The two used to
+      be lumped together, so a citations-only backend read as "in selection
+      UI: yes" although nothing can ever select it.
     * ``reporting_registered``: the friendly name is present in
       ``models_by_name`` — the name-stamping registry that usage reporting
       (ProposedAppeal.model_name / ChooserCandidate.model_name) records.
+    * ``context_only``: the instance's own flag, so the status page can say
+      "context only" instead of "none recorded" for its generations.
     """
     try:
         router = _router()
         reporting = bool(router.models_by_name.get(desc.name))
         ui = False
+        context_only = False
         if instance is not None:
-            pool_ids = {
-                id(m)
-                for m in list(router.all_models_by_cost)
-                + list(router.context_only_models_by_cost)
-            }
-            ui = id(instance) in pool_ids
-        return ui, reporting
+            context_only = bool(getattr(instance, "context_only", False))
+            pool = (
+                router.context_only_models_by_cost
+                if context_only
+                else router.all_models_by_cost
+            )
+            ui = id(instance) in {id(m) for m in pool}
+        return ui, reporting, context_only
     except Exception:
         logger.opt(exception=True).warning("Could not compute registry flags")
-        return False, False
+        return False, False, False
 
 
 def enumerate_backend_checks(
@@ -424,8 +434,8 @@ def enumerate_backend_checks(
                 continue
 
             instance = _registered_instance(backend_cls, desc)
-            base.ui_registered, base.reporting_registered = _registry_flags(
-                desc, instance
+            base.ui_registered, base.reporting_registered, base.context_only = (
+                _registry_flags(desc, instance)
             )
 
             # The ENABLED_REMOTE_MODELS allow-list only gates remote
