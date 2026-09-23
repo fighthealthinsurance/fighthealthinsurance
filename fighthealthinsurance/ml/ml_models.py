@@ -289,21 +289,26 @@ def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
 
     Matches the OpenAI-compatible local servers we point at: vLLM ("The model
     `X` does not exist.", type NotFoundError), llama.cpp ("model not found"),
-    Ollama ("model 'X' not found, try pulling it first"), and OpenAI/LM Studio
-    ("model_not_found"). Requiring the word "model" keeps a wrong-URL 404
-    (e.g. vLLM's {"detail": "Not Found"}) from matching -- that's a config
-    problem, not a missing model.
+    Ollama ("model 'X' not found, try pulling it first"), OpenAI/LM Studio
+    ("model_not_found"), Azure OpenAI ("The API deployment for this resource
+    does not exist", code DeploymentNotFound) and Anthropic's not_found_error
+    whose message names the model ("model: claude-x"). Requiring the word
+    "model" or "deployment" keeps a wrong-URL 404 (vLLM's {"detail": "Not
+    Found"}, Anthropic's not_found_error "Not Found") from matching -- that's
+    a config problem, not a missing model.
     """
     if not text:
         return False
     lowered = text.lower()
-    if "model" not in lowered:
+    if "model" not in lowered and "deployment" not in lowered:
         return False
     return (
         "does not exist" in lowered
         or "not found" in lowered
         or "model_not_found" in lowered
         or "unknown model" in lowered
+        or "not_found_error" in lowered
+        or "deploymentnotfound" in lowered
     )
 
 

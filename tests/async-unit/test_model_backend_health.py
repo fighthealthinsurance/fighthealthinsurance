@@ -880,3 +880,129 @@ class TestRealTransportPlumbing:
         with patch.object(aiohttp.ClientSession, "post", side_effect=err):
             await model._infer(system_prompts=["sys"], prompt="hi")
         assert _PROBE_OBSERVATIONS.get() is None
+
+
+class TestOkAcknowledgement:
+    """The probe passes on a short reply that says OK and nothing against it.
+    The previous rule, the word anywhere in the reply, passed refusals."""
+
+    @pytest.mark.parametrize(
+        "reply", ["OK", "OK.", "Sure — OK", "Okay", "Reply: OK", "OK!"]
+    )
+    def test_short_acknowledgements_pass(self, reply):
+        assert mhc._looks_like_ok(reply)
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "not ok",
+            "HTTP 200 OK",
+            "<title>200 OK</title>",
+            "I am unable to reply with only OK as instructed",
+            "a broken token",
+            "",
+        ],
+    )
+    def test_negations_status_lines_and_refusals_fail(self, reply):
+        assert not mhc._looks_like_ok(reply)
+
+
+class TestCategorize404:
+    def test_a_404_naming_the_deployment_is_a_missing_model(self):
+        category, _ = mhc._categorize_http_error(
+            _http_error(
+                404,
+                "Not Found",
+                body='{"error":{"code":"DeploymentNotFound","message":"The API deployment for this resource does not exist."}}',
+            )
+        )
+        assert category == mhc.CATEGORY_MODEL_NOT_FOUND
+
+    def test_a_404_without_a_model_error_points_at_the_endpoint_path(self):
+        """vLLM's {"detail": "Not Found"} is a wrong base URL, not a missing
+        model; filing it as one sent the operator to the deployment name."""
+        category, detail = mhc._categorize_http_error(
+            _http_error(404, "Not Found", body='{"detail":"Not Found"}')
+        )
+        assert category == mhc.CATEGORY_OTHER
+        assert "endpoint path" in detail
+
+    def test_a_bare_404_stays_a_missing_model(self):
+        category, _ = mhc._categorize_http_error(_http_error(404, "Not Found"))
+        assert category == mhc.CATEGORY_MODEL_NOT_FOUND
+
+
+class TestDeployHookOnACrashedCheck:
+    """A crashed check and a lost leader claim both leave ran_checks False;
+    the deploy hook used to exit 0 for either, so strict mode could not fail
+    a deploy whose check never ran."""
+
+    def _summary(self, *, crashed):
+        summary = mhc.HealthCheckRunSummary(
+            run_id="r1", deployment_id="vcmd", environment="Test"
+        )
+        summary.ran_checks = False
+        summary.crashed = crashed
+        return summary
+
+    def _call(self, summary):
+        out = StringIO()
+        with patch.object(mhc, "run_health_check", return_value=summary):
+            call_command("check_model_backends", "--deploy-hook", stdout=out, stderr=out)
+        return out.getvalue()
+
+    def test_a_crash_fails_a_strict_deploy(self, monkeypatch):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_STRICT", "1")
+        with pytest.raises(SystemExit) as excinfo:
+            self._call(self._summary(crashed=True))
+        assert excinfo.value.code == 2
+
+    def test_a_crash_is_reported_but_passes_a_non_strict_deploy(self, monkeypatch):
+        monkeypatch.delenv("FHI_MODEL_HEALTH_STRICT", raising=False)
+        output = self._call(self._summary(crashed=True))
+        assert "could not run" in output
+        assert "skipped" not in output.lower()
+
+    def test_a_lost_claim_is_a_skip_even_under_strict(self, monkeypatch):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_STRICT", "1")
+        output = self._call(self._summary(crashed=False))
+        assert "skipped" in output.lower()
+
+
+class TestEnvironmentSwitches:
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "False"])
+    def test_alert_email_off_spellings(self, monkeypatch, value):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_ALERT_EMAIL", value)
+        assert mhc.alert_emails_enabled() is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "TRUE"])
+    def test_alert_email_on_spellings(self, monkeypatch, value):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_ALERT_EMAIL", value)
+        assert mhc.alert_emails_enabled() is True
+
+    def test_deployment_id_ignores_the_unknown_build_default(self, monkeypatch):
+        monkeypatch.delenv("FHI_DEPLOYMENT_ID", raising=False)
+        monkeypatch.setenv("FHI_RELEASE", "unknown")
+        monkeypatch.setenv("FHI_VERSION", "v9.9")
+        assert mhc.deployment_id() == "v9.9"
+
+
+class TestCatalogFailureIsVisible:
+    def test_a_backend_whose_catalog_raises_gets_a_client_init_row(
+        self, monkeypatch
+    ):
+        """It used to vanish from the report with only a log warning, exactly
+        as it vanishes from the router."""
+        from fighthealthinsurance.ml.ml_models import RemoteAzureOpenAI
+
+        _clear_provider_env(monkeypatch)
+        with patch.object(
+            RemoteAzureOpenAI, "model_catalog", side_effect=RuntimeError("bad list")
+        ):
+            static, _checkable = mhc.enumerate_backend_checks()
+
+        rows = [r for r in static if r.model_name == "RemoteAzureOpenAI"]
+        assert len(rows) == 1
+        assert rows[0].category == mhc.CATEGORY_CLIENT_INIT
+        assert rows[0].provider == "Azure OpenAI"
+        assert "bad list" in rows[0].error

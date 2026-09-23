@@ -202,3 +202,26 @@ class TestMissingModelCooldown:
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
         assert fake_post.calls == 2
+
+
+class TestHostedProviderMissingModelBodies:
+    """Azure OpenAI and Anthropic phrase a missing deployment or model without
+    the local servers' wording; both used to miss the cooldown and were
+    re-hit and re-logged on every request."""
+
+    def test_azure_deployment_not_found_matches(self):
+        assert _error_text_indicates_missing_model(
+            '{"error":{"code":"DeploymentNotFound","message":'
+            '"The API deployment for this resource does not exist."}}'
+        )
+
+    def test_anthropic_not_found_error_naming_the_model_matches(self):
+        assert _error_text_indicates_missing_model(
+            '{"type":"error","error":{"type":"not_found_error",'
+            '"message":"model: claude-nope"}}'
+        )
+
+    def test_anthropic_not_found_error_for_a_wrong_path_does_not_match(self):
+        assert not _error_text_indicates_missing_model(
+            '{"type":"error","error":{"type":"not_found_error","message":"Not Found"}}'
+        )
