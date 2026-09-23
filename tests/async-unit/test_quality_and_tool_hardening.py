@@ -20,6 +20,7 @@ import pytest
 from fighthealthinsurance.chat.tools.base_tool import (
     BaseTool,
     is_safe_tool_field,
+    set_tool_field,
     settable_model_fields,
 )
 from fighthealthinsurance.chat.tools.medicaid_tool import MedicaidInfoTool
@@ -110,6 +111,38 @@ class TestToolFieldAllowlist:
                 setattr(appeal, key, value)
         assert appeal.id != 999999
         assert appeal.appeal_text == "updated text"
+
+
+class TestToolFieldTextCoercion:
+    """set_tool_field gives text columns text on the in-memory instance: the
+    letter tool reads the denial it just updated (calling str methods on it)
+    before anything refetches it."""
+
+    def test_number_for_a_text_column_is_stringified(self):
+        denial = Denial()
+        set_tool_field(denial, "procedure", 72148)
+        assert denial.procedure == "72148"
+
+    def test_list_of_plain_values_is_joined(self):
+        denial = Denial()
+        set_tool_field(denial, "diagnosis", ["M54.5", "M51.26"])
+        assert denial.diagnosis == "M54.5, M51.26"
+
+    def test_nested_object_for_a_text_column_is_skipped(self):
+        denial = Denial(procedure="MRI")
+        set_tool_field(denial, "procedure", {"code": "72148"})
+        assert denial.procedure == "MRI"
+
+    def test_boolean_for_a_text_column_is_skipped(self):
+        denial = Denial(diagnosis="back pain")
+        set_tool_field(denial, "diagnosis", True)
+        assert denial.diagnosis == "back pain"
+
+    def test_boolean_column_keeps_a_real_boolean(self):
+        """Stringifying it would make False truthy in memory."""
+        denial = Denial(professional_to_finish=True)
+        set_tool_field(denial, "professional_to_finish", False)
+        assert denial.professional_to_finish is False
 
 
 class _ExplodingTool(BaseTool):

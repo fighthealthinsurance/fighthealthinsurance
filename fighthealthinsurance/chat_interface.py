@@ -2592,7 +2592,10 @@ class ChatInterface:
                 chat_id=str(chat.id),
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
-                letter_fallback_attempted=letter_request,
+                letter_request=letter_request,
+                # Ran and failed, vs. never ran (no letter-capable appeal):
+                # letter_appeal is set exactly when the fallback was tried.
+                letter_fallback_attempted=letter_appeal is not None,
             )
             self._shadow_runner_up = None
             # As above, a send that raises or is cancelled still leaves the

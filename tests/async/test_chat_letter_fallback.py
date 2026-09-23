@@ -289,6 +289,41 @@ class ChatLetterFallbackTest(APITestCase):
         mock_draft.assert_awaited_once()
 
 
+    @staticmethod
+    def _failure_event(capture):
+        return next(
+            call.kwargs
+            for call in capture.call_args_list
+            if call.args[0] == "chat_turn_total_failure"
+        )
+
+    async def test_failure_event_reports_no_attempt_without_linked_appeal(self):
+        """No letter-capable appeal: the fallback never ran, and the event
+        must not read like a fallback that ran and failed."""
+        with patch(
+            "fighthealthinsurance.chat_interface.capture_reliability_event"
+        ) as capture:
+            await self._run_failing_turn(
+                "letterfall10",
+                "9999920010",
+                "Please go ahead and draft a letter.",
+                link_appeal=False,
+            )
+        self.assertFalse(self._failure_event(capture)["letter_fallback_attempted"])
+
+    async def test_failure_event_reports_a_failed_fallback_attempt(self):
+        with patch(
+            "fighthealthinsurance.chat_interface.draft_letter_for_chat",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "fighthealthinsurance.chat_interface.capture_reliability_event"
+        ) as capture:
+            await self._run_failing_turn(
+                "letterfall11", "9999920011", "Please go ahead and draft a letter."
+            )
+        self.assertTrue(self._failure_event(capture)["letter_fallback_attempted"])
+
+
 class GenerateAppealLetterToolTest(APITestCase):
     """The generate_appeal_letter tool: appeal setup + pipeline handoff."""
 
@@ -425,6 +460,22 @@ class GenerateAppealLetterToolTest(APITestCase):
             'Sure.\n**generate_appeal_letter**{"procedure": "MRI"}', "", chat=None
         )
         self.assertNotIn("generate_appeal_letter", response)
+
+
+    async def test_numeric_procedure_still_reaches_the_letter_pipeline(self):
+        """A CPT code sent as a JSON number must not crash the context gate,
+        which calls str methods on the in-memory denial."""
+        chat = await self._make_chat("lettertool7", "9999930007")
+        tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock())
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft:
+            await tool.handle(
+                '**generate_appeal_letter**{"procedure": 72148}', "", chat=chat
+            )
+        self.assertEqual(mock_draft.await_args.kwargs["denial"].procedure, "72148")
 
 
 class LetterSelectionPolicyTest(APITestCase):
