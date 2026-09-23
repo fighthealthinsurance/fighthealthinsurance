@@ -299,10 +299,14 @@ class ChooseAppealForm(DenialRefForm):
         ids: typing.List[int] = []
         for value in values[: self.MAX_PRESENTED_IDS]:
             try:
-                ids.append(int(value))
+                candidate = int(value)
             except (TypeError, ValueError, OverflowError):
                 # OverflowError: a JSON 1e999 parses to inf.
                 continue
+            # A row id fits a signed 64-bit column; anything else is junk
+            # that sqlite would refuse as a query parameter.
+            if 0 < candidate < 2**63:
+                ids.append(candidate)
         return ids or None
 
 

@@ -131,18 +131,31 @@ class ProfessionalPickAttributionTest(APITestCase):
         self._assemble("Something written from scratch")
         self.assertIsNone(self._chosen().get().model_name)
 
-    def test_an_edited_assembly_is_recorded_as_edited_and_a_verbatim_one_is_not(
-        self,
-    ):
-        # completed_appeal_text is post-editing text and the flow has no
-        # textarea flag, so whether the pick was edited comes from the text.
+    # completed_appeal_text is post-editing text and the flow has no textarea
+    # flag, so whether the pick was edited comes from the text.
+
+    def test_an_edited_assembly_is_recorded_as_edited(self):
         self._assemble(
             "Draft letter from model x, edited by the professional",
             proposed_appeal_id=self.draft.id,
         )
+        self.assertTrue(self._chosen().get().editted)
+
+    def test_a_verbatim_assembly_is_not_recorded_as_edited(self):
         self._assemble("Draft letter from model y")
-        by_text = {p.appeal_text: p for p in self._chosen()}
-        self.assertTrue(
-            by_text["Draft letter from model x, edited by the professional"].editted
+        self.assertFalse(self._chosen().get().editted)
+
+    def test_a_verbatim_assembly_of_a_substituted_draft_is_not_an_edit(self):
+        # The browser shows the draft with the denial's values substituted
+        # for its placeholders; the stored draft keeps the placeholders.
+        draft = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Please cover {procedure} for my patient.",
+            chosen=False,
+            model_name="model-x",
         )
-        self.assertFalse(by_text["Draft letter from model y"].editted)
+        self._assemble(
+            "Please cover physical therapy for my patient.",
+            proposed_appeal_id=draft.id,
+        )
+        self.assertFalse(self._chosen().get().editted)

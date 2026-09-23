@@ -443,22 +443,44 @@ class MarkProposalChosenTest(TestCase):
         )
         self.assertEqual(pa.model_name, "model-x")
 
-    def test_editted_is_derived_from_the_text_when_the_caller_cannot_say(self):
-        draft = ProposedAppeal.objects.create(
-            for_denial=self.denial,
-            appeal_text="the draft",
-            chosen=False,
-            model_name="model-x",
+    def _draft_from_model_x(self, text="the draft"):
+        return ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text=text, chosen=False, model_name="model-x"
         )
-        verbatim = mark_proposal_chosen(
+
+    def test_a_verbatim_pick_is_not_an_edit_when_the_caller_cannot_say(self):
+        draft = self._draft_from_model_x()
+        pa = mark_proposal_chosen(
             self.denial, "the draft", proposed_appeal_id=draft.id, editted=None
         )
-        edited = mark_proposal_chosen(
+        self.assertFalse(pa.editted)
+
+    def test_a_changed_pick_is_an_edit_of_the_same_model_when_the_caller_cannot_say(
+        self,
+    ):
+        draft = self._draft_from_model_x()
+        pa = mark_proposal_chosen(
             self.denial, "the draft, edited", proposed_appeal_id=draft.id, editted=None
         )
-        self.assertFalse(verbatim.editted)
-        self.assertTrue(edited.editted)
-        self.assertEqual(edited.model_name, "model-x")
+        self.assertTrue(pa.editted)
+        self.assertEqual(pa.model_name, "model-x")
+
+    def test_a_re_pick_of_an_edited_copy_stays_an_edit(self):
+        # The replay serves chosen copies too, so a re-submit can echo the
+        # copy's id; unchanged text keeps the copy's own answer rather than
+        # reading as verbatim against the already-edited copy.
+        self._draft_from_model_x()
+        copy = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft, edited",
+            chosen=True,
+            editted=True,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "the draft, edited", proposed_appeal_id=copy.id, editted=None
+        )
+        self.assertTrue(pa.editted)
 
     def test_edited_main_flow_pick_is_recorded_and_still_inferred(self):
         # editted only records the edit now; a draft edited from the sole

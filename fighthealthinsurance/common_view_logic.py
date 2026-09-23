@@ -607,6 +607,181 @@ async def _record_synthesis_attempt(
         logger.opt(exception=True).debug("Could not record the synthesis attempt")
 
 
+def substitute_appeal_fields(denial: Denial, content: str) -> str:
+    """Substitute the denial's own values (insurance company, claim id,
+    diagnosis, procedure, the patient's and professional's names, dates ...)
+    for the placeholders a draft carries.
+
+    Every frame the browser receives goes through this while the stored draft
+    keeps its placeholders, so text that comes back from the browser is
+    compared with a draft only after the draft has been substituted the same
+    way (see mark_proposal_chosen)."""
+    insurance_company = "{insurance_company}"
+    if (
+        denial.insurance_company is not None
+        and denial.insurance_company != ""
+        and denial.insurance_company != "UNKNOWN"
+    ):
+        insurance_company = denial.insurance_company
+    claim_id = "{claim_id}"
+    if (
+        denial.claim_id is not None
+        and denial.claim_id != ""
+        and denial.claim_id != "UNKNOWN"
+        and denial.claim_id != insurance_company
+    ):
+        claim_id = denial.claim_id
+    diagnosis = "{diagnosis}"
+    if (
+        denial.diagnosis is not None
+        and denial.diagnosis != ""
+        and denial.diagnosis != "UNKNOWN"
+    ):
+        diagnosis = denial.diagnosis
+    procedure = "{procedure}"
+    if (
+        denial.procedure is not None
+        and denial.procedure != ""
+        and denial.procedure != "UNKNOWN"
+    ):
+        procedure = denial.procedure
+    # Substitutes for common terms - using {{PLACEHOLDER}} format
+    # matching data pipeline conventions
+    subs = {
+        # Insurance company substitutions
+        "Esteemed Members of the Appeals Committee": insurance_company,
+        "{{insurance_company}}": insurance_company,
+        "[insurance_company]": insurance_company,
+        "{insurance_company}": insurance_company,
+        "insurance_company": insurance_company,
+        "[Insurance Company Name]": insurance_company,
+        "[Insurance Company]": insurance_company,
+        "[Health Plan]": insurance_company,
+        "Dear Insurance Company": f"Dear {insurance_company}",
+        "Dear Health Plan": f"Dear {insurance_company}",
+        "Dear Sir/Madam": f"Dear {insurance_company}",
+        # Date
+        "[Insert Date]": denial.date or "{{date}}",
+        # Claim/Case ID
+        "{{CASEID}}": claim_id,
+        "[Reference Number from Denial Letter]": claim_id,
+        "[Claim ID]": claim_id,
+        "{claim_id}": claim_id,
+        # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
+        # for frontend (appeal.ts) to fill from localStorage
+        # using the actual subscriber_id and group_id values
+        # Diagnosis & Procedure
+        "[Diagnosis]": diagnosis,
+        "[Procedure]": procedure,
+        "{diagnosis}": diagnosis,
+        "{procedure}": procedure,
+        # Legacy $-prefixed keys (used in fixture templates)
+        "$insurance_company": insurance_company,
+        "$DATE": denial.date or "{{date}}",
+        "$diagnosis": diagnosis,
+        "$procedure": procedure,
+        "$claim_id": claim_id,
+        "$CASEID": claim_id,
+    }
+    # Each lookup individually guarded: one failing relation (e.g. a
+    # deleted professional profile) must not abort the LATER
+    # substitutions too, leaving [Patient Name]-style placeholders in
+    # the letter the user downloads.
+    try:
+        if denial.professional_to_finish and denial.primary_professional is not None:
+            prof_name = denial.primary_professional.get_full_name()
+            subs["{{Your Name}}"] = prof_name
+            subs["[Your Name]"] = prof_name
+            subs["YourNameMagic"] = prof_name
+            subs["$your_name_here"] = prof_name
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching professional name for denial sub "
+            f"{denial.denial_id}: {e}"
+        )
+    try:
+        if denial.patient_user is not None:
+            patient_name = denial.patient_user.get_legal_name()
+            subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
+            subs["[Patient Name]"] = patient_name
+            subs["[patient name]"] = patient_name
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching patient name for denial sub {denial.denial_id}: {e}"
+        )
+    try:
+        if denial and denial.primary_professional is not None:
+            subs["[Professional Name]"] = denial.primary_professional.get_full_name()
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching professional display name for denial sub "
+            f"{denial.denial_id}: {e}"
+        )
+    try:
+        if denial.domain:
+            subs["[Professional Address]"] = denial.domain.get_address()
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching domain address for denial sub {denial.denial_id}: {e}"
+        )
+    for k, v in subs.items():
+        if v and v != "" and v != "UNKNOWN":
+            content = content.replace(k, str(v))
+    # Second pass: regex-based fuzzy matching for model-generated
+    # placeholder variants like [Claim # Placeholder]
+    patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
+    prof_name_value = subs.get("{{Your Name}}", "")
+    professional_name_value = subs.get("[Professional Name]", "")
+    domain_address_value = subs.get("[Professional Address]", "")
+    fuzzy_subs = [
+        # Claim/Reference number variants
+        (r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[Case\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[CLAIM_NUMBER\]", claim_id),
+        # Diagnosis variants
+        (r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]", diagnosis),
+        # Procedure variants
+        (r"\[Procedure\s*(?:Code\s*)?(?:Placeholder)?\]", procedure),
+        # Insurance company variants
+        (
+            r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
+            insurance_company,
+        ),
+        (
+            r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
+            insurance_company,
+        ),
+        # Date variants
+        (
+            r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
+            denial.date or "{{date}}",
+        ),
+        # Patient name variants
+        (
+            r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+            patient_name_value,
+        ),
+        # Provider/professional name variants
+        (
+            r"\[(?:Provider|Professional|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+            prof_name_value or professional_name_value,
+        ),
+        # Address variants
+        (
+            r"\[(?:Provider|Professional|Practice)?\s*Address\s*(?:Placeholder)?\]",
+            domain_address_value,
+        ),
+    ]
+    for pattern, value in fuzzy_subs:
+        if not value or value == "" or value == "UNKNOWN":
+            continue
+        str_value = str(value)
+        escaped = str_value.replace("\\", r"\\")
+        content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
+    return content
+
+
 def mark_proposal_chosen(
     denial: Denial,
     appeal_text: str,
@@ -719,9 +894,23 @@ def mark_proposal_chosen(
     if editted is None:
         # Edited when the text is not the matched draft's own; with no draft
         # matched (an inferred or unattributed pick) it is not any draft's.
-        editted = original is None or ProposedAppeal.fingerprint(
-            original.appeal_text
-        ) != ProposedAppeal.fingerprint(appeal_text)
+        # The browser never saw the stored text -- every frame has the
+        # denial's values substituted for the draft's placeholders -- so the
+        # draft is compared after the same substitution. A matched chosen
+        # copy (a re-pick) keeps its own answer when the text is unchanged.
+        if original is None:
+            editted = True
+        else:
+            unchanged = ProposedAppeal.fingerprint(appeal_text) in {
+                ProposedAppeal.fingerprint(original.appeal_text),
+                ProposedAppeal.fingerprint(
+                    substitute_appeal_fields(denial, original.appeal_text or "")
+                ),
+            }
+            if not unchanged:
+                editted = True
+            else:
+                editted = bool(original.editted) if original.chosen else False
     shown: Optional[List[int]] = None
     if presented_ids:
         # In the order the browser reported (the page ranks its cards, so
@@ -4628,178 +4817,7 @@ class AppealsBackendHelper:
             Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
             """
             await asyncio.sleep(0)
-            content = appeal["content"]
-            insurance_company = "{insurance_company}"
-            if (
-                denial.insurance_company is not None
-                and denial.insurance_company != ""
-                and denial.insurance_company != "UNKNOWN"
-            ):
-                insurance_company = denial.insurance_company
-            claim_id = "{claim_id}"
-            if (
-                denial.claim_id is not None
-                and denial.claim_id != ""
-                and denial.claim_id != "UNKNOWN"
-                and denial.claim_id != insurance_company
-            ):
-                claim_id = denial.claim_id
-            diagnosis = "{diagnosis}"
-            if (
-                denial.diagnosis is not None
-                and denial.diagnosis != ""
-                and denial.diagnosis != "UNKNOWN"
-            ):
-                diagnosis = denial.diagnosis
-            procedure = "{procedure}"
-            if (
-                denial.procedure is not None
-                and denial.procedure != ""
-                and denial.procedure != "UNKNOWN"
-            ):
-                procedure = denial.procedure
-            # Substitutes for common terms - using {{PLACEHOLDER}} format
-            # matching data pipeline conventions
-            subs = {
-                # Insurance company substitutions
-                "Esteemed Members of the Appeals Committee": insurance_company,
-                "{{insurance_company}}": insurance_company,
-                "[insurance_company]": insurance_company,
-                "{insurance_company}": insurance_company,
-                "insurance_company": insurance_company,
-                "[Insurance Company Name]": insurance_company,
-                "[Insurance Company]": insurance_company,
-                "[Health Plan]": insurance_company,
-                "Dear Insurance Company": f"Dear {insurance_company}",
-                "Dear Health Plan": f"Dear {insurance_company}",
-                "Dear Sir/Madam": f"Dear {insurance_company}",
-                # Date
-                "[Insert Date]": denial.date or "{{date}}",
-                # Claim/Case ID
-                "{{CASEID}}": claim_id,
-                "[Reference Number from Denial Letter]": claim_id,
-                "[Claim ID]": claim_id,
-                "{claim_id}": claim_id,
-                # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
-                # for frontend (appeal.ts) to fill from localStorage
-                # using the actual subscriber_id and group_id values
-                # Diagnosis & Procedure
-                "[Diagnosis]": diagnosis,
-                "[Procedure]": procedure,
-                "{diagnosis}": diagnosis,
-                "{procedure}": procedure,
-                # Legacy $-prefixed keys (used in fixture templates)
-                "$insurance_company": insurance_company,
-                "$DATE": denial.date or "{{date}}",
-                "$diagnosis": diagnosis,
-                "$procedure": procedure,
-                "$claim_id": claim_id,
-                "$CASEID": claim_id,
-            }
-            # Each lookup individually guarded: one failing relation (e.g. a
-            # deleted professional profile) must not abort the LATER
-            # substitutions too, leaving [Patient Name]-style placeholders in
-            # the letter the user downloads.
-            try:
-                if (
-                    denial.professional_to_finish
-                    and denial.primary_professional is not None
-                ):
-                    prof_name = denial.primary_professional.get_full_name()
-                    subs["{{Your Name}}"] = prof_name
-                    subs["[Your Name]"] = prof_name
-                    subs["YourNameMagic"] = prof_name
-                    subs["$your_name_here"] = prof_name
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching professional name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial.patient_user is not None:
-                    patient_name = denial.patient_user.get_legal_name()
-                    subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
-                    subs["[Patient Name]"] = patient_name
-                    subs["[patient name]"] = patient_name
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching patient name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial and denial.primary_professional is not None:
-                    subs["[Professional Name]"] = (
-                        denial.primary_professional.get_full_name()
-                    )
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching professional display name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial.domain:
-                    subs["[Professional Address]"] = denial.domain.get_address()
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching domain address for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            for k, v in subs.items():
-                if v and v != "" and v != "UNKNOWN":
-                    content = content.replace(k, str(v))
-            # Second pass: regex-based fuzzy matching for model-generated
-            # placeholder variants like [Claim # Placeholder]
-            patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
-            prof_name_value = subs.get("{{Your Name}}", "")
-            professional_name_value = subs.get("[Professional Name]", "")
-            domain_address_value = subs.get("[Professional Address]", "")
-            fuzzy_subs = [
-                # Claim/Reference number variants
-                (r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[Case\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[CLAIM_NUMBER\]", claim_id),
-                # Diagnosis variants
-                (r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]", diagnosis),
-                # Procedure variants
-                (r"\[Procedure\s*(?:Code\s*)?(?:Placeholder)?\]", procedure),
-                # Insurance company variants
-                (
-                    r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
-                    insurance_company,
-                ),
-                (
-                    r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
-                    insurance_company,
-                ),
-                # Date variants
-                (
-                    r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
-                    denial.date or "{{date}}",
-                ),
-                # Patient name variants
-                (
-                    r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
-                    patient_name_value,
-                ),
-                # Provider/professional name variants
-                (
-                    r"\[(?:Provider|Professional|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
-                    prof_name_value or professional_name_value,
-                ),
-                # Address variants
-                (
-                    r"\[(?:Provider|Professional|Practice)?\s*Address\s*(?:Placeholder)?\]",
-                    domain_address_value,
-                ),
-            ]
-            for pattern, value in fuzzy_subs:
-                if not value or value == "" or value == "UNKNOWN":
-                    continue
-                str_value = str(value)
-                escaped = str_value.replace("\\", r"\\")
-                content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
-            appeal["content"] = content
+            appeal["content"] = substitute_appeal_fields(denial, appeal["content"])
             return appeal
 
         # If we've had a timeout on the initial call and we're on round 2
@@ -5890,11 +5908,14 @@ class AppealsBackendHelper:
                 )
                 if appeal_text:
                     served_keys.add(_served_key(appeal_text))
-                return {
+                unsaved: dict[str, Any] = {
                     "id": "unknown",
                     "content": appeal_text,
                     "save_failed": True,
                 }
+                if item.synthesized:
+                    unsaved["synthesized"] = "true"
+                return unsaved
             try:
                 fingerprint = ProposedAppeal.fingerprint(appeal_text)
                 pa = ProposedAppeal(
@@ -6044,7 +6065,10 @@ class AppealsBackendHelper:
             # and a pick of that frame is recorded under the twin's model, so
             # the frame must not call it a synthesis: decided here, from the
             # row, rather than by the synthesis branch that asked for it.
-            if stored_row.synthesized if stored_row is not None else item.synthesized:
+            row_synthesized = (
+                stored_row.synthesized if stored_row is not None else item.synthesized
+            )
+            if row_synthesized:
                 result["synthesized"] = "true"
             return result
 

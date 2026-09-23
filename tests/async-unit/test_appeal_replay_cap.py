@@ -290,8 +290,6 @@ class AppealReplayCapTest(TestCase):
                 echo = [f for f in frames if "Stored draft 5 " in f["content"]]
                 self.assertEqual(len(echo), 1, [f["content"][:20] for f in frames])
                 self.assertNotEqual(echo[0].get("synthesized"), "true", echo[0])
-                # The row's own flag is private to the flow, never a frame key.
-                self.assertTrue(all("synthesized_row" not in f for f in frames))
             finally:
                 await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
 

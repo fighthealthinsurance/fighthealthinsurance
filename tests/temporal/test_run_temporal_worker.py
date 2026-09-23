@@ -191,17 +191,26 @@ def test_app_metrics_server_serves_the_app_registry_when_set():
     start.assert_called_once_with(9465, addr="0.0.0.0")
 
 
-def test_app_metrics_server_never_keeps_the_worker_from_hosting():
-    """A malformed bind or a port a sidecar already holds is a metrics
-    problem, not a reason to CrashLoop the pod that generates appeals."""
-    from unittest.mock import Mock
+# A malformed bind or a port a sidecar already holds is a metrics problem,
+# not a reason to CrashLoop the pod that generates appeals.
 
+
+def test_app_metrics_server_survives_a_malformed_bind():
     from fighthealthinsurance.management.commands.run_temporal_worker import (
         app_metrics_server,
     )
 
     with patch.dict(os.environ, {"FHI_APP_METRICS_BIND": "0.0.0.0:"}):
         assert app_metrics_server() is None
+
+
+def test_app_metrics_server_survives_a_busy_port():
+    from unittest.mock import Mock
+
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        app_metrics_server,
+    )
+
     busy = Mock(side_effect=OSError("address already in use"))
     with (
         patch.dict(os.environ, {"FHI_APP_METRICS_BIND": "0.0.0.0:9465"}),
