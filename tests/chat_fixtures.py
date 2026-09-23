@@ -169,19 +169,18 @@ def llm_call_fails(side_effect):
 
 async def make_professional_chat(username, npi):
     """A professional user plus an empty OngoingChat bound to them."""
-    from asgiref.sync import sync_to_async
     from django.contrib.auth import get_user_model
 
     from fighthealthinsurance.models import OngoingChat, ProfessionalUser
 
     User = get_user_model()
-    user = await sync_to_async(User.objects.create_user)(
+    user = await User.objects.acreate_user(
         username=username, password="testpass", email=f"{username}@example.com"
     )
-    professional = await sync_to_async(ProfessionalUser.objects.create)(
+    professional = await ProfessionalUser.objects.acreate(
         user=user, active=True, npi_number=npi
     )
-    chat = await sync_to_async(OngoingChat.objects.create)(
+    chat = await OngoingChat.objects.acreate(
         professional_user=professional,
         chat_history=[],
         summary_for_next_call=[],

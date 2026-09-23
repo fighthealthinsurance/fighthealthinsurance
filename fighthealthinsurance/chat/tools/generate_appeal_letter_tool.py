@@ -13,11 +13,12 @@ call with the letter text plus a link.
 
 import json
 import re
-from typing import Any, Awaitable, Callable, Optional, Tuple
+from typing import Any, Awaitable, Callable, List, Optional, Tuple
 
 from loguru import logger
 
 from fighthealthinsurance.chat.appeal_letter_generator import (
+    DraftedLetter,
     denial_has_letter_context,
     draft_letter_for_chat,
 )
@@ -31,6 +32,16 @@ from .patterns import GENERATE_APPEAL_LETTER_REGEX
 # columns; folded into denial.qa_context (which the appeal prompt bakes in)
 # instead of going through the field allowlist, which would warn on them.
 _CONTEXT_ONLY_KEYS = ("medical_reason", "additional_context")
+
+# Appended when a letter call is dropped because a letter was already
+# drafted for this message (a straggler in the same reply, or a call in a
+# later pass of the turn). The reply is what the user reads AND what the
+# model sees as history, so the drop is stated rather than silent.
+_ONE_LETTER_NOTICE = (
+    "(Note: I drafted one letter for this message. If you wanted another "
+    "version -- a different procedure or a different angle -- just ask and "
+    "I'll write it.)"
+)
 
 
 class GenerateAppealLetterTool(AppealTool):
@@ -57,7 +68,8 @@ class GenerateAppealLetterTool(AppealTool):
     # ONE letter per turn, unlike AppealTool's 3: each execution runs a full
     # (deadline-bounded) generation, so a duplicate call would double the
     # model spend and blow the turn budget. Straggler calls past the first
-    # are stripped instead (see _replace_call).
+    # are stripped instead (see _replace_call); calls in LATER passes of the
+    # same turn are caught by the drafted_this_turn slot.
     max_calls_per_reply: int = 1
 
     def __init__(
@@ -67,6 +79,7 @@ class GenerateAppealLetterTool(AppealTool):
         domain: str = "",
         use_external: bool = True,
         deadline_seconds: Optional[float] = None,
+        drafted_this_turn: Optional[List[Optional[DraftedLetter]]] = None,
     ):
         """
         Args:
@@ -79,10 +92,18 @@ class GenerateAppealLetterTool(AppealTool):
                 turn budget's remaining time (see
                 ChatInterface._remaining_letter_deadline). None applies the
                 pipeline's env default.
+            drafted_this_turn: One-element slot for the letter drafted in
+                the current turn, owned by ChatInterface because this tool
+                is rebuilt for every pass of a turn, recursive research
+                passes included. Once it holds a letter, further calls in
+                the turn are stripped instead of drafting a second letter
+                that would overwrite the first on the appeal. None (direct
+                use) disables the per-turn guard.
         """
         super().__init__(send_status_message, send_error_message, domain)
         self.use_external = use_external
         self.deadline_seconds = deadline_seconds
+        self.drafted_this_turn = drafted_this_turn
 
     def _appeal_link(self, appeal: Any) -> str:
         return f"[Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id})"
@@ -100,15 +121,7 @@ class GenerateAppealLetterTool(AppealTool):
         """
         updated = response_text.replace(call_span, replacement, 1)
         if self.detect(updated):
-            updated = strip_anchored_calls(
-                self,
-                updated,
-                notice=(
-                    "(Note: I drafted one letter for this message. If you "
-                    "wanted another version -- a different procedure or a "
-                    "different angle -- just ask and I'll write it.)"
-                ),
-            )
+            updated = strip_anchored_calls(self, updated, notice=_ONE_LETTER_NOTICE)
         return updated
 
     async def execute(
@@ -122,7 +135,23 @@ class GenerateAppealLetterTool(AppealTool):
         if not chat:
             logger.warning("GenerateAppealLetterTool called without chat object")
             await self.send_error_message("Cannot draft a letter: no chat context")
-            return response_text, context
+            # Stripped here: with max_calls_per_reply == 1, handle() leaves a
+            # declined call in place, which would render its raw payload.
+            return self.strip_calls_on_error(response_text), context
+
+        if self.drafted_this_turn is not None and self.drafted_this_turn[0]:
+            # An earlier pass of this turn already drafted the letter (e.g.
+            # before a research pass whose reply is appended to it). Drafting
+            # again would double the model spend and overwrite that letter on
+            # the appeal.
+            logger.info(
+                "GenerateAppealLetterTool: a letter was already drafted this "
+                "turn; stripping the repeat call"
+            )
+            return (
+                strip_anchored_calls(self, response_text, notice=_ONE_LETTER_NOTICE),
+                context,
+            )
 
         try:
             # Precise payload + span (see parse_anchored_json_payload): replace
@@ -199,6 +228,8 @@ class GenerateAppealLetterTool(AppealTool):
                 use_external=self.use_external,
                 deadline_seconds=self.deadline_seconds,
             )
+            if drafted and self.drafted_this_turn is not None:
+                self.drafted_this_turn[0] = drafted
 
             if drafted and drafted.saved_to_appeal:
                 await self.send_status_message(
