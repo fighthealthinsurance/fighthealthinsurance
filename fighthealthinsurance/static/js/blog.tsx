@@ -111,7 +111,7 @@ const BlogIndex: React.FC = () => {
           classes mirror templates/partials/page_title.html, which a React
           root cannot include. */}
       <header className="fhi-page-title">
-        <h1>Fight Health Insurance Blog</h1>
+        <h1>Blog</h1>
         <p className="fhi-page-lede">
           Insights, tips, and strategies for fighting health insurance denials.
         </p>
