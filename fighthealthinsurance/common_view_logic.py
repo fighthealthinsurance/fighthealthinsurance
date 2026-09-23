@@ -1766,6 +1766,29 @@ def served_reserve_for_another_state() -> Q:
     )
 
 
+def servable_drafts(denial) -> QuerySet:
+    """The denial's ProposedAppeal rows that may be shown to the user.
+
+    The one serving rule, shared by the wizard's end-of-stream reconciliation
+    and the chat letter fallback so the two can't drift apart:
+
+    - never a chosen row -- those are copies of the user's own pick (for an
+      edited one, text the user wrote, which was never a draft);
+    - a held-back reserve only when it was written for the state on the row
+      now: it argues under that state's law;
+    - and a reserve already promoted keeps its stamp, so the same test
+      applies to it after promotion (served_reserve_for_another_state).
+
+    Deliverability (runt filtering) is separate -- see deliverable_candidates.
+    """
+    narrowed: QuerySet = (
+        ProposedAppeal.objects.filter(for_denial=denial, chosen=False)
+        .filter(Q(speculative=False) | Q(built_for_state=state_on_the_row_now()))
+        .exclude(served_reserve_for_another_state())
+    )
+    return narrowed
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -6425,17 +6448,11 @@ class AppealsBackendHelper:
             # another request mid-stream lands a chosen row (for an editted one,
             # text the user wrote, which was never a draft) in between that
             # query and this one, leaving it absent from served_keys.
-            async for row in deliverable_candidates(
-                ProposedAppeal.objects.filter(for_denial=denial, chosen=False).filter(
-                    # A held-back reserve written for another state argues
-                    # under that state's law: only a live row or a reserve
-                    # written for the state on the row now is served...
-                    Q(speculative=False)
-                    | Q(built_for_state=state_on_the_row_now())
-                )
-                # ...and a reserve already promoted keeps its stamp.
-                .exclude(served_reserve_for_another_state())
-            ).order_by("id"):
+            # servable_drafts: no chosen rows, and a reserve only when it was
+            # written for the state on the row now (promoted or not).
+            async for row in deliverable_candidates(servable_drafts(denial)).order_by(
+                "id"
+            ):
                 text = row.appeal_text
                 if not is_real_appeal(text):
                     continue
