@@ -90,6 +90,12 @@ def clear_poisoned_client_class(actor_class: Any) -> None:
         logger.debug(f"Could not inspect Ray's client class cache: {e}")
 
 
+# What a loop actor's ``run`` returns when it is asked to start a loop it is
+# already running. The launch job reads a finished run task as a failure,
+# except for this.
+RUN_ALREADY_STARTED = "run-already-started"
+
+
 class BaseActorRef:
     """
     Base class for Ray actor references with common initialization logic.
@@ -126,15 +132,57 @@ class BaseActorRef:
         # poisons it in a way nothing here would otherwise reach.
         clear_poisoned_client_class(self.actor_class)
 
+    def _existing_actor(self) -> Tuple[Optional[Any], bool]:
+        """``(handle, loop_is_live)`` for the named actor when it is already
+        alive, else ``(None, False)``.
+
+        Only asked when a cluster is attached: ``ray.get_actor`` auto-starts
+        a local cluster otherwise, and there is nothing to attach to in that
+        case anyway. For a loop actor the handle only counts as existing when
+        it answers a health check at all; a dead or hung actor is treated as
+        absent so the creation path (``get_if_exists``) decides.
+        """
+        if not ray_cluster_available():
+            return None, False
+        try:
+            handle = ray.get_actor(self.actor_name, namespace="fhi")
+        except ValueError:
+            return None, False
+        except Exception as e:
+            logger.debug(f"Could not look up existing actor {self.actor_name}: {e}")
+            return None, False
+        if not self.has_run_method:
+            return handle, False
+        try:
+            live = bool(ray.get(handle.health_check.remote(), timeout=10))
+        except Exception as e:
+            logger.info(
+                f"Actor {self.actor_name} exists but did not answer a health "
+                f"check ({e}); letting Ray create or reuse it"
+            )
+            return None, False
+        return handle, live
+
     @cached_property
     def get(self) -> Any:
         """
         Get or create the actor instance.
 
         Returns:
-            For actors with run_method: Tuple of (actor, remote_result)
+            For actors with run_method: Tuple of (actor, remote_result). The
+            remote_result is None when the actor already existed with its run
+            loop live: every evaluation of ``get`` in a fresh process (each
+            deploy's launch job, each reconcile run) used to call
+            ``run.remote()`` regardless, and these are async actors, so each
+            call started one more concurrent loop inside the same actor that
+            nothing could see or stop.
             For actors without run_method: Just the actor instance
         """
+        loop_live = False
+        if self._actor_instance is None:
+            existing, loop_live = self._existing_actor()
+            if existing is not None:
+                self._actor_instance = existing
         if self._actor_instance is None:
             try:
                 self._actor_instance = self.actor_class.options(  # type: ignore
@@ -158,6 +206,12 @@ class BaseActorRef:
                 raise
 
         if self.has_run_method:
+            if loop_live:
+                logger.info(
+                    f"Attached to the running {self.actor_name} actor; its run "
+                    "loop is already live, not starting another"
+                )
+                return (self._actor_instance, None)
             try:
                 # Kick off the remote task
                 remote_result = self._actor_instance.run.remote()
