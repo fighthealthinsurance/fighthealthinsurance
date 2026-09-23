@@ -114,6 +114,15 @@ class TheIntakePageHasANameTest(TestCase):
         form = html.index('<div class="main-form">')
         self.assertLess(narrow, title, "the title is outside the narrow column")
         self.assertLess(title, form, "the title sits inside or below the form")
+        # The first heading a screen reader meets is the page's, even when a
+        # resume-help or pre-fill notice is showing above the form.
+        first_heading = re.search(r"<h[1-6]\b", html[narrow:])
+        self.assertIsNotNone(first_heading)
+        self.assertEqual(
+            narrow + first_heading.start(),
+            html.index("<h1>", title),
+            "a notice's heading comes before the page title",
+        )
 
 
 class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):

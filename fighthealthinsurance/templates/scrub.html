@@ -31,6 +31,7 @@ Upload your Health Insurance Denial
 {% block content %}
 <section class="scan-section mt-2">
     <div class="container-narrow">
+	{% include "partials/page_title.html" with title="Generate an Appeal" %}
 	{% if resume_help %}
 	<div class="alert-box alert-box-warning-light" id="resume-help">
 	    <h4>That link did not open your appeal</h4>
@@ -55,7 +56,6 @@ Upload your Health Insurance Denial
 	    {{ form.errors }}
 	</div>
 	{% endif %}
-	{% include "partials/page_title.html" with title="Generate an Appeal" %}
 	<div class="main-form">
 	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
