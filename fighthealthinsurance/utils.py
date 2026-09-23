@@ -988,7 +988,7 @@ def _discard_task_outcome(task: "asyncio.Future") -> None:
         pass
 
 
-def _retire_anext_task(task: "Optional[asyncio.Future]") -> None:
+def _retire_anext_task(task: "Optional[asyncio.Future]", *, cancel: bool) -> None:
     """Make an abandoned ``__anext__()`` task harmless.
 
     ``_interleave_iterator_for_keep_alive`` drives its source with an explicit
@@ -1005,17 +1005,34 @@ def _retire_anext_task(task: "Optional[asyncio.Future]") -> None:
     arriving a minute or two after a mid-stream disconnect, which is exactly
     how long the abandoned model call took to finish.
 
-    Cancels rather than awaits: this runs from teardown paths (including GC
-    finalisation) where awaiting is either unavailable or unbounded. The
-    done-callback retrieves whatever the task ends up holding.
+    ``cancel`` says whether the task is also stopped. The interleaver's
+    cancellation and error paths always cancelled it, and still do. Its
+    close path (``aclose``) never did, and must not start: that task is the
+    head of the ``save_appeal`` chain, so cancelling it drops the draft the
+    model thread is still finishing instead of letting ``save_appeal`` run
+    and the lease decide whether it persists -- the behaviour the appeal
+    consumer has always had (review). All the noise ever needed was for the
+    outcome to be READ, which the done-callback does either way.
+
+    Never awaits: this runs from teardown paths, GC finalisation included,
+    where awaiting is unavailable or unbounded. Nor does it raise: both
+    ``cancel()`` and ``add_done_callback()`` on an already-finished task
+    schedule through ``loop.call_soon``, which raises ``RuntimeError`` once
+    the loop is closed (interpreter shutdown with a stream still suspended),
+    and a raise out of a generator's ``finally`` would turn its clean close
+    into "an error occurred during closing of asynchronous generator".
     """
     if task is None:
         return
-    if task.done():
-        _discard_task_outcome(task)
-        return
-    task.cancel()
-    task.add_done_callback(_discard_task_outcome)
+    try:
+        if task.done():
+            _discard_task_outcome(task)
+            return
+        if cancel:
+            task.cancel()
+        task.add_done_callback(_discard_task_outcome)
+    except RuntimeError:  # pragma: no cover - loop closed; see docstring
+        pass
 
 
 async def _interleave_iterator_for_keep_alive(
@@ -1061,20 +1078,21 @@ async def _interleave_iterator_for_keep_alive(
                 break
             except asyncio.CancelledError:
                 logger.debug("Cancellation of task in interleaved generator")
-                _retire_anext_task(task)
+                _retire_anext_task(task, cancel=True)
                 task = None
                 raise
             except Exception as e:
                 logger.opt(exception=True).error(f"Error in generator: {e}")
                 yield "\n"
-                _retire_anext_task(task)
+                _retire_anext_task(task, cancel=True)
                 task = None
     finally:
         # Every exit, including the one no except clause can see: aclose()
         # throws GeneratorExit here, and without this the in-flight
         # __anext__() task outlives the generator and reports its unread
-        # StopAsyncIteration at GC. See _retire_anext_task.
-        _retire_anext_task(task)
+        # StopAsyncIteration at GC. Left running, as it always was -- see
+        # _retire_anext_task for why cancelling here would lose a draft.
+        _retire_anext_task(task, cancel=False)
 
 
 # A heartbeat that lands more than this far past its scheduled interval was

@@ -776,26 +776,39 @@ def pro_signups_csv_single_lines(request):
 
 
 def _unique_signups_per_day_df() -> "pd.DataFrame":
-    """Unique-email signup counts per day, split by paid status.
+    """One row per (signup day, paid status) with the count of professionals
+    whose FIRST signup landed there.
 
-    Postgres can do the per-email dedupe in SQL, but ONLY without an
-    aggregate: ``distinct(*fields)`` combined with ``annotate()`` raises
-    ``NotImplementedError("annotate() + distinct(fields) is not
-    implemented.")`` from the SQL compiler. That is not the
-    ``NotSupportedError`` SQLite raises for ``distinct(*fields)`` at all, so
-    the fallback this code has always had was unreachable in production and
-    the staff chart 500'd on every load (issue PYTHON-DJANGO-00-J1).
+    "Unique" means one per email across the whole table, which is what the
+    cumulative chart claims to show: InterestedProfessional.email is not
+    unique, so someone who submits the interest form on Monday and again on
+    Wednesday has two rows and must count once, on Monday.
 
-    Both backends therefore land on the same query: group by day and paid
-    status, and count distinct emails within each group.
+    Done in Python, as the provider-type charts already do for SQLite. The
+    SQL shape this used to try -- ``.distinct("email")`` then
+    ``.annotate()`` -- cannot work on either backend: SQLite raises
+    ``NotSupportedError`` for ``distinct(*fields)``, and Postgres, which
+    supports it, raises ``NotImplementedError("annotate() + distinct(fields)
+    is not implemented.")`` from the SQL compiler. The fallback only caught
+    the first, so the staff charts 500'd on every load in production
+    (PYTHON-DJANGO-00-J1). And a per-day ``Count(distinct=True)`` would
+    quietly count that Monday/Wednesday professional twice (review).
     """
-    return pd.DataFrame(
-        list(
-            _interested_professionals_excluding_test_emails()
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email", distinct=True))
-        )
+    rows = (
+        _interested_professionals_excluding_test_emails()
+        .order_by("email", "signup_date", "pk")
+        .values("email", "signup_date", "clicked_for_paid")
+    )
+    first_row_per_email: dict = {}
+    for row in rows:
+        first_row_per_email.setdefault(row["email"], row)
+    if not first_row_per_email:
+        return pd.DataFrame()
+    return (
+        pd.DataFrame(first_row_per_email.values())
+        .groupby(["signup_date", "clicked_for_paid"])
+        .size()
+        .reset_index(name="count")
     )
 
 

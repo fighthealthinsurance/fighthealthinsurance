@@ -21,9 +21,9 @@ from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 from django.db.utils import OperationalError
 
+from fighthealthinsurance.client_gone import message_means_client_gone
 from fighthealthinsurance.websockets import (
     _AppealGenTraceFields,
-    _stream_error_is_client_disconnect,
     StreamWireTracker,
     log_zero_appeal_diagnostics,
 )
@@ -426,13 +426,13 @@ class TestStreamErrorClassification:
         ],
     )
     def test_disconnect_markers_match(self, err):
-        assert _stream_error_is_client_disconnect(err)
+        assert message_means_client_gone(err)
 
     @pytest.mark.parametrize(
         "err", [None, "", "Server error while generating appeals."]
     )
     def test_non_disconnect_does_not_match(self, err):
-        assert not _stream_error_is_client_disconnect(err)
+        assert not message_means_client_gone(err)
 
 
 @pytest.mark.asyncio
@@ -828,7 +828,8 @@ class TestDeniedItemsAnalysisDispatchGuard:
 
 class TestClientDisconnectedOverridesTextMatching:
     """uvicorn's ClientDisconnected carries no message, so the caller's
-    type-based verdict has to be able to reach the classification.
+    verdict (the send wrapper raised ClientGone) has to be able to reach the
+    classification.
 
     Before this, a hangup mid-stream had an empty `stream_error`, matched no
     marker, and was filed at ERROR as a delivery failure -- one Sentry issue
@@ -837,6 +838,8 @@ class TestClientDisconnectedOverridesTextMatching:
 
     @pytest.mark.asyncio
     async def test_message_less_disconnect_is_a_disconnect_when_caller_says_so(self):
+        """The caller's verdict is isinstance(e, ClientGone) off the send
+        wrapper; this helper only ever sees the resulting bool."""
         objects = _make_count_mock(return_value=3)
         p1, p2 = _patch_models(objects)
         warn_cm, warnings = _captured_warning()

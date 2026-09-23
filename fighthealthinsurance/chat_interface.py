@@ -83,7 +83,7 @@ from fighthealthinsurance.ml.ml_models import (
     remove_repeated_blocks,
     remove_repeated_sentences,
 )
-from fighthealthinsurance.client_gone import client_is_gone
+from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -1419,8 +1419,12 @@ class ChatInterface:
             # The status/heartbeat frames this turn writes go down the same
             # socket as the reply, so a user who closes the tab mid-turn
             # surfaces here as a failed generation. It isn't one: nothing
-            # broke and nobody is waiting.
-            if client_is_gone(e):
+            # broke and nobody is waiting. isinstance, not a type sniff of
+            # e: this try also wraps every tool handler and model call, and
+            # a "connection reset by peer" out of Postgres or a model
+            # backend is a real failure that the user (still here) must be
+            # told about (review).
+            if isinstance(e, ClientGone):
                 client_hung_up = True
                 logger.warning(
                     f"Chat {chat.id}: client disconnected mid-turn; "

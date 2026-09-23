@@ -226,15 +226,20 @@ class ChatClientHangupTest(APITestCase):
     hangup surfaces here as a failed generation. Reporting it produced four
     more Sentry issues on top of the send itself, including a
     ``chat_turn_total_failure`` reliability event that pages (-M8).
+
+    A hangup is what the consumer's send wrapper says it is -- ``ClientGone``
+    -- and nothing else: the turn also wraps every tool handler and model
+    call, and a transport-shaped error from one of THOSE is an outage the
+    (still present) user has to hear about.
     """
 
     _run_failing_turn = ChatFailurePersistenceTest._run_failing_turn
 
     @staticmethod
     def _hangup():
-        from uvicorn.protocols.utils import ClientDisconnected
+        from fighthealthinsurance.client_gone import ClientGone
 
-        return ClientDisconnected()
+        return ClientGone()
 
     async def test_a_hangup_is_not_logged_at_error(self):
         records = []
@@ -271,6 +276,25 @@ class ChatClientHangupTest(APITestCase):
                 "hangup4", "9999910024", RuntimeError("all models down")
             )
         mock_capture.assert_called_once()
+
+    async def test_a_reset_from_a_backend_is_not_a_hangup(self):
+        """A model backend (or Postgres, via a tool handler) resetting the
+        connection on US looks exactly like a departed client to a type
+        sniff, and is nothing of the kind: the user is still there, and gets
+        the error frame and the page."""
+        with patch(
+            "fighthealthinsurance.chat_interface.capture_reliability_event"
+        ) as mock_capture:
+            chat, recorder = await self._run_failing_turn(
+                "hangup5",
+                "9999910025",
+                ConnectionResetError("[Errno 104] Connection reset by peer"),
+            )
+        mock_capture.assert_called_once()
+        self.assertTrue(
+            [f for f in recorder.frames if "error" in f],
+            f"the still-connected user must get an error frame: {recorder.frames}",
+        )
 
 
 class PersistChatTurnHelperTest(APITestCase):
