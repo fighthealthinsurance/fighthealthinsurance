@@ -111,13 +111,9 @@ class Command(BaseCommand):
         # speculative=False mirrors mark_proposal_chosen's guard: a held-back
         # precompute row the user never saw must not mis-attribute the pick on a
         # coincidental text collision (a promoted row is speculative=False).
-        fingerprint = ProposedAppeal.fingerprint(pa.appeal_text)
-        text_match = Q(appeal_text=pa.appeal_text)
-        if fingerprint is not None:
-            text_match |= Q(text_fingerprint=fingerprint)
         original = (
             ProposedAppeal.objects.filter(
-                text_match,
+                ProposedAppeal.text_match_q(pa.appeal_text),
                 for_denial_id=pa.for_denial_id,
                 chosen=False,
                 model_name__isnull=False,

@@ -106,7 +106,10 @@ from fighthealthinsurance.ml.model_attempt_log import (
     ModelAttemptRecord,
     ModelAttemptRecorder,
 )
-from fighthealthinsurance.ml.model_identity import canonical_model_name
+from fighthealthinsurance.ml.model_identity import (
+    LEGACY_UNATTRIBUTED_LABEL,
+    canonical_model_name,
+)
 from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import (
     MLAppealQuestionsHelper,
@@ -607,7 +610,7 @@ async def _record_synthesis_attempt(
 def mark_proposal_chosen(
     denial: Denial,
     appeal_text: str,
-    editted: bool = False,
+    editted: Optional[bool] = False,
     proposed_appeal_id: Optional[int] = None,
     draft_unsaved: bool = False,
     arbitrary_text: bool = False,
@@ -651,6 +654,9 @@ def mark_proposal_chosen(
     as the share flow's marker AND the inference gate, which left the column
     constantly False for the main flow: verbatim-vs-edited per model was
     unmeasurable, and the admin filter on it showed a flow with no edits.
+    ``None`` means the caller cannot say (the professional flow has no
+    textarea flag): the pick is then recorded as edited when its text is not
+    the matched draft's own.
     """
     # speculative=False throughout: a held-back precompute row was never shown
     # to the user, so it can't be the pick. Served speculative rows are flipped
@@ -676,17 +682,19 @@ def mark_proposal_chosen(
         if (
             original is not None
             and original.chosen
-            and not (original.model_name or "").strip()
+            and (
+                not (original.model_name or "").strip()
+                # The backfill's placeholder for a pick it could not attribute
+                # is not evidence either: copying it would file a pick made
+                # today as a pre-tracking one.
+                or original.model_name == LEGACY_UNATTRIBUTED_LABEL
+            )
         ):
             original = None
     if original is None:
-        fingerprint = ProposedAppeal.fingerprint(appeal_text)
-        text_match = Q(appeal_text=appeal_text)
-        if fingerprint is not None:
-            text_match |= Q(text_fingerprint=fingerprint)
         original = (
             ProposedAppeal.objects.filter(
-                text_match,
+                ProposedAppeal.text_match_q(appeal_text),
                 for_denial=denial,
                 chosen=False,
                 speculative=False,
@@ -708,13 +716,23 @@ def mark_proposal_chosen(
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
             model_name, synthesized, context_level = inferred
+    if editted is None:
+        # Edited when the text is not the matched draft's own; with no draft
+        # matched (an inferred or unattributed pick) it is not any draft's.
+        editted = original is None or ProposedAppeal.fingerprint(
+            original.appeal_text
+        ) != ProposedAppeal.fingerprint(appeal_text)
     shown: Optional[List[int]] = None
     if presented_ids:
-        shown = sorted(
+        # In the order the browser reported (the page ranks its cards, so
+        # the order says which sat on top), deduped, and only this denial's
+        # own rows.
+        own = set(
             ProposedAppeal.objects.filter(
                 for_denial=denial, id__in=presented_ids
             ).values_list("id", flat=True)
         )
+        shown = list(dict.fromkeys(i for i in presented_ids if i in own))
     pa = ProposedAppeal(
         appeal_text=appeal_text,
         for_denial=denial,
@@ -749,8 +767,10 @@ def record_professional_pick(
             for_denial=denial, chosen=True, appeal_text=appeal_text
         ).exists():
             return None
+        # completed_appeal_text is post-editing text and this flow has no
+        # textarea flag, so whether the pick was edited is read off the text.
         return mark_proposal_chosen(
-            denial, appeal_text, proposed_appeal_id=proposed_appeal_id
+            denial, appeal_text, proposed_appeal_id=proposed_appeal_id, editted=None
         )
     except Exception:
         logger.opt(exception=True).warning(
@@ -4780,7 +4800,6 @@ class AppealsBackendHelper:
                 escaped = str_value.replace("\\", r"\\")
                 content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
             appeal["content"] = content
-            appeal.pop("synthesized_row", None)
             return appeal
 
         # If we've had a timeout on the initial call and we're on round 2
@@ -6020,15 +6039,13 @@ class AppealsBackendHelper:
             result: dict[str, Any] = {"id": id, "content": appeal_text}
             if save_failed:
                 result["save_failed"] = True
-            # Whether the ROW behind this frame is a synthesis. A synthesis
-            # result can land on a stored draft (the fingerprint constraint
-            # hands back the twin), and the frame must then say what the row
-            # says: badged as a synthesis, a pick of it was recorded under the
-            # twin's model. Private to the streaming flow; sub_in_appeals
-            # drops it before the frame goes out.
-            result["synthesized_row"] = bool(
-                stored_row.synthesized if stored_row is not None else item.synthesized
-            )
+            # The badge says what the ROW says. A synthesis result can land on
+            # a stored draft (the fingerprint constraint hands back the twin),
+            # and a pick of that frame is recorded under the twin's model, so
+            # the frame must not call it a synthesis: decided here, from the
+            # row, rather than by the synthesis branch that asked for it.
+            if stored_row.synthesized if stored_row is not None else item.synthesized:
+                result["synthesized"] = "true"
             return result
 
         # (The form_completed intake event was recorded right after the
@@ -6528,16 +6545,14 @@ class AppealsBackendHelper:
                                     started=synthesis_started,
                                     started_wall=synthesis_started_wall,
                                 )
-                            synthesized_row = saved.get("synthesized_row", True)
                             subbed = await sub_in_appeals(saved)
-                            if synthesized_row:
-                                subbed["synthesized"] = "true"
-                            else:
+                            if subbed.get("synthesized") != "true":
                                 # The synthesis reproduced a stored draft the
                                 # replay cap held back: what is served is that
-                                # draft, under its own model, so the frame is
-                                # not badged as a synthesis that a pick would
-                                # then be credited to the draft's model for.
+                                # draft, under its own model (save_appeal
+                                # badges from the row), so the frame is not
+                                # badged as a synthesis that a pick would then
+                                # be credited to the draft's model for.
                                 logger.info(
                                     f"[gen_id={generation_id}] synthesis for "
                                     f"denial {denial_id} reproduced a stored "

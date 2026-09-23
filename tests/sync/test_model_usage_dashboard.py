@@ -513,8 +513,10 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
         self.assertEqual(by_name["model-a"]["presented"], 1)
         self.assertEqual(by_name["model-b"]["presented"], 1)
 
-    def test_multiple_chosen_rows_do_not_duplicate_presented(self):
-        # Two picks on the same denial (re-submit): drafts still count once.
+    def test_multiple_chosen_rows_count_presented_once_per_pick(self):
+        # Two picks on the same denial (re-submit): the draft was on offer at
+        # each, so it is presented twice against two chosen -- 100%, not the
+        # 200% that counting it once against both picks produced.
         denial = Denial.objects.create(
             hashed_email="hash",
             denial_text="denied",
@@ -531,7 +533,7 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
             )
         rows = self._rows(source="proposed_appeal")
         m1 = next(r for r in rows if r["model_name"] == "m1")
-        self.assertEqual(m1["presented"], 1)
+        self.assertEqual(m1["presented"], 2)
         self.assertEqual(m1["chosen"], 2)
 
     def test_zero_denominator_renders_em_dash(self):
@@ -903,7 +905,9 @@ class PresentedCountsOnlyDraftsBeforeThePickTest(_StaffDashboardCase):
         self._draft("m2", "second round")
         self._pick("m2", "second round")
         rows = self._rows()
-        self.assertEqual(rows["m1"]["presented"], 1)
+        # m1's draft was on offer at both picks (and passed over at the
+        # second); m2's only at the second.
+        self.assertEqual(rows["m1"]["presented"], 2)
         self.assertEqual(rows["m2"]["presented"], 1)
 
     def test_context_level_table_uses_the_same_bound(self):
@@ -984,6 +988,33 @@ class PresentedIsWhatThePickSawTest(_StaffDashboardCase):
         rows = self._rows(source="context_level")
         self.assertEqual(rows["full"]["presented"], 1)
         self.assertNotIn("tier1_shed", rows)
+
+    def test_an_unreported_then_a_reported_pick_on_one_denial_count_both(self):
+        # A denial picked before this deploy and again after it, inside the
+        # window: the first pick's candidates come from the fallback, the
+        # second's from its report, and the picked model wins both.
+        a = self._draft("m1", "a")
+        self._draft("m2", "b")
+        self._pick("m1", "a")
+        self._pick("m1", "a", presented_ids=[a.id])
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["chosen"], 2)
+        self.assertEqual(rows["m1"]["presented"], 2)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+    def test_each_unreported_pick_counts_the_drafts_it_saw(self):
+        # Two re-submits of the same draft are two picks; the fallback used
+        # to count the drafts once, which read as a 200% win rate.
+        self._draft("m1", "a")
+        self._draft("m2", "b")
+        self._pick("m1", "a")
+        self._pick("m1", "a")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["chosen"], 2)
+        self.assertEqual(rows["m1"]["presented"], 2)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertEqual(rows["m2"]["presented"], 2)
 
 
 class TemplateDraftsAreAModelBucketTest(_StaffDashboardCase):

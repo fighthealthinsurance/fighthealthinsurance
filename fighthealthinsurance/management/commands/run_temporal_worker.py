@@ -27,6 +27,7 @@ from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from loguru import logger
 
 from fighthealthinsurance.worker_signals import early_stop
 
@@ -78,8 +79,18 @@ def app_metrics_server() -> str | None:
         return None
     from prometheus_client import start_http_server
 
-    host, _, port = bind.rpartition(":")
-    start_http_server(int(port), addr=host or "0.0.0.0")
+    try:
+        host, _, port = bind.rpartition(":")
+        start_http_server(int(port), addr=host or "0.0.0.0")
+    except Exception:
+        # A metrics problem (a malformed bind, a port a sidecar already
+        # holds) must not keep the worker from hosting: generating appeals
+        # matters more than having their counters scraped.
+        logger.opt(exception=True).warning(
+            f"Not serving app metrics: could not bind {bind!r} "
+            f"({APP_METRICS_BIND_ENV})"
+        )
+        return None
     return bind
 
 

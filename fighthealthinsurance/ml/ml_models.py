@@ -305,6 +305,13 @@ def _endpoint_label(url: Any) -> str:
     return f"{host}:{port}" if port else host
 
 
+# Set on an HTTP error the status handler in __infer has already filed under
+# a specific reason (context_overflow, missing_model) before re-raising it
+# for a raise_http_errors caller, so the outer handler does not file the
+# same call again as a bare http_error.
+_REASON_RECORDED_ATTR = "_fhi_ml_reason_recorded"
+
+
 def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
     """True when an error payload says the endpoint doesn't serve the model.
 
@@ -3597,11 +3604,12 @@ class RemoteOpenLike(RemoteModel):
                                     f"window at {api_base} -- "
                                     f"{response_body[:300]}"
                                 )
-                                if raise_http_errors:
-                                    raise
                                 record_ml_failure(
                                     metric_model, "context_overflow", leg=leg
                                 )
+                                if raise_http_errors:
+                                    setattr(e, _REASON_RECORDED_ATTR, True)
+                                    raise
                                 return None
 
                             if e.status == 404 and _error_text_indicates_missing_model(
@@ -3617,15 +3625,16 @@ class RemoteOpenLike(RemoteModel):
                                 self._note_missing_model(
                                     api_base, model, response_body[:200]
                                 )
+                                record_ml_failure(
+                                    metric_model, "missing_model", leg=leg
+                                )
                                 if raise_http_errors:
+                                    setattr(e, _REASON_RECORDED_ATTR, True)
                                     raise
                                 if transport_failures is not None:
                                     transport_failures.append(
                                         f"{model} via {api_base}: not served here"
                                     )
-                                record_ml_failure(
-                                    metric_model, "missing_model", leg=leg
-                                )
                                 return None
 
                             response_body_preview = response_body[:2000]
@@ -3657,21 +3666,23 @@ class RemoteOpenLike(RemoteModel):
                             )[:300]
                             if _error_text_indicates_missing_model(error_message):
                                 self._note_missing_model(api_base, model, error_message)
+                                record_ml_failure(
+                                    metric_model, "missing_model", leg=leg
+                                )
                                 if raise_http_errors:
                                     # Semantically a missing model even though
                                     # the transport said 200: raise a status-
                                     # bearing error (like the HTTP 404 branch)
                                     # so the startup probe reports the real
                                     # cause instead of "empty or no response".
-                                    raise aiohttp.ClientResponseError(
+                                    missing = aiohttp.ClientResponseError(
                                         request_info=response.request_info,
                                         history=(),
                                         status=404,
                                         message=error_message,
                                     )
-                                record_ml_failure(
-                                    metric_model, "missing_model", leg=leg
-                                )
+                                    setattr(missing, _REASON_RECORDED_ATTR, True)
+                                    raise missing
                                 return None
                             logger.warning(
                                 f"Bad response from {self} with {model}: "
@@ -3697,7 +3708,8 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
-            record_ml_failure(metric_model, "http_error", leg=leg)
+            if not getattr(e, _REASON_RECORDED_ATTR, False):
+                record_ml_failure(metric_model, "http_error", leg=leg)
             raise
         except MODEL_TRANSPORT_ERRORS as e:
             # Expected operational failures (backend down, unreachable, slow,

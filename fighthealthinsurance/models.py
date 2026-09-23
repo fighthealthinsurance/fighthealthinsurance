@@ -2790,6 +2790,18 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
             ),
         ]
 
+    @classmethod
+    def text_match_q(cls, text: typing.Optional[str]) -> Q:
+        """Rows whose text is ``text``: by fingerprint when one can be computed
+        (so CRLF, whitespace and case differences still match) or by the exact
+        text. Shared by the pick recorder and the attribution backfill so the
+        two cannot drift."""
+        match = Q(appeal_text=text)
+        fingerprint = cls.fingerprint(text)
+        if fingerprint is not None:
+            match |= Q(text_fingerprint=fingerprint)
+        return match
+
     @staticmethod
     def fingerprint(text: typing.Optional[str]) -> typing.Optional[str]:
         """Normalized content fingerprint: case- and whitespace-insensitive,

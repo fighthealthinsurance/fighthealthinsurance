@@ -9,6 +9,7 @@ from fighthealthinsurance.common_view_logic import (
     ChooseAppealHelper,
     mark_proposal_chosen,
 )
+from fighthealthinsurance.ml.model_identity import LEGACY_UNATTRIBUTED_LABEL
 from fighthealthinsurance.models import Denial, ProposedAppeal
 
 
@@ -408,6 +409,57 @@ class MarkProposalChosenTest(TestCase):
         pa = mark_proposal_chosen(self.denial, "anything")
         self.assertIsNone(pa.presented_ids)
 
+    def test_presented_ids_keep_the_on_screen_order_without_duplicates(self):
+        # The page ranks its cards, so the order says which sat on top.
+        first = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="first", chosen=False, model_name="m"
+        )
+        second = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="second", chosen=False, model_name="m"
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "first", presented_ids=[second.id, first.id, second.id]
+        )
+        self.assertEqual(pa.presented_ids, [second.id, first.id])
+
+    def test_a_legacy_placeholder_on_a_chosen_copy_is_not_evidence(self):
+        # The backfill stamps picks it could not attribute; the replay serves
+        # chosen copies too, so a re-submit can echo such a copy's id. Copying
+        # the placeholder would file a pick made today as a pre-tracking one.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        legacy = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft",
+            chosen=True,
+            model_name=LEGACY_UNATTRIBUTED_LABEL,
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "the draft", proposed_appeal_id=legacy.id
+        )
+        self.assertEqual(pa.model_name, "model-x")
+
+    def test_editted_is_derived_from_the_text_when_the_caller_cannot_say(self):
+        draft = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        verbatim = mark_proposal_chosen(
+            self.denial, "the draft", proposed_appeal_id=draft.id, editted=None
+        )
+        edited = mark_proposal_chosen(
+            self.denial, "the draft, edited", proposed_appeal_id=draft.id, editted=None
+        )
+        self.assertFalse(verbatim.editted)
+        self.assertTrue(edited.editted)
+        self.assertEqual(edited.model_name, "model-x")
+
     def test_edited_main_flow_pick_is_recorded_and_still_inferred(self):
         # editted only records the edit now; a draft edited from the sole
         # model's output is still that model's.
@@ -465,7 +517,9 @@ class ChooseAppealCarriesTheBrowserFlagsTest(TestCase):
             "semi_sekret": "sekret",
             "appeal_text": "the letter",
         }
-        for raw in ("not json", "{\"a\": 1}", "", "[]"):
+        # Also a JSON number that parses to inf and nesting past the parser's
+        # depth: neither may 500 the pick.
+        for raw in ("not json", "{\"a\": 1}", "", "[]", "[1e999]", "[" * 100000):
             form = core_forms.ChooseAppealForm({**base, "presented_ids": raw})
             self.assertTrue(form.is_valid(), (raw, form.errors))
             self.assertIsNone(form.cleaned_data["presented_ids"], raw)

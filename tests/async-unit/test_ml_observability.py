@@ -612,3 +612,47 @@ class TestCheckedResultsAreCounted:
             )
             == before + 1
         )
+
+
+class TestClassifiedReasonsSurviveTheProbeRaise:
+    """The status handler classifies a context overflow or a missing model,
+    but for a raise_http_errors caller (the probes) it re-raised before
+    filing the reason, and the outer handler filed the call as a bare
+    http_error: the specific series never moved for exactly the callers
+    that exist to notice."""
+
+    @pytest.mark.asyncio
+    async def test_probe_context_overflow_keeps_its_reason(self, make_fake_model_post):
+        model_name = "obs-probe-overflow"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        body = (
+            "This model's maximum context length is 8192 tokens. However, you "
+            "requested 9000 tokens."
+        )
+        overflow_before = _counter_value(
+            "fhi_ml_call_failures_total", model=model_name, reason="context_overflow"
+        )
+        http_before = _counter_value(
+            "fhi_ml_call_failures_total", model=model_name, reason="http_error"
+        )
+        with patch("aiohttp.ClientSession.post", make_fake_model_post(400, body=body)):
+            with pytest.raises(aiohttp.ClientResponseError):
+                await m._infer_no_context(
+                    system_prompts=["sys"],
+                    prompt="hello",
+                    timeout=10.0,
+                    raise_http_errors=True,
+                )
+        assert (
+            _counter_value(
+                "fhi_ml_call_failures_total", model=model_name, reason="context_overflow"
+            )
+            == overflow_before + 1
+        )
+        # Filed once, under its reason, not again as a bare http_error.
+        assert (
+            _counter_value(
+                "fhi_ml_call_failures_total", model=model_name, reason="http_error"
+            )
+            == http_before
+        )

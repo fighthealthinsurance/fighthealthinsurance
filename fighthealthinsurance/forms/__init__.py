@@ -291,7 +291,8 @@ class ChooseAppealForm(DenialRefForm):
             return None
         try:
             values = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
+            # Not JSON, or nested past the parser's depth: not a report.
             return None
         if not isinstance(values, list):
             return None
@@ -299,7 +300,8 @@ class ChooseAppealForm(DenialRefForm):
         for value in values[: self.MAX_PRESENTED_IDS]:
             try:
                 ids.append(int(value))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: a JSON 1e999 parses to inf.
                 continue
         return ids or None
 

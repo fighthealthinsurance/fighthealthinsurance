@@ -130,3 +130,19 @@ class ProfessionalPickAttributionTest(APITestCase):
     def test_text_from_scratch_with_several_models_in_play_is_unattributed(self):
         self._assemble("Something written from scratch")
         self.assertIsNone(self._chosen().get().model_name)
+
+    def test_an_edited_assembly_is_recorded_as_edited_and_a_verbatim_one_is_not(
+        self,
+    ):
+        # completed_appeal_text is post-editing text and the flow has no
+        # textarea flag, so whether the pick was edited comes from the text.
+        self._assemble(
+            "Draft letter from model x, edited by the professional",
+            proposed_appeal_id=self.draft.id,
+        )
+        self._assemble("Draft letter from model y")
+        by_text = {p.appeal_text: p for p in self._chosen()}
+        self.assertTrue(
+            by_text["Draft letter from model x, edited by the professional"].editted
+        )
+        self.assertFalse(by_text["Draft letter from model y"].editted)

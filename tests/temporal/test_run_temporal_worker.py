@@ -191,6 +191,25 @@ def test_app_metrics_server_serves_the_app_registry_when_set():
     start.assert_called_once_with(9465, addr="0.0.0.0")
 
 
+def test_app_metrics_server_never_keeps_the_worker_from_hosting():
+    """A malformed bind or a port a sidecar already holds is a metrics
+    problem, not a reason to CrashLoop the pod that generates appeals."""
+    from unittest.mock import Mock
+
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        app_metrics_server,
+    )
+
+    with patch.dict(os.environ, {"FHI_APP_METRICS_BIND": "0.0.0.0:"}):
+        assert app_metrics_server() is None
+    busy = Mock(side_effect=OSError("address already in use"))
+    with (
+        patch.dict(os.environ, {"FHI_APP_METRICS_BIND": "0.0.0.0:9465"}),
+        patch("prometheus_client.start_http_server", busy),
+    ):
+        assert app_metrics_server() is None
+
+
 def test_worker_passes_metrics_runtime_to_the_client():
     """The runtime reaches Client.connect only through get_temporal_client's
     runtime kwarg; web/Ray callers never pass one."""

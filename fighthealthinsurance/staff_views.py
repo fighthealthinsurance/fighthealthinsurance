@@ -7,8 +7,20 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db import connection
-from django.db.models import Avg, Count, F, Max, Min, OuterRef, QuerySet, Subquery
-from django.db.models.functions import Lower
+from django.db.models import (
+    Avg,
+    Count,
+    F,
+    IntegerField,
+    Max,
+    Min,
+    OuterRef,
+    QuerySet,
+    Subquery,
+    Sum,
+    Value,
+)
+from django.db.models.functions import Coalesce, Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.db.models import Q
@@ -1455,11 +1467,13 @@ class ModelUsageDashboardView(generic.TemplateView):
         drafts generated for denials picked in the window (a draft generated
         on day 0 and picked on day 1 still counts as presented in a 1-day
         window anchored on the pick).
-      * Presented counts each draft shown, once per draft (a model producing
-        several drafts on one denial is counted once per draft, the
-        fan-out-neutral unit the chooser tables also use): the drafts the
-        browser reported on screen at the pick, or, for picks recorded before
-        that report, every deliverable draft stored before the pick.
+      * Presented counts each draft shown, once per pick it was shown on (a
+        model producing several drafts on one denial is counted once per
+        draft, the fan-out-neutral unit the chooser tables also use): the
+        drafts the browser reported on screen at the pick, or, for a pick
+        recorded without that report, every deliverable draft stored before
+        it. Both paths count per pick, so a re-pick cannot push a win rate
+        past 100%.
 
     All stored model names pass through normalize_model_label so historical
     object-repr values aggregate per class (without memory addresses) even
@@ -1603,22 +1617,17 @@ class ModelUsageDashboardView(generic.TemplateView):
         # it (presented_ids): the appeals page folds drafts past its visible
         # limit behind a button, so the drafts generated for a denial are not
         # the drafts the user saw, and counting the folded ones charged
-        # whatever landed fourth with a loss. Picks recorded before that
-        # report count every deliverable draft stored before the pick.
-        shown, reported_denials = ModelUsageDashboardView._shown_on_picks(chosen_qs)
-        id_to_model = dict(
-            ProposedAppeal.objects.filter(
-                id__in=list(shown), model_name__isnull=False
-            ).values_list("id", "model_name")
-        )
+        # whatever landed fourth with a loss. A pick recorded without that
+        # report counts every deliverable draft stored before it, once per
+        # such pick (_presented_before_pick's ``times``).
+        shown, identity = ModelUsageDashboardView._shown_on_picks(chosen_qs)
         for draft_id, times in shown.items():
-            presented_label = normalize_model_label(id_to_model.get(draft_id))
+            model_name, _level = identity.get(draft_id, (None, None))
+            presented_label = normalize_model_label(model_name)
             if presented_label is not None:
                 presented[presented_label] += times
-        for name, count in (
-            presented_qs.exclude(for_denial_id__in=list(reported_denials))
-            .values_list("model_name")
-            .annotate(c=Count("id"))
+        for name, count in presented_qs.values_list("model_name").annotate(
+            c=Sum("times")
         ):
             presented_label = normalize_model_label(name)
             if presented_label is not None:
@@ -1630,30 +1639,42 @@ class ModelUsageDashboardView(generic.TemplateView):
         )
 
     @staticmethod
-    def _shown_on_picks(chosen_qs: QuerySet) -> Tuple[Counter, set]:
+    def _shown_on_picks(
+        chosen_qs: QuerySet,
+    ) -> Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]:
         """What the in-window picks reported was on screen: a Counter of draft
-        id -> number of picks it was shown on, and the denials whose picks
-        carried the report (their presented set is exactly that, and the
-        stored-before-the-pick fallback must not count them again)."""
+        id -> number of picks it was shown on, and each such draft's
+        (model_name, context_level). The identities come from one query over
+        the reported denials' drafts rather than an id list pasted into SQL."""
+        reported = chosen_qs.exclude(presented_ids__isnull=True)
         shown: Counter = Counter()
-        reported: set = set()
-        for denial_id, ids in (
-            chosen_qs.exclude(presented_ids__isnull=True)
-            .values_list("for_denial_id", "presented_ids")
-            .iterator()
-        ):
+        for ids in reported.values_list("presented_ids", flat=True).iterator():
             if not ids:
                 continue
-            reported.add(denial_id)
             # A draft was on screen once per pick; a duplicated id in a
             # report must not inflate the denominator.
             shown.update({int(i) for i in ids if isinstance(i, int)})
-        return shown, reported
+        identity: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
+        if shown:
+            for draft_id, model_name, level in (
+                ProposedAppeal.objects.filter(
+                    for_denial_id__in=reported.values("for_denial_id")
+                )
+                .values_list("id", "model_name", "context_level")
+                .iterator()
+            ):
+                if draft_id in shown:
+                    identity[draft_id] = (model_name, level)
+        return shown, identity
 
     @staticmethod
     def _presented_before_pick(presented_qs: QuerySet, chosen_qs: QuerySet) -> QuerySet:
-        """Narrow ``presented_qs`` to drafts that existed when the denial's
-        latest in-window pick was made.
+        """Narrow ``presented_qs`` to drafts on offer at an in-window pick that
+        carried no on-screen report, annotated with ``times``: how many such
+        picks on the draft's denial were made after it. Each is one
+        presentation, the per-pick unit the reported path uses, so a re-pick
+        counts its drafts again instead of pushing a win rate past 100%;
+        picks that carry a report are counted from it instead.
 
         Every visit to the appeals page reruns generation, and a pick can
         land mid-stream, so a denial keeps accumulating drafts after the user
@@ -1664,14 +1685,23 @@ class ModelUsageDashboardView(generic.TemplateView):
         was picked from, so "id below the pick's id" means "on the screen at
         pick time" without leaning on created_at (NULL on legacy rows).
         """
-        latest_pick = (
-            chosen_qs.filter(for_denial_id=OuterRef("for_denial_id"))
-            .order_by("-id")
-            .values("id")[:1]
+        later_unreported_picks = (
+            chosen_qs.filter(
+                presented_ids__isnull=True,
+                for_denial_id=OuterRef("for_denial_id"),
+                id__gt=OuterRef("id"),
+            )
+            .order_by()
+            .values("for_denial_id")
+            .annotate(n=Count("id"))
+            .values("n")
         )
-        bounded: QuerySet = presented_qs.annotate(pick_id=Subquery(latest_pick)).filter(
-            id__lt=F("pick_id")
-        )
+        bounded: QuerySet = presented_qs.annotate(
+            times=Coalesce(
+                Subquery(later_unreported_picks, output_field=IntegerField()),
+                Value(0),
+            )
+        ).filter(times__gt=0)
         return bounded
 
     @staticmethod
@@ -1807,21 +1837,13 @@ class ModelUsageDashboardView(generic.TemplateView):
         # Per draft shown, as the model table counts (see there): the drafts
         # the pick reported on screen when it carries them, else every
         # deliverable draft stored before the pick.
-        shown, reported_denials = ModelUsageDashboardView._shown_on_picks(chosen_qs)
-        id_to_level = dict(
-            ProposedAppeal.objects.filter(id__in=list(shown))
-            .exclude(context_level__isnull=True)
-            .exclude(context_level="")
-            .values_list("id", "context_level")
-        )
+        shown, identity = ModelUsageDashboardView._shown_on_picks(chosen_qs)
         for draft_id, times in shown.items():
-            level = id_to_level.get(draft_id)
+            _model_name, level = identity.get(draft_id, (None, None))
             if level:
                 presented[level] += times
-        for level, count in (
-            presented_qs.exclude(for_denial_id__in=list(reported_denials))
-            .values_list("context_level")
-            .annotate(c=Count("id"))
+        for level, count in presented_qs.values_list("context_level").annotate(
+            c=Sum("times")
         ):
             presented[level] += count
         # _merge_stats labels the bucket key "model_name"; the value here is the
