@@ -141,6 +141,11 @@ class TestAgentEndpoints(TestCase):
         self.assertEqual(response["Link"], '</llms.txt>; rel="describedby"')
         body = response.content.decode("utf-8")
         self.assertTrue(body.startswith("# "))
+        # The page's own h1 is the twin's heading, once, above the URL lines,
+        # not repeated under them and not replaced by the <title>.
+        self.assertTrue(body.startswith("# About Us\n"), body[:60])
+        self.assertEqual(body.count("\n# "), 0, "a second h1 line in the twin")
+        self.assertLess(body.index("# About Us"), body.index("- URL:"))
         self.assertIn(f"- URL: https://www.fighthealthinsurance.com{about}", body)
         self.assertIn(
             "- Site index for agents: https://www.fighthealthinsurance.com/llms.txt",

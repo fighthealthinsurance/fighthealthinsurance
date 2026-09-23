@@ -288,7 +288,14 @@ def html_to_markdown(html: str, page_url: str, origin: str = CANONICAL_ORIGIN) -
     body = _tidy(_render(main, origin))
 
     head: list[str] = []
-    if title and not body.startswith("# "):
+    if body.startswith("# "):
+        # The page opens with its own h1, which is the better heading for
+        # the twin than the <title>: lift it above the URL lines rather than
+        # leaving it under them, and do not add the <title> as a second.
+        heading, _, body = body.partition("\n")
+        body = body.lstrip("\n")
+        head += [heading, ""]
+    elif title:
         head += [f"# {title}", ""]
     if description:
         head += [f"> {description}", ""]
