@@ -1887,6 +1887,18 @@ class TestGenerateAppealLetterPattern(TestCase):
         text = 'On it -- drafting now.\ngenerate_appeal_letter {"procedure": "MRI"}\n'
         self.assertIsNotNone(tool.detect(text))
 
+    def test_wrapped_call_is_removed_with_its_closing_markers(self):
+        """Models also bold the whole call (**tool {...}**). The closing **
+        belongs to the call; leaving it would put stray markdown in the
+        reply."""
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = GenerateAppealLetterTool(AsyncMock())
+        text = 'Drafting now.\n**generate_appeal_letter {"procedure": "MRI"}**\nThanks!'
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(result, "Drafting now.\n\nThanks!")
+
     def test_counts_as_tool_invocation(self):
         text = 'Sure.\n**generate_appeal_letter**{"procedure": "MRI"}\n'
         self.assertEqual(count_tool_invocations(text), 1)
@@ -1934,30 +1946,8 @@ class TestLetterRequestDetector(TestCase):
                 self.assertFalse(looks_like_letter_request(message))
 
 
-class TestSubstituteDenialFields(TestCase):
-    """Placeholder substitution for chat-served letters."""
-
-    class _Denial:
-        insurance_company = "Acme Health"
-        claim_id = "CLM-123"
-        diagnosis = None
-        procedure = "UNKNOWN"
-
-    def test_substitutes_known_fields_and_keeps_unknown_placeholders(self):
-        from fighthealthinsurance.chat.appeal_letter_generator import (
-            substitute_denial_fields,
-        )
-
-        letter = (
-            "Dear {insurance_company}, re claim {claim_id} for {procedure} "
-            "({diagnosis})."
-        )
-        result = substitute_denial_fields(letter, self._Denial())
-        self.assertIn("Acme Health", result)
-        self.assertIn("CLM-123", result)
-        # None and the extractor's UNKNOWN marker keep the fill-in blank.
-        self.assertIn("{procedure}", result)
-        self.assertIn("{diagnosis}", result)
+class TestDenialLetterContextGate(TestCase):
+    """denial_has_letter_context: is there anything to write a letter about?"""
 
     def test_denial_context_gate(self):
         from fighthealthinsurance.chat.appeal_letter_generator import (
@@ -2031,28 +2021,6 @@ class TestParseAnchoredJsonPayload(TestCase):
             parse_anchored_json_payload(text, payload_match)
 
 
-class TestClaimIdSubstitutionGuard(TestCase):
-    """Mirror of sub_in_appeals' claim_id != insurance_company guard."""
-
-    def test_claim_id_matching_insurance_company_keeps_placeholder(self):
-        from fighthealthinsurance.chat.appeal_letter_generator import (
-            substitute_denial_fields,
-        )
-
-        class D:
-            insurance_company = "Acme Health"
-            claim_id = "Acme Health"  # known extractor failure mode
-            diagnosis = None
-            procedure = "MRI"
-
-        result = substitute_denial_fields(
-            "To {insurance_company} re claim {claim_id} for {procedure}.", D()
-        )
-        self.assertIn("To Acme Health", result)
-        self.assertIn("{claim_id}", result)
-        self.assertIn("MRI", result)
-
-
 class TestAnchoredCallRemoval(TestCase):
     """Span-bounded removal must leave no raw tool syntax behind.
 
@@ -2108,10 +2076,28 @@ class TestAnchoredCallRemoval(TestCase):
             "**create_or_update_appeal**{\n  broken\n}\n"
             '**create_or_update_appeal**{"procedure": "MRI"}'
         )
-        result = remove_anchored_call(text, tool.detect(text), tool)
+        result = remove_anchored_call(text, tool.detect(text))
         self.assertNotIn("broken", result)
         # The following call survives for its own handler pass.
         self.assertIn('**create_or_update_appeal**{"procedure": "MRI"}', result)
+
+    def test_malformed_call_does_not_swallow_another_tools_call(self):
+        """The removal is bounded by the next call of ANY tool: bounded by
+        this tool's own calls only, a broken appeal body ran through a later
+        generate_appeal_letter call's closing brace and deleted it."""
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            '**create_or_update_appeal**{"procedure": "MRI", oops}\n'
+            "Now drafting the letter.\n"
+            '**generate_appeal_letter**{"procedure": "MRI"}'
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(
+            result,
+            '\nNow drafting the letter.\n**generate_appeal_letter**{"procedure": "MRI"}',
+        )
 
     def test_tool_call_only_reply_never_returns_raw_payload(self):
         """A reply that is nothing but a failed call must not fall back to

@@ -1144,8 +1144,7 @@ class Prod(Base):
             # default of 40 therefore NO LONGER covers a fully busy worker:
             # before re-enabling pooling, set PG_POOL_MAX_SIZE with the
             # bridge/letter pools and expected concurrent sockets in the
-            # budget, or
-            # accept pool-wait throttling under peak. (Keep in sync with
+            # budget, or accept pool-wait throttling under peak. (Keep in sync with
             # exec.py's pool sizes / their FHI_*_EXECUTOR_WORKERS overrides,
             # and remember cluster-wide max_connections must cover
             # pods * max_size.)

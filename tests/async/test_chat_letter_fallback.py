@@ -16,6 +16,7 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.chat.appeal_letter_generator import (
     DraftedLetter,
     draft_letter_for_chat,
+    fill_letter_placeholders,
     find_reserve_letter,
     generate_letter_for_denial,
 )
@@ -38,8 +39,10 @@ from tests.chat_fixtures import (
 )
 
 # Long enough to pass is_real_appeal and the reserve length preference.
+# Free of the phrases the wizard's placeholder fill rewrites (e.g. "Dear
+# Insurance Company"), so a served reserve comes back verbatim.
 RESERVE_LETTER = (
-    "Dear Insurance Company, I am writing to formally appeal the denial of "
+    "To the appeals reviewer: I am writing to formally appeal the denial of "
     "the MRI ordered for my chronic back pain. The imaging is medically "
     "necessary to evaluate ongoing symptoms that have not improved with "
     "conservative treatment. Please reverse the denial. Sincerely, Patient"
@@ -49,6 +52,18 @@ GENERATED_LETTER = (
     "Dear Acme Health, I appeal the denial of claim 123. The requested "
     "procedure is medically necessary for the diagnosis documented in the "
     "attached records, and the denial should be overturned. Sincerely, Me"
+)
+
+
+# A full model draft: model-written and past FHI_CHAT_LETTER_MIN_CHARS (350).
+FULL_MODEL_LETTER = GENERATED_LETTER + " " + (
+    "The treating physician documented failed conservative therapy, "
+    "worsening symptoms, and a clinical need for this procedure. " * 3
+)
+
+EDITED_LETTER = (
+    "My carefully hand-edited appeal letter about the MRI denial, "
+    "which must not be replaced by boilerplate."
 )
 
 
@@ -201,6 +216,79 @@ class ChatLetterFallbackTest(APITestCase):
         self.assertIn(f"/appeals/{appeal.id}", error_frames[0]["error"])
 
 
+    async def _interface_with_linked_appeal(self, username, npi):
+        user, chat = await _make_professional_chat(username, npi)
+        await _link_letter_appeal(chat, user)
+        recorder = _FrameRecorder()
+        interface = ChatInterface(
+            send_json_message_func=recorder,
+            chat=chat,
+            user=user,
+        )
+        return interface, recorder
+
+    @staticmethod
+    def _tool_drafted_then_turn_failed(interface):
+        """LLM-pass stand-in: the letter tool drafts (and saves) a letter,
+        then the turn fails -- e.g. a later research pass runs it out of
+        budget."""
+
+        def run(*args, **kwargs):
+            interface._turn_drafted_letter[0] = DraftedLetter(GENERATED_LETTER, True)
+            return (None, None)
+
+        return run
+
+    async def test_fallback_delivers_the_letter_drafted_this_turn(self):
+        """Not a second generation that would be saved over the first."""
+        interface, recorder = await self._interface_with_linked_appeal(
+            "letterfall7", "9999920007"
+        )
+        with patch(
+            "fighthealthinsurance.chat_interface.draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(RESERVE_LETTER, True)),
+        ) as mock_draft:
+            with _llm_call_fails(self._tool_drafted_then_turn_failed(interface)):
+                await interface.handle_chat_message(
+                    "Please go ahead and draft a letter."
+                )
+        mock_draft.assert_not_awaited()
+        assistant_frames = [
+            f for f in recorder.frames if f.get("role") == "assistant"
+        ]
+        self.assertIn(GENERATED_LETTER, assistant_frames[0]["content"])
+
+    async def test_letter_drafted_this_turn_is_delivered_for_any_message(self):
+        """A bare "yes" to the model's offer to draft doesn't read as a
+        letter request, but the letter it led to is already on the appeal:
+        deliver it rather than hide it behind an error."""
+        interface, recorder = await self._interface_with_linked_appeal(
+            "letterfall8", "9999920008"
+        )
+        with _llm_call_fails(self._tool_drafted_then_turn_failed(interface)):
+            await interface.handle_chat_message("Yes, please.")
+        assistant_frames = [
+            f for f in recorder.frames if f.get("role") == "assistant"
+        ]
+        self.assertEqual(len(assistant_frames), 1)
+        self.assertIn(GENERATED_LETTER, assistant_frames[0]["content"])
+
+    async def test_previous_turns_letter_is_not_reused(self):
+        interface, recorder = await self._interface_with_linked_appeal(
+            "letterfall9", "9999920009"
+        )
+        interface._turn_drafted_letter[0] = DraftedLetter(GENERATED_LETTER, True)
+        with patch(
+            "fighthealthinsurance.chat_interface.draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(RESERVE_LETTER, True)),
+        ) as mock_draft:
+            with _llm_call_fails(lambda *a, **k: (None, None)):
+                await interface.handle_chat_message(
+                    "Please go ahead and draft a letter."
+                )
+        mock_draft.assert_awaited_once()
+
+
 class GenerateAppealLetterToolTest(APITestCase):
     """The generate_appeal_letter tool: appeal setup + pipeline handoff."""
 
@@ -289,6 +377,56 @@ class GenerateAppealLetterToolTest(APITestCase):
         error.assert_awaited()
 
 
+    async def test_second_letter_call_in_a_turn_is_not_drafted(self):
+        """An earlier pass of the turn (before a recursive research pass)
+        already drafted the letter: a repeat call is stripped with a notice
+        instead of drafting a second letter over the first."""
+        chat = await self._make_chat("lettertool5", "9999930005")
+        tool = GenerateAppealLetterTool(
+            AsyncMock(),
+            AsyncMock(),
+            drafted_this_turn=[DraftedLetter(GENERATED_LETTER, True)],
+        )
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(RESERVE_LETTER, True)),
+        ) as mock_draft:
+            response, _, _ = await tool.handle(
+                "More detail from the research.\n"
+                '**generate_appeal_letter**{"procedure": "MRI"}',
+                "",
+                chat=chat,
+            )
+        mock_draft.assert_not_awaited()
+        self.assertNotIn("generate_appeal_letter", response)
+        self.assertIn("drafted one letter", response)
+
+    async def test_drafted_letter_is_recorded_for_the_turn(self):
+        chat = await self._make_chat("lettertool6", "9999930006")
+        drafted_this_turn = [None]
+        tool = GenerateAppealLetterTool(
+            AsyncMock(), AsyncMock(), drafted_this_turn=drafted_this_turn
+        )
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ):
+            await tool.handle(
+                '**generate_appeal_letter**{"procedure": "MRI"}', "", chat=chat
+            )
+        self.assertEqual(drafted_this_turn, [DraftedLetter(GENERATED_LETTER, True)])
+
+    async def test_tool_without_chat_strips_the_call(self):
+        """A declined call must not render its raw payload."""
+        tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock())
+        response, _, _ = await tool.handle(
+            'Sure.\n**generate_appeal_letter**{"procedure": "MRI"}', "", chat=None
+        )
+        self.assertNotIn("generate_appeal_letter", response)
+
+
 class LetterSelectionPolicyTest(APITestCase):
     """generate_letter_for_denial picks a letter, not just any model output."""
 
@@ -347,6 +485,31 @@ class LetterSelectionPolicyTest(APITestCase):
         ):
             item = await generate_letter_for_denial(self._denial())
         self.assertIsNone(item)
+
+
+    async def test_summarizer_sees_chat_consent_not_the_stored_opt_in(self):
+        """This chat's use_external applies before ANY model call: the
+        denial summarizer routes by denial.use_external too, and the stored
+        flag may say yes where this user said no."""
+        denial = self._denial()
+        denial.use_external = True
+        seen = []
+
+        async def record_consent(summarized_denial):
+            seen.append(summarized_denial.use_external)
+            return None
+
+        with patch(
+            "fighthealthinsurance.ml.ml_appeal_context_helper."
+            "MLAppealContextHelper.maybe_summarize_denial_text",
+            new=AsyncMock(side_effect=record_consent),
+        ), patch.object(
+            common_view_logic.appealGenerator,
+            "make_appeals",
+            return_value=iter([]),
+        ):
+            await generate_letter_for_denial(denial, use_external=False)
+        self.assertEqual(seen, [False])
 
 
 class FindReserveLetterTest(APITestCase):
@@ -510,6 +673,20 @@ class DraftLetterForChatTest(APITestCase):
         self.assertEqual(drafted, DraftedLetter(RESERVE_LETTER, False, True))
         fresh = await Appeal.objects.aget(id=appeal.id)
         self.assertEqual(fresh.appeal_text, edited)
+
+    async def test_served_letter_gets_the_wizards_placeholder_fill(self):
+        user, chat = await _make_professional_chat("draftpersist5", "9999940005")
+        appeal, denial = await _link_letter_appeal(
+            chat, user, insurance_company="Acme Health"
+        )
+        await ProposedAppeal.objects.acreate(
+            appeal_text="Dear Insurance Company, " + RESERVE_LETTER,
+            for_denial=denial,
+        )
+        drafted = await draft_letter_for_chat(
+            appeal=appeal, denial=denial, use_external=False, prefer_existing=True
+        )
+        self.assertEqual(drafted.text, "Dear Acme Health, " + RESERVE_LETTER)
 
     async def test_failed_appeal_save_reported_not_hidden(self):
         """A letter whose appeal save failed is still delivered, but flagged
@@ -683,6 +860,26 @@ class MultiCallAndErrorStripTest(APITestCase):
         self.assertIn("generate_appeal_letter", result)
 
 
+    async def test_declined_call_sends_its_error_once(self):
+        """A call execute() declines (no chat) is not retried up to the cap,
+        repeating the same error to the user each time."""
+        error = AsyncMock()
+        tool = AppealTool(AsyncMock(), error)
+        await tool.handle(
+            'Noted.\n**create_or_update_appeal**{"procedure": "MRI"}', "", chat=None
+        )
+        self.assertEqual(error.await_count, 1)
+
+    async def test_declined_call_is_stripped_without_a_cap_notice(self):
+        """It was declined, not dropped for exceeding the cap."""
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        result, _, _ = await tool.handle(
+            'Noted.\n**create_or_update_appeal**{"procedure": "MRI"}', "", chat=None
+        )
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("hasn't been saved", result)
+
+
 class LetterDeadlineClampTest(APITestCase):
     """The letter tool's deadline is clamped to the turn budget's remainder."""
 
@@ -725,3 +922,89 @@ class LetterDeadlineClampTest(APITestCase):
         interface._turn_deadline = time_mod.monotonic() + 10_000.0
         with patch.dict(os.environ, {"FHI_CHAT_LETTER_DEADLINE": "75"}):
             self.assertEqual(interface._remaining_letter_deadline(), 75.0)
+
+
+class FillLetterPlaceholdersTest(APITestCase):
+    """Chat letters get the wizard's own placeholder substitution."""
+
+    async def test_fills_known_fields_and_keeps_unknown_placeholders(self):
+        denial = await Denial.objects.acreate(
+            denial_text="denied",
+            hashed_email=Denial.get_hashed_email("sub1@x.com"),
+            insurance_company="Acme Health",
+            claim_id="CLM-123",
+            procedure="UNKNOWN",
+        )
+        result = await fill_letter_placeholders(
+            "Dear Sir/Madam, re [Claim # Placeholder] for {procedure} "
+            "({diagnosis}).",
+            denial,
+        )
+        # Spellings the old four-field subset never handled.
+        self.assertIn("Dear Acme Health", result)
+        self.assertIn("CLM-123", result)
+        # The extractor's UNKNOWN marker and a missing value keep the blank.
+        self.assertIn("{procedure}", result)
+        self.assertIn("{diagnosis}", result)
+
+    async def test_claim_id_matching_insurance_company_keeps_placeholder(self):
+        denial = await Denial.objects.acreate(
+            denial_text="denied",
+            hashed_email=Denial.get_hashed_email("sub2@x.com"),
+            insurance_company="Acme Health",
+            claim_id="Acme Health",  # a known extractor failure mode
+        )
+        result = await fill_letter_placeholders("re claim {claim_id}", denial)
+        self.assertIn("{claim_id}", result)
+
+
+class OverwritePolicyTest(APITestCase):
+    """Only a full model-written draft may replace a letter on the appeal."""
+
+    async def _appeal_with_edited_letter(self, username, npi):
+        user, chat = await _make_professional_chat(username, npi)
+        appeal, denial = await _link_letter_appeal(chat, user)
+        appeal.appeal_text = EDITED_LETTER
+        await appeal.asave()
+        return appeal, denial
+
+    async def _draft_with(self, appeal, denial, generated):
+        with patch(
+            "fighthealthinsurance.chat.appeal_letter_generator."
+            "generate_letter_for_denial",
+            new=AsyncMock(return_value=generated),
+        ):
+            return await draft_letter_for_chat(
+                appeal=appeal, denial=denial, use_external=False
+            )
+
+    async def test_zero_model_template_does_not_replace_edited_letter(self):
+        appeal, denial = await self._appeal_with_edited_letter(
+            "overwrite1", "9999970001"
+        )
+        template = GeneratedAppeal(text=FULL_MODEL_LETTER, model_name=None)
+        drafted = await self._draft_with(appeal, denial, template)
+        self.assertTrue(drafted.preserved_existing)
+        fresh = await Appeal.objects.aget(id=appeal.id)
+        self.assertEqual(fresh.appeal_text, EDITED_LETTER)
+
+    async def test_short_model_fragment_does_not_replace_edited_letter(self):
+        appeal, denial = await self._appeal_with_edited_letter(
+            "overwrite2", "9999970002"
+        )
+        fragment = GeneratedAppeal(text=GENERATED_LETTER, model_name="fhi-model")
+        drafted = await self._draft_with(appeal, denial, fragment)
+        self.assertTrue(drafted.preserved_existing)
+        fresh = await Appeal.objects.aget(id=appeal.id)
+        self.assertEqual(fresh.appeal_text, EDITED_LETTER)
+
+    async def test_full_model_redraft_replaces_existing_letter(self):
+        """An explicit redraft that produced a real letter does replace it."""
+        appeal, denial = await self._appeal_with_edited_letter(
+            "overwrite3", "9999970003"
+        )
+        full = GeneratedAppeal(text=FULL_MODEL_LETTER, model_name="fhi-model")
+        drafted = await self._draft_with(appeal, denial, full)
+        self.assertTrue(drafted.saved_to_appeal)
+        fresh = await Appeal.objects.aget(id=appeal.id)
+        self.assertEqual(fresh.appeal_text, FULL_MODEL_LETTER)

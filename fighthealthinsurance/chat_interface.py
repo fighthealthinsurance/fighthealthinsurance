@@ -72,6 +72,7 @@ from fighthealthinsurance.chat.tools import (
     USPSTFLookupTool,
 )
 from fighthealthinsurance.chat.appeal_letter_generator import (
+    DraftedLetter,
     denial_has_letter_context,
     draft_letter_for_chat,
     looks_like_letter_request,
@@ -216,6 +217,13 @@ class ChatInterface:
         # deadline to the time actually left in the turn -- see
         # _remaining_letter_deadline. None outside a budgeted turn.
         self._turn_deadline: Optional[float] = None
+        # The appeal letter drafted in the turn in flight, if any. Shared
+        # with GenerateAppealLetterTool via a one-element list (same trick as
+        # _doc_fetch_count; the tool is rebuilt for every pass of a turn) so
+        # a turn drafts at most one letter, and so the total-failure fallback
+        # delivers a letter the tool already drafted instead of generating --
+        # and saving over it -- another. Reset at the start of each turn.
+        self._turn_drafted_letter: list[Optional[DraftedLetter]] = [None]
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -686,6 +694,7 @@ class ChatInterface:
             self.send_error_message,
             use_external=self.use_external_models,
             deadline_seconds=self._remaining_letter_deadline(),
+            drafted_this_turn=self._turn_drafted_letter,
         )
         response_text, context, _ = await generate_letter_tool.handle(
             response_text, context, chat=chat
@@ -815,6 +824,8 @@ class ChatInterface:
         # A stale alternate from a previous turn must never attach to this
         # turn's reply (early-return paths below don't go through the LLM).
         self._candidate_alternate = None
+        # Nor may a previous turn's letter count as this turn's.
+        self._turn_drafted_letter[0] = None
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -1575,7 +1586,14 @@ class ChatInterface:
             # does not mean the letter is out of reach.
             fallback_reply: Optional[str] = None
             letter_appeal = None
-            letter_request = looks_like_letter_request(user_message)
+            # A letter this turn's tool already drafted qualifies whatever
+            # the message said (e.g. a bare "yes" to the model's offer to
+            # draft one): it is already on the appeal, and an error reply
+            # would hide it.
+            letter_request = (
+                looks_like_letter_request(user_message)
+                or self._turn_drafted_letter[0] is not None
+            )
             if letter_request:
                 # One lookup for both the fallback attempt and the
                 # appeal-page link in the error message below.
@@ -1701,33 +1719,41 @@ class ChatInterface:
         """Draft the requested appeal letter after a total chat-model failure.
 
         ``appeal`` is the letter-capable linked appeal the caller already
-        looked up. Serves an existing ProposedAppeal first (a DB read is the
-        one step guaranteed to work while models are down), then runs a
-        bounded appeal-pipeline generation. Never raises: the caller still
-        owes the user an error frame when this returns None.
+        looked up. A letter this turn's letter tool already drafted is
+        delivered as is. Otherwise serves an existing ProposedAppeal first (a
+        DB read is the one step guaranteed to work while models are down),
+        then runs a bounded appeal-pipeline generation. Never raises: the
+        caller still owes the user an error frame when this returns None.
         """
         chat = self.chat
         try:
-            await self.send_status_message(
-                "Our chat models are having trouble right now -- drafting "
-                "your appeal letter through the appeal generator instead..."
-            )
-            # The turn's own heartbeat was cancelled when generation failed;
-            # the fallback can run for another minute, so keep frames moving
-            # on the socket for the user (and any idle-reaping proxy).
-            heartbeat_task = asyncio.create_task(self._turn_heartbeat())
-            try:
-                drafted = await draft_letter_for_chat(
-                    appeal=appeal,
-                    denial=appeal.for_denial,
-                    use_external=self.use_external_models,
-                    prefer_existing=True,
-                    deadline_seconds=_env_float(
-                        "FHI_CHAT_LETTER_FALLBACK_DEADLINE", 60.0
-                    ),
+            # The tool can finish its letter and the turn still fail, e.g. a
+            # later research pass running out the budget. Drafting again
+            # would repeat up to a minute of model work only to save a
+            # different letter over the one just saved.
+            drafted = self._turn_drafted_letter[0]
+            if drafted is None:
+                await self.send_status_message(
+                    "Our chat models are having trouble right now -- drafting "
+                    "your appeal letter through the appeal generator instead..."
                 )
-            finally:
-                heartbeat_task.cancel()
+                # The turn's own heartbeat was cancelled when generation
+                # failed; the fallback can run for another minute, so keep
+                # frames moving on the socket for the user (and any
+                # idle-reaping proxy).
+                heartbeat_task = asyncio.create_task(self._turn_heartbeat())
+                try:
+                    drafted = await draft_letter_for_chat(
+                        appeal=appeal,
+                        denial=appeal.for_denial,
+                        use_external=self.use_external_models,
+                        prefer_existing=True,
+                        deadline_seconds=_env_float(
+                            "FHI_CHAT_LETTER_FALLBACK_DEADLINE", 60.0
+                        ),
+                    )
+                finally:
+                    heartbeat_task.cancel()
             if not drafted:
                 return None
             # Word the appeal-row relationship honestly: saved, deliberately

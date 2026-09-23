@@ -12,6 +12,8 @@ from typing import Awaitable, Callable, List, Optional, Set, Tuple
 
 from loguru import logger
 
+from .patterns import next_tool_call_start
+
 # Identity/audit fields that LLM-supplied tool payloads must never overwrite,
 # even though they are concrete editable columns.
 _TOOL_FIELD_DENYLIST = {
@@ -75,22 +77,26 @@ def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, 
         raise json.JSONDecodeError(
             "tool payload must be a JSON object", text[start : start + end], 0
         )
-    return payload, text[match.start() : start + end]
+    span_end = start + end
+    # A closing wrapper (**tool {...}**) belongs to the call: leaving it
+    # behind would put a stray ** into the reply.
+    wrapper = len(text[span_end:]) - len(text[span_end:].lstrip("*"))
+    span_end += min(wrapper, 4)
+    return payload, text[match.start() : span_end]
 
 
-def remove_anchored_call(
-    text: str, match: re.Match[str], tool: Optional["BaseTool"] = None
-) -> str:
+def remove_anchored_call(text: str, match: re.Match[str]) -> str:
     """Remove ONE anchored ``**tool**{...}`` call from ``text`` precisely.
 
     Uses the raw_decode span when the payload parses. When it does NOT
     parse, the removal runs to the last ``}`` of the broken body -- bounded
-    by where the next call of ``tool`` starts, so it still can't swallow a
-    later tool call the way a ``re.sub`` over the greedy DOTALL pattern
-    would. Cutting at the first newline instead (as this used to) left the
-    rest of a pretty-printed malformed payload behind, putting its
-    contents -- possibly medical detail -- in the reply and in chat
-    history. Without ``tool`` the bound is the end of the text.
+    by where the next tool call of ANY kind starts, so it can't swallow a
+    later call the way a ``re.sub`` over the greedy DOTALL pattern would.
+    (Bounding by this tool's own calls only let a broken
+    create_or_update_appeal body swallow a later generate_appeal_letter
+    call and the prose before it.) Cutting at the first newline instead
+    left the rest of a pretty-printed malformed payload behind, putting its
+    contents -- possibly medical detail -- in the reply and chat history.
     """
     start = match.start()
     try:
@@ -100,12 +106,9 @@ def remove_anchored_call(
         pass
 
     body_start = match.start(1)
-    # Never reach past the next call of this tool: it gets its own removal.
-    limit = len(text)
-    if tool is not None:
-        following = tool.detect(text[body_start + 1 :])
-        if following:
-            limit = body_start + 1 + following.start()
+    # Never reach past the next tool call: it gets its own handler pass.
+    following = next_tool_call_start(text, body_start + 1)
+    limit = following if following is not None else len(text)
     close = text.rfind("}", body_start, limit)
     if close != -1:
         end = close + 1
@@ -150,7 +153,7 @@ def strip_anchored_calls(
         match = tool.detect(text)
         if not match:
             break
-        shortened = remove_anchored_call(text, match, tool)
+        shortened = remove_anchored_call(text, match)
         if len(shortened) >= len(text):
             logger.warning(
                 f"{tool.name}: tool-call removal made no progress; "
@@ -337,30 +340,41 @@ class BaseTool(ABC):
             Tuple of (updated_response_text, updated_context, was_handled)
         """
         handled = False
+        stalled = False
         try:
             for _ in range(max(1, self.max_calls_per_reply)):
                 match = self.detect(response_text)
                 if not match:
                     break
                 logger.debug(f"{self.name} tool detected in response")
-                response_text, context = await self.execute(
+                updated, context = await self.execute(
                     match, response_text, context, **kwargs
                 )
                 handled = True
+                if updated == response_text:
+                    # execute() declined without consuming the call (e.g. no
+                    # chat to attach to). Another pass would decline the same
+                    # way -- and repeat whatever error it sent the user.
+                    stalled = True
+                    break
+                response_text = updated
             if handled and self.max_calls_per_reply > 1 and self.detect(response_text):
-                # Calls past the per-reply cap are stripped (with a notice
-                # saying they were not applied) rather than left to render
-                # as raw tool syntax with their JSON payloads. Gated on
+                # Calls left over are stripped rather than left to render as
+                # raw tool syntax with their JSON payloads. Gated on
                 # max_calls_per_reply > 1, i.e. the anchored JSON tools:
                 # span-bounded removal assumes their `**tool**{...}` shape,
                 # and single-call tools keep their historical behavior.
-                logger.info(
-                    f"{self.name}: more than {self.max_calls_per_reply} calls "
-                    f"in one reply; stripping the rest"
-                )
-                response_text = strip_anchored_calls(
-                    self, response_text, notice=self.dropped_calls_notice()
-                )
+                if stalled:
+                    # Declined, not capped: no "first N updates" notice.
+                    response_text = self.strip_calls_on_error(response_text)
+                else:
+                    logger.info(
+                        f"{self.name}: more than {self.max_calls_per_reply} "
+                        f"calls in one reply; stripping the rest"
+                    )
+                    response_text = strip_anchored_calls(
+                        self, response_text, notice=self.dropped_calls_notice()
+                    )
             return response_text, context, handled
 
         except Exception as e:
