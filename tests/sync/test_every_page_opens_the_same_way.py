@@ -6,11 +6,12 @@ the intake page no heading at all. A person landing on About Us saw a small
 left-aligned title with the body starting under it; Delete your Data opened
 with a huge centred one; FAQ and Contact drew a green rule under theirs.
 
-There are three ways a page opens now, and each page uses exactly one:
+There are two ways a page opens now, and each page uses exactly one:
 
-  the image hero, for the entry pages, with two heights that are tokens
-  the page title block, partials/page_title.html, for every content page
-  the form title, inside the form, for a page that is a form
+  the image hero, for the entry pages, with two heights and one headline
+  size that are tokens (home keeps the poster size)
+  the page title block, partials/page_title.html, for every other page,
+  centred in the narrow column and left-aligned in the wide one
 
 These tests hold the rendered pages to that, so a new page cannot bring a
 seventh treatment back, and hold the sizes to the type scale so the block
@@ -42,6 +43,7 @@ CONTENT_PAGES = [
     "tos",
     "mhmda",
     "remove_data",
+    "scan",
 ]
 
 # The entry pages: the h1 is the hero headline, and the band is a token.
@@ -102,20 +104,16 @@ class EveryContentPageOpensWithTheTitleBlockTest(TestCase):
 
 
 class TheIntakePageHasANameTest(TestCase):
-    def test_the_form_carries_the_only_heading(self):
+    def test_the_title_sits_in_the_narrow_column_above_the_form(self):
+        """The intake page had no heading at all; it opens with the same block
+        as every other page, inside the narrow column so it centres, and
+        above the form rather than inside it."""
         html = self.client.get(reverse("scan")).content.decode()
-        headings = H1.findall(html)
-        self.assertEqual(len(headings), 1, "the intake page has %d h1s" % len(headings))
-        self.assertIn(
-            '<h1 class="fhi-form-title">',
-            html,
-            "the intake page's heading is not the form title",
-        )
-        self.assertLess(
-            html.index('<div class="main-form">'),
-            html.index('<h1 class="fhi-form-title">'),
-            "the form title sits outside the form",
-        )
+        narrow = html.index('<div class="container-narrow">')
+        title = html.index('<header class="fhi-page-title">')
+        form = html.index('<div class="main-form">')
+        self.assertLess(narrow, title, "the title is outside the narrow column")
+        self.assertLess(title, form, "the title sits inside or below the form")
 
 
 class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
@@ -138,6 +136,26 @@ class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
                     "%s sets its hero height as a number" % template,
                 )
 
+    def test_every_hero_page_but_home_shares_one_headline_size(self):
+        custom = (CSS / "custom.css").read_text()
+        self.assertEqual(custom.count("--fhi-text-hero-page:"), 1)
+        rules = re.findall(r"(?:^|[,\s])\.hero-headline\s*\{([^}]*)\}", custom, re.M)
+        self.assertTrue(
+            any("font-size: var(--fhi-text-hero-page)" in r for r in rules),
+            "no .hero-headline rule reads --fhi-text-hero-page",
+        )
+        self.assertFalse(
+            any("font-size" in r and "--fhi-text-hero-page" not in r for r in rules),
+            "a .hero-headline rule sizes the headline by hand",
+        )
+        for template in TEMPLATES.rglob("*.html"):
+            text = template.read_text()
+            self.assertNotRegex(
+                text,
+                r"\.hero-headline\s*\{[^}]*font-size",
+                "%s sizes its hero headline itself" % template.name,
+            )
+
     def test_both_hero_floors_are_declared_once_and_read_by_the_band(self):
         custom = (CSS / "custom.css").read_text()
         main = (CSS / "main.css").read_text()
@@ -155,17 +173,32 @@ class TheTitleBlockReadsTheScaleTest(TestCase):
         self.assertIsNotNone(match, "%s has no rule" % selector)
         return match.group(1)
 
-    def test_the_page_title_is_the_page_size_and_the_form_title_the_section_size(
-        self,
-    ):
+    def test_the_page_title_is_the_page_size(self):
         self.assertIn("font-size: var(--fhi-text-page);", self._rule(".fhi-page-title h1"))
         self.assertIn("font-size: var(--fhi-text-lead);", self._rule(".fhi-page-lede"))
-        self.assertIn(
-            "font-size: var(--fhi-text-section);", self._rule(".fhi-form-title")
+
+    def test_alignment_follows_the_column(self):
+        """Centred in the narrow column, left in the wide one, decided by the
+        wrapper and never by the page."""
+        custom = (CSS / "custom.css").read_text()
+        centred = re.search(
+            r"\.container-narrow \.fhi-page-title,\s*\.fhi-page-centred \.fhi-page-title \{([^}]*)\}",
+            custom,
         )
+        self.assertIsNotNone(centred, "no rule centres the title in the narrow column")
+        self.assertIn("text-align: center", centred.group(1))
+        self.assertNotIn("text-align", self._rule(".fhi-page-title"))
+        self.assertNotIn("text-align", self._rule(".fhi-page-title h1"))
+        for template in TEMPLATES.rglob("*.html"):
+            text = template.read_text()
+            self.assertNotRegex(
+                text,
+                r"\.fhi-page-title[^{]*\{[^}]*text-align",
+                "%s aligns the title itself" % template.name,
+            )
 
     def test_the_block_spaces_itself_from_the_scale_only(self):
-        for selector in (".fhi-page-title", ".fhi-page-title h1", ".fhi-page-lede", ".fhi-form-title"):
+        for selector in (".fhi-page-title", ".fhi-page-title h1", ".fhi-page-lede"):
             with self.subTest(selector=selector):
                 rule = self._rule(selector)
                 for prop, value in re.findall(r"(margin|padding)[^:]*:\s*([^;]+);", rule):

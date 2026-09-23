@@ -106,6 +106,11 @@
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
     --fhi-text-page: clamp(2.1rem, 2.5vw + 1.2rem, 3rem);
     --fhi-text-hero: 5rem;
+    /* Every hero page except home shares one headline size: the home hero
+       is the site's one poster, the rest are pages with a picture behind
+       the title. Patient Access ran at the poster size and the Explain pages
+       at 2.5rem in their own style blocks before this. */
+    --fhi-text-hero-page: clamp(2.2rem, 2.4vw + 1.4rem, 3.25rem);
     /* The two heights an image hero can have. Home keeps the tall band;
        a page whose hero is three lines of copy uses the short one. Both are
        floors: the band grows with its copy and never cuts it off. */
@@ -401,15 +406,18 @@ textarea.fhi-field {
     margin: var(--fhi-space-3) 0 0;
 }
 
-/* A form page carries its title inside the form itself, at the section size,
-   so the first thing the page says is what the form does. The intake page had
-   no heading at all before this, which a screen reader announces as a page
-   with no name. */
-.fhi-form-title {
-    font-size: var(--fhi-text-section);
-    line-height: var(--fhi-line-heading);
-    color: var(--fhi-ink);
-    margin: 0 0 var(--fhi-space-5);
+/* Alignment follows the column. In the narrow column (the intake flow, the
+   delete family, anything on .fhi-page-centred) the title sits centred over
+   its content; in the wide column it stays left, where a reader's eye starts
+   a page. */
+.container-narrow .fhi-page-title,
+.fhi-page-centred .fhi-page-title {
+    text-align: center;
+}
+
+.container-narrow .fhi-page-lede,
+.fhi-page-centred .fhi-page-lede {
+    margin-inline: auto;
 }
 
 /* Option sections */
@@ -548,7 +556,7 @@ a.link:hover::after {
 @media (max-width: 768px){
   .hero-cta-group a {flex:1 1 auto;}
 }
-.hero-headline {margin-top: .25rem; margin-bottom: .75rem; color: #fff; font-weight: 700; text-shadow: 2px 2px 8px rgba(0,0,0,0.4);}
+.hero-headline {font-size: var(--fhi-text-hero-page); line-height: var(--fhi-line-heading); margin-top: .25rem; margin-bottom: .75rem; color: #fff; font-weight: 700; text-shadow: 2px 2px 8px rgba(0,0,0,0.4);}
 .hero-tagline {margin-bottom: .25rem; font-weight: 600; color: #fff; font-size: 1.15rem; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 .hero-subcopy {font-size: 1.05rem; line-height: 1.5rem; margin: .75rem 0 1.25rem; color: #fff; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 

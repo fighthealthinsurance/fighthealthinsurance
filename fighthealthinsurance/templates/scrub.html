@@ -55,8 +55,8 @@ Upload your Health Insurance Denial
 	    {{ form.errors }}
 	</div>
 	{% endif %}
+	{% include "partials/page_title.html" with title="Generate an Appeal" %}
 	<div class="main-form">
-	<h1 class="fhi-form-title">Generate an Appeal</h1>
 	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
 		{% if default_procedure or default_condition %}
