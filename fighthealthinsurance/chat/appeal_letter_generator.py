@@ -118,14 +118,21 @@ def substitute_denial_fields(letter: str, denial: Any) -> str:
 async def find_reserve_letter(denial: Any) -> Optional[str]:
     """Best already-generated ProposedAppeal text for ``denial``, or None.
 
-    Zero model calls: this is the rescue path for total model failure. Live
-    (non-speculative) rows are preferred over the speculative precompute
-    reserve; within a group the longest deliverable letter wins. Rows are
-    only read -- reserve promotion bookkeeping belongs to the appeal wizard
-    flow (AppealsBackendHelper), not chat.
+    Zero model calls: this is the rescue path for total model failure.
+    Candidates are exactly what the wizard would serve (servable_drafts: no
+    chosen rows, and a held-back reserve only when it was written for the
+    state on the row now -- it argues under that state's law). Live rows
+    are preferred over held-back reserves, as the wizard does; within a
+    group the draft main would rank first wins (letter_quality.sort_key:
+    grounded before ungrounded, then by quality score, unscored last), with
+    length as the final tie-break. Rows are only read -- reserve promotion
+    bookkeeping belongs to the wizard flow, not chat.
     """
-    from fighthealthinsurance.common_view_logic import deliverable_candidates
-    from fighthealthinsurance.models import ProposedAppeal
+    from fighthealthinsurance.common_view_logic import (
+        deliverable_candidates,
+        servable_drafts,
+    )
+    from fighthealthinsurance.ml import letter_quality
 
     # deliverable_candidates pushes the cheap runt filter into SQL (raw
     # length upper-bounds meaningful length), so a pile of junk drafts --
@@ -134,18 +141,25 @@ async def find_reserve_letter(denial: Any) -> Optional[str]:
     # is_real_appeal below stays the authority on what is served.
     rows = [
         row
-        async for row in deliverable_candidates(
-            ProposedAppeal.objects.filter(for_denial=denial)
-        ).order_by("speculative", "-created_at")[:10]
+        async for row in deliverable_candidates(servable_drafts(denial)).order_by(
+            "speculative", "-created_at"
+        )[:10]
     ]
     for speculative_group in (False, True):
         candidates = [
-            row.appeal_text
+            row
             for row in rows
             if row.speculative == speculative_group and is_real_appeal(row.appeal_text)
         ]
         if candidates:
-            return max(candidates, key=len)
+            best = max(
+                candidates,
+                key=lambda row: (
+                    letter_quality.sort_key(row.quality_score, row.grounding_score),
+                    len(row.appeal_text),
+                ),
+            )
+            return str(best.appeal_text)
     return None
 
 
@@ -165,7 +179,8 @@ async def generate_letter_for_denial(
     specialized static templates serve as the zero-model fallback.
 
     Returns the winning ``GeneratedAppeal`` (its ``text`` already has known
-    denial fields substituted) so callers can persist real provenance.
+    denial fields substituted); callers use it to tell a fresh draft from
+    a served reserve, and its model/context provenance reaches the log.
     ``use_external`` is applied to the in-memory denial only -- it reflects
     this chat session's consent and must not rewrite the denial's stored
     opt-in. Never raises; a failed run returns None.
@@ -308,16 +323,22 @@ async def draft_letter_for_chat(
     models are down. The tool path generates first (the user just asked for
     a fresh draft) and falls back to the reserve.
 
-    On success the letter is saved to ``appeal.appeal_text`` and, for a
-    newly generated letter, recorded as a ProposedAppeal row for the same
-    provenance the wizard flow gets -- EXCEPT that a reserve draft never
-    overwrites an appeal that already carries a real letter (the user may
-    have edited it on the appeal page; only an explicitly generated fresh
-    draft may replace it). Returns a ``DraftedLetter`` (text plus how it
-    relates to the appeal row), or None when no letter could be produced.
-    """
-    from fighthealthinsurance.models import ProposedAppeal
+    On success the letter is saved to ``appeal.appeal_text`` -- EXCEPT that
+    a reserve draft never overwrites an appeal that already carries a real
+    letter (the user may have edited it on the appeal page; only an
+    explicitly generated fresh draft may replace it). Returns a
+    ``DraftedLetter`` (text plus how it relates to the appeal row), or None
+    when no letter could be produced.
 
+    No ProposedAppeal row is written for a generated letter. Live drafts
+    belong to the denial's generation lease (generation_lease): the wizard
+    and the appeal journey write them only while holding it, so two runs
+    can't both fill the draft set. A chat-side insert would hold no lease,
+    sit beside whatever the real holder is writing, and be served and
+    counted by the wizard as one of its own. The chat's product is the
+    letter on the appeal; the attempts themselves stay attributable through
+    the run_kind="chat" ModelCallAttempt rows and the drafting log line.
+    """
     letter: Optional[str] = None
     generated_item: Optional["GeneratedAppeal"] = None
     if prefer_existing:
@@ -338,22 +359,6 @@ async def draft_letter_for_chat(
             letter = substitute_denial_fields(reserve, denial)
     if not letter:
         return None
-
-    if generated_item:
-        try:
-            await ProposedAppeal.objects.acreate(
-                appeal_text=letter,
-                for_denial=denial,
-                model_name=generated_item.model_name,
-                synthesized=generated_item.synthesized,
-                context_level=generated_item.context_level,
-            )
-        except Exception:
-            # Provenance only -- the user still gets their letter.
-            logger.opt(exception=True).warning(
-                f"chat letter: could not record ProposedAppeal for denial "
-                f"{getattr(denial, 'denial_id', None)}"
-            )
 
     # A reserve (not freshly generated) letter must not clobber a real
     # letter already on the appeal -- the user may have edited that one on

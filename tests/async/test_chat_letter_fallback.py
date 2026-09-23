@@ -130,9 +130,14 @@ class ChatLetterFallbackTest(APITestCase):
         """With a ProposedAppeal already in the DB the rescue needs zero
         model calls: the reserve is served and saved onto the appeal."""
         user, chat = await _make_professional_chat("letterfall3", "9999920003")
-        appeal, denial = await _link_letter_appeal(chat, user)
+        appeal, denial = await _link_letter_appeal(chat, user, your_state="CA")
         await ProposedAppeal.objects.acreate(
-            appeal_text=RESERVE_LETTER, for_denial=denial, speculative=True
+            appeal_text=RESERVE_LETTER,
+            for_denial=denial,
+            speculative=True,
+            # A held-back reserve is only served for the state it was
+            # written for (servable_drafts).
+            built_for_state="CA",
         )
         recorder = _FrameRecorder()
         interface = ChatInterface(
@@ -345,16 +350,22 @@ class LetterSelectionPolicyTest(APITestCase):
 
 
 class FindReserveLetterTest(APITestCase):
-    """Reserve lookup prefers live rows and skips runts."""
+    """Reserve lookup serves exactly what the wizard would, best first."""
+
+    async def _denial(self, email, state="CA"):
+        return await Denial.objects.acreate(
+            denial_text="denied",
+            hashed_email=Denial.get_hashed_email(email),
+            your_state=state,
+        )
 
     async def test_prefers_live_over_speculative_and_skips_runts(self):
-        denial = await Denial.objects.acreate(
-            denial_text="denied", hashed_email=Denial.get_hashed_email("a@b.com")
-        )
+        denial = await self._denial("a@b.com")
         await ProposedAppeal.objects.acreate(
             appeal_text=RESERVE_LETTER + " speculative extra text here",
             for_denial=denial,
             speculative=True,
+            built_for_state="CA",
         )
         await ProposedAppeal.objects.acreate(
             appeal_text=RESERVE_LETTER, for_denial=denial, speculative=False
@@ -363,29 +374,75 @@ class FindReserveLetterTest(APITestCase):
             appeal_text="runt", for_denial=denial, speculative=False
         )
         found = await find_reserve_letter(denial)
-        # The live row wins even though the speculative one is longer.
+        # The live row wins even though the (servable) reserve is longer.
         self.assertEqual(found, RESERVE_LETTER)
 
     async def test_junk_rows_cannot_evict_reserve_from_the_window(self):
         """A pile of runt live drafts (a degraded-model period) must not fill
         the bounded lookup window and hide the one deliverable reserve --
         the runt filter runs in SQL before the slice."""
-        denial = await Denial.objects.acreate(
-            denial_text="denied", hashed_email=Denial.get_hashed_email("e@f.com")
-        )
-        for _ in range(12):
+        denial = await self._denial("e@f.com")
+        for i in range(12):
+            # Distinct texts: drafts are unique per (denial, fingerprint).
             await ProposedAppeal.objects.acreate(
-                appeal_text="junk", for_denial=denial, speculative=False
+                appeal_text=f"junk {i}", for_denial=denial, speculative=False
             )
         await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER,
+            for_denial=denial,
+            speculative=True,
+            built_for_state="CA",
+        )
+        self.assertEqual(await find_reserve_letter(denial), RESERVE_LETTER)
+
+    async def test_reserve_written_for_another_state_is_not_served(self):
+        """A held-back reserve argues under the state it was written for;
+        once the case names another state it must not be served."""
+        denial = await self._denial("g@h.com", state="CA")
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER,
+            for_denial=denial,
+            speculative=True,
+            built_for_state="NY",
+        )
+        self.assertIsNone(await find_reserve_letter(denial))
+
+    async def test_unstamped_legacy_reserve_is_not_served(self):
+        """A reserve from before the state stamp is unknown, and unknown is
+        treated as another state."""
+        denial = await self._denial("i@j.com")
+        await ProposedAppeal.objects.acreate(
             appeal_text=RESERVE_LETTER, for_denial=denial, speculative=True
+        )
+        self.assertIsNone(await find_reserve_letter(denial))
+
+    async def test_chosen_row_is_not_served(self):
+        """Chosen rows are copies of the user's own pick (possibly text they
+        wrote) -- never presented back as a draft the generator produced."""
+        denial = await self._denial("k@l.com")
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER, for_denial=denial, chosen=True
+        )
+        self.assertIsNone(await find_reserve_letter(denial))
+
+    async def test_higher_quality_draft_beats_longer_unscored_one(self):
+        """Within a group the draft main would rank first wins
+        (letter_quality.sort_key), not merely the longest."""
+        denial = await self._denial("m@n.com")
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER + " plus a much longer unscored tail",
+            for_denial=denial,
+        )
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER,
+            for_denial=denial,
+            quality_score=0.9,
+            grounding_score=2.0,
         )
         self.assertEqual(await find_reserve_letter(denial), RESERVE_LETTER)
 
     async def test_returns_none_when_no_deliverable_rows(self):
-        denial = await Denial.objects.acreate(
-            denial_text="denied", hashed_email=Denial.get_hashed_email("c@d.com")
-        )
+        denial = await self._denial("c@d.com")
         await ProposedAppeal.objects.acreate(
             appeal_text="runt", for_denial=denial, speculative=False
         )
@@ -395,7 +452,10 @@ class FindReserveLetterTest(APITestCase):
 class DraftLetterForChatTest(APITestCase):
     """draft_letter_for_chat persistence behavior."""
 
-    async def test_generated_letter_persisted_with_provenance(self):
+    async def test_generated_letter_saved_to_appeal_without_a_draft_row(self):
+        """The letter lands on the appeal, but no ProposedAppeal row: live
+        drafts belong to the denial's generation lease, which chat does not
+        hold."""
         user, chat = await _make_professional_chat("draftpersist1", "9999940001")
         appeal, denial = await _link_letter_appeal(chat, user)
         generated = GeneratedAppeal(
@@ -412,10 +472,9 @@ class DraftLetterForChatTest(APITestCase):
         self.assertEqual(drafted, DraftedLetter(GENERATED_LETTER, True))
         fresh_appeal = await Appeal.objects.aget(id=appeal.id)
         self.assertEqual(fresh_appeal.appeal_text, GENERATED_LETTER)
-        row = await ProposedAppeal.objects.aget(for_denial=denial)
-        self.assertEqual(row.model_name, "fhi-model")
-        self.assertEqual(row.context_level, "full")
-        self.assertFalse(row.speculative)
+        self.assertEqual(
+            await ProposedAppeal.objects.filter(for_denial=denial).acount(), 0
+        )
 
     async def test_reserve_reuse_creates_no_duplicate_row(self):
         user, chat = await _make_professional_chat("draftpersist2", "9999940002")
