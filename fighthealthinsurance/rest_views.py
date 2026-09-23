@@ -2526,33 +2526,22 @@ class ChooserViewSet(viewsets.ViewSet):
         task = available_tasks.first()
 
         if not task:
-            # Generate a single task synchronously (blocking) since nothing is available
-            from asgiref.sync import async_to_sync
-
-            from fighthealthinsurance.chooser_tasks import _generate_single_task
+            # Nothing for this session. Generation used to run right here,
+            # synchronously, on an anonymous and unthrottled endpoint: one
+            # scenario call plus up to a dozen candidate calls, two of them to
+            # paid providers, holding a worker for minutes, on demand. Hand
+            # the pool to the throttled background prefill instead and tell
+            # the client to come back; the refill actor tops the pool up too.
+            from fighthealthinsurance.chooser_tasks import trigger_prefill_async
 
             try:
-                # Generate one task immediately for this request (blocking call)
-                async_to_sync(_generate_single_task)(task_type)
+                trigger_prefill_async()
             except Exception as e:
-                logger.warning(f"Failed to generate task on demand: {e}")
-                return Response(
-                    {"message": "No tasks available", "task_type": task_type},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-
-            # Try to get the task again
-            task = (
-                ChooserTask.objects.filter(task_type=task_type, status="READY")
-                .exclude(id__in=excluded_task_ids)
-                .first()
+                logger.warning(f"Could not trigger chooser prefill: {e}")
+            return Response(
+                {"message": "No tasks available", "task_type": task_type},
+                status=status.HTTP_404_NOT_FOUND,
             )
-
-            if not task:
-                return Response(
-                    {"message": "No tasks available", "task_type": task_type},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
 
         # Get candidates for this task
         candidates = ChooserCandidate.objects.filter(

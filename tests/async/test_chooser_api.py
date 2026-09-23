@@ -291,6 +291,42 @@ class ChooserNextTaskAPITest(APITestCase):
             self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
+class ChooserNextTaskDoesNotGenerateInlineTest(APITestCase):
+    """An empty pool hands generation to the throttled background prefill.
+
+    The endpoint is anonymous and unthrottled; generating a task inside the
+    request held a worker for minutes and drove paid provider calls on demand.
+    """
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_empty_pool_triggers_prefill_and_returns_404(self):
+        ChooserTask.objects.all().delete()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+        ) as mock_prefill, patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task"
+        ) as mock_generate:
+            response = self.client.get(reverse("chooser-next-appeal"))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("No tasks available", response.json()["message"])
+        mock_prefill.assert_called_once()
+        mock_generate.assert_not_called()
+
+    def test_a_failing_prefill_trigger_still_answers_404(self):
+        ChooserTask.objects.all().delete()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            side_effect=RuntimeError("no threads"),
+        ):
+            response = self.client.get(reverse("chooser-next-appeal"))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
 class ChooserTaskSelectionOrderingTest(APITestCase):
     """Test the task selection ordering logic."""
 

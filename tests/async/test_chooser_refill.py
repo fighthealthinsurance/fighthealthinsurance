@@ -15,8 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from fighthealthinsurance.chooser_tasks import (
+    _claim_refill,
     _count_unscored_tasks,
     _maybe_add_synthesized_candidate,
+    _refill_reason,
+    _release_refill,
     _synthesize_appeal_candidate,
     _synthesize_chat_candidate,
     check_and_refill_task_pool,
@@ -90,15 +93,14 @@ class TestRefillThreshold:
         # Empty DB: every type is below threshold and should be back-filled.
         with patch(
             "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
-            new=MagicMock(),
-        ), patch(
-            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
             new=AsyncMock(),
-        ) as mock_fire:
+        ) as mock_batch:
             await check_and_refill_task_pool()
 
-        # Once for "appeal" and once for "chat".
-        assert mock_fire.await_count == 2
+        # Once for "appeal" and once for "chat", awaited in place: the batch
+        # used to be handed to a background thread with the guard already
+        # released, so batches could overlap.
+        assert mock_batch.await_count == 2
 
     async def test_no_refill_when_enough_unscored_and_ready(self):
         # One fresh READY synthetic task per type, with thresholds lowered to 1
@@ -111,15 +113,15 @@ class TestRefillThreshold:
         ), patch(
             "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 1
         ), patch(
-            "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
-            new=MagicMock(),
+            "fighthealthinsurance.chooser_tasks._comparable_backends",
+            return_value=[],
         ), patch(
-            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
+            "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
             new=AsyncMock(),
-        ) as mock_fire:
+        ) as mock_batch:
             await check_and_refill_task_pool()
 
-        mock_fire.assert_not_awaited()
+        mock_batch.assert_not_awaited()
 
     async def test_refill_triggers_on_low_unscored_when_ready_pool_healthy(self):
         # Each type has a READY task that has already been voted on, so the
@@ -141,16 +143,13 @@ class TestRefillThreshold:
             "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 5
         ), patch(
             "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
-            new=MagicMock(),
-        ), patch(
-            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
             new=AsyncMock(),
-        ) as mock_fire:
+        ) as mock_batch:
             await check_and_refill_task_pool()
 
         # ready=1>=1 (healthy) for both; unscored=0<5 -> both refill solely via
         # the unscored branch. Dropping that clause would make this 0.
-        assert mock_fire.await_count == 2
+        assert mock_batch.await_count == 2
 
     async def test_refill_triggers_on_low_ready_pool_when_unscored_healthy(self):
         # Two fresh (unvoted) READY tasks per type: unscored=2 is healthy
@@ -166,16 +165,169 @@ class TestRefillThreshold:
             "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 1
         ), patch(
             "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
-            new=MagicMock(),
-        ), patch(
-            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
             new=AsyncMock(),
-        ) as mock_fire:
+        ) as mock_batch:
             await check_and_refill_task_pool()
 
         # ready=2<5 -> both refill; unscored=2>=1 is healthy, so the trigger is
         # solely the ready-pool branch. Dropping that clause would make this 0.
-        assert mock_fire.await_count == 2
+        assert mock_batch.await_count == 2
+
+
+class _Backend:
+    """A router backend as the coverage check sees it: a stamped name and
+    an ``external`` flag."""
+
+    def __init__(self, name, external):
+        self.name = name
+        self.external = external
+
+
+async def _fresh_task_with(task_type, *model_names):
+    task = await _make_task(task_type=task_type)
+    for index, name in enumerate(model_names):
+        await ChooserCandidate.objects.acreate(
+            task=task,
+            candidate_index=index,
+            kind="appeal_letter" if task_type == "appeal" else "chat_response",
+            model_name=name,
+            content="x" * 120,
+        )
+    return task
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestCoverageRefill:
+    """A pool that is full but never compares a configured external backend
+    is refilled. READY is monotonic, so without this trigger a provider
+    configured after the pool was bootstrapped never got a task."""
+
+    def _thresholds(self):
+        return [
+            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 1),
+            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 1),
+            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MAX_UNSCORED_TASKS", 10),
+            patch(
+                "fighthealthinsurance.chooser_tasks._comparable_backends",
+                return_value=[
+                    _Backend("fhi-2025-may", external=False),
+                    _Backend("azure-openai/gpt-5.5", external=True),
+                ],
+            ),
+        ]
+
+    async def test_an_external_backend_with_no_fresh_tasks_triggers_a_refill(self):
+        # READY and unscored are both healthy (one task each, thresholds 1),
+        # but the only fresh task compares the internal backend alone.
+        await _fresh_task_with("appeal", "fhi-2025-may")
+        await _fresh_task_with("chat", "fhi-2025-may")
+
+        patches = self._thresholds()
+        for p in patches:
+            p.start()
+        try:
+            reason = await _refill_reason("appeal")
+            with patch(
+                "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+                new=AsyncMock(),
+            ) as mock_batch:
+                await check_and_refill_task_pool()
+        finally:
+            for p in patches:
+                p.stop()
+
+        assert reason is not None and "azure-openai/gpt-5.5" in reason
+        assert mock_batch.await_count == 2
+
+    async def test_a_covered_external_backend_needs_no_refill(self):
+        await _fresh_task_with("appeal", "fhi-2025-may", "azure-openai/gpt-5.5")
+        await _fresh_task_with("chat", "fhi-2025-may", "azure-openai/gpt-5.5")
+
+        patches = self._thresholds()
+        for p in patches:
+            p.start()
+        try:
+            assert await _refill_reason("appeal") is None
+            with patch(
+                "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+                new=AsyncMock(),
+            ) as mock_batch:
+                await check_and_refill_task_pool()
+        finally:
+            for p in patches:
+                p.stop()
+
+        mock_batch.assert_not_awaited()
+
+    async def test_a_voted_task_does_not_count_as_coverage(self):
+        task = await _fresh_task_with("appeal", "fhi-2025-may", "azure-openai/gpt-5.5")
+        cand = await ChooserCandidate.objects.aget(task=task, candidate_index=1)
+        await ChooserVote.objects.acreate(
+            task=task,
+            chosen_candidate=cand,
+            presented_candidate_ids=[cand.id],
+            session_key="sess-cov",
+        )
+        # One fresh task keeps the unscored count healthy; it holds no external.
+        await _fresh_task_with("appeal", "fhi-2025-may")
+
+        patches = self._thresholds()
+        for p in patches:
+            p.start()
+        try:
+            reason = await _refill_reason("appeal")
+        finally:
+            for p in patches:
+                p.stop()
+
+        assert reason is not None and "azure-openai/gpt-5.5" in reason
+
+    async def test_coverage_refills_stop_at_the_unscored_ceiling(self):
+        # A backend that never yields a usable candidate must not justify a
+        # batch every tick forever: past the ceiling the trigger is off.
+        await _fresh_task_with("appeal", "fhi-2025-may")
+
+        patches = self._thresholds()
+        patches.append(
+            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MAX_UNSCORED_TASKS", 1)
+        )
+        for p in patches:
+            p.start()
+        try:
+            reason = await _refill_reason("appeal")
+        finally:
+            for p in patches:
+                p.stop()
+
+        assert reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestRefillGuard:
+    async def test_a_refill_in_progress_is_not_started_twice(self):
+        assert _claim_refill()
+        try:
+            with patch(
+                "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+                new=AsyncMock(),
+            ) as mock_batch:
+                await check_and_refill_task_pool()
+        finally:
+            _release_refill()
+
+        mock_batch.assert_not_awaited()
+
+    async def test_the_guard_is_released_after_a_refill(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+            new=AsyncMock(),
+        ):
+            await check_and_refill_task_pool()
+
+        assert _claim_refill(), "the guard was still held after the refill"
+        _release_refill()
 
 
 @pytest.mark.asyncio
@@ -206,6 +358,9 @@ class TestSynthesizedCandidate:
         assert synth.content == synth_text
         await task.arefresh_from_db()
         assert task.num_candidates_generated == 3
+        # The expectation never sits below what was generated, so the two
+        # counters stay comparable on synthesized tasks.
+        assert task.num_candidates_expected >= task.num_candidates_generated
 
     async def test_skips_synthesis_with_single_candidate(self):
         task = await _make_task()
