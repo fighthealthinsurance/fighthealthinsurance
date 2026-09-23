@@ -390,9 +390,13 @@ class MLRouter(object):
         servers are available.
 
         FLOW:
-        1. Router returns ["fhi-2025", "sonar"]
+        1. Router returns ["fhi-2025", "deepseek-ai/DeepSeek-V4-Pro"]
         2. Caller looks up models_by_name["fhi-2025"] → [server1, server2, server3]
-        3. Caller tries server1, if fails → server2, if fails → server3
+        3. Caller submits to the first server that accepts the submission and
+           moves to the next only when a submission fails (get_model_result);
+           an inference-time failure is that server's failure.
+        Context-only backends (Perplexity "sonar") are never returned: they
+        build citations and do not draft.
 
         Args:
             use_external: Whether to include external models
@@ -440,16 +444,25 @@ class MLRouter(object):
                 return True
             return False
 
+        # Same availability gate as generate_text_backends: this is the list
+        # make_appeals fans every appeal out to, and without the gate a
+        # backend the sweep had already marked down was called on every run,
+        # holding the end of each stream open for its full timeout.
+        # Filtered before the slice so healthy backends past the boundary
+        # can step up; fails open when everything is marked down.
+        internal = self._filter_available(
+            self.internal_models_by_cost, "generate-text-names"
+        )
         if use_external:
             # Internal + external: take internal first, then the best
             # available external models.
-            for model in self.internal_models_by_cost[:6]:
+            for model in internal[:6]:
                 add_model_name(model)
             for model in self.best_external_models():
                 add_model_name(model)
         else:
             # Internal only
-            for model in self.internal_models_by_cost:
+            for model in internal:
                 add_model_name(model)
 
         return names
@@ -490,9 +503,11 @@ class MLRouter(object):
                     for m in self.cheapest("google/gemma-4-26B-A4B-it")
                     if self._selectable(m)
                 ]
-            # Add Perplexity for web-informed questions
+            # Add Perplexity for web-informed questions. Gated like gemma
+            # above: question generation waits on every fanned-out task, so
+            # a backed-off Perplexity stalled it for the full timeout.
             if "sonar" in self.models_by_name:
-                models += self.cheapest("sonar")
+                models += [m for m in self.cheapest("sonar") if self._selectable(m)]
 
         return models
 

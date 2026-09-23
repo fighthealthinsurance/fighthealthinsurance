@@ -69,6 +69,37 @@ class TestInternalHealthGating:
 
         assert unknown in models
 
+    def test_generate_text_backend_names_gates_internal_models(self):
+        """The names list is what make_appeals fans every appeal out to; it
+        used to skip the sweep gate its instance-returning sibling applied,
+        so a marked-down backend was called on every run."""
+        router = _bare_router()
+        up = _internal_model("up-model")
+        down = _internal_model("down-model")
+        router.internal_models_by_cost = [down, up]
+        router.models_by_name = {"up-model": [up], "down-model": [down]}
+
+        with _health_map({"up-model": True, "down-model": False}):
+            names = router.generate_text_backend_names(use_external=False)
+            names_with_external = router.generate_text_backend_names(
+                use_external=True
+            )
+
+        assert names == ["up-model"]
+        assert "down-model" not in names_with_external
+
+    def test_generate_text_backend_names_fails_open_when_all_are_down(self):
+        router = _bare_router()
+        a = _internal_model("a-model")
+        b = _internal_model("b-model")
+        router.internal_models_by_cost = [a, b]
+        router.models_by_name = {"a-model": [a], "b-model": [b]}
+
+        with _health_map({"a-model": False, "b-model": False}):
+            names = router.generate_text_backend_names(use_external=False)
+
+        assert names == ["a-model", "b-model"]
+
     def test_all_down_fails_open_with_error_log(self):
         router = _bare_router()
         a = _internal_model("a-model")
