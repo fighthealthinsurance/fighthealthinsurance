@@ -84,13 +84,8 @@ async def _discard_background_task(coro):
     coro.close()
 
 
-def _repeat_metric(action: str) -> float:
-    return (
-        REGISTRY.get_sample_value(
-            "fhi_chat_repeated_responses_total", {"action": action}
-        )
-        or 0.0
-    )
+def _counter(name: str, **labels) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
 
 
 _user_numbers = itertools.count(1)
@@ -324,11 +319,29 @@ class LongPasteMarkerEchoTest(ChatTurnTestCase):
         self.assertIn("paste it again", response.get("content", ""))
 
     async def test_replacement_is_counted_apart_from_delivered_repeats(self):
-        replaced_before = _repeat_metric("replaced_by_stored_content_ack")
+        replaced = {"action": "replaced_by_stored_content_ack"}
+        before = _counter("fhi_chat_repeated_responses_total", **replaced)
         await self.paste_big()
         self.assertEqual(
-            _repeat_metric("replaced_by_stored_content_ack"), replaced_before + 1
+            _counter("fhi_chat_repeated_responses_total", **replaced), before + 1
         )
+
+    async def test_replacement_is_not_counted_as_a_failed_turn(self):
+        # The models DID answer (only with repeats): alerting on it as a
+        # failed turn would page on a turn that worked.
+        failed_before = _counter("fhi_chat_turns_total", outcome="failed")
+        await self.paste_big()
+        self.assertEqual(
+            _counter("fhi_chat_turns_total", outcome="failed"), failed_before
+        )
+
+    async def test_replacement_raises_no_total_failure_event(self):
+        with patch(
+            "fighthealthinsurance.chat_interface.capture_reliability_event"
+        ) as capture:
+            await self.paste_big()
+        events = [call.args[0] for call in capture.call_args_list]
+        self.assertNotIn("chat_turn_total_failure", events)
 
 
 class LongPasteCrashedTurnTest(ChatTurnTestCase):

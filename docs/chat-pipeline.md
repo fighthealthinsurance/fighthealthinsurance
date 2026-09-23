@@ -298,6 +298,8 @@ search. Explicit uploads take the same storage path under their own marker.
   what to do with it), persisted after the marker so replays read as a
   coherent exchange. "All models are experiencing issues, try again" read
   as "your paste was lost", and a re-paste only duplicated the failure.
+  The repeat case is still an "ok" turn, like any delivered repeat: the
+  models did answer, so it raises no failure metric or reliability event.
 
 ## 7. Debuggability
 

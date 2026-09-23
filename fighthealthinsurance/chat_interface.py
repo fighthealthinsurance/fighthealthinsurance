@@ -1431,6 +1431,10 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _chat_turn_budget()
         turn_timed_out = False
+        # Set when the models DID answer, but only with repeats, and the
+        # stored-content acknowledgment goes out in their place: the reply
+        # path below is the failed-turn one, but the turn is not a failure.
+        repeat_replaced_by_ack = False
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -1482,6 +1486,7 @@ class ChatInterface:
                             f"only repeats on a stored-content turn; sending "
                             f"the stored-content acknowledgment instead"
                         )
+                        repeat_replaced_by_ack = True
                         final_response_text = None
                         final_context_part = None
                     else:
@@ -1664,19 +1669,26 @@ class ChatInterface:
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
-            logger.error(
-                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
-                f"after trying all models. use_external_models={self.use_external_models}"
-            )
-            if not turn_timed_out:
-                record_chat_turn("failed")
-            capture_reliability_event(
-                "chat_turn_total_failure",
-                chat_id=str(chat.id),
-                use_external_models=self.use_external_models,
-                message_chars=len(user_message or ""),
-                stored_content_ack_delivered=bool(stored_content_ack),
-            )
+            if repeat_replaced_by_ack:
+                # Not a generation failure: the models answered, only with
+                # repeats (counted as replaced_by_stored_content_ack above).
+                # An "ok" turn, like a delivered repeat -- reporting it as a
+                # total failure would raise alerts on a turn that worked.
+                record_chat_turn("ok")
+            else:
+                logger.error(
+                    f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
+                    f"after trying all models. use_external_models={self.use_external_models}"
+                )
+                if not turn_timed_out:
+                    record_chat_turn("failed")
+                capture_reliability_event(
+                    "chat_turn_total_failure",
+                    chat_id=str(chat.id),
+                    use_external_models=self.use_external_models,
+                    message_chars=len(user_message or ""),
+                    stored_content_ack_delivered=bool(stored_content_ack),
+                )
             if stored_content_ack:
                 # The user's content IS safely stored and queued for analysis,
                 # so tell them that and how to proceed instead of erroring:
@@ -1684,8 +1696,7 @@ class ChatInterface:
                 # paste was lost, send it again", which just duplicates the
                 # failure (and the storage).
                 logger.info(
-                    f"Delivering stored-content acknowledgment for failed turn "
-                    f"in chat {chat.id}"
+                    f"Delivering stored-content acknowledgment in chat {chat.id}"
                 )
                 await self.send_message_to_client(stored_content_ack)
             else:
