@@ -65,7 +65,7 @@ ML_CALLS_TOTAL = Counter(
 # Failure *reasons* observed inside the transport layer. Deliberately a
 # separate counter from ML_CALLS_TOTAL: a failed call shows up once there
 # (outcome=none/timeout/error) and once here with its classified reason
-# (transport_error, http_error, bad_body, context_overflow, missing_model,
+# (transport_error, http_error, bad_body, no_text, context_overflow, missing_model,
 # skipped_missing_model, skipped_cooling, unexpected_error). The two skips are
 # calls not made because the pair failed moments ago; counting them as plain
 # outcome=none would let the failure rate fall during the very outage that
