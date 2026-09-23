@@ -192,9 +192,14 @@
 
 {% block extra_style %}
 <style>
-    /* Three lines of copy do not need the home page's 650px band; the
-       band is only as tall as the copy plus a margin, and the image
-       crops rather than the page scrolling past empty colour. */
+    /* main.css gives every slider band the home page's 650px floor. Three
+       lines of copy do not need it, so the floor is 380px here: on a
+       desktop the copy is shorter than that and the band sits at 380px
+       with the image cropped, rather than the page scrolling past empty
+       colour. It is a floor and not a cap on purpose. On a phone the copy
+       wraps taller than 380px and the band grows with it; a fixed height
+       pushes the last line of the policy page's copy out of the band at
+       320px wide. */
     #explain-denial-hero .item {
         min-height: 380px;
     }
