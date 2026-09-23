@@ -4,6 +4,7 @@ import ray
 from django.conf import settings
 from loguru import logger
 
+from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
 from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
 from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
 from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
@@ -47,13 +48,16 @@ while not success and attempt < 10:
         logger.info(f"Launched PA refresh actor {ppar}")
 
         # Collect the running-task and actor handles so the fax polling actor
-        # can be conditionally excluded when Temporal owns fax sending.
-        tasks = [etask, ctask, itask, utask, ptask]
+        # can be conditionally excluded when Temporal owns fax sending. A task
+        # is None when the ref attached to an actor whose loop was already
+        # live (a re-run of this job against a surviving cluster).
+        tasks = [t for t in (etask, ctask, itask, utask, ptask) if t is not None]
         actors = [epar, cpar, ipar, upar, ppar]
         if not _temporal_enabled:
             fpar, ftask = fax_polling_actor_ref.get
             logger.info(f"Launched fax polling actor {fpar}")
-            tasks.append(ftask)
+            if ftask is not None:
+                tasks.append(ftask)
             actors.append(fpar)
         else:
             logger.info("TEMPORAL_ENABLED: skipping fax polling actor launch")
@@ -69,11 +73,13 @@ while not success and attempt < 10:
 
         logger.info("Checking that polling tasks are still running")
         time.sleep(10)
-        ready, wait = ray.wait(tasks, timeout=10)
+        ready, wait = ray.wait(tasks, timeout=10) if tasks else ([], [])
         logger.info(f"Finished {ready}")
         result = ray.get(ready)
         logger.info(f"Results: {result}")
-        if len(result) > 0:
+        # A run that returned at once because the loop was already live is
+        # not a finished loop.
+        if any(r != RUN_ALREADY_STARTED for r in result):
             raise Exception("We should not have any polling actors finished!")
         for actor in actors:
             logger.info(f"Checking health of {actor}")
