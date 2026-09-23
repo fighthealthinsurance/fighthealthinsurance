@@ -90,14 +90,30 @@ class Command(BaseCommand):
 
         if not summary.ran_checks:
             if deploy_hook:
+                if summary.crashed:
+                    # The check itself raised: nothing was verified, no row
+                    # was written, no email sent. A strict deploy must not
+                    # pass on that; it used to, because a crash and a lost
+                    # leader claim looked the same here.
+                    self.stderr.write(
+                        self.style.ERROR(
+                            "Model backend health check could not run (see the "
+                            "traceback above)."
+                        )
+                    )
+                    if mhc.strict_mode_enabled():
+                        self.stderr.write(
+                            self.style.ERROR(
+                                "FHI_MODEL_HEALTH_STRICT=1: failing the deploy hook."
+                            )
+                        )
+                        raise SystemExit(2)
+                    return
                 self.stdout.write(
                     "Model backend health check skipped (another process "
-                    "already ran it for this deployment, or it could not run)."
+                    "already ran it for this deployment)."
                 )
-                # A lost leader claim is normal; only strict mode + an actual
-                # inability to verify should fail the deploy, and we can't
-                # tell those apart here without racing the winner — so always
-                # exit 0 on skip.
+                # A lost leader claim is normal: exit 0.
                 return
             self.stderr.write(
                 self.style.ERROR("Model backend health check could not run.")
