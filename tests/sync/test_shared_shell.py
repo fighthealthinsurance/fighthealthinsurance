@@ -87,6 +87,19 @@ def to_px(value: str):
     return number if match.group(2).lower() == "px" else number * 16.0
 
 
+def resolved(value: str):
+    """``var(--token)`` replaced by what custom.css's :root gives the token.
+
+    A width that reads a token is still a real width; this lets the checks
+    below see through the reference to the number it stands for.
+    """
+    match = re.fullmatch(r"var\(\s*(--[\w-]+)\s*\)", value.strip())
+    if not match:
+        return value
+    root = ";".join(body for sel, body in css_rules(CUSTOM_CSS) if sel == ":root")
+    return declared(root, match.group(1)) or value
+
+
 def css_rules_with_media(path: pathlib.Path):
     """``(media conditions, selector, declarations)`` for every rule.
 
@@ -650,7 +663,7 @@ class NothingClippedOutOfReachTest(TestCase):
             "width:80% throws away a fifth of a 390px screen",
         )
         self.assertIsNotNone(
-            to_px(declared(body, "max-width") or ""),
+            to_px(resolved(declared(body, "max-width") or "")),
             ".container-narrow needs a real max-width for the desktop line length",
         )
 

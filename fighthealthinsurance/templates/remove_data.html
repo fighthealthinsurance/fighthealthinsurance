@@ -6,7 +6,7 @@ Delete Your Data
 
 <!-- HOME -->
 <section id="delete-data">
-    <div class="container-narrow">
+    <div class="fhi-page fhi-page-centred">
         {% include "partials/page_title.html" with title="Delete your Data" %}
         <p>We take several steps to protect your data privacy. You can learn more about our <a href="{% url 'privacy_policy' %}" target="_blank" rel="noopener noreferrer">privacy practices in our privacy policy.</a></p>
             <p>To help us delete your data, please provide the email address you used. We'll send a confirmation link to verify your request.</p>
@@ -18,7 +18,7 @@ Delete Your Data
         <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
           {% csrf_token %}
 		  <div class="scroll-x">
-		    <table>
+		    <table class="fhi-form-table">
 		      {{ form.as_table }}
 		    </table>
 		  </div>
