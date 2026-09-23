@@ -106,6 +106,11 @@
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
     --fhi-text-page: clamp(2.1rem, 2.5vw + 1.2rem, 3rem);
     --fhi-text-hero: 5rem;
+    /* The two heights an image hero can have. Home keeps the tall band;
+       a page whose hero is three lines of copy uses the short one. Both are
+       floors: the band grows with its copy and never cuts it off. */
+    --fhi-hero-floor: 650px;
+    --fhi-hero-floor-short: 380px;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
@@ -361,6 +366,53 @@ textarea.fhi-field {
     margin-top: 2rem;
 }
 
+/* ---- The page title -------------------------------------------------------
+   Every content page opens the same way: one h1 at the page size, an
+   optional one-line lede under it, left-aligned, the same distance below
+   the header on every page. Pages include partials/page_title.html rather
+   than writing a heading of their own. Before this, twelve pages had six
+   treatments between them: an h1 at hero size, an h2, an h3, centred,
+   centred over a green rule, boxed, and on the intake page nothing at all.
+   -------------------------------------------------------------------------- */
+.fhi-page-title {
+    margin: var(--fhi-space-9) 0 var(--fhi-space-7);
+}
+
+/* The narrow wrapper brings 2.5rem of its own above the page, so inside it
+   the block keeps only enough to land the title where it lands everywhere
+   else. */
+.container-narrow > .fhi-page-title {
+    margin-top: var(--fhi-space-2);
+}
+
+.fhi-page-title h1 {
+    /* An h1 reads --fhi-text-hero for the image hero; a page title is the
+       page size, the same size the section h2s used to give these pages. */
+    font-size: var(--fhi-text-page);
+    line-height: var(--fhi-line-heading);
+    color: var(--fhi-ink);
+    margin: 0;
+}
+
+.fhi-page-lede {
+    font-size: var(--fhi-text-lead);
+    line-height: var(--fhi-line-body);
+    color: var(--fhi-ink-2);
+    max-width: 65ch;
+    margin: var(--fhi-space-3) 0 0;
+}
+
+/* A form page carries its title inside the form itself, at the section size,
+   so the first thing the page says is what the form does. The intake page had
+   no heading at all before this, which a screen reader announces as a page
+   with no name. */
+.fhi-form-title {
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
+    color: var(--fhi-ink);
+    margin: 0 0 var(--fhi-space-5);
+}
+
 /* Option sections */
 .option-header {
     color: #2e7d32;
@@ -390,11 +442,6 @@ textarea.fhi-field {
     margin: 1.5rem 0;
 }
 
-/* Ensure header stays above hero background */
-header {
-    position: relative;
-    z-index: 1000;
-}
 
 a.link {
     color: var(--fhi-green-ink) !important;
@@ -475,9 +522,6 @@ a.link:hover::after {
    background-position: right center;
    color: var(--fhi-btn-ink);
    text-decoration: none;
-}
-
-.delete-header {
 }
 
 .logo {
@@ -2234,24 +2278,7 @@ section:not(.slider) .share-subcopy {
 
 /* ===== Media References / Press Page ===== */
 .media-references-section {
-    padding: 6rem 0 4rem;
-    background: linear-gradient(135deg, rgba(165, 196, 34, 0.05) 0%, rgba(123, 146, 10, 0.08) 100%);
-}
-.media-references-header {
-    text-align: center;
-    max-width: 760px;
-    margin: 0 auto 3rem;
-}
-.media-references-title {
-    font-size: 2.4rem;
-    font-weight: 700;
-    color: #333;
-    margin-bottom: 1rem;
-}
-.media-references-subtitle {
-    font-size: 1.1rem;
-    color: #555;
-    line-height: 1.6;
+    padding: 0 0 4rem;
 }
 .media-references-grid {
     display: grid;
@@ -2259,14 +2286,13 @@ section:not(.slider) .share-subcopy {
     gap: 1.75rem;
 }
 .media-references-subhead {
-    text-align: center;
     font-size: 1.5rem;
     font-weight: 700;
     color: #333;
     margin: 3rem 0 1.75rem;
 }
-/* First subhead follows the header, which already has bottom margin. */
-.media-references-header + .media-references-subhead {
+/* The first subhead follows the page title, which carries its own margin. */
+.fhi-page-title + .media-references-subhead {
     margin-top: 0;
 }
 .media-reference-card {
@@ -2388,10 +2414,7 @@ section:not(.slider) .share-subcopy {
 }
 @media (max-width: 768px) {
     .media-references-section {
-        padding: 4rem 0 3rem;
-    }
-    .media-references-title {
-        font-size: 1.9rem;
+        padding: 0 0 3rem;
     }
     .media-references-grid {
         grid-template-columns: 1fr;

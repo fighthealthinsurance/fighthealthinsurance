@@ -74,15 +74,11 @@ Other Resources
     text-decoration: underline;
 }
 </style>
-<div class="container mt-5">
+<div class="container">
+    {% include "partials/page_title.html" with title="Resources" lede="There are many other resources for fighting for a fair outcome with your health insurance provider." %}
 
-    <h2 style="margin-top: 10vh;">Resources</h2>
-    
     <div class="row">
         <div class="col-12">
-            <p class="lead mb-4">
-                There are many other resources for fighting for a fair outcome with your health insurance provider.
-            </p>
             <div class="mb-4">
                 <form action="{% url 'faq' %}" method="get" style="display:inline;">
                     <button type="submit" class="fhi-btn me-2">FAQ</button>

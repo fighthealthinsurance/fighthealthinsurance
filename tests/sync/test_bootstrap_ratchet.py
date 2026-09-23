@@ -40,11 +40,11 @@ BASELINE = {
     "form-check-input": 5,
     "card": 108,
     "btn": 126,
-    "row": 148,
-    "col-": 219,
+    "row": 144,
+    "col-": 211,
     "container": 118,
     "alert": 33,
-    "d-flex": 61,
+    "d-flex": 53,
 }
 
 # Where each one should end up instead, for whoever reads a failure.
@@ -82,9 +82,9 @@ PER_TEMPLATE = {
         "container": 1,
         "row": 1,
     },
-    "confirm_delete.html": {"btn": 1, "col-": 2, "d-flex": 2, "row": 1},
+    "confirm_delete.html": {"btn": 1},
     "contact.html": {"container": 1},
-    "delete_data_email_sent.html": {"alert": 1, "col-": 2, "d-flex": 2, "row": 1},
+    "delete_data_email_sent.html": {"alert": 1},
     "denial_language_library.html": {
         "alert": 1,
         "btn": 4,
@@ -208,8 +208,8 @@ PER_TEMPLATE = {
     "professional.html": {"alert": 1, "container": 1},
     "professional_available.html": {"btn": 1, "container": 1},
     "professional_thankyou.html": {"container": 1},
-    "remove_data.html": {"alert": 1, "btn": 1, "col-": 2, "d-flex": 3, "row": 1},
-    "removed_data.html": {"col-": 2, "d-flex": 2, "row": 1},
+    "remove_data.html": {"alert": 1, "btn": 1, "d-flex": 1},
+    "removed_data.html": {},
     "scrub.html": {"btn": 3, "col-": 1},
     "server_side_ocr.html": {"btn": 1},
     "server_side_ocr_error.html": {"btn": 1},

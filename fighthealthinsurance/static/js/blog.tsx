@@ -106,11 +106,16 @@ const BlogIndex: React.FC = () => {
   }
 
   return (
-    <div className="container mt-5">
-      <h2 style={{ marginTop: '10vh' }}>Fight Health Insurance Blog</h2>
-      <p className="lead mb-4">
-        Insights, tips, and strategies for fighting health insurance denials.
-      </p>
+    <div className="container">
+      {/* The same title block every content page opens with; the markup and
+          classes mirror templates/partials/page_title.html, which a React
+          root cannot include. */}
+      <header className="fhi-page-title">
+        <h1>Fight Health Insurance Blog</h1>
+        <p className="fhi-page-lede">
+          Insights, tips, and strategies for fighting health insurance denials.
+        </p>
+      </header>
       
       {failedSlugs.length > 0 && (
         <div className="alert alert-warning" role="alert">

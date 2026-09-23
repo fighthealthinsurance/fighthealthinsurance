@@ -5,37 +5,28 @@ Delete Your Data
 {% block content %}
 
 <!-- HOME -->
-<section id="delete-data" data-stellar-background-ratio="0.5">
-    {% comment %} .row carries a negative side margin that only cancels
-    against a container's padding. Without one it hung 12px off each edge and
-    the page scrolled sideways on a phone. {% endcomment %}
-    <div class="container-fluid">
-    <div class="row mt-5 mb-5">
-        <div class="caption d-flex flex-column align-items-center justify-content-center">
-            <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center">
-                <h1 class="delete-header">Delete your Data</h1>
-                <p>We take several steps to protect your data privacy. You can learn more about our <a href="{% url 'privacy_policy' %}" target="_blank" rel="noopener noreferrer">privacy practices in our privacy policy.</a></p>
-                    <p>To help us delete your data, please provide the email address you used. We'll send a confirmation link to verify your request.</p>
-                {% if error %}
-                <div class="alert alert-danger mt-3" role="alert">
-                    {{ error }}
-                </div>
-                {% endif %}
-                <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
-                  {% csrf_token %}
+<section id="delete-data">
+    <div class="container-narrow">
+        {% include "partials/page_title.html" with title="Delete your Data" %}
+        <p>We take several steps to protect your data privacy. You can learn more about our <a href="{% url 'privacy_policy' %}" target="_blank" rel="noopener noreferrer">privacy practices in our privacy policy.</a></p>
+            <p>To help us delete your data, please provide the email address you used. We'll send a confirmation link to verify your request.</p>
+        {% if error %}
+        <div class="alert alert-danger mt-3" role="alert">
+            {{ error }}
+        </div>
+        {% endif %}
+        <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
+          {% csrf_token %}
 		  <div class="scroll-x">
 		    <table>
 		      {{ form.as_table }}
 		    </table>
 		  </div>
-                    <div class="form-group mt-2">
-                        <button type="submit" id="submit" class="btn btn-delete fhi-btn-lg">Send Confirmation Email</button>
-                    </div>
-                </form>
-                <p class="mt-3"><small>If you've lost access to your email, please contact <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> for assistance with data deletion.</small></p>
+            <div class="form-group mt-2">
+                <button type="submit" id="submit" class="btn btn-delete fhi-btn-lg">Send Confirmation Email</button>
             </div>
-        </div>
-    </div>
+        </form>
+        <p class="mt-3"><small>If you've lost access to your email, please contact <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> for assistance with data deletion.</small></p>
     </div>
 </section>
 
