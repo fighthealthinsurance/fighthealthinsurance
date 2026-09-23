@@ -175,6 +175,23 @@ class TheTitleBlockReadsTheScaleTest(TestCase):
                         "%s spaces itself with %s rather than a token" % (selector, value),
                     )
 
+    def test_printing_a_policy_page_keeps_its_title(self):
+        """The policy pages print themselves as the downloadable PDF and hide
+        the site furniture to do it. Their print rules used to name the bare
+        <header> element, which hid nothing until the title block became the
+        site's first <header>; then Save as PDF lost the document's title."""
+        for name in ("privacy_policy", "mhmda", "tos"):
+            with self.subTest(page=name):
+                html = self.client.get(reverse(name)).content.decode()
+                for block in re.findall(r"@media print\s*\{(.*?)\n\s*\}\n", html, re.S):
+                    for selector_list in re.findall(r"([^{}]+)\{", block):
+                        for selector in selector_list.split(","):
+                            self.assertNotEqual(
+                                selector.strip(),
+                                "header",
+                                "%s hides every <header> when printing, the title with it" % name,
+                            )
+
     def test_the_partial_is_the_only_place_the_block_is_written(self):
         writers = [
             p.relative_to(TEMPLATES).as_posix()

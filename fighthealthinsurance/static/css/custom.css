@@ -378,12 +378,11 @@ textarea.fhi-field {
     margin: var(--fhi-space-9) 0 var(--fhi-space-7);
 }
 
-/* The narrow wrapper brings 2.5rem of its own above the page, so inside it
-   the block keeps only enough to land the title where it lands everywhere
-   else. */
-.container-narrow > .fhi-page-title {
-    margin-top: var(--fhi-space-2);
-}
+/* Inside .container-narrow, whose own 2.5rem top margin collapses with this
+   block's 3rem (a wrapper with no top padding or border shares its first
+   child's margin), the title lands at the same 3rem as everywhere else with
+   no rule of its own. Do not add a compensation here: it was tried, and it
+   moved the delete pages' titles 8px higher than the rest. */
 
 .fhi-page-title h1 {
     /* An h1 reads --fhi-text-hero for the image hero; a page title is the
