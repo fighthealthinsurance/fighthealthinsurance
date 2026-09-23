@@ -1,3 +1,14 @@
+/* The box model is ours, not the CDN's. Bootstrap's stylesheet carries the
+   same rule, so nothing changes while it loads; without it every element
+   that pairs width:100% with padding (the intake wrapper, .fhi-field) would
+   overflow a phone by its padding, and a 390px page would scroll sideways
+   because a download failed. */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
 :root {
     /* Palette already in use across this file, named once. */
     --fhi-green: #a5c422;
@@ -1233,11 +1244,17 @@ a.link:hover::after {
     /* Default layout for desktop */
     display: flex;
     flex-wrap: nowrap; /* Keep items on one line */
+    /* The space between the two fields is the row's, not each cell's: a
+       side margin on the cells pulled the pair 10px in from either edge,
+       which is why the email box below them was 20px wider. column-gap,
+       not gap: below 768px the row becomes a column, and a row gap there
+       would double the space between the stacked fields. */
+    column-gap: var(--fhi-space-5);
 }
 
 .together-form-group > div {
   /* Individual prompt container */
-    margin: 10px;
+    margin: 10px 0;
     flex: 1;
 }
 
@@ -1708,11 +1725,16 @@ section:not(.slider) .share-subcopy {
 }
 
 /* Container utilities */
+/* The intake flow's wrapper, on its own: it used to ride on Bootstrap's
+   .container for centering, and every page that carried both counted as
+   one more use of Bootstrap on the way out. */
 .container-narrow {
     width: 100%;
     max-width: 760px;
     padding-left: 16px;
     padding-right: 16px;
+    margin-left: auto;
+    margin-right: auto;
     margin-top: 2.5rem !important;
 }
 
@@ -2735,5 +2757,33 @@ textarea,
        ones people print. */
     .fhi-chat-button {
         display: none;
+    }
+}
+
+/* ---- Form tables on a phone ----------------------------------------------
+   Details and Questions are Django as_table forms: a label cell beside a
+   field cell. On a 390px phone the two split the row and the field is left
+   with half of it. Below the phone breakpoint each cell becomes a block, so
+   the label sits above its field and the field has the whole width. Desktop
+   keeps the two columns.
+   -------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+    .fhi-form-table,
+    .fhi-form-table tbody,
+    .fhi-form-table tr,
+    .fhi-form-table th,
+    .fhi-form-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .fhi-form-table th {
+        padding: var(--fhi-space-3) 0 var(--fhi-space-1);
+        background: transparent;
+        border-bottom: 0;
+    }
+
+    .fhi-form-table td {
+        padding: 0 0 var(--fhi-space-4);
     }
 }
