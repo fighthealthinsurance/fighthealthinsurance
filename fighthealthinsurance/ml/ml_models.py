@@ -3652,6 +3652,31 @@ class RemoteOpenLike(RemoteModel):
                 # Simple string response
                 r = str(response_message)
 
+            if isinstance(r, list):
+                # Content parts (newer APIs): keep the text parts.
+                r = (
+                    "".join(
+                        str(part.get("text", ""))
+                        for part in r
+                        if isinstance(part, dict) and part.get("type", "text") == "text"
+                    )
+                    or None
+                )
+            if r is None:
+                # No text at all: a tool-calls-only reply, or a reasoning model
+                # that spent its budget thinking (reasoning_content set,
+                # content null). A provider-side condition, not a bug: one
+                # line, no traceback, and the caller moves to the next
+                # backend. It used to raise into the catch-all below, which
+                # logged two ERROR lines and a traceback on the appeal path.
+                finish = json_result["choices"][0].get("finish_reason")
+                logger.warning(
+                    f"{self}: {model} via {api_base} returned no text content "
+                    f"(finish_reason={finish!r})"
+                )
+                record_ml_failure(model, "no_text")
+                return None
+
             # Check if the response is valid text using LLMResponseUtils
             if not LLMResponseUtils.is_valid_text(r):
                 error_msg = f"Received non-text response from {model}"
@@ -4104,6 +4129,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
         return citations
 
 
+def _internal_model_name(model_path: str) -> str:
+    """The friendly registry name for an internal model path: its last path
+    segment. A trailing "/" used to yield a model named "", which the router
+    then registered and reported under that empty name."""
+    name = model_path.rstrip("/").split("/")[-1]
+    return name or model_path
+
+
 class RemoteHealthInsurance(RemoteFullOpenLike):
     PROVIDER_LABEL: ClassVar[str] = "FHI Internal (legacy)"
 
@@ -4175,8 +4208,11 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_name = get_env_variable(
-            "HEALTH_BACKEND_MODEL", "totallylegitco/fighthealthinsurance_model_v0.5"
+        # `or`, like the host and port: a templated empty string is "unset",
+        # and a blank wire model sent model "" on every request.
+        model_name = (
+            get_env_variable("HEALTH_BACKEND_MODEL")
+            or "totallylegitco/fighthealthinsurance_model_v0.5"
         )
         return [
             ModelDescription(cost=1, name="fhi-legacy", internal_name=model_name),
@@ -4243,14 +4279,16 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = get_env_variable(
-            "NEW_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed",
+        model_path = (
+            get_env_variable("NEW_HEALTH_BACKEND_MODEL")
+            or "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"
         )
-        # Extract a friendly name from the model path
-        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
-            ModelDescription(cost=2, name=model_name, internal_name=model_path),
+            ModelDescription(
+                cost=2,
+                name=_internal_model_name(model_path),
+                internal_name=model_path,
+            ),
         ]
 
 
@@ -4271,11 +4309,17 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         # these as empty strings, which must mean "unset".
         self.port = get_env_variable("ALPHA_HEALTH_BACKEND_PORT") or "8000"
         self.host = get_env_variable("ALPHA_HEALTH_BACKEND_HOST") or None
-        self.backup_port = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or None
+        # Like the legacy backend: the backup port defaults to the primary's
+        # (a backup host set alone used to be silently discarded) and the
+        # backup model to the primary's (it used to be the literal
+        # "/app/model", which 404ed unless that box loaded its weights there).
+        self.backup_port = (
+            get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or self.port
+        )
         self.backup_host = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_HOST") or None
-        backup_model = "/app/model"
+        backup_model = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_MODEL") or model
         if self.host is None:
-            raise Exception("Can not construct New FHI backend without a host")
+            raise Exception("Can not construct alpha FHI backend without a host")
         self.url = None
         if self.port is not None and self.host is not None:
             self.url = f"http://{self.host}:{self.port}/v1"
@@ -4308,14 +4352,16 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = get_env_variable(
-            "ALPHA_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-nov-q8-vllm-compressed",
+        model_path = (
+            get_env_variable("ALPHA_HEALTH_BACKEND_MODEL")
+            or "/models/fhi-2025-nov-q8-vllm-compressed"
         )
-        # Extract a friendly name from the model path
-        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
-            ModelDescription(cost=3, name=model_name, internal_name=model_path),
+            ModelDescription(
+                cost=3,
+                name=_internal_model_name(model_path),
+                internal_name=model_path,
+            ),
         ]
 
 
@@ -4926,10 +4972,22 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     @classmethod
     def _configured_deployments(cls) -> List[Tuple[str, int, str]]:
         """(deployment, cost, tier) list, honoring the optional ``MODELS_ENV``
-        override (overrides inherit incrementing costs and a ``custom`` tier)."""
+        override.
+
+        A deployment the override names that is also in ``DEFAULT_MODELS``
+        keeps its default cost and tier; only a name the table does not know
+        gets an incrementing cost and the ``custom`` tier. Every override
+        used to be ``custom`` (quality 88), so listing the sponsored frontier
+        deployment, which the comments above DEFAULT_MODELS tell operators
+        to do, demoted it below DeepInfra in the external fan-out and put the
+        paid provider first. Repeated names are dropped: two descriptions of
+        one deployment registered two instances and doubled its calls.
+        """
         override = get_env_variable(cls.MODELS_ENV) if cls.MODELS_ENV else None
         if override and override.strip():
-            names = [n.strip() for n in override.split(",") if n.strip()]
+            names = list(
+                dict.fromkeys(n.strip() for n in override.split(",") if n.strip())
+            )
             if not names:
                 # e.g. AZURE_*_MODELS="," — separators only, no real names.
                 # Fall back to defaults rather than silently disabling the
@@ -4941,7 +4999,15 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
                 )
                 return list(cls.DEFAULT_MODELS)
             base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
-            return [(n, base_cost + i * 10, "custom") for i, n in enumerate(names)]
+            known = {
+                deployment: (cost, tier)
+                for deployment, cost, tier in cls.DEFAULT_MODELS
+            }
+            configured: List[Tuple[str, int, str]] = []
+            for i, name in enumerate(names):
+                cost, tier = known.get(name, (base_cost + i * 10, "custom"))
+                configured.append((name, cost, tier))
+            return configured
         return list(cls.DEFAULT_MODELS)
 
     @property
@@ -5109,10 +5175,18 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         endpoint with or without a trailing ``/v1/messages``, and appends the
         ``/anthropic`` segment when only the bare resource host was supplied."""
         e = endpoint.strip().rstrip("/")
-        suffix = "/v1/messages"
-        if e.endswith(suffix):
-            e = e[: -len(suffix)].rstrip("/")
-        if not e.endswith("/anthropic"):
+        lowered = e.lower()
+        # A pasted target URI, or the sibling provider's ``/chat/completions``
+        # form, is trimmed back to the base; so is a ``…/anthropic/v1`` base,
+        # the natural analogue of the ``/openai/v1`` the README gives for
+        # Azure OpenAI. Each used to have ``/anthropic`` appended, doubling
+        # the path so every call 404ed while the config-only liveness check
+        # kept the deployment selected.
+        for suffix in ("/v1/messages", "/chat/completions", "/v1"):
+            if lowered.endswith(suffix):
+                e = e[: -len(suffix)].rstrip("/")
+                lowered = e.lower()
+        if not lowered.endswith("/anthropic"):
             e = f"{e}/anthropic"
         return e
 
