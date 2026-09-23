@@ -591,61 +591,41 @@ class TestFindRepeatedReply(TestCase):
         )
 
 
-class TestStoredMarkerEchoExemption(TestCase):
-    """A long-paste/upload turn replaces the user message with a
-    system-written marker; a reply acknowledging the stored content by name
-    legitimately reuses that wording, so the echoes-the-user rung must stand
-    down for markers -- otherwise every candidate on such a turn could be
-    hard-rejected, failing the whole turn."""
+class TestStoredContentMarkerEchoes(TestCase):
+    """A long-paste turn scores candidates against the compact marker that
+    replaced the paste. The marker gets NO special treatment from the
+    anti-loop ladder: the echo rung only ever flags near-copies of it --
+    useless replies, which must stay rejectable -- while a substantive
+    acknowledgment is dissimilar enough never to be flagged at all. (An
+    exemption here once let reworded copies of the marker win the fan-out.)"""
 
     MARKER = build_long_paste_marker(18949, "pasted_message_1787951051.txt")
 
-    def test_reply_reusing_marker_wording_is_not_hard_rejected(self):
-        # Near-verbatim reuse with actual content on top: legitimate
-        # acknowledgment, must survive the echoes-the-user rung.
-        reply = f"{self.MARKER} I'm reading it now."
-        self.assertIsNone(find_repeated_reply(reply, [], self.MARKER))
-
-    def test_bare_marker_echo_is_still_rejected(self):
-        # A reply that IS the marker adds nothing -- rejecting it lets the
-        # stored-content acknowledgment fallback deliver something useful.
+    def test_exact_marker_echo_is_rejected(self):
         self.assertEqual(
             find_repeated_reply(self.MARKER, [], self.MARKER),
             "echoes_user_message",
         )
 
-    def test_reply_echoing_real_user_text_is_still_rejected(self):
-        msg = "Help me figure out how to navigate the new medicaid requirements."
-        self.assertEqual(find_repeated_reply(msg, [], msg), "echoes_user_message")
-
-    def test_assistant_repeat_still_rejected_on_marker_turns(self):
-        history = [
-            {"role": "user", "content": "Help me with this denial."},
-            {"role": "assistant", "content": LOOPED_REPLY},
-        ]
+    def test_near_copy_of_marker_is_rejected(self):
+        reply = f"{self.MARKER} I'm reading it now."
         self.assertEqual(
-            find_repeated_reply(LOOPED_REPLY, history, self.MARKER),
-            "repeats_recent_assistant_reply",
+            find_repeated_reply(reply, [], self.MARKER), "echoes_user_message"
         )
 
-    def test_no_soft_penalty_for_marker_similarity(self):
-        self.assertEqual(
+    def test_marker_echo_is_soft_penalized(self):
+        self.assertLess(
             compute_repetition_penalty(self.MARKER, [], current_message=self.MARKER),
             0.0,
         )
 
-    def test_marker_echo_not_scored_negative_infinity(self):
+    def test_substantive_acknowledgment_is_not_flagged(self):
         reply = (
-            f"{self.MARKER} I'm reading through it now — tell me what you'd "
-            f"like me to do with it."
+            f"{self.MARKER} Looking at it, the insurer cites medical necessity "
+            f"and gives a 180-day appeal window, so let's start by gathering "
+            f"the ordering physician's clinical notes."
         )
-        score = score_llm_response(
-            (reply, "Context: long pasted denial letter stored."),
-            100,
-            chat_history=[],
-            current_message=self.MARKER,
-        )
-        self.assertGreater(score, 0)
+        self.assertIsNone(find_repeated_reply(reply, [], self.MARKER))
 
 
 class TestTransformRequestSoftPenalty(TestCase):

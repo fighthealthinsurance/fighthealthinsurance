@@ -21,6 +21,7 @@ from fighthealthinsurance.chat.chat_persistence import (
     visible_history,
 )
 from fighthealthinsurance.chat.context_manager import (
+    HISTORY_SUMMARY_TIMEOUT_SECONDS,
     MOST_RECENT_SUMMARY_WRAPPER_LABEL,
     PREVIOUS_SUMMARY_WRAPPER_LABEL,
     background_generate_summary,
@@ -42,6 +43,8 @@ from fighthealthinsurance.chat.llm_client import (
 from fighthealthinsurance.chat.message_preprocessor import (
     MessageVariant,
     build_long_paste_marker,
+    is_long_paste,
+    paste_document_name,
     prepare_user_message_variants,
     sanitize_document_name,
 )
@@ -130,6 +133,11 @@ def _detect_policy_analysis_request(text: str) -> bool:
 # the terse-reply bridge note (see handle_chat_message): terse answers are
 # where models historically looped by re-asking instead of using the answer.
 TERSE_REPLY_MAX_CHARS = 60
+
+
+def _chat_turn_budget() -> float:
+    """Wall-clock budget (seconds) for one turn's LLM + tool work."""
+    return _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
 
 
 def _clean_reply(text: str) -> str:
@@ -858,8 +866,7 @@ class ChatInterface:
         # Handle document uploads: store separately and replace with marker in chat
         if is_document and user_message:
             # Client-supplied name: sanitize so a newline inside a filename
-            # can't break the single-line marker (or its recognition by
-            # is_stored_message_marker) built around it below.
+            # can't break the single-line marker built around it below.
             doc_name = sanitize_document_name(document_name) or "uploaded_document"
             char_count = len(user_message)
             logger.info(
@@ -878,11 +885,9 @@ class ChatInterface:
                 denial_context=denial_context,
             )
             # Re-uploading identical content dedupes to the earlier document:
-            # adopt its name (sanitized -- legacy rows may predate the name
-            # sanitization) so the marker references a document that exists.
-            raw_name = getattr(uploaded_doc, "document_name", None)
-            if isinstance(raw_name, str):
-                doc_name = sanitize_document_name(raw_name) or doc_name
+            # name the document that exists (sanitized -- legacy rows may
+            # predate the name sanitization).
+            doc_name = sanitize_document_name(uploaded_doc.document_name) or doc_name
 
             user_message = (
                 f"I've uploaded a document: {doc_name} ({char_count:,} characters). "
@@ -1137,6 +1142,45 @@ class ChatInterface:
                 int(_env_float("FHI_CHAT_MAX_SUMMARY_CHARS", 6000.0)),
             )
 
+        # Long paste (not an explicit upload -- those were stored above):
+        # preserve the full original in document storage and switch
+        # history/scoring to a compact marker, so we neither bloat
+        # chat_history nor fan the huge text out to every backend. Stored
+        # BEFORE the variants are built, so they are built once, around the
+        # name storage actually resolved to: re-pasting identical content
+        # dedupes to the earlier document, and the marker must name the
+        # document that exists. (Never string-replace a name through built
+        # variants instead: the truncated variant's text IS the user's raw
+        # paste, and a client-supplied name occurring in it would be
+        # rewritten inside the message sent to the model.)
+        if is_long_paste(user_message, is_document=is_document):
+            logger.info(
+                f"Long pasted message in chat {chat.id}: storing "
+                f"{len(user_message)} chars for reference"
+            )
+            denial_context = await self._denial_context_for_chat(chat)
+            # Summarization is deferred until after this turn's LLM pass (the
+            # kickoff in the finally block below): fanning out the chunk
+            # summaries now would compete with the user's own turn for the
+            # same backends -- on internal-only deployments that
+            # self-inflicted contention helped time out exactly the turns
+            # that deliver a long paste. The deadline covers everything
+            # between here and that kickoff: history summarization, then the
+            # whole turn budget. If the turn dies first (a raise in the setup
+            # below, the consumer cancelled on disconnect), the watchdog
+            # process_uploaded_document arms rescues the document.
+            stored_content_doc = await process_uploaded_document(
+                chat=chat,
+                document_name=paste_document_name(document_name),
+                full_text=user_message,
+                denial_context=denial_context,
+                defer_summarization_for=(
+                    HISTORY_SUMMARY_TIMEOUT_SECONDS + _chat_turn_budget()
+                ),
+            )
+            stored_content_denial_context = denial_context
+            document_name = stored_content_doc.document_name
+
         # Build message variants: the original/primary path plus lower-scored
         # long-message and weird-Unicode alternatives. A normal short message
         # yields a single primary_original variant, so the wrapped input, stored
@@ -1147,68 +1191,15 @@ class ChatInterface:
             document_name=document_name,
         )
 
-        # Long paste detected (and not already an explicit upload): preserve the
-        # full original in document storage and switch history/scoring to a
-        # compact marker, so we neither bloat chat_history nor fan the huge text
-        # out to every backend.
         long_paste_variant = next(
             (v for v in message_variants if v.metadata.get("store_full_text")),
             None,
         )
-        if long_paste_variant is not None and not is_document:
+        if stored_content_doc is not None and long_paste_variant is not None:
             char_count = long_paste_variant.metadata.get(
                 "char_count", len(user_message)
             )
-            doc_name = long_paste_variant.metadata.get(
-                "document_name",
-                f"pasted_message_{int(timezone.now().timestamp())}.txt",
-            )
-            logger.info(
-                f"Long pasted message in chat {chat.id}: storing {char_count} chars "
-                f"as {doc_name} for reference"
-            )
-            denial_context = await self._denial_context_for_chat(chat)
-            # Summarization is deferred to this turn's finally block: fanning
-            # out the chunk summaries now would compete with the user's own
-            # turn for the same backends -- on internal-only deployments that
-            # self-inflicted contention helped time out exactly the turns that
-            # deliver a long paste. If this turn dies before that finally runs
-            # (a raise in the setup below, the consumer cancelled on
-            # disconnect), the watchdog process_uploaded_document arms at
-            # storage time rescues the still-PENDING document.
-            stored_content_doc = await process_uploaded_document(
-                chat=chat,
-                document_name=doc_name,
-                full_text=user_message,
-                denial_context=denial_context,
-                defer_summarization=True,
-            )
-            stored_content_denial_context = denial_context
-            # Re-pasting identical content (say, after a failed turn) dedupes
-            # to the earlier document: adopt its name (sanitized -- legacy
-            # rows may predate the name sanitization) in the marker and every
-            # variant so we reference a document that actually exists.
-            raw_name = getattr(stored_content_doc, "document_name", None)
-            actual_name = (
-                sanitize_document_name(raw_name) if isinstance(raw_name, str) else ""
-            )
-            if actual_name and actual_name != doc_name:
-                # Rebuild the variants around the real name rather than
-                # string-replacing the old one through them: the truncated
-                # variant's text IS the user's raw paste, and document_name
-                # is client-supplied, so a name that happens to occur in
-                # their content (say "the") would have been rewritten inside
-                # the message we send to the model. user_message is still the
-                # raw paste here -- it becomes the marker below.
-                message_variants = prepare_user_message_variants(
-                    user_message,
-                    is_document=is_document,
-                    document_name=actual_name,
-                )
-                long_paste_variant = next(
-                    v for v in message_variants if v.metadata.get("store_full_text")
-                )
-                doc_name = actual_name
+            doc_name = str(long_paste_variant.metadata.get("document_name", ""))
             await self.send_status_message(
                 f"Long message received ({char_count:,} chars). "
                 f"Stored for reference and analyzing in background..."
@@ -1438,7 +1429,7 @@ class ChatInterface:
         # traffic while a long turn is still working. Without the budget a
         # wedged backend chain could hold the turn open indefinitely with the
         # client showing a spinner forever.
-        turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
+        turn_budget = _chat_turn_budget()
         turn_timed_out = False
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
@@ -1478,11 +1469,27 @@ class ChatInterface:
                         final_response_text, chat.chat_history, user_message
                     )
                 ):
-                    record_chat_repeat("delivered_repeat")
-                    logger.warning(
-                        f"Chat {chat.id}: delivering a reply that repeats a "
-                        f"recent reply (all anti-repeat rungs exhausted)"
-                    )
+                    if stored_content_ack:
+                        # A stored-content turn has a better last resort than
+                        # a repeat: its acknowledgment (the content is stored
+                        # and being analyzed). The retry's finite repeat
+                        # penalty exists because a repeat beats an error
+                        # frame -- here the repeat would be the user's own
+                        # marker, or our previous reply, echoed back.
+                        record_chat_repeat("replaced_by_stored_content_ack")
+                        logger.warning(
+                            f"Chat {chat.id}: every anti-repeat rung produced "
+                            f"only repeats on a stored-content turn; sending "
+                            f"the stored-content acknowledgment instead"
+                        )
+                        final_response_text = None
+                        final_context_part = None
+                    else:
+                        record_chat_repeat("delivered_repeat")
+                        logger.warning(
+                            f"Chat {chat.id}: delivering a reply that repeats "
+                            f"a recent reply (all anti-repeat rungs exhausted)"
+                        )
         except asyncio.TimeoutError:
             logger.error(
                 f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
@@ -1499,6 +1506,13 @@ class ChatInterface:
             logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
         finally:
             heartbeat_task.cancel()
+            # Backstop for the once-per-turn loop metric. The depth-0 exits
+            # inside _call_llm_with_actions record it themselves, but a tool
+            # handler raising -- or the turn budget above firing -- unwinds
+            # past them, losing the metric for a turn that DID reject
+            # repeats. The helper clears its own flag, so this no-ops
+            # whenever the turn already recorded.
+            self._record_turn_repeat_metric(0)
             # Deferred long-paste summarization: started only now, after the
             # interactive LLM pass, so the chunk-summary fan-out doesn't
             # compete with the user's own turn for the same backends. This is
@@ -1506,7 +1520,9 @@ class ChatInterface:
             # most one dispatcher wins, and the watchdog armed at storage
             # time rescues the document if this block never runs or is
             # cancelled mid-await (its DB claim can yield), so the document
-            # cannot be stranded unanalyzed either way.
+            # cannot be stranded unanalyzed either way. It runs AFTER the
+            # synchronous metric backstop above: this await can be
+            # interrupted by cancellation, which must not skip the metric.
             if stored_content_doc is not None:
                 try:
                     await start_document_summarization(
@@ -1518,13 +1534,6 @@ class ChatInterface:
                         f"Could not start deferred document summarization for "
                         f"chat {chat.id}"
                     )
-            # Backstop for the once-per-turn loop metric. The depth-0 exits
-            # inside _call_llm_with_actions record it themselves, but a tool
-            # handler raising -- or the turn budget above firing -- unwinds
-            # past them, losing the metric for a turn that DID reject
-            # repeats. The helper clears its own flag, so this no-ops
-            # whenever the turn already recorded.
-            self._record_turn_repeat_metric(0)
 
         if final_response_text:
             if should_store_summary(chat.summary_for_next_call, final_context_part):

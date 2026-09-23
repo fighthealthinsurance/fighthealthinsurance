@@ -17,6 +17,10 @@ from fighthealthinsurance.utils import ensure_message_alternation
 # Configuration
 DEFAULT_MESSAGES_TO_KEEP = 20
 SUMMARIZATION_INTERVAL = 10
+# Hard bound on the history summarization that runs on the interactive
+# turn path, BEFORE the turn budget's clock starts (see
+# _summarize_history) -- anything timing the whole turn must add it.
+HISTORY_SUMMARY_TIMEOUT_SECONDS = 90
 
 MISSING_CONTEXT_PREFIX = "Missing context summary, refer to previous chat history"
 
@@ -231,7 +235,7 @@ async def _summarize_history(
                 messages_to_summarize,
                 max_messages=0,  # Summarize all dropped messages
             ),
-            timeout=90,
+            timeout=HISTORY_SUMMARY_TIMEOUT_SECONDS,
         )
 
         if history_summary:
