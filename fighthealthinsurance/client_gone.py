@@ -22,17 +22,36 @@ So classify by TYPE, which is what actually separates the two cases, and keep
 the message markers underneath for the callers that have nothing but a string
 left and for uvloop's untyped ``RuntimeError``.
 
+Where the classification runs matters as much as how. ``client_is_gone`` is
+applied at ONE place: the consumers' socket-write wrapper
+(``websockets.PerConnectionThreadSensitiveMixin.send``), which turns a write
+that failed because the peer left into :class:`ClientGone`. Everything above
+that boundary checks ``isinstance(e, ClientGone)`` and nothing else. Sniffing
+an arbitrary exception higher up is how a Postgres "connection reset by peer"
+raised inside generation, or a ``ConnectionResetError`` from a model backend,
+would be misfiled as "the user left" -- a real outage downgraded to a
+WARNING with no error frame sent to a user who is still there. Only a socket
+write can be the client going away, so only the socket write gets to say so.
+
 Deliberately conservative in one direction: this only ever DOWNGRADES a log,
 so a false positive hides a real failure while a false negative merely leaves
 noise. Everything matched here is raised by the transport once the peer is
 already gone -- never by our own code, never by the ORM, never by a model
-call. In particular a Postgres "connection reset by peer" raised inside
-generation is NOT the client leaving, which is why callers that can tell the
-send side from the generator side (``websockets.log_zero_appeal_diagnostics``
-via ``error_from_send``) still get the final say.
+call.
 """
 
 from typing import Optional, Tuple
+
+
+class ClientGone(Exception):
+    """A socket write failed because the peer had already left.
+
+    Raised only by the consumers' send wrapper, with the transport's own
+    exception as ``__cause__``. Being a distinct type is the point: a handler
+    that catches it knows the failure was OUR write to THEIR closed socket,
+    not something that merely looks like one, and can end the stream quietly
+    (warning, no traceback, no error frame -- there is nobody to send it to).
+    """
 
 
 def _optional_disconnect_types() -> Tuple[type, ...]:
@@ -129,6 +148,9 @@ def _one_is_disconnect(exc: BaseException) -> bool:
 
 def client_is_gone(exc: Optional[BaseException]) -> bool:
     """True when *exc* means the peer hung up, not that we failed.
+
+    For the send boundary (see the module docstring): call this on an
+    exception raised by a socket write, not on one caught further up.
 
     A bare ``ClientDisconnected`` matches on the first link; ``__cause__`` is
     followed so a disconnect deliberately re-raised inside a wrapper

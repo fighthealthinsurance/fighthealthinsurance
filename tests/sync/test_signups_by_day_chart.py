@@ -15,6 +15,8 @@ the assertion holds whichever backend the suite runs against.
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from datetime import timedelta
+
 from django.utils import timezone
 
 from charts.views import _unique_signups_per_day_df
@@ -26,22 +28,30 @@ User = get_user_model()
 class SignupsPerDayQueryTest(TestCase):
     """The query itself, independent of the rendering around it."""
 
-    def test_counts_each_email_once_per_day_and_paid_status(self):
-        day = timezone.now()
+    def test_counts_each_email_once_on_its_first_signup_day(self):
+        """A professional who submits the form twice, on different days, is
+        one signup on the first of them -- not one per day (review)."""
+        monday = timezone.now().date() - timedelta(days=2)
+        wednesday = timezone.now().date()
+        # signup_date is auto_now_add, so create() ignores a supplied value;
+        # update() is the one write that lands the day we mean.
+        for day in (monday, monday, wednesday):
+            row = InterestedProfessional.objects.create(
+                email="one@example.com", clicked_for_paid=False
+            )
+            InterestedProfessional.objects.filter(pk=row.pk).update(signup_date=day)
         InterestedProfessional.objects.create(
-            email="one@example.com", signup_date=day, clicked_for_paid=False
-        )
-        InterestedProfessional.objects.create(
-            email="one@example.com", signup_date=day, clicked_for_paid=False
-        )
-        InterestedProfessional.objects.create(
-            email="two@example.com", signup_date=day, clicked_for_paid=False
+            email="two@example.com", clicked_for_paid=True
         )
 
         df = _unique_signups_per_day_df()
 
-        self.assertFalse(df.empty)
         self.assertEqual(int(df["count"].sum()), 2)
+        by_day = {
+            (row.signup_date, row.clicked_for_paid): row.count
+            for row in df.itertuples()
+        }
+        self.assertEqual(by_day, {(monday, False): 1, (wednesday, True): 1})
 
     def test_no_signups_yields_an_empty_frame_rather_than_raising(self):
         self.assertTrue(_unique_signups_per_day_df().empty)
