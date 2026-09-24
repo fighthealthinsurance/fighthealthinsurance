@@ -1127,6 +1127,86 @@ class NotifyPatientTest(APITestCase):
         # Flag was omitted from the request, so the existing False is kept.
         self.assertFalse(self.denial.professional_to_finish)
 
+    def _log_in_as_the_patient(self):
+        """The patient can see this appeal, so notify_patient finds it for them."""
+        self.patient.active = True
+        self.patient.save()
+        self.appeal.patient_visible = True
+        self.appeal.save()
+        self.client.logout()
+        self.client.login(username="patientuser", password="patientpass")
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+
+    def test_patient_cannot_clear_professional_to_finish(self):
+        """Regression: a patient cannot switch off the professional's review.
+
+        With the flag cleared, send_fax would fax the patient's appeal at once
+        instead of holding it for a professional.
+        """
+        self.denial.professional_to_finish = True
+        self.denial.save()
+        self._log_in_as_the_patient()
+
+        response = self.client.post(
+            reverse("appeals-notify-patient"),
+            json.dumps({"id": self.appeal.id, "professional_to_finish": False}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.denial.refresh_from_db()
+        self.assertTrue(self.denial.professional_to_finish)
+        # Refused before anything was sent.
+        self.assertEqual(len(mail.outbox), 0)
+
+        # And the fax is still held for the professional.
+        response = self.client.post(
+            reverse("appeals-send-fax"),
+            json.dumps({"appeal_id": self.appeal.id}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "pending_professional")
+
+    def test_professional_who_is_only_the_patient_cannot_clear_the_flag(self):
+        """Being a professional somewhere is not enough: on this appeal the
+        caller is only the patient, so the flag stays as it is."""
+        self.denial.professional_to_finish = True
+        self.denial.save()
+        ProfessionalUser.objects.create(
+            user=self.patient_user, active=True, npi_number="1234567891"
+        )
+        self._log_in_as_the_patient()
+
+        response = self.client.post(
+            reverse("appeals-notify-patient"),
+            json.dumps({"id": self.appeal.id, "professional_to_finish": False}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.denial.refresh_from_db()
+        self.assertTrue(self.denial.professional_to_finish)
+
+    def test_patient_can_still_notify_without_the_flag(self):
+        """The check is on the flag, not the endpoint: a patient's request
+        that leaves the flag out is answered as before."""
+        self.denial.professional_to_finish = True
+        self.denial.save()
+        self._log_in_as_the_patient()
+
+        response = self.client.post(
+            reverse("appeals-notify-patient"),
+            json.dumps({"id": self.appeal.id}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.denial.refresh_from_db()
+        self.assertTrue(self.denial.professional_to_finish)
+
 
 class AppealSearchPaginationTest(APITestCase):
     """Pagination-parameter handling for the appeals search endpoint."""

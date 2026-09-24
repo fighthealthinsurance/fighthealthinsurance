@@ -1172,6 +1172,25 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
+        # professional_to_finish is the professional's review gate: while it
+        # is set, send_fax holds a patient's fax for a professional. A patient
+        # reaches their own appeal here too, so without this check they could
+        # clear the flag and then fax the appeal unreviewed. Refused before
+        # anything is saved or sent.
+        if (
+            "professional_to_finish" in request.data
+            and not Appeal.filter_to_professional_appeals(current_user)
+            .filter(pk=appeal.pk)
+            .exists()
+        ):
+            return Response(
+                serializers.ErrorSerializer(
+                    {
+                        "error": "Only a professional on this appeal can change professional_to_finish"
+                    }
+                ).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
         denial = appeal.for_denial
         # Only overwrite professional_to_finish when the caller explicitly sent
         # it. The serializer field has default=True, so validated_data always

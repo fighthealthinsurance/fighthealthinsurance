@@ -3192,6 +3192,22 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
         except PatientUser.DoesNotExist:
             pass
 
+        query_set |= cls.filter_to_professional_appeals(current_user)
+        return query_set
+
+    @classmethod
+    def filter_to_professional_appeals(cls, current_user: User):
+        """The appeals current_user reaches as staff or as a professional.
+
+        filter_to_allowed_appeals is this plus the patient's own visible
+        appeals. Use this one where an action belongs to the professional
+        side, like changing whether a professional must finish the appeal.
+        """
+        if current_user.is_superuser or current_user.is_staff:
+            return Appeal.objects.all()
+
+        query_set = Appeal.objects.none()
+
         # Providers can view appeals they created or were added to as a provider
         # or are a domain admin in.
         try:
