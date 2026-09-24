@@ -18,13 +18,13 @@
                         Deploy denial-specific AI and landing pages for your drugs and conditions. Control the clinical evidence.
                         Add human review when you need it. Built for hub teams, market access, and specialty pharmacies.
                     </p>
+                    {% comment %} One row, so the two calls to action sit side by
+                    side on a desktop; the row wraps to a column on a phone. {% endcomment %}
                     <div class="hero-cta-group">
                         <a href="mailto:support42@fighthealthinsurance.com?subject=Patient%20Access%20Demo%20Request"
                            class="section-btn btn btn-default smoothScroll primary-cta">
                             Book a Demo
                         </a>
-                    </div>
-                    <div class="hero-cta-group hero-cta-secondary">
                         <a href="{% url 'microsite' slug='biologic-denial' %}" class="btn btn-outline-green tertiary-cta">
                             See a sample page
                         </a>
@@ -318,8 +318,14 @@
 {% block extra_style %}
 <style>
 /* Patient Access page specific styles */
-#patient-access-hero {
-    min-height: 60vh;
+/* The same short band as the two Explain pages: main.css gives every
+   slider band the home page's floor, and this page also asked for 60vh of
+   its own, so a laptop saw 540px of colour above five lines of copy. The
+   floor is 380px here, a floor and not a cap: the copy is a tagline, a
+   two-line headline, three lines and a row of two buttons, and the band
+   grows with it where that needs more. */
+#patient-access-hero .item {
+    min-height: var(--fhi-hero-floor-short);
 }
 
 #landing-pages .card,

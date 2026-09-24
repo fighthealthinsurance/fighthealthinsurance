@@ -25,6 +25,8 @@ HERO_FLOOR = 380
 PAGES = {
     "explain-denial": "explain-denial-hero",
     "understand-policy": "understand-policy-hero",
+    "professionals/patient-access": "patient-access-hero",
+    "microsite/biologic-denial": "microsite-hero",
 }
 
 MEASURE_JS = """
@@ -33,7 +35,17 @@ const band = hero.querySelector('.item');
 const copy = hero.querySelector('.hero-inner');
 const bandRect = band.getBoundingClientRect();
 const copyRect = copy.getBoundingClientRect();
+// What the band adds around the copy when the copy is what sets the
+// height: its own and the caption's vertical padding and borders, and
+// the copy's vertical margins. Read from the styles, not from the band,
+// so the expectation is independent of the thing it checks.
+const v = (el, props) => props.reduce((n, p) => n + parseFloat(getComputedStyle(el)[p]), 0);
+const caption = copy.parentElement;
+const chrome = v(band, ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'])
+  + v(caption, ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'])
+  + v(copy, ['marginTop', 'marginBottom']);
 return {
+  chrome: chrome,
   band: bandRect.height,
   copy: copyRect.height,
   above: copyRect.top - bandRect.top,
@@ -68,10 +80,16 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
             for size in (DESKTOP, LAPTOP):
                 with self.subTest(page=page, width=size[0]):
                     m = self._measure(page, hero, size)
-                    assert abs(m["band"] - HERO_FLOOR) <= 1, (
+                    # The floor when the copy plus what the band wraps around
+                    # it is shorter; otherwise that sum, since it is a floor
+                    # and not a cap. The sum is read from the styles, so a
+                    # band back at 650px fails here.
+                    expected = max(HERO_FLOOR, m["copy"] + m["chrome"])
+                    assert abs(m["band"] - expected) <= 1, (
                         f"{page} at {size[0]}px: the band is {m['band']:.0f}px, "
-                        f"not {HERO_FLOOR}px. Copy is {m['copy']:.0f}px."
+                        f"not {expected:.0f}px. Copy is {m['copy']:.0f}px."
                     )
+                    assert m["band"] >= HERO_FLOOR - 1, f"{page}: under the floor"
                     assert abs(m["above"] - m["below"]) <= 2, (
                         f"{page} at {size[0]}px: {m['above']:.0f}px above the "
                         f"copy and {m['below']:.0f}px below it."
@@ -93,3 +111,22 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                         f"{page} at {size[0]}px: the band is {m['band']:.0f}px, "
                         f"under the {HERO_FLOOR}px floor."
                     )
+
+    def test_the_patient_access_buttons_sit_side_by_side_on_a_desktop(self):
+        """Two calls to action in one row, not one under the other."""
+        self.set_window_size(*DESKTOP)
+        self.open(f"{self.live_server_url}/professionals/patient-access")
+        self.wait_for_ready_state_complete()
+        # Vertical centres, not tops: the two buttons are different heights
+        # and sit centred in the row, so their tops differ by a few pixels
+        # even when they share it, and a half-pixel shift of the whole page
+        # could tip a rounded comparison. Two buttons in one row have centres
+        # within a few pixels; stacked, they are a button's height apart.
+        centres = self.execute_script("""
+            return Array.from(document.querySelectorAll('#patient-access-hero .hero-cta-group a'))
+                .map(a => { const r = a.getBoundingClientRect(); return r.top + r.height / 2; });
+        """)
+        assert len(centres) == 2, f"expected two buttons, found {centres}"
+        assert abs(centres[0] - centres[1]) <= 4, (
+            f"the buttons are on different rows: centres at {centres}"
+        )
