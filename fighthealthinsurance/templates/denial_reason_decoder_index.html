@@ -1,0 +1,239 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ title }} - Fight Health Insurance{% endblock title %}
+{% block metatitle %}{{ title }}{% endblock metatitle %}
+{% block metadescription %}{{ meta_description }}{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="decoder-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Free Educational Tool</h3>
+                    <h1 class="hero-headline">Denial Reason Decoder</h1>
+                    <p class="hero-subcopy">Pick the reason on your denial letter to learn what it really means, why insurers use it, and how to build a strong appeal.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- How It Works -->
+<section id="how-it-works" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto text-center">
+                <h2 class="mb-4">How This Tool Helps You</h2>
+                <p class="lead mb-5">
+                    Insurance denial letters use confusing, technical language that can make you feel powerless. 
+                    The Denial Reason Decoder explains each common denial reason in plain English so you can 
+                    understand your situation and take informed action.
+                </p>
+                <div class="row">
+                    <div class="col-md-4 mb-4">
+                        <div class="feature-box p-4 h-100">
+                            <div class="feature-icon mb-3">🔍</div>
+                            <h5>1. Pick Your Reason</h5>
+                            <p class="text-muted">Find the denial reason that matches your letter below.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <div class="feature-box p-4 h-100">
+                            <div class="feature-icon mb-3">💡</div>
+                            <h5>2. Understand It</h5>
+                            <p class="text-muted">Learn what the denial really means and why insurers use it.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <div class="feature-box p-4 h-100">
+                            <div class="feature-icon mb-3">✊</div>
+                            <h5>3. Take Action</h5>
+                            <p class="text-muted">Get evidence-based appeal strategies, then use our free appeal generator.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Denial Reason Cards -->
+<section id="reason-list" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-5">Choose the Denial Reason From Your Letter</h2>
+
+                <div class="row">
+                    {% for reason in reasons %}
+                    <div class="col-md-6 mb-4">
+                        <a href="{% url 'denial_reason_decoder_detail' reason.slug %}" class="text-decoration-none">
+                            <div class="card reason-card h-100">
+                                <div class="card-body">
+                                    <h3 class="card-title h5">{{ reason.title }}</h3>
+                                    <p class="card-text text-muted">{{ reason.subtitle }}</p>
+                                    <span class="btn btn-sm btn-outline-green mt-2">
+                                        Understand This Reason →
+                                    </span>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Don't See Your Reason Section -->
+<section id="other-reasons" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Don't See Your Exact Denial Reason?</h2>
+                <p class="lead mb-4">
+                    Insurance companies use many different phrases to say the same thing. Even if the wording 
+                    on your denial letter is different, the underlying reason likely matches one of the 
+                    categories above. Our appeal generator can still help.
+                </p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
+                        Start Your Appeal
+                    </a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
+                        Chat with AI Assistant
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Related Resources -->
+<section id="related-resources" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">More Tools &amp; Resources</h2>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">📋 Denial Language Library</h5>
+                                <p class="card-text">Decode specific phrases from your denial letter.</p>
+                                <a href="{% url 'denial-language-library' %}" class="btn btn-sm btn-outline-primary">Browse Library</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">🗺️ State-by-State Help</h5>
+                                <p class="card-text">Find consumer assistance and Medicaid resources in your state.</p>
+                                <a href="{% url 'state_help_index' %}" class="btn btn-sm btn-outline-primary">Find Help</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">❓ FAQ</h5>
+                                <p class="card-text">Answers to common questions about health insurance appeals.</p>
+                                <a href="{% url 'faq' %}" class="btn btn-sm btn-outline-primary">Read FAQ</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> The information on this page is for educational purposes only. 
+                        It is not legal advice, and it does not guarantee a successful appeal. Every insurance plan 
+                        and denial is different. Use this information to understand your options, but consult with 
+                        your healthcare provider and, if needed, a qualified professional for your specific situation.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #decoder-hero .hero-inner {
+        max-width: 800px;
+        padding: 2rem;
+        text-align: center;
+    }
+
+    .feature-box {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .feature-icon {
+        font-size: 2.5rem;
+    }
+
+    .reason-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        border-left: 4px solid #28a745;
+    }
+
+    .reason-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+    }
+
+    .reason-card .card-title {
+        color: #333;
+    }
+
+    .btn-green {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .btn-green:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #28a745;
+        border-color: #28a745;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #28a745;
+        color: white;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    @media (max-width: 768px) {
+        .reason-card .card-title {
+            font-size: 1.1rem;
+        }
+    }
+</style>
+{% endblock extra_style %}
