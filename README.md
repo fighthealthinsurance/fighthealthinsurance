@@ -6,9 +6,21 @@ an appeal, explains the denial, and points to next steps and the regulators
 for their state. This repository is the site at
 [fighthealthinsurance.com](https://www.fighthealthinsurance.com/) and its API:
 a Django 5.2 app, with React/TypeScript bundles for the chat and a few other
-pages. The same code also serves Fight Paperwork, the professional version at
-fightpaperwork.com. New self-serve professional signups are off in production
-and on under the `Dev` and test settings, so locally the signup flow works
+pages.
+
+## Fight Paperwork
+
+The same code also serves Fight Paperwork, the professional version at
+fightpaperwork.com. If you're a provider, practice, or hospital system, we're
+building tools to integrate into your workflow so your patients can fight
+denials more effectively. Learn about the
+[professional version](https://www.fighthealthinsurance.com/pro_version) or
+explore [patient and market access partnerships](https://www.fighthealthinsurance.com/professionals/patient-access),
+and reach us for more information from the
+[partner section of the Join the Fight page](https://www.fighthealthinsurance.com/how-to-help#providers).
+
+For development: new self-serve professional signups are off in production and
+on under the `Dev` and test settings, so the signup flow works locally
 (`NEW_PROFESSIONAL_SIGNUP_ENABLED` in `fighthealthinsurance/settings.py`).
 
 ## For AI agents and new contributors
