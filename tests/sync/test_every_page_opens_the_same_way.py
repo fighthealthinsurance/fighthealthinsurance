@@ -135,7 +135,12 @@ class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
                 self.assertIn('class="hero-headline"', hero[: hero.index("</section>")])
 
     def test_the_short_band_is_the_token_and_not_a_number(self):
-        for template in ("explain_denial.html", "understand_policy.html"):
+        for template in (
+            "explain_denial.html",
+            "understand_policy.html",
+            "patient_access.html",
+            "microsite.html",
+        ):
             with self.subTest(template=template):
                 text = (TEMPLATES / template).read_text()
                 self.assertIn("min-height: var(--fhi-hero-floor-short);", text)
