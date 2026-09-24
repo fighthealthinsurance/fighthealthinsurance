@@ -1120,13 +1120,6 @@ class ConfirmDeleteDataView(View):
         )
 
 
-class RecommendAppeal(View):
-    """View for recommending appeal templates (placeholder)."""
-
-    def post(self, request):
-        return render(request, "")
-
-
 class CategorizeReview(View):
     """View for the categorize/review page that supports GET for back navigation."""
 
