@@ -20,6 +20,7 @@ from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
 from django.http import (
+    Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
@@ -47,7 +48,7 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic
+from fighthealthinsurance import appeal_deadlines, common_view_logic
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -568,6 +569,43 @@ class Turning26View(StaticIshView):
     """SEO page for young adults aging off a parent's health insurance at 26."""
 
     template_name = "turning_26.html"
+
+
+class AppealDeadlineCalculatorView(PublicCachedPageMixin, generic.TemplateView):
+    """Public, no-login tool that estimates health-insurance appeal deadlines.
+
+    The form is bound to ``request.GET`` so a filled-in result is bookmarkable,
+    shareable, and printable via its URL. All computation lives in
+    ``appeal_deadlines`` and the inputs in ``AppealDeadlineCalculatorForm``; this
+    view only wires them to the template.
+    """
+
+    template_name = "appeal_deadline_calculator.html"
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Health Insurance Appeal Deadline Calculator"
+
+        # Only treat the form as submitted when the user actually chose a
+        # coverage type; a bare visit (no query string) should render blank
+        # rather than showing "this field is required" errors.
+        submitted = bool(self.request.GET.get("coverage_type"))
+        form = core_forms.AppealDeadlineCalculatorForm(
+            self.request.GET if submitted else None
+        )
+
+        result = None
+        if submitted and form.is_valid():
+            result = form.compute()
+
+        context["form"] = form
+        context["result"] = result
+        context["submitted"] = submitted
+        context["last_reviewed"] = appeal_deadlines.LAST_REVIEWED
+        context["canonical_url"] = self.request.build_absolute_uri(
+            reverse("appeal_deadline_calculator")
+        )
+        return context
 
 
 class MedicaidEligibilityView(StaticIshView):
@@ -3606,9 +3644,140 @@ class StateHelpView(StaticIshView):
         # Use cached state from get() to avoid duplicate lookup
         state = getattr(self, "_state", None)
         if state:
-            context["state"] = state
-            context["title"] = f"{state.name} Health Insurance Help"
+            from fighthealthinsurance.state_help import LAST_REVIEWED
 
+            context["state"] = state
+            context["title"] = (
+                f"{state.name} External Review & Insurance Complaint Guide"
+            )
+            context["last_reviewed"] = LAST_REVIEWED
+
+            # Absolute URLs for canonical + JSON-LD.
+            index_url = self.request.build_absolute_uri(reverse("state_help_index"))
+            page_url = self.request.build_absolute_uri(
+                reverse("state_help", kwargs={"slug": state.slug})
+            )
+            home_url = self.request.build_absolute_uri("/")
+            context["canonical_url"] = page_url
+
+            # Structured data: a WebPage describing this state's external-review
+            # guidance plus a BreadcrumbList for the navigation path. Serialized
+            # here so the template just prints it.
+            page_title = f"{state.name} External Review & Insurance Complaint Guide"
+            page_description = (
+                f"How to request an external review and file a complaint with the "
+                f"{state.insurance_department.name} after a health insurance denial "
+                f"in {state.name}."
+            )
+            structured_data = {
+                "@context": "https://schema.org",
+                "@graph": [
+                    {
+                        "@type": "WebPage",
+                        "@id": page_url,
+                        "url": page_url,
+                        "name": page_title,
+                        "description": page_description,
+                        "inLanguage": "en-US",
+                        "isPartOf": {"@type": "WebSite", "@id": home_url},
+                        "about": {
+                            "@type": "Thing",
+                            "name": (
+                                f"Health insurance external review in {state.name}"
+                            ),
+                        },
+                    },
+                    {
+                        "@type": "BreadcrumbList",
+                        "itemListElement": [
+                            {
+                                "@type": "ListItem",
+                                "position": 1,
+                                "name": "Home",
+                                "item": home_url,
+                            },
+                            {
+                                "@type": "ListItem",
+                                "position": 2,
+                                "name": "State Health Insurance Help",
+                                "item": index_url,
+                            },
+                            {
+                                "@type": "ListItem",
+                                "position": 3,
+                                "name": state.name,
+                                "item": page_url,
+                            },
+                        ],
+                    },
+                ],
+            }
+            # render_json_ld escapes <, >, & so the state name/description
+            # can't break out of the <script type="application/ld+json"> block.
+            context["structured_data_json"] = render_json_ld(structured_data)
+
+        return context
+
+
+class DenialReasonDecoderIndexView(PublicCachedPageMixin, TemplateView):
+    """Public index page for the Denial Reason Decoder tool – lists all reasons."""
+
+    template_name = "denial_reason_decoder_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.denial_reason_decoder import load_reasons
+
+        reasons = load_reasons()
+        context["reasons"] = reasons
+        context["title"] = (
+            "Denial Reason Decoder – Understand Why Your Health Insurance Claim Was Denied"
+        )
+        context["meta_description"] = (
+            "Learn what common health insurance denial reasons really mean, why insurers use them, "
+            "and the strongest appeal strategies and evidence for each. Free educational tool."
+        )
+        context["canonical_url"] = (
+            "https://www.fighthealthinsurance.com/tools/denial-reason-decoder/"
+        )
+        return context
+
+
+class DenialReasonDecoderView(PublicCachedPageMixin, TemplateView):
+    """Public detail page for a single denial reason (slug-based)."""
+
+    template_name = "denial_reason_decoder_detail.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.denial_reason_decoder import get_reason
+
+        self._reason = get_reason(slug)
+        if self._reason is None:
+            raise Http404(f"Denial reason '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.denial_reason_decoder import get_reasons_map
+
+        reason = getattr(self, "_reason", None)
+        if reason:
+            all_reasons = get_reasons_map()
+            context["reason"] = reason
+            context["title"] = (
+                f"{reason.title} Denial – Appeal Guide | Fight Health Insurance"
+            )
+            context["meta_description"] = reason.meta_description
+            context["canonical_url"] = (
+                f"https://www.fighthealthinsurance.com/tools/denial-reason-decoder/{reason.slug}/"
+            )
+            # render_json_ld emits the full <script> tag with <, >, & escaped,
+            # replacing the previous hand-rolled .replace() escaping.
+            context["faq_jsonld"] = render_json_ld(reason.faq_jsonld())
+            context["breadcrumb_jsonld"] = render_json_ld(reason.breadcrumb_jsonld())
+            context["article_jsonld"] = render_json_ld(reason.article_jsonld())
+            context["related_reasons"] = reason.related_reasons(all_reasons)
         return context
 
 
@@ -3742,4 +3911,172 @@ class GlossaryView(StaticIshView):
         # render_json_ld escapes <, >, & so a term's definition/aliases can't
         # break out of the <script type="application/ld+json"> block.
         context["json_ld"] = render_json_ld([defined_term, breadcrumbs])
+        return context
+
+
+# Canonical domain used to build absolute URLs inside JSON-LD structured data.
+# Kept in sync with fighthealthinsurance.context_processors.canonical_url_context.
+_INSURER_GUIDE_CANONICAL_DOMAIN = "https://www.fighthealthinsurance.com"
+
+
+def _insurer_guide_abs_url(url_name: str, **kwargs) -> str:
+    """Build a canonical absolute URL for an insurer guide route."""
+    from django.urls import reverse
+
+    return f"{_INSURER_GUIDE_CANONICAL_DOMAIN}{reverse(url_name, kwargs=kwargs)}"
+
+
+class InsurerAppealGuideIndexView(PublicCachedPageMixin, TemplateView):
+    """Index page listing per-insurer 'how to appeal a denial' guides."""
+
+    template_name = "insurer_appeal_guide_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.insurer_appeal_guides import (
+            LAST_REVIEWED,
+            get_insurers_sorted_by_name,
+        )
+
+        insurers = get_insurers_sorted_by_name()
+        context["insurers"] = insurers
+        context["last_reviewed"] = LAST_REVIEWED
+        context["title"] = "How to Appeal a Health Insurance Denial by Insurer"
+
+        index_url = _insurer_guide_abs_url("insurer_appeal_guide_index")
+        webpage = {
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "name": "How to Appeal a Health Insurance Denial by Insurer",
+            "url": index_url,
+            "description": (
+                "Original, general guides on how to appeal a health insurance "
+                "denial from major U.S. insurers and pharmacy benefit managers."
+            ),
+        }
+        breadcrumbs = {
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": 1,
+                    "name": "Home",
+                    "item": _INSURER_GUIDE_CANONICAL_DOMAIN + "/",
+                },
+                {
+                    "@type": "ListItem",
+                    "position": 2,
+                    "name": "Insurance Appeal Guides",
+                    "item": index_url,
+                },
+            ],
+        }
+        item_list = {
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": i + 1,
+                    "name": f"How to Appeal a {insurer.name} Insurance Denial",
+                    "url": _insurer_guide_abs_url(
+                        "insurer_appeal_guide", slug=insurer.slug
+                    ),
+                }
+                for i, insurer in enumerate(insurers)
+            ],
+        }
+        # render_json_ld escapes <, >, & so insurer copy can't break out of the
+        # <script type="application/ld+json"> block.
+        context["jsonld"] = render_json_ld([webpage, breadcrumbs, item_list])
+        return context
+
+
+class InsurerAppealGuideView(PublicCachedPageMixin, TemplateView):
+    """Individual per-insurer appeal guide page."""
+
+    template_name = "insurer_appeal_guide.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.insurer_appeal_guides import get_insurer_guide
+
+        # Cache the lookup to avoid a duplicate call in get_context_data.
+        self._insurer = get_insurer_guide(slug)
+        if self._insurer is None:
+            raise Http404(f"Insurer appeal guide '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.insurer_appeal_guides import (
+            GENERAL_APPEAL_STEPS,
+            GENERAL_DENIAL_REASONS,
+            LAST_REVIEWED,
+            get_related_guides,
+        )
+
+        insurer = getattr(self, "_insurer", None)
+        if insurer:
+            context["insurer"] = insurer
+            context["related_guides"] = get_related_guides(insurer.slug)
+            context["appeal_steps"] = GENERAL_APPEAL_STEPS
+            context["denial_reasons"] = GENERAL_DENIAL_REASONS
+            context["last_reviewed"] = LAST_REVIEWED
+            title = f"How to Appeal a {insurer.name} Insurance Denial"
+            context["title"] = title
+
+            page_url = _insurer_guide_abs_url("insurer_appeal_guide", slug=insurer.slug)
+            index_url = _insurer_guide_abs_url("insurer_appeal_guide_index")
+            webpage = {
+                "@context": "https://schema.org",
+                "@type": "WebPage",
+                "name": title,
+                "url": page_url,
+                "description": insurer.summary,
+            }
+            breadcrumbs = {
+                "@context": "https://schema.org",
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "Home",
+                        "item": _INSURER_GUIDE_CANONICAL_DOMAIN + "/",
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "Insurance Appeal Guides",
+                        "item": index_url,
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 3,
+                        "name": insurer.name,
+                        "item": page_url,
+                    },
+                ],
+            }
+            faqpage = {
+                "@context": "https://schema.org",
+                "@type": "FAQPage",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": faq.question,
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": faq.answer,
+                        },
+                    }
+                    for faq in insurer.faqs
+                ],
+            }
+            # render_json_ld escapes <, >, & so insurer/FAQ copy can't break
+            # out of the <script type="application/ld+json"> block.
+            context["jsonld"] = render_json_ld([webpage, breadcrumbs, faqpage])
+
         return context

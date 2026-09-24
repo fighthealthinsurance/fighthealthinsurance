@@ -32,6 +32,33 @@ REQUIRED_STATE_HELP_KEYS = {
     "medicaid",
 }
 
+# Date the state external-review / Department of Insurance guidance was last
+# reviewed by a human. Shown to users so they know how current the general
+# information is. Update this whenever the guidance copy or data is reviewed.
+LAST_REVIEWED = "2026-07-10"
+
+# Recognized values for ExternalReviewInfo.review_type. These describe, in
+# general terms, WHO administers the external (independent) review a consumer
+# can request after exhausting an internal appeal:
+#   - "state": the state runs its own external review process (typical for
+#     fully-insured / state-regulated plans).
+#   - "federal": the review is administered through the federal HHS-administered
+#     process (e.g. for plans not subject to a state process).
+#   - "state-and-federal": both pathways apply depending on the plan type.
+#   - "varies": not reliably classified; the consumer should verify with their
+#     state Department of Insurance.
+# Deliberately conservative: when a value is unknown we fall back to "varies"
+# rather than guessing, to avoid misstating which process applies.
+VALID_EXTERNAL_REVIEW_TYPES = {"state", "federal", "state-and-federal", "varies"}
+
+# Human-readable labels for each review type, used in templates.
+EXTERNAL_REVIEW_TYPE_LABELS = {
+    "state": "State-administered external review",
+    "federal": "Federal (HHS-administered) external review",
+    "state-and-federal": "State and federal external review (depends on your plan)",
+    "varies": "Varies — verify with your state Department of Insurance",
+}
+
 
 class InsuranceDepartment:
     """Represents a state insurance department."""
@@ -169,9 +196,37 @@ class ExternalReviewInfo:
             data (dict[str, Any]): Source mapping, expected to contain optional keys:
                 - "available" (bool): whether external review is available.
                 - "info_url" (str): URL with details about external review.
+                - "review_type" (str): who administers the external review; one of
+                  VALID_EXTERNAL_REVIEW_TYPES. Unknown/absent values normalize to
+                  "varies" so we never overstate which process applies.
+
+        We intentionally do NOT store per-state deadlines, phone numbers invented
+        for external review, or statistics here: deadlines vary and are surfaced
+        as a general "verify with your state Department of Insurance" note.
         """
         self.available: bool = data.get("available", False)
         self.info_url: Optional[str] = data.get("info_url")
+
+        raw_type = data.get("review_type", "varies")
+        if raw_type not in VALID_EXTERNAL_REVIEW_TYPES:
+            logger.warning(
+                f"ExternalReviewInfo has unrecognized review_type {raw_type!r}; "
+                "falling back to 'varies'"
+            )
+            raw_type = "varies"
+        self.review_type: str = raw_type
+
+    @property
+    def review_type_label(self) -> str:
+        """Human-readable label for ``review_type`` (see EXTERNAL_REVIEW_TYPE_LABELS)."""
+        return EXTERNAL_REVIEW_TYPE_LABELS.get(
+            self.review_type, EXTERNAL_REVIEW_TYPE_LABELS["varies"]
+        )
+
+    @property
+    def is_state_administered(self) -> bool:
+        """True when the state runs (at least in part) its own external review."""
+        return self.review_type in ("state", "state-and-federal")
 
     def __repr__(self) -> str:
         """
@@ -180,7 +235,9 @@ class ExternalReviewInfo:
         Returns:
             A string of the form "<ExternalReviewInfo: available=True>" or "<ExternalReviewInfo: available=False>".
         """
-        return f"<ExternalReviewInfo: available={self.available}>"
+        return (
+            f"<ExternalReviewInfo: available={self.available} type={self.review_type}>"
+        )
 
 
 class AdditionalResource:
