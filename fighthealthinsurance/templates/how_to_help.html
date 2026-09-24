@@ -19,14 +19,10 @@
 {% endblock extra_style %}
 
 {% block content %}
-<div class="container mt-5">
-    <h2 style="margin-top: 10vh; text-align: center; margin-bottom: 1rem;">Join the Fight Against Unfair Denials</h2>
-    <p style="text-align: center; font-size: 1.1rem; max-width: 800px; margin: 0 auto 2rem;">
-        Whether you want to help patients directly, contribute code, partner as a healthcare provider,
-        or connect us with organizations — there's a way for you to make a real difference.
-    </p>
+<div class="fhi-page-wide">
+    {% include "partials/page_title.html" with title="Join the Fight Against Unfair Denials" lede="Whether you want to help patients directly, contribute code, partner as a healthcare provider, or connect us with organizations — there's a way for you to make a real difference." %}
 
-    <ul class="nav nav-pills justify-content-center flex-wrap mb-4">
+    <ul class="nav nav-pills flex-wrap mb-4">
         <li class="nav-item">
             <a class="nav-link" href="#help-patients">I Want to Help Patients</a>
         </li>
@@ -46,7 +42,7 @@
 
     <section style="text-align: center; padding: 2rem; background-color: #fff8e1; border-radius: 8px; margin-bottom: 3rem;">
         <h3 style="margin-bottom: 1rem;">Help Someone Fight a Denial They Couldn't Afford to Appeal</h3>
-        <p style="font-size: 1.05rem; max-width: 700px; margin: 0 auto 1rem;">
+        <p style="font-size: 1.05rem; margin: 0 auto 1rem;">
             Fight Health Insurance is free for every patient. Your donation keeps it that way — so no one
             has to give up on an appeal because they can't afford help.
         </p>

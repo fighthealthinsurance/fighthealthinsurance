@@ -315,6 +315,13 @@
 
 {% block extra_style %}
 <style>
+    /* The same short band as the Explain pages and Patient Access, which
+       links here as its sample page: a floor, not a cap, so a microsite
+       with an image beside its copy still gets the height it needs. */
+    #microsite-hero .item {
+        min-height: var(--fhi-hero-floor-short);
+    }
+
     #microsite-hero .hero-inner {
         max-width: 800px;
         padding: 2rem;

@@ -1,0 +1,18 @@
+{% comment %}
+The one way a content page opens: an h1 and, when the page has one, a
+single-line lede. Include it as the first thing inside the page's container:
+
+    {% include "partials/page_title.html" with title="About Us" %}
+    {% include "partials/page_title.html" with title="Resources" lede="..." %}
+
+The size, colour and spacing live in custom.css under "The page title", so a
+page never sets them itself; alignment follows the column the page sits in
+(centred in the narrow one, left in the wide one). The hero pages (home,
+Explain My Denial, and the rest of the image-hero family) do not use this.
+{% endcomment %}
+<header class="fhi-page-title">
+    <h1>{{ title }}</h1>
+    {% if lede %}
+    <p class="fhi-page-lede">{{ lede }}</p>
+    {% endif %}
+</header>

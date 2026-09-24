@@ -30,6 +30,21 @@
     --fhi-surface: #f9f9f9;
     --fhi-radius: 10px;
     --fhi-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    /* The two widths a page's content can have. Reading is the column
+       the intake flow already holds; wide is for the four pages that are
+       grids of cards or an index. The measure is how long a line of
+       running text gets inside the reading column: 65 characters, the
+       upper end of what eyes track back from comfortably. */
+    --fhi-page-reading: 760px;
+    --fhi-page-wide: 1140px;
+    /* The buffer a column keeps from the window's edge when the window is
+       narrower than the column wants: 5% of the width, never under 2rem
+       nor over 4rem. Bootstrap's container kept 30px to 90px here by
+       stepping down in fixed sizes; without this, a 1100px laptop window
+       ran the wide column to the edge. A phone has no buffer, only the
+       edge padding. */
+    --fhi-page-gutter: clamp(2rem, 5vw, 4rem);
+    --fhi-measure: 65ch;
     /* Button fill: the brand lime, as a sweep from a bright stop down to a
        dark one rather than a flat panel of colour. Held apart from the
        palette so a button's fill can move without dragging the decorative
@@ -106,6 +121,16 @@
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
     --fhi-text-page: clamp(2.1rem, 2.5vw + 1.2rem, 3rem);
     --fhi-text-hero: 5rem;
+    /* Every hero page except home shares one headline size: the home hero
+       is the site's one poster, the rest are pages with a picture behind
+       the title. Patient Access ran at the poster size and the Explain pages
+       at 2.5rem in their own style blocks before this. */
+    --fhi-text-hero-page: clamp(2.2rem, 2.4vw + 1.4rem, 3.25rem);
+    /* The two heights an image hero can have. Home keeps the tall band;
+       a page whose hero is three lines of copy uses the short one. Both are
+       floors: the band grows with its copy and never cuts it off. */
+    --fhi-hero-floor: 650px;
+    --fhi-hero-floor-short: 380px;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
@@ -361,6 +386,55 @@ textarea.fhi-field {
     margin-top: 2rem;
 }
 
+/* ---- The page title -------------------------------------------------------
+   Every content page opens the same way: one h1 at the page size, an
+   optional one-line lede under it, left-aligned, the same distance below
+   the header on every page. Pages include partials/page_title.html rather
+   than writing a heading of their own. Before this, twelve pages had six
+   treatments between them: an h1 at hero size, an h2, an h3, centred,
+   centred over a green rule, boxed, and on the intake page nothing at all.
+   -------------------------------------------------------------------------- */
+.fhi-page-title {
+    margin: var(--fhi-space-9) 0 var(--fhi-space-7);
+}
+
+/* Inside .container-narrow, whose own 2.5rem top margin collapses with this
+   block's 3rem (a wrapper with no top padding or border shares its first
+   child's margin), the title lands at the same 3rem as everywhere else with
+   no rule of its own. Do not add a compensation here: it was tried, and it
+   moved the delete pages' titles 8px higher than the rest. */
+
+.fhi-page-title h1 {
+    /* An h1 reads --fhi-text-hero for the image hero; a page title is the
+       page size, the same size the section h2s used to give these pages. */
+    font-size: var(--fhi-text-page);
+    line-height: var(--fhi-line-heading);
+    color: var(--fhi-ink);
+    margin: 0;
+}
+
+.fhi-page-lede {
+    font-size: var(--fhi-text-lead);
+    line-height: var(--fhi-line-body);
+    color: var(--fhi-ink-2);
+    max-width: var(--fhi-measure);
+    margin: var(--fhi-space-3) 0 0;
+}
+
+/* Alignment follows the column. In the narrow column (the intake flow, the
+   delete family, anything on .fhi-page-centred) the title sits centred over
+   its content; in the wide column it stays left, where a reader's eye starts
+   a page. */
+.container-narrow .fhi-page-title,
+.fhi-page-centred .fhi-page-title {
+    text-align: center;
+}
+
+.container-narrow .fhi-page-lede,
+.fhi-page-centred .fhi-page-lede {
+    margin-inline: auto;
+}
+
 /* Option sections */
 .option-header {
     color: #2e7d32;
@@ -390,11 +464,6 @@ textarea.fhi-field {
     margin: 1.5rem 0;
 }
 
-/* Ensure header stays above hero background */
-header {
-    position: relative;
-    z-index: 1000;
-}
 
 a.link {
     color: var(--fhi-green-ink) !important;
@@ -477,9 +546,6 @@ a.link:hover::after {
    text-decoration: none;
 }
 
-.delete-header {
-}
-
 .logo {
     width: 75px;
 }
@@ -505,7 +571,7 @@ a.link:hover::after {
 @media (max-width: 768px){
   .hero-cta-group a {flex:1 1 auto;}
 }
-.hero-headline {margin-top: .25rem; margin-bottom: .75rem; color: #fff; font-weight: 700; text-shadow: 2px 2px 8px rgba(0,0,0,0.4);}
+.hero-headline {font-size: var(--fhi-text-hero-page); line-height: var(--fhi-line-heading); margin-top: .25rem; margin-bottom: .75rem; color: #fff; font-weight: 700; text-shadow: 2px 2px 8px rgba(0,0,0,0.4);}
 .hero-tagline {margin-bottom: .25rem; font-weight: 600; color: #fff; font-size: 1.15rem; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 .hero-subcopy {font-size: 1.05rem; line-height: 1.5rem; margin: .75rem 0 1.25rem; color: #fff; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 
@@ -1724,13 +1790,114 @@ section:not(.slider) .share-subcopy {
     margin-bottom: 1rem;
 }
 
+/* ---- The page column --------------------------------------------------
+   Every page's content sits in one of two columns. Bootstrap's .container
+   is a layout boundary, 1320px at a desktop, and the prose pages ran text
+   right across it: About Us was a 200-character line. .fhi-page is the
+   reading column, .fhi-page-wide the one for grids and indexes. Both are
+   the whole width of a phone less the edge padding, and neither depends
+   on Bootstrap. A page names its tier and never states a width. The
+   column carries no top spacing of its own: the page title block does
+   that, so a title lands at the same height on every page.
+   -------------------------------------------------------------------------- */
+.fhi-page,
+.fhi-page-wide {
+    width: 100%;
+    max-width: min(var(--fhi-page-reading), 100% - 2 * var(--fhi-page-gutter));
+    margin-left: auto;
+    margin-right: auto;
+    padding: 0 var(--fhi-space-4) var(--fhi-space-10);
+}
+
+.fhi-page-wide {
+    max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-page-gutter));
+}
+
+@media (max-width: 575px) {
+    /* A phone's column is the screen; the 16px edge padding is the buffer. */
+    .fhi-page,
+    .fhi-page-wide {
+        max-width: none;
+    }
+}
+
+/* In the reading column, running text stops at the measure while
+   headings, forms and tables use the whole column. The wide column has
+   no measure: its text fills the column like the cards and grids below
+   it, Melanie's call after seeing About Us with 650px paragraphs over
+   1140px of boxes. :where() on the element keeps this at one class of
+   specificity, so a page rule that wants a wider paragraph wins by
+   naming two. */
+.fhi-page :where(p, li) {
+    max-width: var(--fhi-measure);
+}
+
+/* A page whose copy is centred, like Delete Data: the column stacks its
+   children down the middle, so a paragraph at the measure and a form
+   narrower than the column both sit centred. A centred child takes its
+   own width, so each is also capped at the column: an alert holding an
+   unbroken support address was 371px in a 350px phone column. Running
+   text is left out, since the measure above is its cap and a rule that
+   ties with it on specificity would win on source order; :not() also
+   lifts this above the .alert rule's own max-width. */
+.fhi-page-centred > :not(p):not(li) {
+    max-width: 100%;
+}
+
+/* The delete flow's notes ("Don't see the email?") read best at 640px,
+   which used to be an inline style on the alert. An inline style beats
+   the cap above, so on a phone the note ran 373px in a 350px column.
+   Here the two limits are one rule, and the smaller wins. */
+.fhi-page-centred > .alert {
+    max-width: min(640px, 100%);
+}
+
+/* The support address is one word. In bold Poppins it is 320px, and a
+   list item inside the phone note has 284px, so the page scrolled 5px
+   sideways. A word that cannot fit breaks; nothing else changes. */
+.fhi-page .alert,
+.fhi-page a[href^="mailto:"] {
+    overflow-wrap: anywhere;
+}
+
+.fhi-page-centred {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+/* The press logos on About Us: a row that wraps and centres, each
+   wordmark near the size the home page's featured row gives its logos
+   (five to a line in the reading column, the same five centred in the
+   wide one). On Bootstrap's col-md-2 they were a sixth of the
+   row, which in a 760px column is a 99px wordmark nobody can read. The
+   image is capped at its link, since .img-fluid.img-thumbnail otherwise
+   lets it ask for 200px and a flex item will not shrink below its
+   content. */
+.fhi-logo-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--fhi-space-2) var(--fhi-space-3);
+}
+
+.fhi-logo-row a {
+    flex: 0 1 136px;
+}
+
+.fhi-logo-row .img-fluid.img-thumbnail {
+    max-width: 100%;
+}
+
 /* Container utilities */
 /* The intake flow's wrapper, on its own: it used to ride on Bootstrap's
    .container for centering, and every page that carried both counted as
-   one more use of Bootstrap on the way out. */
+   one more use of Bootstrap on the way out. Same width as .fhi-page; it
+   keeps its own top margin, which the intake pages were built around. */
 .container-narrow {
     width: 100%;
-    max-width: 760px;
+    max-width: var(--fhi-page-reading);
     padding-left: 16px;
     padding-right: 16px;
     margin-left: auto;
@@ -2234,24 +2401,7 @@ section:not(.slider) .share-subcopy {
 
 /* ===== Media References / Press Page ===== */
 .media-references-section {
-    padding: 6rem 0 4rem;
-    background: linear-gradient(135deg, rgba(165, 196, 34, 0.05) 0%, rgba(123, 146, 10, 0.08) 100%);
-}
-.media-references-header {
-    text-align: center;
-    max-width: 760px;
-    margin: 0 auto 3rem;
-}
-.media-references-title {
-    font-size: 2.4rem;
-    font-weight: 700;
-    color: #333;
-    margin-bottom: 1rem;
-}
-.media-references-subtitle {
-    font-size: 1.1rem;
-    color: #555;
-    line-height: 1.6;
+    padding: 0 0 4rem;
 }
 .media-references-grid {
     display: grid;
@@ -2259,14 +2409,13 @@ section:not(.slider) .share-subcopy {
     gap: 1.75rem;
 }
 .media-references-subhead {
-    text-align: center;
     font-size: 1.5rem;
     font-weight: 700;
     color: #333;
     margin: 3rem 0 1.75rem;
 }
-/* First subhead follows the header, which already has bottom margin. */
-.media-references-header + .media-references-subhead {
+/* The first subhead follows the page title, which carries its own margin. */
+.fhi-page-title + .media-references-subhead {
     margin-top: 0;
 }
 .media-reference-card {
@@ -2388,10 +2537,7 @@ section:not(.slider) .share-subcopy {
 }
 @media (max-width: 768px) {
     .media-references-section {
-        padding: 4rem 0 3rem;
-    }
-    .media-references-title {
-        font-size: 1.9rem;
+        padding: 0 0 3rem;
     }
     .media-references-grid {
         grid-template-columns: 1fr;

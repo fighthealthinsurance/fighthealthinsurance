@@ -312,46 +312,11 @@ a:focus {
       MENU
   -----------------------------------------*/
 
-header {
-    background: #ffffff;
-    border-bottom: 1px solid #f2f2f2;
-    display: flex;
-    height: 45px;
-}
-
-header .col-md-8 {
-    padding-right: 0;
-}
-
-header p,
-header span {
-    font-size: 12px;
-    line-height: 24px;
-    padding-top: var(--fhi-space-3);
-}
-
-header a,
-header span {
-    color: #747474;
-}
-
-header span {
-    font-weight: 500;
-    display: inline-block;
-    padding: var(--fhi-space-3) var(--fhi-space-4);
-}
-
-header span.date-icon {
-    border-left: 1px solid #f2f2f2;
-    border-right: 1px solid #f2f2f2;
-    padding-right: var(--fhi-space-5);
-    padding-left: var(--fhi-space-5);
-}
-
-header span i {
-    color: #a5c422;
-    margin-right: var(--fhi-space-1);
-}
+/* The theme's 45px top bar (a flex <header> of date and email icons) is not
+   in any template. Its rules used to sit here, and because they were written
+   against the bare element they landed on any <header> at all: the page
+   title block, a <header>, came out 45px tall, in a row, with a rule under
+   it. Gone rather than overridden. */
 
 
 
@@ -452,7 +417,7 @@ header span i {
     background-repeat: no-repeat;
     background-attachment: local;
     background-size: cover;
-    min-height: 650px;
+    min-height: var(--fhi-hero-floor);
 }
 
 .slider .item-first {
@@ -969,44 +934,13 @@ footer a:hover {
      RESPONSIVE STYLES
   -----------------------------------------*/
 
-@media only screen and (max-width: 1200px) {
-    /* The heading steps that used to sit here are in --fhi-text-hero,
-       --fhi-text-page and --fhi-text-section, which cover this width and
-       every width between the breakpoints too. */
-
-    header {
-	height: inherit;
-    }
-
-    header span.date-icon {
-	border: 0;
-	padding-right: 0;
-	padding-left: 0;
-    }
-
-    header span.email-icon {
-	padding-top: 0;
-    }
-
-    }
+/* The 1200px block that used to sit here held the heading steps, now in
+   --fhi-text-hero, --fhi-text-page and --fhi-text-section, and the top bar's
+   phone rules, now gone with the top bar. */
 
 @media only screen and (max-width: 992px) {
     .slider .item {
 	background-position: center;
-    }
-
-    header {
-	padding-bottom: var(--fhi-space-3);
-    }
-
-    header .text-align-right {
-	text-align: left;
-    }
-
-    header span {
-	padding-top: 0;
-	padding-left: 0;
-	padding-bottom: 0;
     }
 }
 
