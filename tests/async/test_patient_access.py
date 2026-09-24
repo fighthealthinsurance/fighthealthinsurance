@@ -10,6 +10,7 @@ This module tests:
 
 from django.test import TestCase, Client
 from django.urls import reverse
+from django.utils.html import strip_tags
 
 
 class PatientAccessViewTest(TestCase):
@@ -29,9 +30,17 @@ class PatientAccessViewTest(TestCase):
         self.assertTemplateUsed(response, "patient_access.html")
 
     def test_patient_access_contains_hero_headline(self):
-        """Test that the page contains the hero headline."""
+        """The headline reads as one sentence once its markup is stripped.
+
+        The template wraps the second half in a span so the line breaks
+        after "Infrastructure" on a desktop; a reader still sees the whole
+        sentence, so the check strips tags and collapses whitespace before
+        looking for it, rather than expecting the words to sit in one run
+        of source.
+        """
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "Appeal Infrastructure for Patient Access Teams")
+        text = " ".join(strip_tags(response.content.decode()).split())
+        self.assertIn("Appeal Infrastructure for Patient Access Teams", text)
 
     def test_patient_access_contains_hero_tagline(self):
         """Test that the page contains the hero tagline."""
