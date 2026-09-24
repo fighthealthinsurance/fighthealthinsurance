@@ -87,6 +87,46 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
         assert opened[0] is False, "the phone menu starts open"
         assert opened[1] is True, "clicking the toggle did not open the menu"
 
+    def test_the_open_phone_menu_pushes_the_page_down(self):
+        """The open menu takes its own room instead of covering the page.
+        The old sticky plugin wrapped the header in a div frozen at the
+        closed height, so the list that opened out of it hung over whatever
+        came next. position: sticky leaves the header in the flow, so what
+        follows it moves down."""
+        self.set_window_size(*PHONE)
+        self.open(f"{self.live_server_url}/")
+        self.wait_for_ready_state_complete()
+
+        edges = self.execute_script("""
+            const menu = document.querySelector('details.fhi-nav');
+            if (!menu) { return 'NO MENU'; }
+            menu.querySelector('summary').click();
+            const header = document.querySelector('.navbar-default');
+            // Anything wrapped around the header counts as the header, so
+            // the next thing on the page is measured from outside it.
+            let outer = header;
+            while (outer.parentElement && outer.parentElement !== document.body) {
+                outer = outer.parentElement;
+            }
+            let next = outer.nextElementSibling;
+            while (next && next.getBoundingClientRect().height === 0) {
+                next = next.nextElementSibling;
+            }
+            return {
+                open: menu.open,
+                headerBottom: header.getBoundingClientRect().bottom,
+                next: next ? next.tagName.toLowerCase() + '#' + next.id : 'nothing',
+                nextTop: next ? next.getBoundingClientRect().top : null,
+            };
+            """)
+        assert edges != "NO MENU", "no menu on the page"
+        assert edges["open"] is True, "tapping Menu did not open it"
+        assert edges["nextTop"] is not None, "nothing follows the header"
+        assert edges["nextTop"] >= edges["headerBottom"] - 1, (
+            f"the open menu ends at {edges['headerBottom']:.0f}px but "
+            f"{edges['next']} starts at {edges['nextTop']:.0f}px, under it"
+        )
+
     def test_resources_opens_and_its_links_are_reachable(self):
         self.set_window_size(*DESKTOP)
         self.open(f"{self.live_server_url}/")
@@ -342,7 +382,8 @@ class SeleniumTestDropdownLinksGoSomewhere(FHISeleniumBase, StaticLiveServerTest
         self.wait_for_ready_state_complete()
         if scroll:
             self.execute_script("window.scrollTo(0, arguments[0])", scroll)
-            time.sleep(0.5)  # jquery.sticky reacts to the scroll event
+            # html has scroll-behavior: smooth, so the page glides there.
+            time.sleep(0.5)
             header = self.execute_script(
                 "return document.querySelector('details.fhi-nav').getBoundingClientRect().top"
             )

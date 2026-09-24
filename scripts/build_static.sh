@@ -119,7 +119,7 @@ SKIP_STATIC_COLLECT=false
 
 compute_static_checksum() {
   local parts=""
-  # Include all static files (JS dist, non-bundled JS like jquery.sticky.js, CSS, images, blog posts)
+  # Include all static files (JS dist, non-bundled JS like custom.js, CSS, images, blog posts)
   # Excludes node_modules and source .ts/.tsx files (those are covered by the JS build checksum)
   if [ -d "fighthealthinsurance/static" ]; then
     parts="${parts}$(find fighthealthinsurance/static -type f \
