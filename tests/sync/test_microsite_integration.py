@@ -156,3 +156,41 @@ class MicrositeTemplateTest(TestCase):
         # Check that the appeal link includes microsite_slug parameter
         self.assertContains(response, "microsite_slug=mri-denial")
         self.assertContains(response, "default_procedure=MRI")
+
+
+class MicrositeGuideLinkTest(TestCase):
+    """The guide link wears the site's buttons, not Bootstrap's blue.
+
+    It was Bootstrap's blue outline in both places: thin blue text on the
+    hero photo, hard to read and the only hero button in that colour. In
+    the hero it now takes the frosted outline the other hero buttons use,
+    and in the closing call to action the green outline its neighbours use.
+    Only the Medicare work requirements page has a guide link today.
+    """
+
+    SLUG = "medicare-work-requirements-denial"
+
+    def _guide_link_classes(self):
+        guide = get_microsite(self.SLUG).blog_post_url
+        self.assertTrue(guide, "the test page no longer has a guide link")
+        html = self.client.get(reverse("microsite", kwargs={"slug": self.SLUG})).content.decode()
+        marker = 'href="%s" class="' % guide
+        found = []
+        start = html.find(marker)
+        while start != -1:
+            begin = start + len(marker)
+            found.append(html[begin : html.index('"', begin)].split())
+            start = html.find(marker, begin)
+        return found
+
+    def test_the_hero_guide_link_is_frosted_like_the_other_hero_buttons(self):
+        hero, _closing = self._guide_link_classes()
+        self.assertIn("secondary-cta", hero)
+        self.assertNotIn("btn-outline-primary", hero)
+
+    def test_the_closing_guide_link_matches_its_green_neighbours(self):
+        _hero, closing = self._guide_link_classes()
+        self.assertIn("btn-outline-green", closing)
+        self.assertIn("fhi-btn-lg", closing)
+        self.assertNotIn("btn-outline-primary", closing)
+        self.assertNotIn("btn-lg", closing)
