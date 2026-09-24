@@ -15,6 +15,14 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.views import DELETE_CONFIRMATION_SUBJECT
 
 
+def assert_one_title(response):
+    """Every page in the deletion flow opens with the shared title block and
+    nothing else on it is an h1; these three pages render only after a POST
+    or from a token link, so the page-opening test cannot reach them."""
+    assert response.content.count(b'<header class="fhi-page-title">') == 1
+    assert response.content.count(b"<h1>") == 1
+
+
 class TestRemoveDataView(TestCase):
     """Test that RemoveDataView sends confirmation email instead of deleting."""
 
@@ -25,6 +33,7 @@ class TestRemoveDataView(TestCase):
         url = reverse("remove_data")
         response = self.client.post(url, {"email": "test@test-fhi.com"})
         assert response.status_code == 200
+        assert_one_title(response)
         assert b"Check Your Email" in response.content
         assert len(mail.outbox) >= 1
         assert mail.outbox[0].subject == DELETE_CONFIRMATION_SUBJECT
@@ -100,6 +109,7 @@ class TestRemoveDataView(TestCase):
             f"{parsed.path}?{parsed.query}",
         )
         assert response.status_code == 200
+        assert_one_title(response)
         assert b"Confirm Data Deletion" in response.content
         assert b"Confirm Deletion" in response.content
 
@@ -158,6 +168,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
+        assert_one_title(response)
         assert b"data associated with your email has been removed" in response.content
         mock_remove.assert_called_once_with("test@test-fhi.com")
         assert not DeleteToken.objects.filter(
