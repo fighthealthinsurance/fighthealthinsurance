@@ -5,11 +5,13 @@ Explain Denial, Understand Policy, About Our AI, How to Help, Resources/Blogs,
 Remove Your Data, Professional and Generate Appeal. On a phone that is the
 whole first screen before any of the page.
 
-It is seven now: About, Explain Denial, Explain Policy, Resources, Delete Data,
-Professional, and Generate Appeal as the one highlighted thing. Chat became a
-button in the corner on every page. About Our AI moved to the footer, which is
-why one of these tests checks the footer rather than the header: removing it
-from the nav without putting it anywhere would have lost the page.
+It is seven now: About, Explain Denial/Policy (a dropdown holding the two
+Explain pages), Resources (Guides and Blog), Delete, Help (the Join the Fight
+page, which used to sit under Resources as "How to help"), Professional, and
+Generate Appeal as the one highlighted thing. Chat became a button in the
+corner on every page. About Our AI moved to the footer, which is why one of
+these tests checks the footer rather than the header: removing it from the nav
+without putting it anywhere would have lost the page.
 
 The dropdowns are <details>, so nothing here needs JavaScript to open.
 """
@@ -42,10 +44,10 @@ class TheNavIsSevenThingsTest(TestCase):
         nav = _nav(self.html)
         wanted = [
             "About",
-            "Explain Denial",
-            "Explain Policy",
+            "Explain Denial/Policy",
             "Resources",
-            "Delete Data",
+            "Delete",
+            "Help",
             "Professional",
             "Generate Appeal",
         ]
@@ -63,7 +65,8 @@ class TheNavIsSevenThingsTest(TestCase):
 
         self.assertNotIn("Chat", nav, "Chat is still in the header")
         self.assertNotIn("About Our AI", nav)
-        self.assertNotIn("How to Help", nav, "How to help belongs under Resources")
+        self.assertNotIn("How to help", nav, "How to help is the Help item now")
+        self.assertNotIn(">Delete Data<", nav, "Delete Data is Delete now")
 
     def test_generate_appeal_is_the_last_and_the_highlighted_one(self):
         nav = _nav(self.html)
@@ -75,16 +78,25 @@ class TheNavIsSevenThingsTest(TestCase):
             "Generate Appeal should sit rightmost",
         )
 
-    def test_resources_holds_the_three_it_was_given(self):
+    def test_each_dropdown_holds_what_it_was_given(self):
         nav = _nav(self.html)
 
         for label, route in (
+            ("Explain Denial", "explain_denial"),
+            ("Explain Policy", "understand_policy"),
             ("Guides", "other-resources"),
             ("Blog", "blog"),
-            ("How to help", "how-to-help"),
         ):
             self.assertIn(label, nav)
             self.assertIn(reverse(route), nav)
+
+    def test_help_is_its_own_item_and_goes_to_join_the_fight(self):
+        nav = _nav(self.html)
+
+        help_link = f'href="{reverse("how-to-help")}" class="nav-link">Help</a>'
+        self.assertIn(help_link, nav)
+        self.assertGreater(nav.index(">Help<"), nav.index(">Delete<"))
+        self.assertLess(nav.index(">Help<"), nav.index("Professional"))
 
 
 class NothingInTheHeaderNeedsJavaScriptTest(TestCase):
@@ -128,6 +140,9 @@ class NothingInTheHeaderNeedsJavaScriptTest(TestCase):
         self.assertIn('<details class="fhi-nav" id="navbar" open>', html)
         self.assertIn("menu.open = false", html)
         self.assertIn("(min-width: 992px)", html)
+        # And the fallback for browsers that ignore name= on <details>:
+        # one group opening closes the others by hand.
+        self.assertIn("other.open = false", html)
 
     def test_the_menu_and_both_dropdowns_are_details(self):
         html = self.client.get(reverse("root")).content.decode()
@@ -135,9 +150,10 @@ class NothingInTheHeaderNeedsJavaScriptTest(TestCase):
 
         self.assertIn('<details class="fhi-nav"', html)
         self.assertEqual(
-            nav.count('<details class="fhi-nav-group">'),
-            2,
-            "Resources and Professional should both be native disclosures",
+            nav.count('<details class="fhi-nav-group" name="fhi-nav-group">'),
+            3,
+            "Explain, Resources and Professional should all be native disclosures "
+            "sharing one name, so that opening one closes the others",
         )
 
 

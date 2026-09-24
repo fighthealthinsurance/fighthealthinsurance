@@ -131,26 +131,39 @@
                     <span class="fhi-nav-toggle-word">Menu</span>
                 </summary>
 
+                {% comment %} The three groups share a name, so opening one closes
+                the others: two open at once overlapped, with Resources painted over
+                the Explain links, and the right half of "Explain Denial" answered
+                to Guides. Native in browsers since late 2023; the inline script
+                below does the same by hand for the ones before. {% endcomment %}
                 <ul class="fhi-nav-list">
                     <li><a href="{% url 'about' %}" class="nav-link">About</a></li>
-                    <li><a href="{% url 'explain_denial' %}" class="nav-link">Explain Denial</a></li>
-                    <li><a href="{% url 'understand_policy' %}" class="nav-link">Explain Policy</a></li>
 
                     <li>
-                        <details class="fhi-nav-group">
-                            <summary class="nav-link">Resources</summary>
+                        <details class="fhi-nav-group" name="fhi-nav-group">
+                            <summary class="nav-link">Explain Denial/Policy</summary>
                             <ul class="fhi-nav-submenu">
-                                <li><a href="{% url 'other-resources' %}">Guides</a></li>
-                                <li><a href="{% url 'blog' %}">Blog</a></li>
-                                <li><a href="{% url 'how-to-help' %}">How to help</a></li>
+                                <li><a href="{% url 'explain_denial' %}">Explain Denial</a></li>
+                                <li><a href="{% url 'understand_policy' %}">Explain Policy</a></li>
                             </ul>
                         </details>
                     </li>
 
-                    <li><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Delete Data</a></li>
+                    <li>
+                        <details class="fhi-nav-group" name="fhi-nav-group">
+                            <summary class="nav-link">Resources</summary>
+                            <ul class="fhi-nav-submenu">
+                                <li><a href="{% url 'other-resources' %}">Guides</a></li>
+                                <li><a href="{% url 'blog' %}">Blog</a></li>
+                            </ul>
+                        </details>
+                    </li>
+
+                    <li><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Delete</a></li>
+                    <li><a href="{% url 'how-to-help' %}" class="nav-link">Help</a></li>
 
                     <li>
-                        <details class="fhi-nav-group">
+                        <details class="fhi-nav-group" name="fhi-nav-group">
                             <summary class="nav-link">Professional</summary>
                             <ul class="fhi-nav-submenu">
                                 <li><a href="{% url 'pro_version' %}">Practices &amp; Hospitals</a></li>
@@ -179,6 +192,18 @@
                 function follow(change) { menu.open = change.matches; }
                 if (wide.addEventListener) { wide.addEventListener('change', follow); }
                 else { wide.addListener(follow); }
+                // Browsers before late 2023 ignore name= on <details>, so two
+                // dropdowns could open at once and overlap. Close the others by
+                // hand when one opens; where name= works this changes nothing.
+                var groups = document.querySelectorAll('details.fhi-nav-group');
+                groups.forEach(function (group) {
+                  group.addEventListener('toggle', function () {
+                    if (!group.open) { return; }
+                    groups.forEach(function (other) {
+                      if (other !== group) { other.open = false; }
+                    });
+                  });
+                });
               })();
             </script>
 

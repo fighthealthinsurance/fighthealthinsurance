@@ -9,11 +9,11 @@
 <!-- Hero Section -->
 <section id="patient-access-hero" class="slider" data-stellar-background-ratio="0.5">
     <div class="row">
-        <div class="item item-first">
+        <div class="item item-first fhi-hero-short">
             <div class="caption d-flex flex-column align-items-center justify-content-center">
                 <div class="hero-inner">
                     <h3 class="hero-tagline">Patient access at scale. Without the spreadsheets.</h3>
-                    <h1 class="hero-headline">Appeal Infrastructure for Patient Access Teams</h1>
+                    <h1 class="hero-headline">Appeal Infrastructure <span class="fhi-together">for Patient Access Teams</span></h1>
                     <p class="hero-subcopy">
                         Deploy denial-specific AI and landing pages for your drugs and conditions. Control the clinical evidence.
                         Add human review when you need it. Built for hub teams, market access, and specialty pharmacies.
@@ -326,6 +326,14 @@
    grows with it where that needs more. */
 #patient-access-hero .item {
     min-height: var(--fhi-hero-floor-short);
+}
+
+/* The headline breaks after "Infrastructure", not wherever the width
+   happens to fall: at a laptop it left "Teams" alone on a third line.
+   The width cap keeps it to two lines on any desktop, and the second
+   half is one piece that moves down whole. */
+#patient-access-hero .hero-headline {
+    max-width: 26ch;
 }
 
 #landing-pages .card,

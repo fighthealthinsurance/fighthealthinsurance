@@ -1343,6 +1343,17 @@ EXCEPTIONS: tuple[Exempt, ...] = (
         ".fhi-nav-cta a:hover, .fhi-nav-cta a:focus, .fhi-nav-cta a:active",
         WHITE_ON_BRAND_LIME,
     ),
+    # The chat button took the same sweep on 2026-09-24, and the email share
+    # button and the home page's step circles took the flat lime the blog's
+    # buttons use: white on #a5c422 is 2.34:1, the same product decision.
+    Exempt("custom.css", ".fhi-chat-button", WHITE_ON_BRAND_LIME),
+    Exempt(
+        "custom.css",
+        ".fhi-chat-button:hover, .fhi-chat-button:focus, .fhi-chat-button:active",
+        WHITE_ON_BRAND_LIME,
+    ),
+    Exempt("custom.css", ".share-btn-email", WHITE_ON_BRAND_LIME),
+    Exempt("custom.css", ".about-step-number", WHITE_ON_BRAND_LIME),
 )
 
 
@@ -1687,7 +1698,13 @@ INK_TOKEN = "--fhi-btn-ink"
 BRAND_BUTTON_CLASSES = frozenset(
     ("btn-green", "section-btn", "btn-delete", "pro-submit-btn", "pwyw-pill")
 )
-GRADIENT_BUTTON_CLASSES = ("btn-green", "section-btn", "btn-delete", "pro-submit-btn")
+GRADIENT_BUTTON_CLASSES = (
+    "btn-green",
+    "section-btn",
+    "btn-delete",
+    "pro-submit-btn",
+    "fhi-chat-button",
+)
 # Same family, drawn as an edge rather than a fill. They carry the size scale
 # but not the white-on-lime measurement, because their fill is not the lime.
 OUTLINE_BUTTON_CLASSES = frozenset(

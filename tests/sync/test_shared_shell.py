@@ -517,7 +517,7 @@ NAV_ROW_RULES = (
 
 
 class ShellTapTargetTest(TestCase):
-    """Twelve nav rows once both groups are open, one of which is Delete Data."""
+    """Thirteen nav rows once all three groups are open, one of which is Delete."""
 
     def _rule(self, path, selector):
         for found, body in css_rules(path):
