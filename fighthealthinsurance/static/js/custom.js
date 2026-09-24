@@ -2,7 +2,7 @@
 
   "use strict";
 
-    // WOW ANIMATION
-    new WOW({ mobile: false }).init();
+  // Site-wide behaviour that needs jQuery goes here. The carousel, the
+  // parallax and the WOW fade that used to start here are all gone.
 
 })(jQuery);

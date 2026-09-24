@@ -15,7 +15,7 @@
       border-bottom: 2px solid #007bff;
       padding-bottom: 10px;
     }
-    .card {
+    .proconnector-card {
       background: white;
       padding: 20px;
       border-radius: 8px;
@@ -166,7 +166,7 @@
   {% if pro %}
     <p class="readonly">{{ remaining_count }} interested professional{{ remaining_count|pluralize }} remaining to process.</p>
 
-    <div class="card">
+    <div class="proconnector-card">
       <h2>Known information</h2>
       <table class="info">
         <tr><th>ID</th><td>{{ pro.id }}</td></tr>
@@ -204,7 +204,7 @@
       {% csrf_token %}
       <input type="hidden" name="interested_professional_id" value="{{ pro.id }}">
 
-      <div class="card">
+      <div class="proconnector-card">
         <h2>Physical letter (optional)</h2>
         <p>
           For professionals worth reaching by mail as well as email, print a
@@ -231,7 +231,7 @@
         </p>
       </div>
 
-      <div class="card">
+      <div class="proconnector-card">
         <h2>Introduction email</h2>
         <div class="disclosure">
           This draft was generated to help. Review and edit it before sending.
@@ -293,7 +293,7 @@
       </div>
     </form>
   {% else %}
-    <div class="card">
+    <div class="proconnector-card">
       <p>🎉 All caught up &mdash; there are no interested professionals left to process.</p>
     </div>
   {% endif %}

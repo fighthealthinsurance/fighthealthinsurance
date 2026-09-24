@@ -38,7 +38,8 @@ starts passing.
 What the gate still cannot see: colours a script writes at runtime (the drafts
 page phase labels, named in UNREACHED), and anything Bootstrap contributes,
 which is why the focus ring is checked against Bootstrap's known weight rather
-than against Bootstrap's actual text.
+than against Bootstrap's actual text. The one exception is the few fills
+written down by hand in BOOTSTRAP_GROUNDS.
 """
 
 from __future__ import annotations
@@ -984,6 +985,23 @@ def _layers_from(
     return layers
 
 
+# What Bootstrap paints under words on our pages, for as long as base.html
+# loads it. The gate reads only our own CSS, so these are written down by
+# hand from Bootstrap 5.2.3's stylesheet, which sets .card's background to
+# var(--bs-card-bg), and that to #fff.
+#
+# Until 2026-09-24 a .card's white reached the gate by accident: the two
+# Pro Connector pages each had a ".card { background: white }" of their own,
+# and a template's <style> block is read as if it applied to every page. When
+# those became .proconnector-card, every Bootstrap card lost its white and
+# fell through to whichever <body> fill any template declares, the printable
+# letter's grey included, and three pages failed for words that sit on white.
+# Take an entry out when the component it describes leaves the site.
+BOOTSTRAP_GROUNDS: tuple[Rule, ...] = (
+    Rule("bootstrap 5.2.3", 0, ".card", (("background-color", "#fff", False),)),
+)
+
+
 class Painter:
     """Resolves what any element on any page is painted on.
 
@@ -1020,7 +1038,7 @@ class Painter:
         self.foregrounds: list[
             tuple[str, list[Step], frozenset[str], tuple[int, int, int, int], bool]
         ] = []
-        for rule in rules:
+        for rule in tuple(rules) + BOOTSTRAP_GROUNDS:
             important_colour = [
                 important for prop, _, important in rule.declarations if prop == "color"
             ]
@@ -1824,6 +1842,27 @@ def test_every_colour_rule_the_gate_never_reached_is_named() -> None:
         "These are on a page now, or they are gone. Either way the line has "
         "to go:\n  %s" % "\n  ".join(stale)
     )
+
+
+def test_every_bootstrap_ground_is_still_under_something() -> None:
+    """A fill written down for a component the site no longer uses.
+
+    It would paint nothing, and it would quietly start painting again if the
+    class came back for some other reason, so it goes when its component
+    goes, and all of them go with Bootstrap.
+    """
+    base = (TEMPLATE_DIR / "base.html").read_text()
+    assert (
+        "bootstrap@5.2.3" in base
+    ), "base.html no longer loads Bootstrap 5.2.3; take BOOTSTRAP_GROUNDS out"
+    dom = template_dom()
+    gone = [
+        selector
+        for rule in BOOTSTRAP_GROUNDS
+        for selector in rule.selectors
+        if not dom.matching(split_selector(selector))
+    ]
+    assert not gone, "no page has these any more: %s" % gone
 
 
 def test_every_excuse_names_a_rule_that_still_exists() -> None:

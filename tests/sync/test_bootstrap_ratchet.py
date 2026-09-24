@@ -151,7 +151,8 @@ DATA_BS = "data-bs attributes"
 # The nine carried over from the counts of 2026-09-18 and 2026-09-19, which
 # the wider reading moved in three ways: login.html in fhi_users is counted,
 # so are the scripts, and the pages in NO_BOOTSTRAP_HERE are not, which took
-# the seventeen ".stat-card.alert" uses in admin_status.html out of "alert".
+# the seventeen ".stat-card.alert" uses in admin_status.html out of "alert"
+# (they are "stat-alert" now).
 # Lower these as uses go. A family or class not listed is at zero and stays
 # there. The only thing that raises one is a page arriving that was written
 # before this existed, and then by exactly what that page brings, with the
@@ -178,7 +179,7 @@ BASELINE: "dict[str, int]" = {
     "collapse panels": 27,
     "colours and backgrounds": 64,
     "data-bs attributes": 45,
-    "display and flex": 178,
+    "display and flex": 177,
     "forms": 107,
     "grid": 483,
     "images and figures": 49,
@@ -186,9 +187,9 @@ BASELINE: "dict[str, int]" = {
     "navs and the navbar": 21,
     "shared state": 7,
     "sizing": 83,
-    "spacing": 735,
+    "spacing": 709,
     "spinners": 3,
-    "text": 395,
+    "text": 385,
     "visibility and interaction": 8,
 }
 
@@ -246,16 +247,19 @@ INSTEAD = {
 # shares a name with Bootstrap's is theirs, styled by their own <style>
 # block, so it is not a use and is not counted. A test holds each of them to
 # that, so a page that starts loading Bootstrap has to come off this list.
+#
+# The staff pages that used to be here, admin_status, admin_model_query and
+# the two Pro Connector pages, gave their own badge, alert and card classes
+# names of their own on 2026-09-24, so nothing on them shares a name with
+# Bootstrap's any more. They are counted like any other page, at zero, and
+# a Bootstrap class put on one of them fails.
 NO_BOOTSTRAP_HERE = (
-    # Django's admin, which brings its own stylesheet.
+    # Django's admin, which brings its own stylesheet. Its "active" and
+    # "tab-content" are the admin's.
     "admin/fighthealthinsurance/ongoingchat/chat_editor.html",
-    # Standalone pages that carry their own styles. ".badge" and
-    # ".stat-card.alert" on the two admin pages are defined on the page.
-    "admin_model_query.html",
-    "admin_status.html",
+    # A standalone page styled inline. Its container, mt-4 and mb-5 style
+    # nothing, because nothing there loads Bootstrap.
     "brb.html",
-    "proconnector.html",
-    "proconnector_quick_intro.html",
 )
 
 # Class names of ours that share a name with Bootstrap's, where it matters.
@@ -329,7 +333,7 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "cards": 4,
         "col-": 1,
         "container": 1,
-        "display and flex": 3,
+        "display and flex": 2,
         "grid": 3,
         "row": 1,
         "spacing": 3,
@@ -722,8 +726,8 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "grid": 28,
         "row": 10,
         "sizing": 2,
-        "spacing": 62,
-        "text": 20,
+        "spacing": 45,
+        "text": 19,
     },
     "state_help_index.html": {
         "borders and shadows": 2,
@@ -739,8 +743,8 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "grid": 29,
         "row": 9,
         "sizing": 5,
-        "spacing": 46,
-        "text": 23,
+        "spacing": 37,
+        "text": 16,
     },
     "static/js/appeal_fetcher.ts": {"btn": 1, "buttons": 2, "text": 2},
     "static/js/blog.tsx": {
@@ -831,7 +835,7 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "row": 6,
         "sizing": 4,
         "spacing": 34,
-        "text": 15,
+        "text": 13,
     },
     "unsubscribed.html": {
         "col-": 2,

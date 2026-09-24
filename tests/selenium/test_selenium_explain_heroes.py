@@ -210,7 +210,7 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                     const row = document.querySelector('#microsite-hero .hero-cta-group');
                     const guide = document.createElement('a');
                     guide.href = '#'; guide.className = 'btn btn-outline-primary';
-                    guide.innerHTML = '<i class="bi bi-book"></i> Read Our Guide';
+                    guide.textContent = 'Read Our Guide';
                     row.prepend(guide);
                     return Array.from(row.querySelectorAll('a'))
                         .map(a => { const r = a.getBoundingClientRect(); return r.top + r.height / 2; });

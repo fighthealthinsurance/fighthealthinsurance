@@ -9,6 +9,14 @@
     box-sizing: border-box;
 }
 
+/* The hidden attribute hides, whatever display a rule gives the element.
+   Bootstrap's stylesheet carries the same rule, so nothing changes while it
+   loads; without it, the browser's own [hidden] loses to any rule of ours
+   that sets display, and the element shows. */
+[hidden] {
+    display: none !important;
+}
+
 :root {
     /* Palette already in use across this file, named once. */
     --fhi-green: #a5c422;
@@ -1863,6 +1871,55 @@ section:not(.slider) .share-subcopy {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
+}
+
+/* Words for screen readers only: in the page and read aloud, drawn nowhere.
+   Ours rather than Bootstrap's .visually-hidden, so it holds when Bootstrap
+   is gone. Bootstrap 5 dropped the older .sr-only, and a page still using
+   that name printed its screen-reader text on the screen. */
+.fhi-visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    clip-path: inset(50%) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* A ring with one side coloured, for a page waiting on the server. The
+   loading page named Font Awesome's spinner, which no page loads, so
+   nothing turned there. It turns only for someone who has not asked for
+   less motion; for anyone who has, it stands still. */
+.fhi-spinner {
+    display: inline-block;
+    width: 2rem;
+    height: 2rem;
+    border: 0.25rem solid var(--fhi-line);
+    border-top-color: var(--fhi-green-ink);
+    border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-spinner {
+        animation: fhi-spin 0.8s linear infinite;
+    }
+}
+
+@keyframes fhi-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* An inline SVG icon beside words, the size of the words around it and
+   sitting on their baseline, the way an icon font's glyph did. */
+.fhi-icon {
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.125em;
 }
 
 /* Form validation errors */

@@ -50,9 +50,9 @@ Login
   </div>
 </div>
 
-<!-- Bootstrap core JavaScript-->
+<!-- jQuery here, not only at the foot of base.html: the FIDO2 script below
+     calls it as soon as it loads, before base.html's copy arrives. -->
 <script src="{% static 'js/jquery.js'%}"></script>
-<script src="{%static 'js/bootstrap.min.js'%}"></script>
 
 {% include 'FIDO2/Auth_JS.html'%}
 <script type="text/javascript">
