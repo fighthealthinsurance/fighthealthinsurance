@@ -1,10 +1,19 @@
 """Bootstrap can only shrink from here.
 
 The site is built on Bootstrap 5 and the owner wants it gone, which is a long
-job: its grid alone is used four hundred times across a hundred and twenty six
-templates, and its JavaScript still drives the header. A long job needs a
-mechanism rather than a resolution, so this is the mechanism. It counts what
-is there today, per class, and fails when a count goes up.
+job: on 2026-09-24 there were 2,994 uses of 163 of its classes across 69
+templates and 5 scripts, 483 of them the grid alone, and its script still
+opens the accordions on four pages. A long job needs a mechanism rather than
+a resolution, so this is the mechanism. It counts what is there today and
+fails when a count goes up.
+
+It counts all of it. Every class name in Bootstrap 5.2.3's own stylesheet is
+listed in bootstrap_5_2_3_classes.txt next to this file, and each one belongs
+to a family: the grid, spacing, display and flex, text, and each component
+on its own, so a failure says which part of Bootstrap a page reached for and
+what replaces it. The count covers the templates of both apps, the class
+names the TypeScript writes into the page, and the data-bs-* attributes
+Bootstrap's script reads to open and close things.
 
 Nothing here asks anyone to remove Bootstrap. It asks that a page being worked
 on does not reach for more of it, and that when a batch of uses goes, the
@@ -18,35 +27,169 @@ picked first because the site uses a thin slice of Bootstrap's form layer, so
 it is about twenty lines of CSS against four hundred uses of the grid.
 """
 
+import functools
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES = REPO_ROOT / "fighthealthinsurance" / "templates"
+USER_TEMPLATES = REPO_ROOT / "fhi_users" / "templates"
+SCRIPTS = REPO_ROOT / "fighthealthinsurance" / "static" / "js"
+CLASS_LIST = Path(__file__).resolve().with_name("bootstrap_5_2_3_classes.txt")
 
-# Counted on 2026-09-18, after the input box moved to the site's own class,
-# and recounted on 2026-09-19 once classes behind a template condition became
-# visible. That recount moved "alert" from 16 to 33, all seventeen of them in
-# admin_status.html, where ".stat-card.alert" is that page's own class,
-# defined in its own style block, that happens to share Bootstrap's name.
-# Lower these as uses go. The only thing that raises one is a page arriving
-# that was written before this existed, and then by exactly what that page
-# brings, with the page named in PER_TEMPLATE below, so no page can grow
-# under cover of a total. 2026-09-19: the two glossary pages, written before
-# the ratchet landed. 2026-09-24: the policy, reading, index, state and share
-# pages moved onto the page column, which took 29 containers, 8 rows, 9
-# columns and 2 d-flex with them.
-BASELINE = {
-    "form-control": 2,
+CLASS_LIST_SOURCE = (
+    "https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.css"
+)
+CLASS_LIST_HEADER = (
+    "# Every class name Bootstrap 5.2.3 styles, one per line, sorted: the class\n"
+    "# selectors of its stylesheet, the version base.html loads. Read by\n"
+    "# test_bootstrap_ratchet.py.\n"
+    "# Our own classes that only look like Bootstrap's, such as btn-default and\n"
+    "# no-gutters in custom.css, are not in it, because 5.2.3 does not have them.\n"
+    "# To regenerate it, from the top of the repository:\n"
+    "#   curl -sL %s \\\n"
+    "#     | python tests/sync/test_bootstrap_ratchet.py \\\n"
+    "#     > tests/sync/bootstrap_5_2_3_classes.txt\n" % CLASS_LIST_SOURCE
+)
+
+# The family each Bootstrap class belongs to, by its name. Every class in the
+# list belongs to exactly one; a test holds that, so a regenerated list cannot
+# leave a class uncounted or count one twice. The family names have
+# spaces or are plurals Bootstrap does not use, so none of them is a class.
+FAMILIES = (
+    # Components, one family each.
+    ("accordions", r"accordion.*"),
+    ("alerts", r"alert(-.*)?"),
+    ("badges", r"badge"),
+    ("breadcrumbs", r"breadcrumb.*"),
+    ("buttons", r"btn(-.*)?"),
+    ("cards", r"card(-.*)?"),
+    ("carousels", r"carousel.*|pointer-event"),
+    ("collapse panels", r"collapse.*|collapsing|collapsed"),
+    ("dropdowns", r"dropdown.*|dropup.*|dropend|dropstart"),
+    (
+        "forms",
+        r"form-.*|col-form-label.*|input-group.*|is-(in)?valid|was-validated"
+        r"|(in)?valid-(feedback|tooltip)|has-validation",
+    ),
+    ("images and figures", r"img-.*|figure.*"),
+    ("list groups", r"list-group.*"),
+    ("modals", r"modal.*"),
+    ("navs and the navbar", r"nav|nav-.*|navbar.*|tab-content|tab-pane"),
+    ("offcanvas panels", r"offcanvas.*"),
+    ("page links", r"pagination.*|page-(item|link)"),
+    ("placeholders", r"placeholder.*"),
+    ("popovers", r"popover.*|bs-popover-.*"),
+    ("progress bars", r"progress.*"),
+    ("spinners", r"spinner-.*"),
+    ("tables", r"table.*|caption-top"),
+    ("toasts", r"toast.*"),
+    ("tooltips", r"tooltip.*|bs-tooltip-.*"),
+    # The state classes several components share, and read together with them.
+    ("shared state", r"active|show|showing|hiding|fade|disabled"),
+    # Layout and the utilities.
+    (
+        "grid",
+        r"container.*|row|row-cols-.*|col|col-(?!form-label).*|offset-.*|g[xy]?-.*",
+    ),
+    (
+        "spacing",
+        r"m[tbsexy]?-((sm|md|lg|xl|xxl)-)?(auto|\d)"
+        r"|p[tbsexy]?-((sm|md|lg|xl|xxl)-)?\d|gap-.*",
+    ),
+    (
+        "display and flex",
+        r"d-.*|flex-.*|justify-content-.*|align-(items|content|self)-.*|order-.*"
+        r"|[hv]stack",
+    ),
+    (
+        "text",
+        r"text-(?!bg-).*|fw-.*|fst-.*|fs-.*|lh-.*|font-monospace|lead|small|mark"
+        r"|initialism|display-\d|h[1-6]|list-(unstyled|inline.*)|blockquote.*"
+        r"|align-(baseline|top|middle|bottom|text-top|text-bottom)",
+    ),
+    ("colours and backgrounds", r"bg-.*|text-bg-.*|link-.*"),
+    ("borders and shadows", r"border.*|rounded.*|shadow.*"),
+    ("sizing", r"[wh]-.*|m[wh]-.*|v[wh]-.*|min-v[wh]-.*|ratio.*"),
+    (
+        "position, float and overflow",
+        r"position-.*|(top|bottom|start|end)-.*|translate-middle.*"
+        r"|fixed-(top|bottom)|sticky-.*|float-.*|clearfix|overflow-.*",
+    ),
+    (
+        "visibility and interaction",
+        r"visible|invisible|visually-hidden.*|opacity-.*|pe-(none|auto)"
+        r"|user-select-.*|stretched-link|vr",
+    ),
+)
+_FAMILY_PATTERNS = tuple((family, re.compile(p)) for family, p in FAMILIES)
+
+# The nine class names the first version of this ratchet watched, still held
+# one by one, inside their family and on their own as well. A family's count
+# lets a page trade one of its classes for another, mt-3 for mt-4; these keep
+# the stricter promise they always made, that a page gets no more of them.
+# "col-" is every class that starts with it, as it always was.
+WATCHED = (
+    "form-control",
+    "form-check-input",
+    "card",
+    "btn",
+    "row",
+    "col-",
+    "container",
+    "alert",
+    "d-flex",
+)
+
+#: Attributes Bootstrap's script reads, counted together under this name.
+DATA_BS = "data-bs attributes"
+
+# Recounted 2026-09-24, when this widened from nine class names in one app's
+# templates to all of Bootstrap in both apps' templates and the TypeScript.
+# The nine carried over from the counts of 2026-09-18 and 2026-09-19, which
+# the wider reading moved in three ways: login.html in fhi_users is counted,
+# so are the scripts, and the pages in NO_BOOTSTRAP_HERE are not, which took
+# the seventeen ".stat-card.alert" uses in admin_status.html out of "alert".
+# Lower these as uses go. A family or class not listed is at zero and stays
+# there. The only thing that raises one is a page arriving that was written
+# before this existed, and then by exactly what that page brings, with the
+# page named in PER_TEMPLATE below, so no page can grow under cover of a
+# total. 2026-09-19: the two glossary pages, written before the ratchet landed.
+BASELINE: "dict[str, int]" = {
+    "form-control": 6,
     "form-check-input": 5,
-    "card": 108,
-    "btn": 126,
-    "row": 131,
-    "col-": 190,
-    "container": 86,
-    "alert": 33,
-    "d-flex": 51,
+    "card": 105,
+    "btn": 136,
+    "row": 141,
+    "col-": 203,
+    "container": 120,
+    "alert": 20,
+    "d-flex": 53,
+    # The families.
+    "accordions": 79,
+    "alerts": 60,
+    "badges": 18,
+    "borders and shadows": 41,
+    "breadcrumbs": 7,
+    "buttons": 192,
+    "cards": 411,
+    "collapse panels": 27,
+    "colours and backgrounds": 64,
+    "data-bs attributes": 45,
+    "display and flex": 178,
+    "forms": 107,
+    "grid": 483,
+    "images and figures": 49,
+    "list groups": 23,
+    "navs and the navbar": 21,
+    "shared state": 7,
+    "sizing": 83,
+    "spacing": 735,
+    "spinners": 3,
+    "text": 395,
+    "visibility and interaction": 8,
 }
 
 # Where each one should end up instead, for whoever reads a failure.
@@ -60,194 +203,730 @@ INSTEAD = {
     "container": "one shared content wrapper",
     "alert": "a component class of ours",
     "d-flex": "a component class of ours, or plain CSS on the element",
+    # The families.
+    "accordions": "a native <details>, the way the header opens its groups",
+    "alerts": "a component class of ours",
+    "badges": "a component class of ours",
+    "breadcrumbs": "a plain list with a class of ours",
+    "buttons": "the button tokens #1025 shipped",
+    "cards": "a component class of ours, built from the tokens",
+    "carousels": "a component class of ours",
+    "collapse panels": "a native <details>",
+    "dropdowns": "a native <details>, the way the header opens its groups",
+    "forms": "fhi-field and fhi-check",
+    "images and figures": "max-width on a class of ours",
+    "list groups": "a plain list with a class of ours",
+    "modals": "a native <dialog>",
+    "navs and the navbar": "the header's own fhi-nav classes",
+    "offcanvas panels": "a native <dialog>",
+    "page links": "a plain list of links with a class of ours",
+    "placeholders": "a component class of ours",
+    "popovers": "a component class of ours",
+    "progress bars": "a native <progress>",
+    "spinners": "a component class of ours",
+    "tables": "a table class of ours",
+    "toasts": "a component class of ours",
+    "tooltips": "a title attribute, or a component class of ours",
+    "shared state": "whatever replaces the component that reads it",
+    "grid": "flexbox or grid with gap, or the fhi-page columns",
+    "spacing": "margin, padding or gap from the --fhi-space-* scale",
+    "display and flex": "a component class of ours, or plain CSS on the element",
+    "text": "the --fhi-text-* sizes and --fhi-muted, on a class of ours",
+    "colours and backgrounds": "the colour tokens, such as --fhi-surface",
+    "borders and shadows": "--fhi-line, --fhi-radius and --fhi-shadow",
+    "sizing": "width, height or aspect-ratio on a class of ours",
+    "position, float and overflow": "plain CSS on a class of ours",
+    "visibility and interaction": "plain CSS on a class of ours",
+    DATA_BS: "a native <details> or <dialog>, or a few lines of our own script",
 }
 
 
-# What each template carries today, counted 2026-09-18. Lower as uses go.
-PER_TEMPLATE = {
-    "404.html": {"btn": 1, "container": 1},
-    # Not Bootstrap's alert: this page defines .stat-card.alert itself.
-    "admin_status.html": {"alert": 17},
-    "about_us.html": {"card": 3},
-    "appeal.html": {"btn": 7, "col-": 2, "container": 1, "d-flex": 2},
-    "appeals.html": {"btn": 4, "col-": 1, "container": 2, "d-flex": 1},
-    "as_seen_on_pbs.html": {"btn": 1, "container": 1},
-    "base.html": {"col-": 2, "container": 2, "row": 1},
-    "brb.html": {"container": 1},
-    "categorize.html": {"btn": 2},
-    "chat_consent.html": {
-        "alert": 1,
-        "btn": 1,
-        "card": 1,
-        "col-": 1,
+# Pages that load no Bootstrap at all: no stylesheet, no script, nothing of
+# ours extended, and included by nothing that loads it. A class on them that
+# shares a name with Bootstrap's is theirs, styled by their own <style>
+# block, so it is not a use and is not counted. A test holds each of them to
+# that, so a page that starts loading Bootstrap has to come off this list.
+NO_BOOTSTRAP_HERE = (
+    # Django's admin, which brings its own stylesheet.
+    "admin/fighthealthinsurance/ongoingchat/chat_editor.html",
+    # Standalone pages that carry their own styles. ".badge" and
+    # ".stat-card.alert" on the two admin pages are defined on the page.
+    "admin_model_query.html",
+    "admin_status.html",
+    "brb.html",
+    "proconnector.html",
+    "proconnector_quick_intro.html",
+)
+
+# Class names of ours that share a name with Bootstrap's, where it matters.
+# Bootstrap's ".active" only does anything beside one of its own components,
+# and ".visible" on our error message is our own toggle. A test fails when an
+# entry here stops being used, so the list cannot hide anything by going
+# stale.
+OUR_OWN_NAMES = {
+    # .flow-progress-step.active, defined in the partial's own <style>.
+    "partials/flow_progress.html": ("active",),
+    # .hidden-error-message.visible, defined in custom.css.
+    "static/js/scrub_client_side_form.ts": ("visible",),
+}
+
+# What each file carries today, counted 2026-09-24. Lower as uses go. A
+# template is named by its path under fighthealthinsurance/templates, one of
+# fhi_users' by fhi_users/ and its path, and a script by static/js/ and its
+# name.
+PER_TEMPLATE: "dict[str, dict[str, int]]" = {
+    "404.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
+    "about_ai.html": {"container": 1, "grid": 1, "spacing": 5},
+    "about_us.html": {"card": 3, "cards": 11, "images and figures": 29, "spacing": 2},
+    "appeal.html": {
+        "alerts": 7,
+        "btn": 7,
+        "buttons": 9,
+        "col-": 2,
         "container": 1,
+        "d-flex": 2,
+        "display and flex": 6,
+        "forms": 10,
+        "grid": 3,
+        "text": 2,
+    },
+    "appeals.html": {
+        "alerts": 2,
+        "btn": 4,
+        "buttons": 4,
+        "col-": 1,
+        "container": 2,
+        "d-flex": 1,
+        "display and flex": 3,
+        "grid": 3,
+        "spacing": 2,
+        "text": 7,
+    },
+    "as_seen_on_pbs.html": {
+        "btn": 1,
+        "buttons": 1,
+        "container": 1,
+        "grid": 1,
+        "sizing": 2,
+    },
+    "base.html": {
+        "borders and shadows": 1,
+        "col-": 2,
+        "container": 2,
+        "grid": 5,
+        "images and figures": 1,
+        "navs and the navbar": 9,
         "row": 1,
     },
-    "confirm_delete.html": {"btn": 1},
-    "delete_data_email_sent.html": {"alert": 1},
-    "denial_language_library.html": {
+    "bingo.html": {"text": 1},
+    "categorize.html": {"alerts": 2, "btn": 2, "buttons": 2, "text": 2},
+    "chat_consent.html": {
         "alert": 1,
+        "alerts": 2,
+        "btn": 1,
+        "buttons": 2,
+        "card": 1,
+        "cards": 4,
+        "col-": 1,
+        "container": 1,
+        "display and flex": 3,
+        "grid": 3,
+        "row": 1,
+        "spacing": 3,
+    },
+    "confirm_delete.html": {"btn": 1, "buttons": 1, "spacing": 1},
+    "contact.html": {"container": 1, "grid": 1},
+    "delete_data_email_sent.html": {"alert": 1, "alerts": 2, "spacing": 4, "text": 1},
+    "denial_language_library.html": {
+        "accordions": 21,
+        "alert": 1,
+        "alerts": 2,
+        "badges": 1,
+        "borders and shadows": 2,
         "btn": 4,
+        "buttons": 8,
         "card": 2,
+        "cards": 7,
         "col-": 6,
+        "collapse panels": 7,
+        "colours and backgrounds": 4,
         "container": 5,
         "d-flex": 4,
+        "data-bs attributes": 12,
+        "display and flex": 13,
+        "grid": 18,
         "row": 7,
+        "shared state": 1,
+        "sizing": 1,
+        "spacing": 24,
+        "text": 10,
     },
-    "escalation_packet.html": {"btn": 3, "col-": 1, "container": 1, "d-flex": 1},
-    "escalation_packet_review.html": {"btn": 2, "container": 1},
+    "entity_extract.html": {"alerts": 1, "spinners": 2, "text": 2},
+    "escalation_packet.html": {
+        "alerts": 2,
+        "btn": 3,
+        "buttons": 4,
+        "col-": 1,
+        "container": 1,
+        "d-flex": 1,
+        "display and flex": 3,
+        "grid": 2,
+    },
+    "escalation_packet_review.html": {
+        "alerts": 1,
+        "btn": 2,
+        "buttons": 2,
+        "container": 1,
+        "grid": 1,
+    },
+    "explain_denial.html": {
+        "alert": 1,
+        "alerts": 2,
+        "borders and shadows": 3,
+        "btn": 1,
+        "buttons": 1,
+        "card": 7,
+        "cards": 27,
+        "col-": 9,
+        "colours and backgrounds": 2,
+        "container": 3,
+        "d-flex": 1,
+        "display and flex": 5,
+        "form-control": 2,
+        "forms": 6,
+        "grid": 17,
+        "row": 5,
+        "sizing": 6,
+        "spacing": 22,
+        "text": 11,
+    },
+    "faq.html": {"container": 1, "grid": 1, "spacing": 1},
+    "faq_post.html": {"container": 1, "grid": 1},
+    "fax_followup_thankyou.html": {"container": 1, "grid": 1},
+    "fax_thankyou.html": {"container": 1, "grid": 1},
+    "faxfollowup.html": {
+        "btn": 1,
+        "buttons": 1,
+        "container": 1,
+        "grid": 1,
+        "spacing": 2,
+    },
+    "fhi_users/login.html": {
+        "alert": 2,
+        "alerts": 4,
+        "btn": 2,
+        "buttons": 4,
+        "card": 1,
+        "cards": 3,
+        "container": 1,
+        "form-control": 4,
+        "forms": 4,
+        "grid": 1,
+        "spacing": 2,
+    },
+    "find_next_steps_loading.html": {"btn": 3, "buttons": 3, "text": 2},
+    "followup.html": {"btn": 2, "buttons": 2, "container": 1, "grid": 1, "spacing": 2},
+    "followup_thankyou.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
     # Written before this ratchet existed, and counted here so they cannot
     # grow. Converting them to our own classes is its own change: the
     # col- and row uses are the Bootstrap grid, so it is a layout edit
     # that wants somebody looking at the rendered page.
     "glossary.html": {
+        "borders and shadows": 2,
+        "breadcrumbs": 4,
         "btn": 4,
+        "buttons": 6,
         "card": 1,
-        "col-": 1,
+        "cards": 4,
+        "col-": 7,
+        "colours and backgrounds": 3,
+        "container": 6,
         "d-flex": 1,
-        "row": 1,
+        "display and flex": 4,
+        "grid": 20,
+        "row": 7,
+        "shared state": 1,
+        "sizing": 1,
+        "spacing": 25,
+        "text": 10,
     },
     "glossary_index.html": {
+        "borders and shadows": 2,
         "btn": 4,
+        "buttons": 9,
         "card": 1,
-        "col-": 3,
-        "d-flex": 2,
-        "row": 4,
-    },
-    "explain_denial.html": {
-        "alert": 1,
-        "btn": 1,
-        "card": 7,
-        "col-": 9,
+        "cards": 4,
+        "col-": 4,
+        "colours and backgrounds": 2,
         "container": 3,
-        "d-flex": 1,
-        "form-control": 2,
+        "d-flex": 2,
+        "display and flex": 9,
+        "grid": 12,
         "row": 5,
+        "shared state": 1,
+        "sizing": 1,
+        "spacing": 16,
+        "text": 8,
     },
-    "faq_post.html": {"container": 1},
-    "fax_followup_thankyou.html": {"container": 1},
-    "fax_thankyou.html": {"container": 1},
-    "faxfollowup.html": {"btn": 1, "container": 1},
-    "find_next_steps_loading.html": {"btn": 3},
-    "followup.html": {"btn": 2, "container": 1},
-    "followup_thankyou.html": {"btn": 1, "container": 1},
-    "how_to_help.html": {"btn": 10, "col-": 2, "row": 1},
-    "landing_base.html": {"btn": 5, "container": 4, "d-flex": 1, "row": 1},
-    "media_references.html": {"btn": 1},
+    "health_history.html": {"forms": 5, "spacing": 1, "text": 4},
+    "how_to_help.html": {
+        "btn": 10,
+        "buttons": 10,
+        "col-": 2,
+        "display and flex": 1,
+        "grid": 3,
+        "navs and the navbar": 12,
+        "row": 1,
+        "spacing": 1,
+    },
+    "landing_base.html": {
+        "btn": 5,
+        "buttons": 5,
+        "container": 4,
+        "d-flex": 1,
+        "display and flex": 4,
+        "grid": 5,
+        "row": 1,
+    },
+    "media_references.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
     "medicaid_eligibility.html": {
         "alert": 1,
+        "alerts": 4,
+        "borders and shadows": 5,
         "btn": 12,
+        "buttons": 14,
         "card": 21,
+        "cards": 82,
         "col-": 26,
+        "colours and backgrounds": 4,
         "container": 9,
         "d-flex": 5,
+        "display and flex": 16,
+        "grid": 55,
+        "list groups": 6,
         "row": 15,
+        "sizing": 17,
+        "spacing": 70,
+        "text": 25,
     },
-    "mfa_auth_base.html": {"card": 1, "container": 1},
+    "mfa_auth_base.html": {
+        "card": 1,
+        "cards": 3,
+        "colours and backgrounds": 1,
+        "container": 1,
+        "grid": 1,
+        "spacing": 2,
+    },
+    "mhmda.html": {"container": 1, "grid": 1},
     "microsite.html": {
+        "accordions": 6,
+        "badges": 1,
+        "borders and shadows": 4,
         "btn": 7,
+        "buttons": 10,
         "card": 4,
+        "cards": 14,
         "col-": 10,
+        "collapse panels": 2,
+        "colours and backgrounds": 6,
         "container": 10,
         "d-flex": 3,
+        "data-bs attributes": 3,
+        "display and flex": 9,
+        "grid": 31,
+        "images and figures": 1,
+        "list groups": 2,
         "row": 11,
+        "shared state": 1,
+        "spacing": 55,
+        "text": 30,
     },
     "microsite_directory.html": {
         "alert": 1,
+        "alerts": 4,
+        "badges": 2,
         "btn": 2,
+        "buttons": 2,
         "card": 1,
-        "col-": 3,
-        "row": 4,
+        "cards": 4,
+        "col-": 4,
+        "colours and backgrounds": 2,
+        "container": 1,
+        "grid": 15,
+        "row": 5,
+        "sizing": 1,
+        "spacing": 6,
+        "text": 6,
+        "visibility and interaction": 1,
     },
-    "other_resources.html": {"alert": 1, "col-": 7, "row": 6},
-    "outside_help.html": {"btn": 1},
-    "partials/bingo_board.html": {"container": 1},
-    "partials/featured_section.html": {"col-": 11, "container": 1, "row": 4},
+    "other_resources.html": {
+        "alert": 1,
+        "alerts": 2,
+        "borders and shadows": 1,
+        "col-": 7,
+        "grid": 13,
+        "row": 6,
+        "spacing": 28,
+        "text": 13,
+    },
+    "outside_help.html": {"btn": 1, "buttons": 1, "text": 2},
+    "partials/bingo_board.html": {"container": 1, "grid": 1},
+    "partials/experimental_badge.html": {"badges": 1},
+    "partials/featured_section.html": {
+        "col-": 11,
+        "container": 1,
+        "display and flex": 1,
+        "grid": 16,
+        "images and figures": 18,
+        "row": 4,
+        "spacing": 10,
+        "text": 9,
+    },
     "partials/financial_assistance_section.html": {
         "card": 5,
+        "cards": 25,
         "col-": 1,
         "container": 1,
+        "grid": 3,
         "row": 1,
+        "spacing": 36,
+        "text": 32,
+        "visibility and interaction": 5,
     },
     "partials/pharmacy_coupon_section.html": {
         "card": 1,
+        "cards": 4,
         "col-": 1,
         "container": 1,
+        "grid": 3,
         "row": 1,
+        "spacing": 10,
+        "text": 9,
+        "visibility and interaction": 1,
     },
-    "partials/site_banner.html": {"alert": 1, "container": 1},
-    "partials/user_consent_form_fields.html": {"col-": 5, "row": 2},
+    "partials/site_banner.html": {
+        "alert": 1,
+        "alerts": 1,
+        "buttons": 1,
+        "container": 1,
+        "grid": 1,
+        "text": 1,
+    },
+    "partials/user_consent_form_fields.html": {
+        "col-": 5,
+        "display and flex": 1,
+        "forms": 20,
+        "grid": 7,
+        "row": 2,
+        "spacing": 20,
+        "text": 6,
+    },
     "patient_access.html": {
         "alert": 1,
+        "alerts": 2,
         "btn": 4,
+        "buttons": 4,
         "card": 12,
+        "cards": 45,
         "col-": 18,
+        "colours and backgrounds": 3,
         "container": 6,
         "d-flex": 2,
+        "display and flex": 7,
+        "grid": 37,
         "row": 10,
+        "sizing": 8,
+        "spacing": 40,
+        "text": 46,
     },
-    "plan_documents.html": {"col-": 1},
+    "plan_documents.html": {"col-": 1, "forms": 1, "grid": 1, "spacing": 1, "text": 3},
     "preparing_2026.html": {
+        "accordions": 26,
         "alert": 1,
+        "alerts": 2,
+        "badges": 7,
+        "borders and shadows": 6,
         "btn": 8,
+        "buttons": 10,
         "card": 12,
+        "cards": 44,
         "col-": 19,
+        "collapse panels": 9,
+        "colours and backgrounds": 14,
         "container": 10,
         "d-flex": 9,
+        "data-bs attributes": 15,
+        "display and flex": 21,
         "form-check-input": 5,
+        "forms": 15,
+        "grid": 48,
+        "list groups": 8,
         "row": 15,
+        "shared state": 1,
+        "sizing": 16,
+        "spacing": 99,
+        "text": 40,
     },
-    "proconnector.html": {"card": 4},
-    "proconnector_quick_intro.html": {"card": 3},
-    "professional.html": {"alert": 1, "container": 1},
-    "professional_available.html": {"btn": 1, "container": 1},
-    "professional_thankyou.html": {"container": 1},
-    "remove_data.html": {"alert": 1, "btn": 1, "d-flex": 1},
-    "removed_data.html": {},
-    "scrub.html": {"btn": 3, "col-": 1},
-    "server_side_ocr.html": {"btn": 1},
-    "server_side_ocr_error.html": {"btn": 1},
-    "single_optional_question.html": {"alert": 1, "btn": 2},
-    "state_help.html": {
-        "btn": 9,
-        "card": 5,
-        "col-": 11,
+    "privacy_policy.html": {"container": 1, "grid": 1},
+    "professional.html": {"alert": 1, "alerts": 2, "container": 1, "grid": 1},
+    "professional_available.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
+    "professional_thankyou.html": {"container": 1, "grid": 1},
+    "remove_data.html": {
+        "alert": 1,
+        "alerts": 2,
+        "btn": 1,
+        "buttons": 1,
+        "d-flex": 1,
+        "display and flex": 3,
+        "spacing": 3,
+    },
+    "scrub.html": {
+        "alerts": 2,
+        "btn": 3,
+        "buttons": 5,
+        "col-": 1,
+        "display and flex": 2,
+        "forms": 27,
+        "grid": 1,
+        "spacing": 9,
+        "text": 16,
+    },
+    "server_side_ocr.html": {"btn": 1, "buttons": 1},
+    "server_side_ocr_error.html": {"btn": 1, "buttons": 1},
+    "share_denial.html": {
+        "col-": 2,
         "d-flex": 2,
+        "display and flex": 8,
+        "grid": 2,
+        "row": 1,
+        "spacing": 2,
+    },
+    "single_optional_question.html": {
+        "alert": 1,
+        "alerts": 2,
+        "btn": 2,
+        "buttons": 3,
+        "spacing": 1,
+    },
+    "state_help.html": {
+        "borders and shadows": 3,
+        "btn": 9,
+        "buttons": 19,
+        "card": 5,
+        "cards": 17,
+        "col-": 11,
+        "colours and backgrounds": 5,
+        "container": 7,
+        "d-flex": 2,
+        "display and flex": 7,
+        "grid": 28,
         "row": 10,
+        "sizing": 2,
+        "spacing": 62,
+        "text": 20,
     },
     "state_help_index.html": {
+        "borders and shadows": 2,
         "btn": 7,
+        "buttons": 18,
         "card": 5,
+        "cards": 19,
         "col-": 15,
+        "colours and backgrounds": 3,
+        "container": 5,
         "d-flex": 3,
+        "display and flex": 11,
+        "grid": 29,
         "row": 9,
+        "sizing": 5,
+        "spacing": 46,
+        "text": 23,
     },
-    "stripe_finish_error.html": {"alert": 1, "col-": 2, "d-flex": 2, "row": 1},
-    "thankyou.html": {"container": 1},
+    "static/js/appeal_fetcher.ts": {"btn": 1, "buttons": 2, "text": 2},
+    "static/js/blog.tsx": {
+        "alert": 1,
+        "alerts": 2,
+        "btn": 1,
+        "buttons": 1,
+        "card": 1,
+        "cards": 5,
+        "col-": 3,
+        "container": 2,
+        "display and flex": 1,
+        "grid": 6,
+        "row": 1,
+        "sizing": 1,
+        "spacing": 5,
+        "text": 5,
+    },
+    "static/js/blog_post.tsx": {
+        "alert": 1,
+        "alerts": 2,
+        "breadcrumbs": 3,
+        "btn": 3,
+        "buttons": 4,
+        "card": 2,
+        "cards": 8,
+        "container": 3,
+        "grid": 3,
+        "shared state": 1,
+        "spacing": 4,
+        "spinners": 1,
+        "text": 2,
+        "visibility and interaction": 1,
+    },
+    "static/js/entity_fetcher.ts": {"btn": 2, "buttons": 3},
+    "static/js/scrub.ts": {"btn": 1, "buttons": 3, "spacing": 2},
+    "stripe_finish_error.html": {
+        "alert": 1,
+        "alerts": 2,
+        "col-": 2,
+        "d-flex": 2,
+        "display and flex": 8,
+        "grid": 2,
+        "row": 1,
+        "spacing": 5,
+        "text": 1,
+    },
+    "thankyou.html": {"container": 1, "grid": 1, "spacing": 1},
+    "tos.html": {"container": 1, "grid": 1},
     "turning_26.html": {
+        "accordions": 26,
+        "badges": 6,
+        "borders and shadows": 6,
         "btn": 8,
+        "buttons": 10,
         "card": 14,
+        "cards": 62,
         "col-": 20,
+        "collapse panels": 9,
+        "colours and backgrounds": 14,
         "container": 8,
         "d-flex": 8,
+        "data-bs attributes": 15,
+        "display and flex": 19,
+        "grid": 47,
+        "list groups": 7,
         "row": 14,
+        "shared state": 1,
+        "sizing": 18,
+        "spacing": 68,
+        "text": 29,
     },
     "understand_policy.html": {
         "alert": 2,
+        "alerts": 4,
+        "borders and shadows": 4,
         "btn": 1,
+        "buttons": 1,
         "card": 5,
+        "cards": 19,
         "col-": 9,
+        "colours and backgrounds": 1,
         "container": 3,
         "d-flex": 1,
+        "display and flex": 5,
+        "forms": 19,
+        "grid": 18,
         "row": 6,
+        "sizing": 4,
+        "spacing": 34,
+        "text": 15,
     },
-    "unsubscribed.html": {"col-": 2, "d-flex": 2, "row": 1},
-    "warnings.html": {"container": 1},
+    "unsubscribed.html": {
+        "col-": 2,
+        "d-flex": 2,
+        "display and flex": 8,
+        "grid": 2,
+        "row": 1,
+        "spacing": 3,
+    },
+    "warnings.html": {"container": 1, "grid": 1},
 }
+
+
+@functools.lru_cache(maxsize=None)
+def bootstrap_classes() -> "frozenset[str]":
+    """The class names in the list next to this file."""
+    return frozenset(
+        line
+        for line in CLASS_LIST.read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def family_of(name: str) -> "str | None":
+    """The family a Bootstrap class belongs to, or None for any other name."""
+    if name not in bootstrap_classes():
+        return None
+    for family, pattern in _FAMILY_PATTERNS:
+        if pattern.fullmatch(name):
+            return family
+    return None
+
+
+def _keys_of(name: str) -> "list[str]":
+    """The counts one use adds to: its family, and its own if it is watched."""
+    if name.startswith("data-bs-"):
+        return [DATA_BS]
+    keys = []
+    family = family_of(name)
+    if family:
+        keys.append(family)
+    watched = "col-" if name.startswith("col-") else name
+    if watched in WATCHED:
+        keys.append(watched)
+    return keys
+
+
+def class_names_in_stylesheet(css: str) -> "set[str]":
+    """Every class a stylesheet's selectors name.
+
+    Reads the text before each "{" that does not start an at-rule, so a
+    class-like word inside a declaration's value, such as a url(), is not
+    taken for one, and a "{" inside a quoted string does not start a rule.
+    """
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    names = set()
+    prelude = ""
+    for piece in re.findall(
+        r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[{};]|[^{};"']+""", css
+    ):
+        if piece == "{":
+            if not prelude.lstrip().startswith("@"):
+                selector = re.sub(r"\[[^\]]*\]", "", prelude)
+                names.update(re.findall(r"\.(-?[_a-zA-Z][\w-]*)", selector))
+            prelude = ""
+        elif piece in "};":
+            prelude = ""
+        else:
+            prelude += piece
+    return names
 
 
 def _templates():
     return sorted(TEMPLATES.rglob("*.html"))
+
+
+def _scripts():
+    """The TypeScript sources, not the packages or the bundles built from them."""
+    return sorted(
+        path
+        for path in SCRIPTS.rglob("*.ts*")
+        if path.suffix in (".ts", ".tsx")
+        and not {"node_modules", "dist"} & set(path.relative_to(SCRIPTS).parts)
+    )
+
+
+def _files():
+    """Every file counted, under the name the baselines use for it."""
+    for path in _templates():
+        yield str(path.relative_to(TEMPLATES)), path
+    for path in sorted(USER_TEMPLATES.rglob("*.html")):
+        yield "fhi_users/%s" % path.relative_to(USER_TEMPLATES), path
+    for path in _scripts():
+        yield "static/js/%s" % path.relative_to(SCRIPTS), path
 
 
 #: A class attribute, anchored on the whitespace that must precede any
@@ -290,6 +969,16 @@ def _live_markup(text: str) -> str:
     return COMMENTS.sub("", text)
 
 
+def _attributes_in(text: str):
+    """Every attribute the markup puts on an element, as (name, value).
+
+    Template tags are taken out first, each replaced by a space, so an
+    attribute behind a condition is one the page can render.
+    """
+    for tag in OPENING_TAG.findall(TEMPLATE_TAGS.sub(" ", text)):
+        yield from ATTRIBUTE.findall(tag)
+
+
 def _classes_in(text: str):
     """Every class name the markup actually puts on an element.
 
@@ -306,39 +995,173 @@ def _classes_in(text: str):
     a quote inside the tag ended the attribute early and lost the rest of
     it.
     """
-    for tag in OPENING_TAG.findall(TEMPLATE_TAGS.sub(" ", text)):
-        for attribute, value in ATTRIBUTE.findall(tag):
-            if attribute.lower() != "class":
-                continue
-            for name in value.strip("\"'").split():
-                yield name
+    for attribute, value in _attributes_in(text):
+        if attribute.lower() != "class":
+            continue
+        for name in value.strip("\"'").split():
+            yield name
+
+
+def _data_bs_in(text: str):
+    """The data-bs-* attributes the markup puts on elements."""
+    for attribute, _ in _attributes_in(text):
+        if attribute.lower().startswith("data-bs-"):
+            yield attribute.lower()
+
+
+#: A string literal in a script: double quoted, single quoted, or a template.
+SCRIPT_STRING = re.compile(
+    r""""(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`"""
+)
+#: A comment in a script, found alongside the strings so that "//" inside a
+#: string, a URL say, is not taken for one.
+SCRIPT_COMMENT = re.compile(r"(%s)|//[^\n]*|/\*.*?\*/" % SCRIPT_STRING.pattern, re.S)
+
+#: Where a script names classes. After a JSX className= comes one value, a
+#: string or a {...} group. After the DOM's className, a className key, or
+#: classList and setAttribute("class", ...), the value runs to the end of
+#: the expression. Only the string literals in the value are read, so an
+#: error message that says "container" or "not active" is not a use.
+CLASS_VALUE = re.compile(r"(?<![\w.$])className\s*=(?!=)\s*")
+CLASS_EXPRESSION = re.compile(
+    r"\.className\s*\+?=(?!=)\s*"
+    r"|(?<![\w.$])className\s*:\s*"
+    r"|\bclassList\s*\.\s*(?:add|remove|toggle|contains|replace)\s*(?=\()"
+    r"""|\bsetAttribute\s*(?=\(\s*["']class["'])"""
+)
+#: A data-bs-* attribute written into a script's markup, JSX or a string.
+SCRIPT_DATA_BS = re.compile(r"(?<![\w-])data-bs-[\w-]+(?=\s*=)")
+
+
+def _literals_after(text: str, start: int, whole_expression: bool):
+    """The string literals in the value that starts at `start`.
+
+    One value is a single string or a single bracketed group. A whole
+    expression runs to a ";" or "," outside any bracket, a bracket that
+    closes one opened before it, or the end of a line that the next line
+    does not carry on with an operator.
+    """
+    depth = 0
+    i = start
+    while i < len(text):
+        literal = SCRIPT_STRING.match(text, i)
+        if literal:
+            yield literal.group(0)
+            i = literal.end()
+            if depth == 0 and not whole_expression:
+                return
+            continue
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0 or (depth == 0 and not whole_expression):
+                return
+        elif depth == 0 and not whole_expression:
+            return
+        elif depth == 0 and ch in ";,":
+            return
+        elif depth == 0 and ch == "\n":
+            if text[i:].lstrip()[:1] not in ("?", ":", "+", "|", "&"):
+                return
+        i += 1
+
+
+def _words_in_literal(literal: str):
+    """The class names in one string literal.
+
+    A template literal's text is read as class names and its ${...} parts
+    as script, whose own string literals are read in turn. A name glued to
+    a ${...}, btn-${size}, is built at run time and is not read.
+    """
+    body = literal[1:-1]
+    if literal[0] != "`":
+        yield from body.split()
+        return
+    text = []
+    i = 0
+    while i < len(body):
+        if body.startswith("${", i):
+            depth = 0
+            j = i + 1
+            while j < len(body):
+                depth += {"{": 1, "}": -1}.get(body[j], 0)
+                if depth == 0:
+                    break
+                j += 1
+            for inner in SCRIPT_STRING.findall(body[i + 2 : j]):
+                yield from _words_in_literal(inner)
+            text.append("\0")
+            i = j + 1
+        else:
+            text.append(body[i])
+            i += 1
+    for word in "".join(text).split():
+        if "\0" not in word:
+            yield word
+
+
+def _script_classes(text: str):
+    """Every class name a script writes, literally, where it names classes.
+
+    Known limits: a class held in a variable before it is assigned, or built
+    from pieces at run time, is not seen.
+    """
+    text = SCRIPT_COMMENT.sub(lambda m: m.group(1) or " ", text)
+    for anchor, whole_expression in ((CLASS_VALUE, False), (CLASS_EXPRESSION, True)):
+        for found in anchor.finditer(text):
+            for literal in _literals_after(text, found.end(), whole_expression):
+                yield from _words_in_literal(literal)
+    # Markup built as a string, for innerHTML. JSX says className, so this
+    # only ever reads the strings.
+    yield from _classes_in(text)
+
+
+def bootstrap_uses() -> "dict[str, Counter]":
+    """Every Bootstrap class and data-bs-* attribute, by name, per file."""
+    uses: dict = {}
+    for key, path in _files():
+        if key in NO_BOOTSTRAP_HERE:
+            continue
+        text = path.read_text(errors="replace")
+        if path.suffix in (".ts", ".tsx"):
+            names = list(_script_classes(text))
+            code = SCRIPT_COMMENT.sub(lambda m: m.group(1) or " ", text)
+            attributes = SCRIPT_DATA_BS.findall(code)
+        else:
+            live = _live_markup(text)
+            names = list(_classes_in(live))
+            attributes = list(_data_bs_in(live))
+        ours = OUR_OWN_NAMES.get(key, ())
+        here = Counter(
+            name for name in names + attributes if name not in ours and _keys_of(name)
+        )
+        if here:
+            uses[key] = here
+    return uses
 
 
 # Known limits, so nobody reads more into a green run than is there. A class
-# whose name arrives in a variable is not seen, and neither is one added by
-# JavaScript. This counts what is written literally in the markup, inside a
-# condition or not, which is where Bootstrap actually sits in this codebase.
+# whose name arrives in a variable is not seen, and neither is one a script
+# builds from pieces. This counts what is written literally in the markup,
+# inside a condition or not, and what the scripts write where they name
+# classes, which is where Bootstrap actually sits in this codebase.
 
 
 def bootstrap_counts() -> "dict[str, Counter]":
-    """How often each watched class is used, per template.
+    """How often each family and watched class is used, per file.
 
-    Per template, not per site, so removing a use on one page cannot pay for
+    Per file, not per site, so removing a use on one page cannot pay for
     adding one on another.
     """
     counts: dict = {}
-    for path in _templates():
-        key = str(path.relative_to(TEMPLATES))
-        here: Counter = Counter()
-        for name in _classes_in(_live_markup(path.read_text(errors="replace"))):
-            for watched in BASELINE:
-                if watched == "col-":
-                    if name.startswith("col-"):
-                        here["col-"] += 1
-                elif name == watched:
-                    here[watched] += 1
-        if here:
-            counts[key] = here
+    for key, here in bootstrap_uses().items():
+        tally: Counter = Counter()
+        for name, found in here.items():
+            for counted in _keys_of(name):
+                tally[counted] += found
+        counts[key] = tally
     return counts
 
 
@@ -349,6 +1172,15 @@ def totals() -> Counter:
     return total
 
 
+def _behind(uses: Counter, counted: str) -> str:
+    """The names on a page behind one count, for a failure message."""
+    return ", ".join(
+        "%s x%d" % (name, found)
+        for name, found in sorted(uses.items())
+        if counted in _keys_of(name)
+    )
+
+
 def test_the_templates_are_found_at_all() -> None:
     """A path that stops matching would make every count zero and pass."""
     found = _templates()
@@ -356,15 +1188,20 @@ def test_the_templates_are_found_at_all() -> None:
         len(found),
         TEMPLATES,
     )
+    assert (USER_TEMPLATES / "login.html").exists(), USER_TEMPLATES
+    assert len(_scripts()) > 10, "only found %d scripts under %s" % (
+        len(_scripts()),
+        SCRIPTS,
+    )
 
 
 def test_no_page_reaches_for_more_bootstrap() -> None:
     counts = totals()
     grown = [
         "%s: %d now, %d allowed -- use %s instead"
-        % (name, counts[name], BASELINE[name], INSTEAD[name])
-        for name in sorted(BASELINE)
-        if counts[name] > BASELINE[name]
+        % (name, counts[name], BASELINE.get(name, 0), INSTEAD[name])
+        for name in sorted(set(counts) | set(BASELINE))
+        if counts[name] > BASELINE.get(name, 0)
     ]
     assert not grown, (
         "Bootstrap is on the way out and these went up:\n  %s\n"
@@ -379,10 +1216,18 @@ def test_no_single_page_reaches_for_more_bootstrap() -> None:
     Removing a use from one template must not buy the right to add one to
     another, so each template is held to what it has today.
     """
+    uses = bootstrap_uses()
     counts = bootstrap_counts()
     grown = [
-        "%s: %s went from %d to %d"
-        % (path, name, PER_TEMPLATE.get(path, {}).get(name, 0), found)
+        "%s: %s went from %d to %d (%s) -- use %s instead"
+        % (
+            path,
+            name,
+            PER_TEMPLATE.get(path, {}).get(name, 0),
+            found,
+            _behind(uses[path], name),
+            INSTEAD[name],
+        )
         for path, here in sorted(counts.items())
         for name, found in sorted(here.items())
         if found > PER_TEMPLATE.get(path, {}).get(name, 0)
@@ -420,6 +1265,155 @@ def test_the_per_template_baseline_has_no_stale_numbers() -> None:
     assert (
         not stale
     ), "lower these to what the templates actually have:\n  %s" % "\n  ".join(stale)
+
+
+def test_every_count_has_a_name_it_can_mean() -> None:
+    """A misspelt key in a baseline would hold nothing down and say nothing."""
+    known = set(INSTEAD)
+    unknown = sorted(
+        {name for name in BASELINE if name not in known}
+        | {
+            "%s: %s" % (path, name)
+            for path, here in PER_TEMPLATE.items()
+            for name in here
+            if name not in known
+        }
+    )
+    assert not unknown, "not a family or watched class: %s" % unknown
+    missing = sorted(
+        name
+        for name in [family for family, _ in FAMILIES] + list(WATCHED) + [DATA_BS]
+        if name not in INSTEAD
+    )
+    assert not missing, "INSTEAD has nothing to suggest for %s" % missing
+
+
+def test_the_class_list_is_bootstrap_5_2_3() -> None:
+    """The list is Bootstrap's own, read from its stylesheet, and only that.
+
+    Our own classes that only look like Bootstrap's are not in it. The
+    site's stylesheets define all four of these: btn-default and
+    navbar-default are Bootstrap 3's names, no-gutters is Bootstrap 4's, and
+    text-align-center was never Bootstrap's.
+    """
+    text = CLASS_LIST.read_text()
+    assert text.startswith(CLASS_LIST_HEADER), "the header says how to regenerate"
+    names = [line for line in text.splitlines() if not line.startswith("#")]
+    assert names == sorted(set(names)), "one name per line, sorted, no repeats"
+    classes = bootstrap_classes()
+    assert len(classes) > 1500, len(classes)
+    for name in ("btn", "col-md-6", "d-flex", "mb-3", "text-muted", "row"):
+        assert name in classes, name
+    for name in ("btn-default", "no-gutters", "text-align-center", "navbar-default"):
+        assert name not in classes, name
+
+
+def test_every_bootstrap_class_has_exactly_one_family() -> None:
+    """A class in no family would be counted nowhere; in two, twice."""
+    wrong = {}
+    for name in sorted(bootstrap_classes()):
+        families = [
+            family for family, pattern in _FAMILY_PATTERNS if pattern.fullmatch(name)
+        ]
+        if len(families) != 1:
+            wrong[name] = families
+    assert not wrong, wrong
+    names = [family for family, _ in FAMILIES] + list(WATCHED) + [DATA_BS]
+    assert len(names) == len(set(names)), "a family shares a name with a class"
+    assert not bootstrap_classes() & {family for family, _ in FAMILIES}
+
+
+def test_the_stylesheet_is_read_by_its_selectors() -> None:
+    css = """
+    /* .not-this */
+    @media (min-width: 576px) { .col-sm-6, .a > .b:not(.c) { width: 50%; } }
+    .x[data-y=".z"] { background: url("data:image/svg+xml,.nope{"); }
+    @keyframes spin { from { opacity: 0.5 } }
+    """
+    assert class_names_in_stylesheet(css) == {"col-sm-6", "a", "b", "c", "x"}
+
+
+def test_a_script_counts_classes_only_where_it_names_them() -> None:
+    """A word in an error message is not a class, and a className is."""
+
+    def read(script: str) -> "list[str]":
+        return list(_script_classes(script))
+
+    assert read('el.className = "btn btn-primary";') == ["btn", "btn-primary"]
+    assert read('<a className="btn mt-auto" role="alert">x</a>') == ["btn", "mt-auto"]
+    assert read('<a className={`card ${open ? "show" : ""}`}>x</a>') == [
+        "show",
+        "card",
+    ]
+    assert read('el.classList.add("visually-hidden", "d-none");') == [
+        "visually-hidden",
+        "d-none",
+    ]
+    assert read("b.className = on\n  ? 'btn btn-green'\n  : 'btn';") == [
+        "btn",
+        "btn-green",
+        "btn",
+    ]
+    assert read("return { char: '', className: 'row' };") == ["row"]
+    assert read("el.innerHTML = '<div class=\"alert alert-info\">x</div>';") == [
+        "alert",
+        "alert-info",
+    ]
+    assert read('throw new Error("container not found");') == []
+    assert read('// el.className = "btn";\nx = 1;') == []
+    assert read('if (e.classList.contains("show")) {\n  go("row");\n}') == ["show"]
+
+
+def test_a_data_bs_attribute_counts_where_it_is_one() -> None:
+    markup = '<button data-bs-toggle="collapse" data-bs-target="#a">x</button>'
+    assert list(_data_bs_in(markup)) == ["data-bs-toggle", "data-bs-target"]
+    assert list(_data_bs_in("<p>prose about data-bs-toggle</p>")) == []
+    assert SCRIPT_DATA_BS.findall('<b data-bs-toggle="tooltip">x</b>') == [
+        "data-bs-toggle"
+    ]
+
+
+def test_the_pages_left_out_load_no_bootstrap() -> None:
+    """A page on NO_BOOTSTRAP_HERE is counted as soon as it could load it."""
+    ours = {key for key, _ in _files()}
+    everything = [path.read_text(errors="replace") for _, path in _files()]
+    problems = []
+    for page in NO_BOOTSTRAP_HERE:
+        path = TEMPLATES / page
+        if not path.exists():
+            problems.append("%s: no longer exists" % page)
+            continue
+        live = _live_markup(path.read_text(errors="replace"))
+        if "bootstrap" in live.lower():
+            problems.append("%s: names Bootstrap" % page)
+        if re.search(r"<link\b[^>]*stylesheet|<script\b[^>]*\bsrc=", live, re.I):
+            problems.append("%s: loads a stylesheet or script" % page)
+        for parent in re.findall(r"""{%\s*extends\s+["']([^"']+)""", live):
+            if parent in ours:
+                problems.append("%s: extends %s" % (page, parent))
+        pulled_in = re.compile(
+            r"""{%%\s*(?:include|extends)\s+["']%s["']""" % re.escape(page)
+        )
+        if any(pulled_in.search(text) for text in everything):
+            problems.append("%s: another template pulls it in" % page)
+    assert not problems, (
+        "count these pages again, by taking them off NO_BOOTSTRAP_HERE:\n  %s"
+        % "\n  ".join(problems)
+    )
+
+
+def test_our_own_names_are_still_used_where_they_are_listed() -> None:
+    files = dict(_files())
+    stale = []
+    for key, names in sorted(OUR_OWN_NAMES.items()):
+        text = files[key].read_text(errors="replace")
+        found = (
+            set(_script_classes(text))
+            if key.startswith("static/js/")
+            else set(_classes_in(_live_markup(text)))
+        )
+        stale.extend("%s: %s" % (key, name) for name in names if name not in found)
+    assert not stale, "take these off OUR_OWN_NAMES:\n  %s" % "\n  ".join(stale)
 
 
 def test_only_a_real_class_attribute_counts() -> None:
@@ -481,3 +1475,15 @@ def test_a_commented_block_with_a_note_is_still_ignored() -> None:
     assert list(_classes_in(_live_markup(plain))) == []
     assert list(_classes_in(_live_markup(noted))) == []
     assert list(_classes_in(_live_markup('<a class="btn">x</a>'))) == ["btn"]
+
+
+if __name__ == "__main__":
+    # Regenerates the class list from Bootstrap's stylesheet on stdin; the
+    # list's own header says how.
+    sys.stdout.write(
+        CLASS_LIST_HEADER
+        + "".join(
+            "%s\n" % name
+            for name in sorted(class_names_in_stylesheet(sys.stdin.read()))
+        )
+    )
