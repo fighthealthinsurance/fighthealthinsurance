@@ -12,7 +12,9 @@ selector like `.pwyw-thanks` says nothing about where the element renders. So
 the gate builds the pages too: it resolves each template's `{% extends %}` and
 `{% include %}`, walks the elements, and asks what the real ancestors paint.
 That is how it can tell that the home page's payment confirmation renders on a
-dark purple panel over the hero photograph rather than on a white page.
+dark purple panel over the hero photograph rather than on a white page. It
+also records which CSS each page carries, so a rule is only measured on a page
+that links its stylesheet or renders its template's <style> block.
 
 Three things are then true of every rule that writes words, and the gate says
 which one out loud rather than reporting green by default:
@@ -25,8 +27,9 @@ which one out loud rather than reporting green by default:
   UNRESOLVED with a reason. An unresolvable ground scored as a pass is the same
   hole as a hand written selector list: nobody has checked it, and green says
   somebody has.
-* Unreached. The selector matches no element on any page the templates build,
-  so the rule paints nothing. Reported, and named in UNREACHED with a reason.
+* Unreached. The selector matches no element on any page that carries the
+  rule, so the rule paints nothing. Reported, and named in UNREACHED with a
+  reason.
 
 Each of the three lists can only shrink: an entry whose rule leaves the
 stylesheet fails, and so does one whose rule starts being measurable or
@@ -526,6 +529,12 @@ _ATTR_IN_TAG = re.compile(r"([\w:@-]+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s\"'>]+)")
 _CLASS_NAME = re.compile(r"-?[A-Za-z_][\w-]*")
 _BRANCH = re.compile(r"\{%\s*if\b.*?%\}(.*?)\{%\s*endif\s*%\}", re.S)
 _BRANCH_SPLIT = re.compile(r"\{%\s*(?:elif\b.*?|else)\s*%\}", re.S)
+# The attribute template_markup writes onto each <style> tag to say which
+# template the block came from, so a built page can say whose CSS it carries.
+_STYLE_SOURCE = "data-contrast-source"
+_STYLE_OPEN = re.compile(r"<style\b", re.I)
+_STYLE_FROM = re.compile(r"<style\b[^>]*\b%s=\"([^\"]+)\"" % _STYLE_SOURCE, re.I)
+_LINKED_STYLESHEET = re.compile(r"static\s+['\"]css/([\w.-]+\.css)['\"]")
 
 
 def _class_variants(raw: str) -> tuple[frozenset[str], ...]:
@@ -628,11 +637,18 @@ def template_markup(name: str, stack: tuple[str, ...] = ()) -> str:
     This is the only way the gate can know that the payment confirmation in
     partials/pwyw_panel.html renders inside the hero's dark panel: the
     relationship is in the templates, never in the selector.
+
+    Each <style> tag is stamped with the template it came from before the
+    blocks are filled, so a block that the child replaces, or that sits
+    outside every block in a child and so never renders, drops out with the
+    rest of that markup. What is left on the page is exactly the CSS the page
+    carries.
     """
     path = TEMPLATE_DIR / name
     if name in stack or not path.is_file():
         return ""
     text = _HTML_COMMENT.sub(" ", path.read_text(errors="replace"))
+    text = _STYLE_OPEN.sub('<style %s="%s"' % (_STYLE_SOURCE, name), text)
     parent = _EXTENDS.search(text)
     if parent is not None:
         text = _fill_blocks(
@@ -668,6 +684,14 @@ class Node:
 
 
 def _nodes_in(markup: str, template: str) -> list[Node]:
+    # The inside of a <style> block is CSS, not markup, and a browser never
+    # reads a tag out of it. The error pages' CSS comments mention a <button>
+    # and an <a>, and reading those as elements put a phantom link inside a
+    # phantom button in the <head>, which is where the error pages' link
+    # colour kept being measured.
+    markup = _STYLE_BLOCK.sub(
+        lambda m: m.group(0)[: m.start(1) - m.start(0)] + "</style>", markup
+    )
     nodes: list[Node] = []
     stack: list[Node] = []
     brothers: dict[int, list[Node]] = {}
@@ -792,23 +816,48 @@ def selector_states(steps: Sequence[Step]) -> frozenset[str]:
     )
 
 
+def page_sources(markup: str) -> frozenset[str]:
+    """The CSS one built page carries, named the way Rule.stylesheet names it.
+
+    That is the site stylesheets the page links, and the <style> block of
+    every template that renders into it: the page itself, what it extends,
+    and what it or they include. Nothing else. A browser applies a <style>
+    block to the document it sits in and to no other, and a page that links
+    no stylesheet never sees custom.css or main.css at all.
+    """
+    linked = {
+        name for name in _LINKED_STYLESHEET.findall(markup) if name in STYLESHEETS
+    }
+    blocks = {"templates/" + name for name in _STYLE_FROM.findall(markup)}
+    return frozenset(linked | blocks)
+
+
 class TemplateDom:
     """Every element on every page the site can serve.
 
-    A template is indexed only once its `{% extends %}` chain has reached
-    base.html, so an element's ancestors run all the way up to <body> and the
-    ground under it is the page's, not a fragment's.
+    A template is indexed only once its resolved markup has a <body>, so an
+    element's ancestors run all the way up to the page and the ground under
+    it is the page's, not a fragment's.
+
+    Each page also records which CSS reaches it. Pooling every template's
+    <style> block into one cascade over every page used to let one template
+    paint another's markup: the error pages' link colour was measured on a
+    blue that only send_bulk_email.html's buttons wear, and custom.css was
+    measured on error pages that never load it. A rule is now measured, and
+    paints grounds, only on the pages that carry it.
     """
 
     def __init__(self) -> None:
         self.nodes: list[Node] = []
         self.pages: list[str] = []
+        self.reach: dict[str, frozenset[str]] = {}
         for path in sorted(TEMPLATE_DIR.rglob("*.html")):
             name = path.relative_to(TEMPLATE_DIR).as_posix()
             markup = template_markup(name)
             if "<body" not in markup:
                 continue  # a partial or a mail fragment, reached through a page
             self.pages.append(name)
+            self.reach[name] = page_sources(markup)
             self.nodes.extend(_nodes_in(markup, name))
         self.by_class: dict[str, list[Node]] = {}
         self.by_ident: dict[str, list[Node]] = {}
@@ -832,13 +881,25 @@ class TemplateDom:
             return self.nodes
         return min(buckets, key=len)
 
-    def matching(self, steps: Sequence[Step]) -> list[Node]:
+    def reaches(self, source: str, node: Node) -> bool:
+        """Does the CSS from `source` apply on the page this element is on?"""
+        return source in self.reach.get(node.template, frozenset())
+
+    def matching(
+        self, steps: Sequence[Step], source: Optional[str] = None
+    ) -> list[Node]:
+        """Elements the selector matches, on the pages `source` reaches.
+
+        Without a source this is every page, which is only right for a
+        question about the markup rather than about what a rule paints.
+        """
         if not steps:
             return []
         return [
             node
             for node in self.candidates(steps[-1][1])
-            if selector_matches(node, steps)
+            if (source is None or self.reaches(source, node))
+            and selector_matches(node, steps)
         ]
 
 
@@ -878,6 +939,11 @@ class Ground:
 
 
 UNKNOWN_GROUND = Ground(BLACK, WHITE)
+# What shows through when nothing on the page paints a fill: the browser's own
+# canvas, which is white. A page that loads main.css never gets this far,
+# because main.css fills <body>. A page that loads no stylesheet and fills
+# nothing itself, such as a fax cover, is words on white.
+PAGE_CANVAS = Ground(WHITE, WHITE)
 
 
 def _known(colour: RGBA) -> Ground:
@@ -928,37 +994,94 @@ class Painter:
     both stylesheets at the same specificity and which one wins depends on the
     <link> order in base.html, so measuring both means a reorder cannot turn a
     readable button back into an unreadable one.
+
+    A rule only paints on the pages that carry it (TemplateDom.reach), and a
+    var() resolves against the :root tokens of that page alone, the way a
+    browser resolves it. `variables` is every token pooled, for callers that
+    want the site's own values rather than one page's.
     """
 
     def __init__(self, rules: Sequence[Rule], dom: TemplateDom) -> None:
         self.variables = custom_properties(rules)
         self.dom = dom
-        self.backgrounds: list[tuple[list[Step], frozenset[str], list[Layer]]] = []
+        self._root_rules = [rule for rule in rules if ":root" in rule.selector]
+        self._page_variables: dict[str, dict[str, str]] = {}
+        self._token_sets: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
+        # Source, selector steps, states, declarations, specificity.
+        self.backgrounds: list[
+            tuple[
+                str,
+                list[Step],
+                frozenset[str],
+                tuple[tuple[str, str, bool], ...],
+                tuple[int, int, int],
+            ]
+        ] = []
         self.foregrounds: list[
-            tuple[list[Step], frozenset[str], tuple[int, int, int, int], bool]
+            tuple[str, list[Step], frozenset[str], tuple[int, int, int, int], bool]
         ] = []
         for rule in rules:
             important_colour = [
                 important for prop, _, important in rule.declarations if prop == "color"
             ]
+            paints = any(
+                prop in BACKGROUND_PROPERTIES for prop, _, _ in rule.declarations
+            )
             for selector in rule.selectors:
                 steps = split_selector(selector)
                 weight = specificity(selector)
                 states = selector_states(steps)
-                if steps and not steps[-1][1].pseudo_elements:
+                if paints and steps and not steps[-1][1].pseudo_elements:
                     # A ::before box paints itself, not the element it hangs
                     # off, so its fill is not what the element's words sit on.
-                    layers = _layers_from(rule.declarations, self.variables, weight)
-                    if layers:
-                        self.backgrounds.append((steps, states, layers))
+                    self.backgrounds.append(
+                        (rule.stylesheet, steps, states, rule.declarations, weight)
+                    )
                 pseudo = bool(steps and steps[-1][1].pseudo_elements)
                 for important in important_colour:
                     self.foregrounds.append(
-                        (steps, states, (int(important),) + weight, pseudo)
+                        (
+                            rule.stylesheet,
+                            steps,
+                            states,
+                            (int(important),) + weight,
+                            pseudo,
+                        )
                     )
+        self._layer_cache: dict[tuple[int, int], list[Layer]] = {}
         self._cache: dict[
             tuple[int, Optional[frozenset[str]], frozenset[str]], list[Ground]
         ] = {}
+
+    # -- the tokens a page can read -----------------------------------------
+
+    def variables_on(self, page: str) -> dict[str, str]:
+        """The :root tokens declared by the CSS this page carries.
+
+        An error page that declares its own --fhi-green-ink is read with its
+        own value, and a page that loads custom.css never sees that
+        declaration. Pages with the same tokens share one dictionary, which is
+        what lets the layers below be worked out once per token set.
+        """
+        found = self._page_variables.get(page)
+        if found is None:
+            sources = self.dom.reach.get(page, frozenset())
+            own = custom_properties(
+                rule for rule in self._root_rules if rule.stylesheet in sources
+            )
+            found = self._token_sets.setdefault(tuple(sorted(own.items())), own)
+            self._page_variables[page] = found
+        return found
+
+    def _layers(self, index: int, page: str) -> list[Layer]:
+        variables = self.variables_on(page)
+        key = (index, id(variables))
+        cached = self._layer_cache.get(key)
+        if cached is None:
+            _, _, _, declarations, weight = self.backgrounds[index]
+            cached = _layers_from(declarations, variables, weight)
+            self._layer_cache[key] = cached
+        return cached
 
     # -- the states a reader can put an element into ----------------------
 
@@ -967,11 +1090,20 @@ class Painter:
     ) -> list[frozenset[str]]:
         """Resting, plus every state the stylesheets repaint this element in."""
         found = {frozenset()}
-        for steps, states, _ in self.backgrounds:
-            if states and selector_matches(node, steps, variant):
+        for index, (source, steps, states, _, _) in enumerate(self.backgrounds):
+            if (
+                states
+                and self.dom.reaches(source, node)
+                and self._layers(index, node.template)
+                and selector_matches(node, steps, variant)
+            ):
                 found.add(states)
-        for steps, states, _, _ in self.foregrounds:
-            if states and selector_matches(node, steps, variant):
+        for source, steps, states, _, _ in self.foregrounds:
+            if (
+                states
+                and self.dom.reaches(source, node)
+                and selector_matches(node, steps, variant)
+            ):
                 found.add(states)
         return sorted(found, key=lambda entry: (len(entry), sorted(entry)))
 
@@ -985,13 +1117,17 @@ class Painter:
             layers.extend(
                 _layers_from(
                     _split_declarations(node.inline_style),
-                    self.variables,
+                    self.variables_on(node.template),
                     (1, 0, 0),
                 )
             )
-        for steps, states, rule_layers in self.backgrounds:
-            if states <= active and selector_matches(node, steps, variant):
-                layers.extend(rule_layers)
+        for index, (source, steps, states, _, _) in enumerate(self.backgrounds):
+            if (
+                states <= active
+                and self.dom.reaches(source, node)
+                and selector_matches(node, steps, variant)
+            ):
+                layers.extend(self._layers(index, node.template))
         if not layers:
             return []
         winning = max(layer.weight for layer in layers)
@@ -1004,7 +1140,9 @@ class Painter:
         active: frozenset[str] = frozenset(),
         depth: int = 0,
     ) -> list[Ground]:
-        if node is None or depth > 24:
+        if node is None:
+            return [PAGE_CANVAS]
+        if depth > 24:
             return [UNKNOWN_GROUND]
         key = (id(node), variant, active)
         cached = self._cache.get(key)
@@ -1054,10 +1192,14 @@ class Painter:
             and "color" in _split_property_names(node.inline_style)
         ):
             return False
-        for steps, states, other, other_pseudo in self.foregrounds:
+        for source, steps, states, other, other_pseudo in self.foregrounds:
             if other_pseudo != pseudo or not states <= active:
                 continue
-            if other > weight and selector_matches(node, steps, variant):
+            if (
+                other > weight
+                and self.dom.reaches(source, node)
+                and selector_matches(node, steps, variant)
+            ):
                 return False
         return True
 
@@ -1159,6 +1301,11 @@ def all_pairs(rules: Sequence[Rule]) -> list[Pair]:
     template conditional that can put its classes there, and in each state the
     reader can hold that element in. The worst of those is the pair, because
     the worst is the one a patient can actually be looking at.
+
+    Only elements on a page that carries the rule count, and the colour is
+    read with that page's tokens, so the same rule can resolve differently on
+    an error page than on the rest of the site, exactly as it does in a
+    browser.
     """
     key = tuple(rules)
     cached = _PAIRS.get(key)
@@ -1172,27 +1319,28 @@ def all_pairs(rules: Sequence[Rule]) -> list[Pair]:
         important = False
         for prop, raw, flag in rule.declarations:
             if prop == "color":
-                declared = resolve_vars(raw, painter.variables)
+                declared = raw
                 important = flag
         if declared is None:
             continue
-        foregrounds = colours_in(declared)
-        if not foregrounds:
-            continue
-        foreground = foregrounds[-1]
         for selector in rule.selectors:
             steps = split_selector(selector)
             own_specificity = specificity(selector)
             weight = (int(important),) + own_specificity
             needs = selector_states(steps)
             pseudo = bool(steps and steps[-1][1].pseudo_elements)
-            own = (
-                _layers_from(rule.declarations, painter.variables, own_specificity)
-                if pseudo
-                else []
-            )
-            worst: Optional[tuple[float, float, tuple[int, int, int], str]] = None
-            for node in dom.matching(steps):
+            worst: Optional[tuple[float, float, tuple[int, int, int], str, RGBA]] = None
+            for node in dom.matching(steps, rule.stylesheet):
+                variables = painter.variables_on(node.template)
+                foregrounds = colours_in(resolve_vars(declared, variables))
+                if not foregrounds:
+                    continue
+                foreground = foregrounds[-1]
+                own = (
+                    _layers_from(rule.declarations, variables, own_specificity)
+                    if pseudo
+                    else []
+                )
                 for variant in node.class_sets:
                     if not selector_matches(node, steps, variant):
                         continue
@@ -1207,14 +1355,14 @@ def all_pairs(rules: Sequence[Rule]) -> list[Pair]:
                         for ground in painter.grounds_under(base, own):
                             low, high, seen = _ratio_band(foreground, ground)
                             if worst is None or (low, high) < (worst[0], worst[1]):
-                                worst = (low, high, seen, node.template)
+                                worst = (low, high, seen, node.template, foreground)
             if worst is None:
                 continue
             pairs.append(
                 Pair(
                     rule=rule,
                     selector=selector,
-                    foreground=flatten(foreground, worst[2]),
+                    foreground=flatten(worst[4], worst[2]),
                     background=worst[2],
                     ratio=worst[0],
                     best=worst[1],
@@ -1388,7 +1536,6 @@ UNRESOLVED: tuple[Exempt, ...] = (
     Exempt("custom.css", ".how-it-works-intro", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".trust-chip", HERO_VEIL),
     Exempt("custom.css", ".trust-chip-link:hover, .trust-chip-link:focus", HERO_VEIL),
-    Exempt("main.css", "a", EVERY_LINK),
     Exempt("main.css", "a:hover, a:active, a:focus", EVERY_LINK),
     Exempt("main.css", "#home h1", HERO_PHOTOGRAPH),
     Exempt("main.css", "#home h3", HERO_PHOTOGRAPH),
@@ -1489,14 +1636,14 @@ def _keys(entries: Sequence[Exempt]) -> set[tuple[str, str]]:
 
 
 def unreached_selectors(rules: Sequence[Rule]) -> list[tuple[str, int, str]]:
-    """Colour rules that reach no element on any page the templates build."""
+    """Colour rules that reach no element on any page that carries them."""
     dom = template_dom()
     missing: list[tuple[str, int, str]] = []
     for rule in rules:
         if not any(prop == "color" for prop, _, _ in rule.declarations):
             continue
         for selector in rule.selectors:
-            if not dom.matching(split_selector(selector)):
+            if not dom.matching(split_selector(selector), rule.stylesheet):
                 missing.append((rule.stylesheet, rule.line, selector))
     return missing
 
@@ -1507,7 +1654,7 @@ def unreached_selectors(rules: Sequence[Rule]) -> list[tuple[str, int, str]]:
 def test_stylesheets_are_linked_in_the_order_the_gate_assumes() -> None:
     """The cascade order the resolver uses has to be the page's real order."""
     base = (TEMPLATE_DIR / "base.html").read_text()
-    linked = re.findall(r"static\s+'css/([a-z.]+\.css)'", base)
+    linked = _LINKED_STYLESHEET.findall(base)
     ours = [name for name in linked if name in STYLESHEETS]
     assert ours == list(STYLESHEETS), (
         "base.html links %r; the gate measures every declaration in both "
@@ -1541,6 +1688,46 @@ def test_the_gate_reads_the_ground_out_of_the_templates() -> None:
             "the hero's payment panel resolved to %s, which is not the dark "
             "veil custom.css paints there" % ground.describe()
         )
+
+
+def test_css_is_measured_only_on_the_pages_that_carry_it() -> None:
+    """A <style> block reaches its own page, and a stylesheet the pages linking it.
+
+    The gate used to pour both stylesheets and every template's <style> block
+    into one cascade over every page. That scored the error pages' link colour
+    on the blue send_bulk_email.html gives its buttons, scored the fax covers'
+    list text on another page's dark purple, and scored custom.css on error pages
+    that never load it. A browser does none of that, and the passes and
+    failures it produced were accidents of which page happened to be worst.
+    """
+    dom = template_dom()
+    for name in STANDALONE_TEMPLATES:
+        assert dom.reach.get(name) == frozenset(("templates/" + name,)), (
+            "%s loads no stylesheet and carries only its own <style> block, "
+            "but the gate has it carrying %s" % (name, sorted(dom.reach.get(name, ())))
+        )
+    microsite = dom.reach.get("microsite.html", frozenset())
+    for source in STYLESHEETS + ("templates/microsite.html",):
+        assert source in microsite, (
+            "microsite.html extends base.html, which links %s, yet the gate "
+            "does not measure %s there" % (", ".join(STYLESHEETS), source)
+        )
+    assert "templates/send_bulk_email.html" not in microsite, (
+        "send_bulk_email.html's <style> block is being applied to a page it "
+        "never renders on"
+    )
+    strays = sorted(
+        {
+            "%s:%d  %s  measured on %s"
+            % (pair.rule.stylesheet, pair.rule.line, pair.selector, pair.where)
+            for pair in all_pairs(load_rules() + load_template_rules())
+            if pair.rule.stylesheet not in dom.reach.get(pair.where, frozenset())
+        }
+    )
+    assert not strays, (
+        "these rules were measured on a page that does not carry them:\n  %s"
+        % "\n  ".join(strays)
+    )
 
 
 def test_every_text_pair_in_the_stylesheets_meets_wcag_aa() -> None:
@@ -2414,6 +2601,10 @@ def test_no_state_selector_decides_a_buttons_size() -> None:
 #
 # This is a backlog, not an exemption: none of these are decisions anyone made.
 # They are what a surface looks like the day it starts being measured.
+#
+# Recounted on 2026-09-24, when each block started being measured only on the
+# pages it renders on. The two fax covers and the state index dropped out: their
+# one failure each was their own text scored on another page's ground.
 TEMPLATE_BASELINE: dict[str, int] = {
     "templates/403_csrf.html": 1,
     "templates/500.html": 1,
@@ -2421,8 +2612,6 @@ TEMPLATE_BASELINE: dict[str, int] = {
     "templates/admin_status.html": 4,
     "templates/denial_language_library.html": 3,
     "templates/faq.html": 3,
-    "templates/faxes/cover.html": 1,
-    "templates/faxes/fpw_cover.html": 1,
     "templates/model_backend_status.html": 2,
     "templates/model_usage_dashboard.html": 1,
     "templates/other_resources.html": 4,
@@ -2433,7 +2622,6 @@ TEMPLATE_BASELINE: dict[str, int] = {
     "templates/send_bulk_email.html": 1,
     "templates/staff_dashboard.html": 4,
     "templates/state_help.html": 4,
-    "templates/state_help_index.html": 1,
 }
 
 
@@ -2532,6 +2720,8 @@ def _spreading_shadows(rules: Sequence[Rule], name: str) -> list[tuple[str, str]
 # own CSS and never load custom.css. They cannot see the token block, which
 # means the brand ink has to be declared in each of them too.
 STANDALONE_TEMPLATES = ("403_csrf.html", "500.html")
+# The tokens those pages copy locally, each held to the value in custom.css.
+STANDALONE_TOKENS = (INK_TOKEN, "--fhi-green-ink")
 
 
 def test_a_standalone_page_declares_the_ink_it_uses() -> None:
@@ -2545,10 +2735,13 @@ def test_a_standalone_page_declares_the_ink_it_uses() -> None:
 
     Declaring it locally makes the label right and makes the duplicate
     visible: this test fails the day the two values disagree, which is the
-    day someone swaps the ink and does not think about the error pages.
+    day someone swaps the ink and does not think about the error pages. The
+    link green is held to the same rule: the error pages copy it too, since
+    the brand lime they used before was 2:1 on their white page.
     """
-    canonical = custom_properties(load_rules()).get(INK_TOKEN)
-    assert canonical is not None, "%s is gone from :root" % INK_TOKEN
+    tokens = custom_properties(load_rules())
+    for token in STANDALONE_TOKENS:
+        assert tokens.get(token) is not None, "%s is gone from :root" % token
     for name in STANDALONE_TEMPLATES:
         path = TEMPLATE_DIR / name
         assert path.is_file(), "%s is gone" % name
@@ -2558,19 +2751,21 @@ def test_a_standalone_page_declares_the_ink_it_uses() -> None:
             "custom.css after all. If it can, drop its local declaration and "
             "this entry rather than keeping a second copy of the ink." % name
         )
-        if "var(%s)" % INK_TOKEN not in text:
-            continue
-        declared = re.search(r"%s:\s*([^;]+);" % INK_TOKEN, text)
-        assert declared is not None, (
-            "%s writes its button label as var(%s) but never declares it, and "
-            "it loads no stylesheet that does. The label resolves to whatever "
-            "it inherits." % (name, INK_TOKEN)
-        )
-        assert declared.group(1).strip() == canonical.strip(), (
-            "%s declares %s as %s while custom.css says %s. The error pages "
-            "have been left behind by an ink swap."
-            % (name, INK_TOKEN, declared.group(1).strip(), canonical.strip())
-        )
+        for token in STANDALONE_TOKENS:
+            if "var(%s)" % token not in text:
+                continue
+            canonical = tokens[token]
+            declared = re.search(r"%s:\s*([^;]+);" % token, text)
+            assert declared is not None, (
+                "%s reads var(%s) but never declares it, and it loads no "
+                "stylesheet that does. The colour resolves to whatever it "
+                "inherits." % (name, token)
+            )
+            assert declared.group(1).strip() == canonical.strip(), (
+                "%s declares %s as %s while custom.css says %s. The error "
+                "pages have been left behind by a colour change."
+                % (name, token, declared.group(1).strip(), canonical.strip())
+            )
 
 
 # Bootstrap's own size classes. They set padding and type but no minimum
