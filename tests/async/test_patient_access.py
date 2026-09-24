@@ -228,7 +228,7 @@ class PatientAccessNavigationTest(TestCase):
         so a blocked or slow script left it dead. None of those hooks may
         come back."""
         response = self.client.get("/")
-        self.assertContains(response, '<details class="fhi-nav-group">')
+        self.assertContains(response, '<details class="fhi-nav-group" name="fhi-nav-group">')
         self.assertNotContains(response, 'data-bs-toggle="dropdown"')
         self.assertNotContains(response, "dropdown-toggle")
 
@@ -252,7 +252,7 @@ class PatientAccessAccessibilityTest(TestCase):
         to a screen reader with no ARIA written by hand, which is what the
         aria-expanded and aria-labelledby on the old dropdown were for."""
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, '<details class="fhi-nav-group">')
+        self.assertContains(response, '<details class="fhi-nav-group" name="fhi-nav-group">')
         self.assertContains(response, PROFESSIONAL_MENU)
 
 

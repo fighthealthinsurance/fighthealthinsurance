@@ -12,6 +12,8 @@ was about.
 import time
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
+from selenium.webdriver import ActionChains
+from selenium.webdriver.common.by import By
 from seleniumbase import BaseCase
 
 from .fhi_selenium_base import FHISeleniumBase
@@ -23,10 +25,10 @@ PHONE = (390, 844)
 
 NAV_WORDS = (
     "About",
-    "Explain Denial",
-    "Explain Policy",
+    "Explain Denial/Policy",
     "Resources",
-    "Delete Data",
+    "Delete",
+    "Help",
     "Professional",
     "Generate Appeal",
 )
@@ -106,7 +108,7 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
             return [resources.open, links];
             """)
         assert result[0] is True, "Resources did not open"
-        for label in ("Guides", "Blog", "How to help"):
+        for label in ("Guides", "Blog"):
             assert label in result[1], f"{label} not reachable: {result[1]}"
 
     def test_the_chat_button_is_there_and_goes_to_chat(self):
@@ -233,16 +235,14 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
 
         covered = self.execute_script("""
             // Everything a person would have open after tapping through:
-            // the menu itself and both dropdowns. A closed <details> still
-            // reports rects for its children in this browser, so checking
-            // them while shut measures nothing real.
-            document.querySelectorAll('details.fhi-nav, details.fhi-nav-group')
-                .forEach(d => { d.open = true; });
-            const items = Array.from(
-                document.querySelectorAll('.fhi-nav-list a, .fhi-nav-list summary')
-            );
+            // the menu itself, then each dropdown in turn, since the three
+            // groups share a name and the browser keeps one open. A closed
+            // <details> still reports rects for its children in this
+            // browser, so checking them while shut measures nothing real.
+            document.querySelector('details.fhi-nav').open = true;
+            const groups = Array.from(document.querySelectorAll('details.fhi-nav-group'));
             const covered = [];
-            items.forEach(el => {
+            const check = el => {
                 const r = el.getBoundingClientRect();
                 if (r.width === 0 || r.height === 0) { return; }
                 const x = r.left + r.width / 2;
@@ -252,7 +252,152 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
                 if (!hit || !(el === hit || el.contains(hit) || hit.contains(el))) {
                     covered.push([el.textContent.trim(), hit ? hit.tagName : 'none']);
                 }
+            };
+            groups.forEach(g => { g.open = false; });
+            document.querySelectorAll('.fhi-nav-list > li > a, .fhi-nav-list > li > details > summary')
+                .forEach(check);
+            groups.forEach(g => {
+                g.open = true;
+                g.querySelectorAll('a').forEach(check);
+                g.open = false;
             });
             return covered;
             """)
         assert covered == [], f"something is painted over these header items: {covered}"
+
+
+class SeleniumTestDropdownLinksGoSomewhere(FHISeleniumBase, StaticLiveServerTestCase):
+    """The report: "Guides doesn't work as a link". A link inside an open
+    desktop dropdown has to be the thing under the pointer and has to take
+    the visitor to its page when the pointer clicks it; a hero's stacking
+    context, a sticky header, or a second dropdown painted over the first
+    could put something else on top without any test noticing. These use
+    WebDriver's own pointer clicks, not a script's .click(), so whatever is
+    on top gets the click, and the check runs from the top of the page and
+    after scrolling, when the header is sticky."""
+
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    @classmethod
+    def setUpClass(cls):
+        super(StaticLiveServerTestCase, cls).setUpClass()
+        super(BaseCase, cls).setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super(StaticLiveServerTestCase, cls).tearDownClass()
+        super(BaseCase, cls).tearDownClass()
+
+    UNDER_THE_POINTER = """
+        const [group, label] = arguments;
+        const details = Array.from(document.querySelectorAll('details.fhi-nav-group'))
+            .find(d => d.querySelector('summary').textContent.includes(group));
+        const link = Array.from(details.querySelectorAll('a'))
+            .find(a => a.textContent.trim() === label);
+        const r = link.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return {
+            open: details.open,
+            onTop: top === link || link.contains(top),
+            covering: top ? top.tagName.toLowerCase() + '.' + top.className : 'nothing',
+        };
+    """
+
+    def _pointer_click(self, xpath):
+        """A pointer moved to the element's centre and clicked there. Not
+        seleniumbase's click(), which falls back to a script click when a
+        real one is intercepted and would hide exactly the defect this
+        looks for: whatever is on top gets this click."""
+        element = self.driver.find_element(By.XPATH, xpath)
+        ActionChains(self.driver).move_to_element(element).click().perform()
+
+    def _summary(self, group):
+        return f"//details[contains(@class, 'fhi-nav-group')]/summary[contains(., '{group}')]"
+
+    def _open_groups_once_settled(self, timeout: float = 2.0):
+        """Which groups are open, once nothing is still closing. A <details>
+        fires its toggle event asynchronously, so the script that closes
+        the other groups runs a moment after the click; the native name=
+        path closes them synchronously. Poll until the set holds still."""
+        read = """
+            return Array.from(document.querySelectorAll('details.fhi-nav-group[open] summary'))
+                .map(s => s.textContent.trim());
+        """
+        deadline = time.time() + timeout
+        last = self.execute_script(read)
+        while time.time() < deadline:
+            time.sleep(0.1)
+            now = self.execute_script(read)
+            if now == last and len(now) <= 1:
+                return now
+            last = now
+        return last
+
+    def _open_link(self, label):
+        return f"//details[contains(@class, 'fhi-nav-group') and @open]//a[normalize-space() = '{label}']"
+
+    def _dropdown_link_works(self, page, group, label, path, scroll=0):
+        self.set_window_size(*DESKTOP)
+        self.open(f"{self.live_server_url}{page}")
+        self.wait_for_ready_state_complete()
+        if scroll:
+            self.execute_script("window.scrollTo(0, arguments[0])", scroll)
+            time.sleep(0.5)  # jquery.sticky reacts to the scroll event
+            header = self.execute_script(
+                "return document.querySelector('details.fhi-nav').getBoundingClientRect().top"
+            )
+            assert 0 <= header < 200, (
+                f"after scrolling {scroll}px the header is at {header:.0f}px; it is not sticky"
+            )
+        self._pointer_click(self._summary(group))
+        found = self.execute_script(self.UNDER_THE_POINTER, group, label)
+        assert found["open"], f"{page}: {group} did not open on a pointer click"
+        assert found["onTop"], (
+            f"{page}: {label} under {group} is covered by {found['covering']}"
+        )
+        self._pointer_click(self._open_link(label))
+        self.wait_for_ready_state_complete()
+        assert self.get_current_url().endswith(path), (
+            f"{page}: clicking {label} led to {self.get_current_url()}"
+        )
+
+    def test_guides_works_as_a_link_from_the_home_page(self):
+        self._dropdown_link_works("/", "Resources", "Guides", "/other-resources")
+
+    def test_guides_works_as_a_link_from_a_hero_page(self):
+        self._dropdown_link_works("/explain-denial", "Resources", "Guides", "/other-resources")
+
+    def test_guides_works_as_a_link_once_the_header_is_sticky(self):
+        self._dropdown_link_works("/", "Resources", "Guides", "/other-resources", scroll=400)
+
+    def test_explain_policy_works_as_a_link(self):
+        self._dropdown_link_works("/", "Explain Denial/Policy", "Explain Policy", "/understand-policy")
+
+    def test_opening_one_dropdown_closes_the_other(self):
+        """Two open at once overlapped, and Resources painted over the Explain
+        links: the right half of "Explain Denial" answered to Guides. The
+        groups share a name now, so the browser keeps one open."""
+        self.set_window_size(*DESKTOP)
+        self.open(f"{self.live_server_url}/")
+        self.wait_for_ready_state_complete()
+        self._pointer_click(self._summary("Explain Denial/Policy"))
+        self._pointer_click(self._summary("Resources"))
+        open_groups = self._open_groups_once_settled()
+        assert open_groups == ["Resources"], f"open at once: {open_groups}"
+        # Browsers before late 2023 ignore name=; the inline script closes the
+        # others by hand. Strip the attribute to prove it does.
+        self.execute_script("""
+            document.querySelectorAll('details.fhi-nav-group')
+                .forEach(d => { d.removeAttribute('name'); d.open = false; });
+        """)
+        self._pointer_click(self._summary("Explain Denial/Policy"))
+        self._pointer_click(self._summary("Professional"))
+        open_groups = self._open_groups_once_settled()
+        assert open_groups == ["Professional"], f"without name=, open at once: {open_groups}"
+        self.execute_script("""
+            document.querySelectorAll('details.fhi-nav-group').forEach(d => { d.open = false; });
+        """)
+        # And back: Explain reopens on its own, with nothing over its links.
+        self._pointer_click(self._summary("Explain Denial/Policy"))
+        found = self.execute_script(self.UNDER_THE_POINTER, "Explain Denial/Policy", "Explain Denial")
+        assert found["open"] and found["onTop"], found
