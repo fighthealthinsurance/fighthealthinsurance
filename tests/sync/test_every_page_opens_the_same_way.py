@@ -174,7 +174,7 @@ class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
         custom = (CSS / "custom.css").read_text()
         main = (CSS / "main.css").read_text()
         self.assertEqual(custom.count("--fhi-hero-floor: 650px;"), 1)
-        self.assertEqual(custom.count("--fhi-hero-floor-short: 380px;"), 1)
+        self.assertEqual(custom.count("--fhi-hero-floor-short: 320px;"), 1)
         band = re.search(r"\.slider \.item \{[^}]*\}", main)
         self.assertIsNotNone(band)
         self.assertIn("min-height: var(--fhi-hero-floor);", band.group(0))

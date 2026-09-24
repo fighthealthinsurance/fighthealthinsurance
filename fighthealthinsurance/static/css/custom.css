@@ -130,7 +130,7 @@
        a page whose hero is three lines of copy uses the short one. Both are
        floors: the band grows with its copy and never cuts it off. */
     --fhi-hero-floor: 650px;
-    --fhi-hero-floor-short: 380px;
+    --fhi-hero-floor-short: 320px;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
@@ -572,7 +572,9 @@ a.link:hover::after {
   .hero-cta-group a {flex:1 1 auto;}
 }
 .hero-headline {font-size: var(--fhi-text-hero-page); line-height: var(--fhi-line-heading); margin-top: .25rem; margin-bottom: .75rem; color: #fff; font-weight: 700; text-shadow: 2px 2px 8px rgba(0,0,0,0.4);}
-.hero-tagline {margin-bottom: .25rem; font-weight: 600; color: #fff; font-size: 1.15rem; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
+/* One tagline colour on every hero: the brand green the two Explain pages
+   had given theirs, which Patient Access and the sample pages now share. */
+.hero-tagline {margin-bottom: .25rem; font-weight: 600; color: var(--fhi-green); font-size: 1.15rem; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 .hero-subcopy {font-size: 1.05rem; line-height: 1.5rem; margin: .75rem 0 1.25rem; color: #fff; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 
 /* Hero Primary CTA - Large button above other CTAs */
@@ -2864,6 +2866,51 @@ textarea,
         border-radius: var(--fhi-radius);
         box-shadow: var(--fhi-shadow);
     }
+}
+
+/* ---- The short hero -------------------------------------------------------
+   The Explain pages, Patient Access and the sample pages: a band that is
+   only as tall as its copy needs plus a little air, and a softly blurred
+   image behind it. The blur is a copy of the band's own background on a
+   pseudo-element, since a background image cannot be filtered in place;
+   the band's own sharp image sits under it, so the blur's soft edge shows
+   the same picture a little crisper for a few pixels and nothing else.
+   .slider .item.fhi-hero-short outranks main.css's phone padding on the
+   band, which is what set 40px above and below the copy.
+   -------------------------------------------------------------------------- */
+.slider .item.fhi-hero-short {
+    position: relative;
+    overflow: hidden;
+    padding: var(--fhi-space-6) 0;
+}
+
+.fhi-hero-short::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: inherit;
+    filter: blur(8px);
+}
+
+.fhi-hero-short > * {
+    position: relative;
+}
+
+/* The copy box has carried its own 3px backdrop blur since before the
+   band had one. On Patient Access that box is nearly the band's width,
+   so its blur read as the whole banner; on the Explain and sample pages
+   it is capped at 800px, so the banner looked blurred inside a box and
+   sharper outside it. One blur, the band's, and the box's goes. */
+.fhi-hero-short .hero-inner {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+/* Words that stay together: a phrase that moves to the next line whole
+   rather than breaking wherever the width falls. It still wraps inside
+   itself on a screen too narrow for the whole phrase. */
+.fhi-together {
+    display: inline-block;
 }
 
 /* Chat, which left the nav. */
