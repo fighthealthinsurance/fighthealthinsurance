@@ -9,7 +9,7 @@ Fight Health Insurance is a Django application that helps patients appeal health
 ## Build & Development Commands
 
 ```bash
-# Install dependencies (Option A: Conda - recommended)
+# Install dependencies (Option A: Conda; it does not install pandoc, Node 20+ or mkcert, see README.md)
 micromamba env create -f environment.yml
 micromamba activate fhi
 
@@ -28,12 +28,12 @@ tox -e py313-django52-sync       # Synchronous tests
 tox -e py313-django52-async      # Async tests (parallelized)
 tox -e py313-django52-sync-actor # Ray actor tests
 
-# Run single test file
-python manage.py run_test --test-file tests/async/test_appeal_file_view.py
+# Run one test by name (each env collects its whole directory, so narrow with -k)
+tox -e py313-django52-sync -- -k test_no_multiline_hash_comments_in_any_template
 
 # Code formatting
-black --check fighthealthinsurance fhi_users  # Check
-black fighthealthinsurance fhi_users          # Fix
+tox -e py313-black                                     # Check (what CI runs)
+black setup.py fighthealthinsurance fhi_users charts  # Fix (use black 26.1.0)
 
 # Type checking
 mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users
@@ -52,15 +52,15 @@ python manage.py loaddata initial followup plan_source insurance_companies pa_re
 ### Core Data Flow
 1. User submits denial information via web form or chat interface
 2. `common_view_logic.py` orchestrates the appeal workflow
-3. `generate_appeal.py` calls ML backend (OctoAI or local) to create appeal letter
+3. `generate_appeal.py` calls the ML backends to create the appeal letter: internal models first, hosted models as a backup only when the user allows external models (`Denial.use_external`)
 4. WebSocket consumers in `websockets.py` stream results in real-time
 5. Appeals can be sent via email, fax, or downloaded as PDF
 
 ### Key Modules
-- **views.py** - Primary web view handlers (~1700 lines)
+- **views.py** - Primary web view handlers (~3700 lines)
 - **rest_views.py** - REST API endpoints (DRF with drf-spectacular)
-- **common_view_logic.py** - Main business logic for processing denials (~2100 lines)
-- **chat_interface.py** - AI-powered chat assistance (~1500 lines)
+- **common_view_logic.py** - Main business logic for processing denials (~6900 lines)
+- **chat_interface.py** - AI-powered chat assistance (~1700 lines)
 - **websockets.py** - Django Channels WebSocket consumers for streaming
 - **models.py** - Database models (~30+ models with encrypted PII fields)
 - **ml/** - ML integration layer with routing, citations, and model helpers
@@ -116,7 +116,7 @@ Business logic is organized into large helper classes:
 - `FaxHelperResults` - Fax sending with results
 
 ### Encrypted Fields
-Sensitive data uses `django-encrypted-model-fields`. Look for `encrypted_` prefixed fields in models.
+Uploaded documents are encrypted at rest with `EncryptedFileField` (from `django_encrypted_filefield`): the `*_enc` fields in `models.py`, keyed by `DEFF_SALT` and `DEFF_PASSWORD`.
 
 ### Environment Configuration
 Django uses `django-configurations` with classes: Dev, TestSync, Test, TestActor, Prod. Set via `DJANGO_CONFIGURATION` env var.
@@ -127,7 +127,7 @@ REST API uses drf-spectacular for OpenAPI docs. API endpoints are under `/ziggy/
 ## Environment Variables
 
 Required for ML:
-- `OCTOAI_TOKEN` - OctoAI API key (for cloud ML)
+- `ANTHROPIC_API_KEY`, `DEEPINFRA_API`, or the Azure settings - hosted models, used as the backup tier (see docs/ml-backends.md)
 - `HEALTH_BACKEND_HOST` / `HEALTH_BACKEND_PORT` - Local ML backend
 
 Development:
@@ -186,7 +186,7 @@ collectstatic build. What to know:
 
 ### Code Style
 - **Check style and types via tox:** `tox -e py313-black` for formatting checks, `tox -e mypy` for type checking (`mypy` is the env CI runs and the one pre-built in web sessions; `py313-mypy` is a separate env dir that duplicates the same install).
-- To **fix** formatting issues, run `black fighthealthinsurance fhi_users` directly.
+- To **fix** formatting issues, run `black setup.py fighthealthinsurance fhi_users charts` directly, with black 26.1.0 (the version CI pins).
 - Follow existing code conventions in the file you're editing — match naming, import style, and structure.
 
 ### Writing Good Tests
