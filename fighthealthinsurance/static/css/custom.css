@@ -9,6 +9,14 @@
     box-sizing: border-box;
 }
 
+/* The hidden attribute hides, whatever display a rule gives the element.
+   Bootstrap's stylesheet carries the same rule, so nothing changes while it
+   loads; without it, the browser's own [hidden] loses to any rule of ours
+   that sets display, and the element shows. */
+[hidden] {
+    display: none !important;
+}
+
 :root {
     /* Palette already in use across this file, named once. */
     --fhi-green: #a5c422;
@@ -1865,6 +1873,55 @@ section:not(.slider) .share-subcopy {
     transform: translate(-50%, -50%);
 }
 
+/* Words for screen readers only: in the page and read aloud, drawn nowhere.
+   Ours rather than Bootstrap's .visually-hidden, so it holds when Bootstrap
+   is gone. Bootstrap 5 dropped the older .sr-only, and a page still using
+   that name printed its screen-reader text on the screen. */
+.fhi-visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    clip-path: inset(50%) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* A ring with one side coloured, for a page waiting on the server. The
+   loading page named Font Awesome's spinner, which no page loads, so
+   nothing turned there. It turns only for someone who has not asked for
+   less motion; for anyone who has, it stands still. */
+.fhi-spinner {
+    display: inline-block;
+    width: 2rem;
+    height: 2rem;
+    border: 0.25rem solid var(--fhi-line);
+    border-top-color: var(--fhi-green-ink);
+    border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-spinner {
+        animation: fhi-spin 0.8s linear infinite;
+    }
+}
+
+@keyframes fhi-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* An inline SVG icon beside words, the size of the words around it and
+   sitting on their baseline, the way an icon font's glyph did. */
+.fhi-icon {
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.125em;
+}
+
 /* Form validation errors */
 .form-errors {
     color: #dc3545;
@@ -3018,6 +3075,108 @@ textarea,
         border: 1px solid var(--fhi-line);
         border-radius: var(--fhi-radius);
         box-shadow: var(--fhi-shadow);
+    }
+}
+
+/* ---- Questions that open in place ----------------------------------------
+   The FAQ on every microsite and on the Denial Language Library, and the
+   lists on Preparing for 2026 and Turning 26. They were Bootstrap
+   accordions, which opened only once bootstrap.bundle.min.js had arrived
+   from a CDN, so a blocked or slow script left every answer shut. Each item
+   is a <details> now: the browser opens it with no script, and keyboards
+   and screen readers get the open and closed state for free. The question
+   stays a heading inside the <summary>, so the page's outline is what it
+   was. The items in a group share a name=, as the header's dropdowns do,
+   so one answer is open at a time.
+   -------------------------------------------------------------------------- */
+.fhi-accordion {
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid var(--fhi-line);
+    border-radius: var(--fhi-radius);
+}
+
+.fhi-accordion-item + .fhi-accordion-item {
+    border-top: 1px solid var(--fhi-line);
+}
+
+/* The whole row is the control, and never shorter than 48px, so a thumb
+   finds it. */
+.fhi-accordion-item > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--fhi-space-4);
+    min-height: 48px;
+    padding: var(--fhi-space-4) var(--fhi-space-5);
+    color: var(--fhi-ink);
+    cursor: pointer;
+    /* The chevron below is the marker, not the browser's triangle. */
+    list-style: none;
+}
+
+.fhi-accordion-item > summary::-webkit-details-marker {
+    display: none;
+}
+
+.fhi-accordion-item > summary:hover,
+.fhi-accordion-item[open] > summary {
+    background: var(--fhi-surface);
+}
+
+/* The ring sits inside the row. Outside it, the box's rounded edge would
+   cut it off on the first and last question, and the row next door would
+   paint over it on the others. */
+.fhi-accordion-item > summary:focus-visible {
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: -3px;
+}
+
+.fhi-accordion-question {
+    margin: 0;
+    color: inherit;
+    font-size: var(--fhi-text-lead);
+    font-weight: 600;
+    line-height: var(--fhi-line-heading);
+    letter-spacing: normal;
+}
+
+/* The chevron: two sides of a square, turned to point down, and up once
+   the answer is open. The nudge keeps the point centred on the question. */
+.fhi-accordion-item > summary::after {
+    content: "";
+    flex: none;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-25%) rotate(45deg);
+}
+
+.fhi-accordion-item[open] > summary::after {
+    transform: translateY(25%) rotate(225deg);
+}
+
+/* An open question keeps a bar of the brand green down its left edge,
+   across the question and its answer, so it reads as one piece. */
+.fhi-accordion-item[open] > summary,
+.fhi-accordion-item[open] > .fhi-accordion-body {
+    box-shadow: inset 4px 0 0 var(--fhi-green);
+}
+
+.fhi-accordion-body {
+    padding: var(--fhi-space-4) var(--fhi-space-5);
+}
+
+.fhi-accordion-body > :last-child {
+    margin-bottom: 0;
+}
+
+/* The turn is the only motion, and only for anyone who has not asked for
+   less. */
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-accordion-item > summary::after {
+        transition: transform 0.2s ease;
     }
 }
 

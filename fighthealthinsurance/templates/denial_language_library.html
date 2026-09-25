@@ -134,10 +134,10 @@
                 </p>
                 <div class="d-flex justify-content-center gap-3 flex-wrap">
                     <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
-                        <i class="bi bi-file-earmark-text"></i> Generate Appeal Letter
+                        Generate Appeal Letter
                     </a>
                     <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">
-                        <i class="bi bi-chat-dots"></i> Chat with AI Assistant
+                        Chat with AI Assistant
                     </a>
                 </div>
             </div>
@@ -173,61 +173,45 @@
         <div class="row">
             <div class="col-lg-10 mx-auto">
                 <h2 class="text-center mb-4">Frequently Asked Questions</h2>
-                <div class="accordion" id="libraryFAQ">
-                    <div class="accordion-item">
-                        <h3 class="accordion-header">
-                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#faq1">
-                                Why do insurance companies use confusing language in denials?
-                            </button>
-                        </h3>
-                        <div id="faq1" class="accordion-collapse collapse show" data-bs-parent="#libraryFAQ">
-                            <div class="accordion-body">
-                                Insurance companies often use vague or technical language to make denials seem more legitimate and to discourage appeals. 
-                                Terms like "not medically necessary" sound official but are often subjective. Understanding what these phrases really mean 
-                                helps you craft a stronger appeal.
-                            </div>
+                <div class="fhi-accordion">
+                    <details class="fhi-accordion-item" name="library-faq" open>
+                        <summary>
+                            <h3 class="fhi-accordion-question">Why do insurance companies use confusing language in denials?</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            Insurance companies often use vague or technical language to make denials seem more legitimate and to discourage appeals. 
+                            Terms like "not medically necessary" sound official but are often subjective. Understanding what these phrases really mean 
+                            helps you craft a stronger appeal.
                         </div>
-                    </div>
-                    <div class="accordion-item">
-                        <h3 class="accordion-header">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq2">
-                                Can I appeal even if the denial seems final?
-                            </button>
-                        </h3>
-                        <div id="faq2" class="accordion-collapse collapse" data-bs-parent="#libraryFAQ">
-                            <div class="accordion-body">
-                                Yes! Most insurance denials can and should be appealed. You typically have the right to an internal appeal with your insurer, 
-                                and often an external appeal with an independent reviewer. Many denials are overturned on appeal, especially with proper documentation.
-                            </div>
+                    </details>
+                    <details class="fhi-accordion-item" name="library-faq">
+                        <summary>
+                            <h3 class="fhi-accordion-question">Can I appeal even if the denial seems final?</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            Yes! Most insurance denials can and should be appealed. You typically have the right to an internal appeal with your insurer, 
+                            and often an external appeal with an independent reviewer. Many denials are overturned on appeal, especially with proper documentation.
                         </div>
-                    </div>
-                    <div class="accordion-item">
-                        <h3 class="accordion-header">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq3">
-                                How long do I have to appeal a denial?
-                            </button>
-                        </h3>
-                        <div id="faq3" class="accordion-collapse collapse" data-bs-parent="#libraryFAQ">
-                            <div class="accordion-body">
-                                Deadlines vary by plan and state, but typically you have 180 days for a standard appeal. Urgent or expedited appeals may have 
-                                shorter deadlines. Always check your denial letter for specific timelines and don't delay - the sooner you appeal, the better.
-                            </div>
+                    </details>
+                    <details class="fhi-accordion-item" name="library-faq">
+                        <summary>
+                            <h3 class="fhi-accordion-question">How long do I have to appeal a denial?</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            Deadlines vary by plan and state, but typically you have 180 days for a standard appeal. Urgent or expedited appeals may have 
+                            shorter deadlines. Always check your denial letter for specific timelines and don't delay - the sooner you appeal, the better.
                         </div>
-                    </div>
-                    <div class="accordion-item">
-                        <h3 class="accordion-header">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq4">
-                                What's the success rate of insurance appeals?
-                            </button>
-                        </h3>
-                        <div id="faq4" class="accordion-collapse collapse" data-bs-parent="#libraryFAQ">
-                            <div class="accordion-body">
-                                Success rates vary by denial type and plan, but many appeals succeed - especially with proper documentation. Studies show that 
-                                patients who appeal have a significant chance of overturning denials, yet most people don't appeal at all. Don't give up - 
-                                insurers count on you not fighting back.
-                            </div>
+                    </details>
+                    <details class="fhi-accordion-item" name="library-faq">
+                        <summary>
+                            <h3 class="fhi-accordion-question">What's the success rate of insurance appeals?</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            Success rates vary by denial type and plan, but many appeals succeed - especially with proper documentation. Studies show that 
+                            patients who appeal have a significant chance of overturning denials, yet most people don't appeal at all. Don't give up - 
+                            insurers count on you not fighting back.
                         </div>
-                    </div>
+                    </details>
                 </div>
             </div>
         </div>

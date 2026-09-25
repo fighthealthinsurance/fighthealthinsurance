@@ -38,7 +38,8 @@ starts passing.
 What the gate still cannot see: colours a script writes at runtime (the drafts
 page phase labels, named in UNREACHED), and anything Bootstrap contributes,
 which is why the focus ring is checked against Bootstrap's known weight rather
-than against Bootstrap's actual text.
+than against Bootstrap's actual text. The one exception is the few fills
+written down by hand in BOOTSTRAP_GROUNDS.
 """
 
 from __future__ import annotations
@@ -69,6 +70,8 @@ class Rule:
     line: int
     selector: str
     declarations: tuple[tuple[str, str, bool], ...]  # property, value, !important
+    # The @media (or @supports) the rule sits in, as written; "" at top level.
+    media: str = ""
 
     @property
     def selectors(self) -> list[str]:
@@ -117,7 +120,7 @@ def parse_stylesheet(text: str, stylesheet: str) -> list[Rule]:
     """Flatten a stylesheet into rules, descending into @media and friends."""
     rules: list[Rule] = []
 
-    def walk(source: str, first_line: int) -> None:
+    def walk(source: str, first_line: int, media: str = "") -> None:
         index = 0
         line = first_line
         start_line = first_line
@@ -139,11 +142,15 @@ def parse_stylesheet(text: str, stylesheet: str) -> list[Rule]:
                 inner = source[index + 1 : end - 1]
                 if selector.startswith("@"):
                     if _NESTING_AT_RULES.match(selector):
-                        walk(inner, line)
+                        walk(inner, line, f"{media} {selector}".strip())
                 else:
                     rules.append(
                         Rule(
-                            stylesheet, start_line, selector, _split_declarations(inner)
+                            stylesheet,
+                            start_line,
+                            selector,
+                            _split_declarations(inner),
+                            media,
                         )
                     )
                 line += source[index:end].count("\n")
@@ -535,6 +542,10 @@ _STYLE_SOURCE = "data-contrast-source"
 _STYLE_OPEN = re.compile(r"<style\b", re.I)
 _STYLE_FROM = re.compile(r"<style\b[^>]*\b%s=\"([^\"]+)\"" % _STYLE_SOURCE, re.I)
 _LINKED_STYLESHEET = re.compile(r"static\s+['\"]css/([\w.-]+\.css)['\"]")
+# Bootstrap's stylesheet comes from a CDN, not from static/css, so it needs a
+# pattern of its own. A page that links it is reached by BOOTSTRAP_GROUNDS.
+BOOTSTRAP_SOURCE = "bootstrap 5.2.3"
+_LINKED_BOOTSTRAP = re.compile(r"bootstrap@5\.2\.3/dist/css/bootstrap(?:\.min)?\.css")
 
 
 def _class_variants(raw: str) -> tuple[frozenset[str], ...]:
@@ -819,15 +830,18 @@ def selector_states(steps: Sequence[Step]) -> frozenset[str]:
 def page_sources(markup: str) -> frozenset[str]:
     """The CSS one built page carries, named the way Rule.stylesheet names it.
 
-    That is the site stylesheets the page links, and the <style> block of
-    every template that renders into it: the page itself, what it extends,
-    and what it or they include. Nothing else. A browser applies a <style>
-    block to the document it sits in and to no other, and a page that links
-    no stylesheet never sees custom.css or main.css at all.
+    That is the site stylesheets the page links, Bootstrap when the page
+    links it (the source of the fills in BOOTSTRAP_GROUNDS), and the <style>
+    block of every template that renders into it: the page itself, what it
+    extends, and what it or they include. Nothing else. A browser applies a
+    <style> block to the document it sits in and to no other, and a page that
+    links no stylesheet never sees custom.css or main.css at all.
     """
     linked = {
         name for name in _LINKED_STYLESHEET.findall(markup) if name in STYLESHEETS
     }
+    if _LINKED_BOOTSTRAP.search(markup):
+        linked.add(BOOTSTRAP_SOURCE)
     blocks = {"templates/" + name for name in _STYLE_FROM.findall(markup)}
     return frozenset(linked | blocks)
 
@@ -984,6 +998,23 @@ def _layers_from(
     return layers
 
 
+# What Bootstrap paints under words on our pages, for as long as base.html
+# loads it. The gate reads only our own CSS, so these are written down by
+# hand from Bootstrap 5.2.3's stylesheet, which sets .card's background to
+# var(--bs-card-bg), and that to #fff.
+#
+# Until 2026-09-24 a .card's white reached the gate by accident: the two
+# Pro Connector pages each had a ".card { background: white }" of their own,
+# and a template's <style> block is read as if it applied to every page. When
+# those became .proconnector-card, every Bootstrap card lost its white and
+# fell through to whichever <body> fill any template declares, the printable
+# letter's grey included, and three pages failed for words that sit on white.
+# Take an entry out when the component it describes leaves the site.
+BOOTSTRAP_GROUNDS: tuple[Rule, ...] = (
+    Rule(BOOTSTRAP_SOURCE, 0, ".card", (("background-color", "#fff", False),)),
+)
+
+
 class Painter:
     """Resolves what any element on any page is painted on.
 
@@ -1020,7 +1051,7 @@ class Painter:
         self.foregrounds: list[
             tuple[str, list[Step], frozenset[str], tuple[int, int, int, int], bool]
         ] = []
-        for rule in rules:
+        for rule in tuple(rules) + BOOTSTRAP_GROUNDS:
             important_colour = [
                 important for prop, _, important in rule.declarations if prop == "color"
             ]
@@ -1824,6 +1855,59 @@ def test_every_colour_rule_the_gate_never_reached_is_named() -> None:
         "These are on a page now, or they are gone. Either way the line has "
         "to go:\n  %s" % "\n  ".join(stale)
     )
+
+
+def test_every_bootstrap_ground_is_still_under_something() -> None:
+    """A fill written down for a component the site no longer uses.
+
+    It would paint nothing, and it would quietly start painting again if the
+    class came back for some other reason, so it goes when its component
+    goes, and all of them go with Bootstrap. The class has to be on a page
+    that links Bootstrap: a ground paints only where its source reaches.
+    """
+    base = (TEMPLATE_DIR / "base.html").read_text()
+    assert (
+        "bootstrap@5.2.3" in base
+    ), "base.html no longer loads Bootstrap 5.2.3; take BOOTSTRAP_GROUNDS out"
+    dom = template_dom()
+    gone = [
+        selector
+        for rule in BOOTSTRAP_GROUNDS
+        for selector in rule.selectors
+        if not dom.matching(split_selector(selector), rule.stylesheet)
+    ]
+    assert not gone, "no page that links Bootstrap has these any more: %s" % gone
+
+
+def test_a_bootstrap_ground_reaches_the_painter() -> None:
+    """Listing a fill is not the same as painting it. Each rule paints only
+    on the pages that carry its source, and for a while no page recorded
+    Bootstrap as one, so every card's white was skipped and the words in a
+    card were measured on whatever sat under the card. With none of our own
+    CSS in the way, each card on a page that links Bootstrap has to come out
+    as exactly the fill written down for it."""
+    dom = template_dom()
+    painter = Painter([], dom)
+    for rule in BOOTSTRAP_GROUNDS:
+        for selector in rule.selectors:
+            nodes = dom.matching(split_selector(selector), rule.stylesheet)
+            assert nodes, f"no page that links Bootstrap has {selector}"
+            unpainted = sorted(
+                {
+                    node.template
+                    for node in nodes
+                    if [
+                        flatten(stop, BLACK)
+                        for layer in painter._own_layers(node, None, frozenset())
+                        for stop in layer.stops
+                    ]
+                    != [WHITE]
+                }
+            )
+            assert not unpainted, (
+                f"{selector} is not painted white on these pages, although "
+                f"they link Bootstrap: {unpainted}"
+            )
 
 
 def test_every_excuse_names_a_rule_that_still_exists() -> None:

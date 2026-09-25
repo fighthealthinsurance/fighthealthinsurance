@@ -16,18 +16,18 @@
     table.status th, table.status td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; }
     table.status th { background: #f0f4f8; }
     table.status td.num, table.status th.num { text-align: right; }
-    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
-    .badge.ok { background: #28a745; }
-    .badge.bad { background: #dc3545; }
-    .badge.warn { background: #f0ad4e; color: #333; }
-    .badge.unknown { background: #adb5bd; }
+    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
+    .status-badge.ok { background: #28a745; }
+    .status-badge.bad { background: #dc3545; }
+    .status-badge.warn { background: #f0ad4e; color: #333; }
+    .status-badge.unknown { background: #adb5bd; }
     .error-text { color: #dc3545; font-size: 0.85em; }
     .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; background: #e9ecef; color: #555; }
     .stat-grid { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
     .stat-card { flex: 1 1 140px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 14px; }
     .stat-card .value { font-size: 1.8em; font-weight: bold; color: #333; }
     .stat-card .label { font-size: 0.85em; color: #666; margin-top: 2px; }
-    .stat-card.alert .value { color: #dc3545; }
+    .stat-card.stat-alert .value { color: #dc3545; }
   </style>
 </head>
 <body>
@@ -43,15 +43,15 @@
   <div class="status-section">
     <h2>🧠 ML Model Backends</h2>
     {% if models.error %}
-      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ models.error }}</span></p>
+      <p><span class="status-badge bad">ERROR</span> <span class="error-text">{{ models.error }}</span></p>
     {% else %}
       <p class="summary-line">
         {% if models.working and models.internal_alive %}
-          <span class="badge ok">UP</span>
+          <span class="status-badge ok">UP</span>
         {% elif models.alive %}
-          <span class="badge warn">DEGRADED</span>
+          <span class="status-badge warn">DEGRADED</span>
         {% else %}
-          <span class="badge bad">DOWN</span>
+          <span class="status-badge bad">DOWN</span>
         {% endif %}
         &nbsp;{{ models.alive }} / {{ models.total }} backends responding
         ({{ models.internal_alive }} / {{ models.internal_total }} internal)
@@ -65,7 +65,7 @@
           <tr>
             <td>{{ d.name }}</td>
             <td><span class="pill">{% if d.external %}external{% else %}internal{% endif %}</span></td>
-            <td>{% if d.ok %}<span class="badge ok">up</span>{% else %}<span class="badge bad">down</span>{% endif %}</td>
+            <td>{% if d.ok %}<span class="status-badge ok">up</span>{% else %}<span class="status-badge bad">down</span>{% endif %}</td>
             <td class="error-text">{{ d.error|default:"" }}</td>
             <td>
               {% if d.ref %}
@@ -91,15 +91,15 @@
   <div class="status-section">
     <h2>⚙️ Ray Polling Actors</h2>
     {% if actors.error %}
-      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ actors.error }}</span></p>
+      <p><span class="status-badge bad">ERROR</span> <span class="error-text">{{ actors.error }}</span></p>
     {% else %}
       <p class="summary-line">
         {% if actors.alive_actors == actors.total_actors %}
-          <span class="badge ok">ALL UP</span>
+          <span class="status-badge ok">ALL UP</span>
         {% elif actors.alive_actors %}
-          <span class="badge warn">DEGRADED</span>
+          <span class="status-badge warn">DEGRADED</span>
         {% else %}
-          <span class="badge bad">DOWN</span>
+          <span class="status-badge bad">DOWN</span>
         {% endif %}
         &nbsp;{{ actors.alive_actors }} / {{ actors.total_actors }} actors alive
       </p>
@@ -109,7 +109,7 @@
         {% for d in actors.details %}
           <tr>
             <td>{{ d.name }}</td>
-            <td>{% if d.alive %}<span class="badge ok">alive</span>{% else %}<span class="badge bad">down</span>{% endif %}</td>
+            <td>{% if d.alive %}<span class="status-badge ok">alive</span>{% else %}<span class="status-badge bad">down</span>{% endif %}</td>
             <td class="error-text">{{ d.error|default:"" }}</td>
           </tr>
         {% endfor %}
@@ -124,16 +124,16 @@
     <p class="summary-line">
       Sonic:
       {% if not fax.sonic.configured %}
-        <span class="badge unknown">NOT CONFIGURED</span>
+        <span class="status-badge unknown">NOT CONFIGURED</span>
       {% elif fax.sonic.ok %}
-        <span class="badge ok">WORKING</span>
+        <span class="status-badge ok">WORKING</span>
       {% else %}
-        <span class="badge bad">NOT WORKING</span>
+        <span class="status-badge bad">NOT WORKING</span>
       {% endif %}
       {% if fax.sonic.error %}<span class="error-text">&nbsp;{{ fax.sonic.error }}</span>{% endif %}
     </p>
     {% if fax.error %}
-      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ fax.error }}</span></p>
+      <p><span class="status-badge bad">ERROR</span> <span class="error-text">{{ fax.error }}</span></p>
     {% endif %}
     {% if fax.backends %}
     <table class="status">
@@ -144,7 +144,7 @@
           <td>{{ b.name }}</td>
           <td>{{ b.professional|yesno:"yes,no" }}</td>
           <td>
-            {% if b.ok %}<span class="badge ok">ok</span>{% else %}<span class="badge bad">down</span>{% endif %}
+            {% if b.ok %}<span class="status-badge ok">ok</span>{% else %}<span class="status-badge bad">down</span>{% endif %}
             {% if not b.probed %}<span class="pill">not probed</span>{% endif %}
           </td>
           <td class="error-text">{{ b.error|default:"" }}</td>
@@ -161,26 +161,26 @@
   <div class="status-section">
     <h2>🗂️ Fax Queue</h2>
     {% if fax_queue.error %}
-      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ fax_queue.error }}</span></p>
+      <p><span class="status-badge bad">ERROR</span> <span class="error-text">{{ fax_queue.error }}</span></p>
     {% else %}
       <div class="stat-grid">
         <div class="stat-card">
           <div class="value">{{ fax_queue.ready_queued }}</div>
           <div class="label">Queued (user confirmed, not yet sent)</div>
         </div>
-        <div class="stat-card {% if fax_queue.due_now %}alert{% endif %}">
+        <div class="stat-card {% if fax_queue.due_now %}stat-alert{% endif %}">
           <div class="value">{{ fax_queue.due_now }}</div>
           <div class="label">Stuck (queued &gt;1h, never picked up)</div>
         </div>
-        <div class="stat-card {% if fax_queue.requested_unpicked %}alert{% endif %}">
+        <div class="stat-card {% if fax_queue.requested_unpicked %}stat-alert{% endif %}">
           <div class="value">{{ fax_queue.requested_unpicked }}</div>
           <div class="label">Professional send never picked up</div>
         </div>
-        <div class="stat-card {% if fax_queue.in_flight %}alert{% endif %}">
+        <div class="stat-card {% if fax_queue.in_flight %}stat-alert{% endif %}">
           <div class="value">{{ fax_queue.in_flight }}</div>
           <div class="label">Attempting now (started &lt;2h ago)</div>
         </div>
-        <div class="stat-card {% if fax_queue.stale_attempts %}alert{% endif %}">
+        <div class="stat-card {% if fax_queue.stale_attempts %}stat-alert{% endif %}">
           <div class="value">{{ fax_queue.stale_attempts }}</div>
           <div class="label">Stale attempt (started &gt;2h ago, never finished)</div>
         </div>
@@ -188,7 +188,7 @@
           <div class="value">{{ fax_queue.awaiting_confirmation }}</div>
           <div class="label">Never confirmed by the user</div>
         </div>
-        <div class="stat-card {% if fax_queue.failures_recent %}alert{% endif %}">
+        <div class="stat-card {% if fax_queue.failures_recent %}stat-alert{% endif %}">
           <div class="value">{{ fax_queue.failures_recent }}</div>
           <div class="label">Failures (last 7 days)</div>
         </div>
@@ -200,18 +200,18 @@
   <div class="status-section">
     <h2>⏱️ Temporal (fax workflows)</h2>
     {% if not temporal.enabled %}
-      <p class="summary-line"><span class="badge unknown">DISABLED</span> <span class="pill">TEMPORAL_ENABLED is off; faxes use the Ray path</span></p>
+      <p class="summary-line"><span class="status-badge unknown">DISABLED</span> <span class="pill">TEMPORAL_ENABLED is off; faxes use the Ray path</span></p>
     {% elif temporal.error %}
-      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ temporal.error }}</span></p>
+      <p class="summary-line"><span class="status-badge bad">ERROR</span> <span class="error-text">{{ temporal.error }}</span></p>
     {% else %}
       <p class="summary-line">
-        <span class="badge ok">CONNECTED</span>
+        <span class="status-badge ok">CONNECTED</span>
         {% if temporal.host %}<span class="pill">{{ temporal.host }}</span>{% endif %}
         {% if temporal.namespace %}<span class="pill">ns: {{ temporal.namespace }}</span>{% endif %}
         {% if temporal.task_queue %}<span class="pill">queue: {{ temporal.task_queue }}</span>{% endif %}
       </p>
       <div class="stat-grid">
-        <div class="stat-card {% if temporal.counts.Running %}alert{% endif %}">
+        <div class="stat-card {% if temporal.counts.Running %}stat-alert{% endif %}">
           <div class="value">{{ temporal.counts.Running|default:0 }}</div>
           <div class="label">Running now</div>
         </div>
@@ -219,18 +219,18 @@
           <div class="value">{{ temporal.counts.Completed|default:0 }}</div>
           <div class="label">Completed (last 7 days)</div>
         </div>
-        <div class="stat-card {% if temporal.counts.Failed %}alert{% endif %}">
+        <div class="stat-card {% if temporal.counts.Failed %}stat-alert{% endif %}">
           <div class="value">{{ temporal.counts.Failed|default:0 }}</div>
           <div class="label">Failed (last 7 days)</div>
         </div>
-        <div class="stat-card {% if temporal.counts.TimedOut or temporal.counts.Terminated %}alert{% endif %}">
+        <div class="stat-card {% if temporal.counts.TimedOut or temporal.counts.Terminated %}stat-alert{% endif %}">
           <div class="value">{{ temporal.counts.TimedOut|default:0 }} / {{ temporal.counts.Terminated|default:0 }}</div>
           <div class="label">Timed out / terminated (last 7 days)</div>
         </div>
       </div>
       {% if temporal.recent_error %}
       <p class="summary-line">
-        <span class="badge bad">RECENT RUNS UNAVAILABLE</span>
+        <span class="status-badge bad">RECENT RUNS UNAVAILABLE</span>
         <span class="error-text">{{ temporal.recent_error }}</span>
       </p>
       {% else %}
@@ -243,9 +243,9 @@
           <tr>
             <td><code>{{ wf.id }}</code></td>
             <td>
-              {% if wf.status == "COMPLETED" %}<span class="badge ok">{{ wf.status }}</span>
-              {% elif wf.status == "RUNNING" %}<span class="badge warn">{{ wf.status }}</span>
-              {% else %}<span class="badge bad">{{ wf.status }}</span>{% endif %}
+              {% if wf.status == "COMPLETED" %}<span class="status-badge ok">{{ wf.status }}</span>
+              {% elif wf.status == "RUNNING" %}<span class="status-badge warn">{{ wf.status }}</span>
+              {% else %}<span class="status-badge bad">{{ wf.status }}</span>{% endif %}
             </td>
             <td>{{ wf.started|date:"Y-m-d H:i" }}</td>
             <td>{% if wf.duration_s is not None %}{{ wf.duration_s }}s{% else %}&mdash;{% endif %}</td>
@@ -267,7 +267,7 @@
   <div class="status-section">
     <h2>📠 Fax delivery (last 7 days)</h2>
     {% if fax_outcomes.error %}
-      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ fax_outcomes.error }}</span></p>
+      <p class="summary-line"><span class="status-badge bad">ERROR</span> <span class="error-text">{{ fax_outcomes.error }}</span></p>
     {% else %}
       <p class="summary-line"><span class="pill">A "Completed" workflow above only means it finished; this is whether faxes were delivered.</span></p>
       <div class="stat-grid">
@@ -279,15 +279,15 @@
           <div class="value">{{ fax_outcomes.delivered|default:0 }}</div>
           <div class="label">Delivered</div>
         </div>
-        <div class="stat-card {% if fax_outcomes.delivered_all_time is None %}alert{% endif %}">
-          <div class="value">{% if fax_outcomes.delivered_all_time is None %}<span class="badge bad">unavailable</span>{% else %}{{ fax_outcomes.delivered_all_time }}{% endif %}</div>
+        <div class="stat-card {% if fax_outcomes.delivered_all_time is None %}stat-alert{% endif %}">
+          <div class="value">{% if fax_outcomes.delivered_all_time is None %}<span class="status-badge bad">unavailable</span>{% else %}{{ fax_outcomes.delivered_all_time }}{% endif %}</div>
           <div class="label">Delivered, all time (counter; deletions do not lower it)</div>
         </div>
-        <div class="stat-card {% if fax_outcomes.failed %}alert{% endif %}">
+        <div class="stat-card {% if fax_outcomes.failed %}stat-alert{% endif %}">
           <div class="value">{{ fax_outcomes.failed|default:0 }}</div>
           <div class="label">Failed</div>
         </div>
-        <div class="stat-card {% if fax_outcomes.stuck_claims %}alert{% endif %}">
+        <div class="stat-card {% if fax_outcomes.stuck_claims %}stat-alert{% endif %}">
           <div class="value">{{ fax_outcomes.stuck_claims|default:0 }}</div>
           <div class="label">Failed with claim stuck (cannot auto-resend)</div>
         </div>
@@ -300,7 +300,7 @@
           <tr>
             <td><code>{{ f.uuid }}</code></td>
             <td>{{ f.date|date:"Y-m-d H:i" }}</td>
-            <td>{% if f.claim_stuck %}<span class="badge bad">STUCK</span>{% else %}<span class="badge ok">released</span>{% endif %}</td>
+            <td>{% if f.claim_stuck %}<span class="status-badge bad">STUCK</span>{% else %}<span class="status-badge ok">released</span>{% endif %}</td>
             <td>
               {% comment %} POST, never GET: a GET would let a crawler or prefetch re-fax
                  a patient's appeal to an insurer. The view refuses any fax
@@ -327,36 +327,36 @@
   <div class="status-section">
     <h2>&#127942; All time</h2>
     {% if all_time.error %}
-      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ all_time.error }}</span></p>
+      <p class="summary-line"><span class="status-badge bad">ERROR</span> <span class="error-text">{{ all_time.error }}</span></p>
     {% else %}
-      <p class="summary-line">Counters that only go up: a generated draft, a person's first generated draft and a delivered fax each add one at the moment they happen, and deleting someone's data changes none of them. {% if all_time.counting_since %}Counting since {{ all_time.counting_since|date:"Y-m-d" }}, seeded from the rows present that day; deletions before then are not recoverable.{% elif all_time.appeals_generated is None %}<span class="badge bad">counters unavailable right now</span>{% else %}Not seeded yet.{% endif %}</p>
+      <p class="summary-line">Counters that only go up: a generated draft, a person's first generated draft and a delivered fax each add one at the moment they happen, and deleting someone's data changes none of them. {% if all_time.counting_since %}Counting since {{ all_time.counting_since|date:"Y-m-d" }}, seeded from the rows present that day; deletions before then are not recoverable.{% elif all_time.appeals_generated is None %}<span class="status-badge bad">counters unavailable right now</span>{% else %}Not seeded yet.{% endif %}</p>
       <div class="stat-grid">
-        <div class="stat-card {% if all_time.appeals_generated is None %}alert{% endif %}">
-          <div class="value">{% if all_time.appeals_generated is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.appeals_generated }}{% endif %}</div>
+        <div class="stat-card {% if all_time.appeals_generated is None %}stat-alert{% endif %}">
+          <div class="value">{% if all_time.appeals_generated is None %}<span class="status-badge bad">unavailable</span>{% else %}{{ all_time.appeals_generated }}{% endif %}</div>
           <div class="label">Appeal drafts generated</div>
         </div>
-        <div class="stat-card {% if all_time.people_with_draft_lifetime is None %}alert{% endif %}">
-          <div class="value">{% if all_time.people_with_draft_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.people_with_draft_lifetime }}{% endif %}</div>
+        <div class="stat-card {% if all_time.people_with_draft_lifetime is None %}stat-alert{% endif %}">
+          <div class="value">{% if all_time.people_with_draft_lifetime is None %}<span class="status-badge bad">unavailable</span>{% else %}{{ all_time.people_with_draft_lifetime }}{% endif %}</div>
           <div class="label">People with a generated draft (distinct email hashes)</div>
         </div>
         <div class="stat-card">
-          <div class="value">{% if all_time.faxes_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.faxes_ever }}{% endif %}</div>
+          <div class="value">{% if all_time.faxes_ever is None %}<span class="status-badge unknown">n/a</span>{% else %}{{ all_time.faxes_ever }}{% endif %}</div>
           <div class="label">Fax requests (rows ever created; a row exists before the user confirms)</div>
         </div>
-        <div class="stat-card {% if all_time.faxes_sent_lifetime is None %}alert{% endif %}">
-          <div class="value">{% if all_time.faxes_sent_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.faxes_sent_lifetime }}{% endif %}</div>
+        <div class="stat-card {% if all_time.faxes_sent_lifetime is None %}stat-alert{% endif %}">
+          <div class="value">{% if all_time.faxes_sent_lifetime is None %}<span class="status-badge bad">unavailable</span>{% else %}{{ all_time.faxes_sent_lifetime }}{% endif %}</div>
           <div class="label">Faxes sent (an attempt was made)</div>
         </div>
-        <div class="stat-card {% if all_time.faxes_delivered_lifetime is None %}alert{% endif %}">
-          <div class="value">{% if all_time.faxes_delivered_lifetime is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.faxes_delivered_lifetime }}{% endif %}</div>
+        <div class="stat-card {% if all_time.faxes_delivered_lifetime is None %}stat-alert{% endif %}">
+          <div class="value">{% if all_time.faxes_delivered_lifetime is None %}<span class="status-badge bad">unavailable</span>{% else %}{{ all_time.faxes_delivered_lifetime }}{% endif %}</div>
           <div class="label">Faxes confirmed delivered</div>
         </div>
-        <div class="stat-card {% if all_time.removal_requests is None %}alert{% endif %}">
-          <div class="value">{% if all_time.removal_requests is None %}<span class="badge bad">unavailable</span>{% else %}{{ all_time.removal_requests }}{% endif %}</div>
+        <div class="stat-card {% if all_time.removal_requests is None %}stat-alert{% endif %}">
+          <div class="value">{% if all_time.removal_requests is None %}<span class="status-badge bad">unavailable</span>{% else %}{{ all_time.removal_requests }}{% endif %}</div>
           <div class="label">Delete-my-data requests{% if all_time.removals_since %} (since {{ all_time.removals_since|date:"Y-m-d" }}, {{ all_time.removed_denials }} denial{{ all_time.removed_denials|pluralize }} removed){% endif %}</div>
         </div>
         <div class="stat-card">
-          <div class="value">{% if all_time.denials_ever is None %}<span class="badge unknown">n/a</span>{% else %}{{ all_time.denials_ever }}{% endif %}</div>
+          <div class="value">{% if all_time.denials_ever is None %}<span class="status-badge unknown">n/a</span>{% else %}{{ all_time.denials_ever }}{% endif %}</div>
           <div class="label">Denials ever created (id sequence; includes rolled-back inserts)</div>
         </div>
       </div>
@@ -368,7 +368,7 @@
   <div class="status-section">
     <h2>&#128203; Intake funnel (last 7 days)</h2>
     {% if intake_funnel.error %}
-      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ intake_funnel.error }}</span></p>
+      <p class="summary-line"><span class="status-badge bad">ERROR</span> <span class="error-text">{{ intake_funnel.error }}</span></p>
     {% else %}
       <p class="summary-line"><span class="pill">Stage tallies only; where do people stop between starting a submission and holding drafts?</span></p>
       <div class="stat-grid">
@@ -396,14 +396,14 @@
   <div class="status-section">
     <h2>&#127919; Letter scoring (TypeSafe, last {{ letter_scoring.window_hours }}h)</h2>
     {% if letter_scoring.error %}
-      <p class="summary-line"><span class="badge bad">ERROR</span> <span class="error-text">{{ letter_scoring.error }}</span></p>
+      <p class="summary-line"><span class="status-badge bad">ERROR</span> <span class="error-text">{{ letter_scoring.error }}</span></p>
     {% else %}
       <p class="summary-line">
-        {% if letter_scoring.level == "off" %}<span class="badge unknown">OFF</span>
-        {% elif letter_scoring.level == "failing" %}<span class="badge bad">FAILING</span>
-        {% elif letter_scoring.level == "not_scoring" %}<span class="badge warn">NOT SCORING</span>
-        {% elif letter_scoring.level == "idle" %}<span class="badge ok">IDLE</span>
-        {% else %}<span class="badge ok">SCORING</span>{% endif %}
+        {% if letter_scoring.level == "off" %}<span class="status-badge unknown">OFF</span>
+        {% elif letter_scoring.level == "failing" %}<span class="status-badge bad">FAILING</span>
+        {% elif letter_scoring.level == "not_scoring" %}<span class="status-badge warn">NOT SCORING</span>
+        {% elif letter_scoring.level == "idle" %}<span class="status-badge ok">IDLE</span>
+        {% else %}<span class="status-badge ok">SCORING</span>{% endif %}
         <span class="pill">API key: {% if letter_scoring.key_present %}present{% else %}missing{% endif %}</span>
         <span class="pill">TYPESAFE_LETTER_RANKING_ENABLED: {% if letter_scoring.flag_on %}on{% else %}off{% endif %}</span>
         {% if letter_scoring.timeout_seconds %}<span class="pill">timeout: {{ letter_scoring.timeout_seconds }}s</span>{% endif %}
@@ -414,7 +414,7 @@
           <div class="value">{{ letter_scoring.scored|default:0 }}</div>
           <div class="label">Drafts scored</div>
         </div>
-        <div class="stat-card {% if letter_scoring.unscored %}alert{% endif %}">
+        <div class="stat-card {% if letter_scoring.unscored %}stat-alert{% endif %}">
           <div class="value">{{ letter_scoring.unscored|default:0 }}</div>
           <div class="label">Eligible drafts left unscored</div>
         </div>
@@ -434,9 +434,9 @@
     <h2>💾 External Storage</h2>
     <p class="summary-line">
       {% if storage.ok %}
-        <span class="badge ok">REACHABLE</span>
+        <span class="status-badge ok">REACHABLE</span>
       {% else %}
-        <span class="badge bad">UNREACHABLE</span>
+        <span class="status-badge bad">UNREACHABLE</span>
       {% endif %}
       {% if storage.location %}<span class="pill">{{ storage.location }}</span>{% endif %}
       {% if storage.error %}<span class="error-text">&nbsp;{{ storage.error }}</span>{% endif %}

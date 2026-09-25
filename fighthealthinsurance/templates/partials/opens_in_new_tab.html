@@ -1,0 +1,15 @@
+{% comment %}
+The mark at the end of a link that opens in a new tab: an arrow leaving a
+box for anyone looking, and the same news in words for anyone listening.
+Include it inside the link, after its text:
+
+    <a href="..." target="_blank" rel="noopener noreferrer">
+        Visit Website {% include "partials/opens_in_new_tab.html" %}
+    </a>
+
+The arrow is an inline SVG, so it draws with nothing else loaded. The
+templates used to name an icon font here that no page loads, and the arrow
+never appeared. The path is Bootstrap Icons' box-arrow-up-right, MIT
+licensed, the same set the envelope on the About page comes from.
+{% endcomment %}
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="fhi-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"/><path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"/></svg><span class="fhi-visually-hidden">(opens in a new tab)</span>

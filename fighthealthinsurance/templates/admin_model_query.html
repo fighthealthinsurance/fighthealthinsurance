@@ -10,10 +10,10 @@
     .nav-back { display: inline-block; margin-bottom: 14px; margin-right: 14px; color: #007bff; text-decoration: none; }
     .nav-back:hover { text-decoration: underline; }
     .meta { color: #666; font-size: 0.9em; margin-bottom: 18px; }
-    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
-    .badge.ok { background: #28a745; }
-    .badge.bad { background: #dc3545; }
-    .badge.warn { background: #f0ad4e; color: #333; }
+    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
+    .status-badge.ok { background: #28a745; }
+    .status-badge.bad { background: #dc3545; }
+    .status-badge.warn { background: #f0ad4e; color: #333; }
     .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; background: #e9ecef; color: #555; }
     .error-text { color: #dc3545; }
     table.status { width: 100%; border-collapse: collapse; margin-top: 8px; }
@@ -48,13 +48,13 @@
 
   {% if error %}
     <div class="status-section">
-      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ error }}</span></p>
+      <p><span class="status-badge bad">ERROR</span> <span class="error-text">{{ error }}</span></p>
     </div>
   {% endif %}
 
   {% if enumeration_error %}
     <div class="status-section">
-      <p><span class="badge bad">ERROR</span>
+      <p><span class="status-badge bad">ERROR</span>
         <span class="error-text">Could not enumerate model backends: {{ enumeration_error }}</span></p>
     </div>
   {% endif %}
@@ -120,9 +120,9 @@
     <h2>📥 Response</h2>
     <p>
       {% if result.ok %}
-        <span class="badge ok">RESPONDED</span>
+        <span class="status-badge ok">RESPONDED</span>
       {% else %}
-        <span class="badge bad">FAILED</span>
+        <span class="status-badge bad">FAILED</span>
       {% endif %}
       <span class="pill">{{ result.elapsed|floatformat:2 }}s</span>
       {% if result.error %}<span class="error-text">&nbsp;{{ result.error }}</span>{% endif %}

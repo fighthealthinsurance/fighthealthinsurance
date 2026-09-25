@@ -31,28 +31,24 @@
                 <div class="row mt-4">
                     <div class="col-md-3 mb-3">
                         <div class="feature-box">
-                            <i class="bi bi-building fs-2 text-primary"></i>
                             <h3 class="mt-2">Insurance Department</h3>
                             <small class="text-muted">File complaints & get help</small>
                         </div>
                     </div>
                     <div class="col-md-3 mb-3">
                         <div class="feature-box">
-                            <i class="bi bi-shield-check fs-2 text-success"></i>
                             <h3 class="mt-2">Consumer Assistance</h3>
                             <small class="text-muted">Free counseling programs</small>
                         </div>
                     </div>
                     <div class="col-md-3 mb-3">
                         <div class="feature-box">
-                            <i class="bi bi-hospital fs-2 text-purple"></i>
                             <h3 class="mt-2">Medicaid Resources</h3>
                             <small class="text-muted">Agency & ombudsman info</small>
                         </div>
                     </div>
                     <div class="col-md-3 mb-3">
                         <div class="feature-box">
-                            <i class="bi bi-clipboard-check fs-2 text-info"></i>
                             <h3 class="mt-2">External Review</h3>
                             <small class="text-muted">Appeal denial decisions</small>
                         </div>
@@ -95,7 +91,7 @@
                                             <div>
                                                 <h4 class="card-title mb-0">{{ state.name }}</h4>
                                                 {% if state.medicaid.managed_care_ombudsman %}
-                                                <small class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Ombudsman Available</small>
+                                                <small class="text-success">Ombudsman Available</small>
                                                 {% endif %}
                                             </div>
                                         </div>
@@ -124,10 +120,10 @@
                     <div class="col-md-6 mb-4">
                         <div class="card h-100 national-card">
                             <div class="card-body">
-                                <h3 class="card-title"><i class="bi bi-globe me-2"></i>CMS Consumer Assistance</h3>
+                                <h3 class="card-title">CMS Consumer Assistance</h3>
                                 <p class="card-text">The Centers for Medicare & Medicaid Services maintains a directory of state consumer assistance programs.</p>
                                 <a href="https://www.cms.gov/cciio/resources/consumer-assistance-grants" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
-                                    Visit CMS <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                    Visit CMS {% include 'partials/opens_in_new_tab.html' %}
                                 </a>
                             </div>
                         </div>
@@ -135,10 +131,10 @@
                     <div class="col-md-6 mb-4">
                         <div class="card h-100 national-card">
                             <div class="card-body">
-                                <h3 class="card-title"><i class="bi bi-building me-2"></i>NAIC Insurance Departments</h3>
+                                <h3 class="card-title">NAIC Insurance Departments</h3>
                                 <p class="card-text">The National Association of Insurance Commissioners provides a directory of all state insurance departments.</p>
                                 <a href="https://content.naic.org/state-insurance-departments" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
-                                    Visit NAIC <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                    Visit NAIC {% include 'partials/opens_in_new_tab.html' %}
                                 </a>
                             </div>
                         </div>
@@ -146,10 +142,10 @@
                     <div class="col-md-6 mb-4">
                         <div class="card h-100 national-card">
                             <div class="card-body">
-                                <h3 class="card-title"><i class="bi bi-heart-pulse me-2"></i>SHIP National Network</h3>
+                                <h3 class="card-title">SHIP National Network</h3>
                                 <p class="card-text">State Health Insurance Assistance Programs provide free Medicare counseling in every state.</p>
                                 <a href="https://www.shiphelp.org/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
-                                    Visit SHIP <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                    Visit SHIP {% include 'partials/opens_in_new_tab.html' %}
                                 </a>
                             </div>
                         </div>
@@ -157,10 +153,10 @@
                     <div class="col-md-6 mb-4">
                         <div class="card h-100 national-card">
                             <div class="card-body">
-                                <h3 class="card-title"><i class="bi bi-hospital me-2"></i>Medicaid.gov</h3>
+                                <h3 class="card-title">Medicaid.gov</h3>
                                 <p class="card-text">Official federal resource for Medicaid information, including state-by-state program details.</p>
                                 <a href="https://www.medicaid.gov/state-overviews/index.html" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
-                                    Visit Medicaid.gov <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                    Visit Medicaid.gov {% include 'partials/opens_in_new_tab.html' %}
                                 </a>
                             </div>
                         </div>
@@ -219,19 +215,15 @@
     }
 
     /* The four labels in the introduction are h3s so the outline holds, but
-       each one captions an icon rather than heading a section. They keep the
-       size, weight and caption gap they had as h6s: the column would draw
-       them as subsections, and main.css gives every h3 no bottom margin. */
+       each one names a small box rather than heading a section. They keep the
+       size, weight and gap they had as h6s: the column would draw them as
+       subsections, and main.css gives every h3 no bottom margin. */
     .feature-box h3 {
         font-size: var(--fhi-text-body);
         font-weight: normal;
         letter-spacing: 0;
         line-height: inherit;
         margin-bottom: var(--fhi-space-2);
-    }
-
-    .text-purple {
-        color: #6f42c1;
     }
 
     .quick-jump {

@@ -25,7 +25,7 @@
                     <div class="hero-cta-group">
                         {% if microsite.blog_post_url %}
                         <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green secondary-cta">
-                            <i class="bi bi-book"></i> Read Our Guide
+                            Read Our Guide
                         </a>
                         {% endif %}
                         {% if not microsite.medicare %}
@@ -232,28 +232,16 @@
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <h2 class="text-center mb-4">Frequently Asked Questions</h2>
-                <div class="accordion" id="faqAccordion">
+                <div class="fhi-accordion">
                     {% for item in microsite.faq %}
-                    <div class="accordion-item">
-                        <h3 class="accordion-header" id="faqHeading{{ forloop.counter }}">
-                            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
-                                    type="button"
-                                    data-bs-toggle="collapse"
-                                    data-bs-target="#faqCollapse{{ forloop.counter }}"
-                                    aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}"
-                                    aria-controls="faqCollapse{{ forloop.counter }}">
-                                {{ item.question }}
-                            </button>
-                        </h3>
-                        <div id="faqCollapse{{ forloop.counter }}"
-                             class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
-                             aria-labelledby="faqHeading{{ forloop.counter }}"
-                             data-bs-parent="#faqAccordion">
-                            <div class="accordion-body">
-                                {{ item.answer }}
-                            </div>
+                    <details class="fhi-accordion-item" name="microsite-faq"{% if forloop.first %} open{% endif %}>
+                        <summary>
+                            <h3 class="fhi-accordion-question">{{ item.question }}</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            {{ item.answer }}
                         </div>
-                    </div>
+                    </details>
                     {% endfor %}
                 </div>
             </div>
@@ -287,7 +275,7 @@
                     </a>
                     {% if microsite.blog_post_url %}
                     <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green fhi-btn-lg">
-                        <i class="bi bi-book"></i> Read Our Guide
+                        Read Our Guide
                     </a>
                     {% endif %}
                 </div>
@@ -418,15 +406,6 @@
 
     .disclaimer-box {
         border-color: #dee2e6 !important;
-    }
-
-    .accordion-button:not(.collapsed) {
-        background-color: rgba(40, 167, 69, 0.1);
-        color: #155724;
-    }
-
-    .accordion-button:focus {
-        box-shadow: 0 0 0 0.25rem rgba(40, 167, 69, 0.25);
     }
 
     #final-cta {
