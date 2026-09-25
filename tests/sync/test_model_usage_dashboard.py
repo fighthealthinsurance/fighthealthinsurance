@@ -1204,7 +1204,9 @@ class ChartTypeTest(StaffClientMixin, TestCase):
 
     def test_staff_dashboard_link_names_every_window(self):
         response = self.client.get(reverse("staff_dashboard"))
-        self.assertContains(response, "all time / 1 day / 7 days / 30 days")
+        self.assertContains(response, "(all time / 1 day / 7 days / 30 days)")
+        # The call table skips All Time, so the link must not promise it.
+        self.assertContains(response, "appeal call outcomes (1 day / 7 days / 30 days)")
 
 
 def _check(model_name, category, ok, minutes_ago=0):
