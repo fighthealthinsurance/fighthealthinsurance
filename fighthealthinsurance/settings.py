@@ -843,7 +843,39 @@ class Dev(Base):
     CSRF_FAILURE_VIEW = "fighthealthinsurance.views.csrf_failure"
 
 
-class Test(Dev):
+class _TestBase(Dev):
+    """Process environment shared by Test, TestSync and TestActor."""
+
+    @classmethod
+    def pre_setup(cls):
+        """Mark the process as a test run and point outside APIs at nothing.
+
+        django-configurations calls this only on the configuration it
+        selects (configurations/importer.py), after this module is imported
+        and before any setting is read. These writes used to sit in each test
+        class body, and Python runs every class body in this module on
+        import, whatever the configuration, so Dev got them too (Prod deleted
+        them again): TESTING switched off test-aware code such as the startup
+        model probe, and the CMS and NICE lookups went to a dead address.
+        Nothing in a class body reads these three, and the modules that do
+        (nice_tools reads NICE_API_BASE_URL at import) load after settings.
+        """
+        super().pre_setup()
+        # Set TESTING env var for SessionRequiredMixin and other test-aware code
+        os.environ["TESTING"] = "True"
+        # Point the CMS Coverage API at an unroutable address. Tests that
+        # exercise CMS code mock the client directly; this prevents any
+        # incidental call (e.g., through the appeal-generation flow) from
+        # reaching the real public CMS endpoint.
+        os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
+        # Same defense for NICE: a NICE_API_KEY may be present in CI (e.g., for
+        # the live integration test), so tests that incidentally trigger appeal
+        # generation could reach the real syndication endpoint. Live tests
+        # restore the real URL on the NICETools instance.
+        os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
+
+
+class Test(_TestBase):
     # TypeSafe is hard-off under test: a developer's key and flag in the
     # environment must never let an exercised generation path send test
     # denial text to a real endpoint. Scorer tests opt in with
@@ -869,18 +901,6 @@ class Test(Dev):
     CSRF_COOKIE_SAMESITE = "Lax"
 
     DEBUG = True
-    # Set TESTING env var for SessionRequiredMixin and other test-aware code
-    os.environ["TESTING"] = "True"
-    # Point the CMS Coverage API at an unroutable address. Tests that
-    # exercise CMS code mock the client directly; this prevents any
-    # incidental call (e.g., through the appeal-generation flow) from
-    # reaching the real public CMS endpoint.
-    os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
-    # Same defense for NICE: a NICE_API_KEY may be present in CI (e.g., for
-    # the live integration test), so tests that incidentally trigger appeal
-    # generation could reach the real syndication endpoint. Live tests
-    # restore the real URL on the NICETools instance.
-    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
     # For async tests we do in memory for increased isolation
@@ -909,7 +929,7 @@ class Test(Dev):
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
-class TestSync(Dev):
+class TestSync(_TestBase):
     # TypeSafe is hard-off under test: a developer's key and flag in the
     # environment must never let an exercised generation path send test
     # denial text to a real endpoint. Scorer tests opt in with
@@ -923,11 +943,6 @@ class TestSync(Dev):
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
     FHI_CONTEXT_BARRIER_TIMEOUT_S = 0
-    # Set TESTING env var for SessionRequiredMixin and other test-aware code
-    os.environ["TESTING"] = "True"
-    # Point CMS Coverage API at an unroutable address (see Test class).
-    os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
-    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -951,7 +966,7 @@ class TestSync(Dev):
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
-class TestActor(Dev):
+class TestActor(_TestBase):
     # TypeSafe is hard-off under test: a developer's key and flag in the
     # environment must never let an exercised generation path send test
     # denial text to a real endpoint. Scorer tests opt in with
@@ -965,11 +980,6 @@ class TestActor(Dev):
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
     FHI_CONTEXT_BARRIER_TIMEOUT_S = 0
-    # Set TESTING env var for SessionRequiredMixin and other test-aware code
-    os.environ["TESTING"] = "True"
-    # Point CMS Coverage API at an unroutable address (see Test class).
-    os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
-    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")
@@ -1219,45 +1229,6 @@ class Prod(Base):
     RECAPTCHA_REQUIRED_SCORE = 0.85
     RECAPTCHA_TESTING = False
     os.environ["RECAPTCHA_TESTING"] = "False"
-
-    @classmethod
-    def pre_setup(cls):
-        """Undo test-config env pollution before Prod settings resolve.
-
-        Python executes EVERY class body in this module at import time, no
-        matter which configuration django-configurations goes on to select,
-        so the ``os.environ`` assignments in Test / TestSync / TestActor
-        above also land in the process running Prod. Verified in a production
-        pod before this change: ``TESTING`` was "True" and both API URLs were
-        pinned to the unroutable test address.
-
-        Left set, they:
-
-        - make ``os.getenv("TESTING")`` truthy, which several modules read as
-          "we are under test" -- model-health alerting and the startup model
-          probe disable themselves, ``SessionRequiredMixin`` changes
-          behaviour, and a websocket delivery kill-switch loses the second
-          half of its double-gate (its comment states outright that TESTING
-          is "set only by the TestSync settings class"),
-        - point the CMS Coverage and NICE lookups at http://127.0.0.1:1, so
-          those calls fail in production instead of reaching the real APIs.
-
-        This runs in ``pre_setup`` rather than the class body on purpose:
-        django-configurations calls it only on the SELECTED configuration
-        (see configurations/importer.py), so the test configs keep their own
-        environment. A class-body reset would run under every configuration
-        and clobber the test values it is meant to preserve -- which is what
-        the ``RECAPTCHA_TESTING`` line above quietly does today.
-
-        Values are cleared conditionally, so anything legitimately supplied
-        by the container environment is never touched.
-        """
-        super().pre_setup()
-        if os.environ.get("TESTING") == "True":
-            del os.environ["TESTING"]
-        for _test_pinned_url in ("CMS_COVERAGE_API_URL", "NICE_API_BASE_URL"):
-            if os.environ.get(_test_pinned_url) == "http://127.0.0.1:1":
-                del os.environ[_test_pinned_url]
 
     ADMINS = [("Holden Karau", "holden.karau@gmail.com")]
     SERVER_EMAIL = "support@pigscanfly.ca"

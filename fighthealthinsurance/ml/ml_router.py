@@ -1,10 +1,10 @@
 import asyncio
-import os
 import threading
 from typing import List, Optional, Sequence, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml.ml_models import *
 
 
@@ -161,7 +161,7 @@ class MLRouter(object):
         Local/internal models and context-only models (e.g. Perplexity
         citations) are always enabled regardless of this setting.
         """
-        raw = os.getenv("ENABLED_REMOTE_MODELS")
+        raw = get_env_variable("ENABLED_REMOTE_MODELS")
         if not raw or not raw.strip():
             return None
         names = {n.strip() for n in raw.split(",") if n.strip()}
@@ -283,7 +283,7 @@ class MLRouter(object):
         Returns:
             List of forced models if FORCE_MODEL is set and models are found, None otherwise
         """
-        forced_model = os.getenv("FORCE_MODEL")
+        forced_model = get_env_variable("FORCE_MODEL")
         if not forced_model:
             return None
 
@@ -401,7 +401,7 @@ class MLRouter(object):
             List of model names (not instances) to use for text generation
         """
         # Check for forced model override
-        forced_model = os.getenv("FORCE_MODEL")
+        forced_model = get_env_variable("FORCE_MODEL")
         if forced_model:
             logger.info(f"FORCE_MODEL={forced_model} for text generation")
 

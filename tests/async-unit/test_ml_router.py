@@ -1,9 +1,12 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio
 from typing import Optional
 
+from fighthealthinsurance import env_utils
 from fighthealthinsurance.ml.ml_router import MLRouter
 from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
@@ -67,6 +70,35 @@ class TestRouterHermeticity(unittest.TestCase):
             "unit suite; extend _AMBIENT_BACKEND_ENV_VARS in "
             "tests/async-unit/conftest.py to cover the env var(s) involved.",
         )
+
+    def test_the_suite_points_the_dotenv_fallback_at_no_file(self):
+        """conftest.py keeps the repo's .env, and any real keys in it, away."""
+        self.assertIsNone(env_utils.LOCAL_DOTENV_PATH)
+
+    def test_a_backend_key_in_dotenv_does_not_register_under_tests(self):
+        """A .env with a backend key, right where the helper looks, is ignored.
+
+        The backends fall back to .env for a setting the environment lacks,
+        but get_env_variable refuses that fallback under the test
+        configurations and pytest. With the conftest's own measure set aside
+        and a fake key waiting in the file, only that refusal stands between
+        the key and a registered backend.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dotenv = Path(tmp) / ".env"
+            dotenv.write_text(
+                "ANTHROPIC_API_KEY=fake-key-for-the-hermeticity-test\n"
+                "HEALTH_BACKEND_HOST=backend.invalid\n"
+            )
+            with (
+                patch.dict(os.environ),
+                patch.object(env_utils, "LOCAL_DOTENV_PATH", dotenv),
+            ):
+                os.environ.pop("ANTHROPIC_API_KEY", None)
+                os.environ.pop("HEALTH_BACKEND_HOST", None)
+                router = MLRouter()
+        self.assertEqual(sorted(router.models_by_name), [])
+        self.assertEqual(router.all_models_by_cost, [])
 
 
 class TestMLRouterGenerateTextBackendNames(unittest.TestCase):

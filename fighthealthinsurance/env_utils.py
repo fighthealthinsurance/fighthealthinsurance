@@ -1,30 +1,83 @@
 import os
-from typing import Optional
+import sys
+from pathlib import Path
+from typing import Dict, Optional, overload
 
-from decouple import UndefinedValueError, config
+from decouple import RepositoryEnv
+
+# The repository's .env, beside manage.py. get_env_variable falls back to it
+# for a variable the process environment lacks, on a local run only (see
+# dotenv_allowed). Tests point this at a file of their own, or at nothing.
+LOCAL_DOTENV_PATH: Optional[Path] = Path(__file__).resolve().parent.parent / ".env"
+
+# The settings classes the test suites run under (tox sets one per env).
+_TEST_CONFIGURATIONS = frozenset({"Test", "TestSync", "TestActor"})
 
 
-def get_env_variable(var_name: str, default: Optional[str] = None) -> str:
+def _running_under_pytest() -> bool:
+    """True once pytest is imported, which covers collection as well as tests."""
+    return "pytest" in sys.modules
+
+
+def dotenv_allowed() -> bool:
+    """Whether this process may read the repo's .env: a local run, not a test.
+
+    Never under the Test, TestSync or TestActor configurations or under pytest,
+    so a developer's real keys in .env can't reach the test suite. Never in a
+    deployment (is_deployed_environment), which takes its secrets from
+    Kubernetes only; .dockerignore keeps .env out of the image as well. Every
+    input here comes from the process environment, never from .env itself.
     """
-    Get env variable. First we look at .env file then shell envs.
-    Note: since we control deployment with our k8s configs this is safe *but*
-    if you're going to deploy this outside of such an enviornment you may need to revisit this.
+    if os.getenv("DJANGO_CONFIGURATION") in _TEST_CONFIGURATIONS:
+        return False
+    if _running_under_pytest():
+        return False
+    if is_deployed_environment():
+        return False
+    return True
+
+
+def local_dotenv_values() -> Dict[str, str]:
+    """The settings in the repo's .env, or none where .env must not be read.
+
+    Parsed by python-decouple: KEY=VALUE lines, # comments, and one pair of
+    matching quotes stripped from a value.
     """
+    if LOCAL_DOTENV_PATH is None or not dotenv_allowed():
+        return {}
     try:
-        return config(var_name, default=default)  # type: ignore
-    except UndefinedValueError:
-        try:
-            r = os.getenv(var_name)
-            if r:
-                return r
-            else:
-                raise RuntimeError("Missing")
-        except:
-            if default:
-                return default
-            raise RuntimeError(
-                f"Critical environment variable {var_name} is missing. Ensure it is set securely."
-            )
+        return dict(RepositoryEnv(str(LOCAL_DOTENV_PATH)).data)
+    except FileNotFoundError:
+        return {}
+
+
+# A str default always gets a str back. Spelled out rather than generic so
+# that mypy types ``x or get_env_variable(NAME, "default")`` as str too.
+@overload
+def get_env_variable(var_name: str) -> Optional[str]: ...
+
+
+@overload
+def get_env_variable(var_name: str, default: str) -> str: ...
+
+
+@overload
+def get_env_variable(var_name: str, default: None) -> Optional[str]: ...
+
+
+def get_env_variable(var_name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read a setting from the process environment, then from the repo's .env.
+
+    Works like os.getenv, with one fallback. A variable in the process
+    environment is returned exactly as it is there, even when empty, so the
+    environment always wins. Only a variable missing from the environment is
+    looked up in .env, and only when dotenv_allowed() says this is a local run
+    that is neither a test nor a deployment. When neither has it, returns
+    ``default``.
+    """
+    if var_name in os.environ:
+        return os.environ[var_name]
+    return local_dotenv_values().get(var_name, default)
 
 
 def is_deployed_environment() -> bool:

@@ -13,7 +13,7 @@ import pytest
 # real network calls to a provider. Scrub them before any test module
 # imports app code (this runs at collection start, ahead of both the lazy
 # router singleton and routers built in setUp). Keep the list in sync with
-# the os.getenv / *_ENV usage in fighthealthinsurance/ml/ml_models.py;
+# the get_env_variable / *_ENV usage in fighthealthinsurance/ml/ml_models.py;
 # test_ml_router.py::TestRouterHermeticity fails if a new one slips in.
 _AMBIENT_BACKEND_ENV_VARS = (
     "ALPHA_HEALTH_BACKEND_HOST",
@@ -48,6 +48,17 @@ _AMBIENT_BACKEND_ENV_VARS = (
 )
 for _name in _AMBIENT_BACKEND_ENV_VARS:
     os.environ.pop(_name, None)
+
+# The same settings can also come from the repo's .env: get_env_variable
+# (fighthealthinsurance/env_utils.py) falls back to it for a variable the
+# environment lacks. It already refuses to read .env under pytest and the
+# test configurations; pointing it at no file as well keeps a developer's
+# real keys in .env out of this suite even if that refusal broke. A test of
+# the fallback points it at a temporary file of its own, inside the test.
+from fighthealthinsurance import env_utils as _env_utils
+
+_env_utils.LOCAL_DOTENV_PATH = None
+
 from loguru import logger
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL

@@ -192,7 +192,8 @@ runs the same script.
      `vllm-health-svc` or `vllm-health-svc-slipstream` in the `totallylegitco`
      namespace, it port-forwards them to ports 4280 and 4281 and sets
      `HEALTH_BACKEND_*` and `NEW_HEALTH_BACKEND_*`, overriding any values you
-     exported. It also pings an internal host for `ALPHA_HEALTH_BACKEND_HOST`.
+     exported or put in `.env`. It also pings an internal host for
+     `ALPHA_HEALTH_BACKEND_HOST`.
      Without cluster access these print a message and are skipped.
 5. Serves **https://localhost:8000** with uvicorn
    (`fighthealthinsurance.asgi:application`, auto-reload, bound to `0.0.0.0`)

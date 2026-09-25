@@ -161,8 +161,8 @@ The refusal is unconditional now, ahead of the gate rather than behind it, and
 the expression it used to hide behind is a named function,
 `views.session_gate_enforced`, so a test can assert it is off and then show the
 refusal still happens. `ProductionShapedRefusalTest` in
-`tests/sync/test_back_url_token.py` removes the gate the way `Prod` does
-(`DEBUG = False`, `TESTING` deleted from `os.environ`) and repeats every
+`tests/sync/test_back_url_token.py` turns the gate off as `Prod` has it
+(`DEBUG = False`, no `TESTING` in `os.environ`) and repeats every
 refusal across all seven pages a back link can land on. Two of its tests exist
 only to prove the removal took, so the rest cannot go green for the wrong
 reason.

@@ -722,10 +722,10 @@ class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
     ``SessionRequiredMixin``'s session gate is off in production on purpose,
     and on under tox (``TESTING=True``), so a refusal that sits behind it goes
     green here over a production that serves the patient a blank form instead.
-    This class removes the gate the way ``Prod`` does (``DEBUG = False``,
-    ``pre_setup`` deleting ``TESTING``) and asserts every refusal again. The
-    first two tests prove the removal took; without them the rest would pass
-    for the wrong reason.
+    This class turns the gate off as ``Prod`` has it (``DEBUG = False``, and
+    no ``TESTING``, which only the test configurations set) and asserts every
+    refusal again. The first two tests prove the removal took; without them
+    the rest would pass for the wrong reason.
     """
 
     def setUp(self):

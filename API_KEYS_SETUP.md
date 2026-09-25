@@ -16,7 +16,7 @@ the rest of the app keeps working.
 | Variable | Service | Required? | What it unlocks |
 | --- | --- | --- | --- |
 | none | ClinicalTrials.gov | No key needed | Trial registry evidence for "experimental/investigational" denials |
-| `NICE_API_KEY` | NICE syndication | Optional | UK clinical guidance as international evidence in appeals (Prod only) |
+| `NICE_API_KEY` | NICE syndication | Optional | UK clinical guidance as international evidence in appeals |
 | `NCBI_API_KEY` | NCBI / PubMed | Optional | Higher PubMed rate limits (3 to 10 requests per second) |
 | none | RxNav / RxNorm | No key needed | Drug-name normalization (brand and generic names, misspellings) |
 | `LOG_ANALYTICS_WORKSPACE_ID`, `LOG_ANALYTICS_WORKSPACE_KEY` | Azure Log Analytics | Optional | Ship app logs to a Log Analytics workspace |
@@ -24,17 +24,18 @@ the rest of the app keeps working.
 
 ## Setting the variables
 
-Every variable on this page is read from the process environment, so export
-it in the shell that starts the server:
+Every variable on this page is read from the process environment only, so
+export it in the shell that starts the server:
 
 ```bash
 export NICE_API_KEY="your-key-here"
 ```
 
-The app does not load `.env` by itself (see
-[How the settings are read](docs/ml-backends.md#how-the-settings-are-read)).
-To keep your keys in a file, copy [.env.example](.env.example) to `.env`, fill
-it in, and export it before starting the server:
+Unlike the model backend keys, which fall back to `.env` on a local run (see
+[How the settings are read](docs/ml-backends.md#how-the-settings-are-read)),
+these are never read from `.env`. To keep your keys in a file, copy
+[.env.example](.env.example) to `.env`, fill it in, and export it before
+starting the server:
 
 ```bash
 set -a; . ./.env; set +a
@@ -73,21 +74,16 @@ not as U.S. coverage authority. The client is
 2. Once approved, NICE issues a key through its API gateway (Azure API
    Management). The client sends the key in both the `Api-Key` and
    `Ocp-Apim-Subscription-Key` headers.
-3. The client calls `https://api.nice.org.uk`. `nice_tools.py` reads
-   `NICE_API_BASE_URL` as an override, but the settings overwrite it, so
-   setting it has no effect today (see below).
+3. The client calls `https://api.nice.org.uk`, or `NICE_API_BASE_URL` when
+   that is exported (read once, when `nice_tools.py` is imported).
 
 ### Behavior
 
-- **Only `Prod` reaches the NICE API.** Python runs every settings class body
-  when `fighthealthinsurance/settings.py` is imported, whichever
-  configuration is selected. The `Test`, `TestSync` and `TestActor` bodies set
-  `NICE_API_BASE_URL` to `http://127.0.0.1:1`, which keeps tests off the real
-  API. Only `Prod.pre_setup` clears it again. So under `Dev`, including
-  `scripts/run_local.sh`, the lookup goes to that unroutable address and finds
-  nothing, even with a key. The same assignments replace any
-  `NICE_API_BASE_URL` you export, which is why the override has no effect.
-- **With the key set, under `Prod`:** the NICE lookup runs alongside the
+- **Tests never reach the NICE API.** The `Test`, `TestSync` and `TestActor`
+  configurations set `NICE_API_BASE_URL` to `http://127.0.0.1:1` in their
+  `pre_setup`, which runs only for the configuration in use. `Dev` (including
+  `scripts/run_local.sh`) and `Prod` leave it alone.
+- **With the key set, under `Dev` or `Prod`:** the NICE lookup runs alongside the
   other evidence sources during appeal generation. Results are stored in
   `NICEGuidance` and `NICEQueryData`, and a cached query is reused for 30
   days.
@@ -98,7 +94,7 @@ not as U.S. coverage authority. The client is
   `tests/async-unit/test_nice_tools.py` skips when the key is unset. When it
   is set, the tests build their own client pointed at the real API
   (`NICE_API_LIVE_URL`, default `https://api.nice.org.uk`), so they are the
-  one place outside `Prod` that calls it.
+  one test that calls it.
 
 ---
 
@@ -236,13 +232,13 @@ export LOG_ANALYTICS_LOG_TYPE="FightHealthInsurance"
 
 ## Troubleshooting
 
-- **NICE guidance isn't showing up in appeals.** Outside `Prod` that is
-  expected; see the NICE [Behavior](#behavior) notes. Under `Prod`, the key
-  didn't reach the process: with debug logging on, look for
+- **NICE guidance isn't showing up in appeals.** Under the test
+  configurations that is expected; see the NICE [Behavior](#behavior) notes.
+  Otherwise the key didn't reach the process: with debug logging on, look for
   `NICE_API_KEY not set; skipping NICE search`. For the live tests in CI,
   check that the step has `NICE_API_KEY: ${{ secrets.NICE_API_KEY }}` in its
   `env`.
 - **PubMed timeouts under load.** Add `NCBI_API_KEY`. Without one, NCBI limits
   you to 3 requests per second.
-- **A key in `.env` has no effect.** Export it; see
+- **A key from this page in `.env` has no effect.** Export it; see
   [Setting the variables](#setting-the-variables).

@@ -146,10 +146,11 @@ tox -e py313-django52-sync -- -k test_no_multiline_hash_comments_in_any_template
   `./scripts/ci_npm_build.sh`.
 - tox hands your whole shell environment to the tests (`passenv = *` in
   `tox.ini`), so a key you exported for the dev server reaches the test run
-  too. Tests must not read it. A test that needs a credential sets one with
-  `patch.dict(os.environ, ...)` for that test only; a new env-configured model
-  backend adds its variables to `_AMBIENT_BACKEND_ENV_VARS` in
-  `tests/async-unit/conftest.py`. The full rule is in [AGENTS.md](AGENTS.md).
+  too (one kept only in `.env` does not). Tests must not read it. A test that
+  needs a credential sets one with `patch.dict(os.environ, ...)` for that
+  test only; a new env-configured model backend adds its variables to
+  `_AMBIENT_BACKEND_ENV_VARS` in `tests/async-unit/conftest.py`. The full rule
+  is in [AGENTS.md](AGENTS.md).
 - `good_to_go.sh` runs sync, async, async-unit, sync-actor, selenium, black,
   mypy and prettier. It does not run temporal.
 - Plain `tox` runs every env for every installed Python (3.11 to 3.13) plus the
@@ -366,11 +367,13 @@ path: its model returns a `create_or_update_appeal` call, and `AppealTool`
   `fighthealthinsurance/settings.py`): `Dev`, `Test`, `TestSync`, `TestActor`,
   `Prod`. `DJANGO_CONFIGURATION` picks one; when it is unset, `manage.py` uses
   `ENVIRONMENT`, else `Dev`. tox sets the test class for each env.
-- **Environment variables must be exported.** Most settings, including every
-  model backend and GeoIP, are read with `os.getenv`, and nothing loads `.env`
-  into the process environment. `.env` is read only by `get_env_variable`
-  (`fighthealthinsurance/env_utils.py`, via python-decouple). To use a `.env`
-  file for everything, export it in the shell first: `set -a; . ./.env; set +a`.
+- **Where settings come from.** The model backend settings, and the few
+  others read through `get_env_variable` (`fighthealthinsurance/env_utils.py`),
+  check the process environment first and the repo's `.env` second. They read
+  `.env` only on a local run, never under tests (the `Test*` configurations or
+  pytest) and never in a deployment. Every other setting, GeoIP included, is
+  read with `os.getenv`, and nothing loads `.env` into the process
+  environment, so export those: `set -a; . ./.env; set +a`.
 - [`.env.example`](.env.example) lists the variables the code reads, with
   what each does, and [API_KEYS_SETUP.md](API_KEYS_SETUP.md) covers the
   external API keys. For model backends, see
