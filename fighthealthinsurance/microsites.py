@@ -8,15 +8,13 @@ Microsites are cached in memory after first load for performance.
 """
 
 import json
-import os
 from functools import lru_cache
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from django.conf import settings
-from django.contrib.staticfiles.storage import staticfiles_storage
 
 from loguru import logger
+
+from fighthealthinsurance.static_data import read_static_text
 
 if TYPE_CHECKING:
     from fighthealthinsurance.financial_assistance_directory import (
@@ -336,43 +334,11 @@ class Microsite:
 @lru_cache(maxsize=1)
 def _find_microsites_json() -> Optional[str]:
     """
-    Find microsites.json in staticfiles or STATICFILES_DIRS.
+    Find microsites.json in staticfiles or the app's static directory.
 
     Returns the file contents as a string, or None if not found.
     """
-    # First try staticfiles_storage (works when collectstatic has been run)
-    try:
-        with staticfiles_storage.open("microsites.json", "r") as f:
-            contents = f.read()
-            if not isinstance(contents, str):
-                contents = contents.decode("utf-8")
-            return str(contents)
-    except Exception as e:
-        logger.debug(f"Could not open microsites.json via staticfiles_storage: {e}")
-
-    # Fallback: search the app static dir / STATICFILES_DIRS directly (for test
-    # environments where collectstatic has not run).
-    search_dirs = list(getattr(settings, "STATICFILES_DIRS", []))
-    app_static_dir = getattr(settings, "APP_STATIC_DIR", None)
-    if app_static_dir:
-        search_dirs.append(app_static_dir)
-    for static_dir in search_dirs:
-        json_path = Path(static_dir) / "microsites.json"
-        if json_path.exists():
-            logger.debug(f"Found microsites.json in static source dir: {json_path}")
-            with open(json_path, "r") as f:
-                return f.read()
-
-    # Final fallback: check STATIC_ROOT
-    static_root = getattr(settings, "STATIC_ROOT", None)
-    if static_root:
-        json_path = Path(static_root) / "microsites.json"
-        if json_path.exists():
-            logger.debug(f"Found microsites.json in STATIC_ROOT: {json_path}")
-            with open(json_path, "r") as f:
-                return f.read()
-
-    return None
+    return read_static_text("microsites.json")
 
 
 def _load_microsites_cached() -> tuple[tuple[str, Microsite], ...]:

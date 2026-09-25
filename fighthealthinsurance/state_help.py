@@ -11,9 +11,10 @@ import json
 from functools import lru_cache
 from typing import Any, Optional
 
-from django.contrib.staticfiles.storage import staticfiles_storage
 
 from loguru import logger
+
+from fighthealthinsurance.static_data import read_static_text
 
 
 class StateHelpValidationError(ValueError):
@@ -284,11 +285,10 @@ def _load_state_help_cached() -> tuple[tuple[str, StateHelp], ...]:
             Returns an empty tuple if the file is missing, malformed, or entries fail validation.
     """
     try:
-        with staticfiles_storage.open("state_help.json", "r") as f:
-            contents = f.read()
-            if not isinstance(contents, str):
-                contents = contents.decode("utf-8")
-            data = json.loads(contents)
+        contents = read_static_text("state_help.json")
+        if contents is None:
+            raise FileNotFoundError("state_help.json")
+        data = json.loads(contents)
 
         # Validate that parsed JSON is a dict
         if not isinstance(data, dict):
