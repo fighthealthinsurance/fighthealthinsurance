@@ -1,6 +1,8 @@
 """Tests for the staff-only Model Backend Status page."""
 
 import os
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -11,8 +13,9 @@ from django.utils import timezone
 from fighthealthinsurance.ml import health_status as health_status_module
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
-from fighthealthinsurance.ml.health_status import health_status
+from fighthealthinsurance.ml.health_status import _model_key, health_status
 from fighthealthinsurance.ml.ml_models import (
+    AlphaRemoteInternal,
     RateLimitedRemoteOpenLike,
     RemoteModelLike,
     RemoteOpenLike,
@@ -45,6 +48,12 @@ ALPHA = {
     "ALPHA_HEALTH_BACKEND_MODEL": "/models/fhi-local",
 }
 LEGACY = {"HEALTH_BACKEND_HOST": "legacy.example.invalid"}
+# A second internal server set to the same model path as ALPHA, so both
+# register under the one name "fhi-local".
+NEW_SAME_PATH = {
+    "NEW_HEALTH_BACKEND_HOST": "new.example.invalid",
+    "NEW_HEALTH_BACKEND_MODEL": "/models/fhi-local",
+}
 
 GEMMA = "google/gemma-4-26B-A4B-it"
 DEEPSEEK = "deepseek-ai/DeepSeek-V4-Pro"
@@ -282,9 +291,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertNotIn(
             "sonar", [name for name, _q in response.context["routing"].top_external]
         )
-        self.assertEqual(
-            self.labels(sonar), ["Questions: fan-out (external allowed)"]
-        )
+        self.assertEqual(self.labels(sonar), ["Questions: fan-out (external allowed)"])
 
     def test_internal_backends(self):
         self.configure(**ALPHA, **LEGACY)
@@ -295,7 +302,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         for label in (
             "Appeals: primary",
             "Appeals: best-internal hint",
-            "Chat: doubled lead",
+            "Chat: lead, 3 calls",
             "Questions: fan-out",
             "Summaries: 1st",
         ):
@@ -305,15 +312,58 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             plan = self.plan(response, title)
             self.assertEqual(self.names(plan.internal_only)[:1], ["fhi-local"])
             self.assertEqual(self.names(plan.external_allowed)[:1], ["fhi-local"])
-        self.assertEqual(
-            self.plan(response, "Chat").internal_only[0].note, "doubled lead"
-        )
+        # The lead is listed twice up front and again among the internals,
+        # and the page says how many calls that makes.
+        lead = self.plan(response, "Chat").internal_only[0]
+        self.assertEqual((lead.note, lead.calls), ("lead", 3))
+        self.assertContains(response, "lead, 3 calls")
+        self.assertContains(response, "so it usually gets three calls")
+        self.assertNotContains(response, "doubled lead gets two calls")
         legacy = self.row(response, "fhi-legacy")
         self.assertEqual(
             (legacy["quality"], legacy["kind"]), (101, "appeal-only fine-tune")
         )
         self.assertEqual(self.labels(legacy), ["Appeals: primary", "Appeals: backup"])
         self.assertContains(response, "appeal-only fine-tune")
+
+    def test_backends_sharing_a_name_show_only_their_own_roles(self):
+        """ALPHA and NEW set to the same model path both register as
+        fhi-local. With ALPHA marked down by the sweep, the router picks only
+        NEW for chat, questions and summaries, so only NEW's row may say so.
+        Appeals go by name and try both in turn, so both rows keep those."""
+        self.configure(**ALPHA, **NEW_SAME_PATH)
+        router = ml_router_module._get_ml_router()
+        backends = router.models_by_name["fhi-local"]
+        self.assertEqual(len(backends), 2)
+        alpha = next(m for m in backends if isinstance(m, AlphaRemoteInternal))
+        health_status._health_map[_model_key(alpha)] = False
+
+        response = self.get_page()
+        rows = {
+            r["provider"]: r
+            for r in response.context["rows"]
+            if r["model_name"] == "fhi-local"
+        }
+        self.assertEqual(set(rows), {"FHI Internal", "FHI Internal (alpha)"})
+        picked = self.labels(rows["FHI Internal"])
+        skipped = self.labels(rows["FHI Internal (alpha)"])
+        for label in ("Chat: lead, 3 calls", "Questions: fan-out", "Summaries: 1st"):
+            self.assertIn(label, picked)
+        self.assertFalse(
+            [
+                label
+                for label in skipped
+                if label.startswith(("Chat", "Questions", "Summaries"))
+            ]
+        )
+        for label in ("Appeals: primary", "Appeals: best-internal hint"):
+            self.assertIn(label, picked)
+            self.assertIn(label, skipped)
+        self.assertEqual(
+            self.names(self.plan(response, "Summaries").internal_only),
+            ["fhi-local on FHI Internal"],
+        )
+        self.assertContains(response, "2 backends, tried in turn")
 
     def test_unregistered_rows_read_traits_without_being_routed(self):
         response = self.get_page()
@@ -376,8 +426,11 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         routing = response.context["routing"]
         self.assertEqual(routing.force_model, "fhi-local")
         self.assertTrue(routing.force_model_registered)
+        self.assertFalse(routing.force_model_external)
         self.assertContains(response, "<strong>FORCE_MODEL</strong> is set to")
+        self.assertContains(response, "use only it, whether or")
         self.assertNotContains(response, "No model by that name")
+        self.assertNotContains(response, "It is an external model.")
 
     def test_force_model_banner_names_an_unregistered_model(self):
         self.configure(**ALPHA, FORCE_MODEL="no-such-model")
@@ -385,6 +438,44 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertContains(response, "No model by that name is registered here")
         # generate_text_backend_names returns nothing for an unknown forced name.
         self.assertEqual(self.plan(response, "Appeals, primary pass").internal_only, [])
+        # _get_forced_models finds nothing, so chat and questions route as normal.
+        self.assertContains(response, "chat and appeal questions ignore")
+        self.assertEqual(
+            self.names(self.plan(response, "Chat").internal_only), ["fhi-local"]
+        )
+
+    def test_a_forced_external_model_is_skipped_with_external_off(self):
+        """The banner and the lists agree on what FORCE_MODEL does to a
+        person who has not allowed external models."""
+        sonnet = "anthropic/claude-sonnet-4-6"
+        self.configure(**ALPHA, **ANTHROPIC, FORCE_MODEL=sonnet)
+        response = self.get_page()
+        self.assertTrue(response.context["routing"].force_model_external)
+        self.assertContains(response, "It is an external model.")
+        self.assertContains(response, "chat and appeal questions skip it and route")
+        self.assertContains(response, "the backup pass gets no model either")
+        self.assertNotContains(response, "use only it, whether or")
+
+        # External off: chat and questions use their normal internal lists.
+        chat = self.plan(response, "Chat")
+        self.assertEqual(self.names(chat.internal_only), ["fhi-local"])
+        self.assertEqual(chat.internal_only[0].calls, 3)
+        questions = self.plan(response, "Appeal questions")
+        self.assertEqual(self.names(questions.internal_only), ["fhi-local"])
+        # External on: only the forced model.
+        self.assertEqual(self.names(chat.external_allowed), [sonnet])
+        self.assertEqual(self.names(questions.external_allowed), [sonnet])
+        # Appeals: the internal-only primary pass gets nothing, and so does
+        # the backup pass with external off.
+        primary = self.plan(response, "Appeals, primary pass")
+        self.assertEqual((primary.internal_only, primary.external_allowed), ([], []))
+        backup = self.plan(response, "Appeals, backup pass")
+        self.assertEqual(backup.internal_only, [])
+        self.assertEqual(self.names(backup.external_allowed), [sonnet])
+        # Summaries ignore it.
+        self.assertEqual(
+            self.names(self.plan(response, "Summaries").internal_only), ["fhi-local"]
+        )
 
     def test_enabled_remote_models_banner(self):
         self.configure(**ANTHROPIC, ENABLED_REMOTE_MODELS="anthropic/claude-haiku-4-5")
@@ -428,13 +519,18 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             mocks[label].side_effect = AssertionError(f"the page called {label}")
             self.addCleanup(patcher.stop)
 
+        # The Test settings turn the background health sweep off, so this
+        # covers the page's own work. On a pod, reading cached health can
+        # start the sweep, which probes in a background thread.
         response = self.get_page()
 
         called = [label for label, mock in mocks.items() if mock.called]
         self.assertEqual(called, [])
         # And routing really ran; it wasn't swallowed by the fallback.
         self.assertNotContains(response, "Routing unavailable")
-        self.assertIn("Chat: doubled lead", self.labels(self.row(response, "fhi-local")))
+        self.assertIn(
+            "Chat: lead, 3 calls", self.labels(self.row(response, "fhi-local"))
+        )
 
     def test_routing_failure_degrades_to_a_note(self):
         self.configure(**ALPHA)
@@ -536,6 +632,38 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
         self.assertFalse(self.row(response, self.MODEL)["config_changed"])
         self.assertNotContains(response, "config changed since")
 
+    def test_an_older_failure_survives_many_newer_rows_of_another_model(self):
+        """Each model's latest row is read on its own. A cap on the newest
+        rows across all models let a model checked often push another
+        model's failing check off the page."""
+        self.configure(**ANTHROPIC)
+        self.check_row(category="FAIL_AUTH", ok=False, latency_ms=None)
+        other = "anthropic/claude-haiku-4-5"
+        ModelBackendHealthCheckResult.objects.bulk_create(
+            ModelBackendHealthCheckResult(
+                run_id=f"run-{i}",
+                model_name=other,
+                internal_name="claude-haiku-4-5-20251001",
+                provider="Anthropic",
+                category="PASS",
+                ok=True,
+                latency_ms=i,
+                started_at=timezone.now(),
+            )
+            for i in range(2001)
+        )
+        response = self.get_page()
+        self.assertEqual(
+            self.row(response, self.MODEL)["last_check"].category, "FAIL_AUTH"
+        )
+        self.assertEqual(self.row(response, other)["last_check"].latency_ms, 2000)
+
+    def test_latest_checks_take_two_queries(self):
+        self.check_row()
+        with self.assertNumQueries(2):
+            latest = ModelBackendStatusView._latest_check_by_model([self.MODEL])
+        self.assertEqual(list(latest), [self.MODEL])
+
     def test_healthy_count_is_rendered(self):
         self.configure(**ANTHROPIC)
         self.check_row()
@@ -545,6 +673,91 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
             response,
             f"1 of {len(response.context['rows'])} passed their latest check",
         )
+
+
+class ModelBackendStatusLayoutTest(StatusPageTestCase):
+    """Six columns that fit a 1280px window, with every fact still shown."""
+
+    TEMPLATE = (
+        Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance/templates/model_backend_status.html"
+    )
+
+    def test_six_columns_inside_a_scroll_box(self):
+        response = self.get_page()
+        html = response.content.decode()
+        table = html[html.index('<div class="status-wrap">') :]
+        table = table[: table.index("</thead>")]
+        self.assertEqual(
+            re.findall(r"<th>([^<]*)</th>", table),
+            [
+                "Model",
+                "Kind",
+                "Routing on this pod",
+                "Config",
+                "Last health check",
+                "Last stored generation",
+            ],
+        )
+        self.assertIn(".status-wrap { overflow-x: auto;", html)
+
+    def test_registry_state_is_a_note_under_config(self):
+        self.configure(**ANTHROPIC)
+        response = self.get_page()
+        # Not configured: neither registered in router nor in reporting.
+        self.assertContains(response, "not registered in router or in reporting")
+        # Registered and reported: no note.
+        sonnet = self.row(response, "anthropic/claude-sonnet-4-6")
+        self.assertTrue(sonnet["ui_registered"] and sonnet["reporting_registered"])
+
+    def test_health_facts_share_one_cell(self):
+        self.configure(**ANTHROPIC, FHI_DEPLOYMENT_ID="v-new")
+        ModelBackendHealthCheckResult.objects.create(
+            run_id="run-1",
+            model_name="anthropic/claude-sonnet-4-6",
+            internal_name="claude-sonnet-4-6",
+            provider="Anthropic",
+            category="FAIL_TIMEOUT",
+            ok=False,
+            latency_ms=842,
+            error="timed out after 8s",
+            deployment_id="v-old",
+            environment="RowEnv",
+            enabled=True,
+            started_at=timezone.now(),
+        )
+        html = self.get_page().content.decode()
+        row = html[html.index("anthropic/claude-sonnet-4-6</div>") :]
+        row = row[: row.index("</tr>")]
+        # Model, Kind, Routing, Config, then the health check cell.
+        cell = row.split("<td>")[4]
+        for fact in (
+            "FAIL_TIMEOUT",
+            "842 ms",
+            "UTC",
+            "v-old",
+            "RowEnv",
+            "older than current deploy",
+            "other environment",
+            "timed out after 8s",
+        ):
+            self.assertIn(fact, cell)
+
+    def test_font_sizes_do_not_compound_below_12px(self):
+        """An em size inside a cell that is itself sized in em compounds:
+        0.8em chips in 0.92em cells came out at 11.8px. Every size on this
+        page is in rem, so each one is what it says wherever it sits."""
+        style = self.TEMPLATE.read_text()
+        style = style[style.index("<style>") : style.index("</style>")]
+        sizes = re.findall(r"font-size:\s*([^;}]+)", style)
+        self.assertTrue(sizes)
+        for size in sizes:
+            match = re.fullmatch(r"([\d.]+)rem", size.strip())
+            self.assertIsNotNone(match, f"font-size {size} is not in rem")
+            self.assertGreaterEqual(float(match.group(1)) * 16, 12, size)
+        # A lone generic monospace family shrinks to the 13px monospace
+        # default, which takes code in a 14.4px note down to 11.7px.
+        self.assertIn("code, .mono { font-family: monospace, monospace; }", style)
 
 
 class ModelBackendStatusWordingTest(StatusPageTestCase):

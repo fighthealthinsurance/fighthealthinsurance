@@ -75,8 +75,12 @@ def _register(router: MLRouter, name: str, model: MagicMock) -> None:
         router.internal_models_by_cost.append(model)
 
 
-def _labels(overview: ro.RoutingOverview, name: str) -> list:
-    return [role.label for role in overview.roles.get(name, [])]
+def _labels(
+    overview: ro.RoutingOverview, router: MLRouter, name: str, index: int = 0
+) -> list:
+    """Role labels of the index-th backend registered under name."""
+    instance = router.models_by_name[name][index]
+    return [role.label for role in overview.roles_for(name, instance)]
 
 
 def _plan(overview: ro.RoutingOverview, title: str) -> ro.PathPlan:
@@ -112,25 +116,27 @@ class TestRoles(_NoRoutingEnv):
         return router
 
     def test_roles_follow_the_selectors(self):
-        overview = ro.build_routing_overview(self._production_like())
+        router = self._production_like()
+        overview = ro.build_routing_overview(router)
         self.assertEqual(
-            _labels(overview, "fhi-local"),
+            _labels(overview, router, "fhi-local"),
             [
                 "Appeals: primary",
                 "Appeals: backup",
                 "Appeals: best-internal hint",
-                "Chat: doubled lead",
+                "Chat: lead, 3 calls",
                 "Questions: fan-out",
                 "Summaries: 1st",
             ],
         )
         self.assertEqual(
-            _labels(overview, "fhi-legacy"), ["Appeals: primary", "Appeals: backup"]
+            _labels(overview, router, "fhi-legacy"),
+            ["Appeals: primary", "Appeals: backup"],
         )
         # With a healthy internal, the hosted generalist only backs up
         # summaries, and only when external models are allowed.
         self.assertEqual(
-            _labels(overview, GEMMA),
+            _labels(overview, router, GEMMA),
             [
                 "Appeals: backup (external allowed)",
                 "Chat: fan-out (external allowed)",
@@ -138,14 +144,17 @@ class TestRoles(_NoRoutingEnv):
             ],
         )
         self.assertEqual(
-            _labels(overview, "sonar"), ["Questions: fan-out (external allowed)"]
+            _labels(overview, router, "sonar"),
+            ["Questions: fan-out (external allowed)"],
         )
         self.assertEqual(
             [name for name, _q in overview.top_external],
             ["azure-openai/gpt-5.5", GEMMA],
         )
-        self.assertEqual(overview.top_external_rank("azure-openai/gpt-5.5"), 1)
-        self.assertIsNone(overview.top_external_rank("sonar"))
+        gpt = router.models_by_name["azure-openai/gpt-5.5"][0]
+        self.assertEqual(overview.top_external_rank(gpt), 1)
+        self.assertIsNone(overview.top_external_rank(router.models_by_name["sonar"][0]))
+        self.assertIsNone(overview.top_external_rank(None))
 
     def test_path_lists_keep_the_selectors_order(self):
         overview = ro.build_routing_overview(self._production_like())
@@ -161,9 +170,9 @@ class TestRoles(_NoRoutingEnv):
             ["fhi-legacy", "fhi-local", "azure-openai/gpt-5.5", GEMMA],
         )
         chat = _plan(overview, "Chat")
-        self.assertEqual(
-            chat.internal_only, [ro.PlanEntry("fhi-local", "doubled lead")]
-        )
+        # The lead is listed twice up front and again among the internals.
+        self.assertEqual(chat.internal_only, [ro.PlanEntry("fhi-local", "lead", 3)])
+        self.assertEqual(chat.internal_only[0].detail, "lead, 3 calls")
         summaries = _plan(overview, "Summaries")
         self.assertEqual(
             [e.name for e in summaries.external_allowed], ["fhi-local", GEMMA]
@@ -176,11 +185,65 @@ class TestRoles(_NoRoutingEnv):
         overview = ro.build_routing_overview(router)
         # First when only internals may answer (the fail-open fallback), second
         # behind the generalist when external models are allowed.
-        self.assertIn("Summaries: 1st (internal only)", _labels(overview, "fhi-local"))
+        local = _labels(overview, router, "fhi-local")
+        self.assertIn("Summaries: 1st (internal only)", local)
+        self.assertIn("Summaries: 2nd (external allowed)", local)
         self.assertIn(
-            "Summaries: 2nd (external allowed)", _labels(overview, "fhi-local")
+            "Summaries: 1st (external allowed)", _labels(overview, router, GEMMA)
         )
-        self.assertIn("Summaries: 1st (external allowed)", _labels(overview, GEMMA))
+
+    def test_backends_sharing_a_name_keep_their_own_roles(self):
+        """Two internal servers set to the same model path register under one
+        name. Only the healthy one is picked for chat, questions and
+        summaries, so only its row may say so. Appeals go by name and try
+        both in turn, so both rows carry the appeal roles."""
+        router = _bare_router()
+        up = _backend("fhi-local", 200)
+        up.PROVIDER_LABEL = "FHI Internal"
+        down = _backend("fhi-local", 210, available=False)
+        down.PROVIDER_LABEL = "FHI Internal (alpha)"
+        _register(router, "fhi-local", up)
+        _register(router, "fhi-local", down)
+        overview = ro.build_routing_overview(router)
+        self.assertEqual(
+            _labels(overview, router, "fhi-local", 0),
+            [
+                "Appeals: primary",
+                "Appeals: backup",
+                "Appeals: best-internal hint",
+                "Chat: lead, 3 calls",
+                "Questions: fan-out",
+                "Summaries: 1st",
+            ],
+        )
+        self.assertEqual(
+            _labels(overview, router, "fhi-local", 1),
+            ["Appeals: primary", "Appeals: backup", "Appeals: best-internal hint"],
+        )
+        # The lists that route to instances say which of the two it is, and
+        # the lists that route by name say both are tried.
+        self.assertEqual(
+            _plan(overview, "Summaries").internal_only,
+            [ro.PlanEntry("fhi-local on FHI Internal")],
+        )
+        self.assertEqual(
+            _plan(overview, "Appeals, primary pass").internal_only,
+            [ro.PlanEntry("fhi-local", "2 backends, tried in turn")],
+        )
+
+    def test_chat_counts_come_from_the_list(self):
+        """The lead sorts first by name. When six stronger internals fill the
+        internal slots it is only listed twice, and the count says so."""
+        router = _bare_router()
+        _register(router, "fhi-a", _backend("fhi-a", 10))
+        for letter, quality in zip("bcdefg", range(100, 106)):
+            name = f"fhi-{letter}"
+            _register(router, name, _backend(name, quality))
+        overview = ro.build_routing_overview(router)
+        chat = _plan(overview, "Chat").internal_only
+        self.assertEqual(chat[0], ro.PlanEntry("fhi-a", "lead", 2))
+        self.assertEqual([e.calls for e in chat[1:]], [1] * 6)
+        self.assertIn("Chat: lead, 2 calls", _labels(overview, router, "fhi-a"))
 
     def test_retry_only_externals_are_labelled(self):
         router = self._production_like()
@@ -195,7 +258,8 @@ class TestRoles(_NoRoutingEnv):
             _register(router, "extra-model", extra)
             overview = ro.build_routing_overview(router)
         self.assertIn(
-            "Chat: retry only (external allowed)", _labels(overview, "extra-model")
+            "Chat: retry only (external allowed)",
+            _labels(overview, router, "extra-model"),
         )
         self.assertEqual(
             _plan(overview, "Chat").external_allowed,
@@ -205,18 +269,38 @@ class TestRoles(_NoRoutingEnv):
     def test_force_model_and_allow_list_are_reported(self):
         os.environ["FORCE_MODEL"] = "fhi-local"
         os.environ["ENABLED_REMOTE_MODELS"] = "b-model, a-model"
-        overview = ro.build_routing_overview(self._production_like())
+        router = self._production_like()
+        overview = ro.build_routing_overview(router)
         self.assertEqual(overview.force_model, "fhi-local")
         self.assertTrue(overview.force_model_registered)
+        self.assertFalse(overview.force_model_external)
         self.assertEqual(overview.enabled_remote_models, ["a-model", "b-model"])
         # The forced model is the whole chat list, so nothing is doubled.
-        self.assertIn("Chat: fan-out", _labels(overview, "fhi-local"))
-        self.assertNotIn("Chat: doubled lead", _labels(overview, "fhi-local"))
+        labels = _labels(overview, router, "fhi-local")
+        self.assertIn("Chat: fan-out", labels)
+        self.assertFalse([label for label in labels if "lead" in label])
+
+    def test_a_forced_external_model_is_skipped_with_external_off(self):
+        os.environ["FORCE_MODEL"] = "azure-openai/gpt-5.5"
+        router = self._production_like()
+        overview = ro.build_routing_overview(router)
+        self.assertTrue(overview.force_model_external)
+        chat = _plan(overview, "Chat")
+        # External off: _get_forced_models skips it and chat routes as normal.
+        self.assertEqual(chat.internal_only, [ro.PlanEntry("fhi-local", "lead", 3)])
+        self.assertEqual(
+            [e.name for e in chat.external_allowed], ["azure-openai/gpt-5.5"]
+        )
+        # Appeals go through generate_text_backend_names, which gives an
+        # internal-only pass nothing at all rather than routing as normal.
+        primary = _plan(overview, "Appeals, primary pass")
+        self.assertEqual((primary.internal_only, primary.external_allowed), ([], []))
 
     def test_unset_overrides_are_none(self):
         overview = ro.build_routing_overview(self._production_like())
         self.assertIsNone(overview.force_model)
         self.assertFalse(overview.force_model_registered)
+        self.assertFalse(overview.force_model_external)
         self.assertIsNone(overview.enabled_remote_models)
 
     def test_building_calls_no_model(self):

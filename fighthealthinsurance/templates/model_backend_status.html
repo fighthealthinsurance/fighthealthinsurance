@@ -4,33 +4,38 @@
 <head>
   <title>{{ title }}</title>
   <style>
+    /* Sizes are in rem so none compounds inside another: the smallest, 0.8rem, is 12.8px wherever it sits. */
     body { font-family: Arial, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
     h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
     h2 { color: #333; font-size: 1.15rem; margin: 0 0 8px; }
     .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
     .nav-back:hover { text-decoration: underline; }
-    .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .summary-note { color: #666; font-size: 0.9rem; margin-bottom: 18px; }
     .panel { background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; }
     .banner { background: #fff3cd; color: #856404; border-radius: 6px; padding: 8px 12px; margin: 0 0 10px; }
-    table.status { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
-    table.status th, table.status td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92em; vertical-align: top; }
-    table.status th { background: #f0f4f8; position: sticky; top: 0; }
-    table.routes { width: 100%; border-collapse: collapse; }
-    table.routes th, table.routes td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92em; vertical-align: top; }
+    /* A wide table scrolls inside its own box on a narrow screen, so the page itself never scrolls sideways. */
+    .scroll-x { overflow-x: auto; }
+    .status-wrap { overflow-x: auto; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    table.status { width: 100%; min-width: 960px; border-collapse: collapse; background: white; }
+    table.status th, table.status td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92rem; vertical-align: top; }
+    table.status th { background: #f0f4f8; }
+    table.routes { width: 100%; min-width: 720px; border-collapse: collapse; }
+    table.routes th, table.routes td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92rem; vertical-align: top; }
     table.routes th { background: #f0f4f8; }
     table.routes ol { margin: 0; padding-left: 20px; }
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.85em; font-weight: bold; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.8rem; font-weight: bold; }
     .pill-ok { background: #d4edda; color: #155724; }
     .pill-fail { background: #f8d7da; color: #721c24; }
     .pill-warn { background: #fff3cd; color: #856404; }
     .pill-off { background: #e2e3e5; color: #383d41; }
     .flag { margin-top: 4px; }
-    .chip { display: inline-block; margin: 0 4px 4px 0; padding: 1px 7px; border-radius: 9px; font-size: 0.8em; white-space: nowrap; background: #e2e3e5; color: #383d41; }
+    .chip { display: inline-block; margin: 0 4px 4px 0; padding: 1px 7px; border-radius: 9px; font-size: 0.8rem; white-space: nowrap; background: #e2e3e5; color: #383d41; }
     .chip-ext { background: #cce5ff; color: #004085; }
-    .yes { color: #155724; font-weight: bold; }
-    .no { color: #721c24; font-weight: bold; }
-    .mono { font-family: monospace; font-size: 0.9em; }
-    .err { color: #721c24; font-size: 0.85em; max-width: 320px; word-break: break-word; }
+    .sub { font-size: 0.85rem; margin-top: 2px; }
+    /* Two families, so browsers skip the 13px monospace default that would shrink code below the floor. */
+    code, .mono { font-family: monospace, monospace; }
+    .mono { font-size: 0.85rem; }
+    .err { color: #721c24; font-size: 0.85rem; margin-top: 4px; max-width: 360px; word-break: break-word; }
     .muted { color: #666; }
   </style>
 </head>
@@ -48,9 +53,10 @@
     invokes models itself.
     &ldquo;Registered in router&rdquo; means the router loaded the model; it
     does not mean any request path picks it, which the Routing column shows.
-    &ldquo;In reporting&rdquo; = the name usage reporting records on
-    generations. Blue chips apply only when the person allowed external
-    models.
+    &ldquo;In reporting&rdquo; means usage reporting records the name on
+    generations. The Config column notes a model that is not registered in
+    router or not in reporting. Blue chips apply only when the person
+    allowed external models.
     See also the <a href="{% url 'model_usage_dashboard' %}">ML Model Usage Dashboard</a>.
   </p>
 
@@ -68,10 +74,23 @@
       {% if routing.force_model %}
       <p class="banner">
         <strong>FORCE_MODEL</strong> is set to <span class="mono">{{ routing.force_model }}</span>
-        on this pod. Appeals, chat and appeal questions route only to it;
-        summaries and the best-internal hint ignore it. The lists below
-        already show its effect.
-        {% if not routing.force_model_registered %}No model by that name is registered here, so appeal generation gets no model at all while it is set.{% endif %}
+        on this pod.
+        {% if not routing.force_model_registered %}
+        No model by that name is registered here, so both appeal passes get
+        no model at all while it is set, and chat and appeal questions ignore
+        it and route as normal.
+        {% elif routing.force_model_external %}
+        It is an external model. The appeals primary pass is internal only,
+        so it gets no model at all. When the person allowed external models,
+        the appeals backup pass, chat and appeal questions use only it. When
+        they did not, chat and appeal questions skip it and route as normal,
+        and the backup pass gets no model either.
+        {% else %}
+        Both appeal passes, chat and appeal questions use only it, whether or
+        not the person allowed external models.
+        {% endif %}
+        Summaries and the best-internal hint ignore it. The lists below
+        already reflect all of this.
       </p>
       {% endif %}
       {% if routing.enabled_remote_models %}
@@ -89,6 +108,7 @@
         external models; summaries and questions use their own external
         fallback, shown in their lists below.
       </p>
+      <div class="scroll-x">
       <table class="routes">
         <thead>
           <tr>
@@ -104,50 +124,47 @@
             <td><strong>{{ plan.title }}</strong></td>
             <td>{{ plan.how }}</td>
             <td>
-              {% if plan.internal_only %}<ol>{% for e in plan.internal_only %}<li><span class="mono">{{ e.name }}</span>{% if e.note %} <span class="muted">{{ e.note }}</span>{% endif %}</li>{% endfor %}</ol>
+              {% if plan.internal_only %}<ol>{% for e in plan.internal_only %}<li><span class="mono">{{ e.name }}</span>{% if e.detail %} <span class="muted">{{ e.detail }}</span>{% endif %}</li>{% endfor %}</ol>
               {% else %}<span class="muted">no model</span>{% endif %}
             </td>
             <td>
-              {% if plan.external_allowed %}<ol>{% for e in plan.external_allowed %}<li><span class="mono">{{ e.name }}</span>{% if e.note %} <span class="muted">{{ e.note }}</span>{% endif %}</li>{% endfor %}</ol>
+              {% if plan.external_allowed %}<ol>{% for e in plan.external_allowed %}<li><span class="mono">{{ e.name }}</span>{% if e.detail %} <span class="muted">{{ e.detail }}</span>{% endif %}</li>{% endfor %}</ol>
               {% else %}<span class="muted">no model</span>{% endif %}
             </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
+      </div>
     {% else %}
       <p class="banner">Routing unavailable: this pod's router raised while the page read it, and the error is in this pod's log. The health rows below are unaffected.</p>
     {% endif %}
   </section>
 
+  <div class="status-wrap">
   <table class="status">
     <thead>
       <tr>
-        <th>Provider</th>
-        <th>Model (registry name, internal key)</th>
+        <th>Model</th>
         <th>Kind</th>
-        <th>Quality / tier</th>
         <th>Routing on this pod</th>
         <th>Config</th>
-        <th>Registered in router</th>
-        <th>In reporting</th>
         <th>Last health check</th>
-        <th>Latency</th>
-        <th>Checked at</th>
         <th>Last stored generation</th>
-        <th>Detail</th>
       </tr>
     </thead>
     <tbody>
       {% for r in rows %}
       <tr>
-        <td>{{ r.provider }}</td>
         <td>
+          <div class="sub muted">{{ r.provider }}</div>
           <div class="mono">{{ r.model_name }}</div>
           {% if r.internal_name and r.internal_name != r.model_name %}<div class="mono muted">{{ r.internal_name }}</div>{% endif %}
         </td>
-        <td>{{ r.kind|default:"&mdash;" }}</td>
-        <td>{% if r.quality is not None %}{{ r.quality }}{% if r.tier %} <span class="muted">{{ r.tier }}</span>{% endif %}{% else %}&mdash;{% endif %}</td>
+        <td>
+          {% if r.kind %}{{ r.kind }}{% else %}<span class="muted">unknown</span>{% endif %}
+          {% if r.quality is not None %}<div class="sub">quality {{ r.quality }}{% if r.tier %}, <span class="muted">{{ r.tier }} tier</span>{% endif %}</div>{% endif %}
+        </td>
         <td>
           {% if not r.has_traits %}<span class="muted">unavailable</span>
           {% elif not r.routed %}<span class="muted">not routed on this pod</span>
@@ -160,16 +177,26 @@
           {% if r.config_failing %}<span class="pill pill-fail">{{ r.config_category }}</span>
           {% elif r.enabled %}<span class="pill pill-ok">enabled</span>
           {% else %}<span class="pill pill-off">{{ r.config_category|default:"disabled" }}</span>{% endif %}
+          {% if not r.ui_registered and not r.reporting_registered %}<div class="sub muted">not registered in router or in reporting</div>
+          {% elif not r.ui_registered %}<div class="sub muted">not registered in router</div>
+          {% elif not r.reporting_registered %}<div class="sub muted">not in reporting</div>{% endif %}
+          {% if r.config_detail and r.config_detail != r.last_check.error %}<div class="err">{{ r.config_detail }}</div>{% endif %}
         </td>
-        <td>{% if r.ui_registered %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</td>
-        <td>{% if r.reporting_registered %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</td>
         <td>
           {% if r.last_check %}
             {% if r.last_check.ok %}<span class="pill pill-ok">{{ r.last_check.category }}</span>
             {% else %}<span class="pill pill-fail">{{ r.last_check.category }}</span>{% endif %}
-            {% if r.stale_deployment %}<div class="flag"><span class="pill pill-warn">older than current deploy</span></div>{% endif %}
-            {% if r.stale_environment %}<div class="flag"><span class="pill pill-warn">other environment</span></div>{% endif %}
-            {% if r.config_changed %}<div class="flag"><span class="pill pill-warn">config changed since</span></div>{% endif %}
+            {% if r.last_check.latency_ms is not None %}<span class="sub">{{ r.last_check.latency_ms }} ms</span>{% endif %}
+            <div class="sub">{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC</div>
+            <div class="sub muted">deploy <span class="mono">{{ r.last_check.deployment_id|default:"unknown" }}</span>, env <span class="mono">{{ r.last_check.environment|default:"unknown" }}</span></div>
+            {% if r.stale_deployment or r.stale_environment or r.config_changed %}
+            <div class="flag">
+              {% if r.stale_deployment %}<span class="pill pill-warn">older than current deploy</span>{% endif %}
+              {% if r.stale_environment %}<span class="pill pill-warn">other environment</span>{% endif %}
+              {% if r.config_changed %}<span class="pill pill-warn">config changed since</span>{% endif %}
+            </div>
+            {% endif %}
+            {% if r.last_check.error %}<div class="err">{{ r.last_check.error }}</div>{% endif %}
           {% elif r.config_category and not r.enabled %}
             <span class="muted">not checked</span>
           {% elif r.config_category %}
@@ -178,23 +205,13 @@
             <span class="muted">never checked</span>
           {% endif %}
         </td>
-        <td>{% if r.last_check and r.last_check.latency_ms is not None %}{{ r.last_check.latency_ms }} ms{% else %}&mdash;{% endif %}</td>
-        <td>
-          {% if r.last_check %}{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC
-            <div class="muted">deploy <span class="mono">{{ r.last_check.deployment_id|default:"unknown" }}</span></div>
-            <div class="muted">env <span class="mono">{{ r.last_check.environment|default:"unknown" }}</span></div>
-          {% else %}&mdash;{% endif %}
-        </td>
         <td>{% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC{% else %}<span class="muted">none recorded</span>{% endif %}</td>
-        <td class="err">
-          {% if r.last_check and r.last_check.error %}{{ r.last_check.error }}
-          {% elif r.config_detail %}{{ r.config_detail }}{% endif %}
-        </td>
       </tr>
       {% empty %}
-      <tr><td colspan="13">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
+      <tr><td colspan="6">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </body>
 </html>

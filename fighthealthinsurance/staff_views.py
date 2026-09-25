@@ -1778,7 +1778,11 @@ class ModelBackendStatusView(generic.TemplateView):
     sweep state belong to the process, so the page shows the view of
     whichever pod served it.
 
-    Loading the page never invokes a model and makes no network call. Run
+    Loading the page never invokes a model and never waits on the network.
+    The routing panel reads cached health signals, and like any routed
+    request, the first read on a pod whose background health sweep hasn't
+    started yet starts it; that sweep probes the backends' ``/models``
+    endpoints in a background thread. Run
     ``python manage.py check_model_backends`` (or deploy) to refresh the
     health data.
     """
@@ -1840,8 +1844,13 @@ class ModelBackendStatusView(generic.TemplateView):
             config_category = r.category if r.category != mhc.CATEGORY_OTHER else ""
             t = traits.get(id(r))
             routed = bool(t and t.routed)
+            # Roles and rank follow the instance the router registered, since
+            # two backends can share a registry name while the router picks
+            # only one of them. Appeal roles come by name, as appeals route.
             rank = (
-                routing.top_external_rank(r.model_name) if routing and routed else None
+                routing.top_external_rank(r.router_instance)
+                if routing and routed
+                else None
             )
             stale_deployment = (
                 check is not None
@@ -1870,7 +1879,7 @@ class ModelBackendStatusView(generic.TemplateView):
                     "tier": t.tier if t else "",
                     "routed": routed,
                     "roles": (
-                        routing.roles.get(r.model_name, [])
+                        routing.roles_for(r.model_name, r.router_instance)
                         if routing and routed
                         else []
                     ),
@@ -1933,16 +1942,25 @@ class ModelBackendStatusView(generic.TemplateView):
     def _latest_check_by_model(
         names: List[str],
     ) -> Dict[str, ModelBackendHealthCheckResult]:
-        """Most recent health-check row per model name (one query, newest
-        first, first-seen wins)."""
-        latest: Dict[str, ModelBackendHealthCheckResult] = {}
-        qs = ModelBackendHealthCheckResult.objects.filter(
-            model_name__in=names
-        ).order_by("-created_at")[:2000]
-        for row in qs:
-            if row.model_name not in latest:
-                latest[row.model_name] = row
-        return latest
+        """Most recent health-check row per model name.
+
+        One query finds the newest row id for each name on the page, and one
+        more fetches those rows. Row ids only grow, so the highest is the
+        newest. There is no cap across models: a cap on the newest rows
+        overall let a model checked often push another model's older
+        failing check off the page.
+        """
+        latest_ids = list(
+            ModelBackendHealthCheckResult.objects.filter(model_name__in=names)
+            .order_by()
+            .values("model_name")
+            .annotate(latest_id=Max("id"))
+            .values_list("latest_id", flat=True)
+        )
+        return {
+            row.model_name: row
+            for row in ModelBackendHealthCheckResult.objects.filter(id__in=latest_ids)
+        }
 
     @staticmethod
     def _last_generation_by_model(
