@@ -6,6 +6,34 @@ from seleniumbase import BaseCase
 
 BaseCase.main(__name__, __file__)
 
+PHONE = (390, 844)
+DESKTOP = (1440, 900)
+
+# Where each label of a form table sits against its field, whether the
+# page as a whole scrolls sideways, and whether the form's own .scroll-x box
+# does: a field wider than the phone scrolls the box rather than the page,
+# so the page alone would not show it. Measured against the document's own
+# client width rather than window.innerWidth, which includes a scrollbar
+# gutter that would hide an overflow of a few pixels.
+PHONE_JS = """
+const rows = Array.from(document.querySelectorAll('table.fhi-form-table tr')).map(tr => {
+    const th = tr.querySelector('th');
+    const td = tr.querySelector('td');
+    if (!th || !td) { return null; }
+    return {
+        label: th.textContent.trim().slice(0, 40),
+        stacked: th.getBoundingClientRect().bottom <= td.getBoundingClientRect().top + 1,
+    };
+}).filter(Boolean);
+const box = document.querySelector('table.fhi-form-table').closest('.scroll-x');
+return {
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+    boxOverflow: box ? box.scrollWidth - box.clientWidth : null,
+    rows: rows,
+};
+"""
+
 
 class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
@@ -31,6 +59,67 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
         elif "--no-proxy-server" not in existing:
             sb_config.chromium_arg = existing + ";--no-proxy-server"
         super().setUp()
+
+    def _measure_on_a_phone(self):
+        """The open page at 390px, with the window put back to desktop size
+        before anything is asserted, so a failure cannot leave the next
+        step on a phone."""
+        self.set_window_size(*PHONE)
+        self.wait_for_ready_state_complete()
+        # Read a layout property so the resize has settled before measuring.
+        self.execute_script("return document.body.offsetWidth;")
+        data = self.execute_script(PHONE_JS)
+        self.set_window_size(*DESKTOP)
+        return data
+
+    def _assert_stacks_on_a_phone(self, page, data):
+        assert data["rows"], f"{page}: no .fhi-form-table rows to measure"
+        assert data["scrollWidth"] <= data["clientWidth"], (
+            f"{page} scrolls sideways at 390px: {data['scrollWidth']}px of "
+            f"content in {data['clientWidth']}px"
+        )
+        beside = [row["label"] for row in data["rows"] if not row["stacked"]]
+        assert beside == [], f"{page} at 390px: label still beside field: {beside}"
+        assert data["boxOverflow"] is not None, f"{page}: the form has no .scroll-x"
+        assert data["boxOverflow"] <= 1, (
+            f"{page} at 390px: a field runs {data['boxOverflow']}px past the "
+            "form's box, which scrolls sideways to reach it"
+        )
+
+    def test_follow_up_forms_stack_on_a_phone(self):
+        """Both follow-up forms are Django as_table forms, a label cell
+        beside a field cell. On a phone each label sits above its field, and
+        neither the page nor the form's own box scrolls sideways."""
+        email = "timbit@test.com"
+        hashed_email = Denial.get_hashed_email(email)
+        denial = Denial.objects.create(
+            denial_text="I am evil so no health care for you.",
+            hashed_email=hashed_email,
+            use_external=False,
+            raw_email=email,
+            health_history="",
+        )
+        fax = FaxesToSend.objects.create(
+            hashed_email=hashed_email,
+            paid=True,
+            email=email,
+            name="Timbit",
+            appeal_text="Please cover it.",
+            denial_id=denial,
+            destination=None,
+        )
+        self.set_window_size(*DESKTOP)
+
+        followup = f"v0/followup/{denial.uuid}/{denial.hashed_email}/{denial.follow_up_semi_sekret}"
+        self.open(f"{self.live_server_url}/{followup}")
+        self.assert_title("Follow Up On Your Health Insurance Appeal")
+        self._assert_stacks_on_a_phone("followup", self._measure_on_a_phone())
+
+        self.open(
+            f"{self.live_server_url}/v0/faxfollowup/{fax.uuid}/{fax.hashed_email}"
+        )
+        self.assert_title("Fax ReSend")
+        self._assert_stacks_on_a_phone("faxfollowup", self._measure_on_a_phone())
 
     def test_follow_up_page_loads(self):
         email = "timbit@test.com"

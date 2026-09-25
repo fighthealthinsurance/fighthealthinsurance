@@ -3000,4 +3000,14 @@ textarea,
     .fhi-form-table td {
         padding: 0 0 var(--fhi-space-4);
     }
+
+    /* A field sized in columns rather than by a class, like the follow-up
+       form's cols="80" textareas, is wider than a phone. Stacked, the cell
+       is the whole row, so capping the field at its cell keeps its right
+       edge on screen instead of scrolling the form box sideways. */
+    .fhi-form-table input,
+    .fhi-form-table select,
+    .fhi-form-table textarea {
+        max-width: 100%;
+    }
 }

@@ -14,6 +14,11 @@ that fails keeps showing its last good copy for a week and is not asked
 again for RETRY_AFTER_SECONDS, so an outage at KFF costs one bounded wait
 per process rather than one per visitor.
 
+Each feed carries the time it was fetched, in the fresh copy and the last
+good copy alike, so the page can say how old its headlines are. Without
+that, a week-old last good copy served through an outage reads as today's
+news.
+
 Blocking: does network IO with ``requests``. Callers on the event loop must
 bridge.
 """
@@ -329,6 +334,9 @@ def _fetch_and_remember(feed_key: str) -> Dict[str, Any]:
         "name": info["name"],
         "description": info["description"],
         "articles": articles,
+        # When KFF answered, not when the page asked: the last good copy
+        # keeps this time for as long as it is served.
+        "fetched_at": datetime.now(timezone.utc),
     }
     _remember(_fresh_key(feed_key), feed, FRESH_SECONDS)
     _remember(_last_good_key(feed_key), feed, STALE_SECONDS)
@@ -441,3 +449,21 @@ def get_health_news() -> Dict[str, Dict[str, Any]]:
                     found[feed_key] = last_good
 
     return {feed_key: found[feed_key] for feed_key in FEEDS if feed_key in found}
+
+
+def oldest_fetch(feeds: Dict[str, Dict[str, Any]]) -> Optional[datetime]:
+    """When the oldest of these feeds was fetched, or None for no line.
+
+    The oldest, because a page that went by the newest would pass a week-old
+    last good copy off as current. A feed with no time on it was cached
+    before feeds carried one; its age is unknown, and so is the page's, and
+    an unknown age is no line rather than a guess. Anything that is not an
+    aware datetime counts as unknown too, so nothing here can raise.
+    """
+    times: List[datetime] = []
+    for feed in feeds.values():
+        fetched_at = feed.get("fetched_at") if isinstance(feed, dict) else None
+        if not isinstance(fetched_at, datetime) or fetched_at.utcoffset() is None:
+            return None
+        times.append(fetched_at)
+    return min(times) if times else None

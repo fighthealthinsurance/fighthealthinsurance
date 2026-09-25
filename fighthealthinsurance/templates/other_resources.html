@@ -73,6 +73,14 @@ Other Resources
     color: #a5c422;
     text-decoration: underline;
 }
+
+/* How old the headlines are. A feed KFF cannot serve shows its last good
+   copy for up to a week, so the page says when it last heard from KFF. */
+.rss-updated {
+    font-size: var(--fhi-text-small);
+    color: var(--fhi-muted);
+    margin: 0;
+}
 </style>
 <div class="fhi-page-wide">
     {% include "partials/page_title.html" with title="Resources" lede="There are many other resources for fighting for a fair outcome with your health insurance provider." %}
@@ -171,6 +179,9 @@ Other Resources
         <div class="col-12">
             <h4 class="text-fhi-green mb-3">Latest Health Policy News</h4>
             <p class="mb-3">Stay informed with the latest health policy news from KFF Health News:</p>
+            {% if rss_feeds and rss_fetched_at %}
+            <p class="rss-updated">Headlines updated {{ rss_fetched_at|timesince }} ago.</p>
+            {% endif %}
             
             <div class="rss-section">
                 {% for feed_key, feed_data in rss_feeds.items %}
