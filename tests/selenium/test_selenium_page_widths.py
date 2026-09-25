@@ -124,7 +124,8 @@ for (const p of column.querySelectorAll('p, li')) {
   probe.remove();
   out.push({text: p.textContent.trim().slice(0, 40),
             width: p.getBoundingClientRect().width, measure: measure, room: room,
-            // The lede is narrower by its own rule and is left out; a
+            // In the reading column the lede keeps its own measure and is
+            // left out there; in the wide column it fills like the rest. A
             // paragraph in a card, an alert or a grid cell fills that, and
             // room above is measured against that, not the column.
             lede: p.matches('.fhi-page-lede')});
@@ -266,13 +267,14 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
         """The wide tier has no measure: a paragraph is as wide as what
         holds it, whether that is the column, a grid cell or a card, the
         way the boxes around it are. Melanie's call after 650px paragraphs
-        sat over 1140px of boxes on About Us."""
+        sat over 1140px of boxes on About Us. The lede counts too: the
+        Resources one wrapped at the reading measure under the full column."""
         for page, tier in PAGES.items():
             if tier != "wide":
                 continue
             with self.subTest(page=page):
                 self._column(page, DESKTOP)
-                paragraphs = [p for p in self.execute_script(MEASURE_JS) if not p["lede"]]
+                paragraphs = self.execute_script(MEASURE_JS)
                 assert paragraphs, f"{page}: no running text to measure"
                 for p in paragraphs:
                     assert p["width"] >= p["room"] - 1, (

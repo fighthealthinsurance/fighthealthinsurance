@@ -425,6 +425,69 @@ textarea.fhi-field {
     margin: var(--fhi-space-3) 0 0;
 }
 
+/* The wide column has no measure, and its lede is no exception: the
+   Resources lede, one sentence, wrapped at 65 characters under a column of
+   1140px while the text and boxes below it ran the full width. */
+.fhi-page-wide .fhi-page-lede {
+    max-width: none;
+}
+
+/* A page's jump links to its own sections, as a set of equal tiles rather
+   than a row of pills. Join the Fight had five Bootstrap pills that wrapped
+   four and one on a desktop and ragged on a phone. One row of five on a
+   desktop; two columns below that, the odd last tile spanning both so the
+   set ends square; one column on a phone. */
+.fhi-jump-links {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--fhi-space-3);
+    margin: var(--fhi-space-6) 0 var(--fhi-space-8);
+}
+
+.fhi-jump-links a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3.5rem;
+    padding: var(--fhi-space-3) var(--fhi-space-4);
+    border: 2px solid var(--fhi-green);
+    border-radius: 8px;
+    background: var(--fhi-surface);
+    color: var(--fhi-green-ink);
+    font-weight: 600;
+    line-height: var(--fhi-line-heading);
+    text-align: center;
+    text-decoration: none;
+}
+
+.fhi-jump-links a:hover,
+.fhi-jump-links a:focus-visible {
+    background: var(--fhi-green-ink);
+    border-color: var(--fhi-green-ink);
+    color: #fff;
+}
+
+.fhi-jump-links a:focus-visible {
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 2px;
+}
+
+@media (max-width: 991px) {
+    .fhi-jump-links {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .fhi-jump-links a:last-child:nth-child(odd) {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 575px) {
+    .fhi-jump-links {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Alignment follows the column. In the narrow column (the intake flow, the
    delete family, anything on .fhi-page-centred) the title sits centred over
    its content; in the wide column it stays left, where a reader's eye starts
@@ -2095,13 +2158,28 @@ section:not(.slider) .share-subcopy {
     margin-left: auto;
     margin-right: auto;
 }
+/* Four cards: four across, two by two, or one column, never three and a
+   lone fourth. The old auto-fit grid wanted 280px cards, so at a desktop
+   the four did not quite fit and the last one sat alone on its own row. */
 .start-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1.5rem;
     max-width: 1100px;
     margin: 0 auto;
     padding: 0 1rem;
+}
+
+@media (max-width: 991px) {
+    .start-cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 575px) {
+    .start-cards {
+        grid-template-columns: 1fr;
+    }
 }
 .start-card {
     display: flex;

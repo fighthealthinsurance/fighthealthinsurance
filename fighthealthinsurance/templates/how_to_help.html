@@ -8,9 +8,6 @@
 {% block extra_style %}
 <style>
   html { scroll-behavior: smooth; }
-  .nav-pills .nav-link.active,
-  .nav-pills .nav-link:hover { background-color: var(--fhi-green-ink); color: #fff; }
-  .nav-pills .nav-link { color: #555; border: 1px solid #ddd; margin: 0.25rem; transition: background-color 0.3s; }
   .persona-section { padding: 2.5rem 2rem; border-radius: 8px; margin-bottom: 2rem; }
   .persona-section h2 { margin-bottom: 1.5rem; }
   .persona-card { padding: 1.5rem; background-color: rgba(255,255,255,0.7); border-radius: 8px; height: 100%; }
@@ -22,23 +19,13 @@
 <div class="fhi-page-wide">
     {% include "partials/page_title.html" with title="Join the Fight Against Unfair Denials" lede="Whether you want to help patients directly, contribute code, partner as a healthcare provider, or connect us with organizations — there's a way for you to make a real difference." %}
 
-    <ul class="nav nav-pills flex-wrap mb-4">
-        <li class="nav-item">
-            <a class="nav-link" href="#help-patients">I Want to Help Patients</a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link" href="#developers">I'm a Developer</a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link" href="#cloud">I Work at a Cloud Vendor</a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link" href="#providers">I'm a Healthcare Provider</a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link" href="#connectors">I Can Connect You With Organizations</a>
-        </li>
-    </ul>
+    <nav class="fhi-jump-links" aria-label="Ways to help">
+        <a href="#help-patients">I Want to Help Patients</a>
+        <a href="#developers">I'm a Developer</a>
+        <a href="#cloud">I Work at a Cloud Vendor</a>
+        <a href="#providers">I'm a Healthcare Provider</a>
+        <a href="#connectors">I Can Connect You With Organizations</a>
+    </nav>
 
     <section style="text-align: center; padding: 2rem; background-color: #fff8e1; border-radius: 8px; margin-bottom: 3rem;">
         <h2 style="margin-bottom: 1rem;">Help Someone Fight a Denial They Couldn't Afford to Appeal</h2>

@@ -327,6 +327,12 @@ class TheTitleBlockReadsTheScaleTest(TestCase):
         self.assertIn("font-size: var(--fhi-text-page);", self._rule(".fhi-page-title h1"))
         self.assertIn("font-size: var(--fhi-text-lead);", self._rule(".fhi-page-lede"))
 
+    def test_a_wide_page_lede_fills_its_column(self):
+        """The measure belongs to the reading column. On a wide page the lede
+        runs the column like the text below it; Resources' one-sentence lede
+        wrapped at 65 characters under 1140px before this."""
+        self.assertIn("max-width: none;", self._rule(".fhi-page-wide .fhi-page-lede"))
+
     def test_alignment_follows_the_column(self):
         """Centred in the narrow column, left in the wide one, decided by the
         wrapper and never by the page."""
