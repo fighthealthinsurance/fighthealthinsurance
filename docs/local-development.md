@@ -47,6 +47,71 @@ present. `scripts/good_to_go.sh` needs Bash 4 or newer (`brew install bash`).
 `scripts/install.sh` only knows `apt-get` and Homebrew. On other systems,
 install the prerequisites above with your own package manager.
 
+#### Fedora and other DNF or RPM systems
+
+These notes come from limited testing on Fedora, so they are less proven than
+the Debian and Ubuntu steps. They cover only what differs; otherwise follow
+the rest of this page.
+
+```bash
+sudo dnf install -y python3.12 tesseract tesseract-langpack-eng \
+  texlive-scheme-basic pandoc git git-lfs nodejs npm mkcert
+```
+
+- **Name the Python version.** On Fedora 43 and 44, `python3` is 3.14, newer
+  than any version CI or tox runs. Create the virtualenv with
+  `python3.12 -m venv .venv` ([Option A](#option-a-virtualenv)); in testing on
+  Fedora, a virtualenv worked more reliably than micromamba. `python3.13` is
+  packaged too, and it is the version CI tests.
+- On Fedora 43 and 44, `dnf install nodejs` installs Node.js 22, which meets
+  the 20+ requirement.
+- If pip fails to build a package, add a compiler and headers:
+  `sudo dnf install -y gcc gcc-c++ python3.12-devel libffi-devel openssl-devel`.
+  The requirements installed without them on Fedora 44 (x86-64), but a
+  platform without prebuilt wheels needs them.
+- `pango-devel` and `gdk-pixbuf2-devel` are not needed, for the same reason
+  as their Debian counterparts above.
+- **Make the certificate before the first run**, from the repository root:
+
+  ```bash
+  mkcert -install
+  mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1
+  ```
+
+  `run_local.sh` runs `scripts/install.sh` only when `cert.pem` is missing,
+  and `install.sh` can only install packages through `apt-get` or `brew`.
+  With the pair in place, it is skipped. The second line is the one
+  `install.sh` would run. `mkcert -install` makes browsers trust the
+  certificate; for Firefox and Chrome, mkcert also needs `certutil`, from the
+  `nss-tools` package.
+- **Tests:** the `py313-` tox envs need Python 3.13, and tox skips an env
+  whose interpreter is missing instead of failing it
+  (`skip_missing_interpreters` in `tox.ini`). If you installed only
+  `python3.12`, install `python3.13` as well, or use the `py312-` names (for
+  example `tox -e py312-django52-sync`). CI runs only 3.13. tox on Fedora has
+  had less testing than the rest of these notes.
+
+#### WSL
+
+- Inside WSL, install the prerequisites for the distribution you run: the
+  Debian and Ubuntu steps for Ubuntu, the notes above for Fedora.
+- **Clone the repository inside the WSL file system** (for example under
+  `~`), not under `/mnt/c`. Microsoft
+  [recommends](https://learn.microsoft.com/en-us/windows/wsl/filesystems)
+  keeping files you work on with Linux tools in the WSL file system for
+  speed, and in testing the repository's bash scripts ran into problems from
+  `/mnt/c`.
+- **VS Code:** run `code .` from the repository inside WSL. Or, in VS Code on
+  Windows, install the WSL extension and run **WSL: Connect to WSL** from the
+  command palette (Ctrl+Shift+P). The lower-left corner shows the WSL
+  connection. Extensions installed on the Windows side may need installing
+  again for WSL.
+- **Certificate:** `mkcert -install` inside WSL adds mkcert's CA to the
+  Linux trust stores in WSL. A browser running on Windows does not read those,
+  so it still warns about the certificate for https://localhost:8000. Accept
+  the warning, or see mkcert's documentation for installing its CA on another
+  system.
+
 ## Python environment
 
 ### Option A: virtualenv
@@ -62,7 +127,13 @@ If no virtualenv is active, `run_local.sh` activates `./build_venv`, or else
 `./.venv`. It also installs the requirements when they are missing, and again
 whenever `requirements.txt` or `requirements-dev.txt` change (it keeps a
 checksum in `.requirements_checksum`), so the `pip install` step above is
-optional.
+optional. If you do install them yourself, write the checksum it compares
+against, so its requirements check skips `pip install`. (`scripts/install.sh`,
+which runs when `cert.pem` is missing, pip-installs them regardless.)
+
+```bash
+md5sum requirements.txt requirements-dev.txt | sort | md5sum | cut -d ' ' -f 1 > .requirements_checksum
+```
 
 ### Option B: conda, mamba or micromamba
 

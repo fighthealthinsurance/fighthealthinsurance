@@ -64,6 +64,24 @@ python-decouple.)
      `scripts/run_local.sh` port-forwards the cluster backends and sets
      `HEALTH_BACKEND_*` and `NEW_HEALTH_BACKEND_*` itself, overriding what
      you exported (see [local-development.md](local-development.md)).
+   - Local model platforms such as [Ollama](https://ollama.com/) and
+     [Lemonade](https://lemonade-server.ai/) serve the OpenAI API under `/v1`
+     too, so the same variables can point at them. For example, Lemonade on
+     its default port:
+
+     ```bash
+     export HEALTH_BACKEND_HOST=localhost
+     export HEALTH_BACKEND_PORT=13305   # Ollama's default is 11434
+     export HEALTH_BACKEND_MODEL=full_model_name
+     ```
+
+     Set `HEALTH_BACKEND_MODEL` to the model's full name, exactly as the
+     server lists it at `/v1/models`, tag or quantization suffix included.
+     The health sweep marks the backend unhealthy when that name is not in
+     the list (`model_is_ok` in `ml_models.py`).
+   - A general model served this way still fills the `fhi-legacy` slot, so
+     chat and extraction use it only as the fallback described in
+     [Which model serves which request](#which-model-serves-which-request).
 
 3. **Hosted generative models (Azure, Anthropic, and others).** Set the
    relevant API keys (see the next section). These models are used when the
@@ -154,6 +172,34 @@ models.
 # (local models still load):
 export ENABLED_REMOTE_MODELS="azure-anthropic/claude-opus-4-8,azure-openai/gpt-5.5"
 ```
+
+**Testing remote model features with local models:** Azure OpenAI uses the
+standard OpenAI API format, so its settings can point at a locally hosted,
+OpenAI-compatible server (such as the ones in option 2). The app then calls
+that model through its remote-model code, which allows more testing without
+token costs.
+
+```bash
+export AZURE_OPENAI_ENDPOINT=http://localhost:13305/v1   # your server's /v1 base URL
+export AZURE_OPENAI_API_KEY=your-local-key-or-dummy-value
+export AZURE_OPENAI_MODELS=full_local_model_name
+```
+
+- The key must be set even if your local server does not check one: the
+  backend does not register without it (`RemoteAzureOpenLike.__init__`). It
+  is sent as a Bearer token.
+- The endpoint is used as given, apart from a trailing `/chat/completions`,
+  so include `/v1`.
+- The model registers as `azure-openai/<name>` in the `custom` tier, and it
+  counts as an external model. Chat and appeals call external models only
+  while the external-models consent is on: "Allow external AI models (e.g.,
+  OpenAI, Google)" on the chat consent page, or "Increase the number of
+  possible appeals and use external models" on the first appeal page. Both
+  start checked. With it off, they call only the internal backends
+  (`HEALTH_BACKEND_*` and the others in option 2).
+- In chat, external models are asked alongside the internal ones. For
+  appeals they are only the backup tier, so leave the internal backends
+  unset if you want appeals to reach this model.
 
 To check that each enabled backend actually answers, see
 [model-backend-health.md](model-backend-health.md).
