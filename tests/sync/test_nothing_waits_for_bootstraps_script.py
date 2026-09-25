@@ -11,12 +11,20 @@ were, and the script tag is gone from base.html. These hold both: no
 template or script reaches for Bootstrap's JavaScript, and each of the four
 groups is built so the browser opens it by itself, one answer at a time,
 with the question still a heading.
+
+Pages from an installed package can render inside base.html as well, and
+django-mfa2's do. Two of its templates still carry data-bs attributes.
+Neither can do anything today, for the reasons PACKAGE_PAGES_WAITING gives,
+and a test fails the day either reason stops holding.
 """
 
 import re
 from pathlib import Path
 
 from bs4 import BeautifulSoup
+from django.conf import settings
+from django.template import engines
+from django.template.utils import get_app_template_dirs
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
@@ -56,6 +64,24 @@ BOOTSTRAP_API = re.compile(
 
 MICROSITE = "mri-denial"
 
+# Pages from installed packages that render inside our base.html and still
+# carry a data-bs attribute, and why each does nothing today. Both are
+# django-mfa2's.
+PACKAGE_PAGES_WAITING = {
+    # The list of two-factor methods. Bootstrap's script opened its Add
+    # Method dropdown. Its view stops before the page renders, because
+    # settings does not set MFA_UNALLOWED_METHODS.
+    "MFA.html": ["data-bs-toggle"],
+    # The pop-up its pages include. Only the package's own scripts open
+    # it, with Bootstrap's modal(), and they sit in a {% block head %}
+    # that base.html does not have, so they never load.
+    "modal.html": ["data-bs-dismiss", "data-bs-dismiss"],
+}
+
+EXTENDS = re.compile(r"""{%\s*extends\s+["']([^"']+)["']""")
+INCLUDE = re.compile(r"""{%\s*include\s+["']([^"']+)["']""")
+HEAD_BLOCK = re.compile(r"{%\s*block\s+head\s*%}")
+
 # Each page with questions that open in place: the name its group shares
 # and how many questions it holds.
 GROUPS = {
@@ -74,6 +100,64 @@ def _our_scripts():
         if {"node_modules", "dist"} & set(path.relative_to(SCRIPTS).parts):
             continue
         yield path
+
+
+def _template_file(name: str) -> "Path | None":
+    """The file Django loads for a template name, without compiling it."""
+    for loader in engines["django"].engine.template_loaders:
+        for origin in loader.get_template_sources(name):
+            if Path(origin.name).is_file():
+                return Path(origin.name).resolve()
+    return None
+
+
+def _inside_our_base(path: Path) -> bool:
+    """Whether a template extends, at any remove, our base.html."""
+    seen = set()
+    while path not in seen:
+        seen.add(path)
+        parent = EXTENDS.search(_live_markup(path.read_text(errors="replace")))
+        found = _template_file(parent.group(1)) if parent else None
+        if found is None:
+            return False
+        if found == BASE.resolve():
+            return True
+        path = found
+    return False
+
+
+def _package_data_bs():
+    """The data-bs attributes on package templates rendered inside base.html.
+
+    A package template that extends "base.html" gets ours, because Django
+    looks in our apps first, and with it a page that loads no Bootstrap
+    script. Read are those pages and every template of a package they
+    include, by name, where Django would load that name from the package
+    rather than from us.
+    """
+    ours = {path.resolve() for _, path in _files()}
+    found = {}
+    seen: set = set()
+
+    def read(name: str, path: Path) -> None:
+        if path in seen or path in ours:
+            return
+        seen.add(path)
+        text = _live_markup(path.read_text(errors="replace"))
+        attributes = list(_data_bs_in(text))
+        if attributes:
+            found[name] = attributes
+        for included in INCLUDE.findall(text):
+            target = _template_file(included)
+            if target is not None:
+                read(included, target)
+
+    for folder in get_app_template_dirs("templates"):
+        for path in sorted(Path(folder).rglob("*.html")):
+            name = path.relative_to(folder).as_posix()
+            if _template_file(name) == path.resolve() and _inside_our_base(path):
+                read(name, path.resolve())
+    return found
 
 
 class NothingReachesForBootstrapsScriptTest(TestCase):
@@ -156,6 +240,42 @@ class NothingReachesForBootstrapsScriptTest(TestCase):
         self.assertIsNone(BOOTSTRAP_API.search("window.alert('saved')"))
         self.assertIsNone(BOOTSTRAP_API.search("$('.owl-carousel').owlCarousel({})"))
         self.assertTrue(list(_files()), "no templates or scripts were found")
+
+
+class PackagePagesInsideOursTest(SimpleTestCase):
+    """A page from an installed package can wait on Bootstrap's script too.
+
+    Reading only our own templates missed that django-mfa2's pages render
+    inside base.html, and that two of them carry data-bs attributes.
+    """
+
+    def test_every_package_page_that_carries_one_is_known(self):
+        self.assertEqual(
+            _package_data_bs(),
+            PACKAGE_PAGES_WAITING,
+            "a package's template renders inside base.html, which loads no "
+            "Bootstrap script, so a data-bs attribute on it opens nothing. "
+            "Give what it opens another way to open, and list it in "
+            "PACKAGE_PAGES_WAITING only when it cannot be reached.",
+        )
+
+    def test_the_mfa_method_list_still_cannot_render(self):
+        """Its Add Method dropdown has nothing to open it."""
+        self.assertFalse(
+            hasattr(settings, "MFA_UNALLOWED_METHODS"),
+            "django-mfa2's list of methods renders now, and its Add Method "
+            "dropdown waits on Bootstrap's script, which no page loads. Give "
+            "it another way to open before turning two-factor on.",
+        )
+
+    def test_the_mfa_scripts_still_do_not_load(self):
+        """They open the pop-up with Bootstrap's modal(), which is gone."""
+        self.assertIsNone(
+            HEAD_BLOCK.search(_live_markup(BASE.read_text())),
+            "base.html has a head block, so django-mfa2's scripts load on its "
+            "pages now, and they call Bootstrap's modal(), which no page "
+            "loads. Give the pop-up another way to open.",
+        )
 
 
 class EachQuestionOpensByItselfTest(TestCase):
