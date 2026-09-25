@@ -49,8 +49,10 @@ Other Resources
     margin-bottom: 0;
 }
 
-.rss-feed h5 {
-    font-size: 1.1rem;
+/* A feed's name labels the list under it, so it takes the lead size rather
+   than the column's larger subsection size. */
+.rss-feed h3 {
+    font-size: var(--fhi-text-lead);
     margin-bottom: 8px;
 }
 
@@ -112,20 +114,20 @@ Other Resources
 
     <div class="row" style="flex-wrap: wrap;">
         <div class="col-lg-6 mb-4">
-            <h4 class="text-fhi-green mb-3">Government Resources</h4>
-            <h6>State & Local Advocates</h6>
+            <h2 class="text-fhi-green mb-3">Government Resources</h2>
+            <h3>State & Local Advocates</h3>
             <ul class="mb-3">
                 <li><strong><a class="link" href="{% url 'state_help_index' %}">State-by-State Resources</a></strong> - Find your state's insurance department, consumer assistance programs, and Medicaid ombudsman</li>
                 <li>Many states offer health insurance advocates to help navigate appeals</li>
                 <li>Example: <a class="link" href="https://cahealthadvocates.org/appeals/">CA Health Advocates</a> for California residents</li>
             </ul>
 
-            <h6>Medicare Assistance</h6>
+            <h3>Medicare Assistance</h3>
             <ul class="mb-3">
                 <li><a class="link" href="https://www.shiphelp.org/">State Health Insurance Assistance Programs (SHIP)</a> - free Medicare counseling</li>
             </ul>
 
-            <h6>Federal Resources</h6>
+            <h3>Federal Resources</h3>
             <ul class="mb-3">
                 <li><a class="link" href="https://www.healthcare.gov/appeal-insurance-company-decision/">Healthcare.gov</a> - general appeal information</li>
                 <li><a class="link" href="https://marketplace.cms.gov/technical-assistance-resources/how-to-appeal-a-decision.pdf">CMS.gov</a> - detailed appeal guidance</li>
@@ -133,7 +135,7 @@ Other Resources
         </div>
 
         <div class="col-lg-6 mb-4">
-            <h4 class="text-fhi-green mb-3">Condition-Specific Resources</h4>
+            <h2 class="text-fhi-green mb-3">Condition-Specific Resources</h2>
             <p class="small text-muted mb-3">
                 Organizations focused on specific conditions often provide the most relevant and detailed guidance.
             </p>
@@ -150,7 +152,7 @@ Other Resources
 
     <div class="row">
         <div class="col-12">
-            <h4 class="text-fhi-green mb-3">General Resources</h4>
+            <h2 class="text-fhi-green mb-3">General Resources</h2>
             <p class="mb-3">
                 While general-purpose websites may not be as specific to your situation, they can provide helpful overviews:
             </p>
@@ -164,7 +166,7 @@ Other Resources
     <!-- Coping Resources Section with Link to Bingo -->
     <div class="row">
         <div class="col-12">
-            <h4 class="text-fhi-green mb-3">Coping Resources</h4>
+            <h2 class="text-fhi-green mb-3">Coping Resources</h2>
             <p class="mb-3">
                 Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
             </p>
@@ -177,7 +179,7 @@ Other Resources
     <!-- Simple RSS Section -->
     <div class="row">
         <div class="col-12">
-            <h4 class="text-fhi-green mb-3">Latest Health Policy News</h4>
+            <h2 class="text-fhi-green mb-3">Latest Health Policy News</h2>
             <p class="mb-3">Stay informed with the latest health policy news from KFF Health News:</p>
             {% if rss_feeds and rss_fetched_at %}
             <p class="rss-updated">Headlines updated {{ rss_fetched_at|timesince }} ago.</p>
@@ -186,7 +188,7 @@ Other Resources
             <div class="rss-section">
                 {% for feed_key, feed_data in rss_feeds.items %}
                 <div class="rss-feed">
-                    <h5 class="text-fhi-green">{{ feed_data.name }}</h5>
+                    <h3 class="text-fhi-green">{{ feed_data.name }}</h3>
                     <p class="small text-muted mb-2">{{ feed_data.description }}</p>
                     
                     {% if feed_data.articles %}

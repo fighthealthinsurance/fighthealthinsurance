@@ -9,7 +9,7 @@
 <!-- Hero Section -->
 <section id="medicaid-eligibility-hero" class="slider">
     <div class="row">
-        <div class="item item-first">
+        <div class="item item-first fhi-hero-short">
             <div class="caption d-flex flex-column align-items-center justify-content-center">
                 <div class="hero-inner" style="max-width: 900px;">
                     <div class="mb-3">
@@ -398,9 +398,7 @@
     /* ---------- Hero ---------- */
     #medicaid-eligibility-hero .hero-inner {
         background: rgba(24, 18, 48, 0.30);
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
-        padding: 2.25rem 2.5rem;
+        padding-inline: 2.5rem;
         border-radius: 16px;
         border: 1px solid rgba(255, 255, 255, 0.14);
     }
@@ -665,16 +663,20 @@
     /* ---------- Mobile ---------- */
     @media (max-width: 768px) {
         #medicaid-eligibility-hero .hero-inner {
-            padding: 1.5rem 1.15rem;
+            padding-inline: 1.15rem;
         }
 
         .experimental-badge {
             font-size: var(--fhi-text-micro);
         }
 
-        /* stacked hero buttons get one consistent width */
+        /* Stacked hero buttons get one consistent width. The row is a
+           column on a phone, so the width is a width: a 100% flex basis
+           ran down the column instead, and put Work Requirements FAQ in a
+           second column past the right edge of the band. */
         #medicaid-eligibility-hero .hero-cta-secondary a {
-            flex: 1 1 100%;
+            flex: 0 0 auto;
+            width: 100%;
             max-width: 320px;
         }
 

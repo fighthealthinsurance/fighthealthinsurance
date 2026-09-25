@@ -318,16 +318,6 @@
 {% block extra_style %}
 <style>
 /* Patient Access page specific styles */
-/* The same short band as the two Explain pages: main.css gives every
-   slider band the home page's floor, and this page also asked for 60vh of
-   its own, so a laptop saw 540px of colour above five lines of copy. The
-   floor is 380px here, a floor and not a cap: the copy is a tagline, a
-   two-line headline, three lines and a row of two buttons, and the band
-   grows with it where that needs more. */
-#patient-access-hero .item {
-    min-height: var(--fhi-hero-floor-short);
-}
-
 /* The headline breaks after "Infrastructure", not wherever the width
    happens to fall: at a laptop it left "Teams" alone on a third line.
    The width cap keeps it to two lines on any desktop, and the second

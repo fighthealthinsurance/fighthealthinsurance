@@ -9,7 +9,7 @@
 <!-- Hero Section -->
 <section id="state-help-hero" class="slider">
     <div class="row">
-        <div class="item item-first">
+        <div class="item item-first fhi-hero-short">
             <div class="caption d-flex flex-column align-items-center justify-content-center">
                 <div class="hero-inner">
                     <h3 class="hero-tagline">State Health Insurance Resources</h3>
@@ -33,7 +33,7 @@
 
 <!-- Insurance Department Section -->
 <section id="insurance-department" class="py-5">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <div class="resource-card">
@@ -79,7 +79,7 @@
 
 <!-- Consumer Assistance Section -->
 <section id="consumer-assistance" class="py-5 bg-light">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <h2 class="text-center mb-4">Consumer Assistance Programs</h2>
@@ -90,8 +90,8 @@
                     <div class="col-md-6 mb-4">
                         <div class="card h-100 assistance-card cap-card">
                             <div class="card-body">
-                                <h5 class="card-title"><i class="bi bi-shield-check me-2"></i>Consumer Assistance</h5>
-                                <h6 class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.cap_name }}</h6>
+                                <h3 class="card-title"><i class="bi bi-shield-check me-2"></i>Consumer Assistance</h3>
+                                <p class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.cap_name }}</p>
                                 {% if state.consumer_assistance.cap_phone %}
                                 <p class="mb-2">
                                     <strong>Phone:</strong>
@@ -112,8 +112,8 @@
                     <div class="col-md-6 mb-4">
                         <div class="card h-100 assistance-card ship-card">
                             <div class="card-body">
-                                <h5 class="card-title"><i class="bi bi-heart-pulse me-2"></i>SHIP (Medicare Assistance)</h5>
-                                <h6 class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.ship_name }}</h6>
+                                <h3 class="card-title"><i class="bi bi-heart-pulse me-2"></i>SHIP (Medicare Assistance)</h3>
+                                <p class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.ship_name }}</p>
                                 {% if state.consumer_assistance.ship_phone %}
                                 <p class="mb-2">
                                     <strong>Phone:</strong>
@@ -137,14 +137,14 @@
 
 <!-- Medicaid Section -->
 <section id="medicaid" class="py-5">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <h2 class="text-center mb-4">Medicaid Resources</h2>
 
                 <div class="card medicaid-card">
                     <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-hospital me-2"></i>{{ state.medicaid.agency_name }}</h5>
+                        <h3 class="card-title"><i class="bi bi-hospital me-2"></i>{{ state.medicaid.agency_name }}</h3>
 
                         <div class="row mt-3">
                             <div class="col-md-6">
@@ -167,7 +167,7 @@
                             {% if state.medicaid.managed_care_ombudsman %}
                             <div class="col-md-6">
                                 <div class="ombudsman-info p-3 bg-light rounded">
-                                    <h6><i class="bi bi-person-badge me-2"></i>Medicaid Ombudsman</h6>
+                                    <h4><i class="bi bi-person-badge me-2"></i>Medicaid Ombudsman</h4>
                                     <p class="mb-1 small text-muted">{{ state.medicaid.managed_care_ombudsman.name }}</p>
                                     {% if state.medicaid.managed_care_ombudsman.phone %}
                                     <p class="mb-1">
@@ -194,7 +194,7 @@
 <!-- External Review Section -->
 {% if state.external_review and state.external_review.available %}
 <section id="external-review" class="py-5 bg-light">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <div class="card external-review-card">
@@ -217,7 +217,7 @@
 <!-- Additional Resources Section -->
 {% if state.additional_resources %}
 <section id="additional-resources" class="py-5">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <h2 class="text-center mb-4">Additional Resources</h2>
@@ -227,7 +227,7 @@
                     {% for resource in state.additional_resources %}
                     <div class="card mb-3 resource-item">
                         <div class="card-body">
-                            <h5 class="card-title">
+                            <h3 class="card-title">
                                 {% if resource.url %}
                                 <a href="{{ resource.url }}" target="_blank" rel="noopener noreferrer">
                                     {{ resource.name }} <i class="bi bi-box-arrow-up-right ms-1 small"></i>
@@ -235,7 +235,7 @@
                                 {% else %}
                                 {{ resource.name }}
                                 {% endif %}
-                            </h5>
+                            </h3>
                             {% if resource.description %}
                             <p class="card-text text-muted mb-0">{{ resource.description }}</p>
                             {% endif %}
@@ -251,7 +251,7 @@
 
 <!-- Final CTA Section -->
 <section id="final-cta" class="py-5 bg-light">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto text-center">
                 <h2 class="mb-3">Need Help With a Health Insurance Denial?</h2>
@@ -274,7 +274,7 @@
 
 <!-- Disclaimer Section -->
 <section id="disclaimer" class="py-4">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <div class="disclaimer-box p-3 bg-light border rounded">
@@ -292,7 +292,7 @@
 <style>
     #state-help-hero .hero-inner {
         max-width: 800px;
-        padding: 2rem;
+        padding-inline: 2rem;
     }
 
     .resource-card {

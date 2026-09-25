@@ -36,8 +36,12 @@ PUBLIC_PAGES = (
     ("delete your data", "remove_data"),
     ("the terms", "tos"),
     ("the privacy policy", "privacy_policy"),
+    ("the consumer health data notice", "mhmda"),
     ("about us", "about-us"),
     ("how to help", "how-to-help"),
+    # A Bootstrap row outside any container made this page 12px wider than
+    # the phone until it moved onto the page column.
+    ("share your denial", "share_denial"),
 )
 
 

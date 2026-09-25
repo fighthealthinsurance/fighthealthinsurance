@@ -9,7 +9,8 @@ with a huge centred one; FAQ and Contact drew a green rule under theirs.
 There are two ways a page opens now, and each page uses exactly one:
 
   the image hero, for the entry pages, with two heights and one headline
-  size that are tokens (home keeps the poster size)
+  size that are tokens (home keeps the poster size and the tall band; every
+  other image hero is the short one)
   the page title block, partials/page_title.html, for every other page,
   centred in the narrow column and left-aligned in the wide one
 
@@ -20,13 +21,21 @@ cannot drift on its own.
 
 import re
 from pathlib import Path
+from unittest.mock import patch
 
+from bs4 import BeautifulSoup
 from django.test import TestCase
 from django.urls import reverse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CSS = REPO_ROOT / "fighthealthinsurance" / "static" / "css"
 TEMPLATES = REPO_ROOT / "fighthealthinsurance" / "templates"
+
+# A page is its URL name, or its name and the arguments it takes. The slugs
+# are real entries in the glossary and in static/state_help.json; California
+# has every section the state page can render.
+GLOSSARY_TERM = ("glossary_term", {"slug": "external-review"})
+STATE_PAGE = ("state_help", {"slug": "california"})
 
 # The content pages: each includes the partial and nothing else on the page is
 # an h1. The blog index is not here because its title is rendered by React
@@ -44,12 +53,94 @@ CONTENT_PAGES = [
     "mhmda",
     "remove_data",
     "scan",
+    "microsite_directory",
+    "share_denial",
+    GLOSSARY_TERM,
 ]
 
 # The entry pages: the h1 is the hero headline, and the band is a token.
-HERO_PAGES = ["explain_denial", "understand_policy"]
+HERO_PAGES = [
+    "explain_denial",
+    "understand_policy",
+    "patient_access",
+    "state_help_index",
+    "glossary_index",
+    STATE_PAGE,
+    "turning-26",
+    "preparing-2026",
+    "denial-language-library",
+    "medicaid-eligibility",
+]
+
+# Home is the one image hero with the tall band. Every other template that
+# draws an image hero draws the short one.
+TALL_HERO_TEMPLATES = {"landing_base.html"}
+
+# Every page whose content sits on a page column and that a plain GET
+# reaches: the content pages that have moved, and the hero pages whose
+# bands each hold a column. The rest of the delete flow is reached by a
+# token or a POST and carries only its title.
+ON_A_COLUMN = [
+    "about",
+    "about-ai",
+    "other-resources",
+    "how-to-help",
+    "faq",
+    "media-references",
+    "contact",
+    "privacy_policy",
+    "tos",
+    "mhmda",
+    "remove_data",
+    "microsite_directory",
+    "share_denial",
+    GLOSSARY_TERM,
+    "state_help_index",
+    STATE_PAGE,
+    "glossary_index",
+]
+
+# One feed with one headline, so the Resources page renders the feed name's
+# heading instead of leaving it out when no feed answers in the test run.
+ONE_FEED = {
+    "kff": {
+        "name": "KFF Health News",
+        "description": "Health policy news.",
+        "articles": [
+            {
+                "url": "https://kffhealthnews.org/example/",
+                "title": "A headline",
+                "formatted_date": "Sep 24, 2026",
+            }
+        ],
+    }
+}
 
 H1 = re.compile(r"<h1\b[^>]*>(.*?)</h1>", re.S)
+HEADING = re.compile(r"^h[1-6]$")
+
+
+def _url(page) -> str:
+    if isinstance(page, tuple):
+        name, kwargs = page
+        return reverse(name, kwargs=kwargs)
+    return reverse(page)
+
+
+def _outline(html: str) -> "list[tuple[int, str]]":
+    """The page's own headings in order, as (level, text).
+
+    Read from <main>, not from _body(): the only <header> on a content page
+    is the title block, so everything after the first </header> starts
+    below the page's h1. The shell around <main> has no headings today, and
+    one added there later belongs to the shell's outline, not the page's.
+    """
+    main = BeautifulSoup(html, "html.parser").find("main")
+    assert main is not None, "the page renders no <main>"
+    return [
+        (int(tag.name[1]), tag.get_text(" ", strip=True))
+        for tag in main.find_all(HEADING)
+    ]
 
 
 def _body(html: str) -> str:
@@ -68,9 +159,10 @@ class EveryContentPageOpensWithTheTitleBlockTest(TestCase):
     def test_each_content_page_has_exactly_one_heading_and_it_is_the_title_block(
         self,
     ):
-        for name in CONTENT_PAGES:
+        for page in CONTENT_PAGES:
+            name = _url(page)
             with self.subTest(page=name):
-                html = self.client.get(reverse(name)).content.decode()
+                html = self.client.get(name).content.decode()
                 headings = H1.findall(html)
                 self.assertEqual(
                     len(headings),
@@ -103,6 +195,59 @@ class EveryContentPageOpensWithTheTitleBlockTest(TestCase):
         ), "a page with no lede should render none, not an empty one")
 
 
+class EveryPageOnAColumnHasAnOutlineTest(TestCase):
+    """A heading's level says where it sits in the page, never how big it is.
+
+    The pages used to pick h4 to h6 for their sections because main.css drew
+    an h2 as large as the page's name, so someone moving through a page by
+    its headings met the title and then jumped three levels. The page column
+    sizes each level now, so the outline can be the real one: one h1, the
+    sections under it as h2s, and never a step down of more than one level.
+    A hero page may open with its tagline above the h1; going up a level is
+    never a skip.
+    """
+
+    def test_one_h1_then_an_h2_and_no_level_is_skipped(self):
+        with patch(
+            "fighthealthinsurance.health_news.get_health_news", return_value=ONE_FEED
+        ):
+            for page in ON_A_COLUMN:
+                url = _url(page)
+                with self.subTest(page=url):
+                    headings = _outline(self.client.get(url).content.decode())
+                    ones = [text for level, text in headings if level == 1]
+                    self.assertEqual(
+                        len(ones), 1, "%s has %d h1s: %s" % (url, len(ones), ones)
+                    )
+                    at = [level for level, _ in headings].index(1)
+                    if at + 1 < len(headings):
+                        level, text = headings[at + 1]
+                        self.assertEqual(
+                            level,
+                            2,
+                            "%s: h%d %r follows the h1 %r; the first section is an h2"
+                            % (url, level, text, ones[0]),
+                        )
+                    for (above, above_text), (level, text) in zip(
+                        headings, headings[1:]
+                    ):
+                        self.assertLessEqual(
+                            level,
+                            above + 1,
+                            "%s: h%d %r follows h%d %r, skipping a level"
+                            % (url, level, text, above, above_text),
+                        )
+
+    def test_the_resources_page_renders_the_feed_heading_it_is_checked_with(self):
+        """Without a feed the Resources page has no h3 under its news section,
+        and the outline test would pass it on the shorter page."""
+        with patch(
+            "fighthealthinsurance.health_news.get_health_news", return_value=ONE_FEED
+        ):
+            html = self.client.get(reverse("other-resources")).content.decode()
+        self.assertIn((3, "KFF Health News"), _outline(html))
+
+
 class TheIntakePageHasANameTest(TestCase):
     def test_the_title_sits_in_the_narrow_column_above_the_form(self):
         """The intake page had no heading at all; it opens with the same block
@@ -127,27 +272,58 @@ class TheIntakePageHasANameTest(TestCase):
 
 class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
     def test_each_hero_page_has_one_heading_inside_its_hero(self):
-        for name in HERO_PAGES:
+        for page in HERO_PAGES:
+            name = _url(page)
             with self.subTest(page=name):
-                html = self.client.get(reverse(name)).content.decode()
+                html = self.client.get(name).content.decode()
                 self.assertEqual(len(H1.findall(html)), 1)
                 hero = html[html.index('class="slider"') :]
                 self.assertIn('class="hero-headline"', hero[: hero.index("</section>")])
 
+    def test_the_home_banner_blurs_its_picture_with_one_blur(self):
+        """Home blurs its whole picture, at least 5px, and its copy box stops
+        blurring behind itself: one blur, as on the short banners."""
+        custom = (CSS / "custom.css").read_text()
+        layer = re.search(r"#home \.item::before \{[^}]*\}", custom)
+        self.assertIsNotNone(layer, "the home banner has no blurred layer")
+        radius = re.search(r"filter:\s*blur\(([\d.]+)px\)", layer.group(0))
+        self.assertIsNotNone(radius, "the home layer is not blurred")
+        self.assertGreaterEqual(float(radius.group(1)), 5.0)
+        box = re.search(r"#home \.hero-inner \{[^}]*\}", custom)
+        self.assertIsNotNone(box, "nothing turns off the home copy box's own blur")
+        self.assertIn("backdrop-filter: none;", box.group(0))
+
     def test_the_short_band_is_the_token_and_not_a_number(self):
-        for template in (
-            "explain_denial.html",
-            "understand_policy.html",
-            "patient_access.html",
-            "microsite.html",
-        ):
+        custom = (CSS / "custom.css").read_text()
+        rule = re.search(r"\.slider \.item\.fhi-hero-short \{[^}]*\}", custom)
+        self.assertIsNotNone(rule, "no rule sizes the short band")
+        self.assertIn("min-height: var(--fhi-hero-floor-short);", rule.group(0))
+
+    def test_every_image_hero_but_home_is_the_short_one(self):
+        """The class carries the floor, so a page names it and sets no
+        height of its own. Before this, four pages had the short band and
+        seven more sat on home's 650px floor over three lines of copy."""
+        heroes = {
+            p.relative_to(TEMPLATES).as_posix(): p.read_text()
+            for p in TEMPLATES.rglob("*.html")
+            if 'class="slider"' in p.read_text()
+        }
+        self.assertTrue(TALL_HERO_TEMPLATES <= set(heroes), sorted(heroes))
+        self.assertGreaterEqual(len(heroes), 12, sorted(heroes))
+        for template, text in sorted(heroes.items()):
+            if template in TALL_HERO_TEMPLATES:
+                continue
             with self.subTest(template=template):
-                text = (TEMPLATES / template).read_text()
-                self.assertIn("min-height: var(--fhi-hero-floor-short);", text)
+                section = re.search(
+                    r"<section\b[^>]*class=\"slider\"[^>]*>.*?</section>", text, re.S
+                )
+                band = re.search(r"<div class=\"item\b[^\"]*\"", section.group(0))
+                self.assertIsNotNone(band, "%s has no band" % template)
+                self.assertIn("fhi-hero-short", band.group(0))
                 self.assertNotRegex(
                     text,
-                    r"min-height:\s*\d",
-                    "%s sets its hero height as a number" % template,
+                    r"-hero\b[^{}]*\{[^}]*min-height",
+                    "%s sets its hero's height itself" % template,
                 )
 
     def test_every_hero_page_but_home_shares_one_headline_size(self):
@@ -174,7 +350,7 @@ class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
         custom = (CSS / "custom.css").read_text()
         main = (CSS / "main.css").read_text()
         self.assertEqual(custom.count("--fhi-hero-floor: 650px;"), 1)
-        self.assertEqual(custom.count("--fhi-hero-floor-short: 320px;"), 1)
+        self.assertEqual(custom.count("--fhi-hero-floor-short: 240px;"), 1)
         band = re.search(r"\.slider \.item \{[^}]*\}", main)
         self.assertIsNotNone(band)
         self.assertIn("min-height: var(--fhi-hero-floor);", band.group(0))
@@ -190,6 +366,12 @@ class TheTitleBlockReadsTheScaleTest(TestCase):
     def test_the_page_title_is_the_page_size(self):
         self.assertIn("font-size: var(--fhi-text-page);", self._rule(".fhi-page-title h1"))
         self.assertIn("font-size: var(--fhi-text-lead);", self._rule(".fhi-page-lede"))
+
+    def test_a_wide_page_lede_fills_its_column(self):
+        """The measure belongs to the reading column. On a wide page the lede
+        runs the column like the text below it; Resources' one-sentence lede
+        wrapped at 65 characters under 1140px before this."""
+        self.assertIn("max-width: none;", self._rule(".fhi-page-wide .fhi-page-lede"))
 
     def test_alignment_follows_the_column(self):
         """Centred in the narrow column, left in the wide one, decided by the

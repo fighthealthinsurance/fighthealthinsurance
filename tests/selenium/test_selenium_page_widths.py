@@ -40,12 +40,27 @@ LEAST_GUTTER = 32
 
 # Page path -> tier. Grows as pages move. Only pages a plain GET reaches;
 # the rest of the delete flow shares Delete Data's wrapper and is held by
-# the Bootstrap ratchet.
+# the Bootstrap ratchet. A hero page is measured on the column in its first
+# band under the hero. Share your Denial and a glossary term are on the
+# reading column but are left out: the first has no running text for the
+# measure check to hold, and the second's text is a 20px lead whose 65ch is
+# wider than the column. tests/sync/test_page_columns.py names both.
 PAGES = {
     "/about-us": "wide",
     "/other-resources": "wide",
     "/how-to-help": "wide",
+    "/media-references": "wide",
+    "/treatments/": "wide",
+    "/glossary/": "wide",
+    "/state-help/": "wide",
+    "/state-help/california/": "wide",
     "/remove_data": "reading",
+    "/about-ai": "reading",
+    "/faq/": "reading",
+    "/contact": "reading",
+    "/privacy_policy": "reading",
+    "/tos": "reading",
+    "/mhmda": "reading",
 }
 
 COLUMN_JS = """
@@ -109,12 +124,30 @@ for (const p of column.querySelectorAll('p, li')) {
   probe.remove();
   out.push({text: p.textContent.trim().slice(0, 40),
             width: p.getBoundingClientRect().width, measure: measure, room: room,
-            // The lede is narrower by its own rule and is left out; a
+            // In the reading column the lede keeps its own measure and is
+            // left out there; in the wide column it fills like the rest. A
             // paragraph in a card, an alert or a grid cell fills that, and
             // room above is measured against that, not the column.
             lede: p.matches('.fhi-page-lede')});
 }
 return out;
+"""
+
+
+# The page's name and every section heading in its columns, as drawn.
+HEADINGS_JS = """
+const title = document.querySelector('main h1');
+if (!title) { return {missing: true}; }
+const sections = [];
+for (const column of document.querySelectorAll('.fhi-page, .fhi-page-wide')) {
+  for (const h2 of column.querySelectorAll('h2')) {
+    if (!h2.checkVisibility()) { continue; }
+    sections.push({text: h2.textContent.trim().slice(0, 40),
+                   size: parseFloat(getComputedStyle(h2).fontSize)});
+  }
+}
+return {title: title.textContent.trim().slice(0, 40),
+        size: parseFloat(getComputedStyle(title).fontSize), sections: sections};
 """
 
 
@@ -234,19 +267,42 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
         """The wide tier has no measure: a paragraph is as wide as what
         holds it, whether that is the column, a grid cell or a card, the
         way the boxes around it are. Melanie's call after 650px paragraphs
-        sat over 1140px of boxes on About Us."""
+        sat over 1140px of boxes on About Us. The lede counts too: the
+        Resources one wrapped at the reading measure under the full column."""
         for page, tier in PAGES.items():
             if tier != "wide":
                 continue
             with self.subTest(page=page):
                 self._column(page, DESKTOP)
-                paragraphs = [p for p in self.execute_script(MEASURE_JS) if not p["lede"]]
+                paragraphs = self.execute_script(MEASURE_JS)
                 assert paragraphs, f"{page}: no running text to measure"
                 for p in paragraphs:
                     assert p["width"] >= p["room"] - 1, (
                         f"{page}: '{p['text']}...' is {p['width']:.0f}px in "
                         f"{p['room']:.0f}px of room; a wide page's text fills it."
                     )
+
+    def test_a_section_heading_is_smaller_than_the_page_name(self):
+        """main.css draws every h2 at the page size, the size of the title's
+        h1, so a page with a real outline drew its sections as large as its
+        name and the pages took h4 to h6 for their sections instead. The
+        column sizes its headings now; this holds that a section on any
+        moved page, at a desktop and on a phone, stays below the title."""
+        checked = 0
+        for page in PAGES:
+            for size in (DESKTOP, PHONE):
+                with self.subTest(page=page, width=size[0]):
+                    self._column(page, size)
+                    found = self.execute_script(HEADINGS_JS)
+                    assert not found.get("missing"), f"{page} has no h1 in <main>"
+                    for h2 in found["sections"]:
+                        checked += 1
+                        assert h2["size"] < found["size"], (
+                            f"{page} at {size[0]}px: the h2 '{h2['text']}' is "
+                            f"{h2['size']:.1f}px, as large as the page's name "
+                            f"'{found['title']}' at {found['size']:.1f}px."
+                        )
+        assert checked, "no page in PAGES has a section heading to compare"
 
     def test_running_text_stops_at_the_measure_and_the_column_does_not(self):
         for page, tier in PAGES.items():

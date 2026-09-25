@@ -119,6 +119,12 @@
     --fhi-text-lead: 1.125rem;
     --fhi-text-title: clamp(1.4rem, 1.2vw + 1rem, 1.8rem);
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
+    /* One step below a section heading inside a page column: 20px, the size
+       the policy pages drew their section headings at when they were h5s. */
+    --fhi-text-subsection: 1.25rem;
+    /* A section heading in the reading column: steady at 22px, a step under
+       --fhi-text-section, since the column's pages are prose. */
+    --fhi-text-reading-section: 1.375rem;
     --fhi-text-page: clamp(2.1rem, 2.5vw + 1.2rem, 3rem);
     --fhi-text-hero: 5rem;
     /* Every hero page except home shares one headline size: the home hero
@@ -127,10 +133,12 @@
        at 2.5rem in their own style blocks before this. */
     --fhi-text-hero-page: clamp(2.2rem, 2.4vw + 1.4rem, 3.25rem);
     /* The two heights an image hero can have. Home keeps the tall band;
-       a page whose hero is three lines of copy uses the short one. Both are
-       floors: the band grows with its copy and never cuts it off. */
+       every other page with an image hero uses the short one. Both are
+       floors: the band grows with its copy and never cuts it off. The
+       short floor only bites on a page with very little copy, and is low
+       enough that it does not pad that copy out with empty picture. */
     --fhi-hero-floor: 650px;
-    --fhi-hero-floor-short: 320px;
+    --fhi-hero-floor-short: 240px;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
@@ -310,9 +318,7 @@ textarea.fhi-field {
    is what Bootstrap's class writes too, so the weight needs no correction and
    pinning 600 here would make a heading wearing the class heavier than the
    element it stands in for. Line height is the half that does drift: the
-   element inherits the body's and the class does not. This also loosens the
-   one card title that wore the class before the retagging, on
-   microsite_directory, which is a heading that wraps and reads better for it. */
+   element inherits the body's and the class does not. */
 .h5 {
     line-height: inherit;
 }
@@ -419,6 +425,69 @@ textarea.fhi-field {
     color: var(--fhi-ink-2);
     max-width: var(--fhi-measure);
     margin: var(--fhi-space-3) 0 0;
+}
+
+/* The wide column has no measure, and its lede is no exception: the
+   Resources lede, one sentence, wrapped at 65 characters under a column of
+   1140px while the text and boxes below it ran the full width. */
+.fhi-page-wide .fhi-page-lede {
+    max-width: none;
+}
+
+/* A page's jump links to its own sections, as a set of equal tiles rather
+   than a row of pills. Join the Fight had five Bootstrap pills that wrapped
+   four and one on a desktop and ragged on a phone. One row of five on a
+   desktop; two columns below that, the odd last tile spanning both so the
+   set ends square; one column on a phone. */
+.fhi-jump-links {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--fhi-space-3);
+    margin: var(--fhi-space-6) 0 var(--fhi-space-8);
+}
+
+.fhi-jump-links a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3.5rem;
+    padding: var(--fhi-space-3) var(--fhi-space-4);
+    border: 2px solid var(--fhi-green);
+    border-radius: 8px;
+    background: var(--fhi-surface);
+    color: var(--fhi-green-ink);
+    font-weight: 600;
+    line-height: var(--fhi-line-heading);
+    text-align: center;
+    text-decoration: none;
+}
+
+.fhi-jump-links a:hover,
+.fhi-jump-links a:focus-visible {
+    background: var(--fhi-green-ink);
+    border-color: var(--fhi-green-ink);
+    color: #fff;
+}
+
+.fhi-jump-links a:focus-visible {
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 2px;
+}
+
+@media (max-width: 991px) {
+    .fhi-jump-links {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .fhi-jump-links a:last-child:nth-child(odd) {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 575px) {
+    .fhi-jump-links {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* Alignment follows the column. In the narrow column (the intake flow, the
@@ -1356,10 +1425,17 @@ a.link:hover::after {
     border: 1px solid rgba(255, 255, 255, 0.3);
     border-top: 4px solid var(--fhi-green);
 }
-.share-title {
+/* The title's size is set with two classes, so the page column's heading
+   sizes, which are one class, cannot resize it: the panel is an h4 on How
+   to Help and an h2 on the appeals page, and it looks the same at either
+   level. Its colour stays on the one class, where the light-panel rules
+   below override it. */
+.share-panel .share-title {
     margin: 0 0 .5rem;
     font-size: 1.15rem;
     font-weight: 700;
+}
+.share-title {
     color: #fff;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
 }
@@ -1837,6 +1913,75 @@ section:not(.slider) .share-subcopy {
     max-width: var(--fhi-measure);
 }
 
+/* Headings inside a page column step down from the page title. main.css
+   sizes every h2 at the page size, the same as the title's h1, so a page
+   with a real outline (an h1, then h2 sections, then h3) drew its sections
+   as large as its name; the pages dodged that by using h3 to h5 for their
+   sections, which skips levels for anyone moving through the page by its
+   headings. In a column an h2 is a section and an h3 a subsection, sized
+   here once, so a page picks the level its outline needs and never a level
+   for its size. :where() keeps each at one class of specificity, like the
+   measure, so a page rule that names more still wins.
+
+   An h2 also takes the heading line height. main.css lets every heading
+   but the h3 inherit the body's 1.5, and a long section heading such as
+   the Terms of Service articles wraps on a phone, where 1.5 spreads its
+   lines apart like a paragraph's. An h3 gets its gap back: main.css zeroes
+   an h3's bottom margin, so a label that was an h5 or h6 before the
+   relevelling sat flush on the list under it.
+
+   The reading column steps each level down once more. Its pages are prose
+   (the policies, the FAQ, Contact), and a 28.8px section over 16px grey
+   text read nearly as loud as the page's own title: the FAQ's questions
+   and the all-caps Terms articles shouted. There a section is a steady
+   22px, a subsection 18px and a fourth level the body size. The wide
+   column holds cards and grids, where the larger section sits right. */
+.fhi-page :where(h2),
+.fhi-page-wide :where(h2) {
+    line-height: var(--fhi-line-heading);
+}
+
+.fhi-page :where(h2) {
+    font-size: var(--fhi-text-reading-section);
+}
+
+.fhi-page-wide :where(h2) {
+    font-size: var(--fhi-text-section);
+}
+
+.fhi-page :where(h3),
+.fhi-page-wide :where(h3) {
+    line-height: var(--fhi-line-heading);
+    margin-bottom: var(--fhi-space-2);
+}
+
+.fhi-page :where(h3) {
+    font-size: var(--fhi-text-lead);
+}
+
+.fhi-page-wide :where(h3) {
+    font-size: var(--fhi-text-subsection);
+}
+
+.fhi-page :where(h4) {
+    font-size: var(--fhi-text-body);
+}
+
+.fhi-page-wide :where(h4) {
+    font-size: var(--fhi-text-lead);
+}
+
+/* A hero page is a stack of full-width bands under its image, each holding
+   its own column so the band's background still runs edge to edge. The
+   band's own padding spaces it, as it did around Bootstrap's container, so
+   the column adds no page-end space inside it; otherwise every band grew
+   4rem at its foot. Only bands after a hero: Terms of Service and Contact
+   also wrap their one column in a section, and keep their page end. */
+.slider ~ section > .fhi-page,
+.slider ~ section > .fhi-page-wide {
+    padding-bottom: 0;
+}
+
 /* A page whose copy is centred, like Delete Data: the column stacks its
    children down the middle, so a paragraph at the measure and a form
    narrower than the column both sit centred. A centred child takes its
@@ -2015,13 +2160,28 @@ section:not(.slider) .share-subcopy {
     margin-left: auto;
     margin-right: auto;
 }
+/* Four cards: four across, two by two, or one column, never three and a
+   lone fourth. The old auto-fit grid wanted 280px cards, so at a desktop
+   the four did not quite fit and the last one sat alone on its own row. */
 .start-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1.5rem;
     max-width: 1100px;
     margin: 0 auto;
     padding: 0 1rem;
+}
+
+@media (max-width: 991px) {
+    .start-cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 575px) {
+    .start-cards {
+        grid-template-columns: 1fr;
+    }
 }
 .start-card {
     display: flex;
@@ -2407,16 +2567,14 @@ section:not(.slider) .share-subcopy {
 }
 
 /* ===== Media References / Press Page ===== */
-.media-references-section {
-    padding: 0 0 4rem;
-}
 .media-references-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 1.75rem;
 }
+/* No size here: the page column sizes an h2 as a section, the same as the
+   section headings on every other page in a column. */
 .media-references-subhead {
-    font-size: 1.5rem;
     font-weight: 700;
     color: #333;
     margin: 3rem 0 1.75rem;
@@ -2482,8 +2640,10 @@ section:not(.slider) .share-subcopy {
 .media-reference-date {
     white-space: nowrap;
 }
+/* A card's headline is an h3 under the section's h2, drawn at the lead size
+   rather than the column's subsection size so it stays a card title. */
 .media-reference-headline {
-    font-size: 1.15rem;
+    font-size: var(--fhi-text-lead);
     font-weight: 600;
     line-height: 1.35;
     margin-bottom: 0.6rem;
@@ -2543,9 +2703,6 @@ section:not(.slider) .share-subcopy {
     margin-top: 2.5rem;
 }
 @media (max-width: 768px) {
-    .media-references-section {
-        padding: 0 0 3rem;
-    }
     .media-references-grid {
         grid-template-columns: 1fr;
     }
@@ -2612,7 +2769,7 @@ textarea,
    ------------------------------------------------------------------------ */
 #glossary-index-hero .hero-inner {
     max-width: 820px;
-    padding: var(--fhi-space-7);
+    padding-inline: var(--fhi-space-7);
 }
 
 /* Scoped to this page. /state-help/ already has a .quick-jump and does not
@@ -2672,10 +2829,6 @@ textarea,
     border-radius: var(--fhi-radius);
     box-shadow: var(--fhi-shadow);
     border-left: 4px solid var(--fhi-green-ink);
-}
-
-.term-title {
-    color: var(--fhi-green-ink);
 }
 
 .term-definition .lead {
@@ -2869,19 +3022,23 @@ textarea,
 }
 
 /* ---- The short hero -------------------------------------------------------
-   The Explain pages, Patient Access and the sample pages: a band that is
-   only as tall as its copy needs plus a little air, and a softly blurred
-   image behind it. The blur is a copy of the band's own background on a
-   pseudo-element, since a background image cannot be filtered in place;
-   the band's own sharp image sits under it, so the blur's soft edge shows
-   the same picture a little crisper for a few pixels and nothing else.
-   .slider .item.fhi-hero-short outranks main.css's phone padding on the
-   band, which is what set 40px above and below the copy.
+   Every page with an image hero except home: a band that is only as tall
+   as its copy needs plus a little air, and a softly blurred image behind
+   it. The blur is a copy of the band's own background on a pseudo-element,
+   since a background image cannot be filtered in place; the band's own
+   sharp image sits under it, so the blur's soft edge shows the same
+   picture a little crisper for a few pixels and nothing else.
+   .slider .item.fhi-hero-short outranks main.css's 650px floor and its
+   phone padding on the band, which set 40px above and below the copy, so
+   a page names the class and needs no height rule of its own.
+   The air is 28px above the copy and 36px below it: 12px of band, 16px of
+   the copy box, and 8px under the copy's last line. It was twice that.
    -------------------------------------------------------------------------- */
 .slider .item.fhi-hero-short {
     position: relative;
     overflow: hidden;
-    padding: var(--fhi-space-6) 0;
+    min-height: var(--fhi-hero-floor-short);
+    padding: var(--fhi-space-3) 0;
 }
 
 .fhi-hero-short::before {
@@ -2900,10 +3057,57 @@ textarea,
    band had one. On Patient Access that box is nearly the band's width,
    so its blur read as the whole banner; on the Explain and sample pages
    it is capped at 800px, so the banner looked blurred inside a box and
-   sharper outside it. One blur, the band's, and the box's goes. */
+   sharper outside it. One blur, the band's, and the box's goes.
+   The box's top and bottom padding are set here and nowhere else; a page
+   that wants a wider or narrower box sets only its side padding. */
 .fhi-hero-short .hero-inner {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    padding-top: var(--fhi-space-4);
+    padding-bottom: var(--fhi-space-4);
+}
+
+/* The home banner blurs its picture too, the same way: a copy of the
+   band's background on a pseudo-element, clipped by the band. A little
+   less than the short banners, since home's copy sits on cards of its
+   own, and more than the 3px the copy box used to blur behind itself,
+   which made the photo sharp everywhere but under the box. One blur, so
+   the box's goes. */
+#home .item {
+    position: relative;
+    overflow: hidden;
+}
+
+#home .item::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: inherit;
+    filter: blur(6px);
+}
+
+#home .item > * {
+    position: relative;
+}
+
+#home .hero-inner {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+/* The copy's last piece brings its own bottom margin: 20px under a
+   subcopy, 24px under a row of secondary buttons, none under the denial
+   library's count. Inside the short band that margin is part of the air
+   below the copy, so it is one step here whatever the last piece is. */
+.fhi-hero-short .hero-inner > :last-child {
+    margin-bottom: var(--fhi-space-2);
+}
+
+/* A sample page with a picture beside its copy ends on the row that
+   holds both, which takes the step above; the button row closing its text
+   column adds nothing under that. */
+.fhi-hero-short .hero-text > :last-child {
+    margin-bottom: 0;
 }
 
 /* Words that stay together: a phrase that moves to the next line whole

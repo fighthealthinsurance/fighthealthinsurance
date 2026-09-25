@@ -35,8 +35,10 @@ class AboutUsAcknowledgementsTest(TestCase):
         links = paragraphs[-1].find_all("a", href=True)
         self.assertEqual([a["href"] for a in links], [reverse("how-to-help")])
 
-    def test_thanks_are_a_subsection_of_the_page_heading(self):
+    def test_thanks_are_a_section_under_the_page_heading(self):
+        # The level directly under the page's h1, so the outline skips
+        # nothing; the page column sizes an h2 as a section, not a title.
         heading = self.section.find(["h1", "h2", "h3", "h4", "h5", "h6"])
         self.assertIsNotNone(heading)
-        self.assertEqual(heading.name, "h4")
+        self.assertEqual(heading.name, "h2")
         self.assertEqual(heading.get_text(strip=True), "Thank you")

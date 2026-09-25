@@ -17,17 +17,23 @@ the scale is a description of what the site already looked like at its best
 rather than a new opinion about how big a heading should be.
 """
 
+import functools
 import re
 from typing import Optional
 
 from tests.sync.test_contrast import (
     CSS_DIR,
     TEMPLATE_DIR,
+    Node,
     resolve_vars,
     Rule,
     custom_properties,
     load_rules,
     load_template_rules,
+    selector_matches,
+    split_selector,
+    template_dom,
+    template_markup,
 )
 
 BODY_PX = 16.0
@@ -66,6 +72,40 @@ HEADING_TOKENS = {
     "h3": "--fhi-text-section",
     "h4": "--fhi-text-title",
 }
+
+# Inside a page column the headings step down from the page title, which is
+# the page size, so a section is never drawn as large as the page's name.
+# These are the column's own rules in custom.css; outside a column the
+# element sizes above still hold. The reading column steps down once more
+# than the wide one: its pages are prose, where the wide column's section
+# size shouted over 16px text.
+COLUMN_HEADING_TOKENS = {
+    ".fhi-page": {
+        "h2": "--fhi-text-reading-section",
+        "h3": "--fhi-text-lead",
+        "h4": "--fhi-text-body",
+    },
+    ".fhi-page-wide": {
+        "h2": "--fhi-text-section",
+        "h3": "--fhi-text-subsection",
+        "h4": "--fhi-text-lead",
+    },
+}
+COLUMN_TIERS = tuple(COLUMN_HEADING_TOKENS)
+_COLUMN_HEADING = re.compile(r"(\.fhi-page(?:-wide)?)\s+:where\((h[1-6])\)")
+
+# A heading in a column whose size is a number rather than a token, agreed
+# and named here rather than skipped. The share panel's title keeps one size
+# at whatever level its caller gives it, and every page that includes it but
+# How to Help sits outside any column, so putting it on the scale changes
+# those pages too.
+SIZED_OFF_THE_SCALE = {
+    ("custom.css", ".share-panel .share-title"),
+}
+# A heading whose level its caller picks, like the share panel's
+# h{{ heading }}, parses as a bare h once the template tag is dropped.
+_HEADING_TAG = re.compile(r"h[1-6]?")
+_STYLE_BLOCK = re.compile(r"<style[^>]*>(.*?)</style>", re.S | re.I)
 
 # What each fluid heading has to come out at on a 390px phone and a 1280px
 # desktop. These are the sizes the breakpoints produced before the change.
@@ -158,6 +198,126 @@ def test_each_heading_level_reads_its_token() -> None:
             "%s is sized %s rather than reading %s, so the scale has a hole "
             "in it" % (tag, seen[tag], token)
         )
+
+
+def test_each_column_heading_level_reads_its_token() -> None:
+    """One place decides how big a section is inside a column, on both tiers.
+
+    A number here would be a size the scale does not know about, and a tier
+    left out would draw that level at main.css's size on half the pages.
+    """
+    seen: dict = {}
+    for rule in load_rules():
+        value = _font_size(rule)
+        if value is None:
+            continue
+        for selector in rule.selectors:
+            match = _COLUMN_HEADING.fullmatch(selector.strip())
+            if match:
+                seen.setdefault(match.group(2), {})[match.group(1)] = value
+    for tier, tokens in COLUMN_HEADING_TOKENS.items():
+        for tag, token in tokens.items():
+            value = seen.get(tag, {}).get(tier)
+            assert value is not None, "%s :where(%s) sets no size" % (tier, tag)
+            assert value == "var(%s)" % token, (
+                "%s :where(%s) is sized %s rather than reading %s"
+                % (tier, tag, value, token)
+            )
+
+
+def test_the_column_headings_step_down_from_the_page_title() -> None:
+    """Page title, section, subsection, lead: each smaller than the last, on a
+    phone and on a desktop, so no level in a column can draw as large as the
+    one above it."""
+    variables = custom_properties(load_rules())
+
+    def size(token: str, viewport_px: float) -> float:
+        value = variables.get(token)
+        assert value is not None, "%s is gone" % token
+        found = _clamp_at(value, viewport_px) if "clamp(" in value else _px(value)
+        assert found is not None, "%s is neither a clamp nor a length: %s" % (token, value)
+        return found
+
+    for tier, tokens in COLUMN_HEADING_TOKENS.items():
+        steps = ["--fhi-text-page", *tokens.values()]
+        for viewport in (390.0, 1280.0):
+            sizes = [size(token, viewport) for token in steps]
+            for (above, big), (below, small) in zip(
+                zip(steps, sizes), zip(steps[1:], sizes[1:])
+            ):
+                assert small < big, (
+                    "in %s at %.0fpx %s is %.1fpx, not smaller than %s at %.1fpx"
+                    % (tier, viewport, below, small, above, big)
+                )
+
+
+def _in_a_column(node: Node) -> bool:
+    ancestor = node.parent
+    while ancestor is not None:
+        if {tier.lstrip(".") for tier in COLUMN_TIERS} & ancestor.classes:
+            return True
+        ancestor = ancestor.parent
+    return False
+
+
+@functools.lru_cache(maxsize=None)
+def _style_blocks(stylesheet: str) -> tuple[str, ...]:
+    path = TEMPLATE_DIR / stylesheet[len("templates/") :]
+    return tuple(_STYLE_BLOCK.findall(path.read_text(errors="replace")))
+
+
+def test_a_heading_in_a_column_takes_its_size_from_a_token() -> None:
+    """A number on a heading inside a column is a size the scale cannot move.
+
+    The column's own rules only guarantee a size where nothing else sets one.
+    A page rule that names more wins, and so does a single class later in
+    custom.css. The media page's section headings stayed at a fixed 24px that
+    way while every other page's sections grew with the window, and every
+    test above still passed. So each heading inside a column, on every page,
+    is matched against every rule that reaches it.
+    """
+    headings: dict[str, list[Node]] = {}
+    for node in template_dom().nodes:
+        if _HEADING_TAG.fullmatch(node.tag) and _in_a_column(node):
+            headings.setdefault(node.template, []).append(node)
+    assert headings, "no page has a heading inside a column, so this measures nothing"
+
+    sheets = load_rules()
+    blocks = load_template_rules()
+    offenders: set[str] = set()
+    for page, nodes in sorted(headings.items()):
+        # A template's own style block reaches a page only when the page
+        # renders that template, by extending it or including it.
+        markup = template_markup(page)
+        reaching = sheets + [
+            rule
+            for rule in blocks
+            if any(block in markup for block in _style_blocks(rule.stylesheet))
+        ]
+        for rule in reaching:
+            value = _font_size(rule)
+            if value is None or "var(" in value:
+                continue
+            for selector in rule.selectors:
+                if (rule.stylesheet, selector.strip()) in SIZED_OFF_THE_SCALE:
+                    continue
+                steps = split_selector(selector)
+                if any(selector_matches(node, steps) for node in nodes):
+                    offenders.add(
+                        "%s:%d  %s  font-size: %s  (on %s)"
+                        % (rule.stylesheet, rule.line, selector.strip(), value, page)
+                    )
+        for node in nodes:
+            inline = re.search(r"font-size:\s*([^;]+)", node.inline_style)
+            if inline and "var(" not in inline.group(1):
+                offenders.add(
+                    "templates/%s  <%s style=\"%s\">"
+                    % (page, node.tag, node.inline_style.strip())
+                )
+    assert not offenders, (
+        "these size a heading inside a page column with a number rather than "
+        "a token:\n  %s" % "\n  ".join(sorted(offenders))
+    )
 
 
 def test_the_fluid_headings_land_where_the_breakpoints_did() -> None:
