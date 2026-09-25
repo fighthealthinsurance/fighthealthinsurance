@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import contextvars
 import itertools
-import os
 import random
 import re
 import socket
@@ -31,6 +30,7 @@ def _is_verbose_logging() -> bool:
         return False
 
 
+from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml.ml_metrics import record_ml_call, record_ml_failure
 from fighthealthinsurance.ml.response_similarity import (
     is_canned_reply,
@@ -40,6 +40,13 @@ from fighthealthinsurance.utils import (
     RateLimiter,
     ensure_message_alternation,
     is_real_appeal,
+)
+
+# Every backend setting in this module is read with get_env_variable. This
+# names where such a setting can come from, for the missing-setting errors.
+_SETTING_SOURCES = (
+    "the process environment, or the repo's .env file on a local run "
+    "(.env is never read under tests or in a deployment)"
 )
 
 # Import the appropriate async_timeout based on Python version
@@ -828,8 +835,9 @@ def repetition_penalty(text: str, min_block_size: int = 3) -> float:
 
 
 def _env_float(name: str, default: float) -> float:
-    """Read a float from the environment, falling back on missing/garbage."""
-    raw = os.environ.get(name)
+    """Read a float setting (see get_env_variable), falling back on
+    missing/garbage."""
+    raw = get_env_variable(name)
     if raw is None or raw == "":
         return default
     try:
@@ -1962,7 +1970,7 @@ class RemoteModel(RemoteModelLike):
         """Shared helper for ``config_status``: all ``names`` set and non-empty
         -> configured; none present -> not_configured; anything in between
         (absent-some or present-but-blank) -> missing_credentials."""
-        values = {name: os.getenv(name) for name in names}
+        values = {name: get_env_variable(name) for name in names}
         present = {n for n, v in values.items() if v is not None}
         non_empty = {n for n, v in values.items() if v is not None and v.strip()}
         if not present:
@@ -4100,17 +4108,19 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
     @classmethod
     def config_status(cls) -> Tuple[str, Optional[str]]:
         # Constructable with either the primary or the backup host.
-        if os.getenv("HEALTH_BACKEND_HOST") or os.getenv("HEALTH_BACKUP_BACKEND_HOST"):
+        if get_env_variable("HEALTH_BACKEND_HOST") or get_env_variable(
+            "HEALTH_BACKUP_BACKEND_HOST"
+        ):
             return ("configured", None)
         return ("not_configured", "HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
         # `or` (not getenv defaults): k8s/compose templating can materialize
         # these as empty strings, which must mean "unset".
-        self.port = os.getenv("HEALTH_BACKEND_PORT") or "80"
-        self.host = os.getenv("HEALTH_BACKEND_HOST") or None
-        self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT") or self.port
-        self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST") or self.host
+        self.port = get_env_variable("HEALTH_BACKEND_PORT") or "80"
+        self.host = get_env_variable("HEALTH_BACKEND_HOST") or None
+        self.backup_port = get_env_variable("HEALTH_BACKUP_BACKEND_PORT") or self.port
+        self.backup_host = get_env_variable("HEALTH_BACKUP_BACKEND_HOST") or self.host
         if self.host is None and self.backup_host is None:
             raise Exception("Can not construct FHI backend without a host")
         self.url = None
@@ -4123,7 +4133,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             if self.backup_host is not None
             else None
         )
-        backup_model = os.getenv("HEALTH_BACKUP_BACKEND_MODEL") or model
+        backup_model = get_env_variable("HEALTH_BACKUP_BACKEND_MODEL") or model
         # With no distinct backup configured the "backup" resolves to the very
         # same endpoint+model as the primary. Racing it in dual mode just
         # doubles every request's load on one box without adding redundancy,
@@ -4160,7 +4170,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_name = os.getenv(
+        model_name = get_env_variable(
             "HEALTH_BACKEND_MODEL", "totallylegitco/fighthealthinsurance_model_v0.5"
         )
         return [
@@ -4176,17 +4186,21 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def config_status(cls) -> Tuple[str, Optional[str]]:
-        if os.getenv("NEW_HEALTH_BACKEND_HOST"):
+        if get_env_variable("NEW_HEALTH_BACKEND_HOST"):
             return ("configured", None)
         return ("not_configured", "NEW_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
         # `or` (not getenv defaults): k8s/compose templating can materialize
         # these as empty strings, which must mean "unset".
-        self.port = os.getenv("NEW_HEALTH_BACKEND_PORT") or "80"
-        self.host = os.getenv("NEW_HEALTH_BACKEND_HOST") or None
-        self.secondary_port = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_PORT") or "80"
-        self.secondary_host = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_HOST") or None
+        self.port = get_env_variable("NEW_HEALTH_BACKEND_PORT") or "80"
+        self.host = get_env_variable("NEW_HEALTH_BACKEND_HOST") or None
+        self.secondary_port = (
+            get_env_variable("SECONDARY_NEW_HEALTH_BACKEND_PORT") or "80"
+        )
+        self.secondary_host = (
+            get_env_variable("SECONDARY_NEW_HEALTH_BACKEND_HOST") or None
+        )
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
         self.url = None
@@ -4224,7 +4238,7 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = os.getenv(
+        model_path = get_env_variable(
             "NEW_HEALTH_BACKEND_MODEL",
             "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed",
         )
@@ -4243,17 +4257,17 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def config_status(cls) -> Tuple[str, Optional[str]]:
-        if os.getenv("ALPHA_HEALTH_BACKEND_HOST"):
+        if get_env_variable("ALPHA_HEALTH_BACKEND_HOST"):
             return ("configured", None)
         return ("not_configured", "ALPHA_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
         # `or` (not getenv defaults): k8s/compose templating can materialize
         # these as empty strings, which must mean "unset".
-        self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT") or "8000"
-        self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST") or None
-        self.backup_port = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or None
-        self.backup_host = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_HOST") or None
+        self.port = get_env_variable("ALPHA_HEALTH_BACKEND_PORT") or "8000"
+        self.host = get_env_variable("ALPHA_HEALTH_BACKEND_HOST") or None
+        self.backup_port = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or None
+        self.backup_host = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_HOST") or None
         backup_model = "/app/model"
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
@@ -4289,7 +4303,7 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = os.getenv(
+        model_path = get_env_variable(
             "ALPHA_HEALTH_BACKEND_MODEL",
             "/models/fhi-2025-nov-q8-vllm-compressed",
         )
@@ -4311,7 +4325,7 @@ class RemotePerplexity(RemoteFullOpenLike):
 
     def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.perplexity.ai"
-        token = os.getenv("PERPLEXITY_API")
+        token = get_env_variable("PERPLEXITY_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for perplexity")
         super().__init__(api_base, token, model=model, dual_mode=dual_mode)
@@ -4383,7 +4397,7 @@ class DeepInfra(RemoteFullOpenLike):
 
     def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.deepinfra.com/v1/openai"
-        token = os.getenv("DEEPINFRA_API")
+        token = get_env_variable("DEEPINFRA_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
         # Use model-specific context length, default to 128k for unknown models
@@ -4750,11 +4764,11 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
             dual_mode: Whether to run primary and backup concurrently
         """
         api_base = "https://api.anthropic.com/v1"
-        token = os.getenv("ANTHROPIC_API_KEY")
+        token = get_env_variable("ANTHROPIC_API_KEY")
         if token is None or len(token) < 1:
             raise EnvironmentError(
-                "No API key found for Anthropic. Please set the ANTHROPIC_API_KEY environment variable "
-                "in your environment or .env file."
+                "No API key found for Anthropic. Set ANTHROPIC_API_KEY in "
+                f"{_SETTING_SOURCES}."
             )
 
         # All Claude models support 200K input context
@@ -4816,7 +4830,7 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         """Available Claude models (empty when ANTHROPIC_API_KEY is not set)."""
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        if not get_env_variable("ANTHROPIC_API_KEY"):
             logger.debug("RemoteAnthropic.models: ANTHROPIC_API_KEY not set, skipping")
             return []
         return cls.model_catalog()
@@ -4829,7 +4843,7 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
         OpenAI-compatibility layer historically has limited support for it,
         and we'd rather fail fast on actual inference than block startup.
         """
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        if not get_env_variable("ANTHROPIC_API_KEY"):
             return False
         return self.rate_limiter.can_request()
 
@@ -4867,19 +4881,18 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
         """Configure the backend from the subclass's env vars (API key +
         endpoint), normalize the endpoint, and create the rate limiter.
         Raises EnvironmentError if the key or endpoint is missing."""
-        api_key = os.getenv(self.API_KEY_ENV) if self.API_KEY_ENV else None
-        endpoint = os.getenv(self.ENDPOINT_ENV) if self.ENDPOINT_ENV else None
+        api_key = get_env_variable(self.API_KEY_ENV) if self.API_KEY_ENV else None
+        endpoint = get_env_variable(self.ENDPOINT_ENV) if self.ENDPOINT_ENV else None
         if not api_key:
             raise EnvironmentError(
-                f"No API key found for {self.PROVIDER_LABEL}. Please set the "
-                f"{self.API_KEY_ENV} environment variable in your environment "
-                f"or .env file."
+                f"No API key found for {self.PROVIDER_LABEL}. Set "
+                f"{self.API_KEY_ENV} in {_SETTING_SOURCES}."
             )
         if not endpoint:
             raise EnvironmentError(
-                f"No endpoint found for {self.PROVIDER_LABEL}. Please set the "
-                f"{self.ENDPOINT_ENV} environment variable (e.g. "
-                f"{self.ENDPOINT_EXAMPLE})."
+                f"No endpoint found for {self.PROVIDER_LABEL}. Set "
+                f"{self.ENDPOINT_ENV} (e.g. {self.ENDPOINT_EXAMPLE}) in "
+                f"{_SETTING_SOURCES}."
             )
 
         api_base = self._normalize_endpoint(endpoint)
@@ -4909,7 +4922,7 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     def _configured_deployments(cls) -> List[Tuple[str, int, str]]:
         """(deployment, cost, tier) list, honoring the optional ``MODELS_ENV``
         override (overrides inherit incrementing costs and a ``custom`` tier)."""
-        override = os.getenv(cls.MODELS_ENV) if cls.MODELS_ENV else None
+        override = get_env_variable(cls.MODELS_ENV) if cls.MODELS_ENV else None
         if override and override.strip():
             names = [n.strip() for n in override.split(",") if n.strip()]
             if not names:
@@ -4974,7 +4987,9 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
         is subclassed and both the key and endpoint env vars are set."""
         if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
             return []  # the shared base carries no configuration of its own
-        if not os.getenv(cls.API_KEY_ENV) or not os.getenv(cls.ENDPOINT_ENV):
+        if not get_env_variable(cls.API_KEY_ENV) or not get_env_variable(
+            cls.ENDPOINT_ENV
+        ):
             logger.debug(
                 f"{cls.__name__}.models: {cls.API_KEY_ENV}/{cls.ENDPOINT_ENV} "
                 f"not both set, skipping"
@@ -4985,9 +5000,9 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     def model_is_ok(self) -> bool:
         """Available if env is configured and not rate limited. (No ``/models``
         query — Azure's compat-layer support varies; fail fast on inference.)"""
-        if self.API_KEY_ENV and not os.getenv(self.API_KEY_ENV):
+        if self.API_KEY_ENV and not get_env_variable(self.API_KEY_ENV):
             return False
-        if self.ENDPOINT_ENV and not os.getenv(self.ENDPOINT_ENV):
+        if self.ENDPOINT_ENV and not get_env_variable(self.ENDPOINT_ENV):
             return False
         return self.rate_limiter.can_request()
 

@@ -40,6 +40,7 @@ environments; ``1`` forces on, ``0`` forces off).
 """
 
 import asyncio
+import itertools
 import os
 import re
 import time
@@ -52,6 +53,7 @@ import aiohttp
 from asgiref.sync import async_to_sync
 from loguru import logger
 
+from fighthealthinsurance.env_utils import local_dotenv_values
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
@@ -155,12 +157,17 @@ MAX_SANITIZED_ERROR_LEN = 400
 
 
 def _secret_env_values() -> List[str]:
-    """Values of secret-looking environment variables, longest first so
-    replacement of a long value can't be defeated by a shorter one matching a
-    substring earlier."""
+    """Values of secret-looking settings, longest first so replacement of a
+    long value can't be defeated by a shorter one matching a substring
+    earlier.
+
+    Covers the process environment and, on a local run, the repo's .env: the
+    backends read their keys through get_env_variable, which falls back to
+    .env, so a key that lives only there must still be redacted.
+    """
     values = [
         v
-        for k, v in os.environ.items()
+        for k, v in itertools.chain(os.environ.items(), local_dotenv_values().items())
         if v and len(v) >= 8 and _SECRET_ENV_NAME_RE.search(k)
     ]
     return sorted(set(values), key=len, reverse=True)

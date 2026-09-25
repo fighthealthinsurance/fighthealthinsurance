@@ -482,8 +482,7 @@ class TestMedicaidPathPrompt(TestCase):
 class TestRemoteFullOpenLike(TestCase):
     """Test for the RemoteFullOpenLike class."""
 
-    @patch("fighthealthinsurance.ml.ml_models.os")
-    def test_model_classes_have_valid_models(self, mock_os):
+    def test_model_classes_have_valid_models(self):
         """Test that model classes implement the models method correctly."""
         from fighthealthinsurance.ml.ml_models import (
             candidate_model_backends,

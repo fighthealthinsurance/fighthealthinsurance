@@ -12,12 +12,13 @@ Current models are trained in a private fork of that repository.
 
 ## How the settings are read
 
-The backend classes read their settings with `os.getenv`, so **export them in
-the shell that starts the server**. The app does not load `.env` into the
-process environment. A value that is only in `.env` is invisible to the
-backends. (`.env` is read only for settings fetched through
-`get_env_variable` in `fighthealthinsurance/env_utils.py`, via
-python-decouple.)
+The backend classes and the router read their settings with
+`get_env_variable` (`fighthealthinsurance/env_utils.py`): the process
+environment first, then the repo's `.env` for a setting the environment
+lacks. `.env` is read only on a local run, never under tests (the `Test`,
+`TestSync` and `TestActor` configurations, or pytest) and never in a
+deployment, which takes its keys from Kubernetes. An exported value always
+wins, including the ones `scripts/run_local.sh` sets.
 
 ## Which model serves which request
 
@@ -70,7 +71,8 @@ python-decouple.)
    - On a machine where `kubectl` can see the team's cluster,
      `scripts/run_local.sh` port-forwards the cluster backends and sets
      `HEALTH_BACKEND_*` and `NEW_HEALTH_BACKEND_*` itself, overriding what
-     you exported (see [local-development.md](local-development.md)).
+     you exported or put in `.env` (see
+     [local-development.md](local-development.md)).
    - Local model platforms such as [Ollama](https://ollama.com/) and
      [Lemonade](https://lemonade-server.ai/) serve the OpenAI API under `/v1`
      too, so the same variables can point at them. For example, Lemonade on
@@ -135,8 +137,8 @@ by itself. When DeepInfra or Perplexity has no key, building the router logs a
      `https://my-resource.services.ai.azure.com/anthropic`. The
      `/v1/messages` path is appended automatically. The bare resource host
      and a URL ending in `/v1/messages` are normalized to the same thing.
-3. Export the variables in the environment that starts the server (a `.env`
-   entry is not enough, see [How the settings are read](#how-the-settings-are-read)):
+3. Set the variables in the environment that starts the server, or in `.env`
+   for a local run (see [How the settings are read](#how-the-settings-are-read)):
 
    ```bash
    # Azure OpenAI (GPT family)

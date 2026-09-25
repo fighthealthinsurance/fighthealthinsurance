@@ -24,17 +24,18 @@ the rest of the app keeps working.
 
 ## Setting the variables
 
-Every variable on this page is read from the process environment, so export
-it in the shell that starts the server:
+Every variable on this page is read from the process environment only, so
+export it in the shell that starts the server:
 
 ```bash
 export NICE_API_KEY="your-key-here"
 ```
 
-The app does not load `.env` by itself (see
-[How the settings are read](docs/ml-backends.md#how-the-settings-are-read)).
-To keep your keys in a file, copy [.env.example](.env.example) to `.env`, fill
-it in, and export it before starting the server:
+Unlike the model backend keys, which fall back to `.env` on a local run (see
+[How the settings are read](docs/ml-backends.md#how-the-settings-are-read)),
+these are never read from `.env`. To keep your keys in a file, copy
+[.env.example](.env.example) to `.env`, fill it in, and export it before
+starting the server:
 
 ```bash
 set -a; . ./.env; set +a
@@ -244,5 +245,5 @@ export LOG_ANALYTICS_LOG_TYPE="FightHealthInsurance"
   `env`.
 - **PubMed timeouts under load.** Add `NCBI_API_KEY`. Without one, NCBI limits
   you to 3 requests per second.
-- **A key in `.env` has no effect.** Export it; see
+- **A key from this page in `.env` has no effect.** Export it; see
   [Setting the variables](#setting-the-variables).
