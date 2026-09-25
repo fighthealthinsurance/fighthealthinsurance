@@ -2,9 +2,9 @@
 
 The site is built on Bootstrap 5 and the owner wants it gone, which is a long
 job: on 2026-09-24 there were 2,994 uses of 163 of its classes across 69
-templates and 5 scripts, 483 of them the grid alone, and its script still
-opens the accordions on four pages. A long job needs a mechanism rather than
-a resolution, so this is the mechanism. It counts what is there today and
+templates and 5 scripts, 483 of them the grid alone, and its script opened
+the accordions on four pages. A long job needs a mechanism rather than a
+resolution, so this is the mechanism. It counts what is there today and
 fails when a count goes up.
 
 It counts all of it. Every class name in Bootstrap 5.2.3's own stylesheet is
@@ -158,6 +158,10 @@ DATA_BS = "data-bs attributes"
 # before this existed, and then by exactly what that page brings, with the
 # page named in PER_TEMPLATE below, so no page can grow under cover of a
 # total. 2026-09-19: the two glossary pages, written before the ratchet landed.
+# 2026-09-24: the accordions on four pages became <details>, and with them
+# went every accordion and collapse class, the "show" on each first answer,
+# and all 45 data-bs attributes. Bootstrap's script left base.html in the
+# same change, so none of those can come back and do anything.
 BASELINE: "dict[str, int]" = {
     "form-control": 6,
     "form-check-input": 5,
@@ -169,23 +173,20 @@ BASELINE: "dict[str, int]" = {
     "alert": 20,
     "d-flex": 53,
     # The families.
-    "accordions": 79,
     "alerts": 60,
     "badges": 18,
     "borders and shadows": 41,
     "breadcrumbs": 7,
     "buttons": 192,
     "cards": 411,
-    "collapse panels": 27,
     "colours and backgrounds": 64,
-    "data-bs attributes": 45,
     "display and flex": 177,
     "forms": 107,
     "grid": 483,
     "images and figures": 49,
     "list groups": 23,
     "navs and the navbar": 21,
-    "shared state": 7,
+    "shared state": 3,
     "sizing": 83,
     "spacing": 709,
     "spinners": 3,
@@ -342,7 +343,6 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
     "contact.html": {"container": 1, "grid": 1},
     "delete_data_email_sent.html": {"alert": 1, "alerts": 2, "spacing": 4, "text": 1},
     "denial_language_library.html": {
-        "accordions": 21,
         "alert": 1,
         "alerts": 2,
         "badges": 1,
@@ -352,15 +352,12 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "card": 2,
         "cards": 7,
         "col-": 6,
-        "collapse panels": 7,
         "colours and backgrounds": 4,
         "container": 5,
         "d-flex": 4,
-        "data-bs attributes": 12,
         "display and flex": 13,
         "grid": 18,
         "row": 7,
-        "shared state": 1,
         "sizing": 1,
         "spacing": 24,
         "text": 10,
@@ -523,7 +520,6 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
     },
     "mhmda.html": {"container": 1, "grid": 1},
     "microsite.html": {
-        "accordions": 6,
         "badges": 1,
         "borders and shadows": 4,
         "btn": 7,
@@ -531,17 +527,14 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "card": 4,
         "cards": 14,
         "col-": 10,
-        "collapse panels": 2,
         "colours and backgrounds": 6,
         "container": 10,
         "d-flex": 3,
-        "data-bs attributes": 3,
         "display and flex": 9,
         "grid": 31,
         "images and figures": 1,
         "list groups": 2,
         "row": 11,
-        "shared state": 1,
         "spacing": 55,
         "text": 30,
     },
@@ -645,7 +638,6 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
     },
     "plan_documents.html": {"col-": 1, "forms": 1, "grid": 1, "spacing": 1, "text": 3},
     "preparing_2026.html": {
-        "accordions": 26,
         "alert": 1,
         "alerts": 2,
         "badges": 7,
@@ -655,18 +647,15 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "card": 12,
         "cards": 44,
         "col-": 19,
-        "collapse panels": 9,
         "colours and backgrounds": 14,
         "container": 10,
         "d-flex": 9,
-        "data-bs attributes": 15,
         "display and flex": 21,
         "form-check-input": 5,
         "forms": 15,
         "grid": 48,
         "list groups": 8,
         "row": 15,
-        "shared state": 1,
         "sizing": 16,
         "spacing": 99,
         "text": 40,
@@ -795,7 +784,6 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
     "thankyou.html": {"container": 1, "grid": 1, "spacing": 1},
     "tos.html": {"container": 1, "grid": 1},
     "turning_26.html": {
-        "accordions": 26,
         "badges": 6,
         "borders and shadows": 6,
         "btn": 8,
@@ -803,16 +791,13 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "card": 14,
         "cards": 62,
         "col-": 20,
-        "collapse panels": 9,
         "colours and backgrounds": 14,
         "container": 8,
         "d-flex": 8,
-        "data-bs attributes": 15,
         "display and flex": 19,
         "grid": 47,
         "list groups": 7,
         "row": 14,
-        "shared state": 1,
         "sizing": 18,
         "spacing": 68,
         "text": 29,

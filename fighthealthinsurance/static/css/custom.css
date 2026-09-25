@@ -3078,6 +3078,108 @@ textarea,
     }
 }
 
+/* ---- Questions that open in place ----------------------------------------
+   The FAQ on every microsite and on the Denial Language Library, and the
+   lists on Preparing for 2026 and Turning 26. They were Bootstrap
+   accordions, which opened only once bootstrap.bundle.min.js had arrived
+   from a CDN, so a blocked or slow script left every answer shut. Each item
+   is a <details> now: the browser opens it with no script, and keyboards
+   and screen readers get the open and closed state for free. The question
+   stays a heading inside the <summary>, so the page's outline is what it
+   was. The items in a group share a name=, as the header's dropdowns do,
+   so one answer is open at a time.
+   -------------------------------------------------------------------------- */
+.fhi-accordion {
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid var(--fhi-line);
+    border-radius: var(--fhi-radius);
+}
+
+.fhi-accordion-item + .fhi-accordion-item {
+    border-top: 1px solid var(--fhi-line);
+}
+
+/* The whole row is the control, and never shorter than 48px, so a thumb
+   finds it. */
+.fhi-accordion-item > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--fhi-space-4);
+    min-height: 48px;
+    padding: var(--fhi-space-4) var(--fhi-space-5);
+    color: var(--fhi-ink);
+    cursor: pointer;
+    /* The chevron below is the marker, not the browser's triangle. */
+    list-style: none;
+}
+
+.fhi-accordion-item > summary::-webkit-details-marker {
+    display: none;
+}
+
+.fhi-accordion-item > summary:hover,
+.fhi-accordion-item[open] > summary {
+    background: var(--fhi-surface);
+}
+
+/* The ring sits inside the row. Outside it, the box's rounded edge would
+   cut it off on the first and last question, and the row next door would
+   paint over it on the others. */
+.fhi-accordion-item > summary:focus-visible {
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: -3px;
+}
+
+.fhi-accordion-question {
+    margin: 0;
+    color: inherit;
+    font-size: var(--fhi-text-lead);
+    font-weight: 600;
+    line-height: var(--fhi-line-heading);
+    letter-spacing: normal;
+}
+
+/* The chevron: two sides of a square, turned to point down, and up once
+   the answer is open. The nudge keeps the point centred on the question. */
+.fhi-accordion-item > summary::after {
+    content: "";
+    flex: none;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-25%) rotate(45deg);
+}
+
+.fhi-accordion-item[open] > summary::after {
+    transform: translateY(25%) rotate(225deg);
+}
+
+/* An open question keeps a bar of the brand green down its left edge,
+   across the question and its answer, so it reads as one piece. */
+.fhi-accordion-item[open] > summary,
+.fhi-accordion-item[open] > .fhi-accordion-body {
+    box-shadow: inset 4px 0 0 var(--fhi-green);
+}
+
+.fhi-accordion-body {
+    padding: var(--fhi-space-4) var(--fhi-space-5);
+}
+
+.fhi-accordion-body > :last-child {
+    margin-bottom: 0;
+}
+
+/* The turn is the only motion, and only for anyone who has not asked for
+   less. */
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-accordion-item > summary::after {
+        transition: transform 0.2s ease;
+    }
+}
+
 /* ---- The short hero -------------------------------------------------------
    Every page with an image hero except home: a band that is only as tall
    as its copy needs plus a little air, and a softly blurred image behind

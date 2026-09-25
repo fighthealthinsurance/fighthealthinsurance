@@ -189,18 +189,8 @@
                 function follow(change) { menu.open = change.matches; }
                 if (wide.addEventListener) { wide.addEventListener('change', follow); }
                 else { wide.addListener(follow); }
-                // Browsers before late 2023 ignore name= on <details>, so two
-                // dropdowns could open at once and overlap. Close the others by
-                // hand when one opens; where name= works this changes nothing.
-                var groups = document.querySelectorAll('details.fhi-nav-group');
-                groups.forEach(function (group) {
-                  group.addEventListener('toggle', function () {
-                    if (!group.open) { return; }
-                    groups.forEach(function (other) {
-                      if (other !== group) { other.open = false; }
-                    });
-                  });
-                });
+                // The dropdowns' name= fallback runs after the page's
+                // content, where it can see the page's own groups as well.
               })();
             </script>
 
@@ -218,6 +208,31 @@
     {% endblock content %}
     </main>
     <!-- End of content block -->
+    <script>
+      // A group of <details> that share a name opens one at a time: the
+      // header's dropdowns, and the questions on a page where one answer
+      // shows at once. Browsers before late 2023 ignore name=, so two could
+      // open together, and in the header they overlapped. Close the rest of
+      // a group by hand when one opens; where name= works this changes
+      // nothing. Here, after the content, so every group on the page is in.
+      (function () {
+        var groups = {};
+        document.querySelectorAll('details[name]').forEach(function (item) {
+          var name = item.getAttribute('name');
+          (groups[name] = groups[name] || []).push(item);
+        });
+        Object.keys(groups).forEach(function (name) {
+          groups[name].forEach(function (item) {
+            item.addEventListener('toggle', function () {
+              if (!item.open) { return; }
+              groups[name].forEach(function (other) {
+                if (other !== item) { other.open = false; }
+              });
+            });
+          });
+        });
+      })();
+    </script>
 
     {% block foot-roll %}
     {% endblock foot-roll %}
@@ -302,12 +317,12 @@
         </div>
     </footer>
 
-    <!-- Scripts loaded at end of body for better page load performance -->
-    <!-- jQuery loads first because most of the compressed block below needs it. -->
+    <!-- Scripts loaded at end of body for better page load performance.
+         Bootstrap's script is not one of them. What it used to open, the
+         header and the questions on four pages, is <details> now, which
+         the browser opens by itself. Its stylesheet still loads in the head. -->
+    <!-- jQuery loads first because the compressed block below needs it. -->
     <script src="{% static 'js/jquery.js' %}"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4"
-        crossorigin="anonymous"></script>
     <!-- Smoothscroll and custom.js need jQuery, so they load after it. The
          header stays at the top of the window through position: sticky in
          main.css, with no script. -->

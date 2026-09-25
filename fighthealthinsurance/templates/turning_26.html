@@ -89,112 +89,92 @@
                 <h2 class="text-center mb-4">Your Coverage Options After 26</h2>
                 <p class="text-center text-muted mb-4">Each option has different costs, networks, and benefits. Here's what to consider.</p>
 
-                <div class="accordion" id="coverageAccordion">
+                <div class="fhi-accordion">
                     <!-- Employer Coverage -->
-                    <div class="accordion-item">
-                        <h3 class="accordion-header" id="headingEmployer">
-                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseEmployer" aria-expanded="true" aria-controls="collapseEmployer">
-                                Employer-Sponsored Insurance
-                            </button>
-                        </h3>
-                        <div id="collapseEmployer" class="accordion-collapse collapse show" aria-labelledby="headingEmployer" data-bs-parent="#coverageAccordion">
-                            <div class="accordion-body">
-                                <p>If your employer offers health insurance, this is usually the most straightforward option. Turning 26 qualifies you for a special enrollment period at work.</p>
-                                <ul>
-                                    <li>Ask HR about enrollment deadlines&mdash;they may differ from the ACA marketplace window</li>
-                                    <li>Compare premiums, deductibles, and provider networks before enrolling</li>
-                                    <li>Check if your current doctors and medications are covered</li>
-                                    <li>Consider whether a high-deductible plan with HSA makes sense for your situation</li>
-                                </ul>
-                                <p class="mb-0"><strong>Tip:</strong> Start talking to HR 2&ndash;3 months before your 26th birthday so paperwork is ready.</p>
-                            </div>
+                    <details class="fhi-accordion-item" name="coverage-options" open>
+                        <summary>
+                            <h3 class="fhi-accordion-question">Employer-Sponsored Insurance</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            <p>If your employer offers health insurance, this is usually the most straightforward option. Turning 26 qualifies you for a special enrollment period at work.</p>
+                            <ul>
+                                <li>Ask HR about enrollment deadlines&mdash;they may differ from the ACA marketplace window</li>
+                                <li>Compare premiums, deductibles, and provider networks before enrolling</li>
+                                <li>Check if your current doctors and medications are covered</li>
+                                <li>Consider whether a high-deductible plan with HSA makes sense for your situation</li>
+                            </ul>
+                            <p class="mb-0"><strong>Tip:</strong> Start talking to HR 2&ndash;3 months before your 26th birthday so paperwork is ready.</p>
                         </div>
-                    </div>
+                    </details>
 
                     <!-- ACA Marketplace -->
-                    <div class="accordion-item">
-                        <h3 class="accordion-header" id="headingACA">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseACA" aria-expanded="false" aria-controls="collapseACA">
-                                ACA Marketplace (Healthcare.gov)
-                            </button>
-                        </h3>
-                        <div id="collapseACA" class="accordion-collapse collapse" aria-labelledby="headingACA" data-bs-parent="#coverageAccordion">
-                            <div class="accordion-body">
-                                <p>The Health Insurance Marketplace offers plans at various price points with potential subsidies based on income.</p>
-                                <ul>
-                                    <li>Use the Special Enrollment Period triggered by aging off your parent's plan</li>
-                                    <li>Premium tax credits can significantly reduce monthly costs if your income qualifies</li>
-                                    <li>All Marketplace plans cover essential health benefits including prescriptions, mental health, and preventive care</li>
-                                    <li>You can compare plans by metal tier: Bronze (lowest premium), Silver, Gold, Platinum (highest coverage)</li>
-                                </ul>
-                                <p class="mb-0"><strong>Tip:</strong> Silver plans offer extra cost-sharing reductions if your income is under 250% of the federal poverty level.</p>
-                            </div>
+                    <details class="fhi-accordion-item" name="coverage-options">
+                        <summary>
+                            <h3 class="fhi-accordion-question">ACA Marketplace (Healthcare.gov)</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            <p>The Health Insurance Marketplace offers plans at various price points with potential subsidies based on income.</p>
+                            <ul>
+                                <li>Use the Special Enrollment Period triggered by aging off your parent's plan</li>
+                                <li>Premium tax credits can significantly reduce monthly costs if your income qualifies</li>
+                                <li>All Marketplace plans cover essential health benefits including prescriptions, mental health, and preventive care</li>
+                                <li>You can compare plans by metal tier: Bronze (lowest premium), Silver, Gold, Platinum (highest coverage)</li>
+                            </ul>
+                            <p class="mb-0"><strong>Tip:</strong> Silver plans offer extra cost-sharing reductions if your income is under 250% of the federal poverty level.</p>
                         </div>
-                    </div>
+                    </details>
 
                     <!-- Medicaid -->
-                    <div class="accordion-item">
-                        <h3 class="accordion-header" id="headingMedicaid">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMedicaid" aria-expanded="false" aria-controls="collapseMedicaid">
-                                Medicaid
-                            </button>
-                        </h3>
-                        <div id="collapseMedicaid" class="accordion-collapse collapse" aria-labelledby="headingMedicaid" data-bs-parent="#coverageAccordion">
-                            <div class="accordion-body">
-                                <p>If your income is low, you may qualify for Medicaid. Eligibility and benefits vary by state.</p>
-                                <ul>
-                                    <li>In states that expanded Medicaid, adults under 138% of the federal poverty level generally qualify</li>
-                                    <li>Medicaid has no enrollment periods&mdash;you can apply anytime</li>
-                                    <li>Coverage is often free or very low cost</li>
-                                    <li>Check your state's Medicaid website or apply through Healthcare.gov</li>
-                                </ul>
-                                <p class="mb-0"><strong>Tip:</strong> Even if you're not sure you qualify, apply anyway. The Marketplace application will automatically check your Medicaid eligibility.</p>
-                            </div>
+                    <details class="fhi-accordion-item" name="coverage-options">
+                        <summary>
+                            <h3 class="fhi-accordion-question">Medicaid</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            <p>If your income is low, you may qualify for Medicaid. Eligibility and benefits vary by state.</p>
+                            <ul>
+                                <li>In states that expanded Medicaid, adults under 138% of the federal poverty level generally qualify</li>
+                                <li>Medicaid has no enrollment periods&mdash;you can apply anytime</li>
+                                <li>Coverage is often free or very low cost</li>
+                                <li>Check your state's Medicaid website or apply through Healthcare.gov</li>
+                            </ul>
+                            <p class="mb-0"><strong>Tip:</strong> Even if you're not sure you qualify, apply anyway. The Marketplace application will automatically check your Medicaid eligibility.</p>
                         </div>
-                    </div>
+                    </details>
 
                     <!-- Student Health Insurance -->
-                    <div class="accordion-item">
-                        <h3 class="accordion-header" id="headingSHIP">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseSHIP" aria-expanded="false" aria-controls="collapseSHIP">
-                                Student Health Insurance
-                            </button>
-                        </h3>
-                        <div id="collapseSHIP" class="accordion-collapse collapse" aria-labelledby="headingSHIP" data-bs-parent="#coverageAccordion">
-                            <div class="accordion-body">
-                                <p>If you're enrolled in a college, university, or community college, your school may offer a student health insurance plan. These go by different names&mdash;some schools call it a Student Health Insurance Plan (SHIP), while others brand it differently (e.g., UC SHIP, GAIP). Check with your school's student health or enrollment office.</p>
-                                <ul>
-                                    <li>Many schools automatically enroll students and charge the premium with tuition&mdash;you may already be covered without realizing it</li>
-                                    <li>Plans typically cover services at the campus health center plus a broader provider network</li>
-                                    <li>You can usually waive your school's plan if you have other coverage, or enroll in it if you need it</li>
-                                    <li>Coverage periods often align with the academic year&mdash;check whether summer months are included or require separate coverage</li>
-                                    <li><strong>International students:</strong> Many schools require international students (F1/J1 visa holders) to carry health insurance and may automatically enroll you in a specific plan. Check your school's requirements, as your options to waive may be more limited</li>
-                                </ul>
-                                <p class="mb-0"><strong>Tip:</strong> Not every school offers a student health plan, and availability varies. Compare your school's plan (if offered) against Marketplace plans with subsidies&mdash;depending on your income, one may be significantly cheaper than the other.</p>
-                            </div>
+                    <details class="fhi-accordion-item" name="coverage-options">
+                        <summary>
+                            <h3 class="fhi-accordion-question">Student Health Insurance</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            <p>If you're enrolled in a college, university, or community college, your school may offer a student health insurance plan. These go by different names&mdash;some schools call it a Student Health Insurance Plan (SHIP), while others brand it differently (e.g., UC SHIP, GAIP). Check with your school's student health or enrollment office.</p>
+                            <ul>
+                                <li>Many schools automatically enroll students and charge the premium with tuition&mdash;you may already be covered without realizing it</li>
+                                <li>Plans typically cover services at the campus health center plus a broader provider network</li>
+                                <li>You can usually waive your school's plan if you have other coverage, or enroll in it if you need it</li>
+                                <li>Coverage periods often align with the academic year&mdash;check whether summer months are included or require separate coverage</li>
+                                <li><strong>International students:</strong> Many schools require international students (F1/J1 visa holders) to carry health insurance and may automatically enroll you in a specific plan. Check your school's requirements, as your options to waive may be more limited</li>
+                            </ul>
+                            <p class="mb-0"><strong>Tip:</strong> Not every school offers a student health plan, and availability varies. Compare your school's plan (if offered) against Marketplace plans with subsidies&mdash;depending on your income, one may be significantly cheaper than the other.</p>
                         </div>
-                    </div>
+                    </details>
 
                     <!-- COBRA -->
-                    <div class="accordion-item">
-                        <h3 class="accordion-header" id="headingCOBRA">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCOBRA" aria-expanded="false" aria-controls="collapseCOBRA">
-                                COBRA Continuation Coverage
-                            </button>
-                        </h3>
-                        <div id="collapseCOBRA" class="accordion-collapse collapse" aria-labelledby="headingCOBRA" data-bs-parent="#coverageAccordion">
-                            <div class="accordion-body">
-                                <p>COBRA lets you continue your parent's employer-sponsored plan, but you pay the full premium (plus up to 2% admin fee). This is usually the most expensive option and is typically only worth considering as a short-term bridge if you're mid-treatment and need to keep the same doctors and coverage.</p>
-                                <ul>
-                                    <li>Available for up to 36 months for dependent qualifying events, though duration varies&mdash;check your specific <a href="https://www.dol.gov/agencies/ebsa/workers-and-families/loss-of-dependent-coverage" target="_blank" rel="noopener noreferrer" class="link">COBRA notice and DOL guidance</a> for details</li>
-                                    <li>You have 60 days to elect COBRA after coverage ends</li>
-                                    <li>Often costs $400&ndash;$700+/month since you pay the full premium with no employer contribution or subsidies</li>
-                                    <li>A Marketplace plan with subsidies is almost always cheaper&mdash;compare before choosing COBRA</li>
-                                </ul>
-                                <p class="mb-0"><strong>Tip:</strong> You can elect COBRA retroactively within 60 days, so consider enrolling in a Marketplace plan first and only falling back to COBRA if you need continuity for a specific provider or treatment.</p>
-                            </div>
+                    <details class="fhi-accordion-item" name="coverage-options">
+                        <summary>
+                            <h3 class="fhi-accordion-question">COBRA Continuation Coverage</h3>
+                        </summary>
+                        <div class="fhi-accordion-body">
+                            <p>COBRA lets you continue your parent's employer-sponsored plan, but you pay the full premium (plus up to 2% admin fee). This is usually the most expensive option and is typically only worth considering as a short-term bridge if you're mid-treatment and need to keep the same doctors and coverage.</p>
+                            <ul>
+                                <li>Available for up to 36 months for dependent qualifying events, though duration varies&mdash;check your specific <a href="https://www.dol.gov/agencies/ebsa/workers-and-families/loss-of-dependent-coverage" target="_blank" rel="noopener noreferrer" class="link">COBRA notice and DOL guidance</a> for details</li>
+                                <li>You have 60 days to elect COBRA after coverage ends</li>
+                                <li>Often costs $400&ndash;$700+/month since you pay the full premium with no employer contribution or subsidies</li>
+                                <li>A Marketplace plan with subsidies is almost always cheaper&mdash;compare before choosing COBRA</li>
+                            </ul>
+                            <p class="mb-0"><strong>Tip:</strong> You can elect COBRA retroactively within 60 days, so consider enrolling in a Marketplace plan first and only falling back to COBRA if you need continuity for a specific provider or treatment.</p>
                         </div>
-                    </div>
+                    </details>
                 </div>
             </div>
         </div>
@@ -454,15 +434,6 @@
     #turning26-hero .hero-inner {
         padding-inline: 2rem;
         border-radius: 14px;
-    }
-
-    .accordion-button:not(.collapsed) {
-        background-color: rgba(165, 196, 34, 0.15);
-        color: #155724;
-    }
-
-    .accordion-button:focus {
-        box-shadow: 0 0 0 0.25rem rgba(165, 196, 34, 0.25);
     }
 
     .list-group-item {
