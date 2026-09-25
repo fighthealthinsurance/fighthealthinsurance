@@ -2793,7 +2793,13 @@ class AppealGenerator(object):
                     # the whole model_name's attempt with zero futures and no
                     # attempt row, one of the silent zero-appeal causes.
                     if result:
-                        winning_backend_by_model[model_name] = str(model)
+                        # The endpoint, not the friendly name: str(model) IS
+                        # the friendly name once the router stamps it, so the
+                        # attempt row's backend column repeated model_name.
+                        winning_backend_by_model[model_name] = (
+                            f"{type(model).__name__}"
+                            f"(api_base={getattr(model, 'api_base', None)})"
+                        )
                         return result
                     backend_errors.append(f"{model}: returned no futures")
                 except Exception as e:
@@ -3136,6 +3142,11 @@ class AppealGenerator(object):
         # report whether the primary won or a shed-tier retry rescued it.
         winning_stage: Optional[str] = "primary" if first is not None else None
         shed_tier_used: Optional[int] = None
+        if first is not None and first.context_level == CONTEXT_LEVEL_TIER1_SHED:
+            # A proactive shed sibling, submitted under the primary stage,
+            # won: that is a context-overflow rescue, and the diagnostic that
+            # counts rescues used to miss exactly this case.
+            shed_tier_used = 1
 
         if first is None and backup_calls:
             logger.warning(

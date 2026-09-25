@@ -3,7 +3,9 @@ Lightweight, cached health snapshot for model backends.
 
 What & why:
 - Computes how many model backends are currently reachable/healthy.
-- Runs at startup and caches results; refreshes periodically (hourly) in background.
+- Starts on the first selection or status request (there is no startup hook),
+  caches results, and refreshes periodically (hourly) in the background; until
+  the first sweep lands every backend reads as unchecked and selection fails open.
 - Avoids heavy checks per request; endpoint simply returns the cached snapshot.
 
 Trade-offs:

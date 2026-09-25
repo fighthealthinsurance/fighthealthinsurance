@@ -889,3 +889,59 @@ class ChooserTaskContextTest(APITestCase):
         self.assertEqual(context["prompt"], "How do I appeal a prior auth denial?")
         self.assertIn("history", context)
         self.assertEqual(len(context["history"]), 2)
+
+
+class ChooserVoteIntegrityTest(APITestCase):
+    """Presented ids are the usage dashboard's denominator, so they must be
+    this task's candidates; and candidates are served in a fresh random
+    order so position bias does not land on the same models every time."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", context_json={"procedure": "MRI"}
+        )
+        self.mine = [
+            ChooserCandidate.objects.create(
+                task=self.task,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=f"model-{i}",
+                content=f"Candidate {i} content long enough to matter.",
+            )
+            for i in range(3)
+        ]
+        other_task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", context_json={"procedure": "CT"}
+        )
+        self.foreign = ChooserCandidate.objects.create(
+            task=other_task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-elsewhere",
+            content="A candidate that belongs to another task.",
+        )
+
+    def test_presented_ids_from_another_task_are_rejected(self):
+        data = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": self.mine[0].id,
+            "presented_candidate_ids": [self.mine[0].id, self.foreign.id],
+        }
+        response = self.client.post(
+            reverse("chooser-vote"), json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("belong", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_candidates_are_served_in_the_shuffled_order(self):
+        with patch(
+            "fighthealthinsurance.rest_views.random.shuffle",
+            side_effect=lambda seq: seq.reverse(),
+        ):
+            response = self.client.get(reverse("chooser-next-appeal"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        served = [c["candidate_index"] for c in response.json()["candidates"]]
+        self.assertEqual(served, [2, 1, 0])

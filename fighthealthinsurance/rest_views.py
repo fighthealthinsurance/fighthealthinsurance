@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import random
 import typing
 from typing import Optional
 
@@ -2572,6 +2573,12 @@ class ChooserViewSet(viewsets.ViewSet):
             }
             for c in candidates
         ]
+        # Presented in a fresh random order per fetch. Generation order is
+        # deterministic by model class (internal, external, internal,
+        # external, the synthesized draft last) and the client labels by
+        # position, so any first- or last-option bias landed on the same
+        # models every time.
+        random.shuffle(candidate_data)
 
         response_data = {
             "task_id": task.id,
@@ -2675,6 +2682,20 @@ class ChooserViewSet(viewsets.ViewSet):
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Chosen candidate was not in the presented candidates"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Every presented id must be one of this task's candidates: the usage
+        # dashboard counts each as a presentation of its model, so an id from
+        # another task could deflate that model's win rate at will.
+        task_candidate_ids = set(
+            ChooserCandidate.objects.filter(task=task).values_list("id", flat=True)
+        )
+        if any(cid not in task_candidate_ids for cid in presented_candidate_ids):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "Presented candidates do not all belong to this task"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )

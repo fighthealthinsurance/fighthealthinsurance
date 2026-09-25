@@ -157,10 +157,13 @@ by itself. When DeepInfra or Perplexity has no key, building the router logs a
    names differ, list them explicitly with `AZURE_OPENAI_MODELS` /
    `AZURE_ANTHROPIC_MODELS` (comma-separated).
    - The override **replaces** the default list.
-   - Every overridden deployment gets the `custom` routing tier, which ranks
-     below `frontier` and `premium`. Routing ranks by tier before cost, so
-     re-listing a default model through the override can change which models
-     the default fan-out picks (`MLRouter.best_external_models`).
+   - A listed deployment that is also in `DEFAULT_MODELS` keeps its default
+     cost and routing tier, so re-listing a default model through the
+     override does not change which models the default fan-out picks
+     (`MLRouter.best_external_models`). A name the table does not know gets
+     the `custom` tier, which ranks below `frontier` and `premium`; routing
+     ranks by tier before cost.
+   - A name listed twice registers once.
 
 **Restricting which remote models load:** set `ENABLED_REMOTE_MODELS` to a
 comma-separated list of names to enable *only* those **remote** generation
