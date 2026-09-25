@@ -22,11 +22,10 @@ from django.urls import reverse
 
 from fighthealthinsurance.microsites import get_microsite
 from tests.sync.test_bootstrap_ratchet import (
-    SCRIPT_COMMENT,
-    SCRIPT_DATA_BS,
     _data_bs_in,
     _files,
     _live_markup,
+    _script_data_bs,
 )
 from tests.sync.test_contrast import load_rules
 from tests.sync.test_nothing_leans_on_a_missing_stylesheet import (
@@ -86,13 +85,15 @@ class NothingReachesForBootstrapsScriptTest(TestCase):
         """
         found = []
         for key, path in _files():
-            text = path.read_text(errors="replace")
-            if path.suffix in (".ts", ".tsx"):
-                code = SCRIPT_COMMENT.sub(lambda m: m.group(1) or " ", text)
-                attributes = SCRIPT_DATA_BS.findall(code)
-            else:
-                attributes = list(_data_bs_in(_live_markup(text)))
-            found.extend("%s: %s" % (key, name) for name in attributes)
+            if path.suffix == ".html":
+                text = _live_markup(path.read_text(errors="replace"))
+                found.extend("%s: %s" % (key, name) for name in _data_bs_in(text))
+        # Every script, the plain .js ones as well as the TypeScript.
+        for path in _our_scripts():
+            found.extend(
+                "static/js/%s: %s" % (path.relative_to(SCRIPTS), name)
+                for name in _script_data_bs(path.read_text(errors="replace"))
+            )
         self.assertEqual(
             found,
             [],

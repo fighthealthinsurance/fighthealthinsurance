@@ -930,8 +930,15 @@ def _files():
 #: first ">", because a ">" inside an earlier attribute would otherwise end
 #: the tag there and hide every attribute after it, the class included.
 OPENING_TAG = re.compile(r"""<[a-zA-Z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>""")
+#: The element's name at the front of a tag, taken off before the
+#: attributes are read so that it is not read as one of them.
+TAG_NAME = re.compile(r"^<[a-zA-Z][-\w:.]*")
+#: One attribute, with its value or without one. <button data-bs-toggle>
+#: carries the attribute as surely as <button data-bs-toggle="collapse">
+#: does, and a pattern that insisted on "=" never saw it. The value comes
+#: back empty when there is none.
 ATTRIBUTE = re.compile(
-    r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"""
+    r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?"""
 )
 
 
@@ -965,7 +972,7 @@ def _attributes_in(text: str):
     attribute behind a condition is one the page can render.
     """
     for tag in OPENING_TAG.findall(TEMPLATE_TAGS.sub(" ", text)):
-        yield from ATTRIBUTE.findall(tag)
+        yield from ATTRIBUTE.findall(TAG_NAME.sub("", tag))
 
 
 def _classes_in(text: str):
@@ -1018,8 +1025,19 @@ CLASS_EXPRESSION = re.compile(
     r"|\bclassList\s*\.\s*(?:add|remove|toggle|contains|replace)\s*(?=\()"
     r"""|\bsetAttribute\s*(?=\(\s*["']class["'])"""
 )
-#: A data-bs-* attribute written into a script's markup, JSX or a string.
+#: A data-bs-* attribute written with its value into a script's markup,
+#: JSX or a string.
 SCRIPT_DATA_BS = re.compile(r"(?<![\w-])data-bs-[\w-]+(?=\s*=)")
+#: One set by name: el.setAttribute("data-bs-toggle", ...), toggleAttribute,
+#: or jQuery's $(el).attr(...).
+SCRIPT_DATA_BS_BY_NAME = re.compile(
+    r"""\b(?:setAttribute|toggleAttribute|attr)\s*\(\s*(["'`])(data-bs-[\w-]+)\1"""
+)
+#: One set through the element's dataset, el.dataset.bsToggle = ... or
+#: el.dataset["bsToggle"] = ..., which the browser writes as data-bs-toggle.
+SCRIPT_DATA_BS_DATASET = re.compile(
+    r"""\.dataset\s*(?:\.\s*(bs[A-Z]\w*)|\[\s*(["'`])(bs[A-Z]\w*)\2\s*\])\s*=(?!=)"""
+)
 
 
 def _literals_after(text: str, start: int, whole_expression: bool):
@@ -1091,6 +1109,26 @@ def _words_in_literal(literal: str):
             yield word
 
 
+def _script_data_bs(text: str):
+    """Every data-bs-* attribute a script puts on an element.
+
+    Reading only "data-bs-...=" missed the other ways a script sets one:
+    by name, through the dataset, or with no value in a string of markup.
+    Reading an attribute, getAttribute or a dataset comparison, puts
+    nothing on the page and is not counted.
+    """
+    code = SCRIPT_COMMENT.sub(lambda m: m.group(1) or " ", text)
+    yield from SCRIPT_DATA_BS.findall(code)
+    for attribute, value in _attributes_in(code):
+        if attribute.lower().startswith("data-bs-") and not value:
+            yield attribute.lower()
+    for found in SCRIPT_DATA_BS_BY_NAME.finditer(code):
+        yield found.group(2)
+    for found in SCRIPT_DATA_BS_DATASET.finditer(code):
+        key = found.group(1) or found.group(3)
+        yield "data-" + re.sub(r"[A-Z]", lambda m: "-" + m.group(0).lower(), key)
+
+
 def _script_classes(text: str):
     """Every class name a script writes, literally, where it names classes.
 
@@ -1116,8 +1154,7 @@ def bootstrap_uses() -> "dict[str, Counter]":
         text = path.read_text(errors="replace")
         if path.suffix in (".ts", ".tsx"):
             names = list(_script_classes(text))
-            code = SCRIPT_COMMENT.sub(lambda m: m.group(1) or " ", text)
-            attributes = SCRIPT_DATA_BS.findall(code)
+            attributes = list(_script_data_bs(text))
         else:
             live = _live_markup(text)
             names = list(_classes_in(live))
@@ -1360,6 +1397,34 @@ def test_a_data_bs_attribute_counts_where_it_is_one() -> None:
     assert SCRIPT_DATA_BS.findall('<b data-bs-toggle="tooltip">x</b>') == [
         "data-bs-toggle"
     ]
+
+
+def test_a_data_bs_attribute_without_a_value_still_counts() -> None:
+    """The browser puts it on the element all the same."""
+    assert list(_data_bs_in("<button data-bs-toggle>x</button>")) == ["data-bs-toggle"]
+    spread = '<button\n  data-bs-dismiss\n  class="btn">x</button>'
+    assert list(_data_bs_in(spread)) == ["data-bs-dismiss"]
+    # Reading them that way leaves the classes where they were.
+    assert list(_classes_in('<input required class="btn" disabled>')) == ["btn"]
+    assert list(_classes_in("<button data-bs-toggle>x</button>")) == []
+
+
+def test_a_script_counts_every_way_it_sets_a_data_bs_attribute() -> None:
+    def read(script: str) -> "list[str]":
+        return list(_script_data_bs(script))
+
+    assert read('el.setAttribute("data-bs-toggle", "collapse");') == ["data-bs-toggle"]
+    assert read("el.toggleAttribute('data-bs-dismiss');") == ["data-bs-dismiss"]
+    assert read('$(el).attr("data-bs-target", "#a");') == ["data-bs-target"]
+    assert read('el.dataset.bsToggle = "collapse";') == ["data-bs-toggle"]
+    assert read('el.dataset["bsTarget"] = "#a";') == ["data-bs-target"]
+    assert read("const b = '<button data-bs-toggle>x</button>';") == ["data-bs-toggle"]
+    assert read('<b data-bs-toggle="tooltip">x</b>') == ["data-bs-toggle"]
+    # Reading one, comparing one, a comment and prose put nothing on a page.
+    assert read('el.getAttribute("data-bs-toggle");') == []
+    assert read('if (el.dataset.bsToggle === "collapse") {}') == []
+    assert read('// el.setAttribute("data-bs-toggle", "collapse");') == []
+    assert read('throw new Error("no data-bs-toggle here");') == []
 
 
 def test_the_pages_left_out_load_no_bootstrap() -> None:
