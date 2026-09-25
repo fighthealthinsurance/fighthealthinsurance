@@ -130,7 +130,9 @@ _FAMILY_PATTERNS = tuple((family, re.compile(p)) for family, p in FAMILIES)
 # one by one, inside their family and on their own as well. A family's count
 # lets a page trade one of its classes for another, mt-3 for mt-4; these keep
 # the stricter promise they always made, that a page gets no more of them.
-# "col-" is every class that starts with it, as it always was.
+# "col-" is every Bootstrap class that starts with it. A name of ours that
+# starts the same way is not Bootstrap's, and neither is Bootstrap 3's
+# col-md-offset-1, which 5.2.3 does not have and nothing styles.
 WATCHED = (
     "form-control",
     "form-check-input",
@@ -162,13 +164,16 @@ DATA_BS = "data-bs attributes"
 # went every accordion and collapse class, the "show" on each first answer,
 # and all 45 data-bs attributes. Bootstrap's script left base.html in the
 # same change, so none of those can come back and do anything.
+# 2026-09-25: "col-" stopped counting names that only start like Bootstrap's,
+# which took three col-md-offset-1 out of it, one each on share_denial,
+# stripe_finish_error and unsubscribed.
 BASELINE: "dict[str, int]" = {
     "form-control": 6,
     "form-check-input": 5,
     "card": 105,
     "btn": 136,
     "row": 141,
-    "col-": 203,
+    "col-": 200,
     "container": 120,
     "alert": 20,
     "d-flex": 53,
@@ -687,7 +692,7 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
     "server_side_ocr.html": {"btn": 1, "buttons": 1},
     "server_side_ocr_error.html": {"btn": 1, "buttons": 1},
     "share_denial.html": {
-        "col-": 2,
+        "col-": 1,
         "d-flex": 2,
         "display and flex": 8,
         "grid": 2,
@@ -773,7 +778,7 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
     "stripe_finish_error.html": {
         "alert": 1,
         "alerts": 2,
-        "col-": 2,
+        "col-": 1,
         "d-flex": 2,
         "display and flex": 8,
         "grid": 2,
@@ -823,7 +828,7 @@ PER_TEMPLATE: "dict[str, dict[str, int]]" = {
         "text": 13,
     },
     "unsubscribed.html": {
-        "col-": 2,
+        "col-": 1,
         "d-flex": 2,
         "display and flex": 8,
         "grid": 2,
@@ -863,7 +868,7 @@ def _keys_of(name: str) -> "list[str]":
     family = family_of(name)
     if family:
         keys.append(family)
-    watched = "col-" if name.startswith("col-") else name
+    watched = "col-" if family and name.startswith("col-") else name
     if watched in WATCHED:
         keys.append(watched)
     return keys
@@ -1332,6 +1337,14 @@ def test_the_class_list_is_bootstrap_5_2_3() -> None:
         assert name in classes, name
     for name in ("btn-default", "no-gutters", "text-align-center", "navbar-default"):
         assert name not in classes, name
+
+
+def test_only_bootstraps_own_col_classes_count_as_col() -> None:
+    """A class of ours may start with "col-" and still not be Bootstrap's."""
+    assert _keys_of("col-md-6") == ["grid", "col-"]
+    assert _keys_of("col-form-label") == ["forms", "col-"]
+    assert _keys_of("col-our-layout") == []
+    assert _keys_of("col-md-offset-1") == []
 
 
 def test_every_bootstrap_class_has_exactly_one_family() -> None:
