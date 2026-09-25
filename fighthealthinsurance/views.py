@@ -913,10 +913,12 @@ class ShareDenialView(View):
 
 
 class ShareAppealView(View):
-    """View for sharing appeal text with the community."""
+    """View for sharing appeal text with the community.
 
-    def get(self, request):
-        return render(request, "share_appeal.html", context={"title": "Share Appeal"})
+    POST only, like ChooseAppeal. There is no share_appeal.html, so the old
+    GET handler raised TemplateDoesNotExist on every request; without it a
+    GET is a 405 instead of a 500.
+    """
 
     def post(self, request):
         form = core_forms.ShareAppealForm(request.POST)
@@ -925,11 +927,20 @@ class ShareAppealView(View):
             hashed_email = models.Denial.get_hashed_email(form.cleaned_data["email"])
 
             # Update the denial
-            denial = models.Denial.objects.filter(
-                denial_id=denial_id,
-                # Include the hashed e-mail so folks can't brute force denial_id
-                hashed_email=hashed_email,
-            ).get()
+            try:
+                denial = models.Denial.objects.filter(
+                    denial_id=denial_id,
+                    # Include the hashed e-mail so folks can't brute force denial_id
+                    hashed_email=hashed_email,
+                ).get()
+            except models.Denial.DoesNotExist:
+                # Stale or mismatched (denial_id, email) pair: send them back
+                # to the start, as ChooseAppeal and GenerateAppeal do.
+                logger.warning(
+                    f"ShareAppealView: no denial for id {denial_id} with "
+                    f"supplied email; redirecting to scan"
+                )
+                return redirect("scan")
             logger.debug(form.cleaned_data)
             denial.appeal_text = form.cleaned_data["appeal_text"]
             denial.save()
@@ -937,6 +948,12 @@ class ShareAppealView(View):
                 denial, form.cleaned_data["appeal_text"], editted=True
             )
             return render(request, "thankyou.html")
+
+        # An invalid form used to fall off the end and return None, a 500
+        # ("view didn't return an HttpResponse"). Recover the way ChooseAppeal
+        # does.
+        logger.debug(f"ShareAppealView: invalid form {form.errors}")
+        return redirect("scan")
 
 
 DELETE_CONFIRMATION_SUBJECT = (
@@ -1105,13 +1122,6 @@ class ConfirmDeleteDataView(View):
                 "title": "Remove My Data",
             },
         )
-
-
-class RecommendAppeal(View):
-    """View for recommending appeal templates (placeholder)."""
-
-    def post(self, request):
-        return render(request, "")
 
 
 class CategorizeReview(View):

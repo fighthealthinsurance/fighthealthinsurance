@@ -81,7 +81,12 @@ class MLCitationsHelper:
         """
         Generates patient-specific citations for an insurance denial using ML models.
 
-        Uses detailed patient context—including denial text, plan context, and health history—along with procedure and diagnosis to retrieve citations from ML backends. Returns an empty list if all patient-specific context fields are missing or if no suitable backends are available.
+        Uses the denial text and health history, along with procedure and
+        diagnosis, to retrieve citations from ML backends. Returns an empty
+        list if both patient-specific context fields are missing (nothing to
+        add over the generic path) or if no suitable backends are available.
+        ``denial.plan_context`` is left out on purpose; see the comment at the
+        context check below.
 
         Args:
             denial: The insurance denial object containing relevant context.
@@ -94,7 +99,6 @@ class MLCitationsHelper:
         procedure = denial.procedure.strip().lower() if denial.procedure else ""
         diagnosis = denial.diagnosis.strip().lower() if denial.diagnosis else ""
         denial_text = denial.denial_text
-        plan_context = denial.plan_context
         # The history only if they said it could be used. Citations go to a
         # model and, with use_external, to an outside provider.
         patient_context = (
@@ -107,10 +111,21 @@ class MLCitationsHelper:
         if used_history_sink is not None:
             used_history_sink["used"] = bool(patient_context)
 
-        if (
-            (not denial_text or denial_text == "")
-            and (not plan_context or plan_context == "")
-            and (not patient_context or patient_context == "")
+        # plan_context is deliberately not read here. Despite the name it is
+        # not the patient's plan document: the denial-type forms put advocacy
+        # and regulatory boilerplate into it (the CalMatters article, a link
+        # to the CA CDI nondiscrimination regs, WPATH SOC text, an HRC lookup
+        # on the employer) to give the appeal letter persuasive framing. That
+        # is the wrong input for a citation search, and a risky one: this
+        # backend is asked for "citations with DOIs, PMIDs, or URLs", and the
+        # boilerplate is full of URLs it could echo back as if they were
+        # clinical evidence. get_citations' own prompt never uses it, and the
+        # generic path below already passes plan_context=None. Leaving it out
+        # also keeps the employer name out of a third-party request, and a
+        # denial with only plan_context has nothing to add over the generic
+        # path, so it does not spend an external call.
+        if (not denial_text or denial_text == "") and (
+            not patient_context or patient_context == ""
         ):
             logger.debug(
                 f"Specific citations for {denial}: skipping, no patient context"
@@ -143,7 +158,7 @@ class MLCitationsHelper:
                         procedure=procedure,
                         diagnosis=diagnosis,
                         patient_context=patient_context,
-                        plan_context=plan_context,
+                        plan_context=None,
                     )
                 )
 
