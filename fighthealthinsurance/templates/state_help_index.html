@@ -162,6 +162,23 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="marketplace-callout">
+                    <h3>Enrolled or switched without permission?</h3>
+                    <p>If your state uses HealthCare.gov, call the Marketplace at <a href="tel:+18003182596">1-800-318-2596</a> (TTY <a href="tel:+18558894325">1-855-889-4325</a>) and ask them to investigate. If your state runs its own marketplace, call that marketplace instead.</p>
+                    <ul class="marketplace-callout-links">
+                        <li>
+                            <a href="https://www.healthcare.gov/marketplace-in-your-state/" target="_blank" rel="noopener noreferrer">
+                                Find your state's marketplace {% include 'partials/opens_in_new_tab.html' %}
+                            </a>
+                        </li>
+                        <li>
+                            <a href="https://www.cms.gov/files/document/agent-broker-infographic-2024-final.pdf" target="_blank" rel="noopener noreferrer">
+                                Official guidance {% include 'partials/opens_in_new_tab.html' %}
+                            </a>
+                        </li>
+                    </ul>
+                </div>
             </div>
         </div>
     </div>
@@ -279,6 +296,43 @@
 
     .national-card:hover {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    /* A note under the national cards for anyone moved onto a plan they did
+       not choose. It is set apart the way the site's other notes are, a
+       green edge on a faint green ground (the pair .alert-box-success uses),
+       so it reads as help rather than a warning. main.css draws every link
+       near-black with no underline, too close to the grey text around it to
+       find by colour, so the links here are green and underlined. */
+    .marketplace-callout {
+        background: #e8f5e9;
+        border-left: 4px solid var(--fhi-green);
+        border-radius: var(--fhi-radius);
+        padding: var(--fhi-space-5) var(--fhi-space-6);
+    }
+
+    .marketplace-callout a {
+        color: var(--fhi-green-ink);
+        text-decoration: underline;
+    }
+
+    .marketplace-callout a:hover,
+    .marketplace-callout a:focus {
+        color: var(--fhi-green-deep);
+    }
+
+    /* A phone number reads as one piece, so it never breaks at a hyphen. */
+    .marketplace-callout a[href^="tel:"] {
+        white-space: nowrap;
+    }
+
+    .marketplace-callout-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--fhi-space-2) var(--fhi-space-6);
+        list-style: none;
+        margin: 0;
+        padding: 0;
     }
 
     .disclaimer-box {
