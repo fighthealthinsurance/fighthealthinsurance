@@ -1,3 +1,4 @@
+import inspect
 import os
 import tempfile
 import unittest
@@ -7,8 +8,9 @@ import asyncio
 from typing import Optional
 
 from fighthealthinsurance import env_utils
-from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.ml.ml_router import MLRouter, _EXTERNAL_GENERALIST
 from fighthealthinsurance.ml.ml_models import (
+    DeepInfra,
     ModelDescription,
     RemoteHealthInsurance,
     RemoteModelLike,
@@ -32,6 +34,54 @@ def make_external_mock(
     model.is_available.return_value = available
     model.health_checked_live = health_checked_live
     return model
+
+
+# The hosted generalist that backs up our own models for summaries and
+# questions. Spelled out rather than imported, so a typo in the router's
+# constant fails these tests instead of passing them.
+GEMMA = "google/gemma-4-26B-A4B-it"
+
+
+def make_routed_mock(
+    quality: int,
+    *,
+    external: bool = False,
+    general: bool = True,
+    available: bool = True,
+    reply: Optional[str] = None,
+    name: Optional[str] = None,
+) -> AsyncMock:
+    """Build a backend for the summarize and question-routing tests.
+
+    Sets every signal those paths read: quality (bare mocks can't be sorted),
+    the general-purpose flag, ``is_available``, and ``health_checked_live``
+    True so the health sweep is never consulted. ``reply`` is what
+    ``_infer_no_context`` returns; None means "nothing usable". ``name``
+    only labels the mock, so a failing order assertion is readable.
+    """
+    model = AsyncMock(spec=RemoteModelLike, name=name)
+    model.external = external
+    model.quality.return_value = quality
+    model.supports_general_instructions.return_value = general
+    model.is_available.return_value = available
+    model.health_checked_live = True
+    model._infer_no_context.return_value = reply
+    return model
+
+
+def install_models(
+    router: MLRouter,
+    internals: list,
+    externals: Optional[dict] = None,
+) -> None:
+    """Register mocks where MLRouter.__init__ would put them: internals in
+    cost order, externals by name AND in the external and all-models pools,
+    so a path that reached for an external any other way would find one."""
+    externals = externals or {}
+    router.internal_models_by_cost = list(internals)
+    router.external_models_by_cost = [m for ms in externals.values() for m in ms]
+    router.all_models_by_cost = list(internals) + router.external_models_by_cost
+    router.models_by_name = dict(externals)
 
 
 class TestRouterHermeticity(unittest.TestCase):
@@ -594,7 +644,8 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_full_qa_backends_includes_available_gemma(self):
-        """An available gemma-4 external is offered for QA with use_external."""
+        """With no internal backend, an available gemma-4 external is offered
+        for QA with use_external."""
         gemma = make_external_mock(quality=80)
         self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [gemma]}
         self.router.internal_models_by_cost = []
@@ -721,7 +772,8 @@ class TestContextOnlyModelFlag(unittest.TestCase):
 class TestMLRouterSummarize(unittest.TestCase):
     """MLRouter.summarize gates the external model on use_external so PHI
     (e.g. a long denial letter) is never sent externally for an opt-out
-    denial, and caps input size via max_input_chars."""
+    denial, asks our strongest healthy internal before the external model,
+    and caps input size via max_input_chars."""
 
     def setUp(self):
         self.router = MLRouter()
@@ -751,21 +803,142 @@ class TestMLRouterSummarize(unittest.TestCase):
     def test_use_external_false_never_selects_gemma(self):
         asyncio.run(self.async_test_use_external_false_never_selects_gemma())
 
-    async def async_test_use_external_true_prefers_gemma(self):
-        gemma = AsyncMock(spec=RemoteModelLike)
-        gemma._infer_no_context.return_value = "external summary"
-        internal = AsyncMock(spec=RemoteModelLike)
-        self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [gemma]}
-        self.router.internal_models_by_cost = [internal]
+    async def async_test_use_external_true_prefers_a_healthy_internal(self):
+        """Our own model gets the first try even when the external one is
+        allowed, and a usable answer from it means Gemma is never asked."""
+        internal = make_routed_mock(210, reply="internal summary")
+        gemma = make_routed_mock(80, external=True, reply="external summary")
+        install_models(self.router, [internal], {GEMMA: [gemma]})
 
-        with patch.object(self.router, "_external_selectable", return_value=True):
-            result = await self.router.summarize("article", "text", use_external=True)
+        result = await self.router.summarize("article", "text", use_external=True)
 
-        gemma._infer_no_context.assert_called_once()
+        internal._infer_no_context.assert_awaited_once()
+        gemma._infer_no_context.assert_not_awaited()
+        self.assertEqual(result, "internal summary")
+
+    def test_use_external_true_prefers_a_healthy_internal(self):
+        asyncio.run(self.async_test_use_external_true_prefers_a_healthy_internal())
+
+    async def async_test_use_external_true_falls_back_to_gemma(self):
+        """When the healthy internal answers with nothing usable, or raises,
+        Gemma still rescues the summary."""
+        for label, failure in (
+            ("returns nothing", {"return_value": None}),
+            ("raises", {"side_effect": RuntimeError("500 from our backend")}),
+        ):
+            with self.subTest(label):
+                internal = make_routed_mock(210)
+                internal._infer_no_context.configure_mock(**failure)
+                gemma = make_routed_mock(80, external=True, reply="external summary")
+                install_models(self.router, [internal], {GEMMA: [gemma]})
+
+                result = await self.router.summarize(
+                    "article", "text", use_external=True
+                )
+
+                # Both were asked, and Gemma's usable answer ends the walk, so
+                # the internal went first; otherwise this proves nothing about
+                # falling back.
+                internal._infer_no_context.assert_awaited_once()
+                gemma._infer_no_context.assert_awaited_once()
+                self.assertEqual(result, "external summary")
+
+    def test_use_external_true_falls_back_to_gemma(self):
+        asyncio.run(self.async_test_use_external_true_falls_back_to_gemma())
+
+    async def async_test_tries_the_strongest_internal_first(self):
+        """Cost order lists the cheaper, weaker internal first; the summary
+        still goes to the stronger one."""
+        weaker = make_routed_mock(200, reply="summary from the weaker model")
+        stronger = make_routed_mock(210, reply="summary from the stronger model")
+        install_models(self.router, [weaker, stronger])
+
+        result = await self.router.summarize("denial", "text", use_external=False)
+
+        stronger._infer_no_context.assert_awaited_once()
+        weaker._infer_no_context.assert_not_awaited()
+        self.assertEqual(result, "summary from the stronger model")
+
+    def test_tries_the_strongest_internal_first(self):
+        asyncio.run(self.async_test_tries_the_strongest_internal_first())
+
+    async def async_test_deepinfra_only_deployment_still_summarizes(self):
+        """With no internal backend at all, Gemma is the whole list; without
+        it summarize() would quietly return None."""
+        gemma = make_routed_mock(80, external=True, reply="external summary")
+        install_models(self.router, [], {GEMMA: [gemma]})
+
+        result = await self.router.summarize("article", "text", use_external=True)
+
         self.assertEqual(result, "external summary")
 
-    def test_use_external_true_prefers_gemma(self):
-        asyncio.run(self.async_test_use_external_true_prefers_gemma())
+    def test_deepinfra_only_deployment_still_summarizes(self):
+        asyncio.run(self.async_test_deepinfra_only_deployment_still_summarizes())
+
+    async def async_test_appeal_only_internal_waits_behind_gemma(self):
+        """fhi-legacy's digit soup passes the length check, so when it is the
+        only internal left it must not go ahead of Gemma."""
+        legacy = make_routed_mock(101, general=False, reply="1\n2\n3\n4\n5\n6\n7\n8")
+        gemma = make_routed_mock(80, external=True, reply="external summary")
+        install_models(self.router, [legacy], {GEMMA: [gemma]})
+
+        result = await self.router.summarize("article", "text", use_external=True)
+
+        legacy._infer_no_context.assert_not_awaited()
+        self.assertEqual(result, "external summary")
+
+    def test_appeal_only_internal_waits_behind_gemma(self):
+        asyncio.run(self.async_test_appeal_only_internal_waits_behind_gemma())
+
+    async def async_test_marked_down_internals_go_after_gemma(self):
+        """Internals the health signals marked down are still tried, since the
+        signal can be stale, but only after Gemma."""
+        down_a = make_routed_mock(200, available=False)
+        down_b = make_routed_mock(210, available=False)
+        gemma = make_routed_mock(80, external=True)
+        install_models(self.router, [down_a, down_b], {GEMMA: [gemma]})
+        # Nobody answers, so summarize() walks the whole list and the order
+        # it asked in is the order it holds.
+        asked: list[str] = []
+        for name, model in (("a", down_a), ("b", down_b), ("gemma", gemma)):
+            model._infer_no_context.side_effect = (
+                lambda *args, _name=name, **kwargs: asked.append(_name)
+            )
+
+        result = await self.router.summarize("article", "text", use_external=True)
+
+        self.assertIsNone(result)
+        self.assertEqual(asked[0], "gemma")
+        self.assertCountEqual(asked[1:], ["a", "b"])
+
+    def test_marked_down_internals_go_after_gemma(self):
+        asyncio.run(self.async_test_marked_down_internals_go_after_gemma())
+
+    async def async_test_use_external_false_with_everything_down_stays_internal(
+        self,
+    ):
+        """The opt-out guarantee holds on the last-resort branch too: with
+        every internal marked down and a healthy Gemma registered, a patient
+        who turned external models off still never reaches it."""
+        down = make_routed_mock(210, available=False)
+        legacy = make_routed_mock(101, general=False, available=False)
+        gemma = make_routed_mock(80, external=True, reply="external summary")
+        install_models(self.router, [legacy, down], {GEMMA: [gemma]})
+
+        result = await self.router.summarize(
+            "denial letter", "text", use_external=False
+        )
+
+        # Our own marked-down model is still tried (fail open) ...
+        down._infer_no_context.assert_awaited_once()
+        # ... but nothing ever leaves.
+        gemma._infer_no_context.assert_not_awaited()
+        self.assertIsNone(result)
+
+    def test_use_external_false_with_everything_down_stays_internal(self):
+        asyncio.run(
+            self.async_test_use_external_false_with_everything_down_stays_internal()
+        )
 
     async def async_test_max_input_chars_caps_source_text(self):
         internal = AsyncMock(spec=RemoteModelLike)
@@ -808,6 +981,9 @@ class TestMLRouterSummarize(unittest.TestCase):
         blank._infer_no_context.return_value = "   "
         good = AsyncMock(spec=RemoteModelLike)
         good._infer_no_context.return_value = "A real summary of the denial."
+        # Equal quality, so the strongest-first sort keeps this order (and
+        # bare mocks can't be compared at all).
+        blank.quality.return_value = good.quality.return_value = 200
         self.router.internal_models_by_cost = [blank, good]
 
         result = await self.router.summarize("denial", "text", use_external=False)
@@ -829,6 +1005,8 @@ class TestMLRouterSummarize(unittest.TestCase):
         boom._infer_no_context.side_effect = RuntimeError("500 from provider")
         good = AsyncMock(spec=RemoteModelLike)
         good._infer_no_context.return_value = "A real summary of the denial."
+        # Equal quality, so the strongest-first sort keeps this order.
+        boom.quality.return_value = good.quality.return_value = 200
         self.router.internal_models_by_cost = [boom, good]
 
         result = await self.router.summarize("denial", "text", use_external=False)
@@ -844,6 +1022,182 @@ class TestMLRouterSummarize(unittest.TestCase):
 
     def test_max_input_chars_caps_source_text(self):
         asyncio.run(self.async_test_max_input_chars_caps_source_text())
+
+
+class TestMLRouterSummarizeBackends(unittest.TestCase):
+    """summarize_backends() is the order summarize() walks: our strongest
+    healthy general-purpose internal first, Gemma only as the fallback. A
+    staff page reads it, so it must never call a model."""
+
+    def setUp(self):
+        self.router = MLRouter()
+        install_models(self.router, [])
+        # Production's shape, in cost order: legacy, NEW, ALPHA.
+        self.legacy = make_routed_mock(101, general=False, name="legacy")
+        self.new = make_routed_mock(200, name="new")
+        self.alpha = make_routed_mock(210, name="alpha")
+        self.gemma = make_routed_mock(80, external=True, name="gemma")
+
+    def _install_production(self):
+        install_models(
+            self.router, [self.legacy, self.new, self.alpha], {GEMMA: [self.gemma]}
+        )
+
+    def test_production_puts_the_strongest_internal_first(self):
+        self._install_production()
+
+        self.assertEqual(
+            self.router.summarize_backends(use_external=True),
+            [self.alpha, self.new, self.gemma],
+        )
+        self.assertEqual(
+            self.router.summarize_backends(use_external=False),
+            [self.alpha, self.new],
+        )
+
+    def test_deepinfra_only_deployment_lists_gemma(self):
+        install_models(self.router, [], {GEMMA: [self.gemma]})
+
+        self.assertEqual(
+            self.router.summarize_backends(use_external=True), [self.gemma]
+        )
+        self.assertEqual(self.router.summarize_backends(use_external=False), [])
+
+    def test_appeal_only_internal_goes_after_gemma(self):
+        install_models(self.router, [self.legacy], {GEMMA: [self.gemma]})
+
+        self.assertEqual(
+            self.router.summarize_backends(use_external=True),
+            [self.gemma, self.legacy],
+        )
+
+    def test_marked_down_internals_go_after_gemma(self):
+        self.new.is_available.return_value = False
+        self.alpha.is_available.return_value = False
+        install_models(self.router, [self.new, self.alpha], {GEMMA: [self.gemma]})
+
+        result = self.router.summarize_backends(use_external=True)
+
+        self.assertEqual(result[0], self.gemma)
+        self.assertCountEqual(result[1:], [self.new, self.alpha])
+
+    def test_a_healthy_internal_leads_when_the_stronger_one_is_down(self):
+        self.alpha.is_available.return_value = False
+        self._install_production()
+
+        self.assertEqual(
+            self.router.summarize_backends(use_external=True), [self.new, self.gemma]
+        )
+
+    def test_a_down_gemma_is_left_out(self):
+        self.gemma.is_available.return_value = False
+        self._install_production()
+
+        self.assertEqual(
+            self.router.summarize_backends(use_external=True), [self.alpha, self.new]
+        )
+
+    def test_use_external_false_never_lists_an_external(self):
+        """Including the last-resort branch, where every internal is down and
+        Gemma is the only healthy model registered."""
+        for label, down in (
+            ("all healthy", ()),
+            ("general internals down", (self.new, self.alpha)),
+            ("every internal down", (self.legacy, self.new, self.alpha)),
+        ):
+            with self.subTest(label):
+                for model in (self.legacy, self.new, self.alpha):
+                    model.is_available.return_value = model not in down
+                self._install_production()
+
+                listed = self.router.summarize_backends(use_external=False)
+
+                self.assertTrue(listed)
+                self.assertEqual([m for m in listed if m.external], [])
+
+    def test_never_calls_a_model(self):
+        self._install_production()
+
+        self.router.summarize_backends(use_external=True)
+
+        self.assertFalse(inspect.iscoroutinefunction(MLRouter.summarize_backends))
+        cheap = {"quality", "supports_general_instructions", "is_available"}
+        for model in (self.legacy, self.new, self.alpha, self.gemma):
+            self.assertLessEqual({c[0] for c in model.method_calls}, cheap)
+
+    def test_the_generalist_is_a_model_deepinfra_registers(self):
+        """If DeepInfra drops the name, the fallback silently disappears."""
+        self.assertIn(GEMMA, {d.name for d in DeepInfra.models()})
+        self.assertEqual(_EXTERNAL_GENERALIST, GEMMA)
+
+
+class TestMLRouterFullQABackends(unittest.TestCase):
+    """full_qa_backends() keeps the strongest three internals, and adds Gemma
+    only when none of them is a healthy general-purpose model."""
+
+    def setUp(self):
+        self.router = MLRouter()
+        install_models(self.router, [])
+        self.legacy = make_routed_mock(101, general=False, name="legacy")
+        self.new = make_routed_mock(200, name="new")
+        self.alpha = make_routed_mock(210, name="alpha")
+        self.gemma = make_routed_mock(80, external=True, name="gemma")
+        self.sonar = make_routed_mock(100, external=True, name="sonar")
+        self.externals = {GEMMA: [self.gemma], "sonar": [self.sonar]}
+
+    def test_a_healthy_internal_keeps_gemma_out(self):
+        install_models(self.router, [self.legacy, self.new, self.alpha], self.externals)
+
+        # Sonar stays in the fan-out as before.
+        self.assertEqual(
+            self.router.full_qa_backends(use_external=True),
+            [self.alpha, self.new, self.sonar],
+        )
+
+    def test_gemma_stands_in_when_the_internals_are_down(self):
+        self.new.is_available.return_value = False
+        self.alpha.is_available.return_value = False
+        install_models(self.router, [self.new, self.alpha], self.externals)
+
+        self.assertEqual(
+            self.router.full_qa_backends(use_external=True),
+            [self.alpha, self.new, self.gemma, self.sonar],
+        )
+
+    def test_gemma_stands_in_beside_an_appeal_only_internal(self):
+        install_models(self.router, [self.legacy], self.externals)
+
+        self.assertEqual(
+            self.router.full_qa_backends(use_external=True),
+            [self.legacy, self.gemma, self.sonar],
+        )
+
+    def test_four_internals_keep_the_strongest_three(self):
+        # Cost order; slicing before sorting would keep 150, 200 and 120.
+        internals = [make_routed_mock(q) for q in (150, 200, 120, 210)]
+        install_models(self.router, internals, self.externals)
+
+        result = self.router.full_qa_backends(use_external=False)
+
+        self.assertEqual([m.quality() for m in result], [210, 200, 150])
+
+    def test_use_external_false_never_returns_an_external(self):
+        """Including the branch that would add Gemma: every internal down, or
+        only the appeal-only one left."""
+        for label, internals, down in (
+            ("all healthy", [self.legacy, self.new, self.alpha], ()),
+            ("general internals down", [self.new, self.alpha], (self.new, self.alpha)),
+            ("appeal-only left", [self.legacy], ()),
+            ("no internals", [], ()),
+        ):
+            with self.subTest(label):
+                for model in (self.legacy, self.new, self.alpha):
+                    model.is_available.return_value = model not in down
+                install_models(self.router, internals, self.externals)
+
+                result = self.router.full_qa_backends(use_external=False)
+
+                self.assertEqual([m for m in result if m.external], [])
 
 
 class TestMLRouterSummarizeChatHistory(unittest.TestCase):

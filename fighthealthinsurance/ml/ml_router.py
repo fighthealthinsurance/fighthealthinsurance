@@ -7,6 +7,10 @@ from loguru import logger
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml.ml_models import *
 
+# The hosted model that backs up our own models for summaries and appeal
+# questions (DeepInfra's Gemma). Named once so the two paths can't drift apart.
+_EXTERNAL_GENERALIST = "google/gemma-4-26B-A4B-it"
+
 
 class MLRouter(object):
     """
@@ -272,6 +276,38 @@ class MLRouter(object):
             return candidates
         return general
 
+    def _healthy_general_internal(self) -> list[RemoteModelLike]:
+        """Internal backends that follow instructions and look healthy,
+        strongest first.
+
+        Strict, unlike ``_filter_available`` and ``_general_purpose_only``:
+        it never fails open, so it can be empty. Callers use it to decide
+        whether one of our own models can take a task before a hosted one is
+        asked, and a marked-down or appeal-only backend must not count as
+        "ours can do it". The sort is stable over the cost order, so
+        equal-quality backends stay cheapest-first.
+        """
+        return sorted(
+            (
+                m
+                for m in self.internal_models_by_cost
+                if m.supports_general_instructions() and self._selectable(m)
+            ),
+            key=lambda m: -m.quality(),
+        )
+
+    def _external_generalist(self) -> list[RemoteModelLike]:
+        """The hosted generalist's instances that look healthy, cheapest first.
+
+        Empty when DeepInfra isn't configured or the health signals have it
+        down. Callers decide whether ``use_external`` allows it at all.
+        """
+        return [
+            m
+            for m in self.models_by_name.get(_EXTERNAL_GENERALIST, [])
+            if self._selectable(m)
+        ]
+
     def _get_forced_models(
         self, task_description: str = "", *, use_external: bool = True
     ) -> Optional[list[RemoteModelLike]]:
@@ -457,9 +493,11 @@ class MLRouter(object):
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
         Return models for handling question-answer pairs for appeal generation.
-        Always includes internal FHI models. When use_external is True, also
-        includes a cheap external generalist (google/gemma-4-26B-A4B-it) and
-        Perplexity for web-informed questions.
+        Always includes up to three internal FHI models, strongest first.
+        When use_external is True, also includes Perplexity for web-informed
+        questions, plus the cheap external generalist
+        (google/gemma-4-26B-A4B-it) when none of the chosen internals is a
+        healthy general-purpose model.
 
         Args:
             use_external: Whether to use external models
@@ -472,24 +510,31 @@ class MLRouter(object):
             return forced
 
         models: list[RemoteModelLike] = []
-        # Always include internal FHI models for question generation
-        models += self._general_purpose_only(
+        # Always include internal FHI models for question generation. Sorted
+        # strongest first BEFORE the slice, so a deployment with more than
+        # three internals keeps its best three, not its cheapest three. The
+        # sort is stable over the cost order, so ties stay cheapest-first.
+        internal = self._general_purpose_only(
             self._filter_available(self.internal_models_by_cost, "full-qa"), "full-qa"
-        )[:3]
+        )
+        models += sorted(internal, key=lambda m: -m.quality())[:3]
 
         if use_external:
-            # Add a cheap external generalist if available (successor to the
-            # dropped Llama-4-Scout entry in the DeepInfra catalog). Gate on
-            # availability like best_external_models() does: question
-            # generation waits on every fanned-out task, so appending a
-            # backend the health sweep already marked down would stall it
-            # for the full model timeout.
-            if "google/gemma-4-26B-A4B-it" in self.models_by_name:
-                models += [
-                    m
-                    for m in self.cheapest("google/gemma-4-26B-A4B-it")
-                    if self._selectable(m)
-                ]
+            # The cheap external generalist stands in for our own models; it
+            # doesn't join them. Question scoring mostly rewards the number
+            # and shape of the questions, not model quality, so beside a
+            # healthy internal it could win on formatting alone, and the
+            # fan-out waits on every task, so it would only add latency and a
+            # paid call. So it is added only when none of the internals chosen
+            # above is healthy and general-purpose. _external_generalist()
+            # skips an instance the health sweep marked down, which would
+            # stall the fan-out for the full model timeout. One instance is
+            # enough for a concurrent fan-out, as before.
+            if not any(
+                m.supports_general_instructions() and self._selectable(m)
+                for m in models
+            ):
+                models += self._external_generalist()[:1]
             # Add Perplexity for web-informed questions
             if "sonar" in self.models_by_name:
                 models += self.cheapest("sonar")
@@ -791,6 +836,37 @@ class MLRouter(object):
         except (KeyError, IndexError):
             return []
 
+    def summarize_backends(self, use_external: bool) -> list[RemoteModelLike]:
+        """The models ``summarize`` tries, in the order it tries them.
+
+        Our own general-purpose backends that look healthy come first,
+        strongest first. The cheap external generalist comes next, only when
+        ``use_external`` allows it. Last comes the same fail-open internal
+        pool ``summarize`` has always used, minus what is already listed, so
+        a stale health signal can't leave a summary with nothing to try.
+
+        Reads only cheap in-memory signals and never calls a model, so a
+        staff page can show the order without spending an inference.
+        """
+        # Strict: only internals that follow instructions AND look healthy.
+        # The fail-open pool can hold the appeal-only fhi-legacy, whose
+        # digit soup can pass summarize()'s length check, so it must not go
+        # ahead of the external generalist.
+        head = self._healthy_general_internal()
+        # A DeepInfra-only deployment has no internal backend at all, so there
+        # the external generalist is the whole list; without it summarize()
+        # would quietly return None. It stays behind use_external so a caller
+        # summarizing patient data for an opt-out denial never sends it out.
+        external = self._external_generalist() if use_external else []
+        # Last resort: internals the health signals marked down, or the
+        # appeal-only fine-tune when it is all we have.
+        fallback = self._general_purpose_only(
+            self._filter_available(self.internal_models_by_cost, "summarize"),
+            "summarize",
+        )
+        listed = {id(m) for m in head}
+        return head + external + [m for m in fallback if id(m) not in listed]
+
     async def summarize(
         self,
         title: Optional[str],
@@ -812,25 +888,13 @@ class MLRouter(object):
         denial-text summarization passes a larger cap so the summary actually
         reflects the whole letter).
         """
-        models: list[RemoteModelLike] = []
-        # Prefer the cheap DeepInfra generalist (successor to the dropped
-        # gemma-3-27b entry) for summaries when permitted. Without it a
-        # DeepInfra-only deployment has an empty internal pool and summarize()
-        # would silently return None. Gated on availability AND on
-        # use_external so a PHI caller (or a sweep-marked-down DeepInfra)
-        # doesn't add a doomed/disallowed call before the internal fallbacks.
-        internal_pool = self._general_purpose_only(
-            self._filter_available(self.internal_models_by_cost, "summarize"),
-            "summarize",
-        )
-        if use_external and "google/gemma-4-26B-A4B-it" in self.models_by_name:
-            models = [
-                m
-                for m in self.models_by_name["google/gemma-4-26B-A4B-it"]
-                if self._selectable(m)
-            ] + internal_pool
-        else:
-            models = internal_pool
+        # Our strongest healthy internal first, then the cheap DeepInfra
+        # generalist (only when use_external allows it and it looks healthy),
+        # then the internals marked down. A DeepInfra-only deployment has an
+        # empty internal pool, so there the generalist is the only model and
+        # summarize() still works rather than silently returning None. See
+        # summarize_backends().
+        models = self.summarize_backends(use_external)
         abstract_optional = ""
         text_optional = ""
         if abstract is not None:
