@@ -174,16 +174,19 @@ DATA_BS = "data-bs attributes"
 # stripe_finish_error and unsubscribed.
 # 2026-09-25: each file is held to each class, in bootstrap_uses_by_file.txt,
 # in place of a count per family per file.
+# 2026-09-25: the rest of the content pages moved onto the page column, which
+# took 29 containers, 9 rows, 9 columns and 2 d-flex with them, and the jump
+# links on how_to_help left Bootstrap's nav pills for tiles of our own.
 BASELINE: "dict[str, int]" = {
     "form-control": 6,
     "form-check-input": 5,
     "card": 105,
     "btn": 136,
-    "row": 141,
-    "col-": 200,
-    "container": 120,
+    "row": 132,
+    "col-": 191,
+    "container": 91,
     "alert": 20,
-    "d-flex": 53,
+    "d-flex": 51,
     # The families.
     "alerts": 60,
     "badges": 18,
@@ -192,17 +195,17 @@ BASELINE: "dict[str, int]" = {
     "buttons": 189,
     "cards": 411,
     "colours and backgrounds": 64,
-    "display and flex": 177,
+    "display and flex": 168,
     "forms": 107,
-    "grid": 483,
+    "grid": 436,
     "images and figures": 49,
     "list groups": 23,
-    "navs and the navbar": 21,
+    "navs and the navbar": 9,
     "shared state": 3,
     "sizing": 83,
-    "spacing": 709,
+    "spacing": 695,
     "spinners": 3,
-    "text": 385,
+    "text": 380,
     "visibility and interaction": 8,
 }
 
