@@ -70,6 +70,8 @@ class Rule:
     line: int
     selector: str
     declarations: tuple[tuple[str, str, bool], ...]  # property, value, !important
+    # The @media (or @supports) the rule sits in, as written; "" at top level.
+    media: str = ""
 
     @property
     def selectors(self) -> list[str]:
@@ -118,7 +120,7 @@ def parse_stylesheet(text: str, stylesheet: str) -> list[Rule]:
     """Flatten a stylesheet into rules, descending into @media and friends."""
     rules: list[Rule] = []
 
-    def walk(source: str, first_line: int) -> None:
+    def walk(source: str, first_line: int, media: str = "") -> None:
         index = 0
         line = first_line
         start_line = first_line
@@ -140,11 +142,15 @@ def parse_stylesheet(text: str, stylesheet: str) -> list[Rule]:
                 inner = source[index + 1 : end - 1]
                 if selector.startswith("@"):
                     if _NESTING_AT_RULES.match(selector):
-                        walk(inner, line)
+                        walk(inner, line, f"{media} {selector}".strip())
                 else:
                     rules.append(
                         Rule(
-                            stylesheet, start_line, selector, _split_declarations(inner)
+                            stylesheet,
+                            start_line,
+                            selector,
+                            _split_declarations(inner),
+                            media,
                         )
                     )
                 line += source[index:end].count("\n")

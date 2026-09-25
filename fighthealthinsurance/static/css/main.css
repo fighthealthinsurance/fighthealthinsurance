@@ -352,6 +352,19 @@ a:focus {
     z-index: 1030;
 }
 
+/* The menu is open in the markup and the script in base.html closes it on a
+   phone. With scripting off it never closes, and a stuck header would pin the
+   whole open menu, 476px of a 757px phone screen, over everything below it.
+   So in that one case the header scrolls away with the page, as it did under
+   jquery.sticky, which never ran without a script either. A desktop keeps its
+   sticky row, and a browser that doesn't know the scripting query keeps the
+   rule above. */
+@media (scripting: none) and (width < 992px) {
+    .navbar-default {
+        position: relative;
+    }
+}
+
 /*---------------------------------------
       HOME
   -----------------------------------------*/

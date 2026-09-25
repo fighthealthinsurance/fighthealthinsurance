@@ -200,8 +200,13 @@ class NoPluginLeftWithNothingToDoTest(SimpleTestCase):
         what keeps the header at the top of the window. The browser tests
         scroll a page and measure it; this catches the rule going missing
         without a browser. The last rule for the header wins, so that is the
-        one read."""
-        header = [rule for rule in load_rules() if ".navbar-default" in rule.selectors]
+        one read. Rules inside a media query are left out: the one that lets
+        the header go when scripting is off is checked below."""
+        header = [
+            rule
+            for rule in load_rules()
+            if ".navbar-default" in rule.selectors and not rule.media
+        ]
         declared = {}
         for rule in header:
             for prop, value, _ in rule.declarations:
@@ -217,4 +222,41 @@ class NoPluginLeftWithNothingToDoTest(SimpleTestCase):
             {"0", "0px"},
             f".navbar-default has top: {declared.get('top')}; sticky needs "
             "top: 0 to hold the header at the top of the window",
+        )
+
+    def test_a_phone_without_scripts_lets_the_open_menu_scroll_away(self):
+        """The menu is open in the markup, and only the script in base.html
+        closes it on a phone. With scripting off it stays open, and a stuck
+        header held all of it, 476px of a 757px screen, over the page: a tap
+        on a question landed on the menu. jquery.sticky never ran without a
+        script, so this only showed up once the browser did the sticking.
+
+        The rule has to cover exactly the widths where the script would have
+        closed the menu, so its breakpoint is read from the script."""
+        script = re.search(
+            r"matchMedia\('\(min-width: (\d+)px\)'\)", read(BASE_HTML)
+        )
+        self.assertIsNotNone(
+            script, "no matchMedia('(min-width: Npx)') left in base.html's menu script"
+        )
+        phone = f"(width < {script.group(1)}px)"
+        unstuck = [
+            rule
+            for rule in load_rules()
+            if ".navbar-default" in rule.selectors
+            and "(scripting: none)" in rule.media
+            and phone in rule.media
+        ]
+        self.assertTrue(
+            unstuck,
+            f"no @media (scripting: none) and {phone} rule for .navbar-default, "
+            "so a phone with scripts off pins its open menu over the page",
+        )
+        position = {
+            prop: value for rule in unstuck for prop, value, _ in rule.declarations
+        }.get("position")
+        self.assertNotIn(
+            position,
+            {None, "sticky", "fixed"},
+            f"with scripting off a phone's header is position: {position}",
         )
