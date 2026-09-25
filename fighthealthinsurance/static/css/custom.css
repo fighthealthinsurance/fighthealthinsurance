@@ -122,6 +122,9 @@
     /* One step below a section heading inside a page column: 20px, the size
        the policy pages drew their section headings at when they were h5s. */
     --fhi-text-subsection: 1.25rem;
+    /* A section heading in the reading column: steady at 22px, a step under
+       --fhi-text-section, since the column's pages are prose. */
+    --fhi-text-reading-section: 1.375rem;
     --fhi-text-page: clamp(2.1rem, 2.5vw + 1.2rem, 3rem);
     --fhi-text-hero: 5rem;
     /* Every hero page except home shares one headline size: the home hero
@@ -1860,21 +1863,45 @@ section:not(.slider) .share-subcopy {
    the Terms of Service articles wraps on a phone, where 1.5 spreads its
    lines apart like a paragraph's. An h3 gets its gap back: main.css zeroes
    an h3's bottom margin, so a label that was an h5 or h6 before the
-   relevelling sat flush on the list under it. */
+   relevelling sat flush on the list under it.
+
+   The reading column steps each level down once more. Its pages are prose
+   (the policies, the FAQ, Contact), and a 28.8px section over 16px grey
+   text read nearly as loud as the page's own title: the FAQ's questions
+   and the all-caps Terms articles shouted. There a section is a steady
+   22px, a subsection 18px and a fourth level the body size. The wide
+   column holds cards and grids, where the larger section sits right. */
 .fhi-page :where(h2),
 .fhi-page-wide :where(h2) {
-    font-size: var(--fhi-text-section);
     line-height: var(--fhi-line-heading);
+}
+
+.fhi-page :where(h2) {
+    font-size: var(--fhi-text-reading-section);
+}
+
+.fhi-page-wide :where(h2) {
+    font-size: var(--fhi-text-section);
 }
 
 .fhi-page :where(h3),
 .fhi-page-wide :where(h3) {
-    font-size: var(--fhi-text-subsection);
     line-height: var(--fhi-line-heading);
     margin-bottom: var(--fhi-space-2);
 }
 
-.fhi-page :where(h4),
+.fhi-page :where(h3) {
+    font-size: var(--fhi-text-lead);
+}
+
+.fhi-page-wide :where(h3) {
+    font-size: var(--fhi-text-subsection);
+}
+
+.fhi-page :where(h4) {
+    font-size: var(--fhi-text-body);
+}
+
 .fhi-page-wide :where(h4) {
     font-size: var(--fhi-text-lead);
 }

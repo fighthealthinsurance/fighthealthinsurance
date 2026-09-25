@@ -76,13 +76,22 @@ HEADING_TOKENS = {
 # Inside a page column the headings step down from the page title, which is
 # the page size, so a section is never drawn as large as the page's name.
 # These are the column's own rules in custom.css; outside a column the
-# element sizes above still hold.
+# element sizes above still hold. The reading column steps down once more
+# than the wide one: its pages are prose, where the wide column's section
+# size shouted over 16px text.
 COLUMN_HEADING_TOKENS = {
-    "h2": "--fhi-text-section",
-    "h3": "--fhi-text-subsection",
-    "h4": "--fhi-text-lead",
+    ".fhi-page": {
+        "h2": "--fhi-text-reading-section",
+        "h3": "--fhi-text-lead",
+        "h4": "--fhi-text-body",
+    },
+    ".fhi-page-wide": {
+        "h2": "--fhi-text-section",
+        "h3": "--fhi-text-subsection",
+        "h4": "--fhi-text-lead",
+    },
 }
-COLUMN_TIERS = (".fhi-page", ".fhi-page-wide")
+COLUMN_TIERS = tuple(COLUMN_HEADING_TOKENS)
 _COLUMN_HEADING = re.compile(r"(\.fhi-page(?:-wide)?)\s+:where\((h[1-6])\)")
 
 # A heading in a column whose size is a number rather than a token, agreed
@@ -206,8 +215,8 @@ def test_each_column_heading_level_reads_its_token() -> None:
             match = _COLUMN_HEADING.fullmatch(selector.strip())
             if match:
                 seen.setdefault(match.group(2), {})[match.group(1)] = value
-    for tag, token in COLUMN_HEADING_TOKENS.items():
-        for tier in COLUMN_TIERS:
+    for tier, tokens in COLUMN_HEADING_TOKENS.items():
+        for tag, token in tokens.items():
             value = seen.get(tag, {}).get(tier)
             assert value is not None, "%s :where(%s) sets no size" % (tier, tag)
             assert value == "var(%s)" % token, (
@@ -229,16 +238,17 @@ def test_the_column_headings_step_down_from_the_page_title() -> None:
         assert found is not None, "%s is neither a clamp nor a length: %s" % (token, value)
         return found
 
-    steps = ["--fhi-text-page", *COLUMN_HEADING_TOKENS.values()]
-    for viewport in (390.0, 1280.0):
-        sizes = [size(token, viewport) for token in steps]
-        for (above, big), (below, small) in zip(
-            zip(steps, sizes), zip(steps[1:], sizes[1:])
-        ):
-            assert small < big, (
-                "at %.0fpx %s is %.1fpx, not smaller than %s at %.1fpx"
-                % (viewport, below, small, above, big)
-            )
+    for tier, tokens in COLUMN_HEADING_TOKENS.items():
+        steps = ["--fhi-text-page", *tokens.values()]
+        for viewport in (390.0, 1280.0):
+            sizes = [size(token, viewport) for token in steps]
+            for (above, big), (below, small) in zip(
+                zip(steps, sizes), zip(steps[1:], sizes[1:])
+            ):
+                assert small < big, (
+                    "in %s at %.0fpx %s is %.1fpx, not smaller than %s at %.1fpx"
+                    % (tier, viewport, below, small, above, big)
+                )
 
 
 def _in_a_column(node: Node) -> bool:
