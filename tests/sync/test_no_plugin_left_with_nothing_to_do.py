@@ -233,9 +233,7 @@ class NoPluginLeftWithNothingToDoTest(SimpleTestCase):
 
         The rule has to cover exactly the widths where the script would have
         closed the menu, so its breakpoint is read from the script."""
-        script = re.search(
-            r"matchMedia\('\(min-width: (\d+)px\)'\)", read(BASE_HTML)
-        )
+        script = re.search(r"matchMedia\('\(min-width: (\d+)px\)'\)", read(BASE_HTML))
         self.assertIsNotNone(
             script, "no matchMedia('(min-width: Npx)') left in base.html's menu script"
         )

@@ -542,6 +542,10 @@ _STYLE_SOURCE = "data-contrast-source"
 _STYLE_OPEN = re.compile(r"<style\b", re.I)
 _STYLE_FROM = re.compile(r"<style\b[^>]*\b%s=\"([^\"]+)\"" % _STYLE_SOURCE, re.I)
 _LINKED_STYLESHEET = re.compile(r"static\s+['\"]css/([\w.-]+\.css)['\"]")
+# Bootstrap's stylesheet comes from a CDN, not from static/css, so it needs a
+# pattern of its own. A page that links it is reached by BOOTSTRAP_GROUNDS.
+BOOTSTRAP_SOURCE = "bootstrap 5.2.3"
+_LINKED_BOOTSTRAP = re.compile(r"bootstrap@5\.2\.3/dist/css/bootstrap(?:\.min)?\.css")
 
 
 def _class_variants(raw: str) -> tuple[frozenset[str], ...]:
@@ -826,15 +830,18 @@ def selector_states(steps: Sequence[Step]) -> frozenset[str]:
 def page_sources(markup: str) -> frozenset[str]:
     """The CSS one built page carries, named the way Rule.stylesheet names it.
 
-    That is the site stylesheets the page links, and the <style> block of
-    every template that renders into it: the page itself, what it extends,
-    and what it or they include. Nothing else. A browser applies a <style>
-    block to the document it sits in and to no other, and a page that links
-    no stylesheet never sees custom.css or main.css at all.
+    That is the site stylesheets the page links, Bootstrap when the page
+    links it (the source of the fills in BOOTSTRAP_GROUNDS), and the <style>
+    block of every template that renders into it: the page itself, what it
+    extends, and what it or they include. Nothing else. A browser applies a
+    <style> block to the document it sits in and to no other, and a page that
+    links no stylesheet never sees custom.css or main.css at all.
     """
     linked = {
         name for name in _LINKED_STYLESHEET.findall(markup) if name in STYLESHEETS
     }
+    if _LINKED_BOOTSTRAP.search(markup):
+        linked.add(BOOTSTRAP_SOURCE)
     blocks = {"templates/" + name for name in _STYLE_FROM.findall(markup)}
     return frozenset(linked | blocks)
 
@@ -1004,7 +1011,7 @@ def _layers_from(
 # letter's grey included, and three pages failed for words that sit on white.
 # Take an entry out when the component it describes leaves the site.
 BOOTSTRAP_GROUNDS: tuple[Rule, ...] = (
-    Rule("bootstrap 5.2.3", 0, ".card", (("background-color", "#fff", False),)),
+    Rule(BOOTSTRAP_SOURCE, 0, ".card", (("background-color", "#fff", False),)),
 )
 
 
@@ -1855,7 +1862,8 @@ def test_every_bootstrap_ground_is_still_under_something() -> None:
 
     It would paint nothing, and it would quietly start painting again if the
     class came back for some other reason, so it goes when its component
-    goes, and all of them go with Bootstrap.
+    goes, and all of them go with Bootstrap. The class has to be on a page
+    that links Bootstrap: a ground paints only where its source reaches.
     """
     base = (TEMPLATE_DIR / "base.html").read_text()
     assert (
@@ -1866,9 +1874,40 @@ def test_every_bootstrap_ground_is_still_under_something() -> None:
         selector
         for rule in BOOTSTRAP_GROUNDS
         for selector in rule.selectors
-        if not dom.matching(split_selector(selector))
+        if not dom.matching(split_selector(selector), rule.stylesheet)
     ]
-    assert not gone, "no page has these any more: %s" % gone
+    assert not gone, "no page that links Bootstrap has these any more: %s" % gone
+
+
+def test_a_bootstrap_ground_reaches_the_painter() -> None:
+    """Listing a fill is not the same as painting it. Each rule paints only
+    on the pages that carry its source, and for a while no page recorded
+    Bootstrap as one, so every card's white was skipped and the words in a
+    card were measured on whatever sat under the card. With none of our own
+    CSS in the way, each card on a page that links Bootstrap has to come out
+    as exactly the fill written down for it."""
+    dom = template_dom()
+    painter = Painter([], dom)
+    for rule in BOOTSTRAP_GROUNDS:
+        for selector in rule.selectors:
+            nodes = dom.matching(split_selector(selector), rule.stylesheet)
+            assert nodes, f"no page that links Bootstrap has {selector}"
+            unpainted = sorted(
+                {
+                    node.template
+                    for node in nodes
+                    if [
+                        flatten(stop, BLACK)
+                        for layer in painter._own_layers(node, None, frozenset())
+                        for stop in layer.stops
+                    ]
+                    != [WHITE]
+                }
+            )
+            assert not unpainted, (
+                f"{selector} is not painted white on these pages, although "
+                f"they link Bootstrap: {unpainted}"
+            )
 
 
 def test_every_excuse_names_a_rule_that_still_exists() -> None:
