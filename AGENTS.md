@@ -7,6 +7,9 @@ lives in [CLAUDE.md](CLAUDE.md). Read that first and follow all of it; the
 rules below are the ones agents most often get wrong, repeated here so they
 are never missed.
 
+For orientation (privacy rules, running the app, the tox env map, CI, and a
+repository map), see [README.md](README.md).
+
 ## Non-negotiables
 
 - **Run tests only via tox** (`tox -e py313-django52-async-unit`, etc.).
