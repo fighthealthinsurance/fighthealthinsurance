@@ -17,7 +17,7 @@ Fax ReSend
     <form action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
       {% csrf_token %}
       <div class="scroll-x">
-	<table>
+	<table class="fhi-form-table">
 	  {{ form.as_table }}
 	</table>
       </div>

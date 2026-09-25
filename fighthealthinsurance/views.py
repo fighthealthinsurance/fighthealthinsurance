@@ -669,13 +669,17 @@ class OtherResourcesView(generic.TemplateView):
         # The headlines come from the cache once any request has filled it;
         # on a miss the feeds are fetched together under one short budget.
         # See health_news.py. Nothing here may keep the page from rendering.
+        context["rss_feeds"] = {}
+        # How old the headlines are, by the oldest feed shown. None, for no
+        # feeds or a feed cached before feeds carried a time, means no line.
+        context["rss_fetched_at"] = None
         try:
-            from fighthealthinsurance.health_news import get_health_news
+            from fighthealthinsurance.health_news import get_health_news, oldest_fetch
 
             context["rss_feeds"] = get_health_news()
+            context["rss_fetched_at"] = oldest_fetch(context["rss_feeds"])
         except Exception as e:
             logger.error(f"Error setting up RSS feeds: {e}")
-            context["rss_feeds"] = {}
         return context
 
 

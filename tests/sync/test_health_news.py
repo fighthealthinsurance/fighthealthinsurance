@@ -10,6 +10,7 @@ import gzip
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import requests
@@ -88,6 +89,25 @@ RSS_LONG_TITLE = """<?xml version="1.0"?><rss version="2.0"><channel><title>{nam
 RSS_NO_LINKS = """<?xml version="1.0"?><rss version="2.0"><channel><title>{name}</title>
 <item><title>{name} headline with nowhere to go</title></item>
 </channel></rss>"""
+
+
+def cached_feed(slug: str, **extra) -> dict:
+    """A feed as the cache holds it. With no extra keys, the shape cached
+    before feeds carried the time they were fetched."""
+    return {
+        "name": f"KFF Health News - {slug}",
+        "description": f"{slug} news",
+        "articles": [
+            {
+                "title": f"{slug} cached headline",
+                "url": f"https://kffhealthnews.org/{slug}/1",
+                "published_date": datetime(2026, 9, 21, 10, 0),
+                "formatted_date": "Sep 21, 2026",
+            }
+        ],
+        **extra,
+    }
+
 
 # The feeds as configured. Every test in every suite runs with FEEDS emptied
 # by the conftest fixture so no page load reaches KFF; these tests are about
@@ -665,6 +685,74 @@ class HealthNewsTest(TestCase):
                 found = health_news.get_health_news()
         self.assertEqual(set(found), {"insurance", "health-industry"})
 
+    def test_each_feed_carries_the_time_it_was_fetched(self):
+        """In what the page is handed and in both cached copies, so the
+        last good copy still knows its age when it is all there is."""
+        started = datetime.now(timezone.utc)
+        with faking(FakeKff()):
+            found = health_news.get_health_news()
+        finished = datetime.now(timezone.utc)
+        self.assertEqual(set(found), set(REAL_FEEDS))
+        for feed_key, feed in found.items():
+            with self.subTest(feed=feed_key):
+                fetched_at = feed["fetched_at"]
+                self.assertIsNotNone(fetched_at.utcoffset(), "a naive time")
+                self.assertTrue(started <= fetched_at <= finished, fetched_at)
+                for key in (
+                    health_news._fresh_key(feed_key),
+                    health_news._last_good_key(feed_key),
+                ):
+                    self.assertEqual(cache.get(key)["fetched_at"], fetched_at, key)
+        self.assertEqual(
+            health_news.oldest_fetch(found),
+            min(feed["fetched_at"] for feed in found.values()),
+        )
+
+    def test_a_last_good_copy_keeps_its_own_time_and_the_page_goes_by_it(self):
+        """The honest age is the oldest feed shown. A copy kept through an
+        outage is days old while the other two were fetched just now."""
+        self._primed()
+        days_ago = datetime.now(timezone.utc) - timedelta(days=3)
+        kept = cache.get(health_news._last_good_key("uninsured"))
+        kept["fetched_at"] = days_ago
+        cache.set(health_news._last_good_key("uninsured"), kept, 60)
+        with faking(FakeKff(failing="uninsured")):
+            during = health_news.get_health_news()
+        self.assertEqual(set(during), set(REAL_FEEDS))
+        self.assertEqual(during["uninsured"]["fetched_at"], days_ago)
+        self.assertGreater(during["insurance"]["fetched_at"], days_ago)
+        self.assertEqual(health_news.oldest_fetch(during), days_ago)
+
+        # And on the path that skips a feed left alone after a failure.
+        with faking(FakeKff(failing="uninsured")) as send:
+            again = health_news.get_health_news()
+        self.assertEqual(send.call_count, 0, "a failed feed was asked again at once")
+        self.assertEqual(health_news.oldest_fetch(again), days_ago)
+
+    def test_a_feed_with_no_time_on_it_means_no_age_rather_than_a_guess(self):
+        now = datetime.now(timezone.utc)
+        timed = {"insurance": cached_feed("insurance", fetched_at=now)}
+        self.assertEqual(health_news.oldest_fetch(timed), now)
+        for label, feeds in (
+            ("no feeds", {}),
+            ("cached before times", {"insurance": cached_feed("insurance")}),
+            (
+                "one of two untimed",
+                {**timed, "uninsured": cached_feed("uninsured")},
+            ),
+            (
+                "a naive time",
+                {"insurance": cached_feed("insurance", fetched_at=datetime.now())},
+            ),
+            (
+                "not a time",
+                {"insurance": cached_feed("insurance", fetched_at="yesterday")},
+            ),
+            ("not a feed", {"insurance": None}),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(health_news.oldest_fetch(feeds))
+
     def test_the_uninsured_feed_points_where_kff_moved_it(self):
         """KFF turned the topic into a tag; the old URL is a 404."""
         self.assertEqual(
@@ -699,3 +787,44 @@ class ResourcesPageTest(TestCase):
             response = self.client.get(reverse("other-resources"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Latest Health Policy News")
+        self.assertNotContains(response, "Headlines updated")
+
+    def test_the_page_says_how_old_the_headlines_are(self):
+        """By the oldest feed shown, in the words timesince uses."""
+        now = datetime.now(timezone.utc)
+        ages = {"insurance": 1, "uninsured": 3, "health-industry": 2}
+        for feed_key, hours in ages.items():
+            cache.set(
+                health_news._fresh_key(feed_key),
+                cached_feed(feed_key, fetched_at=now - timedelta(hours=hours)),
+                60,
+            )
+        with faking(FakeKff()) as send:
+            response = self.client.get(reverse("other-resources"))
+        self.assertEqual(send.call_count, 0, "the page fetched past a fresh cache")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "uninsured cached headline")
+        # timesince keeps its number and unit together with a no-break space.
+        self.assertContains(
+            response, '<p class="rss-updated">Headlines updated 3\xa0hours ago.</p>'
+        )
+
+    def test_headlines_cached_before_feeds_carried_a_time_show_no_line(self):
+        """What the cache already holds on the day this ships: the page
+        renders it as it always did, and says nothing about its age."""
+        for feed_key in REAL_FEEDS:
+            cache.set(health_news._fresh_key(feed_key), cached_feed(feed_key), 60)
+        with faking(FakeKff()) as send:
+            response = self.client.get(reverse("other-resources"))
+        self.assertEqual(send.call_count, 0)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "insurance cached headline")
+        self.assertNotContains(response, "Headlines updated")
+        self.assertIsNone(response.context["rss_fetched_at"])
+
+    def test_no_headlines_shown_means_no_line(self):
+        with faking(FakeKff(failing="kffhealthnews.org")):
+            response = self.client.get(reverse("other-resources"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["rss_feeds"], {})
+        self.assertNotContains(response, "Headlines updated")
