@@ -5,17 +5,8 @@
 {% block metadescription %}Browse our treatment and drug-specific resources for fighting health insurance denials. Find guidance for your specific medication or procedure.{% endblock metadescription %}
 
 {% block content %}
-<div class="container mt-5">
-    <h1 style="margin-top: 10vh;">Treatment & Drug Resources</h1>
-
-    <div class="row">
-        <div class="col-12">
-            <p class="lead mb-4">
-                Browse our treatment and drug-specific pages for targeted guidance on fighting health insurance denials.
-                Each page includes common denial reasons, evidence we can use in your appeal, and assistance programs.
-            </p>
-        </div>
-    </div>
+<div class="fhi-page-wide">
+    {% include "partials/page_title.html" with title="Treatment & Drug Resources" lede="Browse our treatment and drug-specific pages for targeted guidance on fighting health insurance denials. Each page includes common denial reasons, evidence we can use in your appeal, and assistance programs." %}
 
     <div class="row">
         <div class="col-12">
@@ -27,7 +18,7 @@
                 <div class="col">
                     <div class="card h-100 microsite-card">
                         <div class="card-body">
-                            <h3 class="card-title h5">
+                            <h3 class="card-title">
                                 <a href="{% url 'microsite' slug=microsite.slug %}" class="stretched-link">
                                     {{ microsite.title }}
                                 </a>

@@ -119,6 +119,9 @@
     --fhi-text-lead: 1.125rem;
     --fhi-text-title: clamp(1.4rem, 1.2vw + 1rem, 1.8rem);
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
+    /* One step below a section heading inside a page column: 20px, the size
+       the policy pages drew their section headings at when they were h5s. */
+    --fhi-text-subsection: 1.25rem;
     --fhi-text-page: clamp(2.1rem, 2.5vw + 1.2rem, 3rem);
     --fhi-text-hero: 5rem;
     /* Every hero page except home shares one headline size: the home hero
@@ -310,9 +313,7 @@ textarea.fhi-field {
    is what Bootstrap's class writes too, so the weight needs no correction and
    pinning 600 here would make a heading wearing the class heavier than the
    element it stands in for. Line height is the half that does drift: the
-   element inherits the body's and the class does not. This also loosens the
-   one card title that wore the class before the retagging, on
-   microsite_directory, which is a heading that wraps and reads better for it. */
+   element inherits the body's and the class does not. */
 .h5 {
     line-height: inherit;
 }
@@ -1356,10 +1357,17 @@ a.link:hover::after {
     border: 1px solid rgba(255, 255, 255, 0.3);
     border-top: 4px solid var(--fhi-green);
 }
-.share-title {
+/* The title's size is set with two classes, so the page column's heading
+   sizes, which are one class, cannot resize it: the panel is an h4 on How
+   to Help and an h2 on the appeals page, and it looks the same at either
+   level. Its colour stays on the one class, where the light-panel rules
+   below override it. */
+.share-panel .share-title {
     margin: 0 0 .5rem;
     font-size: 1.15rem;
     font-weight: 700;
+}
+.share-title {
     color: #fff;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
 }
@@ -1835,6 +1843,51 @@ section:not(.slider) .share-subcopy {
    naming two. */
 .fhi-page :where(p, li) {
     max-width: var(--fhi-measure);
+}
+
+/* Headings inside a page column step down from the page title. main.css
+   sizes every h2 at the page size, the same as the title's h1, so a page
+   with a real outline (an h1, then h2 sections, then h3) drew its sections
+   as large as its name; the pages dodged that by using h3 to h5 for their
+   sections, which skips levels for anyone moving through the page by its
+   headings. In a column an h2 is a section and an h3 a subsection, sized
+   here once, so a page picks the level its outline needs and never a level
+   for its size. :where() keeps each at one class of specificity, like the
+   measure, so a page rule that names more still wins.
+
+   An h2 also takes the heading line height. main.css lets every heading
+   but the h3 inherit the body's 1.5, and a long section heading such as
+   the Terms of Service articles wraps on a phone, where 1.5 spreads its
+   lines apart like a paragraph's. An h3 gets its gap back: main.css zeroes
+   an h3's bottom margin, so a label that was an h5 or h6 before the
+   relevelling sat flush on the list under it. */
+.fhi-page :where(h2),
+.fhi-page-wide :where(h2) {
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
+}
+
+.fhi-page :where(h3),
+.fhi-page-wide :where(h3) {
+    font-size: var(--fhi-text-subsection);
+    line-height: var(--fhi-line-heading);
+    margin-bottom: var(--fhi-space-2);
+}
+
+.fhi-page :where(h4),
+.fhi-page-wide :where(h4) {
+    font-size: var(--fhi-text-lead);
+}
+
+/* A hero page is a stack of full-width bands under its image, each holding
+   its own column so the band's background still runs edge to edge. The
+   band's own padding spaces it, as it did around Bootstrap's container, so
+   the column adds no page-end space inside it; otherwise every band grew
+   4rem at its foot. Only bands after a hero: Terms of Service and Contact
+   also wrap their one column in a section, and keep their page end. */
+.slider ~ section > .fhi-page,
+.slider ~ section > .fhi-page-wide {
+    padding-bottom: 0;
 }
 
 /* A page whose copy is centred, like Delete Data: the column stacks its
@@ -2407,16 +2460,14 @@ section:not(.slider) .share-subcopy {
 }
 
 /* ===== Media References / Press Page ===== */
-.media-references-section {
-    padding: 0 0 4rem;
-}
 .media-references-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 1.75rem;
 }
+/* No size here: the page column sizes an h2 as a section, the same as the
+   section headings on every other page in a column. */
 .media-references-subhead {
-    font-size: 1.5rem;
     font-weight: 700;
     color: #333;
     margin: 3rem 0 1.75rem;
@@ -2482,8 +2533,10 @@ section:not(.slider) .share-subcopy {
 .media-reference-date {
     white-space: nowrap;
 }
+/* A card's headline is an h3 under the section's h2, drawn at the lead size
+   rather than the column's subsection size so it stays a card title. */
 .media-reference-headline {
-    font-size: 1.15rem;
+    font-size: var(--fhi-text-lead);
     font-weight: 600;
     line-height: 1.35;
     margin-bottom: 0.6rem;
@@ -2543,9 +2596,6 @@ section:not(.slider) .share-subcopy {
     margin-top: 2.5rem;
 }
 @media (max-width: 768px) {
-    .media-references-section {
-        padding: 0 0 3rem;
-    }
     .media-references-grid {
         grid-template-columns: 1fr;
     }
@@ -2672,10 +2722,6 @@ textarea,
     border-radius: var(--fhi-radius);
     box-shadow: var(--fhi-shadow);
     border-left: 4px solid var(--fhi-green-ink);
-}
-
-.term-title {
-    color: var(--fhi-green-ink);
 }
 
 .term-definition .lead {

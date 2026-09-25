@@ -12,9 +12,9 @@
   .nav-pills .nav-link:hover { background-color: var(--fhi-green-ink); color: #fff; }
   .nav-pills .nav-link { color: #555; border: 1px solid #ddd; margin: 0.25rem; transition: background-color 0.3s; }
   .persona-section { padding: 2.5rem 2rem; border-radius: 8px; margin-bottom: 2rem; }
-  .persona-section h3 { margin-bottom: 1.5rem; }
+  .persona-section h2 { margin-bottom: 1.5rem; }
   .persona-card { padding: 1.5rem; background-color: rgba(255,255,255,0.7); border-radius: 8px; height: 100%; }
-  .persona-card h4 { margin-bottom: 1rem; }
+  .persona-card h3 { margin-bottom: 1rem; }
 </style>
 {% endblock extra_style %}
 
@@ -41,7 +41,7 @@
     </ul>
 
     <section style="text-align: center; padding: 2rem; background-color: #fff8e1; border-radius: 8px; margin-bottom: 3rem;">
-        <h3 style="margin-bottom: 1rem;">Help Someone Fight a Denial They Couldn't Afford to Appeal</h3>
+        <h2 style="margin-bottom: 1rem;">Help Someone Fight a Denial They Couldn't Afford to Appeal</h2>
         <p style="font-size: 1.05rem; margin: 0 auto 1rem;">
             Fight Health Insurance is free for every patient. Your donation keeps it that way — so no one
             has to give up on an appeal because they can't afford help.
@@ -56,20 +56,20 @@
     </section>
 
     <section id="help-patients" class="persona-section" style="background-color: #f8f9fa;">
-        <h3>Help Patients Fight Denials</h3>
+        <h2>Help Patients Fight Denials</h2>
         <div class="row">
             <div class="col-md-6" style="margin-bottom: 1.5rem;">
                 <div class="persona-card">
-                    <h4>Share the Tool</h4>
+                    <h3>Share the Tool</h3>
                     <p>
                         Know someone dealing with a health insurance denial? Share this free tool and help them fight back.
                     </p>
-                    {% include 'partials/share_buttons.html' %}
+                    {% include 'partials/share_buttons.html' with share_heading_level=4 %}
                 </div>
             </div>
             <div class="col-md-6" style="margin-bottom: 1.5rem;">
                 <div class="persona-card">
-                    <h4>Spread Awareness</h4>
+                    <h3>Spread Awareness</h3>
                     <p>
                         Follow us on social media and help raise awareness about the importance of appealing
                         unfair insurance denials. Every voice makes a difference!
@@ -105,7 +105,7 @@
     </section>
 
     <section id="developers" class="persona-section" style="background-color: #e3f2fd;">
-        <h3>Contribute to Open Source Healthcare Tools</h3>
+        <h2>Contribute to Open Source Healthcare Tools</h2>
         <p style="margin-bottom: 1.5rem;">
             Fight Health Insurance is fully open source. We welcome contributions from developers,
             designers, and anyone who wants to help improve the project. The stack includes Django,
@@ -122,7 +122,7 @@
     </section>
 
     <section id="cloud" class="persona-section" style="background-color: #e0f7fa;">
-        <h3>Provide Cloud Resources</h3>
+        <h2>Provide Cloud Resources</h2>
         <p style="margin-bottom: 1.5rem;">
             Fight Health Insurance runs AI models, processes documents, and serves patients around the clock.
             If you work at a cloud vendor, you can make a huge impact by helping us access compute credits,
@@ -142,7 +142,7 @@
     </section>
 
     <section id="providers" class="persona-section" style="background-color: #e8f5e9;">
-        <h3>Partner With Us to Help Your Patients</h3>
+        <h2>Partner With Us to Help Your Patients</h2>
         <p style="margin-bottom: 1.5rem;">
             If you're a provider, practice, or hospital system, we're building tools to integrate
             into your workflow so your patients can fight denials more effectively. Learn about our
@@ -157,7 +157,7 @@
     </section>
 
     <section id="connectors" class="persona-section" style="background-color: #f3e5f5;">
-        <h3>Connect Us With People Who Need This</h3>
+        <h2>Connect Us With People Who Need This</h2>
         <p style="margin-bottom: 1rem;">
             Do you work at a pharmaceutical company, a doctor's office, a patient advocacy group,
             or another organization that serves patients? We'd love an introduction.
@@ -181,7 +181,7 @@
     </section>
 
     <section style="text-align: center; padding: 3rem 0; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
-        <h3 style="margin-bottom: 1rem;">Ready to Get Started?</h3>
+        <h2 style="margin-bottom: 1rem;">Ready to Get Started?</h2>
         <p style="font-size: 1.1rem; margin-bottom: 2rem;">
             Generate your healthcare claim appeal in minutes with AI.
         </p>

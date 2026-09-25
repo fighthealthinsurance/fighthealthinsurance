@@ -26,9 +26,7 @@
 
 <!-- Glossary Section -->
 <section id="glossary-list" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-10 mx-auto">
+    <div class="fhi-page-wide">
 
                 <!-- Quick Jump -->
                 <div class="glossary-quick-jump text-center mb-4">
@@ -54,7 +52,7 @@
                                 <a href="{% url 'glossary_term' term.slug %}" class="term-card d-block">
                                     <div class="card h-100">
                                         <div class="card-body">
-                                            <h3 class="card-title h5 mb-1">{{ term.term }}</h3>
+                                            <h3 class="card-title mb-1">{{ term.term }}</h3>
                                             <p class="card-text text-muted small mb-0">{{ term.short }}</p>
                                         </div>
                                     </div>
@@ -65,14 +63,12 @@
                     </div>
                     {% endfor %}
                 </div>
-            </div>
-        </div>
     </div>
 </section>
 
 <!-- Final CTA Section -->
 <section id="final-cta" class="py-5 bg-light">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto text-center">
                 <h2 class="mb-3">Ready to Fight a Denial?</h2>
@@ -92,7 +88,7 @@
 
 <!-- Disclaimer Section -->
 <section id="disclaimer" class="py-4">
-    <div class="container">
+    <div class="fhi-page-wide">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <div class="glossary-disclaimer disclaimer-box p-3 bg-light border rounded">

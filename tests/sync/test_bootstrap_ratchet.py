@@ -34,17 +34,19 @@ TEMPLATES = REPO_ROOT / "fighthealthinsurance" / "templates"
 # that was written before this existed, and then by exactly what that page
 # brings, with the page named in PER_TEMPLATE below, so no page can grow
 # under cover of a total. 2026-09-19: the two glossary pages, written before
-# the ratchet landed.
+# the ratchet landed. 2026-09-24: the policy, reading, index, state and share
+# pages moved onto the page column, which took 29 containers, 8 rows, 9
+# columns and 2 d-flex with them.
 BASELINE = {
     "form-control": 2,
     "form-check-input": 5,
     "card": 108,
     "btn": 126,
-    "row": 140,
-    "col-": 200,
-    "container": 115,
+    "row": 131,
+    "col-": 190,
+    "container": 86,
     "alert": 33,
-    "d-flex": 53,
+    "d-flex": 51,
 }
 
 # Where each one should end up instead, for whoever reads a failure.
@@ -64,7 +66,6 @@ INSTEAD = {
 # What each template carries today, counted 2026-09-18. Lower as uses go.
 PER_TEMPLATE = {
     "404.html": {"btn": 1, "container": 1},
-    "about_ai.html": {"container": 1},
     # Not Bootstrap's alert: this page defines .stat-card.alert itself.
     "admin_status.html": {"alert": 17},
     "about_us.html": {"card": 3},
@@ -83,7 +84,6 @@ PER_TEMPLATE = {
         "row": 1,
     },
     "confirm_delete.html": {"btn": 1},
-    "contact.html": {"container": 1},
     "delete_data_email_sent.html": {"alert": 1},
     "denial_language_library.html": {
         "alert": 1,
@@ -103,18 +103,16 @@ PER_TEMPLATE = {
     "glossary.html": {
         "btn": 4,
         "card": 1,
-        "col-": 7,
-        "container": 6,
+        "col-": 1,
         "d-flex": 1,
-        "row": 7,
+        "row": 1,
     },
     "glossary_index.html": {
         "btn": 4,
         "card": 1,
-        "col-": 4,
-        "container": 3,
+        "col-": 3,
         "d-flex": 2,
-        "row": 5,
+        "row": 4,
     },
     "explain_denial.html": {
         "alert": 1,
@@ -126,7 +124,6 @@ PER_TEMPLATE = {
         "form-control": 2,
         "row": 5,
     },
-    "faq.html": {"container": 1},
     "faq_post.html": {"container": 1},
     "fax_followup_thankyou.html": {"container": 1},
     "fax_thankyou.html": {"container": 1},
@@ -136,7 +133,7 @@ PER_TEMPLATE = {
     "followup_thankyou.html": {"btn": 1, "container": 1},
     "how_to_help.html": {"btn": 10, "col-": 2, "row": 1},
     "landing_base.html": {"btn": 5, "container": 4, "d-flex": 1, "row": 1},
-    "media_references.html": {"btn": 1, "container": 1},
+    "media_references.html": {"btn": 1},
     "medicaid_eligibility.html": {
         "alert": 1,
         "btn": 12,
@@ -147,7 +144,6 @@ PER_TEMPLATE = {
         "row": 15,
     },
     "mfa_auth_base.html": {"card": 1, "container": 1},
-    "mhmda.html": {"container": 1},
     "microsite.html": {
         "btn": 7,
         "card": 4,
@@ -160,9 +156,8 @@ PER_TEMPLATE = {
         "alert": 1,
         "btn": 2,
         "card": 1,
-        "col-": 4,
-        "container": 1,
-        "row": 5,
+        "col-": 3,
+        "row": 4,
     },
     "other_resources.html": {"alert": 1, "col-": 7, "row": 6},
     "outside_help.html": {"btn": 1},
@@ -202,7 +197,6 @@ PER_TEMPLATE = {
         "form-check-input": 5,
         "row": 15,
     },
-    "privacy_policy.html": {"container": 1},
     "proconnector.html": {"card": 4},
     "proconnector_quick_intro.html": {"card": 3},
     "professional.html": {"alert": 1, "container": 1},
@@ -213,13 +207,11 @@ PER_TEMPLATE = {
     "scrub.html": {"btn": 3, "col-": 1},
     "server_side_ocr.html": {"btn": 1},
     "server_side_ocr_error.html": {"btn": 1},
-    "share_denial.html": {"col-": 2, "d-flex": 2, "row": 1},
     "single_optional_question.html": {"alert": 1, "btn": 2},
     "state_help.html": {
         "btn": 9,
         "card": 5,
         "col-": 11,
-        "container": 7,
         "d-flex": 2,
         "row": 10,
     },
@@ -227,13 +219,11 @@ PER_TEMPLATE = {
         "btn": 7,
         "card": 5,
         "col-": 15,
-        "container": 5,
         "d-flex": 3,
         "row": 9,
     },
     "stripe_finish_error.html": {"alert": 1, "col-": 2, "d-flex": 2, "row": 1},
     "thankyou.html": {"container": 1},
-    "tos.html": {"container": 1},
     "turning_26.html": {
         "btn": 8,
         "card": 14,
