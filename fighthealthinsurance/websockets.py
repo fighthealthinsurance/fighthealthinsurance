@@ -670,9 +670,9 @@ class StreamingAppealsBackend(
         # back to REST. We close cleanly with no payload so the client
         # sees the same shape as a real broken-pipe / proxy-drop.
         # Double-gate: the module flag alone isn't enough — also
-        # require os.environ["TESTING"] == "True" (set only by the
-        # TestSync settings class) so a misconfigured production
-        # process that somehow toggled the flag still serves real
+        # require os.environ["TESTING"] == "True" (set only by the test
+        # configurations' pre_setup in settings.py) so a misconfigured
+        # production process that somehow toggled the flag still serves real
         # users.
         if SUPPRESS_APPEAL_WS_DELIVERY and os.environ.get("TESTING") == "True":
             logger.warning(

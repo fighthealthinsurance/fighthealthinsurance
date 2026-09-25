@@ -2174,9 +2174,9 @@ DENIAL_REF_IDLE_TTL_SECONDS = 12 * 60 * 60
 def session_gate_enforced() -> bool:
     """Whether ``SessionRequiredMixin`` insists on a session before rendering.
 
-    Off in production on purpose: ``Prod`` sets ``DEBUG = False`` and its
-    ``pre_setup`` deletes ``TESTING`` from the environment. Anything that must
-    hold in production therefore cannot sit behind this.
+    Off in production on purpose: ``Prod`` sets ``DEBUG = False``, and only
+    the test configurations set ``TESTING``. Anything that must hold in
+    production therefore cannot sit behind this.
     """
     return bool(settings.DEBUG or os.environ.get("TESTING", False))
 
