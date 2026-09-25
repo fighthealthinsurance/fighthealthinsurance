@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from django.conf import settings
+from django.contrib.staticfiles import finders
 from django.contrib.staticfiles.storage import staticfiles_storage
 
 from loguru import logger
@@ -23,8 +24,12 @@ from loguru import logger
 def read_static_text(filename: str) -> Optional[str]:
     """The file's contents, or None when no copy of it can be found.
 
-    Tried in order: staticfiles_storage (collectstatic has run), the app's
-    static source directories, then STATIC_ROOT read directly.
+    Tried in order: staticfiles_storage (collectstatic has run), then
+    Django's staticfiles finders, which search STATICFILES_DIRS (prefixed
+    entries included) and every installed app's static directory, this
+    app's among them, then STATIC_ROOT read directly. A hand-written walk of
+    STATICFILES_DIRS broke on a (prefix, path) entry before it reached the
+    app's directory.
     """
     try:
         with staticfiles_storage.open(filename, "r") as f:
@@ -35,15 +40,14 @@ def read_static_text(filename: str) -> Optional[str]:
     except Exception as e:
         logger.debug(f"Could not open {filename} via staticfiles_storage: {e}")
 
-    search_dirs = list(getattr(settings, "STATICFILES_DIRS", []))
-    app_static_dir = getattr(settings, "APP_STATIC_DIR", None)
-    if app_static_dir:
-        search_dirs.append(app_static_dir)
+    found = finders.find(filename)
+    if found:
+        logger.debug(f"Found {filename} at {found}")
+        return Path(found).read_text()
+
     static_root = getattr(settings, "STATIC_ROOT", None)
     if static_root:
-        search_dirs.append(static_root)
-    for static_dir in search_dirs:
-        path = Path(static_dir) / filename
+        path = Path(static_root) / filename
         if path.exists():
             logger.debug(f"Found {filename} at {path}")
             return path.read_text()

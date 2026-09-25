@@ -8,9 +8,10 @@ rendering /state-help/california/. Both loaders now fall back to the app's
 own static directory.
 """
 
+import tempfile
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from fighthealthinsurance import microsites, state_help, static_data
 
@@ -47,3 +48,14 @@ class StaticDataWithoutCollectstaticTest(SimpleTestCase):
             static_data.staticfiles_storage, "open", _storage_that_has_nothing
         ):
             self.assertIsNone(static_data.read_static_text("no-such-file.json"))
+
+    def test_a_prefixed_static_dir_does_not_stop_the_search(self):
+        """Django allows (prefix, path) entries in STATICFILES_DIRS; one of
+        them must not keep the loaders from the app's own directory."""
+        with tempfile.TemporaryDirectory() as extra:
+            with override_settings(STATICFILES_DIRS=[("extra", extra)]):
+                with patch.object(
+                    static_data.staticfiles_storage, "open", _storage_that_has_nothing
+                ):
+                    california = state_help.get_state_help("california")
+        self.assertIsNotNone(california, "a prefixed static dir stopped the search")
