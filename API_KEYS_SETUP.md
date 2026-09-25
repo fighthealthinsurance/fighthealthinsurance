@@ -200,6 +200,12 @@ the
 With the variables unset, nothing is shipped and there is no extra runtime
 cost.
 
+Microsoft ended support for the HTTP Data Collector API on 14 September 2026.
+The app still sends through it (`fighthealthinsurance/log_analytics.py`), and
+ingestion may keep working for a while, but it is unsupported: don't set it
+up for a new workspace. Microsoft's replacement is the Logs Ingestion API; see
+[its migration guide](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/custom-logs-migrate).
+
 ### Sign up
 
 1. In the Azure portal, open (or create) a **Log Analytics workspace**.

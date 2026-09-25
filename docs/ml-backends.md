@@ -32,7 +32,9 @@ python-decouple.)
   fine-tune (`supports_general_instructions` returns False), so the router
   keeps it out of chat, extraction and other instruction-following work. The
   router falls back to it there, with a logged warning, only when no
-  general-purpose backend is registered (`MLRouter._general_purpose_only`).
+  general-purpose backend is left among the candidates for that call, for
+  example when the ones registered are unavailable
+  (`MLRouter._general_purpose_only`).
 
 ## Options
 
@@ -53,6 +55,11 @@ python-decouple.)
 
    - The app calls `http://HOST:PORT/v1/chat/completions`, so the server must
      expose the OpenAI `/v1` API.
+   - That call is plain HTTP (there is no TLS option), and a request carries
+     patient and plan details. Run the server on the same machine, or on a
+     private network you trust, as production does inside its cluster. To
+     reach one anywhere else, use an encrypted tunnel (SSH or WireGuard)
+     rather than exposing the port.
    - `HEALTH_BACKEND_PORT` defaults to `80` when unset.
    - Do not use port 8000: `scripts/run_local.sh` serves the web app there.
    - The default model is a 7B fine-tune. Serving it needs a GPU; the

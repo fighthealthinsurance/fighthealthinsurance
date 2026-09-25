@@ -44,7 +44,9 @@ The script downloads the file and checks it against the digest pinned in
 [`scripts/geoip2fast-city-asn-ipv6.sha256`](../scripts/geoip2fast-city-asn-ipv6.sha256)
 (or `GEOIP2FAST_DB_SHA256` when set). On a mismatch it installs nothing at
 all, and a previously installed copy that no longer matches is removed too.
-Re-running is a no-op once the file is in place (it still hashes the file).
+Re-running is a no-op once the file is in place. With a digest pinned it
+hashes the existing file first; with no digest (allowed only with
+`--allow-unverified`) it accepts the file as it is.
 
 - **Local dev:** `scripts/run_local.sh` runs the fetch (in parallel with the
   other startup work) and exports `FHI_GEOIP_CITY_DB` when the file is there.
@@ -87,6 +89,8 @@ misconfiguration is visible. The warning names `FHI_GEOIP_CITY_DB` except when
 the package itself is missing. A corrupt but non-empty file passes the startup
 check and is reported instead by the background warm-up load.
 
-The guess is transient by design: it is fed to the model as unconfirmed
-context each turn and the app never persists it, for any user. The prompt also
-tells the model not to copy it into the stored context summary.
+The guess is transient by design: the app does not store it. It is fed to
+the model as unconfirmed context each turn, and the prompt asks the model not
+to copy it into the stored context summary. That is an instruction, not a
+check: nothing in the code filters the summary the model returns, so a
+guessed state can end up in it.

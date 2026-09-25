@@ -6,9 +6,11 @@ of all **enabled** model backends
 The staging and dev manifests (`k8s/deploy_staging.yaml`, `k8s/deploy_dev.yaml`)
 have no job that runs it. Each backend gets one tiny "Reply with exactly: OK"
 inference, one attempt with no retries, all backends at once. The probe uses
-the same code path and configuration the web pods use, run inside the
-`web-actor-launch` Job. That Job also mounts
-`fight-health-insurance-primary-secret`, which the web Deployment does not.
+the same code path as the web pods, run inside the `web-actor-launch` Job. The
+Job also mounts `fight-health-insurance-primary-secret`, which the web
+Deployment does not, so their credential environments are not identical: a
+key kept only in that secret would pass the probe and still be missing on
+the web pods.
 A backend already in rate-limit back-off is reported `FAIL_RATE_LIMITED`
 without being called.
 

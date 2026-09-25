@@ -126,9 +126,9 @@ REST API uses drf-spectacular for OpenAPI docs. API endpoints are under `/ziggy/
 
 ## Environment Variables
 
-Required for ML:
+ML backends (at least one; either kind works on its own):
 - `ANTHROPIC_API_KEY`, `DEEPINFRA_API`, or the Azure settings - hosted models, used as the backup tier (see docs/ml-backends.md)
-- `HEALTH_BACKEND_HOST` / `HEALTH_BACKEND_PORT` - Local ML backend
+- `HEALTH_BACKEND_HOST` / `HEALTH_BACKEND_PORT` - a self-hosted backend
 
 Development:
 - `RECAPTCHA_TESTING=true` - Disable reCAPTCHA locally
