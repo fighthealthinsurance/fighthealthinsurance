@@ -1038,6 +1038,30 @@ class UnattributedSplitTest(StaffClientMixin, TestCase):
         self.assertContains(response, f"<td>{TEMPLATE_PICK_LABEL}</td>")
         self.assertContains(response, f"<td>{SHARED_APPEAL_LABEL}</td>")
 
+    def test_blank_and_whitespace_names_split_like_null(self):
+        # A blank or whitespace-only model_name is no name at all, so it gets
+        # the same template / share-appeal split as NULL, not the
+        # unattributed bucket.
+        self._pick(self._denial("bt"), "", context_level="template")
+        self._pick(self._denial("ws"), "   ", editted=True)
+        self._pick(self._denial("bu"), "")
+
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        expected = {
+            TEMPLATE_PICK_LABEL: 1,
+            SHARED_APPEAL_LABEL: 1,
+            UNKNOWN_MODEL_LABEL: 1,
+        }
+        self.assertEqual(
+            {name: row["chosen"] for name, row in rows.items()}, expected
+        )
+        self.assertEqual(
+            {name: row["cases_picked"] for name, row in rows.items()}, expected
+        )
+
 
 class ContextLevelLabelTest(StaffClientMixin, TestCase):
     def setUp(self):
@@ -1155,6 +1179,28 @@ class ChartTypeTest(StaffClientMixin, TestCase):
         self.assertContains(response, 'type: "column"')
         self.assertNotContains(response, "stackedColumn")
         self.assertContains(response, "different populations")
+
+    def test_jump_links_reach_every_window_section(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        for w in response.context["windows"]:
+            anchor = f"window-{w['slug']}"
+            self.assertContains(response, f'<a href="#{anchor}">{w["label"]}</a>')
+            self.assertContains(
+                response, f'<div class="window-section" id="{anchor}">', count=1
+            )
+
+    def test_the_intro_names_each_bucket_on_its_own_line(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        for bucket in (
+            SYNTHESIZED_MODEL_NAME,
+            LEGACY_UNATTRIBUTED_LABEL,
+            "legacy-unresolved (Class)",
+            TEMPLATE_PICK_LABEL,
+            SHARED_APPEAL_LABEL,
+            UNKNOWN_MODEL_LABEL,
+            "unknown",
+        ):
+            self.assertContains(response, f"<li>&ldquo;{bucket}&rdquo;: ")
 
     def test_staff_dashboard_link_names_every_window(self):
         response = self.client.get(reverse("staff_dashboard"))
@@ -1288,6 +1334,35 @@ class ModelStateTagTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
         self.assertEqual(states["ext/broken"]["category"], mhc.CATEGORY_TIMEOUT)
         self.assertEqual(
             states["ext/no-key"]["category"], mhc.CATEGORY_MISSING_CREDENTIALS
+        )
+
+    def test_a_failure_survives_many_newer_rows_for_other_models(self):
+        # ext/broken's newest row is a timeout. 2001 newer rows for another
+        # model must not push it out of the read and leave ext/broken looking
+        # unchecked.
+        ModelBackendHealthCheckResult.objects.bulk_create(
+            ModelBackendHealthCheckResult(
+                run_id=f"run-good-{i}",
+                model_name="ext/good",
+                category=mhc.CATEGORY_PASS,
+                ok=True,
+            )
+            for i in range(2001)
+        )
+        states = _model_states(["ext/broken", "ext/good"])
+        self.assertEqual(
+            states["ext/broken"], {"key": "failing", "category": mhc.CATEGORY_TIMEOUT}
+        )
+        self.assertEqual(states["ext/good"], {"key": "external_ok"})
+
+        denial = self._denial()
+        self._draft(denial, "ext/broken", "draft")
+        self._pick(denial, "ext/broken", text="draft")
+        response = self.client.get(reverse("model_usage_dashboard"))
+        status = reverse("model_backend_status")
+        self.assertContains(
+            response,
+            f'<a class="state-tag state-fail" href="{status}">failing: FAIL_TIMEOUT</a>',
         )
 
     def test_the_health_read_is_one_query(self):

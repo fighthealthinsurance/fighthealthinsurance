@@ -1420,11 +1420,6 @@ CALL_FAILURE_OUTCOMES = ("runt_only", "rejected_at_peek", "no_output", "error")
 # windows are filled before the longer ones lose anything.
 CALL_DURATION_SAMPLE_CAP = 10_000
 
-# Bound on health-check rows read to find each model's latest one. Matches
-# ModelBackendStatusView: a run writes one row per catalog model, so this
-# covers dozens of recent runs.
-HEALTH_CHECK_SCAN_CAP = 2000
-
 # Names on the usage tables that are buckets, not models. They have no
 # backend to be healthy or retired, so their state says so instead.
 PLACEHOLDER_MODEL_LABELS = frozenset(
@@ -1493,13 +1488,24 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
         mhc.CATEGORY_MISSING_CREDENTIALS,
         mhc.CATEGORY_CLIENT_INIT,
     }
-    latest: Dict[str, Tuple[bool, str]] = {}
-    for name, ok, category in (
+    # The newest row for each model, with no row cap shared across models:
+    # under one cap, enough newer rows for other models pushed a model's last
+    # check off the list and it read as never checked. created_at is
+    # auto_now_add, so the highest id is the newest row. One query, and one
+    # row back per model on the page.
+    newest_ids = (
         ModelBackendHealthCheckResult.objects.filter(model_name__in=real)
-        .order_by("-created_at")
-        .values_list("model_name", "ok", "category")[:HEALTH_CHECK_SCAN_CAP]
-    ):
-        latest.setdefault(name, (ok, category))
+        .order_by()
+        .values("model_name")
+        .annotate(newest=Max("id"))
+        .values("newest")
+    )
+    latest: Dict[str, Tuple[bool, str]] = {
+        name: (ok, category)
+        for name, ok, category in ModelBackendHealthCheckResult.objects.filter(
+            id__in=newest_ids
+        ).values_list("model_name", "ok", "category")
+    }
 
     for name in real:
         instances = registered.get(name) or []
@@ -1535,11 +1541,13 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
 def _pick_counts(chosen_qs: QuerySet) -> Counter:
     """Chosen ProposedAppeal rows per reporting label, in one query.
 
-    Named rows go under their normalized label. Rows with no model_name are
-    split with conditional counts inside the same GROUP BY: pre-tracking
-    rows (created_at NULL) to LEGACY_UNATTRIBUTED_LABEL, template letters to
-    TEMPLATE_PICK_LABEL, share-appeal text to SHARED_APPEAL_LABEL, and the
-    rest, the real attribution misses, to UNKNOWN_MODEL_LABEL.
+    Named rows go under their normalized label. Rows with no model_name
+    (NULL, blank or only whitespace, which normalize_model_label treats
+    alike) are split with conditional counts inside the same GROUP BY:
+    pre-tracking rows (created_at NULL) to LEGACY_UNATTRIBUTED_LABEL,
+    template letters to TEMPLATE_PICK_LABEL, share-appeal text to
+    SHARED_APPEAL_LABEL, and the rest, the real attribution misses, to
+    UNKNOWN_MODEL_LABEL.
     """
     tracked = Q(created_at__isnull=False)
     template = Q(context_level=CONTEXT_LEVEL_TEMPLATE)
@@ -1563,8 +1571,9 @@ def _pick_counts(chosen_qs: QuerySet) -> Counter:
             "edited_templates",
         )
     ):
-        if name is not None:
-            counts[normalize_model_label(name) or UNKNOWN_MODEL_LABEL] += total
+        normalized = normalize_model_label(name)
+        if normalized is not None:
+            counts[normalized] += total
             continue
         shared = edited - edited_templates
         for label, n in (

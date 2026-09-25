@@ -17,9 +17,15 @@
     table.usage td.num, table.usage th.num { text-align: right; }
     .source-label { font-size: 0.85em; color: #666; font-weight: normal; }
     .legend-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
-    .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
     .nav-back:hover { text-decoration: underline; }
     .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .intro-lead { color: #333; margin: 0 0 8px 0; }
+    .intro-list { color: #555; font-size: 0.9em; margin: 0 0 14px 0; padding-left: 20px; }
+    .intro-list li { margin: 4px 0; }
+    .intro-list ul { padding-left: 20px; }
+    .jump-links { color: #555; margin: 0 0 14px 0; }
+    .jump-links a { color: #0056b3; }
     .note { color: #555; font-size: 0.9em; margin: 6px 0 12px 0; }
     .window-totals { color: #333; margin: 0 0 12px 0; }
     .state-legend { color: #555; font-size: 0.9em; margin: 0 0 18px 0; padding-left: 20px; }
@@ -37,31 +43,29 @@
 <body>
   <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
   <h1>{{ title }}</h1>
-  <p class="summary-note">
-    Which ML models get picked, and what state each one is in today. Sources:
-    <span class="legend-key" style="background:#1f77b4;"></span>ProposedAppeal (denial flow),
-    <span class="legend-key" style="background:#ff7f0e;"></span>Chooser - Appeal,
-    <span class="legend-key" style="background:#2ca02c;"></span>Chooser - Chat.
-    ProposedAppeal is real patients choosing among the drafts written for their
-    own case. A case counts once, for the pick recorded last, and pick rate =
-    cases picked / cases where the model had a draft on the page. The chooser
-    tables are anonymous votes on synthetic cases: win rate = votes won / votes
-    the model was shown in. A rate with no denominator shows as a dash, never
-    0%. Windows are rolling (last 24 hours / 7 days / 30 days, anchored on the
-    pick or vote time); All Time additionally includes rows predating
-    timestamp tracking. Buckets that are not models:
-    &ldquo;synthesized&rdquo; = drafts merged from several models;
-    &ldquo;legacy-unattributed&rdquo; = historical picks recorded before model
-    tracking whose generating model cannot be recovered;
-    &ldquo;legacy-unresolved (Class)&rdquo; = legacy chooser rows that stored a
-    Python object repr, aggregated by model class;
-    &ldquo;(template, non-AI)&rdquo; = the non-AI template letter;
-    &ldquo;(shared-appeal text)&rdquo; = text submitted through the share-appeal
-    form, which may never have been a draft;
-    &ldquo;(unattributed)&rdquo; = any other pick that could not be matched to
-    a generated draft; &ldquo;unknown&rdquo; = a call record with no model name.
-    These buckets have no offered or presented counts by design.
-  </p>
+  <p class="intro-lead">Which ML models get picked, and what state each one is in today.</p>
+  <nav class="jump-links" aria-label="Windows on this page">
+    Jump to:
+    {% for w in windows %}<a href="#window-{{ w.slug }}">{{ w.label }}</a>{% if not forloop.last %} &middot; {% endif %}{% endfor %}
+  </nav>
+  <ul class="intro-list">
+    <li><span class="legend-key" style="background:#1f77b4;"></span><strong>ProposedAppeal (denial flow)</strong>: real patients choosing among the drafts written for their own case. A case counts once, for the pick recorded last.</li>
+    <li><span class="legend-key" style="background:#ff7f0e;"></span><strong>Chooser - Appeal</strong> and <span class="legend-key" style="background:#2ca02c;"></span><strong>Chooser - Chat</strong>: anonymous votes on synthetic cases.</li>
+    <li><strong>Appeal generation calls</strong>: each model call made while writing appeals on live runs, by outcome (ModelCallAttempt). Shown for the last 1, 7 and 30 days, not All Time.</li>
+    <li><strong>Pick rate</strong> = cases picked / cases where the model had a draft on the page. <strong>Win rate</strong> = votes won / votes the model was shown in. A rate with no denominator shows as a dash, never 0%.</li>
+    <li><strong>Windows</strong> are rolling: last 24 hours / 7 days / 30 days, anchored on the pick or vote time. All Time additionally includes rows predating timestamp tracking.</li>
+    <li><strong>Buckets that are not models</strong>, with no offered or presented counts by design:
+      <ul>
+        <li>&ldquo;synthesized&rdquo;: drafts merged from several models.</li>
+        <li>&ldquo;legacy-unattributed&rdquo;: historical picks recorded before model tracking, whose generating model cannot be recovered.</li>
+        <li>&ldquo;legacy-unresolved (Class)&rdquo;: legacy chooser rows that stored a Python object repr, aggregated by model class.</li>
+        <li>&ldquo;(template, non-AI)&rdquo;: the non-AI template letter.</li>
+        <li>&ldquo;(shared-appeal text)&rdquo;: text submitted through the share-appeal form, which may never have been a draft.</li>
+        <li>&ldquo;(unattributed)&rdquo;: any other pick that could not be matched to a generated draft.</li>
+        <li>&ldquo;unknown&rdquo;: a call record with no model name.</li>
+      </ul>
+    </li>
+  </ul>
   <p class="summary-note">
     Each model row carries its state now, read from this deployment's model
     settings and the stored health checks; this page never calls a model. The
@@ -80,7 +84,7 @@
   </ul>
 
   {% for w in windows %}
-  <div class="window-section">
+  <div class="window-section" id="window-{{ w.slug }}">
     <h2>{{ w.label }}</h2>
     <p class="window-totals">
       Cases picked: <strong>{{ w.totals.cases_picked }}</strong>.
