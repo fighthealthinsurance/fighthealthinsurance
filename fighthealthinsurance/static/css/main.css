@@ -330,20 +330,25 @@ a:focus {
     border: none;
     margin-bottom: 0;
     padding: var(--fhi-space-3);
-    /* The open menu has to paint above the page, and it did not.
-       jquery.sticky wraps the header and freezes that wrapper at the closed
-       height, so an opened menu overhangs the page rather than pushing it
-       down; and .hero-inner carries a backdrop-filter, which makes it a
-       stacking context at the z-index:0 level. With no z-index here the two
-       sit on the same level and DOM order decides, so the hero, being later,
-       covered the menu. Measured on a phone: two of the nine links could be
-       tapped, and Resources was not one of them. That is the "Resources
-       doesn't always work" report, and it is intermittent because it depends
-       on whether the page behind has a hero at all.
+    /* The header stays at the top of the window as the page scrolls. The
+       browser does that from these two lines. It used to take jquery.sticky,
+       which wrapped the header in a div frozen at the closed height and
+       listened to every scroll, so an opened phone menu hung over the page
+       instead of pushing it down. */
+    position: sticky;
+    top: 0;
+    /* Once the header is stuck, the page scrolls underneath it, so an open
+       menu still has to paint above the page. .hero-inner carries a
+       backdrop-filter, which makes it a stacking context at the z-index:0
+       level. With no z-index here the two sit on the same level and DOM
+       order decides, so the hero, being later, covered the menu. Measured on
+       a phone: two of the nine links could be tapped, and Resources was not
+       one of them. That is the "Resources doesn't always work" report, and
+       it is intermittent because it depends on whether the page behind has
+       a hero at all.
 
-       1030 is Bootstrap's sticky layer. The site banner sets 1031 on purpose
-       and still wins. */
-    position: relative;
+       1030 is Bootstrap's fixed-position layer. The site banner sets 1031 on
+       purpose and still wins. */
     z-index: 1030;
 }
 
@@ -375,31 +380,6 @@ a:focus {
 
 .slider .container {
     width: 100%;
-}
-
-.slider .owl-dots {
-    position: absolute;
-    top: 575px;
-    width: 100%;
-    justify-content: center;
-}
-
-.owl-theme .owl-dots .owl-dot span {
-    width: 8px;
-    height: 8px;
-    margin: 5px 7px;
-    border: 2px solid #d9d9d9;
-    background: transparent;
-    display: block;
-    -webkit-backface-visibility: visible;
-    transition: opacity 200ms ease;
-    border-radius: 30px;
-}
-
-.owl-theme .owl-dots .owl-dot.active span,
-.owl-theme .owl-dots .owl-dot:hover span {
-    background-color: #ffffff;
-    border-color: transparent;
 }
 
 .slider .caption {

@@ -67,7 +67,7 @@ SHELL_KEEPS_ITS_LITERAL = {
 # Off-scale spacing declarations still in each stylesheet, counted on
 # 2026-09-13. Lower these as the values are migrated; the test refuses to let
 # them grow, and refuses to let a stale number sit above what is really there.
-BASELINE = {"custom.css": 71, "main.css": 48}
+BASELINE = {"custom.css": 71, "main.css": 46}
 
 
 def _lengths(value: str):

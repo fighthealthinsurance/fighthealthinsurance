@@ -7,7 +7,7 @@
 
 {% block content %}
 <!-- Hero Section -->
-<section id="microsite-hero" class="slider" data-stellar-background-ratio="0.5">
+<section id="microsite-hero" class="slider">
     <div class="row">
         <div class="item item-first fhi-hero-short">
             <div class="caption d-flex flex-column align-items-center justify-content-center">
@@ -24,7 +24,7 @@
                     column on a phone. {% endcomment %}
                     <div class="hero-cta-group">
                         {% if microsite.blog_post_url %}
-                        <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-primary">
+                        <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green secondary-cta">
                             <i class="bi bi-book"></i> Read Our Guide
                         </a>
                         {% endif %}
@@ -286,7 +286,7 @@
                         Chat with AI Assistant
                     </a>
                     {% if microsite.blog_post_url %}
-                    <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-primary btn-lg">
+                    <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green fhi-btn-lg">
                         <i class="bi bi-book"></i> Read Our Guide
                     </a>
                     {% endif %}

@@ -58,6 +58,7 @@
            behind. */
         :root {
             --fhi-btn-ink: #fff;
+            --fhi-green-ink: #566b07;
         }
         .error-container {
             max-width: 600px;
@@ -90,8 +91,10 @@
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             margin: 2rem 0;
         }
+        /* Links take the site's link green, declared above because this page
+           loads no stylesheet: the brand lime was 2:1 on this white page. */
         a {
-            color: #a5c422;
+            color: var(--fhi-green-ink);
         }
     </style>
 </head>
