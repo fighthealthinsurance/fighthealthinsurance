@@ -495,9 +495,6 @@ CLASS_EXPRESSION = re.compile(
     r"|\bclassList\s*\.\s*(?:add|remove|toggle|contains|replace)\s*(?=\()"
     r"""|\bsetAttribute\s*(?=\(\s*["']class["'])"""
 )
-#: A data-bs-* attribute written with its value into a script's markup,
-#: JSX or a string.
-SCRIPT_DATA_BS = re.compile(r"(?<![\w-])data-bs-[\w-]+(?=\s*=)")
 #: One set by name: el.setAttribute("data-bs-toggle", ...), toggleAttribute,
 #: or jQuery's $(el).attr(...).
 SCRIPT_DATA_BS_BY_NAME = re.compile(
@@ -584,13 +581,14 @@ def _script_data_bs(text: str):
 
     Reading only "data-bs-...=" missed the other ways a script sets one:
     by name, through the dataset, or with no value in a string of markup.
-    Reading an attribute, getAttribute or a dataset comparison, puts
-    nothing on the page and is not counted.
+    Reading an attribute, with getAttribute, a CSS selector such as
+    querySelector('[data-bs-toggle="tooltip"]'), or a dataset comparison,
+    puts nothing on the page and is not counted: an attribute is read only
+    from a tag in markup, never from any "data-bs-...=" in the code.
     """
     code = SCRIPT_COMMENT.sub(lambda m: m.group(1) or " ", text)
-    yield from SCRIPT_DATA_BS.findall(code)
-    for attribute, value in _attributes_in(code):
-        if attribute.lower().startswith("data-bs-") and not value:
+    for attribute, _ in _attributes_in(code):
+        if attribute.lower().startswith("data-bs-"):
             yield attribute.lower()
     for found in SCRIPT_DATA_BS_BY_NAME.finditer(code):
         yield found.group(2)
@@ -923,7 +921,7 @@ def test_a_data_bs_attribute_counts_where_it_is_one() -> None:
     markup = '<button data-bs-toggle="collapse" data-bs-target="#a">x</button>'
     assert list(_data_bs_in(markup)) == ["data-bs-toggle", "data-bs-target"]
     assert list(_data_bs_in("<p>prose about data-bs-toggle</p>")) == []
-    assert SCRIPT_DATA_BS.findall('<b data-bs-toggle="tooltip">x</b>') == [
+    assert list(_script_data_bs('<b data-bs-toggle="tooltip">x</b>')) == [
         "data-bs-toggle"
     ]
 
@@ -951,6 +949,8 @@ def test_a_script_counts_every_way_it_sets_a_data_bs_attribute() -> None:
     assert read('<b data-bs-toggle="tooltip">x</b>') == ["data-bs-toggle"]
     # Reading one, comparing one, a comment and prose put nothing on a page.
     assert read('el.getAttribute("data-bs-toggle");') == []
+    assert read("""document.querySelectorAll('[data-bs-toggle="tooltip"]');""") == []
+    assert read('el.matches("[data-bs-toggle=collapse]");') == []
     assert read('if (el.dataset.bsToggle === "collapse") {}') == []
     assert read('// el.setAttribute("data-bs-toggle", "collapse");') == []
     assert read('throw new Error("no data-bs-toggle here");') == []
