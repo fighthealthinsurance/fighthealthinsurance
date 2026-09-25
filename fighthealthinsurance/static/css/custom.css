@@ -133,10 +133,12 @@
        at 2.5rem in their own style blocks before this. */
     --fhi-text-hero-page: clamp(2.2rem, 2.4vw + 1.4rem, 3.25rem);
     /* The two heights an image hero can have. Home keeps the tall band;
-       a page whose hero is three lines of copy uses the short one. Both are
-       floors: the band grows with its copy and never cuts it off. */
+       every other page with an image hero uses the short one. Both are
+       floors: the band grows with its copy and never cuts it off. The
+       short floor only bites on a page with very little copy, and is low
+       enough that it does not pad that copy out with empty picture. */
     --fhi-hero-floor: 650px;
-    --fhi-hero-floor-short: 320px;
+    --fhi-hero-floor-short: 240px;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
@@ -2767,7 +2769,7 @@ textarea,
    ------------------------------------------------------------------------ */
 #glossary-index-hero .hero-inner {
     max-width: 820px;
-    padding: var(--fhi-space-7);
+    padding-inline: var(--fhi-space-7);
 }
 
 /* Scoped to this page. /state-help/ already has a .quick-jump and does not
@@ -3020,19 +3022,23 @@ textarea,
 }
 
 /* ---- The short hero -------------------------------------------------------
-   The Explain pages, Patient Access and the sample pages: a band that is
-   only as tall as its copy needs plus a little air, and a softly blurred
-   image behind it. The blur is a copy of the band's own background on a
-   pseudo-element, since a background image cannot be filtered in place;
-   the band's own sharp image sits under it, so the blur's soft edge shows
-   the same picture a little crisper for a few pixels and nothing else.
-   .slider .item.fhi-hero-short outranks main.css's phone padding on the
-   band, which is what set 40px above and below the copy.
+   Every page with an image hero except home: a band that is only as tall
+   as its copy needs plus a little air, and a softly blurred image behind
+   it. The blur is a copy of the band's own background on a pseudo-element,
+   since a background image cannot be filtered in place; the band's own
+   sharp image sits under it, so the blur's soft edge shows the same
+   picture a little crisper for a few pixels and nothing else.
+   .slider .item.fhi-hero-short outranks main.css's 650px floor and its
+   phone padding on the band, which set 40px above and below the copy, so
+   a page names the class and needs no height rule of its own.
+   The air is 28px above the copy and 36px below it: 12px of band, 16px of
+   the copy box, and 8px under the copy's last line. It was twice that.
    -------------------------------------------------------------------------- */
 .slider .item.fhi-hero-short {
     position: relative;
     overflow: hidden;
-    padding: var(--fhi-space-6) 0;
+    min-height: var(--fhi-hero-floor-short);
+    padding: var(--fhi-space-3) 0;
 }
 
 .fhi-hero-short::before {
@@ -3051,10 +3057,29 @@ textarea,
    band had one. On Patient Access that box is nearly the band's width,
    so its blur read as the whole banner; on the Explain and sample pages
    it is capped at 800px, so the banner looked blurred inside a box and
-   sharper outside it. One blur, the band's, and the box's goes. */
+   sharper outside it. One blur, the band's, and the box's goes.
+   The box's top and bottom padding are set here and nowhere else; a page
+   that wants a wider or narrower box sets only its side padding. */
 .fhi-hero-short .hero-inner {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    padding-top: var(--fhi-space-4);
+    padding-bottom: var(--fhi-space-4);
+}
+
+/* The copy's last piece brings its own bottom margin: 20px under a
+   subcopy, 24px under a row of secondary buttons, none under the denial
+   library's count. Inside the short band that margin is part of the air
+   below the copy, so it is one step here whatever the last piece is. */
+.fhi-hero-short .hero-inner > :last-child {
+    margin-bottom: var(--fhi-space-2);
+}
+
+/* A sample page with a picture beside its copy ends on the row that
+   holds both, which takes the step above; the button row closing its text
+   column adds nothing under that. */
+.fhi-hero-short .hero-text > :last-child {
+    margin-bottom: 0;
 }
 
 /* Words that stay together: a phrase that moves to the next line whole

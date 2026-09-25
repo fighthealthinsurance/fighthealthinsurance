@@ -9,7 +9,8 @@ with a huge centred one; FAQ and Contact drew a green rule under theirs.
 There are two ways a page opens now, and each page uses exactly one:
 
   the image hero, for the entry pages, with two heights and one headline
-  size that are tokens (home keeps the poster size)
+  size that are tokens (home keeps the poster size and the tall band; every
+  other image hero is the short one)
   the page title block, partials/page_title.html, for every other page,
   centred in the narrow column and left-aligned in the wide one
 
@@ -61,10 +62,19 @@ CONTENT_PAGES = [
 HERO_PAGES = [
     "explain_denial",
     "understand_policy",
+    "patient_access",
     "state_help_index",
     "glossary_index",
     STATE_PAGE,
+    "turning-26",
+    "preparing-2026",
+    "denial-language-library",
+    "medicaid-eligibility",
 ]
+
+# Home is the one image hero with the tall band. Every other template that
+# draws an image hero draws the short one.
+TALL_HERO_TEMPLATES = {"landing_base.html"}
 
 # Every page whose content sits on a page column and that a plain GET
 # reaches: the content pages that have moved, and the hero pages whose
@@ -271,19 +281,36 @@ class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
                 self.assertIn('class="hero-headline"', hero[: hero.index("</section>")])
 
     def test_the_short_band_is_the_token_and_not_a_number(self):
-        for template in (
-            "explain_denial.html",
-            "understand_policy.html",
-            "patient_access.html",
-            "microsite.html",
-        ):
+        custom = (CSS / "custom.css").read_text()
+        rule = re.search(r"\.slider \.item\.fhi-hero-short \{[^}]*\}", custom)
+        self.assertIsNotNone(rule, "no rule sizes the short band")
+        self.assertIn("min-height: var(--fhi-hero-floor-short);", rule.group(0))
+
+    def test_every_image_hero_but_home_is_the_short_one(self):
+        """The class carries the floor, so a page names it and sets no
+        height of its own. Before this, four pages had the short band and
+        seven more sat on home's 650px floor over three lines of copy."""
+        heroes = {
+            p.relative_to(TEMPLATES).as_posix(): p.read_text()
+            for p in TEMPLATES.rglob("*.html")
+            if 'class="slider"' in p.read_text()
+        }
+        self.assertTrue(TALL_HERO_TEMPLATES <= set(heroes), sorted(heroes))
+        self.assertGreaterEqual(len(heroes), 12, sorted(heroes))
+        for template, text in sorted(heroes.items()):
+            if template in TALL_HERO_TEMPLATES:
+                continue
             with self.subTest(template=template):
-                text = (TEMPLATES / template).read_text()
-                self.assertIn("min-height: var(--fhi-hero-floor-short);", text)
+                section = re.search(
+                    r"<section\b[^>]*class=\"slider\"[^>]*>.*?</section>", text, re.S
+                )
+                band = re.search(r"<div class=\"item\b[^\"]*\"", section.group(0))
+                self.assertIsNotNone(band, "%s has no band" % template)
+                self.assertIn("fhi-hero-short", band.group(0))
                 self.assertNotRegex(
                     text,
-                    r"min-height:\s*\d",
-                    "%s sets its hero height as a number" % template,
+                    r"-hero\b[^{}]*\{[^}]*min-height",
+                    "%s sets its hero's height itself" % template,
                 )
 
     def test_every_hero_page_but_home_shares_one_headline_size(self):
@@ -310,7 +337,7 @@ class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
         custom = (CSS / "custom.css").read_text()
         main = (CSS / "main.css").read_text()
         self.assertEqual(custom.count("--fhi-hero-floor: 650px;"), 1)
-        self.assertEqual(custom.count("--fhi-hero-floor-short: 320px;"), 1)
+        self.assertEqual(custom.count("--fhi-hero-floor-short: 240px;"), 1)
         band = re.search(r"\.slider \.item \{[^}]*\}", main)
         self.assertIsNotNone(band)
         self.assertIn("min-height: var(--fhi-hero-floor);", band.group(0))

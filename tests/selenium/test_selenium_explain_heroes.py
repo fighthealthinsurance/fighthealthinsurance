@@ -1,11 +1,12 @@
-"""The two Explain heroes, in a real browser, at four widths.
+"""The short heroes, in a real browser, at four widths.
 
-The home page's slider band has a 650px floor in main.css. Explain My Denial
-and Understand My Policy carry three lines of copy, so each page lowers the
-floor to 380px in its own style block. That is a floor and not a cap, which
-is the thing this has to establish: on a desktop the band stops at 380px
-with the copy centred in it, and on a phone, where the copy wraps taller
-than 380px, the band grows with the copy rather than cutting it off.
+The home page's slider band has a 650px floor in main.css. Every other page
+with an image hero carries a few lines of copy and names .fhi-hero-short,
+which lowers the floor to 240px. That is a floor and not a cap, which is the
+thing this has to establish: on a desktop a band with little copy stops at
+the floor with the copy centred in it, and on a phone, where the copy wraps
+taller, the band grows with the copy rather than cutting it off. The air
+around the copy is small and even: 28px above it and 36px below it.
 """
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
@@ -20,13 +21,27 @@ LAPTOP = (1280, 720)
 PHONE = (390, 844)
 SMALL_PHONE = (320, 568)
 
-HERO_FLOOR = 320
+HERO_FLOOR = 240
+
+# The most air the band leaves between its edge and the copy: 12px of band
+# and 16px of copy box above, and 8px more under the copy's last piece.
+# They were 56px above and 84px below on Patient Access, and 107px to 222px
+# on the pages that sat on home's floor.
+MOST_ABOVE = 36
+MOST_BELOW = 48
 
 PAGES = {
     "explain-denial": "explain-denial-hero",
     "understand-policy": "understand-policy-hero",
     "professionals/patient-access": "patient-access-hero",
     "microsite/biologic-denial": "microsite-hero",
+    "state-help/": "state-index-hero",
+    "state-help/california/": "state-help-hero",
+    "glossary/": "glossary-index-hero",
+    "turning-26": "turning26-hero",
+    "preparing-for-2026": "prep2026-hero",
+    "denial-language/": "denial-library-hero",
+    "medicaid-eligibility": "medicaid-eligibility-hero",
 }
 
 # The brand green, as Chromium reports #a5c422.
@@ -47,12 +62,21 @@ const caption = copy.parentElement;
 const chrome = v(band, ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'])
   + v(caption, ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'])
   + v(copy, ['marginTop', 'marginBottom']);
+// The copy itself rather than its box: the top of its first piece and the
+// bottom of its last, a row of buttons included, which is what a reader
+// sees as the first and last line.
+const pieces = Array.from(copy.querySelectorAll('*'))
+  .filter(el => el.getClientRects().length)
+  .map(el => el.getBoundingClientRect())
+  .filter(r => r.height > 0);
 return {
   chrome: chrome,
   band: bandRect.height,
   copy: copyRect.height,
   above: copyRect.top - bandRect.top,
   below: bandRect.bottom - copyRect.bottom,
+  firstLine: Math.min(...pieces.map(r => r.top)) - bandRect.top,
+  lastLine: bandRect.bottom - Math.max(...pieces.map(r => r.bottom)),
   // Copy the band has cut off: any part of the copy box, or of the text
   // inside it (a headline half that stopped wrapping would poke out of
   // the box sideways), outside the band's box.
@@ -121,6 +145,27 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                     assert m["band"] >= HERO_FLOOR - 1, (
                         f"{page} at {size[0]}px: the band is {m['band']:.0f}px, "
                         f"under the {HERO_FLOOR}px floor."
+                    )
+
+    def test_the_band_leaves_a_little_air_around_the_copy(self):
+        """Half what it was: at most 36px from the band's edge to the copy's
+        first line and 48px from its last line to the band's bottom edge,
+        with none of the copy cut off. A page back on home's floor, or a
+        page rule that puts its own 2rem back on the copy box, fails here."""
+        for page, hero in PAGES.items():
+            for size in (DESKTOP, LAPTOP, PHONE):
+                with self.subTest(page=page, width=size[0]):
+                    m = self._measure(page, hero, size)
+                    assert not m["clipped"], (
+                        f"{page} at {size[0]}px: the band cuts off its copy."
+                    )
+                    assert 0 <= m["firstLine"] <= MOST_ABOVE, (
+                        f"{page} at {size[0]}px: {m['firstLine']:.0f}px from the "
+                        f"band's top to the copy, over {MOST_ABOVE}px."
+                    )
+                    assert 0 <= m["lastLine"] <= MOST_BELOW, (
+                        f"{page} at {size[0]}px: {m['lastLine']:.0f}px from the "
+                        f"copy to the band's bottom, over {MOST_BELOW}px."
                     )
 
     def test_the_hero_buttons_sit_side_by_side_on_a_desktop(self):
@@ -211,9 +256,10 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                 )
 
     def test_every_short_hero_is_blurred_and_shares_one_tagline_colour(self):
-        """The four short heroes carry the blur behind the copy, keep the copy
-        above it, and give their taglines the one colour: the green the
-        Explain pages had, which Patient Access and the sample page lacked."""
+        """Every short hero carries the blur behind the copy, keeps the copy
+        above it, draws that one blur and no second one on the copy box, and
+        gives its tagline the one colour: the green the Explain pages had,
+        which Patient Access and the sample page lacked."""
         colours = {}
         for page, hero in PAGES.items():
             with self.subTest(page=page):
@@ -238,6 +284,7 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                         radius: parseFloat(radius),
                         image: before.backgroundImage !== 'none',
                         copyOnTop: copy.contains(onTop) || onTop === copy,
+                        boxBlur: getComputedStyle(copy).backdropFilter,
                         tagline: getComputedStyle(band.querySelector('.hero-tagline')).color,
                     };
                 """, hero)
@@ -253,5 +300,8 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                 assert m["radius"] >= 2, f"{page}: the blur is {m['radius']}px, not a blur"
                 assert m["image"], f"{page}: the blurred layer has no image"
                 assert m["copyOnTop"], f"{page}: the blurred layer covers the copy"
+                assert m["boxBlur"] == "none", (
+                    f"{page}: the copy box draws a second blur, {m['boxBlur']}"
+                )
                 colours[page] = m["tagline"]
         assert set(colours.values()) == {BRAND_GREEN}, f"taglines are not all the brand green: {colours}"
