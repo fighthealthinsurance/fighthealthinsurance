@@ -1761,65 +1761,173 @@ class ModelUsageDashboardView(generic.TemplateView):
 
 
 class ModelBackendStatusView(generic.TemplateView):
-    """Staff page showing the state of every configured model backend.
+    """Staff page listing every model backend the code knows about,
+    configured or not.
 
-    Per model: enabled/disabled, provider, configured (friendly) name,
-    internal/wire key, whether it is registered in the router pools that feed
-    the selection UI and recognized by usage reporting, the latest health
-    check outcome (category, latency, timestamp, sanitized error), and the
-    last time the model actually produced a stored generation
-    (ProposedAppeal / ChooserCandidate rows).
+    Per model: provider, registry and wire names, what kind of backend it is,
+    its routing quality and tier, which request paths use it and in what
+    role, whether it is configured, registered in the router and recognized
+    by usage reporting, the latest health-check row (with the deploy and
+    environment it ran under, flagged when it predates this deploy or the
+    configuration has changed since), and the last time the model produced a
+    stored generation (ProposedAppeal / ChooserCandidate rows).
 
-    Enumeration reuses the health-check module's configuration classification
-    but performs NO model invocations — this page must stay cheap to load.
-    Run ``python manage.py check_model_backends`` (or deploy) to refresh the
+    A panel above the table lists each request path's models in order, with
+    external models off and on. It comes from the router's own synchronous
+    selectors, so it can't drift from what requests do. Router and health
+    sweep state belong to the process, so the page shows the view of
+    whichever pod served it.
+
+    Loading the page never invokes a model and makes no network call. Run
+    ``python manage.py check_model_backends`` (or deploy) to refresh the
     health data.
     """
 
     template_name = "model_backend_status.html"
 
+    # Row groups, in page order. Models this pod routes to come first, the
+    # ones it can't use last.
+    _GROUP_INTERNAL = 0
+    _GROUP_TOP_EXTERNAL = 1
+    _GROUP_EXTERNAL = 2
+    _GROUP_CONTEXT_ONLY = 3
+    _GROUP_BROKEN = 4
+    _GROUP_OFF = 5
+
     def get_context_data(self, **kwargs):
         from fighthealthinsurance.ml import model_health_check as mhc
+        from fighthealthinsurance.ml import routing_overview as ro
 
         ctx = super().get_context_data(**kwargs)
 
         static_results, checkable = mhc.enumerate_backend_checks()
         entries = list(static_results) + [pending for pending, _ in checkable]
-        entries.sort(key=lambda r: (not r.enabled, r.provider, r.model_name))
+
+        # Routing is a view of this pod's router. If reading it fails, the page
+        # says so and still shows the health rows, which are what staff need
+        # most when something is wrong.
+        routing: Optional[ro.RoutingOverview] = None
+        traits: Dict[int, Optional[ro.ModelTraits]] = {}
+        try:
+            routing = ro.build_routing_overview()
+            for r in entries:
+                traits[id(r)] = ro.row_traits(
+                    r.router_instance, r.backend_cls, r.internal_name
+                )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Model backend status: could not read routing from this pod"
+            )
+            routing = None
+            traits = {}
 
         names = [r.model_name for r in entries]
         latest_checks = self._latest_check_by_model(names)
         last_generation = self._last_generation_by_model(names)
 
+        current_deployment = mhc.deployment_id()
+        current_environment = mhc.environment_name()
+        # The hourly fallback id changes on its own, so only a real release id
+        # can say a row came from an earlier deploy.
+        deployment_is_versioned = mhc.is_versioned_deployment_id(current_deployment)
+
         rows: List[Dict[str, Any]] = []
         for r in entries:
             check = latest_checks.get(r.model_name)
+            # Static category from configuration classification (e.g.
+            # NOT_CONFIGURED / DISABLED / FAIL_MISSING_CREDENTIALS); empty for
+            # backends that need a live probe to judge.
+            config_category = r.category if r.category != mhc.CATEGORY_OTHER else ""
+            t = traits.get(id(r))
+            routed = bool(t and t.routed)
+            rank = (
+                routing.top_external_rank(r.model_name) if routing and routed else None
+            )
+            stale_deployment = (
+                check is not None
+                and deployment_is_versioned
+                and check.deployment_id != current_deployment
+            )
+            stale_environment = (
+                check is not None and check.environment != current_environment
+            )
             rows.append(
                 {
                     "provider": r.provider,
                     "model_name": r.model_name,
                     "internal_name": r.internal_name,
                     "enabled": r.enabled,
-                    # Static category from configuration classification (e.g.
-                    # NOT_CONFIGURED / DISABLED / FAIL_MISSING_CREDENTIALS);
-                    # empty for backends that need a live probe to judge.
-                    "config_category": (
-                        r.category if r.category != mhc.CATEGORY_OTHER else ""
-                    ),
+                    "config_category": config_category,
+                    # Missing credentials and a failed client construction keep
+                    # enabled=True, so they need their own flag or the page
+                    # would call them enabled.
+                    "config_failing": config_category in mhc.FAILURE_CATEGORIES,
                     "config_detail": r.error,
                     "ui_registered": r.ui_registered,
                     "reporting_registered": r.reporting_registered,
+                    "kind": t.kind if t else "",
+                    "quality": t.quality if t else None,
+                    "tier": t.tier if t else "",
+                    "routed": routed,
+                    "roles": (
+                        routing.roles.get(r.model_name, [])
+                        if routing and routed
+                        else []
+                    ),
+                    "top_external_rank": rank,
                     "last_check": check,
+                    "stale_deployment": stale_deployment,
+                    "stale_environment": stale_environment,
+                    "config_changed": check is not None and check.enabled != r.enabled,
                     "last_generation": last_generation.get(r.model_name),
+                    "has_traits": t is not None,
                 }
             )
+        rows.sort(key=self._row_order)
 
         ctx["title"] = "Model Backend Status"
         ctx["rows"] = rows
+        ctx["routing"] = routing
+        ctx["current_deployment_id"] = current_deployment
+        ctx["current_environment"] = current_environment
+        ctx["deployment_is_versioned"] = deployment_is_versioned
         ctx["healthy_count"] = sum(
             1 for row in rows if row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
+
+    @classmethod
+    def _row_group(cls, row: Dict[str, Any]) -> int:
+        from fighthealthinsurance.ml import routing_overview as ro
+
+        if not row["enabled"]:
+            return cls._GROUP_OFF
+        if row["config_failing"]:
+            return cls._GROUP_BROKEN
+        if not row["has_traits"]:
+            # Routing couldn't be read, so there is nothing to rank by. Keep
+            # these between the routed models and the broken ones.
+            return cls._GROUP_EXTERNAL
+        if not row["routed"]:
+            # Configured but the router didn't register it: it can't be picked.
+            return cls._GROUP_BROKEN
+        if row["kind"] == ro.KIND_CONTEXT_ONLY:
+            return cls._GROUP_CONTEXT_ONLY
+        if row["kind"] != ro.KIND_EXTERNAL:
+            return cls._GROUP_INTERNAL
+        if row["top_external_rank"] is not None:
+            return cls._GROUP_TOP_EXTERNAL
+        return cls._GROUP_EXTERNAL
+
+    @classmethod
+    def _row_order(cls, row: Dict[str, Any]) -> Tuple[int, int, int, str, str]:
+        return (
+            cls._row_group(row),
+            row["top_external_rank"] or 0,
+            -(row["quality"] or 0),
+            row["provider"],
+            row["model_name"],
+        )
 
     @staticmethod
     def _latest_check_by_model(

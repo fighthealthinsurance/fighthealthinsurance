@@ -6,47 +6,130 @@
   <style>
     body { font-family: Arial, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
     h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
-    .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
+    h2 { color: #333; font-size: 1.15rem; margin: 0 0 8px; }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
     .nav-back:hover { text-decoration: underline; }
     .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .panel { background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; }
+    .banner { background: #fff3cd; color: #856404; border-radius: 6px; padding: 8px 12px; margin: 0 0 10px; }
     table.status { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
     table.status th, table.status td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92em; vertical-align: top; }
     table.status th { background: #f0f4f8; position: sticky; top: 0; }
+    table.routes { width: 100%; border-collapse: collapse; }
+    table.routes th, table.routes td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92em; vertical-align: top; }
+    table.routes th { background: #f0f4f8; }
+    table.routes ol { margin: 0; padding-left: 20px; }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.85em; font-weight: bold; }
     .pill-ok { background: #d4edda; color: #155724; }
     .pill-fail { background: #f8d7da; color: #721c24; }
     .pill-warn { background: #fff3cd; color: #856404; }
     .pill-off { background: #e2e3e5; color: #383d41; }
+    .flag { margin-top: 4px; }
+    .chip { display: inline-block; margin: 0 4px 4px 0; padding: 1px 7px; border-radius: 9px; font-size: 0.8em; white-space: nowrap; background: #e2e3e5; color: #383d41; }
+    .chip-ext { background: #cce5ff; color: #004085; }
     .yes { color: #155724; font-weight: bold; }
     .no { color: #721c24; font-weight: bold; }
     .mono { font-family: monospace; font-size: 0.9em; }
     .err { color: #721c24; font-size: 0.85em; max-width: 320px; word-break: break-word; }
-    .muted { color: #888; }
+    .muted { color: #666; }
   </style>
 </head>
 <body>
   <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
   <h1>{{ title }}</h1>
   <p class="summary-note">
-    Every configured model backend, its registration state, and its most recent
-    health-check result. Health data is written by the once-per-deployment
-    check (search deployment logs for <code>MODEL_BACKEND_HEALTH_SUMMARY</code>)
-    and by manual runs of <code>python manage.py check_model_backends</code> —
-    this page never invokes models itself.
-    &ldquo;In selection UI&rdquo; = registered in the router pools the
-    chooser/appeal flows draw from; &ldquo;In reporting&rdquo; = the name usage
-    reporting records on generations.
+    Every model backend this code knows about, configured or not: what kind
+    of model it is, which request paths this pod routes to it, and its most
+    recent health-check result.
+    {{ healthy_count }} of {{ rows|length }} passed their latest check.
+    Health data is written by the once-per-deployment check (search deployment logs for
+    <code>MODEL_BACKEND_HEALTH_SUMMARY</code>) and by manual runs of
+    <code>python manage.py check_model_backends</code>. This page never
+    invokes models itself.
+    &ldquo;Registered in router&rdquo; means the router loaded the model; it
+    does not mean any request path picks it, which the Routing column shows.
+    &ldquo;In reporting&rdquo; = the name usage reporting records on
+    generations. Blue chips apply only when the person allowed external
+    models.
     See also the <a href="{% url 'model_usage_dashboard' %}">ML Model Usage Dashboard</a>.
   </p>
+
+  <section class="panel">
+    <h2>Routing as seen by this pod</h2>
+    <p class="summary-note">
+      This pod runs deploy <span class="mono">{{ current_deployment_id }}</span>
+      in environment <span class="mono">{{ current_environment }}</span>.
+      Each pod builds its own router and runs its own hourly health sweep, so
+      another pod can show a different picture. These lists come from the
+      router's own selectors, and reading them calls no model.
+      {% if not deployment_is_versioned %}This pod has no release id, so health rows are not compared against its deploy.{% endif %}
+    </p>
+    {% if routing %}
+      {% if routing.force_model %}
+      <p class="banner">
+        <strong>FORCE_MODEL</strong> is set to <span class="mono">{{ routing.force_model }}</span>
+        on this pod. Appeals, chat and appeal questions route only to it;
+        summaries and the best-internal hint ignore it. The lists below
+        already show its effect.
+        {% if not routing.force_model_registered %}No model by that name is registered here, so appeal generation gets no model at all while it is set.{% endif %}
+      </p>
+      {% endif %}
+      {% if routing.enabled_remote_models %}
+      <p class="banner">
+        <strong>ENABLED_REMOTE_MODELS</strong> is set on this pod, so only
+        these external models can register:
+        <span class="mono">{{ routing.enabled_remote_models|join:", " }}</span>.
+        Internal and context-only models are not affected.
+      </p>
+      {% endif %}
+      <p>
+        <strong>Top 3 external models:</strong>
+        {% for name, quality in routing.top_external %}<span class="mono">{{ forloop.counter }}. {{ name }}</span> ({{ quality }}){% if not forloop.last %}, {% endif %}{% empty %}none available{% endfor %}.
+        The appeals backup pass and chat add these when the person allowed
+        external models; summaries and questions use their own external
+        fallback, shown in their lists below.
+      </p>
+      <table class="routes">
+        <thead>
+          <tr>
+            <th>Request path</th>
+            <th>How the list is used</th>
+            <th>Internal only (use_external off)</th>
+            <th>External allowed (use_external on)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for plan in routing.paths %}
+          <tr>
+            <td><strong>{{ plan.title }}</strong></td>
+            <td>{{ plan.how }}</td>
+            <td>
+              {% if plan.internal_only %}<ol>{% for e in plan.internal_only %}<li><span class="mono">{{ e.name }}</span>{% if e.note %} <span class="muted">{{ e.note }}</span>{% endif %}</li>{% endfor %}</ol>
+              {% else %}<span class="muted">no model</span>{% endif %}
+            </td>
+            <td>
+              {% if plan.external_allowed %}<ol>{% for e in plan.external_allowed %}<li><span class="mono">{{ e.name }}</span>{% if e.note %} <span class="muted">{{ e.note }}</span>{% endif %}</li>{% endfor %}</ol>
+              {% else %}<span class="muted">no model</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="banner">Routing unavailable: this pod's router raised while the page read it, and the error is in this pod's log. The health rows below are unaffected.</p>
+    {% endif %}
+  </section>
 
   <table class="status">
     <thead>
       <tr>
         <th>Provider</th>
-        <th>Model (registry name)</th>
-        <th>Internal key</th>
-        <th>Enabled</th>
-        <th>In selection UI</th>
+        <th>Model (registry name, internal key)</th>
+        <th>Kind</th>
+        <th>Quality / tier</th>
+        <th>Routing on this pod</th>
+        <th>Config</th>
+        <th>Registered in router</th>
         <th>In reporting</th>
         <th>Last health check</th>
         <th>Latency</th>
@@ -59,10 +142,23 @@
       {% for r in rows %}
       <tr>
         <td>{{ r.provider }}</td>
-        <td class="mono">{{ r.model_name }}</td>
-        <td class="mono">{{ r.internal_name|default:"&mdash;" }}</td>
         <td>
-          {% if r.enabled %}<span class="pill pill-ok">enabled</span>
+          <div class="mono">{{ r.model_name }}</div>
+          {% if r.internal_name and r.internal_name != r.model_name %}<div class="mono muted">{{ r.internal_name }}</div>{% endif %}
+        </td>
+        <td>{{ r.kind|default:"&mdash;" }}</td>
+        <td>{% if r.quality is not None %}{{ r.quality }}{% if r.tier %} <span class="muted">{{ r.tier }}</span>{% endif %}{% else %}&mdash;{% endif %}</td>
+        <td>
+          {% if not r.has_traits %}<span class="muted">unavailable</span>
+          {% elif not r.routed %}<span class="muted">not routed on this pod</span>
+          {% else %}
+            {% if r.top_external_rank %}<span class="chip chip-ext">top external #{{ r.top_external_rank }}</span>{% endif %}
+            {% for role in r.roles %}{% if role.external_allowed_only %}<span class="chip chip-ext">{{ role.label }}</span>{% else %}<span class="chip">{{ role.label }}</span>{% endif %}{% empty %}<span class="muted">registered, not picked by any path</span>{% endfor %}
+          {% endif %}
+        </td>
+        <td>
+          {% if r.config_failing %}<span class="pill pill-fail">{{ r.config_category }}</span>
+          {% elif r.enabled %}<span class="pill pill-ok">enabled</span>
           {% else %}<span class="pill pill-off">{{ r.config_category|default:"disabled" }}</span>{% endif %}
         </td>
         <td>{% if r.ui_registered %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</td>
@@ -71,6 +167,9 @@
           {% if r.last_check %}
             {% if r.last_check.ok %}<span class="pill pill-ok">{{ r.last_check.category }}</span>
             {% else %}<span class="pill pill-fail">{{ r.last_check.category }}</span>{% endif %}
+            {% if r.stale_deployment %}<div class="flag"><span class="pill pill-warn">older than current deploy</span></div>{% endif %}
+            {% if r.stale_environment %}<div class="flag"><span class="pill pill-warn">other environment</span></div>{% endif %}
+            {% if r.config_changed %}<div class="flag"><span class="pill pill-warn">config changed since</span></div>{% endif %}
           {% elif r.config_category and not r.enabled %}
             <span class="muted">not checked</span>
           {% elif r.config_category %}
@@ -80,7 +179,12 @@
           {% endif %}
         </td>
         <td>{% if r.last_check and r.last_check.latency_ms is not None %}{{ r.last_check.latency_ms }} ms{% else %}&mdash;{% endif %}</td>
-        <td>{% if r.last_check %}{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC{% else %}&mdash;{% endif %}</td>
+        <td>
+          {% if r.last_check %}{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC
+            <div class="muted">deploy <span class="mono">{{ r.last_check.deployment_id|default:"unknown" }}</span></div>
+            <div class="muted">env <span class="mono">{{ r.last_check.environment|default:"unknown" }}</span></div>
+          {% else %}&mdash;{% endif %}
+        </td>
         <td>{% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC{% else %}<span class="muted">none recorded</span>{% endif %}</td>
         <td class="err">
           {% if r.last_check and r.last_check.error %}{{ r.last_check.error }}
@@ -88,7 +192,7 @@
         </td>
       </tr>
       {% empty %}
-      <tr><td colspan="11">No model backends are configured in this environment.</td></tr>
+      <tr><td colspan="13">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
       {% endfor %}
     </tbody>
   </table>
