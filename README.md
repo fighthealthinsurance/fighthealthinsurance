@@ -371,10 +371,9 @@ path: its model returns a `create_or_update_appeal` call, and `AppealTool`
   into the process environment. `.env` is read only by `get_env_variable`
   (`fighthealthinsurance/env_utils.py`, via python-decouple). To use a `.env`
   file for everything, export it in the shell first: `set -a; . ./.env; set +a`.
-- [`.env.example`](.env.example) and [API_KEYS_SETUP.md](API_KEYS_SETUP.md)
-  list the variables. Both still describe OctoAI (`OCTOAI_TOKEN`), which no
-  code reads, and `.env.example` still has old Azure defaults and a backend
-  port that collides with the dev server. For model backends, follow
+- [`.env.example`](.env.example) lists the variables the code reads, with
+  what each does, and [API_KEYS_SETUP.md](API_KEYS_SETUP.md) covers the
+  external API keys. For model backends, see
   [docs/ml-backends.md](docs/ml-backends.md).
 
 ### ML backends
