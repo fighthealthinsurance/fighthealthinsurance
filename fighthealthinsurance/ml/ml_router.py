@@ -845,8 +845,13 @@ class MLRouter(object):
         pool ``summarize`` has always used, minus what is already listed, so
         a stale health signal can't leave a summary with nothing to try.
 
-        Reads only cheap in-memory signals and never calls a model, so a
-        staff page can show the order without spending an inference.
+        Never calls a model, so a staff page can show the order without
+        spending an inference. It reads only cached health signals: each
+        model's own ``is_available()`` and, for backends without a live
+        signal, the last ``health_status`` sweep. Like any routed request,
+        the first read on a pod whose background health sweep hasn't started
+        yet starts it, and that sweep probes the backends' ``/models``
+        endpoints in a background thread.
         """
         # Strict: only internals that follow instructions AND look healthy.
         # The fail-open pool can hold the appeal-only fhi-legacy, whose

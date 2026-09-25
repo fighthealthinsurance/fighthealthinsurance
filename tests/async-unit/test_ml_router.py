@@ -1125,6 +1125,43 @@ class TestMLRouterSummarizeBackends(unittest.TestCase):
         for model in (self.legacy, self.new, self.alpha, self.gemma):
             self.assertLessEqual({c[0] for c in model.method_calls}, cheap)
 
+    def test_reads_the_cached_health_sweep_and_never_infers(self):
+        """Our own vLLM backends and DeepInfra have no live health signal
+        (``health_checked_live`` is False), so the order comes from the last
+        cached health sweep: an internal it marked down moves behind Gemma.
+        No inference method is ever called or awaited. On a real pod the
+        first read may also start the background sweep, as any routed request
+        does; ``model_ok`` is patched here, so none starts."""
+        from fighthealthinsurance.ml.health_status import health_status
+
+        cheap = {"quality", "supports_general_instructions", "is_available"}
+        for label, alpha_ok in (("sweep says up", True), ("sweep says down", False)):
+            with self.subTest(label):
+                alpha = make_routed_mock(210, name="alpha")
+                gemma = make_routed_mock(80, external=True, name="gemma")
+                # Left False, as on the real backends.
+                alpha.health_checked_live = gemma.health_checked_live = False
+                install_models(self.router, [alpha], {GEMMA: [gemma]})
+
+                with patch.object(
+                    health_status,
+                    "model_ok",
+                    side_effect=lambda m, _alpha=alpha, _ok=alpha_ok: (
+                        _ok if m is _alpha else True
+                    ),
+                ) as model_ok:
+                    listed = self.router.summarize_backends(use_external=True)
+
+                # is_available() is True either way, so only the cached sweep
+                # result can have moved alpha.
+                self.assertEqual(listed, [alpha, gemma] if alpha_ok else [gemma, alpha])
+                model_ok.assert_any_call(alpha)
+                model_ok.assert_any_call(gemma)
+                for model in (alpha, gemma):
+                    self.assertLessEqual({c[0] for c in model.method_calls}, cheap)
+                    model._infer_no_context.assert_not_awaited()
+                    model._infer.assert_not_awaited()
+
     def test_the_generalist_is_a_model_deepinfra_registers(self):
         """If DeepInfra drops the name, the fallback silently disappears."""
         self.assertIn(GEMMA, {d.name for d in DeepInfra.models()})
