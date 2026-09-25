@@ -280,6 +280,19 @@ class TheHeroPagesReadTheirHeightFromATokenTest(TestCase):
                 hero = html[html.index('class="slider"') :]
                 self.assertIn('class="hero-headline"', hero[: hero.index("</section>")])
 
+    def test_the_home_banner_blurs_its_picture_with_one_blur(self):
+        """Home blurs its whole picture, at least 5px, and its copy box stops
+        blurring behind itself: one blur, as on the short banners."""
+        custom = (CSS / "custom.css").read_text()
+        layer = re.search(r"#home \.item::before \{[^}]*\}", custom)
+        self.assertIsNotNone(layer, "the home banner has no blurred layer")
+        radius = re.search(r"filter:\s*blur\(([\d.]+)px\)", layer.group(0))
+        self.assertIsNotNone(radius, "the home layer is not blurred")
+        self.assertGreaterEqual(float(radius.group(1)), 5.0)
+        box = re.search(r"#home \.hero-inner \{[^}]*\}", custom)
+        self.assertIsNotNone(box, "nothing turns off the home copy box's own blur")
+        self.assertIn("backdrop-filter: none;", box.group(0))
+
     def test_the_short_band_is_the_token_and_not_a_number(self):
         custom = (CSS / "custom.css").read_text()
         rule = re.search(r"\.slider \.item\.fhi-hero-short \{[^}]*\}", custom)

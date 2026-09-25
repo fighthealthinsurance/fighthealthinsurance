@@ -3067,6 +3067,34 @@ textarea,
     padding-bottom: var(--fhi-space-4);
 }
 
+/* The home banner blurs its picture too, the same way: a copy of the
+   band's background on a pseudo-element, clipped by the band. A little
+   less than the short banners, since home's copy sits on cards of its
+   own, and more than the 3px the copy box used to blur behind itself,
+   which made the photo sharp everywhere but under the box. One blur, so
+   the box's goes. */
+#home .item {
+    position: relative;
+    overflow: hidden;
+}
+
+#home .item::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: inherit;
+    filter: blur(6px);
+}
+
+#home .item > * {
+    position: relative;
+}
+
+#home .hero-inner {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
 /* The copy's last piece brings its own bottom margin: 20px under a
    subcopy, 24px under a row of secondary buttons, none under the denial
    library's count. Inside the short band that margin is part of the air

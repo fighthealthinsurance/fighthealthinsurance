@@ -255,6 +255,46 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                     f"{size[0]}px: the headline's words fall on these lines: {lines}"
                 )
 
+    def test_the_home_banner_blurs_its_picture_more_than_the_box_did(self):
+        """Home blurs its whole picture now, as the short banners do, where
+        before only a 3px blur sat behind its copy box and the photo was
+        sharp everywhere else. One blur, at least 5px, the band's size and
+        clipped by it, with the copy above it and no second blur on the box."""
+        self.set_window_size(*DESKTOP)
+        self.open(f"{self.live_server_url}/")
+        self.wait_for_ready_state_complete()
+        m = self.execute_script("""
+            const band = document.querySelector('#home .item');
+            const before = getComputedStyle(band, '::before');
+            const copy = band.querySelector('.hero-inner');
+            const r = copy.getBoundingClientRect();
+            const onTop = document.elementFromPoint(r.left + r.width / 2, r.top + 40);
+            const radius = (before.filter.match(/blur\\(([\\d.]+)px\\)/) || [0, 0])[1];
+            return {
+                drawn: before.content !== 'none' && before.display !== 'none',
+                layerWidth: parseFloat(before.width), layerHeight: parseFloat(before.height),
+                bandWidth: band.clientWidth, bandHeight: band.clientHeight,
+                clipped: getComputedStyle(band).overflow === 'hidden',
+                radius: parseFloat(radius),
+                image: before.backgroundImage !== 'none',
+                copyOnTop: copy.contains(onTop) || onTop === copy,
+                boxBlur: getComputedStyle(copy).backdropFilter,
+            };
+        """)
+        assert m["drawn"] and m["image"], "the home banner draws no blurred copy of its picture"
+        assert (
+            abs(m["layerWidth"] - m["bandWidth"]) <= 1
+            and abs(m["layerHeight"] - m["bandHeight"]) <= 1
+        ), (
+            f"the blurred layer is {m['layerWidth']:.0f}x{m['layerHeight']:.0f}, "
+            f"the band {m['bandWidth']}x{m['bandHeight']}"
+        )
+        assert m["clipped"], "the band does not clip its blur, so the blur bleeds past it"
+        assert m["radius"] >= 5, f"the home blur is {m['radius']}px, under 5px"
+        assert m["copyOnTop"], "the blurred layer covers the home copy"
+        assert m["boxBlur"] in ("none", ""), f"the copy box draws a second blur, {m['boxBlur']}"
+
+
     def test_every_short_hero_is_blurred_and_shares_one_tagline_colour(self):
         """Every short hero carries the blur behind the copy, keeps the copy
         above it, draws that one blur and no second one on the copy box, and
