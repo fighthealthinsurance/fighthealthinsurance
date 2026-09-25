@@ -15,6 +15,11 @@ what replaces it. The count covers the templates of both apps, the class
 names the TypeScript writes into the page, and the data-bs-* attributes
 Bootstrap's script reads to open and close things.
 
+Each file is held to each name it uses, in bootstrap_uses_by_file.txt next
+to this file, so a page cannot trade one Bootstrap class for another, d-grid
+for d-none, while its family's total stands still. The families add those
+up into the site's totals below.
+
 Nothing here asks anyone to remove Bootstrap. It asks that a page being worked
 on does not reach for more of it, and that when a batch of uses goes, the
 number recorded here comes down with it so the headroom cannot grow back.
@@ -126,10 +131,9 @@ FAMILIES = (
 )
 _FAMILY_PATTERNS = tuple((family, re.compile(p)) for family, p in FAMILIES)
 
-# The nine class names the first version of this ratchet watched, still held
-# one by one, inside their family and on their own as well. A family's count
-# lets a page trade one of its classes for another, mt-3 for mt-4; these keep
-# the stricter promise they always made, that a page gets no more of them.
+# The nine class names the first version of this ratchet watched, still
+# given site totals of their own beside their family's, as that version
+# gave them.
 # "col-" is every Bootstrap class that starts with it. A name of ours that
 # starts the same way is not Bootstrap's, and neither is Bootstrap 3's
 # col-md-offset-1, which 5.2.3 does not have and nothing styles.
@@ -158,8 +162,9 @@ DATA_BS = "data-bs attributes"
 # Lower these as uses go. A family or class not listed is at zero and stays
 # there. The only thing that raises one is a page arriving that was written
 # before this existed, and then by exactly what that page brings, with the
-# page named in PER_TEMPLATE below, so no page can grow under cover of a
-# total. 2026-09-19: the two glossary pages, written before the ratchet landed.
+# page's own lines in bootstrap_uses_by_file.txt, so no page can grow under
+# cover of a total. 2026-09-19: the two glossary pages, written before the
+# ratchet landed.
 # 2026-09-24: the accordions on four pages became <details>, and with them
 # went every accordion and collapse class, the "show" on each first answer,
 # and all 45 data-bs attributes. Bootstrap's script left base.html in the
@@ -167,6 +172,8 @@ DATA_BS = "data-bs attributes"
 # 2026-09-25: "col-" stopped counting names that only start like Bootstrap's,
 # which took three col-md-offset-1 out of it, one each on share_denial,
 # stripe_finish_error and unsubscribed.
+# 2026-09-25: each file is held to each class, in bootstrap_uses_by_file.txt,
+# in place of a count per family per file.
 BASELINE: "dict[str, int]" = {
     "form-control": 6,
     "form-check-input": 5,
@@ -280,563 +287,21 @@ OUR_OWN_NAMES = {
     "static/js/scrub_client_side_form.ts": ("visible",),
 }
 
-# What each file carries today, counted 2026-09-24. Lower as uses go. A
-# template is named by its path under fighthealthinsurance/templates, one of
-# fhi_users' by fhi_users/ and its path, and a script by static/js/ and its
-# name.
-PER_TEMPLATE: "dict[str, dict[str, int]]" = {
-    "404.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
-    "about_ai.html": {"container": 1, "grid": 1, "spacing": 5},
-    "about_us.html": {"card": 3, "cards": 11, "images and figures": 29, "spacing": 2},
-    "appeal.html": {
-        "alerts": 7,
-        "btn": 7,
-        "buttons": 9,
-        "col-": 2,
-        "container": 1,
-        "d-flex": 2,
-        "display and flex": 6,
-        "forms": 10,
-        "grid": 3,
-        "text": 2,
-    },
-    "appeals.html": {
-        "alerts": 2,
-        "btn": 4,
-        "buttons": 4,
-        "col-": 1,
-        "container": 2,
-        "d-flex": 1,
-        "display and flex": 3,
-        "grid": 3,
-        "spacing": 2,
-        "text": 7,
-    },
-    "as_seen_on_pbs.html": {
-        "btn": 1,
-        "buttons": 1,
-        "container": 1,
-        "grid": 1,
-        "sizing": 2,
-    },
-    "base.html": {
-        "borders and shadows": 1,
-        "col-": 2,
-        "container": 2,
-        "grid": 5,
-        "images and figures": 1,
-        "navs and the navbar": 9,
-        "row": 1,
-    },
-    "bingo.html": {"text": 1},
-    "categorize.html": {"alerts": 2, "btn": 2, "buttons": 2, "text": 2},
-    "chat_consent.html": {
-        "alert": 1,
-        "alerts": 2,
-        "btn": 1,
-        "buttons": 2,
-        "card": 1,
-        "cards": 4,
-        "col-": 1,
-        "container": 1,
-        "display and flex": 2,
-        "grid": 3,
-        "row": 1,
-        "spacing": 3,
-    },
-    "confirm_delete.html": {"btn": 1, "buttons": 1, "spacing": 1},
-    "contact.html": {"container": 1, "grid": 1},
-    "delete_data_email_sent.html": {"alert": 1, "alerts": 2, "spacing": 4, "text": 1},
-    "denial_language_library.html": {
-        "alert": 1,
-        "alerts": 2,
-        "badges": 1,
-        "borders and shadows": 2,
-        "btn": 4,
-        "buttons": 8,
-        "card": 2,
-        "cards": 7,
-        "col-": 6,
-        "colours and backgrounds": 4,
-        "container": 5,
-        "d-flex": 4,
-        "display and flex": 13,
-        "grid": 18,
-        "row": 7,
-        "sizing": 1,
-        "spacing": 24,
-        "text": 10,
-    },
-    "entity_extract.html": {"alerts": 1, "spinners": 2, "text": 2},
-    "escalation_packet.html": {
-        "alerts": 2,
-        "btn": 3,
-        "buttons": 4,
-        "col-": 1,
-        "container": 1,
-        "d-flex": 1,
-        "display and flex": 3,
-        "grid": 2,
-    },
-    "escalation_packet_review.html": {
-        "alerts": 1,
-        "btn": 2,
-        "buttons": 2,
-        "container": 1,
-        "grid": 1,
-    },
-    "explain_denial.html": {
-        "alert": 1,
-        "alerts": 2,
-        "borders and shadows": 3,
-        "btn": 1,
-        "buttons": 1,
-        "card": 7,
-        "cards": 27,
-        "col-": 9,
-        "colours and backgrounds": 2,
-        "container": 3,
-        "d-flex": 1,
-        "display and flex": 5,
-        "form-control": 2,
-        "forms": 6,
-        "grid": 17,
-        "row": 5,
-        "sizing": 6,
-        "spacing": 22,
-        "text": 11,
-    },
-    "faq.html": {"container": 1, "grid": 1, "spacing": 1},
-    "faq_post.html": {"container": 1, "grid": 1},
-    "fax_followup_thankyou.html": {"container": 1, "grid": 1},
-    "fax_thankyou.html": {"container": 1, "grid": 1},
-    "faxfollowup.html": {
-        "btn": 1,
-        "buttons": 1,
-        "container": 1,
-        "grid": 1,
-        "spacing": 2,
-    },
-    "fhi_users/login.html": {
-        "alert": 2,
-        "alerts": 4,
-        "btn": 2,
-        "buttons": 4,
-        "card": 1,
-        "cards": 3,
-        "container": 1,
-        "form-control": 4,
-        "forms": 4,
-        "grid": 1,
-        "spacing": 2,
-    },
-    "find_next_steps_loading.html": {"btn": 3, "buttons": 3, "text": 2},
-    "followup.html": {"btn": 2, "buttons": 2, "container": 1, "grid": 1, "spacing": 2},
-    "followup_thankyou.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
-    # Written before this ratchet existed, and counted here so they cannot
-    # grow. Converting them to our own classes is its own change: the
-    # col- and row uses are the Bootstrap grid, so it is a layout edit
-    # that wants somebody looking at the rendered page.
-    "glossary.html": {
-        "borders and shadows": 2,
-        "breadcrumbs": 4,
-        "btn": 4,
-        "buttons": 6,
-        "card": 1,
-        "cards": 4,
-        "col-": 7,
-        "colours and backgrounds": 3,
-        "container": 6,
-        "d-flex": 1,
-        "display and flex": 4,
-        "grid": 20,
-        "row": 7,
-        "shared state": 1,
-        "sizing": 1,
-        "spacing": 25,
-        "text": 10,
-    },
-    "glossary_index.html": {
-        "borders and shadows": 2,
-        "btn": 4,
-        "buttons": 9,
-        "card": 1,
-        "cards": 4,
-        "col-": 4,
-        "colours and backgrounds": 2,
-        "container": 3,
-        "d-flex": 2,
-        "display and flex": 9,
-        "grid": 12,
-        "row": 5,
-        "shared state": 1,
-        "sizing": 1,
-        "spacing": 16,
-        "text": 8,
-    },
-    "health_history.html": {"forms": 5, "spacing": 1, "text": 4},
-    "how_to_help.html": {
-        "btn": 10,
-        "buttons": 10,
-        "col-": 2,
-        "display and flex": 1,
-        "grid": 3,
-        "navs and the navbar": 12,
-        "row": 1,
-        "spacing": 1,
-    },
-    "landing_base.html": {
-        "btn": 5,
-        "buttons": 5,
-        "container": 4,
-        "d-flex": 1,
-        "display and flex": 4,
-        "grid": 5,
-        "row": 1,
-    },
-    "media_references.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
-    "medicaid_eligibility.html": {
-        "alert": 1,
-        "alerts": 4,
-        "borders and shadows": 5,
-        "btn": 12,
-        "buttons": 14,
-        "card": 21,
-        "cards": 82,
-        "col-": 26,
-        "colours and backgrounds": 4,
-        "container": 9,
-        "d-flex": 5,
-        "display and flex": 16,
-        "grid": 55,
-        "list groups": 6,
-        "row": 15,
-        "sizing": 17,
-        "spacing": 70,
-        "text": 25,
-    },
-    "mfa_auth_base.html": {
-        "card": 1,
-        "cards": 3,
-        "colours and backgrounds": 1,
-        "container": 1,
-        "grid": 1,
-        "spacing": 2,
-    },
-    "mhmda.html": {"container": 1, "grid": 1},
-    "microsite.html": {
-        "badges": 1,
-        "borders and shadows": 4,
-        "btn": 7,
-        "buttons": 10,
-        "card": 4,
-        "cards": 14,
-        "col-": 10,
-        "colours and backgrounds": 6,
-        "container": 10,
-        "d-flex": 3,
-        "display and flex": 9,
-        "grid": 31,
-        "images and figures": 1,
-        "list groups": 2,
-        "row": 11,
-        "spacing": 55,
-        "text": 30,
-    },
-    "microsite_directory.html": {
-        "alert": 1,
-        "alerts": 4,
-        "badges": 2,
-        "btn": 2,
-        "buttons": 2,
-        "card": 1,
-        "cards": 4,
-        "col-": 4,
-        "colours and backgrounds": 2,
-        "container": 1,
-        "grid": 15,
-        "row": 5,
-        "sizing": 1,
-        "spacing": 6,
-        "text": 6,
-        "visibility and interaction": 1,
-    },
-    "other_resources.html": {
-        "alert": 1,
-        "alerts": 2,
-        "borders and shadows": 1,
-        "col-": 7,
-        "grid": 13,
-        "row": 6,
-        "spacing": 28,
-        "text": 13,
-    },
-    "outside_help.html": {"btn": 1, "buttons": 1, "text": 2},
-    "partials/bingo_board.html": {"container": 1, "grid": 1},
-    "partials/experimental_badge.html": {"badges": 1},
-    "partials/featured_section.html": {
-        "col-": 11,
-        "container": 1,
-        "display and flex": 1,
-        "grid": 16,
-        "images and figures": 18,
-        "row": 4,
-        "spacing": 10,
-        "text": 9,
-    },
-    "partials/financial_assistance_section.html": {
-        "card": 5,
-        "cards": 25,
-        "col-": 1,
-        "container": 1,
-        "grid": 3,
-        "row": 1,
-        "spacing": 36,
-        "text": 32,
-        "visibility and interaction": 5,
-    },
-    "partials/pharmacy_coupon_section.html": {
-        "card": 1,
-        "cards": 4,
-        "col-": 1,
-        "container": 1,
-        "grid": 3,
-        "row": 1,
-        "spacing": 10,
-        "text": 9,
-        "visibility and interaction": 1,
-    },
-    "partials/site_banner.html": {
-        "alert": 1,
-        "alerts": 1,
-        "buttons": 1,
-        "container": 1,
-        "grid": 1,
-        "text": 1,
-    },
-    "partials/user_consent_form_fields.html": {
-        "col-": 5,
-        "display and flex": 1,
-        "forms": 20,
-        "grid": 7,
-        "row": 2,
-        "spacing": 20,
-        "text": 6,
-    },
-    "patient_access.html": {
-        "alert": 1,
-        "alerts": 2,
-        "btn": 4,
-        "buttons": 4,
-        "card": 12,
-        "cards": 45,
-        "col-": 18,
-        "colours and backgrounds": 3,
-        "container": 6,
-        "d-flex": 2,
-        "display and flex": 7,
-        "grid": 37,
-        "row": 10,
-        "sizing": 8,
-        "spacing": 40,
-        "text": 46,
-    },
-    "plan_documents.html": {"col-": 1, "forms": 1, "grid": 1, "spacing": 1, "text": 3},
-    "preparing_2026.html": {
-        "alert": 1,
-        "alerts": 2,
-        "badges": 7,
-        "borders and shadows": 6,
-        "btn": 8,
-        "buttons": 10,
-        "card": 12,
-        "cards": 44,
-        "col-": 19,
-        "colours and backgrounds": 14,
-        "container": 10,
-        "d-flex": 9,
-        "display and flex": 21,
-        "form-check-input": 5,
-        "forms": 15,
-        "grid": 48,
-        "list groups": 8,
-        "row": 15,
-        "sizing": 16,
-        "spacing": 99,
-        "text": 40,
-    },
-    "privacy_policy.html": {"container": 1, "grid": 1},
-    "professional.html": {"alert": 1, "alerts": 2, "container": 1, "grid": 1},
-    "professional_available.html": {"btn": 1, "buttons": 1, "container": 1, "grid": 1},
-    "professional_thankyou.html": {"container": 1, "grid": 1},
-    "remove_data.html": {
-        "alert": 1,
-        "alerts": 2,
-        "btn": 1,
-        "buttons": 1,
-        "d-flex": 1,
-        "display and flex": 3,
-        "spacing": 3,
-    },
-    "scrub.html": {
-        "alerts": 2,
-        "btn": 3,
-        "buttons": 5,
-        "col-": 1,
-        "display and flex": 2,
-        "forms": 27,
-        "grid": 1,
-        "spacing": 9,
-        "text": 16,
-    },
-    "server_side_ocr.html": {"btn": 1, "buttons": 1},
-    "server_side_ocr_error.html": {"btn": 1, "buttons": 1},
-    "share_denial.html": {
-        "col-": 1,
-        "d-flex": 2,
-        "display and flex": 8,
-        "grid": 2,
-        "row": 1,
-        "spacing": 2,
-    },
-    "single_optional_question.html": {
-        "alert": 1,
-        "alerts": 2,
-        "btn": 2,
-        "buttons": 3,
-        "spacing": 1,
-    },
-    "state_help.html": {
-        "borders and shadows": 3,
-        "btn": 9,
-        "buttons": 19,
-        "card": 5,
-        "cards": 17,
-        "col-": 11,
-        "colours and backgrounds": 5,
-        "container": 7,
-        "d-flex": 2,
-        "display and flex": 7,
-        "grid": 28,
-        "row": 10,
-        "sizing": 2,
-        "spacing": 45,
-        "text": 19,
-    },
-    "state_help_index.html": {
-        "borders and shadows": 2,
-        "btn": 7,
-        "buttons": 18,
-        "card": 5,
-        "cards": 19,
-        "col-": 15,
-        "colours and backgrounds": 3,
-        "container": 5,
-        "d-flex": 3,
-        "display and flex": 11,
-        "grid": 29,
-        "row": 9,
-        "sizing": 5,
-        "spacing": 37,
-        "text": 16,
-    },
-    "static/js/appeal_fetcher.ts": {"btn": 1, "buttons": 2, "text": 2},
-    "static/js/blog.tsx": {
-        "alert": 1,
-        "alerts": 2,
-        "btn": 1,
-        "buttons": 1,
-        "card": 1,
-        "cards": 5,
-        "col-": 3,
-        "container": 2,
-        "display and flex": 1,
-        "grid": 6,
-        "row": 1,
-        "sizing": 1,
-        "spacing": 5,
-        "text": 5,
-    },
-    "static/js/blog_post.tsx": {
-        "alert": 1,
-        "alerts": 2,
-        "breadcrumbs": 3,
-        "btn": 3,
-        "buttons": 4,
-        "card": 2,
-        "cards": 8,
-        "container": 3,
-        "grid": 3,
-        "shared state": 1,
-        "spacing": 4,
-        "spinners": 1,
-        "text": 2,
-        "visibility and interaction": 1,
-    },
-    "static/js/entity_fetcher.ts": {"btn": 2, "buttons": 3},
-    "static/js/scrub.ts": {"btn": 1, "buttons": 3, "spacing": 2},
-    "stripe_finish_error.html": {
-        "alert": 1,
-        "alerts": 2,
-        "col-": 1,
-        "d-flex": 2,
-        "display and flex": 8,
-        "grid": 2,
-        "row": 1,
-        "spacing": 5,
-        "text": 1,
-    },
-    "thankyou.html": {"container": 1, "grid": 1, "spacing": 1},
-    "tos.html": {"container": 1, "grid": 1},
-    "turning_26.html": {
-        "badges": 6,
-        "borders and shadows": 6,
-        "btn": 8,
-        "buttons": 10,
-        "card": 14,
-        "cards": 62,
-        "col-": 20,
-        "colours and backgrounds": 14,
-        "container": 8,
-        "d-flex": 8,
-        "display and flex": 19,
-        "grid": 47,
-        "list groups": 7,
-        "row": 14,
-        "sizing": 18,
-        "spacing": 68,
-        "text": 29,
-    },
-    "understand_policy.html": {
-        "alert": 2,
-        "alerts": 4,
-        "borders and shadows": 4,
-        "btn": 1,
-        "buttons": 1,
-        "card": 5,
-        "cards": 19,
-        "col-": 9,
-        "colours and backgrounds": 1,
-        "container": 3,
-        "d-flex": 1,
-        "display and flex": 5,
-        "forms": 19,
-        "grid": 18,
-        "row": 6,
-        "sizing": 4,
-        "spacing": 34,
-        "text": 13,
-    },
-    "unsubscribed.html": {
-        "col-": 1,
-        "d-flex": 2,
-        "display and flex": 8,
-        "grid": 2,
-        "row": 1,
-        "spacing": 3,
-    },
-    "warnings.html": {"container": 1, "grid": 1},
-}
+# What each file carries, one class or data-bs attribute to a line.
+USES_BY_FILE = Path(__file__).resolve().with_name("bootstrap_uses_by_file.txt")
+USES_BY_FILE_HEADER = (
+    "# Each Bootstrap class and data-bs attribute each file uses, and how\n"
+    "# many times: the file, the name and the count, one to a line, sorted.\n"
+    "# Read by test_bootstrap_ratchet.py, which fails when a use grows and\n"
+    "# when a number here is above what the file really has. A template is\n"
+    "# named by its path under fighthealthinsurance/templates, one of\n"
+    "# fhi_users' by fhi_users/ and its path, and a script by static/js/ and\n"
+    "# its name. A name a file does not list is at zero there.\n"
+    "# After taking uses out, bring these down, from the top of the repository:\n"
+    "#   python tests/sync/test_bootstrap_ratchet.py --lower\n"
+    "# That only lowers a number or drops a line. A use that has to grow is\n"
+    "# raised here by hand, in the same commit, which says why.\n"
+)
 
 
 @functools.lru_cache(maxsize=None)
@@ -1173,6 +638,41 @@ def bootstrap_uses() -> "dict[str, Counter]":
     return uses
 
 
+def recorded_uses() -> "dict[str, Counter]":
+    """What bootstrap_uses_by_file.txt allows each file, by name."""
+    recorded: dict = {}
+    for line in USES_BY_FILE.read_text().splitlines():
+        if line and not line.startswith("#"):
+            key, name, count = line.split(" ")
+            recorded.setdefault(key, Counter())[name] = int(count)
+    return recorded
+
+
+def _uses_list(uses: "dict[str, Counter]") -> str:
+    """The text of bootstrap_uses_by_file.txt for these uses."""
+    return USES_BY_FILE_HEADER + "".join(
+        "%s %s %d\n" % (key, name, count)
+        for key in sorted(uses)
+        for name, count in sorted(uses[key].items())
+        if count
+    )
+
+
+def _lowered(recorded: "dict[str, Counter]", now: "dict[str, Counter]") -> dict:
+    """Each recorded number brought down to what the file has now.
+
+    Never up, and never a name the list does not already hold for that
+    file, so running it cannot let a use grow.
+    """
+    lowered: dict = {}
+    for key, allowed in recorded.items():
+        for name, count in allowed.items():
+            left = min(count, now.get(key, Counter())[name])
+            if left:
+                lowered.setdefault(key, Counter())[name] = left
+    return lowered
+
+
 # Known limits, so nobody reads more into a green run than is there. A class
 # whose name arrives in a variable is not seen, and neither is one a script
 # builds from pieces. This counts what is written literally in the markup,
@@ -1201,15 +701,6 @@ def totals() -> Counter:
     for here in bootstrap_counts().values():
         total.update(here)
     return total
-
-
-def _behind(uses: Counter, counted: str) -> str:
-    """The names on a page behind one count, for a failure message."""
-    return ", ".join(
-        "%s x%d" % (name, found)
-        for name, found in sorted(uses.items())
-        if counted in _keys_of(name)
-    )
 
 
 def test_the_templates_are_found_at_all() -> None:
@@ -1244,29 +735,32 @@ def test_no_page_reaches_for_more_bootstrap() -> None:
 def test_no_single_page_reaches_for_more_bootstrap() -> None:
     """The site total can hold steady while one page gets worse.
 
-    Removing a use from one template must not buy the right to add one to
-    another, so each template is held to what it has today.
+    Removing a use from one file must not buy the right to add one to
+    another, and removing one class from a page must not buy the right to
+    put another there. Swapping chat consent's d-grid for d-none would
+    leave every family's count where it was and hide its Continue button.
+    So each file is held to each name it has today.
     """
-    uses = bootstrap_uses()
-    counts = bootstrap_counts()
+    recorded = recorded_uses()
     grown = [
         "%s: %s went from %d to %d (%s) -- use %s instead"
         % (
             path,
             name,
-            PER_TEMPLATE.get(path, {}).get(name, 0),
+            recorded.get(path, Counter())[name],
             found,
-            _behind(uses[path], name),
-            INSTEAD[name],
+            _keys_of(name)[0],
+            INSTEAD[_keys_of(name)[0]],
         )
-        for path, here in sorted(counts.items())
+        for path, here in sorted(bootstrap_uses().items())
         for name, found in sorted(here.items())
-        if found > PER_TEMPLATE.get(path, {}).get(name, 0)
+        if found > recorded.get(path, Counter())[name]
     ]
     assert not grown, (
-        "these templates reached for more Bootstrap:\n  %s\n"
-        "Use the site's own classes, or raise the number in PER_TEMPLATE in "
-        "the same commit and say why." % "\n  ".join(grown)
+        "these files reached for more Bootstrap:\n  %s\n"
+        "Use the site's own classes, or raise the number in "
+        "bootstrap_uses_by_file.txt in the same commit and say why."
+        % "\n  ".join(grown)
     )
 
 
@@ -1284,32 +778,54 @@ def test_the_baseline_has_no_stale_numbers() -> None:
     )
 
 
-def test_the_per_template_baseline_has_no_stale_numbers() -> None:
-    counts = bootstrap_counts()
+def test_the_list_by_file_has_no_stale_numbers() -> None:
+    uses = bootstrap_uses()
     stale = [
         "%s: %s allowed %d, only %d left"
-        % (path, name, allowed, counts.get(path, {}).get(name, 0))
-        for path, here in sorted(PER_TEMPLATE.items())
+        % (path, name, allowed, uses.get(path, Counter())[name])
+        for path, here in sorted(recorded_uses().items())
         for name, allowed in sorted(here.items())
-        if counts.get(path, {}).get(name, 0) < allowed
+        if uses.get(path, Counter())[name] < allowed
     ]
-    assert (
-        not stale
-    ), "lower these to what the templates actually have:\n  %s" % "\n  ".join(stale)
+    assert not stale, (
+        "lower these to what the files actually have, with\n"
+        "  python tests/sync/test_bootstrap_ratchet.py --lower\n  %s"
+        % "\n  ".join(stale)
+    )
+
+
+def test_the_list_by_file_is_in_its_own_order() -> None:
+    """The list is exactly what --lower would write.
+
+    Sorted, one line per file and name, every count above zero, and the
+    header on top, so the diff --lower makes is only the numbers that moved.
+    """
+    assert USES_BY_FILE.read_text() == _uses_list(recorded_uses())
+
+
+def test_the_list_by_file_names_only_bootstrap() -> None:
+    """A misspelt class in the list would hold nothing down."""
+    unknown = sorted(
+        "%s: %s" % (path, name)
+        for path, here in recorded_uses().items()
+        for name in here
+        if not (family_of(name) or name.startswith("data-bs-"))
+    )
+    assert not unknown, "not a Bootstrap class or data-bs attribute: %s" % unknown
+
+
+def test_lowering_the_list_never_raises_or_adds_a_use() -> None:
+    recorded = {
+        "a.html": Counter({"btn": 3, "mt-3": 1}),
+        "gone.html": Counter({"row": 2}),
+    }
+    now = {"a.html": Counter({"btn": 2, "mt-3": 4, "d-none": 1})}
+    assert _lowered(recorded, now) == {"a.html": Counter({"btn": 2, "mt-3": 1})}
 
 
 def test_every_count_has_a_name_it_can_mean() -> None:
     """A misspelt key in a baseline would hold nothing down and say nothing."""
-    known = set(INSTEAD)
-    unknown = sorted(
-        {name for name in BASELINE if name not in known}
-        | {
-            "%s: %s" % (path, name)
-            for path, here in PER_TEMPLATE.items()
-            for name in here
-            if name not in known
-        }
-    )
+    unknown = sorted(name for name in BASELINE if name not in INSTEAD)
     assert not unknown, "not a family or watched class: %s" % unknown
     missing = sorted(
         name
@@ -1545,12 +1061,16 @@ def test_a_commented_block_with_a_note_is_still_ignored() -> None:
 
 
 if __name__ == "__main__":
-    # Regenerates the class list from Bootstrap's stylesheet on stdin; the
-    # list's own header says how.
-    sys.stdout.write(
-        CLASS_LIST_HEADER
-        + "".join(
-            "%s\n" % name
-            for name in sorted(class_names_in_stylesheet(sys.stdin.read()))
+    if sys.argv[1:] == ["--lower"]:
+        # Brings bootstrap_uses_by_file.txt down to what the files have now.
+        USES_BY_FILE.write_text(_uses_list(_lowered(recorded_uses(), bootstrap_uses())))
+    else:
+        # Regenerates the class list from Bootstrap's stylesheet on stdin;
+        # the list's own header says how.
+        sys.stdout.write(
+            CLASS_LIST_HEADER
+            + "".join(
+                "%s\n" % name
+                for name in sorted(class_names_in_stylesheet(sys.stdin.read()))
+            )
         )
-    )
