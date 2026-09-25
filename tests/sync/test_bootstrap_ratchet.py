@@ -189,7 +189,7 @@ BASELINE: "dict[str, int]" = {
     "badges": 18,
     "borders and shadows": 41,
     "breadcrumbs": 7,
-    "buttons": 192,
+    "buttons": 189,
     "cards": 411,
     "colours and backgrounds": 64,
     "display and flex": 177,

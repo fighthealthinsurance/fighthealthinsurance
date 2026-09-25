@@ -389,8 +389,6 @@ microsite.html bg-light 5
 microsite.html bg-warning 1
 microsite.html border 1
 microsite.html btn 7
-microsite.html btn-lg 1
-microsite.html btn-outline-primary 2
 microsite.html card 4
 microsite.html card-body 4
 microsite.html card-text 4
