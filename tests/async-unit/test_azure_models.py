@@ -580,6 +580,59 @@ class TestAzureClaudeMessages(unittest.TestCase):
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_messages_api_calls_feed_the_ml_metrics(self):
+        """The Messages transport bypasses RemoteOpenLike's counters, so it
+        records its own calls: a success is an ok call, an HTTP error an error
+        call with an http_error reason. It used to record nothing at all."""
+        from prometheus_client import REGISTRY
+
+        def counter(name, **labels):
+            # Summed over the endpoint label; leg and purpose as a bare call.
+            labels.setdefault("leg", "primary")
+            labels.setdefault("purpose", "other")
+            return sum(
+                sample.value
+                for metric in REGISTRY.collect()
+                for sample in metric.samples
+                if sample.name == name
+                and all(sample.labels.get(k) == v for k, v in labels.items())
+            )
+
+        async def run():
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            label = m._metric_identity(m.api_base)[0]
+            ok_before = counter("fhi_ml_calls_total", model=label, outcome="ok")
+            ok_response = _FakeAiohttpResponse(
+                {"content": [{"type": "text", "text": "Dear insurer, this is fine."}]}
+            )
+            with patch.object(
+                aiohttp, "ClientSession", return_value=_FakeAiohttpSession(ok_response)
+            ):
+                await m._infer(system_prompts=["x"], prompt="y")
+            self.assertEqual(
+                counter("fhi_ml_calls_total", model=label, outcome="ok"), ok_before + 1
+            )
+
+            err_before = counter("fhi_ml_calls_total", model=label, outcome="error")
+            reason_before = counter(
+                "fhi_ml_call_failures_total", model=label, reason="http_error"
+            )
+            failing = _FakeAiohttpSession(_FakeAiohttpResponse(status=500, headers={}))
+            with patch.object(aiohttp, "ClientSession", return_value=failing):
+                with self.assertRaises(aiohttp.ClientResponseError):
+                    await m._infer(system_prompts=["x"], prompt="y")
+            self.assertEqual(
+                counter("fhi_ml_calls_total", model=label, outcome="error"),
+                err_before + 1,
+            )
+            self.assertEqual(
+                counter("fhi_ml_call_failures_total", model=label, reason="http_error"),
+                reason_before + 1,
+            )
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_messages_api_clamps_temperature(self):
         """Temperature is clamped to the Messages API's [0, 1] range so a shared
         router value that's valid on the OpenAI surface (up to 2.0) can't 400."""

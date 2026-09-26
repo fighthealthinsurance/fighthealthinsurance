@@ -163,6 +163,62 @@ def test_metrics_runtime_builds_prometheus_config_when_set():
     assert cfg.durations_as_seconds is True
 
 
+def test_app_metrics_server_is_off_when_unset():
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        app_metrics_server,
+    )
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("FHI_APP_METRICS_BIND", None)
+        assert app_metrics_server() is None
+
+
+def test_app_metrics_server_serves_the_app_registry_when_set():
+    """The fhi_ml_* counters for generation run on this worker live in
+    prometheus_client's default registry, which only the web pods served."""
+    from unittest.mock import Mock
+
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        app_metrics_server,
+    )
+
+    start = Mock()
+    with (
+        patch.dict(os.environ, {"FHI_APP_METRICS_BIND": "0.0.0.0:9465"}),
+        patch("prometheus_client.start_http_server", start),
+    ):
+        assert app_metrics_server() == "0.0.0.0:9465"
+    start.assert_called_once_with(9465, addr="0.0.0.0")
+
+
+# A malformed bind or a port a sidecar already holds is a metrics problem,
+# not a reason to CrashLoop the pod that generates appeals.
+
+
+def test_app_metrics_server_survives_a_malformed_bind():
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        app_metrics_server,
+    )
+
+    with patch.dict(os.environ, {"FHI_APP_METRICS_BIND": "0.0.0.0:"}):
+        assert app_metrics_server() is None
+
+
+def test_app_metrics_server_survives_a_busy_port():
+    from unittest.mock import Mock
+
+    from fighthealthinsurance.management.commands.run_temporal_worker import (
+        app_metrics_server,
+    )
+
+    busy = Mock(side_effect=OSError("address already in use"))
+    with (
+        patch.dict(os.environ, {"FHI_APP_METRICS_BIND": "0.0.0.0:9465"}),
+        patch("prometheus_client.start_http_server", busy),
+    ):
+        assert app_metrics_server() is None
+
+
 def test_worker_passes_metrics_runtime_to_the_client():
     """The runtime reaches Client.connect only through get_temporal_client's
     runtime kwarg; web/Ray callers never pass one."""
@@ -210,6 +266,13 @@ def test_worker_manifests_are_redundant_and_scraped():
             r"name: metrics\s*\n\s*containerPort: 9464", text
         ), f"{name} must expose the metrics port"
         assert "name: TEMPORAL_METRICS_BIND" in text
+        # The app's own registry (fhi_ml_* call counters) on a second port.
+        assert re.search(
+            r"name: app-metrics\s*\n\s*containerPort: 9465", text
+        ), f"{name} must expose the app metrics port"
+        assert "name: FHI_APP_METRICS_BIND" in text
+    podmonitor = (tdir / "worker-podmonitor.yaml").read_text()
+    assert "port: app-metrics" in podmonitor, "the app metrics port must be scraped"
     pdb = (tdir / "worker-pdb.yaml").read_text()
     assert pdb.count("kind: PodDisruptionBudget") == 2
     for group in (

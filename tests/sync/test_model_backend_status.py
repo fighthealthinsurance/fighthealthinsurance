@@ -220,6 +220,32 @@ class ModelBackendStatusContentTest(StatusPageTestCase):
         self.assertEqual(len(rows), 1)
         self.assertIsNotNone(rows[0]["last_generation"])
 
+    def test_last_generation_ignores_users_chosen_copies(self):
+        # A chosen row is the copy written when a user PICKS a draft, stamped
+        # with the draft's model at pick time; it is not a generation, and
+        # counting it kept a retired backend looking alive.
+        denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="picked long ago",
+            chosen=True,
+            model_name="anthropic/claude-sonnet-4-6",
+        )
+        response = self.client.get(reverse("model_backend_status"))
+        rows = [
+            r
+            for r in response.context["rows"]
+            if r["model_name"] == "anthropic/claude-sonnet-4-6"
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["last_generation"])
+
 
 class ModelBackendStatusRoutingTest(StatusPageTestCase):
     """The routing panel and columns match what the router would pick."""

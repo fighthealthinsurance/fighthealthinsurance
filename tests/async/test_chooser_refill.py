@@ -16,6 +16,7 @@ import pytest
 
 from fighthealthinsurance.chooser_tasks import (
     _count_unscored_tasks,
+    _generate_appeal_candidates,
     _maybe_add_synthesized_candidate,
     _synthesize_appeal_candidate,
     _synthesize_chat_candidate,
@@ -413,3 +414,50 @@ class TestSynthesizeHelpers:
         ):
             result = await _synthesize_appeal_candidate({}, ["a", "b"])
         assert result is None
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestRetryAsksTheModelsStillOwedACandidateFirst:
+    """When a backend fails in the first pass, the retry pass used to walk
+    the model list from the top again, so the internal model that had
+    already answered was re-sampled and the task carried two of its drafts
+    while the failed backend was never retried -- and the usage dashboard
+    then charged that model two presentations per vote."""
+
+    async def test_retry_pass_starts_with_the_model_that_failed(self):
+        scenario = (
+            "Procedure: MRI of lumbar spine\nDiagnosis: chronic lower back pain\n"
+            "Insurance Company: Fictional Mutual\nDenial Reason: not medically "
+            "necessary per the plan's clinical policy.\n"
+        )
+        letter = "Dear Reviewer, " + "this care is medically necessary. " * 10
+
+        model_a = MagicMock()
+        model_a.name = "model-a"
+        model_a.external = False
+        # First call writes the synthetic scenario, the rest are drafts.
+        model_a._infer_no_context = AsyncMock(side_effect=[scenario] + [letter] * 10)
+        model_b = MagicMock()
+        model_b.name = "model-b"
+        model_b.external = False
+        model_b._infer_no_context = AsyncMock(
+            side_effect=[Exception("flaky"), letter, letter, letter, letter]
+        )
+        task = await _make_task()
+
+        with patch("fighthealthinsurance.chooser_tasks.ml_router") as router, patch(
+            "fighthealthinsurance.chooser_tasks._maybe_add_synthesized_candidate",
+            AsyncMock(),
+        ):
+            router.generate_text_backends.return_value = [model_a, model_b]
+            await _generate_appeal_candidates(task)
+
+        names = [
+            name
+            async for name in ChooserCandidate.objects.filter(task=task)
+            .order_by("candidate_index")
+            .values_list("model_name", flat=True)
+        ]
+        # model-a answered in the first pass; the retry's first slot goes to
+        # model-b, the one still owed a candidate, not back to model-a.
+        assert names[:2] == ["model-a", "model-b"], names

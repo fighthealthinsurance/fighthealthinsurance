@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import random
 import typing
 from typing import Optional
 
@@ -1361,6 +1362,14 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             include_cover=include_cover,  # for now -- make this a flag on appeal
         )
         appeal.save()
+        # The professional's pick, for the model-usage reporting the consumer
+        # flow feeds through ChooseAppealHelper: without this no professional
+        # pick ever reached ProposedAppeal.chosen=True.
+        common_view_logic.record_professional_pick(
+            denial,
+            completed_appeal_text,
+            proposed_appeal_id=serializer.validated_data.get("proposed_appeal_id"),
+        )
         return Response(
             serializers.AssembleAppealResponseSerializer({"appeal_id": appeal.id}).data,
             status=status.HTTP_201_CREATED,
@@ -2584,6 +2593,13 @@ class ChooserViewSet(viewsets.ViewSet):
             for c in candidates
         ]
 
+        # Served in random order, so the voter is blind to model class: the
+        # stored order (internal model first, synthesized last) is otherwise
+        # perfectly correlated with the position on the page, and a vote for
+        # "Option A" cannot be told from a vote for the internal model. The
+        # client sends presented_candidate_ids in the order it rendered, so
+        # the display order is persisted per vote for later analysis.
+        random.shuffle(candidate_data)
         response_data = {
             "task_id": task.id,
             "task_type": task.task_type,

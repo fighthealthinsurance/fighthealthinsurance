@@ -1,8 +1,15 @@
 """Tests for common_view_logic.mark_proposal_chosen helper."""
 
+import inspect
+
 from django.test import TestCase
 
-from fighthealthinsurance.common_view_logic import mark_proposal_chosen
+from fighthealthinsurance import forms as core_forms
+from fighthealthinsurance.common_view_logic import (
+    ChooseAppealHelper,
+    mark_proposal_chosen,
+)
+from fighthealthinsurance.ml.model_identity import LEGACY_UNATTRIBUTED_LABEL
 from fighthealthinsurance.models import Denial, ProposedAppeal
 
 
@@ -119,15 +126,17 @@ class MarkProposalChosenTest(TestCase):
         self.assertIsNone(pa.model_name)
 
     def test_editted_share_flow_never_infers(self):
-        # The share-appeal flow submits arbitrary user text (editted=True);
-        # even a single-model denial must not claim it.
+        # The share-appeal flow submits arbitrary user text (arbitrary_text,
+        # stored editted=True); even a single-model denial must not claim it.
         ProposedAppeal.objects.create(
             for_denial=self.denial,
             appeal_text="only draft",
             chosen=False,
             model_name="model-x",
         )
-        pa = mark_proposal_chosen(self.denial, "user authored text", editted=True)
+        pa = mark_proposal_chosen(
+            self.denial, "user authored text", editted=True, arbitrary_text=True
+        )
         self.assertIsNone(pa.model_name)
 
     def test_blank_sole_draft_model_name_not_inferred(self):
@@ -299,3 +308,318 @@ class MarkProposalChosenTest(TestCase):
         # ...and to its context level. Without the speculative exclusion the
         # two rows would look like mixed levels and this would infer None.
         self.assertEqual(pa.context_level, "full")
+    # --- re-picks, CRLF submissions, unsaved drafts, edited picks ----------
+
+    def test_repick_via_the_chosen_copys_id_keeps_the_model(self):
+        # The appeals page replays a user's earlier pick under the chosen
+        # copy's id; re-submitting it must not degrade to "(unattributed)".
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="draft-a",
+            chosen=False,
+            model_name="model-a",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="draft-b",
+            chosen=False,
+            model_name="model-b",
+        )
+        first = mark_proposal_chosen(self.denial, "draft-a")
+        self.assertEqual(first.model_name, "model-a")
+        again = mark_proposal_chosen(
+            self.denial, "draft-a, lightly edited", proposed_appeal_id=first.id
+        )
+        self.assertEqual(again.model_name, "model-a")
+
+    def test_chosen_copy_without_a_model_is_not_evidence(self):
+        # An earlier unattributed copy must not pin a re-pick to None when the
+        # denial's drafts can still say which model it was.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="only draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        copy = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="whatever",
+            chosen=True,
+            model_name=None,
+        )
+        pa = mark_proposal_chosen(self.denial, "rewritten", proposed_appeal_id=copy.id)
+        self.assertEqual(pa.model_name, "model-x")
+
+    def test_text_match_survives_crlf_line_endings(self):
+        # Browsers submit textarea content with CRLF while drafts are stored
+        # with LF; a byte-for-byte comparison never matched a multi-line
+        # letter, so an id-less pick fell through to inference -- None here,
+        # with two models in play.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Dear Reviewer,\nI appeal.",
+            chosen=False,
+            model_name="model-x",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Other draft",
+            chosen=False,
+            model_name="model-y",
+        )
+        pa = mark_proposal_chosen(self.denial, "Dear Reviewer,\r\nI appeal.")
+        self.assertEqual(pa.model_name, "model-x")
+
+    def test_unsaved_draft_blocks_sole_draft_inference(self):
+        # The browser says the picked draft was never stored: the stored
+        # drafts say nothing about which model produced it.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="stored draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "the unsaved draft's text", draft_unsaved=True
+        )
+        self.assertIsNone(pa.model_name)
+
+    def test_presented_ids_are_kept_filtered_to_the_denials_own_drafts(self):
+        # The browser reports what was on screen; a stray id from another
+        # denial (or a typo) must not credit that draft with a presentation.
+        shown = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="shown", chosen=False, model_name="m"
+        )
+        other_denial = Denial.objects.create(
+            hashed_email="other",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+        foreign = ProposedAppeal.objects.create(
+            for_denial=other_denial, appeal_text="foreign", chosen=False, model_name="m"
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "shown", presented_ids=[shown.id, foreign.id, 999999]
+        )
+        self.assertEqual(pa.presented_ids, [shown.id])
+
+    def test_a_held_back_precompute_row_is_never_counted_as_shown(self):
+        # A speculative row is held back until served (and flipped then), so
+        # no page ever showed it; only a crafted report could name it.
+        shown = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="shown", chosen=False, model_name="m"
+        )
+        held_back = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="held back",
+            chosen=False,
+            model_name="m",
+            speculative=True,
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "shown", presented_ids=[shown.id, held_back.id]
+        )
+        self.assertEqual(pa.presented_ids, [shown.id])
+
+    def test_no_report_leaves_presented_ids_null(self):
+        pa = mark_proposal_chosen(self.denial, "anything")
+        self.assertIsNone(pa.presented_ids)
+
+    def test_presented_ids_keep_the_on_screen_order_without_duplicates(self):
+        # The page ranks its cards, so the order says which sat on top.
+        first = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="first", chosen=False, model_name="m"
+        )
+        second = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="second", chosen=False, model_name="m"
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "first", presented_ids=[second.id, first.id, second.id]
+        )
+        self.assertEqual(pa.presented_ids, [second.id, first.id])
+
+    def test_a_legacy_placeholder_on_a_chosen_copy_is_not_evidence(self):
+        # The backfill stamps picks it could not attribute; the replay serves
+        # chosen copies too, so a re-submit can echo such a copy's id. Copying
+        # the placeholder would file a pick made today as a pre-tracking one.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        legacy = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft",
+            chosen=True,
+            model_name=LEGACY_UNATTRIBUTED_LABEL,
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "the draft", proposed_appeal_id=legacy.id
+        )
+        self.assertEqual(pa.model_name, "model-x")
+
+    def _draft_from_model_x(self, text="the draft"):
+        return ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text=text, chosen=False, model_name="model-x"
+        )
+
+    def test_a_verbatim_pick_is_not_an_edit_when_the_caller_cannot_say(self):
+        draft = self._draft_from_model_x()
+        pa = mark_proposal_chosen(
+            self.denial, "the draft", proposed_appeal_id=draft.id, editted=None
+        )
+        self.assertFalse(pa.editted)
+
+    def test_a_changed_pick_is_an_edit_of_the_same_model_when_the_caller_cannot_say(
+        self,
+    ):
+        draft = self._draft_from_model_x()
+        pa = mark_proposal_chosen(
+            self.denial, "the draft, edited", proposed_appeal_id=draft.id, editted=None
+        )
+        self.assertTrue(pa.editted)
+        self.assertEqual(pa.model_name, "model-x")
+
+    def test_a_main_flow_re_pick_of_an_edited_copy_stays_an_edit(self):
+        # The page replayed the user's edited pick and they chose it again
+        # without touching the textarea: the letter is still their edit.
+        self._draft_from_model_x()
+        copy = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft, edited",
+            chosen=True,
+            editted=True,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "the draft, edited", proposed_appeal_id=copy.id, editted=False
+        )
+        self.assertTrue(pa.editted)
+
+    def test_an_empty_on_screen_report_is_kept_as_a_report(self):
+        # "Nothing stored was on screen" is not "nobody said" (NULL), for
+        # which the dashboard falls back to every draft stored before.
+        pa = mark_proposal_chosen(self.denial, "an unsaved draft", presented_ids=[])
+        self.assertEqual(ProposedAppeal.objects.get(id=pa.id).presented_ids, [])
+
+    def test_a_re_pick_of_an_edited_copy_stays_an_edit(self):
+        # The replay serves chosen copies too, so a re-submit can echo the
+        # copy's id; unchanged text keeps the copy's own answer rather than
+        # reading as verbatim against the already-edited copy.
+        self._draft_from_model_x()
+        copy = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft, edited",
+            chosen=True,
+            editted=True,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "the draft, edited", proposed_appeal_id=copy.id, editted=None
+        )
+        self.assertTrue(pa.editted)
+
+    def test_edited_main_flow_pick_is_recorded_and_still_inferred(self):
+        # editted only records the edit now; a draft edited from the sole
+        # model's output is still that model's.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="only draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(self.denial, "only draft, edited", editted=True)
+        self.assertTrue(pa.editted)
+        self.assertEqual(pa.model_name, "model-x")
+
+
+class ChooseAppealCarriesTheBrowserFlagsTest(TestCase):
+    """The hidden inputs the appeals page fills in (the draft's id, whether it
+    was ever stored, whether it was edited) reach mark_proposal_chosen."""
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("user@example.com"),
+            semi_sekret="sekret",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def test_form_fields_match_the_helper_signature(self):
+        form = core_forms.ChooseAppealForm(
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": "user@example.com",
+                "semi_sekret": "sekret",
+                "appeal_text": "the letter",
+                "proposed_appeal_id": "",
+                "draft_unsaved": "1",
+                "editted": "1",
+                "presented_ids": "[12, 7, \"x\", 7]",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertTrue(form.cleaned_data["draft_unsaved"])
+        self.assertTrue(form.cleaned_data["editted"])
+        self.assertIsNone(form.cleaned_data["proposed_appeal_id"])
+        # Parsed to ints; junk entries dropped, nothing else rejected.
+        self.assertEqual(form.cleaned_data["presented_ids"], [12, 7, 7])
+        params = inspect.signature(ChooseAppealHelper.choose_appeal).parameters
+        self.assertTrue(set(form.cleaned_data) <= set(params), form.cleaned_data)
+
+    def test_unparseable_presented_ids_are_dropped_not_fatal(self):
+        base = {
+            "denial_id": str(self.denial.denial_id),
+            "email": "user@example.com",
+            "semi_sekret": "sekret",
+            "appeal_text": "the letter",
+        }
+        # Also nesting past the parser's depth: it may not 500 the pick.
+        for raw in ("not json", "{\"a\": 1}", "", "[" * 100000):
+            form = core_forms.ChooseAppealForm({**base, "presented_ids": raw})
+            self.assertTrue(form.is_valid(), (raw, form.errors))
+            self.assertIsNone(form.cleaned_data["presented_ids"], raw)
+
+    def test_a_list_of_junk_ids_is_an_empty_report_not_a_crash(self):
+        base = {
+            "denial_id": str(self.denial.denial_id),
+            "email": "user@example.com",
+            "semi_sekret": "sekret",
+            "appeal_text": "the letter",
+        }
+        # An unsaved card's "unknown", a JSON number that parses to inf, and
+        # an id past a 64-bit column (sqlite refuses it as a parameter).
+        for raw in (
+            "[]",
+            '["unknown"]',
+            "[1e999]",
+            "[100000000000000000000]",
+        ):
+            form = core_forms.ChooseAppealForm({**base, "presented_ids": raw})
+            self.assertTrue(form.is_valid(), (raw, form.errors))
+            self.assertEqual(form.cleaned_data["presented_ids"], [], raw)
+
+    def test_helper_stamps_the_flags_on_the_chosen_row(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="stored draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        ChooseAppealHelper.choose_appeal(
+            denial_id=str(self.denial.denial_id),
+            appeal_text="an unsaved draft, edited",
+            email="user@example.com",
+            semi_sekret="sekret",
+            draft_unsaved=True,
+            editted=True,
+        )
+        pick = ProposedAppeal.objects.get(for_denial=self.denial, chosen=True)
+        self.assertTrue(pick.editted)
+        # Unsaved: the stored draft is not evidence, so no inference.
+        self.assertIsNone(pick.model_name)

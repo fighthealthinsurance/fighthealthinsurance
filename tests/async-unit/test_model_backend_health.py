@@ -21,6 +21,7 @@ from django.core.management import call_command
 
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
+from fighthealthinsurance.ml.ml_metrics import ML_CALL_PURPOSE
 from fighthealthinsurance.ml.ml_models import (
     _attach_error_body,
     _note_probe_transport_error,
@@ -165,6 +166,21 @@ class TestSanitizeError:
 
     def test_handles_none(self):
         assert mhc.sanitize_error(None) == ""
+
+
+class TestHealthCheckCallsAreProbes:
+    def test_the_health_check_call_runs_under_the_probe_purpose(self):
+        """The per-backend "Hello" is a probe; recorded under "other" it sat
+        beside entity extraction and summaries in the series real traffic is
+        judged by."""
+        seen = []
+
+        async def answer():
+            seen.append(ML_CALL_PURPOSE.get())
+            return "OK"
+
+        asyncio.run(mhc.check_backend(_result(), _StubBackend(answer), timeout=5.0))
+        assert seen == ["probe"]
 
 
 class TestCheckBackendCategorization:

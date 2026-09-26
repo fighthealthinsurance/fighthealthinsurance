@@ -11,6 +11,7 @@ from django.utils import timezone
 from fighthealthinsurance.ml.model_identity import (
     LEGACY_UNATTRIBUTED_LABEL,
     SYNTHESIZED_MODEL_NAME,
+    TEMPLATE_MODEL_NAME,
     legacy_unresolved_label,
 )
 from fighthealthinsurance.models import (
@@ -201,17 +202,19 @@ class ModelUsageDashboardContentTest(TestCase):
         )
         ProposedAppeal.objects.create(
             for_denial=d,
-            appeal_text="full-chosen",
-            chosen=True,
-            model_name="m1",
-            context_level="full",
-        )
-        ProposedAppeal.objects.create(
-            for_denial=d,
             appeal_text="shed-draft",
             chosen=False,
             model_name="m1",
             context_level="tier1_shed",
+        )
+        # The pick comes last: presented counts only what existed when the
+        # user chose.
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="full-chosen",
+            chosen=True,
+            model_name="m1",
+            context_level="full",
         )
 
         response = self.client.get(reverse("model_usage_dashboard"))
@@ -510,8 +513,10 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
         self.assertEqual(by_name["model-a"]["presented"], 1)
         self.assertEqual(by_name["model-b"]["presented"], 1)
 
-    def test_multiple_chosen_rows_do_not_duplicate_presented(self):
-        # Two picks on the same denial (re-submit): drafts still count once.
+    def test_multiple_chosen_rows_count_presented_once_per_pick(self):
+        # Two picks on the same denial (re-submit): the draft was on offer at
+        # each, so it is presented twice against two chosen -- 100%, not the
+        # 200% that counting it once against both picks produced.
         denial = Denial.objects.create(
             hashed_email="hash",
             denial_text="denied",
@@ -528,7 +533,7 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
             )
         rows = self._rows(source="proposed_appeal")
         m1 = next(r for r in rows if r["model_name"] == "m1")
-        self.assertEqual(m1["presented"], 1)
+        self.assertEqual(m1["presented"], 2)
         self.assertEqual(m1["chosen"], 2)
 
     def test_zero_denominator_renders_em_dash(self):
@@ -609,6 +614,7 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
         self.assertEqual(prow["presented"], 1)
         self.assertEqual(crow["chosen"], 1)
         self.assertEqual(crow["presented"], 1)
+
 
 
 class ModelUsageDashboardWindowTest(ChooserStatsHelperMixin, TestCase):
@@ -840,3 +846,221 @@ class DraftQualityColumnsTest(TestCase):
         rows = _merge_stats({"a": 1}, {"a": 2})
         self.assertIsNone(rows[0]["quality_avg"])
         self.assertEqual(rows[0]["quality_scored"], 0)
+
+
+class _StaffDashboardCase(TestCase):
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        self.denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def _rows(self, source="proposed_appeal"):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        return {r["model_name"]: r for r in response.context["windows"][0][source]}
+
+    def _draft(self, model_name, text, **kwargs):
+        return ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text=text,
+            chosen=False,
+            model_name=model_name,
+            **kwargs,
+        )
+
+    def _pick(self, model_name, text, **kwargs):
+        return ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text=text,
+            chosen=True,
+            model_name=model_name,
+            **kwargs,
+        )
+
+
+class PresentedCountsOnlyDraftsBeforeThePickTest(_StaffDashboardCase):
+    """Every visit to the appeals page reruns generation, so a denial keeps
+    accumulating drafts after the user chose; those were never in the
+    running and must not count as presented."""
+
+    def test_drafts_stored_after_the_pick_are_not_presented(self):
+        self._draft("m1", "seen")
+        self._pick("m1", "seen")
+        # A later visit regenerated: never shown before the pick.
+        self._draft("m2", "later")
+        self._draft("m1", "later too")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertNotIn("m2", rows)
+
+    def test_a_second_pick_widens_the_window_to_what_it_saw(self):
+        self._draft("m1", "first round")
+        self._pick("m1", "first round")
+        self._draft("m2", "second round")
+        self._pick("m2", "second round")
+        rows = self._rows()
+        # m1's draft was on offer at both picks (and passed over at the
+        # second); m2's only at the second.
+        self.assertEqual(rows["m1"]["presented"], 2)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+    def test_context_level_table_uses_the_same_bound(self):
+        self._draft("m1", "seen", context_level="full")
+        self._pick("m1", "seen", context_level="full")
+        self._draft("m1", "later", context_level="tier1_shed")
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows["full"]["presented"], 1)
+        self.assertNotIn("tier1_shed", rows)
+
+    def test_several_drafts_from_one_model_are_counted_once_per_draft(self):
+        # Pinned on purpose: per draft is the fan-out-neutral unit. On one
+        # denial every draft competes with every other, so a model with two
+        # of three cards is picked two thirds of the time per denial but one
+        # third per draft, the same as a single-card model. Counting per
+        # denial instead would reward fan-out.
+        self._draft("m1", "temperature 0.6 leg")
+        self._draft("m1", "temperature 0.1 leg")
+        self._draft("m1", "medically necessary draft")
+        self._draft("m2", "the other model")
+        self._pick("m1", "temperature 0.6 leg")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 3)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0 / 3)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+
+class PresentedIsWhatThePickSawTest(_StaffDashboardCase):
+    """The appeals page folds drafts past its visible limit behind a button,
+    so a pick reports the ids that were on screen; those, not everything
+    generated for the denial, are the drafts that lost."""
+
+    def test_folded_drafts_the_pick_did_not_see_are_not_presented(self):
+        seen_a = self._draft("m1", "seen a")
+        seen_b = self._draft("m2", "seen b")
+        self._draft("m3", "folded behind show more")
+        self._pick("m1", "seen a", presented_ids=[seen_a.id, seen_b.id])
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertEqual(rows["m2"]["presented"], 1)
+        self.assertNotIn("m3", rows)
+
+    def test_a_pick_that_reported_nothing_falls_back_to_drafts_before_it(self):
+        self._draft("m1", "one")
+        self._draft("m2", "two")
+        self._pick("m1", "one")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+    def test_reported_and_unreported_denials_are_not_double_counted(self):
+        other = Denial.objects.create(
+            hashed_email="hash2",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+        a = self._draft("m1", "reported denial, seen")
+        self._draft("m1", "reported denial, folded")
+        self._pick("m1", "reported denial, seen", presented_ids=[a.id])
+        ProposedAppeal.objects.create(
+            for_denial=other, appeal_text="old style", chosen=False, model_name="m1"
+        )
+        ProposedAppeal.objects.create(
+            for_denial=other, appeal_text="old style", chosen=True, model_name="m1"
+        )
+        rows = self._rows()
+        # One from the report, one from the fallback; the folded draft and
+        # the reported denial's fallback never count.
+        self.assertEqual(rows["m1"]["presented"], 2)
+        self.assertEqual(rows["m1"]["chosen"], 2)
+
+    def test_context_level_table_uses_the_report_too(self):
+        seen = self._draft("m1", "seen", context_level="full")
+        self._draft("m1", "folded", context_level="tier1_shed")
+        self._pick("m1", "seen", context_level="full", presented_ids=[seen.id])
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows["full"]["presented"], 1)
+        self.assertNotIn("tier1_shed", rows)
+
+    def test_an_unreported_then_a_reported_pick_on_one_denial_count_both(self):
+        # A denial picked before this deploy and again after it, inside the
+        # window: the first pick's candidates come from the fallback, the
+        # second's from its report, and the picked model wins both.
+        a = self._draft("m1", "a")
+        self._draft("m2", "b")
+        self._pick("m1", "a")
+        self._pick("m1", "a", presented_ids=[a.id])
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["chosen"], 2)
+        self.assertEqual(rows["m1"]["presented"], 2)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertEqual(rows["m2"]["presented"], 1)
+
+    def test_an_empty_report_does_not_fall_back_to_every_stored_draft(self):
+        # The browser said nothing stored was on screen (the picked card was
+        # never saved): that is not "nobody said".
+        self._draft("m1", "a")
+        self._draft("m2", "b")
+        self._pick(None, "an unsaved card", presented_ids=[])
+        rows = self._rows()
+        self.assertNotIn("m1", rows)
+        self.assertNotIn("m2", rows)
+
+    def test_each_unreported_pick_counts_the_drafts_it_saw(self):
+        # Two re-submits of the same draft are two picks; the fallback used
+        # to count the drafts once, which read as a 200% win rate.
+        self._draft("m1", "a")
+        self._draft("m2", "b")
+        self._pick("m1", "a")
+        self._pick("m1", "a")
+        rows = self._rows()
+        self.assertEqual(rows["m1"]["chosen"], 2)
+        self.assertEqual(rows["m1"]["presented"], 2)
+        self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
+        self.assertEqual(rows["m2"]["presented"], 2)
+
+
+class TemplateDraftsAreAModelBucketTest(_StaffDashboardCase):
+    """Non-AI template drafts are presented and picked like any model's; with
+    model_name NULL their picks read as attribution misses and they never
+    counted as presented."""
+
+    def test_template_pick_is_bucketed_as_template_not_unattributed(self):
+        self._draft(TEMPLATE_MODEL_NAME, "template letter", context_level="template")
+        self._draft("m1", "model letter")
+        self._pick(TEMPLATE_MODEL_NAME, "template letter", context_level="template")
+        rows = self._rows()
+        self.assertEqual(rows[TEMPLATE_MODEL_NAME]["chosen"], 1)
+        self.assertEqual(rows[TEMPLATE_MODEL_NAME]["presented"], 1)
+        self.assertEqual(rows["m1"]["presented"], 1)
+        self.assertNotIn(UNKNOWN_MODEL_LABEL, rows)
+
+
+class ContextLevelLegacyBucketTest(_StaffDashboardCase):
+    """The context-level table follows the model table's rules for rows
+    without a level, so the two tables agree on what a bucket means."""
+
+    def test_pre_tracking_pick_is_legacy_and_level_less_drafts_are_not_presented(
+        self,
+    ):
+        self._draft(None, "old draft", context_level=None)
+        pick = self._pick(None, "old pick", context_level=None)
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows[LEGACY_UNATTRIBUTED_LABEL]["chosen"], 1)
+        self.assertEqual(rows[LEGACY_UNATTRIBUTED_LABEL]["presented"], 0)
+        self.assertIsNone(rows[LEGACY_UNATTRIBUTED_LABEL]["win_rate"])
+        self.assertNotIn(UNKNOWN_MODEL_LABEL, rows)
+
+    def test_post_tracking_pick_without_a_level_stays_unattributed(self):
+        self._pick(None, "recent pick", context_level=None)
+        rows = self._rows(source="context_level")
+        self.assertEqual(rows[UNKNOWN_MODEL_LABEL]["chosen"], 1)
+        self.assertNotIn(LEGACY_UNATTRIBUTED_LABEL, rows)

@@ -72,6 +72,7 @@ from fighthealthinsurance.context_barrier import warm_then_fetch
 from fighthealthinsurance.exec import bridge_executor
 from fighthealthinsurance.context_utils import (
     attach_supplemental_to_citations,
+    CONTEXT_LEVEL_TEMPLATE,
     CONTEXT_LEVEL_SPECULATIVE,
     CONTEXT_LEVEL_SYNTHESIZED,
     CONTEXT_LEVEL_TIER1_SHED,
@@ -100,6 +101,16 @@ from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
+from fighthealthinsurance.generate_appeal import backend_label
+from fighthealthinsurance.ml.model_attempt_log import (
+    OUTCOME_REJECTED_AT_PEEK,
+    ModelAttemptRecord,
+    ModelAttemptRecorder,
+)
+from fighthealthinsurance.ml.model_identity import (
+    LEGACY_UNATTRIBUTED_LABEL,
+    canonical_model_name,
+)
 from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import (
     MLAppealQuestionsHelper,
@@ -560,11 +571,229 @@ class AppealAssemblyHelper:
         return target
 
 
+async def _record_synthesis_attempt(
+    *,
+    denial_id: int,
+    generation_id: Optional[str],
+    model: Any,
+    text: str,
+    duration_seconds: float,
+    started_wall: Any,
+    detail: str = "",
+) -> None:
+    """Persist which backend wrote a synthesized letter, as a ModelCallAttempt
+    row at stage "synthesis". The ProposedAppeal row keeps the reserved
+    "synthesized" model name -- that is the dashboard's bucket -- so this row
+    is the only record of the model that actually produced the text the user
+    may go on to send. Best-effort, like every attempt write."""
+    try:
+        recorder = ModelAttemptRecorder(
+            denial_id=denial_id, generation_id=generation_id, run_kind="live"
+        )
+        recorder.record(
+            ModelAttemptRecord(
+                model_name=canonical_model_name(model),
+                outcome="ok",
+                stage="synthesis",
+                context_level=CONTEXT_LEVEL_SYNTHESIZED,
+                infer_type="synthesis",
+                backend=backend_label(model),
+                response_text=text,
+                response_chars=len(text),
+                duration_ms=int(duration_seconds * 1000),
+                started_at=started_wall,
+                error_detail=detail,
+            )
+        )
+        await recorder.aflush()
+    except Exception:
+        logger.opt(exception=True).debug("Could not record the synthesis attempt")
+
+
+def substitute_appeal_fields(denial: Denial, content: str) -> str:
+    """Substitute the denial's own values (insurance company, claim id,
+    diagnosis, procedure, the patient's and professional's names, dates ...)
+    for the placeholders a draft carries.
+
+    Every frame the browser receives goes through this while the stored draft
+    keeps its placeholders, so text that comes back from the browser is
+    compared with a draft only after the draft has been substituted the same
+    way (see mark_proposal_chosen)."""
+    insurance_company = "{insurance_company}"
+    if (
+        denial.insurance_company is not None
+        and denial.insurance_company != ""
+        and denial.insurance_company != "UNKNOWN"
+    ):
+        insurance_company = denial.insurance_company
+    claim_id = "{claim_id}"
+    if (
+        denial.claim_id is not None
+        and denial.claim_id != ""
+        and denial.claim_id != "UNKNOWN"
+        and denial.claim_id != insurance_company
+    ):
+        claim_id = denial.claim_id
+    diagnosis = "{diagnosis}"
+    if (
+        denial.diagnosis is not None
+        and denial.diagnosis != ""
+        and denial.diagnosis != "UNKNOWN"
+    ):
+        diagnosis = denial.diagnosis
+    procedure = "{procedure}"
+    if (
+        denial.procedure is not None
+        and denial.procedure != ""
+        and denial.procedure != "UNKNOWN"
+    ):
+        procedure = denial.procedure
+    # Substitutes for common terms - using {{PLACEHOLDER}} format
+    # matching data pipeline conventions
+    subs = {
+        # Insurance company substitutions
+        "Esteemed Members of the Appeals Committee": insurance_company,
+        "{{insurance_company}}": insurance_company,
+        "[insurance_company]": insurance_company,
+        "{insurance_company}": insurance_company,
+        "insurance_company": insurance_company,
+        "[Insurance Company Name]": insurance_company,
+        "[Insurance Company]": insurance_company,
+        "[Health Plan]": insurance_company,
+        "Dear Insurance Company": f"Dear {insurance_company}",
+        "Dear Health Plan": f"Dear {insurance_company}",
+        "Dear Sir/Madam": f"Dear {insurance_company}",
+        # Date
+        "[Insert Date]": denial.date or "{{date}}",
+        # Claim/Case ID
+        "{{CASEID}}": claim_id,
+        "[Reference Number from Denial Letter]": claim_id,
+        "[Claim ID]": claim_id,
+        "{claim_id}": claim_id,
+        # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
+        # for frontend (appeal.ts) to fill from localStorage
+        # using the actual subscriber_id and group_id values
+        # Diagnosis & Procedure
+        "[Diagnosis]": diagnosis,
+        "[Procedure]": procedure,
+        "{diagnosis}": diagnosis,
+        "{procedure}": procedure,
+        # Legacy $-prefixed keys (used in fixture templates)
+        "$insurance_company": insurance_company,
+        "$DATE": denial.date or "{{date}}",
+        "$diagnosis": diagnosis,
+        "$procedure": procedure,
+        "$claim_id": claim_id,
+        "$CASEID": claim_id,
+    }
+    # Each lookup individually guarded: one failing relation (e.g. a
+    # deleted professional profile) must not abort the LATER
+    # substitutions too, leaving [Patient Name]-style placeholders in
+    # the letter the user downloads.
+    try:
+        if denial.professional_to_finish and denial.primary_professional is not None:
+            prof_name = denial.primary_professional.get_full_name()
+            subs["{{Your Name}}"] = prof_name
+            subs["[Your Name]"] = prof_name
+            subs["YourNameMagic"] = prof_name
+            subs["$your_name_here"] = prof_name
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching professional name for denial sub "
+            f"{denial.denial_id}: {e}"
+        )
+    try:
+        if denial.patient_user is not None:
+            patient_name = denial.patient_user.get_legal_name()
+            subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
+            subs["[Patient Name]"] = patient_name
+            subs["[patient name]"] = patient_name
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching patient name for denial sub {denial.denial_id}: {e}"
+        )
+    try:
+        if denial and denial.primary_professional is not None:
+            subs["[Professional Name]"] = denial.primary_professional.get_full_name()
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching professional display name for denial sub "
+            f"{denial.denial_id}: {e}"
+        )
+    try:
+        if denial.domain:
+            subs["[Professional Address]"] = denial.domain.get_address()
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching domain address for denial sub {denial.denial_id}: {e}"
+        )
+    for k, v in subs.items():
+        if v and v != "" and v != "UNKNOWN":
+            content = content.replace(k, str(v))
+    # Second pass: regex-based fuzzy matching for model-generated
+    # placeholder variants like [Claim # Placeholder]
+    patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
+    prof_name_value = subs.get("{{Your Name}}", "")
+    professional_name_value = subs.get("[Professional Name]", "")
+    domain_address_value = subs.get("[Professional Address]", "")
+    fuzzy_subs = [
+        # Claim/Reference number variants
+        (r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[Case\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[CLAIM_NUMBER\]", claim_id),
+        # Diagnosis variants
+        (r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]", diagnosis),
+        # Procedure variants
+        (r"\[Procedure\s*(?:Code\s*)?(?:Placeholder)?\]", procedure),
+        # Insurance company variants
+        (
+            r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
+            insurance_company,
+        ),
+        (
+            r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
+            insurance_company,
+        ),
+        # Date variants
+        (
+            r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
+            denial.date or "{{date}}",
+        ),
+        # Patient name variants
+        (
+            r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+            patient_name_value,
+        ),
+        # Provider/professional name variants
+        (
+            r"\[(?:Provider|Professional|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+            prof_name_value or professional_name_value,
+        ),
+        # Address variants
+        (
+            r"\[(?:Provider|Professional|Practice)?\s*Address\s*(?:Placeholder)?\]",
+            domain_address_value,
+        ),
+    ]
+    for pattern, value in fuzzy_subs:
+        if not value or value == "" or value == "UNKNOWN":
+            continue
+        str_value = str(value)
+        escaped = str_value.replace("\\", r"\\")
+        content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
+    return content
+
+
 def mark_proposal_chosen(
     denial: Denial,
     appeal_text: str,
-    editted: bool = False,
+    editted: Optional[bool] = False,
     proposed_appeal_id: Optional[int] = None,
+    draft_unsaved: bool = False,
+    arbitrary_text: bool = False,
+    presented_ids: Optional[List[int]] = None,
+    professional_pick: bool = False,
 ) -> ProposedAppeal:
     """Create a chosen=True ProposedAppeal, copying model_name from the original
     generated row when we can identify which draft was picked.
@@ -573,17 +802,40 @@ def mark_proposal_chosen(
       1. proposed_appeal_id (preferred) - the id returned by save_appeal in
          the streaming JSON frame. Survives sub_in_appeals rewriting the
          displayed text (e.g. {claim_id} -> "ABC123") since it does not
-         depend on string equality.
-      2. exact appeal_text match against a chosen=False row for the same
-         denial. Useful as a fallback when the frontend did not echo the id
-         (older clients, share-appeal flow).
+         depend on string equality. The id may name an earlier chosen=True
+         copy: the appeals page replays a user's pick under the copy's id,
+         and the copy carries the attribution copied from its draft.
+      2. text match against a chosen=False row for the same denial, on the
+         whitespace-normalized fingerprint (browsers submit textarea content
+         with CRLF line endings while drafts are stored with LF, so a
+         byte-for-byte comparison failed for every multi-line letter), with
+         an exact match kept for legacy rows whose fingerprint is NULL.
+         Useful as a fallback when the frontend did not echo the id (older
+         clients, share-appeal flow).
       3. sole-draft inference - when every draft generated for the denial
          came from one model, the pick necessarily did too (even after
-         edits or sub_in_appeals rewrites). Skipped for editted=True calls:
-         the share-appeal flow submits arbitrary text that may never have
-         been a draft.
+         edits or sub_in_appeals rewrites). Skipped for arbitrary_text=True
+         calls (the share-appeal flow submits text that may never have been
+         a draft) and for draft_unsaved=True calls (the browser says
+         the picked draft was streamed but never stored -- save_appeal's
+         save_failed frames -- so the stored drafts say nothing about which
+         model produced it).
       4. model_name=None - the user edited the draft heavily and multiple
          models were in play, or the proposal predates the model_name field.
+
+    ``presented_ids`` are the drafts that were on screen when the pick was
+    made (the browser reports them), kept on the chosen row for the usage
+    dashboard's denominator; they are filtered to this denial's own rows so
+    a stray id cannot credit another denial's draft with a presentation.
+
+    ``editted`` records only whether the user changed the draft before
+    picking it (the browser reports it from the textarea). It used to double
+    as the share flow's marker AND the inference gate, which left the column
+    constantly False for the main flow: verbatim-vs-edited per model was
+    unmeasurable, and the admin filter on it showed a flow with no edits.
+    ``None`` means the caller cannot say (the professional flow has no
+    textarea flag): the pick is then recorded as edited when its text is not
+    the matched draft's own.
     """
     # speculative=False throughout: a held-back precompute row was never shown
     # to the user, so it can't be the pick. Served speculative rows are flipped
@@ -594,17 +846,35 @@ def mark_proposal_chosen(
     # whose coincidentally-identical text would otherwise mislabel the pick.
     original: Optional[ProposedAppeal] = None
     if proposed_appeal_id is not None:
+        # No chosen=False here: a re-submit after a page revisit echoes the
+        # id of the user's earlier chosen copy (the replay serves it newest
+        # first and dedupes the draft under it). Refusing the copy sent every
+        # such pick to sole-draft inference, which gives up the moment two
+        # models were in play -- a correctly attributed pick degraded to
+        # "(unattributed)" by ordinary back-navigation. A copy that carries
+        # no model is no evidence, though, and falls through like a miss.
         original = ProposedAppeal.objects.filter(
             id=proposed_appeal_id,
             for_denial=denial,
-            chosen=False,
             speculative=False,
         ).first()
+        if (
+            original is not None
+            and original.chosen
+            and (
+                not (original.model_name or "").strip()
+                # The backfill's placeholder for a pick it could not attribute
+                # is not evidence either: copying it would file a pick made
+                # today as a pre-tracking one.
+                or original.model_name == LEGACY_UNATTRIBUTED_LABEL
+            )
+        ):
+            original = None
     if original is None:
         original = (
             ProposedAppeal.objects.filter(
+                ProposedAppeal.text_match_q(appeal_text),
                 for_denial=denial,
-                appeal_text=appeal_text,
                 chosen=False,
                 speculative=False,
             )
@@ -621,10 +891,55 @@ def mark_proposal_chosen(
         # dashboard/RL export (which read only chosen rows) would be blind to
         # which context level users actually pick.
         context_level = original.context_level
-    elif not editted:
+    elif not arbitrary_text and not draft_unsaved:
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
             model_name, synthesized, context_level = inferred
+    if editted is None:
+        # Edited when the text is not the matched draft's own; with no draft
+        # matched (an inferred or unattributed pick) it is not any draft's.
+        # The browser never saw the stored text -- every frame has the
+        # denial's values substituted for the draft's placeholders -- so the
+        # draft is compared after the same substitution. A matched chosen
+        # copy (a re-pick) keeps its own answer when the text is unchanged.
+        if original is None:
+            editted = True
+        else:
+            unchanged = ProposedAppeal.fingerprint(appeal_text) in {
+                ProposedAppeal.fingerprint(original.appeal_text),
+                ProposedAppeal.fingerprint(
+                    substitute_appeal_fields(denial, original.appeal_text or "")
+                ),
+            }
+            if not unchanged:
+                editted = True
+            else:
+                editted = bool(original.editted) if original.chosen else False
+    elif not editted and original is not None and original.chosen and original.editted:
+        # A re-pick of an edited copy the page replayed: the textarea was left
+        # alone this time, but the letter is still the user's edit of the
+        # model's draft, not the draft.
+        editted = True
+    shown: Optional[List[int]] = None
+    if presented_ids is not None:
+        # In the order the browser reported (the page ranks its cards, so
+        # the order says which sat on top), deduped, and only rows this
+        # denial could have served: its own, and not a held-back precompute
+        # row (speculative=True until served), which no page ever showed and
+        # the fallback path excludes too. An empty report is kept as one:
+        # "nothing stored was on screen" is not "nobody said" (NULL), for
+        # which the dashboard falls back to every draft stored before the
+        # pick.
+        own = (
+            set(
+                ProposedAppeal.objects.filter(
+                    for_denial=denial, id__in=presented_ids, speculative=False
+                ).values_list("id", flat=True)
+            )
+            if presented_ids
+            else set()
+        )
+        shown = list(dict.fromkeys(i for i in presented_ids if i in own))
     pa = ProposedAppeal(
         appeal_text=appeal_text,
         for_denial=denial,
@@ -633,9 +948,85 @@ def mark_proposal_chosen(
         model_name=model_name,
         synthesized=synthesized,
         context_level=context_level,
+        presented_ids=shown,
+        professional_pick=professional_pick,
     )
     pa.save()
     return pa
+
+
+def record_professional_pick(
+    denial: Denial,
+    appeal_text: Optional[str],
+    proposed_appeal_id: Optional[int] = None,
+) -> Optional[ProposedAppeal]:
+    """Record the text a professional assembled as their pick, for the same
+    model-usage reporting the consumer flow feeds through ChooseAppealHelper.
+
+    One pick per professional denial: assemble_appeal is also how a
+    professional regenerates the document after fixing a typo, so unchanged
+    text is not a new pick, and a changed one replaces the pick an earlier
+    assembly recorded rather than adding another -- a denial the professional
+    iterated on would otherwise outweigh one they got right first time. Only
+    the flow's own rows are replaced (ProposedAppeal.professional_pick): a
+    consumer, share-flow or older pick on the same denial is somebody else's
+    decision and is never deleted. Nothing is recorded when no draft was ever
+    stored for the denial: no model was on offer. Best-effort -- reporting
+    must never cost the professional their appeal document, so a failure
+    here is logged and swallowed.
+    """
+    try:
+        if not appeal_text or not appeal_text.strip():
+            return None
+        if not ProposedAppeal.objects.filter(
+            for_denial=denial, chosen=False, speculative=False
+        ).exists():
+            return None
+        with transaction.atomic():
+            # One recording per denial at a time: two assemblies racing on the
+            # same denial would each keep their own row and delete the other's
+            # (the same row lock the health-history save takes).
+            Denial.objects.select_for_update().filter(pk=denial.pk).values_list(
+                "pk", flat=True
+            ).first()
+            # Unchanged text is not a new pick, compared the way picks are
+            # matched to drafts (a CRLF resubmit is the same letter) and only
+            # against this flow's own picks: a consumer or share-flow pick
+            # with the same text is somebody else's decision, and letting it
+            # suppress this one left the professional's older pick standing.
+            # Chosen rows carry no stored fingerprint, so it is computed here.
+            target = ProposedAppeal.fingerprint(appeal_text)
+            for existing in ProposedAppeal.objects.filter(
+                for_denial=denial, chosen=True, professional_pick=True
+            ).values_list("appeal_text", flat=True):
+                if existing == appeal_text or (
+                    target is not None
+                    and ProposedAppeal.fingerprint(existing) == target
+                ):
+                    return None
+            # completed_appeal_text is post-editing text and this flow has no
+            # textarea flag, so whether the pick was edited is read off the
+            # text.
+            pa = mark_proposal_chosen(
+                denial,
+                appeal_text,
+                proposed_appeal_id=proposed_appeal_id,
+                editted=None,
+                professional_pick=True,
+            )
+            # A new row rather than an update, so the drafts this pick could
+            # have been made from are the ones stored before it; only this
+            # flow's own earlier picks go.
+            ProposedAppeal.objects.filter(
+                for_denial=denial, chosen=True, professional_pick=True
+            ).exclude(id=pa.id).delete()
+        return pa
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"Could not record the professional's pick for denial "
+            f"{denial.denial_id}; the appeal document itself is unaffected"
+        )
+        return None
 
 
 class ChooseAppealHelper:
@@ -647,6 +1038,9 @@ class ChooseAppealHelper:
         email: str,
         semi_sekret: str,
         proposed_appeal_id: Optional[int] = None,
+        draft_unsaved: bool = False,
+        editted: bool = False,
+        presented_ids: Optional[List[int]] = None,
     ) -> Tuple[
         Optional[str], Optional[str], Optional[QuerySet[PubMedArticleSummarized]]
     ]:
@@ -657,7 +1051,14 @@ class ChooseAppealHelper:
         ).get()
         denial.appeal_text = appeal_text
         denial.save()
-        mark_proposal_chosen(denial, appeal_text, proposed_appeal_id=proposed_appeal_id)
+        mark_proposal_chosen(
+            denial,
+            appeal_text,
+            editted=editted,
+            proposed_appeal_id=proposed_appeal_id,
+            draft_unsaved=draft_unsaved,
+            presented_ids=presented_ids,
+        )
         articles = None
         article_ids = None
 
@@ -4476,178 +4877,7 @@ class AppealsBackendHelper:
             Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
             """
             await asyncio.sleep(0)
-            content = appeal["content"]
-            insurance_company = "{insurance_company}"
-            if (
-                denial.insurance_company is not None
-                and denial.insurance_company != ""
-                and denial.insurance_company != "UNKNOWN"
-            ):
-                insurance_company = denial.insurance_company
-            claim_id = "{claim_id}"
-            if (
-                denial.claim_id is not None
-                and denial.claim_id != ""
-                and denial.claim_id != "UNKNOWN"
-                and denial.claim_id != insurance_company
-            ):
-                claim_id = denial.claim_id
-            diagnosis = "{diagnosis}"
-            if (
-                denial.diagnosis is not None
-                and denial.diagnosis != ""
-                and denial.diagnosis != "UNKNOWN"
-            ):
-                diagnosis = denial.diagnosis
-            procedure = "{procedure}"
-            if (
-                denial.procedure is not None
-                and denial.procedure != ""
-                and denial.procedure != "UNKNOWN"
-            ):
-                procedure = denial.procedure
-            # Substitutes for common terms - using {{PLACEHOLDER}} format
-            # matching data pipeline conventions
-            subs = {
-                # Insurance company substitutions
-                "Esteemed Members of the Appeals Committee": insurance_company,
-                "{{insurance_company}}": insurance_company,
-                "[insurance_company]": insurance_company,
-                "{insurance_company}": insurance_company,
-                "insurance_company": insurance_company,
-                "[Insurance Company Name]": insurance_company,
-                "[Insurance Company]": insurance_company,
-                "[Health Plan]": insurance_company,
-                "Dear Insurance Company": f"Dear {insurance_company}",
-                "Dear Health Plan": f"Dear {insurance_company}",
-                "Dear Sir/Madam": f"Dear {insurance_company}",
-                # Date
-                "[Insert Date]": denial.date or "{{date}}",
-                # Claim/Case ID
-                "{{CASEID}}": claim_id,
-                "[Reference Number from Denial Letter]": claim_id,
-                "[Claim ID]": claim_id,
-                "{claim_id}": claim_id,
-                # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
-                # for frontend (appeal.ts) to fill from localStorage
-                # using the actual subscriber_id and group_id values
-                # Diagnosis & Procedure
-                "[Diagnosis]": diagnosis,
-                "[Procedure]": procedure,
-                "{diagnosis}": diagnosis,
-                "{procedure}": procedure,
-                # Legacy $-prefixed keys (used in fixture templates)
-                "$insurance_company": insurance_company,
-                "$DATE": denial.date or "{{date}}",
-                "$diagnosis": diagnosis,
-                "$procedure": procedure,
-                "$claim_id": claim_id,
-                "$CASEID": claim_id,
-            }
-            # Each lookup individually guarded: one failing relation (e.g. a
-            # deleted professional profile) must not abort the LATER
-            # substitutions too, leaving [Patient Name]-style placeholders in
-            # the letter the user downloads.
-            try:
-                if (
-                    denial.professional_to_finish
-                    and denial.primary_professional is not None
-                ):
-                    prof_name = denial.primary_professional.get_full_name()
-                    subs["{{Your Name}}"] = prof_name
-                    subs["[Your Name]"] = prof_name
-                    subs["YourNameMagic"] = prof_name
-                    subs["$your_name_here"] = prof_name
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching professional name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial.patient_user is not None:
-                    patient_name = denial.patient_user.get_legal_name()
-                    subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
-                    subs["[Patient Name]"] = patient_name
-                    subs["[patient name]"] = patient_name
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching patient name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial and denial.primary_professional is not None:
-                    subs["[Professional Name]"] = (
-                        denial.primary_professional.get_full_name()
-                    )
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching professional display name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial.domain:
-                    subs["[Professional Address]"] = denial.domain.get_address()
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching domain address for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            for k, v in subs.items():
-                if v and v != "" and v != "UNKNOWN":
-                    content = content.replace(k, str(v))
-            # Second pass: regex-based fuzzy matching for model-generated
-            # placeholder variants like [Claim # Placeholder]
-            patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
-            prof_name_value = subs.get("{{Your Name}}", "")
-            professional_name_value = subs.get("[Professional Name]", "")
-            domain_address_value = subs.get("[Professional Address]", "")
-            fuzzy_subs = [
-                # Claim/Reference number variants
-                (r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[Case\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[CLAIM_NUMBER\]", claim_id),
-                # Diagnosis variants
-                (r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]", diagnosis),
-                # Procedure variants
-                (r"\[Procedure\s*(?:Code\s*)?(?:Placeholder)?\]", procedure),
-                # Insurance company variants
-                (
-                    r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
-                    insurance_company,
-                ),
-                (
-                    r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
-                    insurance_company,
-                ),
-                # Date variants
-                (
-                    r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
-                    denial.date or "{{date}}",
-                ),
-                # Patient name variants
-                (
-                    r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
-                    patient_name_value,
-                ),
-                # Provider/professional name variants
-                (
-                    r"\[(?:Provider|Professional|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
-                    prof_name_value or professional_name_value,
-                ),
-                # Address variants
-                (
-                    r"\[(?:Provider|Professional|Practice)?\s*Address\s*(?:Placeholder)?\]",
-                    domain_address_value,
-                ),
-            ]
-            for pattern, value in fuzzy_subs:
-                if not value or value == "" or value == "UNKNOWN":
-                    continue
-                str_value = str(value)
-                escaped = str_value.replace("\\", r"\\")
-                content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
-            appeal["content"] = content
+            appeal["content"] = substitute_appeal_fields(denial, appeal["content"])
             return appeal
 
         # If we've had a timeout on the initial call and we're on round 2
@@ -5706,15 +5936,22 @@ class AppealsBackendHelper:
             nonlocal first_model, superseded
             appeal_text = item.text
             model_name = item.model_name
-            if first_model is None and model_name:
+            if (
+                first_model is None
+                and model_name
+                and item.context_level != CONTEXT_LEVEL_TEMPLATE
+            ):
                 # First deliverable draft's model — recorded for the done frame
                 # and zero-appeal diagnostics so we can see which backend won.
+                # Template rows carry a pseudo-model name and no backend won
+                # anything for them, so they never claim this.
                 first_model = str(model_name)
             t = time.time()
             logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
             await asyncio.sleep(0)
             id = "unknown"
             save_failed = False
+            stored_row: Optional[ProposedAppeal] = None
             if lease_unavailable or lease_epoch is None:
                 # No epoch, no durable row -- whatever the reason: the
                 # interactive steal raised twice (lease_unavailable), or a
@@ -5731,11 +5968,14 @@ class AppealsBackendHelper:
                 )
                 if appeal_text:
                     served_keys.add(_served_key(appeal_text))
-                return {
+                unsaved: dict[str, Any] = {
                     "id": "unknown",
                     "content": appeal_text,
                     "save_failed": True,
                 }
+                if item.synthesized:
+                    unsaved["synthesized"] = "true"
+                return unsaved
             try:
                 fingerprint = ProposedAppeal.fingerprint(appeal_text)
                 pa = ProposedAppeal(
@@ -5813,6 +6053,7 @@ class AppealsBackendHelper:
                     # connections and retry once before giving up.
                     await database_sync_to_async(close_old_connections)()
                     await database_sync_to_async(_insert_fenced)()
+                stored_row = pa
                 id = str(pa.id)
                 if scoring_active and letter_quality.needs_scoring(pa):
                     _start_scoring(id, appeal_text)
@@ -5879,6 +6120,16 @@ class AppealsBackendHelper:
             result: dict[str, Any] = {"id": id, "content": appeal_text}
             if save_failed:
                 result["save_failed"] = True
+            # The badge says what the ROW says. A synthesis result can land on
+            # a stored draft (the fingerprint constraint hands back the twin),
+            # and a pick of that frame is recorded under the twin's model, so
+            # the frame must not call it a synthesis: decided here, from the
+            # row, rather than by the synthesis branch that asked for it.
+            row_synthesized = (
+                stored_row.synthesized if stored_row is not None else item.synthesized
+            )
+            if row_synthesized:
+                result["synthesized"] = "true"
             return result
 
         # (The form_completed intake event was recorded right after the
@@ -6300,6 +6551,12 @@ class AppealsBackendHelper:
                 }
             ) + "\n"
             try:
+                # Which backend's synthesis wins, for the attempt log: the
+                # stored row keeps the reserved "synthesized" name, so this is
+                # the only record of who actually wrote the letter.
+                synthesis_provenance: dict[str, Any] = {}
+                synthesis_started = time.monotonic()
+                synthesis_started_wall = timezone.now()
                 synthesis_task = asyncio.ensure_future(
                     appealGenerator.synthesize_appeals(
                         appeal_texts=saved_appeal_texts,
@@ -6308,6 +6565,7 @@ class AppealsBackendHelper:
                         ),
                         procedure=(str(denial.procedure) if denial.procedure else None),
                         diagnosis=(str(denial.diagnosis) if denial.diagnosis else None),
+                        provenance=synthesis_provenance,
                     )
                 )
                 # Emit keepalives while synthesis is running, up to 120s
@@ -6334,6 +6592,8 @@ class AppealsBackendHelper:
                     logger.warning(f"Synthesis timed out after {SYNTHESIS_TIMEOUT}s")
                 else:
                     synthesized = synthesis_task.result()
+                    # The model's time, before the save and lease renewal.
+                    synthesis_seconds = time.monotonic() - synthesis_started
                     if synthesized and not is_real_appeal(synthesized):
                         # Non-empty but not deliverable (too short, or not
                         # made of words): filter it out so
@@ -6361,8 +6621,39 @@ class AppealsBackendHelper:
                                     context_level=CONTEXT_LEVEL_SYNTHESIZED,
                                 )
                             )
+                            winner = synthesis_provenance.get("model")
+                            if winner is not None:
+                                # The call still succeeded when its text landed
+                                # on a stored draft, but what was served is that
+                                # draft under its own model: say so on the row.
+                                served_as_draft = saved.get("synthesized") != "true"
+                                await _record_synthesis_attempt(
+                                    denial_id=denial.denial_id,
+                                    generation_id=generation_id,
+                                    model=winner,
+                                    text=synthesized,
+                                    duration_seconds=synthesis_seconds,
+                                    started_wall=synthesis_started_wall,
+                                    detail=(
+                                        f"reproduced stored draft {saved.get('id')}; "
+                                        "served as that draft"
+                                        if served_as_draft
+                                        else ""
+                                    ),
+                                )
                             subbed = await sub_in_appeals(saved)
-                            subbed["synthesized"] = "true"
+                            if subbed.get("synthesized") != "true":
+                                # The synthesis reproduced a stored draft the
+                                # replay cap held back: what is served is that
+                                # draft, under its own model (save_appeal
+                                # badges from the row), so the frame is not
+                                # badged as a synthesis that a pick would then
+                                # be credited to the draft's model for.
+                                logger.info(
+                                    f"[gen_id={generation_id}] synthesis for "
+                                    f"denial {denial_id} reproduced a stored "
+                                    f"draft; serving it as that draft"
+                                )
                             yield await format_response(subbed)
                             served_keys.add(_served_key(normalized))
                             new += 1
@@ -6513,6 +6804,16 @@ class AppealsBackendHelper:
                     f"[gen_id={generation_id}] persisted {written} late model "
                     f"attempt record(s) for denial {denial_id}"
                 )
+            # Runts the ladder's peek rejected never reach keep(), the only
+            # place `runts` was counted, so a run where EVERY model answered
+            # with a runt logged runt_count=0 -- which the comment below
+            # defines as "models were silent". Add the peek rejections so the
+            # diag line says what the attempt rows say.
+            runts += sum(
+                1
+                for _, outcome in attempt_recorder.outcome_pairs()
+                if outcome == OUTCOME_REJECTED_AT_PEEK
+            )
         # runt_count=0 means models were silent; >0 means models produced only
         # undeliverable outputs (too short, or not made of words) —
         # different root causes for incident review.

@@ -1,4 +1,6 @@
 import os
+import json
+import typing
 from typing import TYPE_CHECKING
 
 from django import forms
@@ -268,6 +270,46 @@ class ChooseAppealForm(DenialRefForm):
     # When present, ChooseAppealHelper uses it to preserve model attribution
     # even after sub_in_appeals rewrites the raw text the user sees.
     proposed_appeal_id = forms.IntegerField(required=False, widget=forms.HiddenInput())
+    # Set by the browser when the draft's streaming frame said it was never
+    # stored (id "unknown" / save_failed): the stored drafts are then no
+    # evidence of which model produced it, so sole-draft inference is off.
+    draft_unsaved = forms.BooleanField(required=False, widget=forms.HiddenInput())
+    # Set by the browser once the textarea is changed, so the chosen row can
+    # say whether the draft was sent as generated (ProposedAppeal.editted).
+    editted = forms.BooleanField(required=False, widget=forms.HiddenInput())
+    # The ids of the drafts on screen when the pick was made (a JSON list of
+    # ints), so the usage dashboard's "presented" can count what was shown
+    # rather than everything generated. Anything unparseable is dropped.
+    presented_ids = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    # Bounded: a page never shows more than a few dozen drafts.
+    MAX_PRESENTED_IDS = 100
+
+    def clean_presented_ids(self) -> typing.Optional[typing.List[int]]:
+        raw = (self.cleaned_data.get("presented_ids") or "").strip()
+        if not raw:
+            return None
+        try:
+            values = json.loads(raw)
+        except (ValueError, RecursionError):
+            # Not JSON, or nested past the parser's depth: not a report.
+            return None
+        if not isinstance(values, list):
+            return None
+        ids: typing.List[int] = []
+        for value in values[: self.MAX_PRESENTED_IDS]:
+            try:
+                candidate = int(value)
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: a JSON 1e999 parses to inf.
+                continue
+            # A row id fits a signed 64-bit column; anything else is junk
+            # that sqlite would refuse as a query parameter.
+            if 0 < candidate < 2**63:
+                ids.append(candidate)
+        # A parsed list is a report even when empty ("nothing stored was on
+        # screen"); None is kept for "nobody said".
+        return ids
 
 
 class ChooseEscalationLetterForm(DenialRefForm):

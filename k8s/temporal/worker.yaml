@@ -49,9 +49,17 @@ spec:
             - name: metrics
               containerPort: 9464
               protocol: TCP
+            # The app's own Prometheus registry (the fhi_ml_* call counters
+            # for the generation this worker runs); a second port, the SDK
+            # owns 9464. Served by run_temporal_worker.app_metrics_server.
+            - name: app-metrics
+              containerPort: 9465
+              protocol: TCP
           env:
             - name: TEMPORAL_METRICS_BIND
               value: "0.0.0.0:9464"
+            - name: FHI_APP_METRICS_BIND
+              value: "0.0.0.0:9465"
             # SSH to FaxyMcFaxFace must go as user "ray" (the account the fax
             # host trusts). asyncssh/paramiko take the default username from
             # getpass.getuser(), which reads USER/LOGNAME before /etc/passwd,
