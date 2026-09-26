@@ -26,8 +26,9 @@ How they are started and kept alive:
 - The `web-actor-launch` Job in `k8s/deploy.yaml` launches them once per
   deploy (`POLLING_ACTORS=1`, see `scripts/start-server.sh`).
 - The `fhi-actor-reconcile` CronJob (`k8s/actor-reconcile-cronjob.yaml`) runs
-  `reconcile_polling_actors` every 5 minutes and relaunches any that are
-  missing.
+  `reconcile_polling_actors` every 5 minutes. It relaunches any actor that is
+  missing, and replaces any whose health check answers False: one whose loop
+  has stopped, or the chooser refill actor after three failed ticks in a row.
 
 ## Monitoring actor health
 
@@ -77,13 +78,16 @@ All of these must run where the Ray cluster is reachable (a production pod
 with `RAY_ADDRESS` set, for example through `kubectl exec`).
 
 ```bash
-# Missing or crashed actors: relaunch only what is absent (idempotent).
-# Exits 0 when every actor is alive at the end, 1 when any is still missing.
+# Missing, crashed or unhealthy actors: relaunch what is absent and replace
+# what answers its health check with False; healthy actors are left alone
+# (idempotent). Exits 0 when every actor is alive at the end, 1 when any is
+# still missing.
 # The fhi-actor-reconcile CronJob already runs this every 5 minutes.
 python manage.py reconcile_polling_actors
 python manage.py reconcile_polling_actors --dry-run   # report only
 
-# Alive but wedged: kill every polling actor, healthy ones included, then recreate.
+# Wedged in a way the health check misses (answering True, or not answering
+# at all): kill every polling actor, healthy ones included, then recreate.
 python manage.py launch_polling_actors --force
 
 # The deploy-time launcher (what start-server.sh runs when POLLING_ACTORS is set).
@@ -97,7 +101,7 @@ Notes on `launch_polling_actors`:
   `RAY_ADDRESS` is unset starts a throwaway local Ray cluster in-process.
 - Without `--force` it waits 60 seconds first and retries up to 10 times with
   a 60-second pause after each failure, so it can take about 11 minutes. It
-  reuses existing actors where they exist.
+  reuses existing healthy actors and replaces any that report unhealthy.
 - It prints "Polling actors loaded successfully" even when every attempt
   failed. Check the health endpoint afterwards.
 - `--force` does not touch `speculative_appeals_actor`.

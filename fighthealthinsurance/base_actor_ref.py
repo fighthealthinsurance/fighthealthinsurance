@@ -1,6 +1,7 @@
 """Base class for Ray actor references to reduce code duplication."""
 
 import os
+import time
 from functools import cached_property
 from typing import Any, Optional, Tuple
 
@@ -95,6 +96,10 @@ def clear_poisoned_client_class(actor_class: Any) -> None:
 # except for this.
 RUN_ALREADY_STARTED = "run-already-started"
 
+# How long ``get`` waits for a killed actor's name to be released before it
+# creates the replacement.
+_NAME_RELEASE_WAIT_SECONDS = 30.0
+
 
 class BaseActorRef:
     """
@@ -140,7 +145,9 @@ class BaseActorRef:
         a local cluster otherwise, and there is nothing to attach to in that
         case anyway. For a loop actor the handle only counts as existing when
         it answers a health check at all; a dead or hung actor is treated as
-        absent so the creation path (``get_if_exists``) decides.
+        absent so the creation path (``get_if_exists``) decides. One that
+        answers False is replaced (see ``_replace``) and also reads as
+        absent, so the creation path makes and runs a fresh one.
         """
         if not ray_cluster_available():
             return None, False
@@ -161,7 +168,46 @@ class BaseActorRef:
                 f"check ({e}); letting Ray create or reuse it"
             )
             return None, False
-        return handle, live
+        if not live:
+            self._replace(handle)
+            return None, False
+        return handle, True
+
+    def _replace(self, handle: Any) -> None:
+        """Kill a loop actor that answered its health check with False.
+
+        Its loop has stopped, or it runs and fails every tick, which the
+        chooser refill actor reports as unhealthy. ``run`` only helps in the
+        first case: a running loop answers RUN_ALREADY_STARTED and keeps
+        failing, so a reconcile could never repair it. A new actor gets a new
+        process and a new loop either way. This waits briefly for the name to
+        be released, so ``get_if_exists`` doesn't hand the dying actor back.
+        When the kill fails, the creation path finds the old actor and runs
+        it, as before.
+        """
+        logger.warning(
+            f"Actor {self.actor_name} answered its health check with False; "
+            "replacing it"
+        )
+        try:
+            ray.kill(handle, no_restart=True)
+        except Exception as e:
+            logger.warning(f"Could not kill actor {self.actor_name}: {e}")
+            return
+        deadline = time.monotonic() + _NAME_RELEASE_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                ray.get_actor(self.actor_name, namespace="fhi")
+            except ValueError:
+                return
+            except Exception as e:
+                logger.debug(f"Could not look up killed actor {self.actor_name}: {e}")
+                return
+            time.sleep(0.5)
+        logger.warning(
+            f"Actor {self.actor_name}'s name was still taken "
+            f"{_NAME_RELEASE_WAIT_SECONDS:.0f}s after killing it"
+        )
 
     @cached_property
     def get(self) -> Any:

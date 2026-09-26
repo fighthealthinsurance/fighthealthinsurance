@@ -39,7 +39,9 @@ class ChooserRefillActor:
 
         The flag alone was true from the first ``run`` onward, so a loop
         whose every tick raised (rotated database credentials, say) reported
-        healthy forever and the reconciler never touched it.
+        healthy forever and the reconciler never touched it. Reporting False
+        gets this actor replaced by the next reconcile or launch (see
+        ``BaseActorRef._replace``).
         """
         failures = getattr(self, "_consecutive_failures", 0)
         return bool(getattr(self, "running", False)) and (
