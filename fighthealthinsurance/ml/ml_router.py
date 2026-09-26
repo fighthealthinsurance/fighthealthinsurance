@@ -1044,6 +1044,23 @@ class MLRouter(object):
         return results
 
 
+def appeal_backup_names(
+    candidates: Sequence[str], primary_names: Sequence[str]
+) -> List[str]:
+    """The names the appeals backup pass calls, in order.
+
+    ``candidates`` is what ``generate_text_backend_names`` returns for the
+    denial's ``use_external``, and ``primary_names`` is the internal-only list
+    the primary pass already called. The backup never repeats one of those.
+    So for an opt-out denial it is empty and ``make_appeals`` skips the stage,
+    and for an opt-in one it holds the external backends. ``make_appeals``
+    and the staff routing overview both use this, so the page lists the
+    backup pass requests actually run.
+    """
+    already = set(primary_names)
+    return [name for name in candidates if name not in already]
+
+
 # Lazy singleton - initialized on first access
 _ml_router_instance: Optional[MLRouter] = None
 _ml_router_lock = threading.Lock()

@@ -122,7 +122,6 @@ class TestRoles(_NoRoutingEnv):
             _labels(overview, router, "fhi-local"),
             [
                 "Appeals: primary",
-                "Appeals: backup",
                 "Appeals: best-internal hint",
                 "Chat: lead, 3 calls",
                 "Questions: fan-out",
@@ -131,7 +130,7 @@ class TestRoles(_NoRoutingEnv):
         )
         self.assertEqual(
             _labels(overview, router, "fhi-legacy"),
-            ["Appeals: primary", "Appeals: backup"],
+            ["Appeals: primary"],
         )
         # With a healthy internal, the hosted generalist only backs up
         # summaries, and only when external models are allowed.
@@ -167,7 +166,7 @@ class TestRoles(_NoRoutingEnv):
         backup = _plan(overview, "Appeals, backup pass")
         self.assertEqual(
             [e.name for e in backup.external_allowed],
-            ["fhi-legacy", "fhi-local", "azure-openai/gpt-5.5", GEMMA],
+            ["azure-openai/gpt-5.5", GEMMA],
         )
         chat = _plan(overview, "Chat")
         # The lead is listed twice up front and again among the internals.
@@ -177,6 +176,22 @@ class TestRoles(_NoRoutingEnv):
         self.assertEqual(
             [e.name for e in summaries.external_allowed], ["fhi-local", GEMMA]
         )
+
+    def test_the_backup_pass_never_repeats_the_primary(self):
+        """make_appeals backs up only with names the primary pass did not
+        call, so with external models off the backup has nothing left, and
+        the internals carry no backup role."""
+        router = self._production_like()
+        overview = ro.build_routing_overview(router)
+        self.assertEqual(_plan(overview, "Appeals, backup pass").internal_only, [])
+        for name in ("fhi-local", "fhi-legacy"):
+            self.assertFalse(
+                [
+                    label
+                    for label in _labels(overview, router, name)
+                    if "backup" in label
+                ]
+            )
 
     def test_a_marked_down_internal_moves_behind_the_generalist(self):
         router = _bare_router()
@@ -209,7 +224,6 @@ class TestRoles(_NoRoutingEnv):
             _labels(overview, router, "fhi-local", 0),
             [
                 "Appeals: primary",
-                "Appeals: backup",
                 "Appeals: best-internal hint",
                 "Chat: lead, 3 calls",
                 "Questions: fan-out",
@@ -218,7 +232,7 @@ class TestRoles(_NoRoutingEnv):
         )
         self.assertEqual(
             _labels(overview, router, "fhi-local", 1),
-            ["Appeals: primary", "Appeals: backup", "Appeals: best-internal hint"],
+            ["Appeals: primary", "Appeals: best-internal hint"],
         )
         # The lists that route to instances say which of the two it is, and
         # the lists that route by name say both are tried.

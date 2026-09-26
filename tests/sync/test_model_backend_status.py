@@ -410,7 +410,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertEqual(
             (legacy["quality"], legacy["kind"]), (101, "appeal-only fine-tune")
         )
-        self.assertEqual(self.labels(legacy), ["Appeals: primary", "Appeals: backup"])
+        # The backup pass never repeats a model the primary pass asked.
+        self.assertEqual(self.labels(legacy), ["Appeals: primary"])
         self.assertContains(response, "appeal-only fine-tune")
 
     def test_backends_sharing_a_name_show_only_their_own_roles(self):
@@ -518,6 +519,20 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertContains(response, "use only it, whether or")
         self.assertNotContains(response, "No model by that name")
         self.assertNotContains(response, "It is an external model.")
+
+    def test_a_forced_internal_model_leaves_the_backup_pass_empty(self):
+        """The primary pass already asks the forced model, and the backup
+        pass never repeats one, so the banner and the lists say it gets
+        nothing."""
+        self.configure(**ALPHA, FORCE_MODEL="fhi-local")
+        response = self.get_page()
+        self.assertContains(response, "The backup pass gets no model")
+        backup = self.plan(response, "Appeals, backup pass")
+        self.assertEqual((backup.internal_only, backup.external_allowed), ([], []))
+        self.assertEqual(
+            self.names(self.plan(response, "Appeals, primary pass").internal_only),
+            ["fhi-local"],
+        )
 
     def test_force_model_banner_names_an_unregistered_model(self):
         self.configure(**ALPHA, FORCE_MODEL="no-such-model")

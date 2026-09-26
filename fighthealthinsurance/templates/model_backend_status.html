@@ -88,8 +88,9 @@
         they did not, chat and appeal questions skip it and route as normal,
         and the backup pass gets no model either.
         {% else %}
-        Both appeal passes, chat and appeal questions use only it, whether or
-        not the person allowed external models.
+        The appeals primary pass, chat and appeal questions use only it, whether or
+        not the person allowed external models. The backup pass gets no model,
+        since it never repeats a model the primary pass asked.
         {% endif %}
         Summaries and the best-internal hint ignore it. The lists below
         already reflect all of this.
