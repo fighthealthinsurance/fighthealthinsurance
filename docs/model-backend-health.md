@@ -55,8 +55,10 @@ insert the first time) keyed on the deployment identifier:
   re-checks. Re-deploying the same version within 6 hours does not; run the
   command by hand then.
 - The Dockerfile's `RELEASE` default is `unknown`, so `FHI_RELEASE` is never
-  empty inside a built image. An image built without `--build-arg RELEASE`
-  shares one claim key with every other such build.
+  empty inside a built image. That placeholder is not used as a claim key:
+  an image built without `--build-arg RELEASE` falls through to
+  `FHI_VERSION`, then to the hourly fallback, rather than sharing one key
+  with every other such build.
 
 ## Running it manually
 
@@ -79,7 +81,9 @@ python manage.py check_model_backends --no-persist
   the email.
 - Exit codes: a manual run exits 1 on any failure (or when the check could not
   run). The deploy hook exits 0, or 2 in strict mode, which
-  `start-server.sh` turns into 1.
+  `start-server.sh` turns into 1. In strict mode the deploy hook also exits 2
+  when the check itself crashed (nothing was verified); a lost leader claim
+  still exits 0.
 
 ## Alerting
 
@@ -94,9 +98,9 @@ least one real failure triggered the email.
 
 | Value | Effect |
 | --- | --- |
-| unset (or anything other than `1`/`0`) | On in production; off when `settings.DEBUG` is true or `TESTING=True`. |
-| `1` | On anywhere. |
-| `0` | Off everywhere. |
+| unset (or anything unrecognised) | On in production; off when `settings.DEBUG` is true or `TESTING=True`. |
+| `1`, `true`, `yes`, `on` | On anywhere. |
+| `0`, `false`, `no`, `off` | Off everywhere. |
 
 Only the leader can send it, and only for `--deploy-hook` runs, so it has no
 effect on a local `run_local.sh` session, which never runs the hook. Error text
@@ -125,10 +129,24 @@ or roll back a deploy today:
   latency, and sanitized detail. The Job is deleted 10 seconds after it
   finishes (`ttlSecondsAfterFinished: 10`), so read this from your log
   aggregator or the staff page, not `kubectl logs`.
-- **Staff dashboard:** `/timbit/help/model_backends` shows, per configured
-  model, enabled/disabled state, provider, registry name, internal key,
-  selection-UI/reporting registration, the latest check result and timestamp,
-  and the last stored generation. It makes no model calls.
+- **Staff dashboard:** `/timbit/help/model_backends` lists every backend the
+  code knows about, configured or not. For each it shows the kind, quality and
+  tier, which request paths this pod routes to it, the configuration and
+  registration state, the latest check result with the deploy and environment
+  it ran under, and the last stored generation. A panel above the table lists
+  each path's models with external models off and on. The page makes no model
+  calls.
+  - A context-only backend (Perplexity) reads "n/a (citations only)" under
+    "Last stored generation": it builds citations and never drafts.
+  - A registered backend that no request path picks, such as an external model
+    outside the router's top 3, reads "registered, not picked by any path".
+  - "Last stored generation" counts drafts and chooser candidates, not the
+    copies made when a user picks a draft.
+  - A disabled or unconfigured backend reads "not checked". Its stored
+    classification row is not shown as a failed check. Once the backend is
+    configured, that row shows as a grey pill flagged "config changed since"
+    until a real check runs.
+  - The healthy count is out of the enabled backends only.
   `/timbit/help/model_usage` shows which models users actually pick.
 - **Database:** `ModelBackendHealthCheckResult` keeps one row per backend per
   run (including `NOT_CONFIGURED` and `DISABLED`). Skipped runs and

@@ -37,7 +37,7 @@ from typing import (
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml.ml_models import RemoteModel, RemoteModelLike
-from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.ml.ml_router import MLRouter, appeal_backup_names
 
 KIND_INTERNAL = "internal"
 # An internal fine-tune that only writes appeal text (fhi-legacy). The router
@@ -282,9 +282,13 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
         )
     )
 
-    # Appeals, backup pass: only run when the primary pass gives nothing.
+    # Appeals, backup pass: only run when the primary pass gives nothing, and
+    # only with names the primary pass didn't already call, so with
+    # use_external off it has none and make_appeals skips it.
     backup = {
-        flag: router.generate_text_backend_names(use_external=flag)
+        flag: appeal_backup_names(
+            router.generate_text_backend_names(use_external=flag), primary
+        )
         for flag in (False, True)
     }
     for flag, names in backup.items():
@@ -293,8 +297,9 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
     paths.append(
         PathPlan(
             "Appeals, backup pass",
-            "Asked only when the primary pass gives no usable letter. "
-            "External models join only when the person allowed them.",
+            "Asked only when the primary pass gives no usable letter, and "
+            "only models the primary pass did not already ask, so it has none "
+            "unless the person allowed external models.",
             name_entries(backup[False]),
             name_entries(backup[True]),
         )

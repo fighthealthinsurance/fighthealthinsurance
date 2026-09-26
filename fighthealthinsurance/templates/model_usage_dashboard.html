@@ -20,20 +20,40 @@
     .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
     .nav-back:hover { text-decoration: underline; }
     .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .view-picker { margin: 0 0 18px 0; }
+    .view-picker label { font-weight: bold; margin-right: 6px; }
+    /* 16px: a smaller field zooms iOS Safari on focus. rem, so no parent size compounds it. */
+    .view-picker select { padding: 4px 6px; font-size: 1rem; }
   </style>
 </head>
 <body>
   <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
   <h1>{{ title }}</h1>
+  <form method="get" class="view-picker">
+    <label for="view-select">View:</label>
+    <select id="view-select" name="view" onchange="this.form.submit()">
+      {% for value, label in views %}
+      <option value="{{ value }}"{% if value == view %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit">Show</button></noscript>
+  </form>
   <p class="summary-note">
     Chosen counts and win rates per ML model. Sources:
     <span class="legend-key" style="background:#1f77b4;"></span>ProposedAppeal (denial flow),
     <span class="legend-key" style="background:#ff7f0e;"></span>Chooser&mdash;Appeal,
     <span class="legend-key" style="background:#2ca02c;"></span>Chooser&mdash;Chat.
     Win rate = chosen / presented, shown as &ldquo;&mdash;&rdquo; when nothing was
-    presented (no denominator). Windows are rolling (last 24 hours / 7 days /
+    presented (no denominator).
+    {% if view == "rolling" %}Windows are rolling (last 24 hours / 7 days /
     30 days, anchored on the pick or vote time); All Time additionally includes
-    rows predating timestamp tracking. Synthesized appeals are bucketed as
+    rows predating timestamp tracking.{% else %}Periods are calendar
+    {% if view == "quarterly" %}quarters{% else %}months{% endif %} in
+    {{ time_zone }}, newest first, anchored on the pick or vote time; the
+    current one runs to now. Periods before the first stored draft or vote are
+    not listed, and rows predating timestamp tracking appear only in the
+    rolling view&rsquo;s All Time.{% endif %}
+    Synthesized appeals are bucketed as
     model_name &ldquo;synthesized&rdquo;. Special buckets:
     &ldquo;legacy-unattributed&rdquo; = historical picks recorded before model
     tracking whose generating model cannot be recovered;

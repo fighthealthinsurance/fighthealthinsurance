@@ -10,8 +10,9 @@ chooser refill and three refresh loops all silently stopped, and a deploy was
 the only thing that would have fixed it.
 
 This is the missing half: cheap, idempotent, and safe to run on a schedule.
-It relaunches only what is actually absent, so a healthy cluster costs one
-health check and nothing else.
+It relaunches what is absent and replaces what answers its health check with
+False (see ``BaseActorRef._replace``), so a healthy cluster costs one health
+check and nothing else.
 
 Exit codes: 0 when every actor is alive at the end (including when nothing
 needed doing), 1 when any is still missing, so a CronJob failure means
@@ -77,9 +78,9 @@ class Command(BaseCommand):
             self.stdout.write("--dry-run: not relaunching.")
             sys.exit(1)
 
-        # force=False is the whole point: it attaches to actors that are alive
-        # and only creates the ones that are not, so a partial outage is
-        # repaired without disturbing the survivors. A force relaunch here
+        # force=False is the whole point: it attaches to actors that are
+        # healthy and only creates or replaces the rest, so a partial outage
+        # is repaired without disturbing the survivors. A force relaunch here
         # would kill healthy actors mid-work on every scheduled run.
         results = relaunch_actors(force=False)
         for actor_name in sorted(results):

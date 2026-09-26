@@ -305,3 +305,189 @@ class RaysOwnCacheIsClearedTest(SimpleTestCase):
 
         # No client-mode key at all: nothing to clear, and no exception.
         base_actor_ref.clear_poisoned_client_class(Klass)
+
+
+class _LiveHandle:
+    """A handle to an actor that already exists on the cluster."""
+
+    def __init__(self, owner, healthy):
+        self._owner = owner
+        self._healthy = healthy
+
+    @property
+    def health_check(self):
+        return self
+
+    @property
+    def run(self):
+        return self
+
+    def remote(self):
+        # health_check.remote() and run.remote() share this; the fake ray.get
+        # below turns the former into the health answer, and the owner counts
+        # the latter as a run only when it comes through the run path.
+        return self
+
+
+class AttachingToARunningActorTest(SimpleTestCase):
+    """A fresh process attaching to a live loop actor must not start a
+    second loop.
+
+    ``get`` used to call ``run.remote()`` whenever it was first evaluated in
+    a process, whether it had created the actor or merely attached to one
+    ``get_if_exists`` found. The loop actors are async actors, so every
+    reconcile run and every re-run of the launch job added one more
+    concurrent loop inside the same actor.
+    """
+
+    def _ref(self):
+        fake = _FakeActorClass()
+
+        class Ref(BaseActorRef):
+            actor_class = fake  # type: ignore[assignment]
+            actor_name = "test_actor"
+            has_run_method = True
+
+        ref = Ref()
+        ref._actor_instance = None
+        return ref, fake
+
+    def _attach(self, ref, existing, health, kill_error=None):
+        """Drive ``get`` with a cluster attached and ``existing`` on it. Each
+        ``ray.kill`` is recorded in ``self.kills``; one that succeeds releases
+        the name, so the next ``ray.get_actor`` finds nothing."""
+        from unittest.mock import patch
+
+        from fighthealthinsurance import base_actor_ref
+
+        runs = []
+        self.kills = []
+        killed = []
+
+        class Handle(_LiveHandle):
+            @property
+            def run(self):
+                class Run:
+                    @staticmethod
+                    def remote():
+                        runs.append(1)
+                        return "task-handle"
+
+                return Run()
+
+        handle = Handle(None, health) if existing else None
+
+        def get_actor(name, namespace):
+            if handle is None or killed:
+                raise ValueError("no such actor")
+            return handle
+
+        def kill(actor, no_restart=True):
+            self.kills.append((actor, no_restart))
+            if kill_error is not None:
+                raise kill_error
+            killed.append(actor)
+
+        def ray_get(ref_, timeout=None):
+            if isinstance(health, Exception):
+                raise health
+            return health
+
+        with patch.object(
+            base_actor_ref, "ray_cluster_available", return_value=True
+        ), patch.object(
+            base_actor_ref.ray, "get_actor", side_effect=get_actor
+        ), patch.object(base_actor_ref.ray, "get", side_effect=ray_get), patch.object(
+            base_actor_ref.ray, "kill", side_effect=kill
+        ):
+            result = ref.get
+        return result, runs, handle
+
+    def test_a_live_loop_is_attached_without_a_second_run(self):
+        ref, fake = self._ref()
+
+        (actor, task), runs, handle = self._attach(ref, existing=True, health=True)
+
+        self.assertIs(actor, handle)
+        self.assertIsNone(task, "a run task was started on a live loop")
+        self.assertEqual(runs, [], "run.remote() was called on a live loop")
+        self.assertEqual(fake.creations, 0, "an existing actor was recreated")
+
+    def test_an_actor_that_reports_unhealthy_is_replaced(self):
+        """It answered False: its loop stopped, or it runs and fails every
+        tick. run() on it would only get RUN_ALREADY_STARTED back from a
+        failing loop, so a reconcile could never repair it. It is killed for
+        good and a fresh actor is created and run."""
+        ref, fake = self._ref()
+
+        (actor, task), runs, handle = self._attach(ref, existing=True, health=False)
+
+        self.assertEqual(self.kills, [(handle, True)])
+        self.assertIsInstance(actor, _Handle)
+        self.assertEqual(task, "task-handle")
+        self.assertEqual(fake.creations, 1)
+        self.assertEqual(fake.runs, 1)
+        self.assertEqual(runs, [], "run was sent to the actor being replaced")
+
+    def test_a_healthy_actor_is_never_killed(self):
+        ref, _fake = self._ref()
+
+        self._attach(ref, existing=True, health=True)
+
+        self.assertEqual(self.kills, [])
+
+    def test_an_actor_that_cannot_be_killed_goes_to_the_creation_path(self):
+        """Without the kill, ``get_if_exists`` finds the old actor and it is
+        run as before; nothing raises out of ``get``."""
+        ref, fake = self._ref()
+
+        (actor, task), runs, handle = self._attach(
+            ref, existing=True, health=False, kill_error=RuntimeError("no")
+        )
+
+        self.assertEqual(len(self.kills), 1)
+        self.assertEqual(fake.creations, 1)
+        self.assertEqual(task, "task-handle")
+
+    def test_an_absent_actor_is_created_and_run(self):
+        ref, fake = self._ref()
+
+        (actor, task), runs, _handle = self._attach(ref, existing=False, health=True)
+
+        self.assertIsInstance(actor, _Handle)
+        self.assertEqual(task, "task-handle")
+        self.assertEqual(fake.creations, 1)
+        self.assertEqual(fake.runs, 1)
+
+    def test_an_actor_that_does_not_answer_is_left_to_ray(self):
+        """A dead or hung actor answers nothing; the creation path with
+        ``get_if_exists`` decides what happens, as before."""
+        ref, fake = self._ref()
+
+        (actor, task), runs, _handle = self._attach(
+            ref, existing=True, health=RuntimeError("actor died")
+        )
+
+        self.assertIsInstance(actor, _Handle)
+        self.assertEqual(fake.creations, 1)
+        self.assertEqual(fake.runs, 1)
+        self.assertEqual(runs, [], "run was sent to the unresponsive handle")
+        self.assertEqual(self.kills, [], "an unresponsive actor was killed")
+
+    def test_without_a_cluster_nothing_is_looked_up(self):
+        """Tests and dev servers have no cluster; ``ray.get_actor`` would
+        start one. The pre-check must not run there."""
+        from unittest.mock import patch
+
+        from fighthealthinsurance import base_actor_ref
+
+        ref, fake = self._ref()
+        with patch.object(
+            base_actor_ref, "ray_cluster_available", return_value=False
+        ), patch.object(
+            base_actor_ref.ray, "get_actor", side_effect=AssertionError("looked up")
+        ):
+            actor, task = ref.get
+
+        self.assertEqual(fake.creations, 1)
+        self.assertEqual(task, "task-handle")

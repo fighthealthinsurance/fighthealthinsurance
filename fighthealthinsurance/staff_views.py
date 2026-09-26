@@ -12,11 +12,12 @@ from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.db.models import Q
-from django.utils import timezone
+from django.utils import dateformat, timezone
 from django.views import View, generic
 
 import ray
 import requests
+from dateutil.relativedelta import relativedelta
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
@@ -795,9 +796,14 @@ class AdminStatusView(generic.TemplateView):
             # numbers describe one population and a scored draft that is
             # speculative or unconsented cannot make the level SCORING by
             # itself (review).
+            # chosen=False on both: choosing a draft inserts an unscored copy
+            # stamped with the pick time, which read as an eligible draft the
+            # scorer had missed and flipped the badge to NOT SCORING while
+            # scoring worked.
             out["scored"] = ProposedAppeal.objects.filter(
                 quality_scored_at__gte=since,
                 speculative=False,
+                chosen=False,
                 for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
@@ -808,6 +814,7 @@ class AdminStatusView(generic.TemplateView):
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
+                chosen=False,
                 for_denial__use_external=True,
                 quality_score__isnull=True,
             )
@@ -1434,8 +1441,98 @@ def _merge_stats(
     return rows
 
 
+# The dashboard's views, in dropdown order. "rolling" is the default and the
+# original page; the calendar views split the same numbers by month or quarter.
+MODEL_USAGE_VIEWS: Tuple[Tuple[str, str], ...] = (
+    ("rolling", "Rolling windows (last day, 7 days, 30 days, all time)"),
+    ("monthly", "Monthly (calendar months)"),
+    ("quarterly", "Quarterly (calendar quarters)"),
+)
+# How far back each calendar view reaches, newest first.
+MODEL_USAGE_PERIODS_SHOWN = {"monthly": 12, "quarterly": 8}
+
+# (slug, label, since, until): one section of the dashboard. The bounds apply
+# to the pick or vote time; either may be None (open), and ``until`` is
+# exclusive, so a pick at a period's closing instant belongs to the next one.
+UsageWindow = Tuple[str, str, Optional[datetime.datetime], Optional[datetime.datetime]]
+
+
+def _within(
+    qs: QuerySet,
+    since: Optional[datetime.datetime],
+    until: Optional[datetime.datetime],
+    field: str = "created_at",
+) -> QuerySet:
+    """``qs`` limited to ``since <= field < until``; a None bound is open."""
+    if since is not None:
+        qs = qs.filter(**{f"{field}__gte": since})
+    if until is not None:
+        qs = qs.filter(**{f"{field}__lt": until})
+    return qs
+
+
+def _calendar_windows(
+    granularity: str,
+    now: datetime.datetime,
+    earliest: Optional[datetime.datetime],
+    max_periods: int,
+) -> List[UsageWindow]:
+    """One window per calendar month (``"monthly"``) or quarter
+    (``"quarterly"``), newest first: from the period holding ``now`` back to
+    the one holding ``earliest``, at most ``max_periods``. With no
+    ``earliest`` (nothing stored yet) only the current period is listed.
+
+    Boundaries are midnight on the first day of the period in the current
+    timezone (settings.TIME_ZONE). They are computed on local wall-clock dates
+    and made aware one at a time, so a DST change inside a period cannot move
+    a boundary. The current period is labelled "to date": it runs to now.
+    """
+    tz = timezone.get_current_timezone()
+    step = 3 if granularity == "quarterly" else 1
+
+    def period_start(moment: datetime.datetime) -> datetime.datetime:
+        local = timezone.localtime(moment, tz)
+        first_month = (local.month - 1) // step * step + 1
+        return datetime.datetime(local.year, first_month, 1)
+
+    current = period_start(now)
+    floor = period_start(earliest) if earliest is not None else current
+    windows: List[UsageWindow] = []
+    for i in range(max(1, max_periods)):
+        start = current - relativedelta(months=step * i)
+        if i > 0 and start < floor:
+            break
+        end = start + relativedelta(months=step)
+        to_date = i == 0
+        if step == 3:
+            quarter = (start.month - 1) // 3 + 1
+            last_month = end - relativedelta(days=1)
+            span = (
+                f"{dateformat.format(start, 'M')}–"
+                f"{dateformat.format(last_month, 'M')}"
+            )
+            suffix = ", to date" if to_date else ""
+            label = f"{start.year} Q{quarter} ({span}{suffix})"
+            slug = f"q-{start.year}-{quarter}"
+        else:
+            label = dateformat.format(start, "F Y") + (" (to date)" if to_date else "")
+            slug = f"m-{start:%Y-%m}"
+        windows.append(
+            (slug, label, timezone.make_aware(start, tz), timezone.make_aware(end, tz))
+        )
+    return windows
+
+
 class ModelUsageDashboardView(generic.TemplateView):
     """Staff dashboard showing which ML models users pick most often.
+
+    A dropdown (``?view=``) picks how the numbers are split: ``rolling`` (the
+    default) shows the four rolling windows below; ``monthly`` and
+    ``quarterly`` show one section per calendar month or quarter, newest
+    first, back to the period of the first stored draft or vote (see
+    ``_calendar_windows`` and ``MODEL_USAGE_PERIODS_SHOWN``). Every section is
+    computed by the same helpers, so a calendar period and a rolling window
+    count a pick or vote the same way.
 
     Aggregates three signal sources across four time windows:
       * ProposedAppeal.chosen=True  - implicit pick from real denial flow
@@ -1466,23 +1563,32 @@ class ModelUsageDashboardView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         now = timezone.now()
-        windows = [
-            ("global", "All Time", None),
-            ("1d", "Last 1 Day", now - datetime.timedelta(days=1)),
-            ("7d", "Last 7 Days", now - datetime.timedelta(days=7)),
-            ("30d", "Last 30 Days", now - datetime.timedelta(days=30)),
-        ]
+        view = self.request.GET.get("view") or "rolling"
+        if view not in dict(MODEL_USAGE_VIEWS):
+            view = "rolling"
+        windows: List[UsageWindow]
+        if view == "rolling":
+            windows = [
+                ("global", "All Time", None, None),
+                ("1d", "Last 1 Day", now - datetime.timedelta(days=1), None),
+                ("7d", "Last 7 Days", now - datetime.timedelta(days=7), None),
+                ("30d", "Last 30 Days", now - datetime.timedelta(days=30), None),
+            ]
+        else:
+            windows = _calendar_windows(
+                view, now, self._earliest_usage(), MODEL_USAGE_PERIODS_SHOWN[view]
+            )
         windows_ctx = []
-        for slug, label, since in windows:
-            proposed = self._proposed_appeal_stats(since)
-            chooser_appeal = self._chooser_stats("appeal_letter", since)
-            chooser_chat = self._chooser_stats("chat_response", since)
+        for slug, label, since, until in windows:
+            proposed = self._proposed_appeal_stats(since, until)
+            chooser_appeal = self._chooser_stats("appeal_letter", since, until)
+            chooser_chat = self._chooser_stats("chat_response", since, until)
             windows_ctx.append(
                 {
                     "slug": slug,
                     "label": label,
                     "proposed_appeal": proposed,
-                    "context_level": self._context_level_stats(since),
+                    "context_level": self._context_level_stats(since, until),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "chart_data_json": json.dumps(
@@ -1492,7 +1598,23 @@ class ModelUsageDashboardView(generic.TemplateView):
             )
         ctx["title"] = "ML Model Usage Dashboard"
         ctx["windows"] = windows_ctx
+        ctx["view"] = view
+        ctx["views"] = MODEL_USAGE_VIEWS
+        ctx["time_zone"] = timezone.get_current_timezone_name()
         return ctx
+
+    @staticmethod
+    def _earliest_usage() -> Optional[datetime.datetime]:
+        """When the first stored draft, pick or vote happened. The calendar
+        views start at its period instead of listing empty periods before
+        the data begins. Every draft and pick is a ProposedAppeal row, so two
+        MIN lookups cover all three."""
+        stamps = [
+            ProposedAppeal.objects.aggregate(first=Min("created_at"))["first"],
+            ChooserVote.objects.aggregate(first=Min("created_at"))["first"],
+        ]
+        present = [s for s in stamps if s is not None]
+        return min(present) if present else None
 
     @staticmethod
     def _chart_data(
@@ -1537,6 +1659,7 @@ class ModelUsageDashboardView(generic.TemplateView):
     @staticmethod
     def _proposed_appeal_stats(
         since: Optional[datetime.datetime],
+        until: Optional[datetime.datetime] = None,
     ) -> List[Dict[str, Any]]:
         # Keep chosen rows with model_name=NULL: mark_proposal_chosen falls
         # back to None when a pick can't be matched to a draft, and those are
@@ -1545,9 +1668,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         # matching what the backfill stamps — while later rows fall under
         # UNKNOWN_MODEL_LABEL, so legacy gaps stay distinct from current
         # attribution misses.
-        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
-        if since is not None:
-            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        chosen_qs = _within(ProposedAppeal.objects.filter(chosen=True), since, until)
 
         # Tie the presented universe to denials picked within the window,
         # NOT to draft created_at: a draft generated on day 0 and picked on
@@ -1594,12 +1715,13 @@ class ModelUsageDashboardView(generic.TemplateView):
         return _merge_stats(
             dict(chosen),
             dict(presented),
-            ModelUsageDashboardView._draft_quality_stats(since),
+            ModelUsageDashboardView._draft_quality_stats(since, until),
         )
 
     @staticmethod
     def _draft_quality_stats(
         since: Optional[datetime.datetime],
+        until: Optional[datetime.datetime] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """Per-model draft quality (ml/letter_quality.py) over the window.
 
@@ -1621,8 +1743,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             speculative=False,
             model_name__isnull=False,
         )
-        if since is not None:
-            scored_qs = scored_qs.filter(created_at__gte=since)
+        scored_qs = _within(scored_qs, since, until)
         latest = None
         for candidate in (
             scored_qs.filter(
@@ -1684,6 +1805,7 @@ class ModelUsageDashboardView(generic.TemplateView):
     @staticmethod
     def _context_level_stats(
         since: Optional[datetime.datetime],
+        until: Optional[datetime.datetime] = None,
     ) -> List[Dict[str, Any]]:
         """Chosen/presented/win-rate bucketed by the context/shed level the
         appeal was generated at (full / tier1_shed / tier2_shed / speculative /
@@ -1691,9 +1813,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         speculative appeals as often as full-context ones. Speculative drafts
         that were never promoted are excluded from the presented denominator
         (they were held back, not shown)."""
-        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
-        if since is not None:
-            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        chosen_qs = _within(ProposedAppeal.objects.filter(chosen=True), since, until)
         chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
         presented_qs = ProposedAppeal.objects.filter(
             chosen=False,
@@ -1718,16 +1838,18 @@ class ModelUsageDashboardView(generic.TemplateView):
 
     @staticmethod
     def _chooser_stats(
-        kind: str, since: Optional[datetime.datetime]
+        kind: str,
+        since: Optional[datetime.datetime],
+        until: Optional[datetime.datetime] = None,
     ) -> List[Dict[str, Any]]:
         # Both chosen and presented derive from the same vote set (filtered
         # by ChooserVote.created_at), so a window's win rates compare like
         # with like: every vote event contributes its chosen candidate once
         # and each distinct presented candidate once. Candidate creation
         # time is irrelevant — candidates are generated ahead of votes.
-        chosen_qs = ChooserVote.objects.filter(chosen_candidate__kind=kind)
-        if since is not None:
-            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        chosen_qs = _within(
+            ChooserVote.objects.filter(chosen_candidate__kind=kind), since, until
+        )
         chosen: Counter = Counter()
         for name, count in chosen_qs.values_list(
             "chosen_candidate__model_name"
@@ -1860,6 +1982,12 @@ class ModelBackendStatusView(generic.TemplateView):
             stale_environment = (
                 check is not None and check.environment != current_environment
             )
+            # The check run also persists its static classification of a
+            # backend it could not probe (NOT_CONFIGURED, DISABLED). While the
+            # backend is still off, that row only repeats the Config column,
+            # so the page says "not checked" instead of showing it as a
+            # failed check.
+            show_check = check is not None and (check.enabled or r.enabled)
             rows.append(
                 {
                     "provider": r.provider,
@@ -1885,10 +2013,18 @@ class ModelBackendStatusView(generic.TemplateView):
                     ),
                     "top_external_rank": rank,
                     "last_check": check,
+                    "show_check": show_check,
                     "stale_deployment": stale_deployment,
                     "stale_environment": stale_environment,
                     "config_changed": check is not None and check.enabled != r.enabled,
                     "last_generation": last_generation.get(r.model_name),
+                    # Citations only: never a generation candidate, so its
+                    # empty "Last stored generation" is not a symptom. Read
+                    # off the router's traits, or off the registered instance
+                    # when routing could not be read.
+                    "context_only": (
+                        t.kind == ro.KIND_CONTEXT_ONLY if t else r.context_only
+                    ),
                     "has_traits": t is not None,
                 }
             )
@@ -1900,8 +2036,11 @@ class ModelBackendStatusView(generic.TemplateView):
         ctx["current_deployment_id"] = current_deployment
         ctx["current_environment"] = current_environment
         ctx["deployment_is_versioned"] = deployment_is_versioned
+        ctx["enabled_count"] = sum(1 for row in rows if row["enabled"])
         ctx["healthy_count"] = sum(
-            1 for row in rows if row["last_check"] is not None and row["last_check"].ok
+            1
+            for row in rows
+            if row["enabled"] and row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
 
@@ -1968,14 +2107,19 @@ class ModelBackendStatusView(generic.TemplateView):
     ) -> Dict[str, datetime.datetime]:
         """Latest stored generation per model across ProposedAppeal and
         ChooserCandidate — evidence the model was actually invoked (and its
-        metadata persisted) in a real flow."""
+        metadata persisted) in a real flow.
+
+        Un-chosen rows only: choosing a draft inserts a copy stamped with the
+        original's model name and the pick time, so with the copies counted
+        a backend read as generating on the day a user picked its old draft.
+        """
         from django.db.models import Max
 
         last: Dict[str, datetime.datetime] = {}
         # .order_by() clears any Meta ordering, which would otherwise leak
         # into the GROUP BY and break the aggregation.
         for name, ts in (
-            ProposedAppeal.objects.filter(model_name__in=names)
+            ProposedAppeal.objects.filter(model_name__in=names, chosen=False)
             .order_by()
             .values_list("model_name")
             .annotate(latest=Max("created_at"))

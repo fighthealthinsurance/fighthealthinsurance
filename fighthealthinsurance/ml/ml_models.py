@@ -289,21 +289,26 @@ def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
 
     Matches the OpenAI-compatible local servers we point at: vLLM ("The model
     `X` does not exist.", type NotFoundError), llama.cpp ("model not found"),
-    Ollama ("model 'X' not found, try pulling it first"), and OpenAI/LM Studio
-    ("model_not_found"). Requiring the word "model" keeps a wrong-URL 404
-    (e.g. vLLM's {"detail": "Not Found"}) from matching -- that's a config
-    problem, not a missing model.
+    Ollama ("model 'X' not found, try pulling it first"), OpenAI/LM Studio
+    ("model_not_found"), Azure OpenAI ("The API deployment for this resource
+    does not exist", code DeploymentNotFound) and Anthropic's not_found_error
+    whose message names the model ("model: claude-x"). Requiring the word
+    "model" or "deployment" keeps a wrong-URL 404 (vLLM's {"detail": "Not
+    Found"}, Anthropic's not_found_error "Not Found") from matching -- that's
+    a config problem, not a missing model.
     """
     if not text:
         return False
     lowered = text.lower()
-    if "model" not in lowered:
+    if "model" not in lowered and "deployment" not in lowered:
         return False
     return (
         "does not exist" in lowered
         or "not found" in lowered
         or "model_not_found" in lowered
         or "unknown model" in lowered
+        or "not_found_error" in lowered
+        or "deploymentnotfound" in lowered
     )
 
 
@@ -2439,7 +2444,20 @@ class RemoteOpenLike(RemoteModel):
             )
         )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float, Optional[List[str]]]]]]
         pool = submit_executor if submit_executor is not None else executor
-        futures = list(map(lambda x: pool.submit(x[0], **x[1]), calls))
+        # The attempt deadline (attempt_deadline / ml_task_timeout) lives in a
+        # ContextVar, and a raw executor submit does not carry the context
+        # into the worker thread, so the clamp read there saw no deadline and
+        # every appeal-path call ran on the full configured timeout. Run each
+        # call inside a copy of the submitting context.
+        futures: List[Future[Tuple[str, Optional[str]]]] = []
+        for fn, kwargs in calls:
+            # One copy per submission, taken here in the submitting thread: a
+            # Context cannot be entered by two threads at once, and a copy
+            # taken inside the worker would be the worker's empty one.
+            run_in_context: Callable[..., Tuple[str, Optional[str]]] = (
+                contextvars.copy_context().run
+            )
+            futures.append(pool.submit(run_in_context, fn, **kwargs))
         return futures
 
     def _blocking_checked_infer(
@@ -2495,6 +2513,14 @@ class RemoteOpenLike(RemoteModel):
 
         if _past_deadline():
             return []
+
+        def _call_timeout() -> float:
+            # Re-read per call: inside an attempt_deadline block this is what
+            # is left of the budget, not the configured value. These calls
+            # used to pass no timeout and ran on the instance default, outside
+            # the clamp the attempt relies on to stop spending.
+            return ml_task_timeout("appeal")
+
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -2520,6 +2546,7 @@ class RemoteOpenLike(RemoteModel):
             pubmed_context=pubmed_context,
             temperature=temperature,
             ml_citations_context=ml_citations_context,
+            timeout=_call_timeout(),
         )
         if _is_verbose_logging():
             logger.debug(f"Got result from {self}: {result}")
@@ -2539,6 +2566,7 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
+                timeout=_call_timeout(),
             )
             # Ok just an empty list, we failed
             if self.bad_result(result, infer_type):
@@ -2569,6 +2597,7 @@ class RemoteOpenLike(RemoteModel):
                     pubmed_context=pubmed_context,
                     temperature=temperature,
                     ml_citations_context=ml_citations_context,
+                    timeout=_call_timeout(),
                 )
                 if self.bad_result(result, infer_type):
                     result = last_okish
@@ -2841,6 +2870,10 @@ class RemoteOpenLike(RemoteModel):
                 # First HTTP error swallowed by the dual-mode race for this
                 # prompt; surfaced after all fallbacks fail (see below).
                 first_http_error: Optional[aiohttp.ClientResponseError] = None
+                # The primary's HTTP error in sequential mode, held while the
+                # backup gets its turn and raised afterwards if it did not
+                # rescue the call.
+                primary_http_error: Optional[aiohttp.ClientResponseError] = None
                 if self.dual_mode and self.backup_api_base:
                     # In dual mode, run primary and backup concurrently and return the first result
                     primary_task = asyncio.create_task(
@@ -2878,10 +2911,28 @@ class RemoteOpenLike(RemoteModel):
                         )
                     )
 
+                    legs = (primary_task, backup_task)
+
+                    def _abandon_legs() -> None:
+                        # The caller was cancelled (a probe's or a chat turn's
+                        # wait_for). Cancelling this coroutine did not cancel
+                        # the legs it created, so both ran on to their own
+                        # timeout holding sockets and a GPU slot, and a leg
+                        # that then raised logged "Task exception was never
+                        # retrieved".
+                        for leg in legs:
+                            if not leg.done():
+                                leg.cancel()
+                                leg.add_done_callback(_log_abandoned_task_quietly)
+
                     # Wait for the first task to complete
-                    done, pending = await asyncio.wait(
-                        [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
-                    )
+                    try:
+                        done, pending = await asyncio.wait(
+                            legs, return_when=asyncio.FIRST_COMPLETED
+                        )
+                    except asyncio.CancelledError:
+                        _abandon_legs()
+                        raise
 
                     # Get the result from the completed task(s). Every done
                     # task is retrieved (they have already finished, so this
@@ -2919,6 +2970,9 @@ class RemoteOpenLike(RemoteModel):
                                 if result and result[0]:
                                     raw_response = result
                                     break
+                            except asyncio.CancelledError:
+                                _abandon_legs()
+                                raise
                             except Exception as e:
                                 if (
                                     isinstance(e, aiohttp.ClientResponseError)
@@ -2934,20 +2988,37 @@ class RemoteOpenLike(RemoteModel):
                             task.cancel()
                             task.add_done_callback(_log_abandoned_task_quietly)
                 else:
-                    raw_response = await self.__timeout_infer(
-                        system_prompt=system_prompt,
-                        prompt=prompt,
-                        patient_context=patient_context,
-                        plan_context=plan_context,
-                        pubmed_context=pubmed_context,
-                        ml_citations_context=ml_citations_context,
-                        temperature=temperature,
-                        history=history,
-                        model=self.model,
-                        raise_http_errors=raise_http_errors,
-                        transport_failures=transport_failures,
-                        timeout=timeout,
-                    )
+                    try:
+                        raw_response = await self.__timeout_infer(
+                            system_prompt=system_prompt,
+                            prompt=prompt,
+                            patient_context=patient_context,
+                            plan_context=plan_context,
+                            pubmed_context=pubmed_context,
+                            ml_citations_context=ml_citations_context,
+                            temperature=temperature,
+                            history=history,
+                            model=self.model,
+                            raise_http_errors=raise_http_errors,
+                            transport_failures=transport_failures,
+                            timeout=timeout,
+                        )
+                    except aiohttp.ClientResponseError as e:
+                        # An HTTP error from the primary used to escape the
+                        # whole prompt loop, so the backup endpoint below was
+                        # never tried and the legacy backend's "a retry against
+                        # the same endpoint still rescues a single 502" did not
+                        # hold. Hold it while the backup answers; if the backup
+                        # does not, it is raised below and handled exactly as
+                        # before (logged by status, or re-raised for callers
+                        # that asked for HTTP errors).
+                        primary_http_error = e
+                        if self.backup_api_base:
+                            logger.debug(
+                                f"{self}: {self.model} at {self.api_base} failed "
+                                f"-- {describe_model_error(e)}; trying the backup"
+                            )
+                        raw_response = None
                 if raw_response and raw_response[0]:
                     return raw_response
 
@@ -2974,6 +3045,10 @@ class RemoteOpenLike(RemoteModel):
                     )
                     if backup_response and backup_response[0]:
                         return backup_response
+                if primary_http_error is not None:
+                    # The backup did not rescue it: the primary's HTTP error
+                    # is the outcome of this call.
+                    raise primary_http_error
                 # Every fallback for this prompt struck out. If the dual-mode
                 # race swallowed an HTTP error above, surface it now to
                 # callers that opted in -- the startup probe reports the real
@@ -3647,6 +3722,31 @@ class RemoteOpenLike(RemoteModel):
                 # Simple string response
                 r = str(response_message)
 
+            if isinstance(r, list):
+                # Content parts (newer APIs): keep the text parts.
+                r = (
+                    "".join(
+                        str(part.get("text", ""))
+                        for part in r
+                        if isinstance(part, dict) and part.get("type", "text") == "text"
+                    )
+                    or None
+                )
+            if r is None:
+                # No text at all: a tool-calls-only reply, or a reasoning model
+                # that spent its budget thinking (reasoning_content set,
+                # content null). A provider-side condition, not a bug: one
+                # line, no traceback, and the caller moves to the next
+                # backend. It used to raise into the catch-all below, which
+                # logged two ERROR lines and a traceback on the appeal path.
+                finish = json_result["choices"][0].get("finish_reason")
+                logger.warning(
+                    f"{self}: {model} via {api_base} returned no text content "
+                    f"(finish_reason={finish!r})"
+                )
+                record_ml_failure(model, "no_text")
+                return None
+
             # Check if the response is valid text using LLMResponseUtils
             if not LLMResponseUtils.is_valid_text(r):
                 error_msg = f"Received non-text response from {model}"
@@ -4099,6 +4199,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
         return citations
 
 
+def _internal_model_name(model_path: str) -> str:
+    """The friendly registry name for an internal model path: its last path
+    segment. A trailing "/" used to yield a model named "", which the router
+    then registered and reported under that empty name."""
+    name = model_path.rstrip("/").split("/")[-1]
+    return name or model_path
+
+
 class RemoteHealthInsurance(RemoteFullOpenLike):
     PROVIDER_LABEL: ClassVar[str] = "FHI Internal (legacy)"
 
@@ -4170,8 +4278,11 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_name = get_env_variable(
-            "HEALTH_BACKEND_MODEL", "totallylegitco/fighthealthinsurance_model_v0.5"
+        # `or`, like the host and port: a templated empty string is "unset",
+        # and a blank wire model sent model "" on every request.
+        model_name = (
+            get_env_variable("HEALTH_BACKEND_MODEL")
+            or "totallylegitco/fighthealthinsurance_model_v0.5"
         )
         return [
             ModelDescription(cost=1, name="fhi-legacy", internal_name=model_name),
@@ -4238,14 +4349,16 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = get_env_variable(
-            "NEW_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed",
+        model_path = (
+            get_env_variable("NEW_HEALTH_BACKEND_MODEL")
+            or "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"
         )
-        # Extract a friendly name from the model path
-        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
-            ModelDescription(cost=2, name=model_name, internal_name=model_path),
+            ModelDescription(
+                cost=2,
+                name=_internal_model_name(model_path),
+                internal_name=model_path,
+            ),
         ]
 
 
@@ -4266,11 +4379,17 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         # these as empty strings, which must mean "unset".
         self.port = get_env_variable("ALPHA_HEALTH_BACKEND_PORT") or "8000"
         self.host = get_env_variable("ALPHA_HEALTH_BACKEND_HOST") or None
-        self.backup_port = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or None
+        # Like the legacy backend: the backup port defaults to the primary's
+        # (a backup host set alone used to be silently discarded) and the
+        # backup model to the primary's (it used to be the literal
+        # "/app/model", which 404ed unless that box loaded its weights there).
+        self.backup_port = (
+            get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or self.port
+        )
         self.backup_host = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_HOST") or None
-        backup_model = "/app/model"
+        backup_model = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_MODEL") or model
         if self.host is None:
-            raise Exception("Can not construct New FHI backend without a host")
+            raise Exception("Can not construct alpha FHI backend without a host")
         self.url = None
         if self.port is not None and self.host is not None:
             self.url = f"http://{self.host}:{self.port}/v1"
@@ -4303,14 +4422,16 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = get_env_variable(
-            "ALPHA_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-nov-q8-vllm-compressed",
+        model_path = (
+            get_env_variable("ALPHA_HEALTH_BACKEND_MODEL")
+            or "/models/fhi-2025-nov-q8-vllm-compressed"
         )
-        # Extract a friendly name from the model path
-        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
-            ModelDescription(cost=3, name=model_name, internal_name=model_path),
+            ModelDescription(
+                cost=3,
+                name=_internal_model_name(model_path),
+                internal_name=model_path,
+            ),
         ]
 
 
@@ -4921,10 +5042,22 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     @classmethod
     def _configured_deployments(cls) -> List[Tuple[str, int, str]]:
         """(deployment, cost, tier) list, honoring the optional ``MODELS_ENV``
-        override (overrides inherit incrementing costs and a ``custom`` tier)."""
+        override.
+
+        A deployment the override names that is also in ``DEFAULT_MODELS``
+        keeps its default cost and tier; only a name the table does not know
+        gets an incrementing cost and the ``custom`` tier. Every override
+        used to be ``custom`` (quality 88), so listing the sponsored frontier
+        deployment, which the comments above DEFAULT_MODELS tell operators
+        to do, demoted it below DeepInfra in the external fan-out and put the
+        paid provider first. Repeated names are dropped: two descriptions of
+        one deployment registered two instances and doubled its calls.
+        """
         override = get_env_variable(cls.MODELS_ENV) if cls.MODELS_ENV else None
         if override and override.strip():
-            names = [n.strip() for n in override.split(",") if n.strip()]
+            names = list(
+                dict.fromkeys(n.strip() for n in override.split(",") if n.strip())
+            )
             if not names:
                 # e.g. AZURE_*_MODELS="," — separators only, no real names.
                 # Fall back to defaults rather than silently disabling the
@@ -4936,7 +5069,15 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
                 )
                 return list(cls.DEFAULT_MODELS)
             base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
-            return [(n, base_cost + i * 10, "custom") for i, n in enumerate(names)]
+            known = {
+                deployment: (cost, tier)
+                for deployment, cost, tier in cls.DEFAULT_MODELS
+            }
+            configured: List[Tuple[str, int, str]] = []
+            for i, name in enumerate(names):
+                cost, tier = known.get(name, (base_cost + i * 10, "custom"))
+                configured.append((name, cost, tier))
+            return configured
         return list(cls.DEFAULT_MODELS)
 
     @property
@@ -5104,10 +5245,18 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         endpoint with or without a trailing ``/v1/messages``, and appends the
         ``/anthropic`` segment when only the bare resource host was supplied."""
         e = endpoint.strip().rstrip("/")
-        suffix = "/v1/messages"
-        if e.endswith(suffix):
-            e = e[: -len(suffix)].rstrip("/")
-        if not e.endswith("/anthropic"):
+        lowered = e.lower()
+        # A pasted target URI, or the sibling provider's ``/chat/completions``
+        # form, is trimmed back to the base; so is a ``…/anthropic/v1`` base,
+        # the natural analogue of the ``/openai/v1`` the README gives for
+        # Azure OpenAI. Each used to have ``/anthropic`` appended, doubling
+        # the path so every call 404ed while the config-only liveness check
+        # kept the deployment selected.
+        for suffix in ("/v1/messages", "/chat/completions", "/v1"):
+            if lowered.endswith(suffix):
+                e = e[: -len(suffix)].rstrip("/")
+                lowered = e.lower()
+        if not lowered.endswith("/anthropic"):
             e = f"{e}/anthropic"
         return e
 
@@ -5141,6 +5290,24 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         """
         if prompt is None:
             logger.debug("No prompt supplied; skipping inference")
+            return None
+        # The same skips as the shared transport. This one consulted neither,
+        # and the router trusts its in-memory signal over the sweep, so a
+        # dead or misdeployed Foundry endpoint kept its fan-out slot until
+        # the process restarted. Probes bypass both so they report reality.
+        if not raise_http_errors and self._model_marked_missing(
+            self.api_base, self.model
+        ):
+            logger.debug(
+                f"{self}: skipping {self.model} at {self.api_base} -- flagged as "
+                "not served here"
+            )
+            return None
+        if not raise_http_errors and self._transport_cooling(self.api_base, self.model):
+            logger.debug(
+                f"{self}: skipping {self.model} at {self.api_base} -- "
+                "transport-failure cooldown"
+            )
             return None
         # The native Anthropic Messages API caps temperature at 1.0 (vs the
         # OpenAI surface's 2.0); clamp so a shared router temperature that's
@@ -5201,7 +5368,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             started = time.monotonic()
             try:
                 result = await self._messages_request(
-                    url, headers, body, timeout=attempt_timeout
+                    url,
+                    headers,
+                    body,
+                    timeout=attempt_timeout,
+                    note_failures=not raise_http_errors,
                 )
             except aiohttp.ClientResponseError as e:
                 if send_temperature and _http_error_indicates_unsupported_temperature(
@@ -5233,7 +5404,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                             )
                             return None
                     result = await self._messages_request(
-                        url, headers, body, timeout=retry_timeout
+                        url,
+                        headers,
+                        body,
+                        timeout=retry_timeout,
+                        note_failures=not raise_http_errors,
                     )
                 else:
                     raise
@@ -5247,12 +5422,52 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         headers: dict,
         body: dict,
         timeout: Optional[float] = None,
+        note_failures: bool = True,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """POST a single Messages API request (honoring ``timeout`` /
         ``self._timeout``) and parse the response. ``raise_for_status``
         surfaces HTTP errors as ``aiohttp.ClientResponseError`` so 429s reach
-        the shared back-off."""
+        the shared back-off.
+
+        Records what the shared transport records: the call metrics, a
+        transport-failure strike (``note_failures``, off for probes) and the
+        missing-model flag for a 404 naming the model. Without these the
+        provider had no fhi_ml_* series at all and never entered a cooldown.
+        """
         effective_timeout = timeout if timeout is not None else self._timeout
+        started = time.monotonic()
+        try:
+            result = await self._messages_post(url, headers, body, effective_timeout)
+        except aiohttp.ClientResponseError as e:
+            record_ml_failure(self.model, "http_error")
+            body_text = _error_body_of(e)
+            if (
+                note_failures
+                and e.status == 404
+                and _error_text_indicates_missing_model(body_text)
+            ):
+                self._note_missing_model(self.api_base, self.model, body_text[:200])
+            raise
+        except MODEL_TRANSPORT_ERRORS as e:
+            described = describe_model_error(e)
+            record_ml_failure(self.model, "transport_error")
+            if note_failures:
+                self._note_transport_failure(self.api_base, self.model, described)
+            raise
+        if result is None and effective_timeout is not None:
+            # _messages_post reported the timeout already.
+            return None
+        record_ml_call(self.model, "ok", time.monotonic() - started)
+        return result
+
+    async def _messages_post(
+        self,
+        url: str,
+        headers: dict,
+        body: dict,
+        effective_timeout: Optional[float],
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """The request itself; None on a timeout (logged and recorded)."""
 
         async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
             # Same rationale as RemoteOpenLike.__infer: fail fast on
@@ -5276,12 +5491,19 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             return self._parse_messages_response(json_result)
 
         if effective_timeout is not None:
+            started = time.monotonic()
             try:
                 async with async_timeout(effective_timeout):
                     return await _post()
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
+                )
+                record_ml_call(self.model, "timeout", time.monotonic() - started)
+                # For a probe: nothing answered the socket, which is not a
+                # malformed response (see _PROBE_OBSERVATIONS).
+                _note_probe_transport_error(
+                    f"{self.model}: no answer within {effective_timeout:.0f}s"
                 )
                 return None
         return await _post()

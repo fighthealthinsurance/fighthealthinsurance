@@ -983,6 +983,50 @@ class TestMakeAppealsRouterCallPattern:
         ), f"Expected 2 router calls (primary + backup), got {len(calls)}: {calls}"
 
 
+class TestBackupStageRunsOnlyWhatPrimaryDidNot:
+    """The backup stage re-ran the internal calls primary had just run, so an
+    opt-out denial waited for the same calls to fail the same way before the
+    shed ladder started, and the zero-appeal note claimed an external
+    fallback whenever consent was given, whether or not one existed."""
+
+    @staticmethod
+    def _spy(internal, external):
+        def spy(use_external=False):
+            return list(internal) + (list(external) if use_external else [])
+
+        return spy
+
+    def test_opt_in_backup_is_the_externals_only(self):
+        with _loguru_capture() as sink:
+            _drain_make_appeals(
+                _mock_denial(use_external=True),
+                self._spy(["fhi-a"], ["ext-b"]),
+                {},
+            )
+        output = sink.getvalue()
+        assert "trying backup_calls" in output
+        assert "models=['ext-b']" in output
+        assert "external backup tried: ['ext-b']" in output
+
+    def test_opt_out_skips_the_backup_stage(self):
+        with _loguru_capture() as sink:
+            _drain_make_appeals(
+                _mock_denial(use_external=False), self._spy(["fhi-a"], []), {}
+            )
+        output = sink.getvalue()
+        assert "trying backup_calls" not in output
+        assert "NO EXTERNAL FALLBACK PERMITTED" in output
+
+    def test_opt_in_without_a_selectable_external_says_so(self):
+        with _loguru_capture() as sink:
+            _drain_make_appeals(
+                _mock_denial(use_external=True), self._spy(["fhi-a"], []), {}
+            )
+        output = sink.getvalue()
+        assert "trying backup_calls" not in output
+        assert "no external backend was selectable" in output
+
+
 # --- get_model_result WARNING-log tests ------------------------------------
 
 

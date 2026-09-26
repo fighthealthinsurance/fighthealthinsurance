@@ -1108,3 +1108,52 @@ class TestEnabledRemoteModels(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAzureOverrideKeepsKnownTiers(unittest.TestCase):
+    """The AZURE_*_MODELS override used to tag every deployment it named as
+    tier "custom" (quality 88), including ones in DEFAULT_MODELS, so listing
+    the sponsored frontier deployment, which the DEFAULT_MODELS comments tell
+    operators to do, demoted it below DeepInfra in the external fan-out."""
+
+    def tearDown(self):
+        _clear_azure_env()
+
+    @patch.dict(os.environ, {**AZURE_OPENAI_ENV, "AZURE_OPENAI_MODELS": "gpt-5.5"})
+    def test_a_known_deployment_keeps_its_default_tier_and_cost(self):
+        models = RemoteAzureOpenAI.models()
+        self.assertEqual([(m.internal_name, m.cost) for m in models], [("gpt-5.5", 10)])
+        self.assertEqual(RemoteAzureOpenAI(model="gpt-5.5").get_tier(), "frontier")
+
+    @patch.dict(
+        os.environ,
+        {**AZURE_CLAUDE_ENV, "AZURE_ANTHROPIC_MODELS": "claude-opus-4-8, my-claude"},
+    )
+    def test_a_mixed_override_keeps_known_tiers_and_marks_the_rest_custom(self):
+        self.assertEqual(RemoteAzureClaude(model="claude-opus-4-8").get_tier(), "premium")
+        self.assertEqual(RemoteAzureClaude(model="my-claude").get_tier(), "custom")
+
+    @patch.dict(
+        os.environ, {**AZURE_OPENAI_ENV, "AZURE_OPENAI_MODELS": "gpt-5.5,gpt-5.5, gpt-5.5"}
+    )
+    def test_repeated_names_register_once(self):
+        self.assertEqual(
+            [m.internal_name for m in RemoteAzureOpenAI.models()], ["gpt-5.5"]
+        )
+
+    def test_normalize_endpoint_accepts_v1_and_chat_forms(self):
+        """A ``…/anthropic/v1`` base (the analogue of the README's
+        ``/openai/v1``) used to get ``/anthropic`` appended, doubling the path
+        so every call 404ed."""
+        norm = RemoteAzureClaude._normalize_endpoint
+        base = "https://res.services.ai.azure.com/anthropic"
+        for form in (
+            base + "/v1",
+            base + "/v1/",
+            base + "/chat/completions",
+            base + "/V1/messages",
+        ):
+            self.assertEqual(norm(form), base, form)
+        # Casing is the operator's; only the recognition is case-insensitive.
+        upper = "https://res.services.ai.azure.com/ANTHROPIC"
+        self.assertEqual(norm(upper), upper)

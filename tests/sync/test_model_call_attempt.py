@@ -315,12 +315,13 @@ class MakeAppealsPersistsAttemptsTest(TestCase):
         self.assertTrue(peek_rows, [r.outcome for r in rows])
         self.assertEqual(peek_rows[0].response_text, "no.")
         self.assertEqual(peek_rows[0].model_name, "runty")
-        # Every stage of the ladder is represented, so it can be replayed: the
-        # same model is retried at backup and at both shed tiers when nothing
-        # deliverable comes back.
+        # Every stage that ran is represented, so it can be replayed: the
+        # backup stage runs only backends primary did not, which for this
+        # opt-out denial is none, so the ladder goes from primary straight to
+        # both shed tiers.
         self.assertEqual(
             {r.stage for r in peek_rows},
-            {"primary", "backup", "retry_tier_1", "retry_tier_2"},
+            {"primary", "retry_tier_1", "retry_tier_2"},
         )
         # And the drained generators record the call-level view, with timing.
         runt_rows = [r for r in rows if r.outcome == "runt_only"]

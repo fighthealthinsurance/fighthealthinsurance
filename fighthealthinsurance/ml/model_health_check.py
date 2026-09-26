@@ -78,18 +78,49 @@ HEALTH_CHECK_SYSTEM_PROMPT = (
     "You are part of an automated health check. Reply with exactly: OK"
 )
 
-# What counts as the model acknowledging the probe: the standalone word "OK"
-# (case-insensitive; "OK", "ok.", "Reply: OK") or a reply beginning with
-# "okay". Deliberately looser than an exact match — instruct models decorate
-# ("OK!") — but strict enough that an HTML error page, a refusal, or garbled
-# output is flagged as FAIL_MALFORMED_RESPONSE instead of passing.
-_OK_RESPONSE_RE = re.compile(r"(?i)(\bok\b|^\s*okay\b)")
+# What counts as the model acknowledging the probe: a SHORT reply that
+# contains the word "OK" or "okay" and nothing that contradicts it. Instruct
+# models decorate ("OK!", "Sure — OK", "Reply: OK"), so an exact match is too
+# strict; but the previous rule, any reply containing the word anywhere,
+# passed "not ok", "HTTP 200 OK" and "I am unable to reply with only OK as
+# instructed", so a backend that could not follow the instruction was
+# persisted as PASS.
+_OK_WORD_TOKENS = frozenset({"ok", "okay"})
+_OK_NEGATION_TOKENS = frozenset(
+    {
+        "not",
+        "no",
+        "cannot",
+        "can't",
+        "cant",
+        "unable",
+        "won't",
+        "wont",
+        "don't",
+        "dont",
+        "never",
+        "sorry",
+        "refuse",
+        "isn't",
+        "isnt",
+    }
+)
+_MAX_OK_REPLY_WORDS = 4
+_WORD_RE = re.compile(r"[A-Za-z0-9']+")
 
 
 def _looks_like_ok(text: str) -> bool:
     """Whether a probe reply plausibly acknowledges the 'Reply with exactly:
-    OK' instruction (see ``_OK_RESPONSE_RE``)."""
-    return bool(_OK_RESPONSE_RE.search(text))
+    OK' instruction: at most a few words, one of them OK/okay, none a
+    negation, none a bare number (a status line such as "200 OK")."""
+    words = [w.lower() for w in _WORD_RE.findall(text or "")]
+    if not words or len(words) > _MAX_OK_REPLY_WORDS:
+        return False
+    if not any(w in _OK_WORD_TOKENS for w in words):
+        return False
+    if any(w in _OK_NEGATION_TOKENS for w in words):
+        return False
+    return not any(w.isdigit() for w in words)
 
 
 # --- Result categories ------------------------------------------------------
@@ -214,6 +245,9 @@ class BackendCheckResult:
     latency_ms: Optional[int] = None
     ui_registered: bool = False
     reporting_registered: bool = False
+    # Reserved for building context (citations); never a generation candidate,
+    # so it can never produce a stored draft or a chooser candidate.
+    context_only: bool = False
     started_at: Optional[datetime] = None
     # Not persisted. The staff status page reads the model's routing traits
     # from these: the instance the router registered, or, when there is none,
@@ -239,6 +273,10 @@ class HealthCheckRunSummary:
     environment: str
     results: List[BackendCheckResult] = field(default_factory=list)
     ran_checks: bool = True  # False when a non-leader skipped the run
+    # True when ran_checks is False because the check itself raised, as
+    # opposed to a lost leader claim: the deploy hook fails a strict deploy
+    # on the former and exits quietly on the latter.
+    crashed: bool = False
     email_sent: bool = False
     persisted: bool = False
 
@@ -265,7 +303,9 @@ def deployment_id() -> str:
     """
     for var in ("FHI_DEPLOYMENT_ID", "FHI_RELEASE", "FHI_VERSION"):
         value = os.getenv(var)
-        if value and value.strip():
+        # The image's build arg defaults FHI_RELEASE to "unknown"; treating
+        # that as an identifier made every such deploy share one leader slot.
+        if value and value.strip() and value.strip().lower() != "unknown":
             return value.strip()
     return _UNVERSIONED_PREFIX + datetime.now(dt_timezone.utc).strftime("%Y%m%d%H")
 
@@ -284,6 +324,20 @@ def environment_name() -> str:
     return os.getenv("DJANGO_CONFIGURATION") or os.getenv("ENVIRONMENT") or "unknown"
 
 
+_TRUTHY_FLAGS = frozenset({"1", "true", "yes", "on"})
+_FALSY_FLAGS = frozenset({"0", "false", "no", "off"})
+
+
+def _env_flag(name: str) -> Optional[bool]:
+    """True/False for a recognised boolean spelling of ``name``, else None."""
+    value = os.getenv(name, "").strip().lower()
+    if value in _TRUTHY_FLAGS:
+        return True
+    if value in _FALSY_FLAGS:
+        return False
+    return None
+
+
 def strict_mode_enabled() -> bool:
     """Whether a failed backend should fail the deployment (default: no)."""
     return os.getenv("FHI_MODEL_HEALTH_STRICT", "0").strip().lower() in (
@@ -296,16 +350,16 @@ def strict_mode_enabled() -> bool:
 def alert_emails_enabled() -> bool:
     """Whether the consolidated failure alert email may be sent.
 
-    ``FHI_MODEL_HEALTH_ALERT_EMAIL=1`` forces on (even in dev/test),
-    ``FHI_MODEL_HEALTH_ALERT_EMAIL=0`` forces off. Otherwise alerts are
+    ``FHI_MODEL_HEALTH_ALERT_EMAIL=1`` (or true/yes/on) forces on (even in
+    dev/test), ``FHI_MODEL_HEALTH_ALERT_EMAIL=0`` (or false/no/off) forces
+    off; the strict-mode switch already accepted those spellings, and a
+    "false" here used to be ignored and keep emailing. Otherwise alerts are
     disabled in test runs (``TESTING=True``) and DEBUG (local dev)
     environments, and enabled elsewhere (production).
     """
-    override = os.getenv("FHI_MODEL_HEALTH_ALERT_EMAIL", "").strip()
-    if override == "1":
-        return True
-    if override == "0":
-        return False
+    override = _env_flag("FHI_MODEL_HEALTH_ALERT_EMAIL")
+    if override is not None:
+        return override
     if os.getenv("TESTING") == "True":
         return False
     try:
@@ -352,31 +406,38 @@ def _registered_instance(
 
 def _registry_flags(
     desc: ModelDescription, instance: Optional[RemoteModelLike]
-) -> Tuple[bool, bool]:
-    """(ui_registered, reporting_registered) for a model description.
+) -> Tuple[bool, bool, bool]:
+    """(ui_registered, reporting_registered, context_only) for a description.
 
-    * ``ui_registered``: the registered instance is in one of the pools the
-      router offers for generation/context work — i.e. it can actually be
-      selected and can therefore show up in the chooser / selection UI.
+    * ``ui_registered``: the registered instance is in the pool the router
+      draws from for its kind of work: the generation pools for a generation
+      model (what the chooser and the appeal flows select from), the
+      context-only pool for a context-only one (citations). The two used to
+      be lumped together, so a citations-only backend read as "in selection
+      UI: yes" although nothing can ever select it.
     * ``reporting_registered``: the friendly name is present in
       ``models_by_name`` — the name-stamping registry that usage reporting
       (ProposedAppeal.model_name / ChooserCandidate.model_name) records.
+    * ``context_only``: the instance's own flag, so the status page can say
+      "context only" instead of "none recorded" for its generations.
     """
     try:
         router = _router()
         reporting = bool(router.models_by_name.get(desc.name))
         ui = False
+        context_only = False
         if instance is not None:
-            pool_ids = {
-                id(m)
-                for m in list(router.all_models_by_cost)
-                + list(router.context_only_models_by_cost)
-            }
-            ui = id(instance) in pool_ids
-        return ui, reporting
+            context_only = bool(getattr(instance, "context_only", False))
+            pool = (
+                router.context_only_models_by_cost
+                if context_only
+                else router.all_models_by_cost
+            )
+            ui = id(instance) in {id(m) for m in pool}
+        return ui, reporting, context_only
     except Exception:
         logger.opt(exception=True).warning("Could not compute registry flags")
-        return False, False
+        return False, False, False
 
 
 def enumerate_backend_checks(
@@ -411,7 +472,26 @@ def enumerate_backend_checks(
             logger.opt(exception=True).warning(
                 f"model_catalog() failed for {backend_cls.__name__}: {e}"
             )
-            catalog = []
+            # A provider whose catalog cannot even be listed vanished from
+            # the report (and from the router) without a row; give it one so
+            # the failure is visible where the others are.
+            try:
+                provider = backend_cls.provider_label()
+            except Exception:
+                provider = backend_cls.__name__
+            # No backend_cls: with no catalog entry there is no model for the
+            # status page to read traits off, and a stand-in of a class whose
+            # catalog raises could raise there too.
+            static_results.append(
+                BackendCheckResult(
+                    provider=provider,
+                    model_name=backend_cls.__name__,
+                    internal_name="",
+                    category=CATEGORY_CLIENT_INIT,
+                    error=sanitize_error(f"model_catalog() failed: {e}"),
+                )
+            )
+            continue
         if not catalog:
             continue  # abstract/intermediate class or nothing to expose
 
@@ -449,8 +529,8 @@ def enumerate_backend_checks(
 
             instance = _registered_instance(backend_cls, desc)
             base.router_instance = instance
-            base.ui_registered, base.reporting_registered = _registry_flags(
-                desc, instance
+            base.ui_registered, base.reporting_registered, base.context_only = (
+                _registry_flags(desc, instance)
             )
 
             # The ENABLED_REMOTE_MODELS allow-list only gates remote
@@ -541,7 +621,18 @@ def _categorize_http_error(e: aiohttp.ClientResponseError) -> Tuple[str, str]:
     if e.status in (401, 403):
         return CATEGORY_AUTH, detail
     if e.status == 404:
-        return CATEGORY_MODEL_NOT_FOUND, detail
+        # A 404 whose body names the model or deployment is a missing model.
+        # One that does not (vLLM's {"detail": "Not Found"}, Azure's bare
+        # "Resource not found") is a wrong base URL: filing it as a missing
+        # model sent the operator to the deployment name instead of the
+        # endpoint path. No body at all stays a missing model, the common
+        # case for a bare 404 from a model-serving endpoint.
+        if not body or _error_text_indicates_missing_model(body):
+            return CATEGORY_MODEL_NOT_FOUND, detail
+        return (
+            CATEGORY_OTHER,
+            f"{detail} (404 without a model error: check the endpoint path)",
+        )
     if e.status in (429, 402):
         return CATEGORY_RATE_LIMITED, detail
     if e.status == 400 and _error_text_indicates_missing_model(body):
@@ -875,6 +966,7 @@ def run_health_check(
     except Exception:
         logger.opt(exception=True).error("Model-backend health check failed to run")
         summary.ran_checks = False
+        summary.crashed = True
         return summary
 
     block = format_summary_block(summary)

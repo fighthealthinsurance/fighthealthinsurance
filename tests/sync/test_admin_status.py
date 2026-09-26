@@ -856,6 +856,20 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(status["level"], "not_scoring")
         self.assertEqual(status["unscored"], 1)
 
+    def test_a_chosen_copy_is_not_an_eligible_draft(self):
+        """Picking a draft inserts an unscored chosen=True copy stamped with
+        the pick time. It read as an eligible draft the scorer had missed and
+        flipped the badge to NOT SCORING while scoring worked."""
+        denial = self._denial()
+        self._draft(denial, scored=True)
+        copy = self._draft(denial, minutes_ago=1)
+        ProposedAppeal.objects.filter(pk=copy.pk).update(chosen=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "scoring")
+        self.assertEqual(status["unscored"], 0)
+        self.assertEqual(status["stalled"], 0)
+
     def test_drafts_that_were_never_eligible_do_not_count_as_unscored(self):
         """Still in flight (younger than the drain window), speculative, or
         from a denial that did not allow external models."""

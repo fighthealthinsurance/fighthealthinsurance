@@ -2,9 +2,11 @@
 
 import datetime
 import json
+from zoneinfo import ZoneInfo
 
+from dateutil.relativedelta import relativedelta
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -20,9 +22,12 @@ from fighthealthinsurance.models import (
     Denial,
     ProposedAppeal,
 )
+from fighthealthinsurance.ml import letter_quality
 from fighthealthinsurance.staff_views import (
+    MODEL_USAGE_VIEWS,
     UNKNOWN_MODEL_LABEL,
     ModelUsageDashboardView,
+    _calendar_windows,
     _merge_stats,
 )
 
@@ -840,3 +845,244 @@ class DraftQualityColumnsTest(TestCase):
         rows = _merge_stats({"a": 1}, {"a": 2})
         self.assertIsNone(rows[0]["quality_avg"])
         self.assertEqual(rows[0]["quality_scored"], 0)
+
+
+def _utc(*args):
+    return datetime.datetime(*args, tzinfo=datetime.timezone.utc)
+
+
+class CalendarWindowsTest(SimpleTestCase):
+    """The period arithmetic behind the monthly and quarterly views."""
+
+    NOW = _utc(2026, 2, 10, 12)
+
+    def test_months_run_newest_first_across_a_year_boundary(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2025, 11, 3), 12)
+        self.assertEqual(
+            [w[0] for w in windows],
+            ["m-2026-02", "m-2026-01", "m-2025-12", "m-2025-11"],
+        )
+
+    def test_the_current_month_is_labelled_to_date(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2025, 11, 3), 12)
+        self.assertEqual(
+            [w[1] for w in windows[:2]], ["February 2026 (to date)", "January 2026"]
+        )
+
+    def test_a_month_runs_from_its_first_midnight_to_the_next(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2025, 11, 3), 12)
+        december = {w[0]: w for w in windows}["m-2025-12"]
+        self.assertEqual(december[2:], (_utc(2025, 12, 1), _utc(2026, 1, 1)))
+
+    def test_quarters_run_newest_first_across_a_year_boundary(self):
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(
+            [w[0] for w in windows],
+            ["q-2026-1", "q-2025-4", "q-2025-3", "q-2025-2"],
+        )
+
+    def test_quarter_labels_name_their_months(self):
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(
+            [w[1] for w in windows[:2]],
+            ["2026 Q1 (Jan\u2013Mar, to date)", "2025 Q4 (Oct\u2013Dec)"],
+        )
+
+    def test_a_quarter_runs_from_its_first_midnight_to_the_next(self):
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(windows[1][2:], (_utc(2025, 10, 1), _utc(2026, 1, 1)))
+
+    def test_the_view_is_capped_at_max_periods(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2020, 1, 1), 12)
+        self.assertEqual(len(windows), 12)
+
+    def test_with_nothing_stored_only_the_current_period_is_listed(self):
+        windows = _calendar_windows("quarterly", self.NOW, None, 8)
+        self.assertEqual([w[0] for w in windows], ["q-2026-1"])
+
+    def test_a_future_earliest_still_lists_the_current_period(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2026, 5, 1), 12)
+        self.assertEqual([w[0] for w in windows], ["m-2026-02"])
+
+    def test_boundaries_follow_the_current_timezone(self):
+        """Late on the last day of February in New York it is already March
+        in UTC; the view must still call it February, starting and ending at
+        New York midnights."""
+        with timezone.override(ZoneInfo("America/New_York")):
+            windows = _calendar_windows(
+                "monthly", _utc(2026, 3, 1, 3), _utc(2026, 2, 5), 12
+            )
+        self.assertEqual(
+            windows[0], windows[0][:2] + (_utc(2026, 2, 1, 5), _utc(2026, 3, 1, 5))
+        )
+        self.assertEqual(windows[0][0], "m-2026-02")
+
+
+class UsageStatsUpperBoundTest(ChooserStatsHelperMixin, TestCase):
+    """A calendar period closes at ``until``: a pick or vote at that instant
+    belongs to the next period, one just before it to this one."""
+
+    SINCE = _utc(2026, 8, 1)
+    UNTIL = _utc(2026, 9, 1)
+    JUST_BEFORE_UNTIL = UNTIL - datetime.timedelta(seconds=1)
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def _vote_at(self, model_name, when, session):
+        task = self._make_task()
+        cand = self._make_candidate(task, 0, model_name)
+        vote = self._vote(task, cand, [cand], session=session)
+        ChooserVote.objects.filter(pk=vote.pk).update(created_at=when)
+
+    def _pick_at(self, model_name, when):
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text=f"pick-{model_name}",
+            chosen=True,
+            model_name=model_name,
+            context_level="full",
+        )
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=when)
+
+    def test_chooser_votes_are_bounded_on_both_sides(self):
+        self._vote_at("before", self.SINCE - datetime.timedelta(seconds=1), "s1")
+        self._vote_at("first-instant", self.SINCE, "s2")
+        self._vote_at("last-instant", self.JUST_BEFORE_UNTIL, "s3")
+        self._vote_at("next-period", self.UNTIL, "s4")
+        rows = ModelUsageDashboardView._chooser_stats(
+            "appeal_letter", self.SINCE, self.UNTIL
+        )
+        self.assertEqual(
+            {r["model_name"] for r in rows}, {"first-instant", "last-instant"}
+        )
+
+    def test_denial_flow_picks_stop_at_the_period_end(self):
+        self._pick_at("in-period", self.JUST_BEFORE_UNTIL)
+        self._pick_at("next-period", self.UNTIL)
+        rows = ModelUsageDashboardView._proposed_appeal_stats(self.SINCE, self.UNTIL)
+        self.assertEqual({r["model_name"] for r in rows}, {"in-period"})
+
+    def test_context_levels_stop_at_the_period_end(self):
+        self._pick_at("in-period", self.JUST_BEFORE_UNTIL)
+        self._pick_at("next-period", self.UNTIL)
+        rows = ModelUsageDashboardView._context_level_stats(self.SINCE, self.UNTIL)
+        self.assertEqual(sum(r["chosen"] for r in rows), 1)
+
+    def test_draft_quality_stops_at_the_period_end(self):
+        for name, when in (
+            ("in-period", self.JUST_BEFORE_UNTIL),
+            ("next-period", self.UNTIL),
+        ):
+            draft = ProposedAppeal.objects.create(
+                for_denial=self.denial, appeal_text=f"draft-{name}", model_name=name
+            )
+            ProposedAppeal.objects.filter(pk=draft.pk).update(
+                created_at=when,
+                quality_score=0.5,
+                grounding_score=2.0,
+                quality_scorer=letter_quality.SCORER,
+                quality_scored_at=when,
+            )
+        stats = ModelUsageDashboardView._draft_quality_stats(self.SINCE, self.UNTIL)
+        self.assertEqual(set(stats), {"in-period"})
+
+
+class ModelUsageDashboardCalendarViewTest(ChooserStatsHelperMixin, TestCase):
+    """The View dropdown: rolling windows by default, or calendar months or
+    quarters."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _vote_at(self, model_name, when, session):
+        task = self._make_task()
+        cand = self._make_candidate(task, 0, model_name)
+        vote = self._vote(task, cand, [cand], session=session)
+        ChooserVote.objects.filter(pk=vote.pk).update(created_at=when)
+
+    def _get(self, view):
+        return self.client.get(reverse("model_usage_dashboard"), {"view": view})
+
+    @staticmethod
+    def _sections(response):
+        return [
+            (w["slug"], {r["model_name"] for r in w["chooser_appeal"]})
+            for w in response.context["windows"]
+        ]
+
+    def test_the_dropdown_offers_every_view(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        for value, label in MODEL_USAGE_VIEWS:
+            self.assertContains(response, f'<option value="{value}"')
+
+    def test_the_dropdown_marks_the_selected_view(self):
+        response = self._get("quarterly")
+        self.assertContains(response, '<option value="quarterly" selected>')
+
+    def test_an_unknown_view_falls_back_to_the_rolling_windows(self):
+        response = self._get("weekly")
+        self.assertEqual(
+            [w["slug"] for w in response.context["windows"]],
+            ["global", "1d", "7d", "30d"],
+        )
+
+    def test_the_monthly_view_puts_each_vote_in_its_calendar_month(self):
+        this_month = timezone.localtime().replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        last_month = this_month - relativedelta(months=1)
+        self._vote_at("this-month", timezone.now(), "s1")
+        self._vote_at("last-month", last_month + datetime.timedelta(days=1), "s2")
+
+        response = self._get("monthly")
+
+        self.assertEqual(
+            self._sections(response),
+            [
+                (f"m-{this_month:%Y-%m}", {"this-month"}),
+                (f"m-{last_month:%Y-%m}", {"last-month"}),
+            ],
+        )
+
+    def test_the_quarterly_view_puts_each_vote_in_its_calendar_quarter(self):
+        now = timezone.localtime()
+        this_quarter = now.replace(
+            month=(now.month - 1) // 3 * 3 + 1,
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        last_quarter = this_quarter - relativedelta(months=3)
+        self._vote_at("this-quarter", timezone.now(), "s1")
+        self._vote_at("last-quarter", last_quarter + datetime.timedelta(days=1), "s2")
+
+        response = self._get("quarterly")
+
+        def slug(start):
+            return f"q-{start.year}-{(start.month - 1) // 3 + 1}"
+
+        self.assertEqual(
+            self._sections(response),
+            [
+                (slug(this_quarter), {"this-quarter"}),
+                (slug(last_quarter), {"last-quarter"}),
+            ],
+        )
+
+    def test_the_current_period_is_labelled_to_date(self):
+        response = self._get("monthly")
+        self.assertTrue(response.context["windows"][0]["label"].endswith("(to date)"))
+
+    def test_the_note_describes_the_calendar_view(self):
+        response = self._get("quarterly")
+        self.assertContains(response, "Periods are calendar")
