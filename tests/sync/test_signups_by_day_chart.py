@@ -53,6 +53,25 @@ class SignupsPerDayQueryTest(TestCase):
         }
         self.assertEqual(by_day, {(monday, False): 1, (wednesday, True): 1})
 
+    def test_a_professional_who_later_clicks_paid_counts_as_paid(self):
+        """Unpaid Monday, paid Wednesday: one professional, on Monday, Paid.
+        Taking the first row's flag hid every conversion (review)."""
+        monday = timezone.now().date() - timedelta(days=2)
+        wednesday = timezone.now().date()
+        for day, paid in ((monday, False), (wednesday, True)):
+            row = InterestedProfessional.objects.create(
+                email="converts@example.com", clicked_for_paid=paid
+            )
+            InterestedProfessional.objects.filter(pk=row.pk).update(signup_date=day)
+
+        df = _unique_signups_per_day_df()
+
+        by_day = {
+            (row.signup_date, row.clicked_for_paid): row.count
+            for row in df.itertuples()
+        }
+        self.assertEqual(by_day, {(monday, True): 1})
+
     def test_no_signups_yields_an_empty_frame_rather_than_raising(self):
         self.assertTrue(_unique_signups_per_day_df().empty)
 

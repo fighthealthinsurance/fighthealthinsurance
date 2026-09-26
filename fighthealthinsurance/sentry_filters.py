@@ -53,8 +53,12 @@ GRPC_CHANNEL_WATCHER_MARKER = "Cannot monitor channel state"
 # what asyncio's Runner attempts while unwinding a SIGTERM -- the event
 # carries a chained SystemExit: 15. A pod being told to stop (deploy,
 # scale-down, node drain) is routine, and this artifact of the shutdown path
-# says nothing about why it stopped. A crash that is NOT an orderly shutdown
-# surfaces as its own exception before the loop is ever torn down.
+# says nothing about why it stopped.
+#
+# Dropped ONLY beside a SystemExit in the same event. On its own the message
+# means code called close() on a running loop, which is a bug, and a real
+# crash that chains into it during teardown would take its root cause down
+# with it (review).
 EVENT_LOOP_SHUTDOWN_MARKER = "Cannot close a running event loop"
 
 # Channels raises this for a websocket path that matches no route. It escapes
@@ -155,7 +159,9 @@ def before_send_filter(event: Any, hint: Any) -> Any:
             logger.warning(f"{description} (filtered from Sentry)")
             return None
 
-    for exc in exception_values(event):
+    values = exception_values(event)
+    shutting_down = any(exc.get("type") == "SystemExit" for exc in values)
+    for exc in values:
         exc_value = as_text(exc.get("value"))
         if "Logstream proxy failed to connect" in exc_value:
             logger.warning(
@@ -174,7 +180,8 @@ def before_send_filter(event: Any, hint: Any) -> Any:
             )
             return None
         if (
-            exc.get("type") == "RuntimeError"
+            shutting_down
+            and exc.get("type") == "RuntimeError"
             and EVENT_LOOP_SHUTDOWN_MARKER in exc_value
         ):
             logger.debug("Event loop shutdown artifact (filtered from Sentry)")

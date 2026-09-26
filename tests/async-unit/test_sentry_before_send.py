@@ -80,9 +80,25 @@ class TestInfrastructureTeardownNoiseIsDropped:
         )
         assert before_send_filter(event, {}) is None
 
-    def test_event_loop_shutdown_artifact_is_dropped(self):
+    def test_the_loop_message_alone_is_kept(self):
+        """Without a SystemExit it means code closed a running loop -- a bug,
+        and possibly the tail of a crash whose root cause rides along."""
         event = _exc_event("RuntimeError", "Cannot close a running event loop")
-        assert before_send_filter(event, {}) is None
+        assert before_send_filter(event, {}) is event
+
+    def test_a_crash_that_chains_into_the_loop_message_is_kept(self):
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "KeyError", "value": "'denial_id'"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
 
     def test_the_shutdown_artifact_is_found_beside_its_chained_systemexit(self):
         event = {

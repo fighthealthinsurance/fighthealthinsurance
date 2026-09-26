@@ -6,7 +6,8 @@ from django.http import HttpResponse, HttpResponseForbidden, StreamingHttpRespon
 from django.shortcuts import render
 from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Exists, IntegerField, Max, Min, OuterRef, Q
+from django.db.models.functions import Cast
 from django.db.utils import NotSupportedError
 from django.utils import timezone
 from datetime import timedelta
@@ -776,39 +777,47 @@ def pro_signups_csv_single_lines(request):
 
 
 def _unique_signups_per_day_df() -> "pd.DataFrame":
-    """One row per (signup day, paid status) with the count of professionals
-    whose FIRST signup landed there.
+    """One row per (signup day, paid) with the count of professionals whose
+    FIRST signup landed on that day.
 
     "Unique" means one per email across the whole table, which is what the
     cumulative chart claims to show: InterestedProfessional.email is not
     unique, so someone who submits the interest form on Monday and again on
     Wednesday has two rows and must count once, on Monday.
 
-    Done in Python, as the provider-type charts already do for SQLite. The
-    SQL shape this used to try -- ``.distinct("email")`` then
-    ``.annotate()`` -- cannot work on either backend: SQLite raises
-    ``NotSupportedError`` for ``distinct(*fields)``, and Postgres, which
-    supports it, raises ``NotImplementedError("annotate() + distinct(fields)
-    is not implemented.")`` from the SQL compiler. The fallback only caught
-    the first, so the staff charts 500'd on every load in production
-    (PYTHON-DJANGO-00-J1). And a per-day ``Count(distinct=True)`` would
-    quietly count that Monday/Wednesday professional twice (review).
+    Paid means paid on ANY of their signups. Taking the first row's flag
+    instead made a conversion invisible: unpaid on Monday, paid on
+    Wednesday, counted Unpaid forever (review).
+
+    Aggregated in the database -- one row back per professional, not per
+    signup (review). The SQL shape this used to try, ``.distinct("email")``
+    then ``.annotate()``, cannot work on either backend: SQLite raises
+    ``NotSupportedError`` for ``distinct(*fields)``, and Postgres raises
+    ``NotImplementedError("annotate() + distinct(fields) is not
+    implemented.")`` from the SQL compiler. The fallback only caught the
+    first, so the staff charts 500'd on every load in production
+    (PYTHON-DJANGO-00-J1).
     """
-    rows = (
+    per_professional = (
         _interested_professionals_excluding_test_emails()
-        .order_by("email", "signup_date", "pk")
-        .values("email", "signup_date", "clicked_for_paid")
+        # Cleared so no default ordering widens the GROUP BY past email.
+        .order_by()
+        .values("email")
+        .annotate(
+            # Not "signup_date": an annotation may not shadow a model field.
+            first_signup=Min("signup_date"),
+            # Max over the flag as an integer: Postgres has no max(boolean).
+            ever_paid=Max(Cast("clicked_for_paid", IntegerField())),
+        )
+        .values("first_signup", "ever_paid")
     )
-    first_row_per_email: dict = {}
-    for row in rows:
-        first_row_per_email.setdefault(row["email"], row)
-    if not first_row_per_email:
-        return pd.DataFrame()
+    df = pd.DataFrame(list(per_professional))
+    if df.empty:
+        return df
+    df["signup_date"] = df["first_signup"]
+    df["clicked_for_paid"] = df["ever_paid"].astype(bool)
     return (
-        pd.DataFrame(first_row_per_email.values())
-        .groupby(["signup_date", "clicked_for_paid"])
-        .size()
-        .reset_index(name="count")
+        df.groupby(["signup_date", "clicked_for_paid"]).size().reset_index(name="count")
     )
 
 
