@@ -28,9 +28,13 @@ from fighthealthinsurance.chat.message_preprocessor import (
     DIRECT_CHAT_SOFT_LIMIT_CHARS,
     LONG_DOC_REFERENCE_DELTA,
     MessageVariant,
+    build_long_paste_marker,
     has_suspicious_unicode,
+    is_long_paste,
+    paste_document_name,
     prepare_user_message_variants,
     safe_display_truncate,
+    sanitize_document_name,
     strip_control_chars,
 )
 
@@ -229,6 +233,87 @@ class UnicodeHelperTest(SimpleTestCase):
     def test_strip_control_chars_keeps_tabs_and_newlines(self):
         self.assertEqual(strip_control_chars("a\tb\nc"), "a\tb\nc")
         self.assertEqual(strip_control_chars("a" + ZERO_WIDTH_SPACE + "b"), "ab")
+
+
+class DocumentNameTest(SimpleTestCase):
+    """Client-supplied document names are normalized before they are baked
+    into single-line chat text (the marker in history, status lines, the
+    stored-content acknowledgment)."""
+
+    def test_sanitize_document_name_collapses_newline_runs(self):
+        self.assertEqual(
+            sanitize_document_name("denial\nletter\r\n final.pdf"),
+            "denial letter final.pdf",
+        )
+
+    def test_sanitize_document_name_trims_surrounding_whitespace(self):
+        self.assertEqual(sanitize_document_name("  plain.txt  "), "plain.txt")
+
+    def test_sanitize_document_name_of_none_is_empty(self):
+        self.assertEqual(sanitize_document_name(None), "")
+
+    def test_sanitize_document_name_of_whitespace_only_is_empty(self):
+        self.assertEqual(sanitize_document_name("\n \t"), "")
+
+    def test_sanitize_document_name_stringifies_non_string_json(self):
+        # document_name is raw client JSON; a number must not fail the turn.
+        self.assertEqual(sanitize_document_name(123), "123")
+
+    def test_paste_document_name_uses_sanitized_client_name(self):
+        self.assertEqual(paste_document_name("my\nletter.txt"), "my letter.txt")
+
+    def test_paste_document_name_defaults_when_client_sends_none(self):
+        self.assertRegex(paste_document_name(None), r"^pasted_message_\d+\.txt$")
+
+    LONG_PASTE = "Denied as not medically necessary. " * 600
+
+    def _long_paste_reference_variant(self, document_name):
+        variants = prepare_user_message_variants(
+            self.LONG_PASTE, is_document=False, document_name=document_name
+        )
+        return next(
+            v for v in variants if v.kind == "long_message_document_reference"
+        )
+
+    def test_long_paste_variants_sanitize_provided_document_name(self):
+        ref = self._long_paste_reference_variant("weird\nname.txt")
+        self.assertEqual(ref.metadata.get("document_name"), "weird name.txt")
+
+    def test_long_paste_marker_is_single_line_despite_newline_in_name(self):
+        ref = self._long_paste_reference_variant("weird\nname.txt")
+        self.assertNotIn("\n", ref.display_text)
+
+    def test_long_paste_marker_is_built_by_the_shared_builder(self):
+        ref = self._long_paste_reference_variant("letter.txt")
+        self.assertEqual(
+            ref.display_text,
+            build_long_paste_marker(len(self.LONG_PASTE), "letter.txt"),
+        )
+
+
+class IsLongPasteTest(SimpleTestCase):
+    """is_long_paste is the one rule the chat turn and the preprocessor share
+    for "store it and send a marker instead"."""
+
+    def test_message_over_soft_limit_is_long_paste(self):
+        msg = "a" * (DIRECT_CHAT_SOFT_LIMIT_CHARS + 1)
+        self.assertTrue(is_long_paste(msg, is_document=False))
+
+    def test_message_at_soft_limit_is_not_long_paste(self):
+        msg = "a" * DIRECT_CHAT_SOFT_LIMIT_CHARS
+        self.assertFalse(is_long_paste(msg, is_document=False))
+
+    def test_explicit_upload_is_never_long_paste(self):
+        msg = "a" * (DIRECT_CHAT_SOFT_LIMIT_CHARS + 1)
+        self.assertFalse(is_long_paste(msg, is_document=True))
+
+    def test_none_is_not_long_paste(self):
+        self.assertFalse(is_long_paste(None, is_document=False))
+
+    def test_agrees_with_variant_building(self):
+        msg = "a" * (DIRECT_CHAT_SOFT_LIMIT_CHARS + 1)
+        variants = prepare_user_message_variants(msg, is_document=False)
+        self.assertTrue(any(v.metadata.get("store_full_text") for v in variants))
 
 
 class VariantScoringTest(SimpleTestCase):

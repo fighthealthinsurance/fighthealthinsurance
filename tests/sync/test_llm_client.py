@@ -24,6 +24,7 @@ from fighthealthinsurance.chat.llm_client import (
     BAD_CONTEXT_PATTERNS,
     INVENTED_ELIGIBILITY_VERDICT_PENALTY,
 )
+from fighthealthinsurance.chat.message_preprocessor import build_long_paste_marker
 from tests.chat_fixtures import CANNED_MEDICAID_REPLY, FRESH_REPLY, LOOPED_REPLY
 
 
@@ -588,6 +589,43 @@ class TestFindRepeatedReply(TestCase):
                 "Now reformat it into three paragraphs",
             )
         )
+
+
+class TestStoredContentMarkerEchoes(TestCase):
+    """A long-paste turn scores candidates against the compact marker that
+    replaced the paste. The marker gets NO special treatment from the
+    anti-loop ladder: the echo rung only ever flags near-copies of it --
+    useless replies, which must stay rejectable -- while a substantive
+    acknowledgment is dissimilar enough never to be flagged at all. (An
+    exemption here once let reworded copies of the marker win the fan-out.)"""
+
+    MARKER = build_long_paste_marker(18949, "pasted_message_1787951051.txt")
+
+    def test_exact_marker_echo_is_rejected(self):
+        self.assertEqual(
+            find_repeated_reply(self.MARKER, [], self.MARKER),
+            "echoes_user_message",
+        )
+
+    def test_near_copy_of_marker_is_rejected(self):
+        reply = f"{self.MARKER} I'm reading it now."
+        self.assertEqual(
+            find_repeated_reply(reply, [], self.MARKER), "echoes_user_message"
+        )
+
+    def test_marker_echo_is_soft_penalized(self):
+        self.assertLess(
+            compute_repetition_penalty(self.MARKER, [], current_message=self.MARKER),
+            0.0,
+        )
+
+    def test_substantive_acknowledgment_is_not_flagged(self):
+        reply = (
+            f"{self.MARKER} Looking at it, the insurer cites medical necessity "
+            f"and gives a 180-day appeal window, so let's start by gathering "
+            f"the ordering physician's clinical notes."
+        )
+        self.assertIsNone(find_repeated_reply(reply, [], self.MARKER))
 
 
 class TestTransformRequestSoftPenalty(TestCase):
