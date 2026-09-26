@@ -605,6 +605,33 @@ class MLRouter(object):
         """
         return self._filter_available(self.internal_models_by_cost, "prior-auth")[:3]
 
+    def _chat_lead_name(self) -> Optional[str]:
+        """The fhi registry name whose backends lead the chat fan-out.
+
+        The strongest fhi backend that follows instructions and looks
+        healthy, by quality. Equal quality goes to the name that sorts
+        first, so every pod picks the SAME lead whatever order the backends
+        registered in. Each step fails open like ``_filter_available``: with
+        no general-purpose fhi backend the appeal fine-tune can still lead,
+        and with every candidate marked down the strongest one still leads,
+        because a doubled slot on a long shot beats no fhi call at all.
+        None when no fhi backend is registered.
+        """
+        candidates = [
+            (name, m)
+            for name, backends in self.models_by_name.items()
+            if name.startswith("fhi-")
+            for m in backends
+        ]
+        general = [(n, m) for n, m in candidates if m.supports_general_instructions()]
+        candidates = general or candidates
+        healthy = [(n, m) for n, m in candidates if self._selectable(m)]
+        candidates = healthy or candidates
+        if not candidates:
+            return None
+        name, _model = min(candidates, key=lambda c: (-c[1].quality(), c[0]))
+        return name
+
     def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
         Return models for handling chat interactions.
@@ -620,46 +647,39 @@ class MLRouter(object):
             return forced_models
 
         models = []
-        # Try each fhi model twice. Sorted so every pod doubles the SAME
-        # fhi backend (dict insertion order used to vary with registration
-        # order). Narrow fine-tunes are excluded first, so a deployment where
-        # the appeal-only backend sorts first doesn't double IT for chat.
-        fhi_names = sorted(
-            name for name in self.models_by_name if name.startswith("fhi-")
-        )
-        general_fhi_names = [
-            name
-            for name in fhi_names
-            if any(m.supports_general_instructions() for m in self.models_by_name[name])
-        ]
-        # Fail open like the other filters: a deployment whose only fhi
-        # backend is the appeal fine-tune should still get its doubled chat
-        # slot rather than silently losing it.
-        chosen_fhi_names = general_fhi_names or fhi_names
-        if chosen_fhi_names:
+        # The lead fhi backend is asked twice, for redundancy against a slow
+        # pod. It is picked by quality (see _chat_lead_name), so the doubled
+        # slot goes to our strongest model rather than whichever name sorts
+        # first.
+        lead: list[RemoteModelLike] = []
+        lead_name = self._chat_lead_name()
+        if lead_name is not None:
             # Filtered again per INSTANCE, not just per name: a name can hold
             # a mix of backends, and _general_purpose_only logs (and fails
             # open) if they are all narrow.
-            models += (
-                self._general_purpose_only(
-                    self._filter_available(
-                        self.models_by_name[chosen_fhi_names[0]], "chat-fhi"
-                    ),
-                    "chat-fhi",
-                )
-                * 2
+            lead = self._general_purpose_only(
+                self._filter_available(self.models_by_name[lead_name], "chat-fhi"),
+                "chat-fhi",
             )
+            models += lead * 2
         if use_external:
             models += self.best_external_models()
         # Strongest available internals, not cheapest: the cost ordering was
         # picking the 6 CHEAPEST internal backends for chat, which is the
         # wrong end of the list when strong and weak internals coexist. The
         # sort is stable over the cost ordering, so equal-quality models
-        # still resolve cheapest-first.
-        internal_available = self._general_purpose_only(
-            self._filter_available(self.internal_models_by_cost, "chat-internal"),
-            "chat-internal",
-        )
+        # still resolve cheapest-first. The lead already has its two calls,
+        # so it is left out here; filtering first and dropping it after keeps
+        # the fail-open behaviour judged over the whole internal pool.
+        lead_ids = {id(m) for m in lead}
+        internal_available = [
+            m
+            for m in self._general_purpose_only(
+                self._filter_available(self.internal_models_by_cost, "chat-internal"),
+                "chat-internal",
+            )
+            if id(m) not in lead_ids
+        ]
         internal_to_add = sorted(internal_available, key=lambda m: -m.quality())[:6]
         models += internal_to_add
         logger.debug(

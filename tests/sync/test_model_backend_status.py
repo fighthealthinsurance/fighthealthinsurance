@@ -328,7 +328,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         for label in (
             "Appeals: primary",
             "Appeals: best-internal hint",
-            "Chat: lead, 3 calls",
+            "Chat: lead, 2 calls",
             "Questions: fan-out",
             "Summaries: 1st",
         ):
@@ -338,13 +338,14 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             plan = self.plan(response, title)
             self.assertEqual(self.names(plan.internal_only)[:1], ["fhi-local"])
             self.assertEqual(self.names(plan.external_allowed)[:1], ["fhi-local"])
-        # The lead is listed twice up front and again among the internals,
-        # and the page says how many calls that makes.
+        # The lead is listed twice up front and not again among the
+        # internals, and the page says how many calls that makes.
         lead = self.plan(response, "Chat").internal_only[0]
-        self.assertEqual((lead.note, lead.calls), ("lead", 3))
-        self.assertContains(response, "lead, 3 calls")
-        self.assertContains(response, "so it usually gets three calls")
-        self.assertNotContains(response, "doubled lead gets two calls")
+        self.assertEqual((lead.note, lead.calls), ("lead", 2))
+        self.assertContains(response, "lead, 2 calls")
+        self.assertContains(response, "The lead is the strongest fhi model")
+        self.assertContains(response, "so it gets two calls")
+        self.assertNotContains(response, "three calls")
         legacy = self.row(response, "fhi-legacy")
         self.assertEqual(
             (legacy["quality"], legacy["kind"]), (101, "appeal-only fine-tune")
@@ -373,7 +374,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertEqual(set(rows), {"FHI Internal", "FHI Internal (alpha)"})
         picked = self.labels(rows["FHI Internal"])
         skipped = self.labels(rows["FHI Internal (alpha)"])
-        for label in ("Chat: lead, 3 calls", "Questions: fan-out", "Summaries: 1st"):
+        for label in ("Chat: lead, 2 calls", "Questions: fan-out", "Summaries: 1st"):
             self.assertIn(label, picked)
         self.assertFalse(
             [
@@ -485,7 +486,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         # External off: chat and questions use their normal internal lists.
         chat = self.plan(response, "Chat")
         self.assertEqual(self.names(chat.internal_only), ["fhi-local"])
-        self.assertEqual(chat.internal_only[0].calls, 3)
+        self.assertEqual(chat.internal_only[0].calls, 2)
         questions = self.plan(response, "Appeal questions")
         self.assertEqual(self.names(questions.internal_only), ["fhi-local"])
         # External on: only the forced model.
@@ -555,7 +556,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         # And routing really ran; it wasn't swallowed by the fallback.
         self.assertNotContains(response, "Routing unavailable")
         self.assertIn(
-            "Chat: lead, 3 calls", self.labels(self.row(response, "fhi-local"))
+            "Chat: lead, 2 calls", self.labels(self.row(response, "fhi-local"))
         )
 
     def test_routing_failure_degrades_to_a_note(self):
