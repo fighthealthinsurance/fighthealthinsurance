@@ -465,6 +465,28 @@ class MarkProposalChosenTest(TestCase):
         self.assertTrue(pa.editted)
         self.assertEqual(pa.model_name, "model-x")
 
+    def test_a_main_flow_re_pick_of_an_edited_copy_stays_an_edit(self):
+        # The page replayed the user's edited pick and they chose it again
+        # without touching the textarea: the letter is still their edit.
+        self._draft_from_model_x()
+        copy = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="the draft, edited",
+            chosen=True,
+            editted=True,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "the draft, edited", proposed_appeal_id=copy.id, editted=False
+        )
+        self.assertTrue(pa.editted)
+
+    def test_an_empty_on_screen_report_is_kept_as_a_report(self):
+        # "Nothing stored was on screen" is not "nobody said" (NULL), for
+        # which the dashboard falls back to every draft stored before.
+        pa = mark_proposal_chosen(self.denial, "an unsaved draft", presented_ids=[])
+        self.assertEqual(ProposedAppeal.objects.get(id=pa.id).presented_ids, [])
+
     def test_a_re_pick_of_an_edited_copy_stays_an_edit(self):
         # The replay serves chosen copies too, so a re-submit can echo the
         # copy's id; unchanged text keeps the copy's own answer rather than
@@ -539,12 +561,30 @@ class ChooseAppealCarriesTheBrowserFlagsTest(TestCase):
             "semi_sekret": "sekret",
             "appeal_text": "the letter",
         }
-        # Also a JSON number that parses to inf and nesting past the parser's
-        # depth: neither may 500 the pick.
-        for raw in ("not json", "{\"a\": 1}", "", "[]", "[1e999]", "[" * 100000):
+        # Also nesting past the parser's depth: it may not 500 the pick.
+        for raw in ("not json", "{\"a\": 1}", "", "[" * 100000):
             form = core_forms.ChooseAppealForm({**base, "presented_ids": raw})
             self.assertTrue(form.is_valid(), (raw, form.errors))
             self.assertIsNone(form.cleaned_data["presented_ids"], raw)
+
+    def test_a_list_of_junk_ids_is_an_empty_report_not_a_crash(self):
+        base = {
+            "denial_id": str(self.denial.denial_id),
+            "email": "user@example.com",
+            "semi_sekret": "sekret",
+            "appeal_text": "the letter",
+        }
+        # An unsaved card's "unknown", a JSON number that parses to inf, and
+        # an id past a 64-bit column (sqlite refuses it as a parameter).
+        for raw in (
+            "[]",
+            '["unknown"]',
+            "[1e999]",
+            "[100000000000000000000]",
+        ):
+            form = core_forms.ChooseAppealForm({**base, "presented_ids": raw})
+            self.assertTrue(form.is_valid(), (raw, form.errors))
+            self.assertEqual(form.cleaned_data["presented_ids"], [], raw)
 
     def test_helper_stamps_the_flags_on_the_chosen_row(self):
         ProposedAppeal.objects.create(

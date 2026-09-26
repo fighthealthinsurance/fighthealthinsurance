@@ -103,6 +103,7 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.generate_appeal import backend_label
 from fighthealthinsurance.ml.model_attempt_log import (
+    OUTCOME_REJECTED_AT_PEEK,
     ModelAttemptRecord,
     ModelAttemptRecorder,
 )
@@ -576,8 +577,9 @@ async def _record_synthesis_attempt(
     generation_id: Optional[str],
     model: Any,
     text: str,
-    started: float,
+    duration_seconds: float,
     started_wall: Any,
+    detail: str = "",
 ) -> None:
     """Persist which backend wrote a synthesized letter, as a ModelCallAttempt
     row at stage "synthesis". The ProposedAppeal row keeps the reserved
@@ -598,8 +600,9 @@ async def _record_synthesis_attempt(
                 backend=backend_label(model),
                 response_text=text,
                 response_chars=len(text),
-                duration_ms=int((time.monotonic() - started) * 1000),
+                duration_ms=int(duration_seconds * 1000),
                 started_at=started_wall,
+                error_detail=detail,
             )
         )
         await recorder.aflush()
@@ -911,15 +914,26 @@ def mark_proposal_chosen(
                 editted = True
             else:
                 editted = bool(original.editted) if original.chosen else False
+    elif not editted and original is not None and original.chosen and original.editted:
+        # A re-pick of an edited copy the page replayed: the textarea was left
+        # alone this time, but the letter is still the user's edit of the
+        # model's draft, not the draft.
+        editted = True
     shown: Optional[List[int]] = None
-    if presented_ids:
+    if presented_ids is not None:
         # In the order the browser reported (the page ranks its cards, so
         # the order says which sat on top), deduped, and only this denial's
-        # own rows.
-        own = set(
-            ProposedAppeal.objects.filter(
-                for_denial=denial, id__in=presented_ids
-            ).values_list("id", flat=True)
+        # own rows. An empty report is kept as one: "nothing stored was on
+        # screen" is not "nobody said" (NULL), for which the dashboard falls
+        # back to every draft stored before the pick.
+        own = (
+            set(
+                ProposedAppeal.objects.filter(
+                    for_denial=denial, id__in=presented_ids
+                ).values_list("id", flat=True)
+            )
+            if presented_ids
+            else set()
         )
         shown = list(dict.fromkeys(i for i in presented_ids if i in own))
     pa = ProposedAppeal(
@@ -930,7 +944,7 @@ def mark_proposal_chosen(
         model_name=model_name,
         synthesized=synthesized,
         context_level=context_level,
-        presented_ids=shown or None,
+        presented_ids=shown,
     )
     pa.save()
     return pa
@@ -944,23 +958,52 @@ def record_professional_pick(
     """Record the text a professional assembled as their pick, for the same
     model-usage reporting the consumer flow feeds through ChooseAppealHelper.
 
-    assemble_appeal is also how a professional regenerates the document, so
-    unchanged text is not a new pick: one chosen row per distinct text per
-    denial. Best-effort -- reporting must never cost the professional their
-    appeal document, so a failure here is logged and swallowed.
+    One pick per professional denial: assemble_appeal is also how a
+    professional regenerates the document after fixing a typo, so unchanged
+    text is not a new pick, and a changed one replaces the pick an earlier
+    assembly recorded rather than adding another -- a denial the professional
+    iterated on would otherwise outweigh one they got right first time. Only
+    the flow's own rows are replaced: picks that carry an on-screen report
+    came from the appeals page. Nothing is recorded when no draft was ever
+    stored for the denial: no model was on offer. Best-effort -- reporting
+    must never cost the professional their appeal document, so a failure
+    here is logged and swallowed.
     """
     try:
         if not appeal_text or not appeal_text.strip():
             return None
-        if ProposedAppeal.objects.filter(
-            for_denial=denial, chosen=True, appeal_text=appeal_text
+        if not ProposedAppeal.objects.filter(
+            for_denial=denial, chosen=False, speculative=False
         ).exists():
             return None
-        # completed_appeal_text is post-editing text and this flow has no
-        # textarea flag, so whether the pick was edited is read off the text.
-        return mark_proposal_chosen(
-            denial, appeal_text, proposed_appeal_id=proposed_appeal_id, editted=None
-        )
+        # Unchanged text is not a new pick, compared the way picks are
+        # matched to drafts (a CRLF resubmit is the same letter). Chosen rows
+        # carry no stored fingerprint, so it is computed here.
+        target = ProposedAppeal.fingerprint(appeal_text)
+        for existing in ProposedAppeal.objects.filter(
+            for_denial=denial, chosen=True
+        ).values_list("appeal_text", flat=True):
+            if existing == appeal_text or (
+                target is not None and ProposedAppeal.fingerprint(existing) == target
+            ):
+                return None
+        with transaction.atomic():
+            # completed_appeal_text is post-editing text and this flow has no
+            # textarea flag, so whether the pick was edited is read off the
+            # text.
+            pa = mark_proposal_chosen(
+                denial,
+                appeal_text,
+                proposed_appeal_id=proposed_appeal_id,
+                editted=None,
+            )
+            if denial.creating_professional_id is not None:
+                # A new row rather than an update, so the drafts this pick
+                # could have been made from are the ones stored before it.
+                ProposedAppeal.objects.filter(
+                    for_denial=denial, chosen=True, presented_ids__isnull=True
+                ).exclude(id=pa.id).delete()
+        return pa
     except Exception:
         logger.opt(exception=True).warning(
             f"Could not record the professional's pick for denial "
@@ -6532,6 +6575,8 @@ class AppealsBackendHelper:
                     logger.warning(f"Synthesis timed out after {SYNTHESIS_TIMEOUT}s")
                 else:
                     synthesized = synthesis_task.result()
+                    # The model's time, before the save and lease renewal.
+                    synthesis_seconds = time.monotonic() - synthesis_started
                     if synthesized and not is_real_appeal(synthesized):
                         # Non-empty but not deliverable (too short, or not
                         # made of words): filter it out so
@@ -6561,13 +6606,23 @@ class AppealsBackendHelper:
                             )
                             winner = synthesis_provenance.get("model")
                             if winner is not None:
+                                # The call still succeeded when its text landed
+                                # on a stored draft, but what was served is that
+                                # draft under its own model: say so on the row.
+                                served_as_draft = saved.get("synthesized") != "true"
                                 await _record_synthesis_attempt(
                                     denial_id=denial.denial_id,
                                     generation_id=generation_id,
                                     model=winner,
                                     text=synthesized,
-                                    started=synthesis_started,
+                                    duration_seconds=synthesis_seconds,
                                     started_wall=synthesis_started_wall,
+                                    detail=(
+                                        f"reproduced stored draft {saved.get('id')}; "
+                                        "served as that draft"
+                                        if served_as_draft
+                                        else ""
+                                    ),
                                 )
                             subbed = await sub_in_appeals(saved)
                             if subbed.get("synthesized") != "true":
@@ -6740,7 +6795,7 @@ class AppealsBackendHelper:
             runts += sum(
                 1
                 for _, outcome in attempt_recorder.outcome_pairs()
-                if outcome == "rejected_at_peek"
+                if outcome == OUTCOME_REJECTED_AT_PEEK
             )
         # runt_count=0 means models were silent; >0 means models produced only
         # undeliverable outputs (too short, or not made of words) —

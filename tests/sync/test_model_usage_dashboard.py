@@ -1003,6 +1003,16 @@ class PresentedIsWhatThePickSawTest(_StaffDashboardCase):
         self.assertAlmostEqual(rows["m1"]["win_rate"], 100.0)
         self.assertEqual(rows["m2"]["presented"], 1)
 
+    def test_an_empty_report_does_not_fall_back_to_every_stored_draft(self):
+        # The browser said nothing stored was on screen (the picked card was
+        # never saved): that is not "nobody said".
+        self._draft("m1", "a")
+        self._draft("m2", "b")
+        self._pick(None, "an unsaved card", presented_ids=[])
+        rows = self._rows()
+        self.assertNotIn("m1", rows)
+        self.assertNotIn("m2", rows)
+
     def test_each_unreported_pick_counts_the_drafts_it_saw(self):
         # Two re-submits of the same draft are two picks; the fallback used
         # to count the drafts once, which read as a 200% win rate.

@@ -111,10 +111,14 @@ class Command(BaseCommand):
         # speculative=False mirrors mark_proposal_chosen's guard: a held-back
         # precompute row the user never saw must not mis-attribute the pick on a
         # coincidental text collision (a promoted row is speculative=False).
+        # id__lt: only drafts stored before the pick were on the screen it
+        # was made from; a later regeneration that happened to write the same
+        # text is not evidence (the same bound sole_draft_attribution uses).
         original = (
             ProposedAppeal.objects.filter(
                 ProposedAppeal.text_match_q(pa.appeal_text),
                 for_denial_id=pa.for_denial_id,
+                id__lt=pa.id,
                 chosen=False,
                 model_name__isnull=False,
                 speculative=False,

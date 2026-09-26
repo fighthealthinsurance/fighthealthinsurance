@@ -1644,7 +1644,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             c=Sum("times")
         ):
             presented_label = normalize_model_label(name)
-            if presented_label is not None:
+            if presented_label is not None and count:
                 presented[presented_label] += count
         return _merge_stats(
             dict(chosen),
@@ -1710,12 +1710,15 @@ class ModelUsageDashboardView(generic.TemplateView):
             .annotate(n=Count("id"))
             .values("n")
         )
+        # No WHERE on ``times``: a draft with none sums to zero anyway, and
+        # filtering on the annotation evaluated the correlated subquery a
+        # second time per row. Callers skip zero totals.
         bounded: QuerySet = presented_qs.annotate(
             times=Coalesce(
                 Subquery(later_unreported_picks, output_field=IntegerField()),
                 Value(0),
             )
-        ).filter(times__gt=0)
+        )
         return bounded
 
     @staticmethod
@@ -1862,7 +1865,8 @@ class ModelUsageDashboardView(generic.TemplateView):
         for level, count in presented_qs.values_list("context_level").annotate(
             c=Sum("times")
         ):
-            presented[level] += count
+            if count:
+                presented[level] += count
         # _merge_stats labels the bucket key "model_name"; the value here is the
         # context level. Reusing the shared table partial (which reads
         # model_name) keeps the key -- the template passes a "Context level"

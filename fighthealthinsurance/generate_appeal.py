@@ -79,6 +79,7 @@ class ExtractionUnavailable(Exception):
 
 from .ml.model_attempt_log import (
     MAX_RESPONSE_CHARS,
+    OUTCOME_REJECTED_AT_PEEK,
     ModelAttemptRecord,
     ModelAttemptRecorder,
     # Re-exported under its historical private name: it lives with the recorder
@@ -1502,7 +1503,7 @@ def _peek_real_or_none(
             recorder.record(
                 ModelAttemptRecord(
                     model_name=first.model_name,
-                    outcome="rejected_at_peek",
+                    outcome=OUTCOME_REJECTED_AT_PEEK,
                     stage=stage,
                     context_level=first.context_level,
                     infer_type=first.infer_type,
@@ -3277,6 +3278,7 @@ class AppealGenerator(object):
         procedure: Optional[str] = None,
         diagnosis: Optional[str] = None,
         provenance: Optional[dict] = None,
+        purpose: str = "appeal",
     ) -> Optional[str]:
         """
         Synthesize multiple appeal drafts into one best appeal by trying ALL
@@ -3344,9 +3346,11 @@ class AppealGenerator(object):
             model: RemoteModelLike,
         ) -> Optional[Tuple[str, RemoteModelLike]]:
             try:
-                # The synthesis pass is appeal generation too: its calls
-                # belong in the appeal series, not under "other".
-                with ml_call_purpose("appeal"):
+                # The appeals page's synthesis pass is appeal generation and
+                # belongs in the appeal series; the chooser refill reuses this
+                # method for synthetic candidates and passes "other", so its
+                # traffic stays out of the series real appeals are judged by.
+                with ml_call_purpose(purpose):
                     result = await model._infer_no_context(
                         system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
                         prompt=prompt,

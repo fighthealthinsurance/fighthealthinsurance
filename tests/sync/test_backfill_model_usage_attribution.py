@@ -154,6 +154,25 @@ class BackfillProposedAppealTest(TestCase):
         pick.refresh_from_db()
         self.assertIsNone(pick.model_name)
 
+    def test_a_matching_draft_stored_after_the_pick_is_not_text_evidence(self):
+        # The pick's own draft was never stored; a later regeneration wrote
+        # the same text. It was not on the screen the pick was made from.
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="picked text",
+            chosen=True,
+            model_name=None,
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="picked text",
+            chosen=False,
+            model_name="later-model",
+        )
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertIsNone(pick.model_name)
+
     def test_does_not_guess_across_multiple_models(self):
         ProposedAppeal.objects.create(
             for_denial=self.denial,
@@ -386,18 +405,20 @@ class BackfillProposedAppealTest(TestCase):
 
     def test_relabeled_row_recovers_when_evidence_appears(self):
         # legacy-unattributed rows are re-checked for recovery, so a rerun
-        # can only improve attribution (it never un-labels to NULL).
-        pick = ProposedAppeal.objects.create(
-            for_denial=self.denial,
-            appeal_text="draft text",
-            chosen=True,
-            model_name=LEGACY_UNATTRIBUTED_LABEL,
-        )
+        # can only improve attribution (it never un-labels to NULL). The
+        # draft is stored before the pick, as the one it was picked from
+        # always is: a draft stored after a pick is not evidence for it.
         ProposedAppeal.objects.create(
             for_denial=self.denial,
             appeal_text="draft text",
             chosen=False,
             model_name="model-x",
+        )
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="draft text",
+            chosen=True,
+            model_name=LEGACY_UNATTRIBUTED_LABEL,
         )
         run_command("--apply")
         pick.refresh_from_db()

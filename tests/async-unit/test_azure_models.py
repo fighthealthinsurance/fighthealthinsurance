@@ -587,9 +587,16 @@ class TestAzureClaudeMessages(unittest.TestCase):
         from prometheus_client import REGISTRY
 
         def counter(name, **labels):
+            # Summed over the endpoint label; leg and purpose as a bare call.
             labels.setdefault("leg", "primary")
             labels.setdefault("purpose", "other")
-            return REGISTRY.get_sample_value(name, labels) or 0.0
+            return sum(
+                sample.value
+                for metric in REGISTRY.collect()
+                for sample in metric.samples
+                if sample.name == name
+                and all(sample.labels.get(k) == v for k, v in labels.items())
+            )
 
         async def run():
             m = RemoteAzureClaude(model="claude-sonnet-4-6")

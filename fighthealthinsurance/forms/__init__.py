@@ -307,7 +307,9 @@ class ChooseAppealForm(DenialRefForm):
             # that sqlite would refuse as a query parameter.
             if 0 < candidate < 2**63:
                 ids.append(candidate)
-        return ids or None
+        # A parsed list is a report even when empty ("nothing stored was on
+        # screen"); None is kept for "nobody said".
+        return ids
 
 
 class ChooseEscalationLetterForm(DenialRefForm):

@@ -131,6 +131,26 @@ class ProfessionalPickAttributionTest(APITestCase):
         self._assemble("Something written from scratch")
         self.assertIsNone(self._chosen().get().model_name)
 
+    def test_regenerating_with_crlf_line_endings_is_still_one_pick(self):
+        # The same letter resubmitted with Windows line endings.
+        self._assemble("Dear insurer,\nplease cover this.")
+        self._assemble("Dear insurer,\r\nplease cover this.")
+        self.assertEqual(self._chosen().count(), 1)
+
+    def test_iterating_on_the_letter_leaves_one_pick_with_the_latest_text(self):
+        # Fix a typo and regenerate: one decision, not a pick per version.
+        self._assemble("Draft letter from model x, with a typo")
+        self._assemble("Draft letter from model x, typo fixed")
+        self.assertEqual(
+            self._chosen().get().appeal_text, "Draft letter from model x, typo fixed"
+        )
+
+    def test_a_letter_written_with_no_drafts_stored_is_not_a_pick(self):
+        # No model was on offer, so there is nothing to attribute.
+        ProposedAppeal.objects.filter(for_denial=self.denial).delete()
+        self._assemble("Written entirely by the professional")
+        self.assertFalse(self._chosen().exists())
+
     # completed_appeal_text is post-editing text and the flow has no textarea
     # flag, so whether the pick was edited comes from the text.
 

@@ -760,6 +760,9 @@ async def _synthesize_appeal_candidate(
             denial_text=context.get("denial_text_preview"),
             procedure=context.get("procedure"),
             diagnosis=context.get("diagnosis"),
+            # Synthetic chooser traffic, not a user's appeal: kept out of the
+            # appeal series of the fhi_ml_call* metrics.
+            purpose="other",
         )
     except Exception as e:
         logger.opt(exception=True).warning(

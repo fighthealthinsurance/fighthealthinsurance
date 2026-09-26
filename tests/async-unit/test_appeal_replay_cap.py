@@ -18,6 +18,7 @@ which is a draft the user has not seen this session and is the right outcome.
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,7 +26,7 @@ from asgiref.sync import async_to_sync
 from django.test import TestCase, override_settings
 
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
-from fighthealthinsurance.models import Denial, ProposedAppeal
+from fighthealthinsurance.models import Denial, ModelCallAttempt, ProposedAppeal
 
 
 # Temporal off, explicitly. The interactive path records a durable intake
@@ -290,6 +291,42 @@ class AppealReplayCapTest(TestCase):
                 echo = [f for f in frames if "Stored draft 5 " in f["content"]]
                 self.assertEqual(len(echo), 1, [f["content"][:20] for f in frames])
                 self.assertNotEqual(echo[0].get("synthesized"), "true", echo[0])
+            finally:
+                await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_synthesis_served_as_a_stored_draft_says_so_on_its_attempt_row(
+        self, mock_appeal_generator
+    ):
+        """The synthesis call succeeded, but what was served is the stored
+        draft under its own model; the attempt row naming the synthesis model
+        must not read as the author of what the user saw."""
+        email, denial, texts = self._eighteen_stored_drafts()
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def synthesize(*, provenance=None, **_kwargs):
+            if provenance is not None:
+                provenance["model"] = SimpleNamespace(name="synth-model")
+            return texts[5]
+
+        mock_appeal_generator.synthesize_appeals = AsyncMock(side_effect=synthesize)
+
+        async def test():
+            try:
+                await self._collect_frames(
+                    {
+                        "denial_id": self.DENIAL_ID,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                row = await ModelCallAttempt.objects.filter(stage="synthesis").afirst()
+                self.assertIsNotNone(row)
+                self.assertEqual(row.model_name, "synth-model")
+                self.assertIn("served as that draft", row.error_detail)
             finally:
                 await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
 

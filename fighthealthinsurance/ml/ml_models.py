@@ -1088,8 +1088,10 @@ class RemoteModelLike(DenialBase):
             label += f" +backup({backup_model} @ {_endpoint_label(backup_base)})"
         return label
 
-    def _metric_identity(self, api_base: Any = None) -> Tuple[str, str]:
-        """``(model, leg)`` labels for the fhi_ml_* Prometheus series.
+    def _metric_identity(
+        self, api_base: Any = None, model: Any = None
+    ) -> Tuple[str, str, str]:
+        """``(model, leg, endpoint)`` labels for the fhi_ml_* Prometheus series.
 
         ``model`` is the router-stamped registry name when there is one --
         the identity ProposedAppeal, ModelCallAttempt, ChooserCandidate and
@@ -1097,8 +1099,13 @@ class RemoteModelLike(DenialBase):
         -- else the wire model id. Labelling with the wire id alone collapsed
         two registry models that share a provider model into one series and
         split one registry model across its primary and backup wire ids.
-        ``leg`` says which endpoint of a primary/backup pair the call went
-        to, which the wire id could not tell apart either.
+        ``leg`` says which side of a primary/backup pair the call went to,
+        which the wire id could not tell apart either; a backup served from
+        the primary's own host differs by model alone, so the call's model
+        decides it there. ``endpoint`` is the host[:port] the call went to:
+        several instances can share one registry name (replicas, or two
+        internal servers set to one model path), and without it a failing
+        host was averaged in with its healthy sibling.
         """
         name = getattr(self, "name", None)
         if name:
@@ -1107,9 +1114,19 @@ class RemoteModelLike(DenialBase):
             label = str(getattr(self, "model", None) or type(self).__name__)
         primary = getattr(self, "api_base", None)
         backup = getattr(self, "backup_api_base", None)
-        is_backup = bool(api_base and backup and api_base == backup)
-        leg = "backup" if is_backup and api_base != primary else "primary"
-        return label, leg
+        primary_model = getattr(self, "model", None)
+        backup_model = getattr(self, "backup_model", None)
+        backup_by_base = bool(
+            api_base and backup and api_base == backup and api_base != primary
+        )
+        backup_by_model = bool(
+            model
+            and backup_model
+            and backup_model != primary_model
+            and model == backup_model
+        )
+        leg = "backup" if backup_by_base or backup_by_model else "primary"
+        return label, leg, _endpoint_label(api_base or primary or backup)
 
     def quality(self) -> int:
         return 100
@@ -2556,6 +2573,49 @@ class RemoteOpenLike(RemoteModel):
         pa: bool = False,
         deadline: Optional[float] = None,
     ) -> List[Tuple[str, Optional[str]]]:
+        # The fhi_ml_call* series say whether the transport answered; this
+        # says what the appeal path made of the answer, exactly once per
+        # invocation (ML_RESULTS_TOTAL). A backend that was up but answered
+        # every prompt with a refusal or a runt read as 100% ok in the call
+        # series while every draft it produced was rejected here.
+        metric_model, _leg, _endpoint = self._metric_identity()
+        try:
+            outcome, results = await self._checked_infer_outcome(
+                prompt,
+                patient_context,
+                plan_context,
+                infer_type,
+                pubmed_context,
+                system_prompt,
+                temperature,
+                ml_citations_context,
+                prof_pov,
+                pa,
+                deadline,
+            )
+        except Exception:
+            record_ml_result(metric_model, infer_type, "error")
+            raise
+        record_ml_result(metric_model, infer_type, outcome)
+        return results
+
+    async def _checked_infer_outcome(
+        self,
+        prompt: str,
+        patient_context: Optional[str],
+        plan_context: Optional[str],
+        infer_type: str,
+        pubmed_context: Optional[str],
+        system_prompt: str,
+        temperature: float,
+        ml_citations_context: Optional[List[str]],
+        prof_pov: bool,
+        pa: bool,
+        deadline: Optional[float],
+    ) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
+        """_checked_infer's work: the results, and what became of the
+        completion (an ML_RESULTS_TOTAL result) for the wrapper to record."""
+
         def _past_deadline() -> bool:
             # Cooperative deadline: threads can't be cancelled, so once the
             # requester's budget has passed we bail out instead of making
@@ -2567,15 +2627,8 @@ class RemoteOpenLike(RemoteModel):
                 return True
             return False
 
-        # The fhi_ml_call* series say whether the transport answered; this
-        # says what the appeal path made of the answer, once per invocation
-        # (ML_RESULTS_TOTAL). A backend that was up but answered every prompt
-        # with a refusal or a runt read as 100% ok in the call series while
-        # every draft it produced was rejected right here.
-        metric_model, _leg = self._metric_identity()
         if _past_deadline():
-            record_ml_result(metric_model, infer_type, "skipped_deadline")
-            return []
+            return "skipped_deadline", []
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -2611,8 +2664,7 @@ class RemoteOpenLike(RemoteModel):
         # One retry
         if self.bad_result(result, infer_type):
             if _past_deadline():
-                record_ml_result(metric_model, infer_type, "skipped_deadline")
-                return []
+                return "skipped_deadline", []
             result = await self._infer_no_context(
                 prompt=prompt,
                 patient_context=patient_context,
@@ -2622,10 +2674,10 @@ class RemoteOpenLike(RemoteModel):
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
             )
-            # Ok just an empty list, we failed
+            # Ok just an empty list, we failed. Nothing back at all is an
+            # outage (the call series classify it), not a content rejection.
             if self.bad_result(result, infer_type):
-                record_ml_result(metric_model, infer_type, "rejected_bad_result")
-                return []
+                return ("rejected_bad_result" if result else "no_completion"), []
 
         # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov or pa:
@@ -2690,18 +2742,11 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"Result rejected due to severe repetition on type {infer_type}"
             )
-            record_ml_result(metric_model, infer_type, "rejected_repetition")
-            return []
+            return "rejected_repetition", []
 
         logger.debug(f"Cleaned {cleaned} on type {infer_type}")
 
-        record_ml_result(metric_model, infer_type, "accepted")
-        return [
-            (
-                infer_type,
-                cleaned,
-            )
-        ]
+        return "accepted", [(infer_type, cleaned)]
 
     def _clean_extracted_field(
         self, response: str, label_regex: re.Pattern[str]
@@ -3278,7 +3323,9 @@ class RemoteOpenLike(RemoteModel):
         effective_timeout = timeout if timeout is not None else self._timeout
         call_model = kwargs.get("model") or self.model
         # api_base is passed only for the backup leg (see _infer).
-        metric_model, leg = self._metric_identity(kwargs.get("api_base"))
+        metric_model, leg, endpoint = self._metric_identity(
+            kwargs.get("api_base"), kwargs.get("model")
+        )
         started = time.monotonic()
         if effective_timeout is not None:
             try:
@@ -3292,6 +3339,7 @@ class RemoteOpenLike(RemoteModel):
                     "ok" if result and result[0] else "none",
                     time.monotonic() - started,
                     leg=leg,
+                    endpoint=endpoint,
                 )
                 return result
             except asyncio.TimeoutError:
@@ -3299,7 +3347,11 @@ class RemoteOpenLike(RemoteModel):
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
                 record_ml_call(
-                    metric_model, "timeout", time.monotonic() - started, leg=leg
+                    metric_model,
+                    "timeout",
+                    time.monotonic() - started,
+                    leg=leg,
+                    endpoint=endpoint,
                 )
                 failures = kwargs.get("transport_failures")
                 if failures is not None:
@@ -3349,7 +3401,11 @@ class RemoteOpenLike(RemoteModel):
                 # count it, or the failure counter climbs while the call
                 # counter stands still and failures / calls reads over 100%.
                 record_ml_call(
-                    metric_model, "error", time.monotonic() - started, leg=leg
+                    metric_model,
+                    "error",
+                    time.monotonic() - started,
+                    leg=leg,
+                    endpoint=endpoint,
                 )
                 raise
             except asyncio.CancelledError:
@@ -3358,7 +3414,11 @@ class RemoteOpenLike(RemoteModel):
                 # backup that accepts-then-hangs would otherwise never show
                 # in any series for as long as the primary keeps winning.
                 record_ml_call(
-                    metric_model, "cancelled", time.monotonic() - started, leg=leg
+                    metric_model,
+                    "cancelled",
+                    time.monotonic() - started,
+                    leg=leg,
+                    endpoint=endpoint,
                 )
                 raise
         else:
@@ -3366,12 +3426,20 @@ class RemoteOpenLike(RemoteModel):
                 result = await self.__infer(*args, **kwargs)
             except asyncio.CancelledError:
                 record_ml_call(
-                    metric_model, "cancelled", time.monotonic() - started, leg=leg
+                    metric_model,
+                    "cancelled",
+                    time.monotonic() - started,
+                    leg=leg,
+                    endpoint=endpoint,
                 )
                 raise
             except Exception:
                 record_ml_call(
-                    metric_model, "error", time.monotonic() - started, leg=leg
+                    metric_model,
+                    "error",
+                    time.monotonic() - started,
+                    leg=leg,
+                    endpoint=endpoint,
                 )
                 raise
             record_ml_call(
@@ -3379,6 +3447,7 @@ class RemoteOpenLike(RemoteModel):
                 "ok" if result and result[0] else "none",
                 time.monotonic() - started,
                 leg=leg,
+                endpoint=endpoint,
             )
             return result
 
@@ -3411,7 +3480,7 @@ class RemoteOpenLike(RemoteModel):
         # the log line below, which otherwise prints "at None".
         if api_base is None:
             return None
-        metric_model, leg = self._metric_identity(api_base)
+        metric_model, leg, endpoint = self._metric_identity(api_base, model)
         logger.debug(
             f"Calling {model} at {api_base} (prompt_len={len(prompt) if prompt else 0}, "
             f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
@@ -3428,7 +3497,9 @@ class RemoteOpenLike(RemoteModel):
                 transport_failures.append(f"{model} via {api_base}: not served here")
             # Nothing went on the wire, but __timeout_infer still files this
             # as outcome=none; give that "none" its reason.
-            record_ml_failure(metric_model, "skipped_missing_model", leg=leg)
+            record_ml_failure(
+                metric_model, "skipped_missing_model", leg=leg, endpoint=endpoint
+            )
             return None
         # Same idea for repeated transport failures (refused/DNS/timeout):
         # skip quietly while the short cooldown lasts; probes bypass this so
@@ -3443,6 +3514,12 @@ class RemoteOpenLike(RemoteModel):
                 transport_failures.append(
                     f"{model} via {api_base}: in transport-failure cooldown"
                 )
+            # Counted like the missing-model skip above: as a bare
+            # outcome=none call it pulled failures / calls toward zero for
+            # as long as the outage that started the cooldown lasted.
+            record_ml_failure(
+                metric_model, "skipped_cooling", leg=leg, endpoint=endpoint
+            )
             return None
         if self.token is None:
             logger.warning(f"No token provided for {model}")
@@ -3605,7 +3682,10 @@ class RemoteOpenLike(RemoteModel):
                                     f"{response_body[:300]}"
                                 )
                                 record_ml_failure(
-                                    metric_model, "context_overflow", leg=leg
+                                    metric_model,
+                                    "context_overflow",
+                                    leg=leg,
+                                    endpoint=endpoint,
                                 )
                                 if raise_http_errors:
                                     setattr(e, _REASON_RECORDED_ATTR, True)
@@ -3626,7 +3706,10 @@ class RemoteOpenLike(RemoteModel):
                                     api_base, model, response_body[:200]
                                 )
                                 record_ml_failure(
-                                    metric_model, "missing_model", leg=leg
+                                    metric_model,
+                                    "missing_model",
+                                    leg=leg,
+                                    endpoint=endpoint,
                                 )
                                 if raise_http_errors:
                                     setattr(e, _REASON_RECORDED_ATTR, True)
@@ -3667,7 +3750,10 @@ class RemoteOpenLike(RemoteModel):
                             if _error_text_indicates_missing_model(error_message):
                                 self._note_missing_model(api_base, model, error_message)
                                 record_ml_failure(
-                                    metric_model, "missing_model", leg=leg
+                                    metric_model,
+                                    "missing_model",
+                                    leg=leg,
+                                    endpoint=endpoint,
                                 )
                                 if raise_http_errors:
                                     # Semantically a missing model even though
@@ -3694,7 +3780,7 @@ class RemoteOpenLike(RemoteModel):
             # error page). Must be caught before ClientResponseError (it's a
             # subclass) or it would be re-raised as a status error below.
             logger.warning(f"{self}: {model} via {api_base}: {describe_model_error(e)}")
-            record_ml_failure(metric_model, "bad_body", leg=leg)
+            record_ml_failure(metric_model, "bad_body", leg=leg, endpoint=endpoint)
             if raise_http_errors or self._propagate_http_errors:
                 # ContentTypeError is a ClientResponseError: probes and
                 # status-handling subclasses get it (with its status) exactly
@@ -3709,7 +3795,9 @@ class RemoteOpenLike(RemoteModel):
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
             if not getattr(e, _REASON_RECORDED_ATTR, False):
-                record_ml_failure(metric_model, "http_error", leg=leg)
+                record_ml_failure(
+                    metric_model, "http_error", leg=leg, endpoint=endpoint
+                )
             raise
         except MODEL_TRANSPORT_ERRORS as e:
             # Expected operational failures (backend down, unreachable, slow,
@@ -3720,7 +3808,9 @@ class RemoteOpenLike(RemoteModel):
             # and a stall would only slow failover to the backup backend.
             described = describe_model_error(e)
             logger.warning(f"{self}: {model} via {api_base} failed -- {described}")
-            record_ml_failure(metric_model, "transport_error", leg=leg)
+            record_ml_failure(
+                metric_model, "transport_error", leg=leg, endpoint=endpoint
+            )
             # Record the cause even when raising is requested. A transport
             # error deliberately does NOT raise here -- returning None is what
             # lets the caller fall through to the backup endpoint -- but that
@@ -3743,7 +3833,9 @@ class RemoteOpenLike(RemoteModel):
             logger.opt(exception=True).warning(
                 f"Unexpected error calling {api_base} for model {model}"
             )
-            record_ml_failure(metric_model, "unexpected_error", leg=leg)
+            record_ml_failure(
+                metric_model, "unexpected_error", leg=leg, endpoint=endpoint
+            )
             await asyncio.sleep(1)
             return None
         try:
@@ -3758,7 +3850,7 @@ class RemoteOpenLike(RemoteModel):
                     f"Response from {url} for {model} had no choices; "
                     f"body starts: {body_snippet}"
                 )
-                record_ml_failure(metric_model, "bad_body", leg=leg)
+                record_ml_failure(metric_model, "bad_body", leg=leg, endpoint=endpoint)
                 return None
 
             # Extract message content
@@ -5417,11 +5509,17 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         # This transport bypasses RemoteOpenLike.__timeout_infer, so it feeds
         # the fhi_ml_* series itself: without this the priciest external
         # backend was a blind spot in the per-backend failure-rate alerts.
-        metric_model, leg = self._metric_identity(self.api_base)
+        metric_model, leg, endpoint = self._metric_identity(self.api_base)
         started = time.monotonic()
 
         def _count(outcome: str) -> None:
-            record_ml_call(metric_model, outcome, time.monotonic() - started, leg=leg)
+            record_ml_call(
+                metric_model,
+                outcome,
+                time.monotonic() - started,
+                leg=leg,
+                endpoint=endpoint,
+            )
 
         try:
             if effective_timeout is not None:
@@ -5440,19 +5538,23 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             _count("cancelled")
             raise
         except aiohttp.ContentTypeError:
-            record_ml_failure(metric_model, "bad_body", leg=leg)
+            record_ml_failure(metric_model, "bad_body", leg=leg, endpoint=endpoint)
             _count("error")
             raise
         except aiohttp.ClientResponseError:
-            record_ml_failure(metric_model, "http_error", leg=leg)
+            record_ml_failure(metric_model, "http_error", leg=leg, endpoint=endpoint)
             _count("error")
             raise
         except MODEL_TRANSPORT_ERRORS:
-            record_ml_failure(metric_model, "transport_error", leg=leg)
+            record_ml_failure(
+                metric_model, "transport_error", leg=leg, endpoint=endpoint
+            )
             _count("error")
             raise
         except Exception:
-            record_ml_failure(metric_model, "unexpected_error", leg=leg)
+            record_ml_failure(
+                metric_model, "unexpected_error", leg=leg, endpoint=endpoint
+            )
             _count("error")
             raise
         _count("ok" if result and result[0] else "none")

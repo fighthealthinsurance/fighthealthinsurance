@@ -5,9 +5,10 @@ classification for APPEAL generation, but no aggregate view: there was no way
 to alert on "backend X's failure rate jumped" or "p95 latency doubled"
 without log archaeology. These metrics are label-bounded (the model's
 registry name -- the identity ProposedAppeal, ModelCallAttempt and the staff
-dashboard key on, so the series can be joined to them -- a primary/backup
-leg, why the call was made (appeal, chat, probe, other), and a small outcome
-enum; never denial/chat ids or free text) and exported through the same
+dashboard key on, so the series can be joined to them -- the endpoint's
+host[:port], a primary/backup leg, why the call was made (appeal, chat,
+probe, other), and a small outcome enum; never denial/chat ids or free
+text) and exported through the same
 django_prometheus endpoint the DB metrics already use. Only processes that
 serve that endpoint are scraped: the Temporal worker serves this registry too
 (run_temporal_worker.app_metrics_server, on FHI_APP_METRICS_BIND), but
@@ -38,9 +39,15 @@ from prometheus_client.core import GaugeMetricFamily, Metric
 from prometheus_client.registry import Collector, REGISTRY
 
 # One outcome per __timeout_infer call: ok (non-empty completion), none (the
-# call returned nothing), timeout, or error (the transport raised -- an HTTP
-# 4xx/5xx re-raised for status-specific handling). Every call lands here
-# exactly once, so failures / calls is always a rate.
+# call returned nothing), timeout, error (the transport raised -- an HTTP
+# 4xx/5xx re-raised for status-specific handling), or cancelled (the losing
+# leg of a dual-mode race, cancelled once its sibling answered). Every call
+# lands here exactly once, so failures / calls is always a rate.
+#
+# ``endpoint`` is the host[:port] the call went to. Several backend instances
+# can register under one name (replicas, or two internal servers configured
+# with the same model path), and without it one failing host was averaged in
+# with its healthy sibling. Bounded by configuration, like ``model``.
 #
 # ``purpose`` is why the call was made (see ML_CALL_PURPOSE). Appeal
 # generation shares its backend instances with chat, the health probes,
@@ -51,25 +58,28 @@ from prometheus_client.registry import Collector, REGISTRY
 ML_CALLS_TOTAL = Counter(
     "fhi_ml_calls_total",
     "Model backend calls by outcome (ok = non-empty completion, none, timeout, "
-    "error).",
-    labelnames=("model", "leg", "purpose", "outcome"),
+    "error, cancelled).",
+    labelnames=("model", "endpoint", "leg", "purpose", "outcome"),
 )
 
 # Failure *reasons* observed inside the transport layer. Deliberately a
 # separate counter from ML_CALLS_TOTAL: a failed call shows up once there
 # (outcome=none/timeout/error) and once here with its classified reason
 # (transport_error, http_error, bad_body, context_overflow, missing_model,
-# skipped_missing_model, unexpected_error).
+# skipped_missing_model, skipped_cooling, unexpected_error). The two skips are
+# calls not made because the pair failed moments ago; counting them as plain
+# outcome=none would let the failure rate fall during the very outage that
+# started the cooldown.
 ML_CALL_FAILURES_TOTAL = Counter(
     "fhi_ml_call_failures_total",
     "Classified model call failures (transport, http, bad body...).",
-    labelnames=("model", "leg", "purpose", "reason"),
+    labelnames=("model", "endpoint", "leg", "purpose", "reason"),
 )
 
 ML_CALL_SECONDS = Histogram(
     "fhi_ml_call_seconds",
     "Wall-clock duration of model backend calls.",
-    labelnames=("model", "leg", "purpose"),
+    labelnames=("model", "endpoint", "leg", "purpose"),
     buckets=(1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 240, 300, 420),
 )
 
@@ -80,16 +90,26 @@ ML_CALL_SECONDS = Histogram(
 # produced was rejected and filed as a no_output attempt, so the failure
 # rate the call series exists to alert on never moved. Results: accepted;
 # rejected_bad_result (a refusal / severe repetition / runt, after the one
-# retry); rejected_repetition (the cleaners removed everything);
+# retry); no_completion (nothing came back to judge -- an outage, which the
+# call series already classifies, not a content rejection); error (the
+# inference raised); rejected_repetition (the cleaners removed everything);
 # skipped_deadline (the requester's budget had passed).
 ML_RESULTS_TOTAL = Counter(
     "fhi_ml_results_total",
     "Checked appeal inferences by what became of the completion (accepted, "
-    "rejected_bad_result, rejected_repetition, skipped_deadline).",
+    "rejected_bad_result, no_completion, error, rejected_repetition, "
+    "skipped_deadline).",
     labelnames=("model", "infer_type", "result"),
 )
 _RESULTS = frozenset(
-    {"accepted", "rejected_bad_result", "rejected_repetition", "skipped_deadline"}
+    {
+        "accepted",
+        "rejected_bad_result",
+        "no_completion",
+        "error",
+        "rejected_repetition",
+        "skipped_deadline",
+    }
 )
 
 CHAT_TURNS_TOTAL = Counter(
@@ -197,29 +217,40 @@ def labelled_ml_calls(
 
 
 def record_ml_call(
-    model: object, outcome: str, seconds: float, leg: str = "primary"
+    model: object,
+    outcome: str,
+    seconds: float,
+    leg: str = "primary",
+    endpoint: object = None,
 ) -> None:
     """Record one completed model call. ``model`` is the registry name when the
-    router stamped one (RemoteModelLike._metric_identity), ``leg`` the
-    endpoint of a primary/backup pair; the purpose comes from the
-    ML_CALL_PURPOSE in scope. Never raises."""
+    router stamped one and ``endpoint`` the host[:port] it went to
+    (RemoteModelLike._metric_identity), ``leg`` the side of a primary/backup
+    pair; the purpose comes from the ML_CALL_PURPOSE in scope. Never
+    raises."""
     try:
         name = _safe_label(model)
+        where = _safe_label(endpoint)
         leg = _leg_label(leg)
         purpose = ML_CALL_PURPOSE.get()
         ML_CALLS_TOTAL.labels(
-            model=name, leg=leg, purpose=purpose, outcome=outcome
+            model=name, endpoint=where, leg=leg, purpose=purpose, outcome=outcome
         ).inc()
-        ML_CALL_SECONDS.labels(model=name, leg=leg, purpose=purpose).observe(seconds)
+        ML_CALL_SECONDS.labels(
+            model=name, endpoint=where, leg=leg, purpose=purpose
+        ).observe(seconds)
     except Exception:  # pragma: no cover - metrics must never break calls
         logger.opt(exception=True).debug("Failed to record ml call metric")
 
 
-def record_ml_failure(model: object, reason: str, leg: str = "primary") -> None:
+def record_ml_failure(
+    model: object, reason: str, leg: str = "primary", endpoint: object = None
+) -> None:
     """Record a classified failure reason. Never raises."""
     try:
         ML_CALL_FAILURES_TOTAL.labels(
             model=_safe_label(model),
+            endpoint=_safe_label(endpoint),
             leg=_leg_label(leg),
             purpose=ML_CALL_PURPOSE.get(),
             reason=reason,

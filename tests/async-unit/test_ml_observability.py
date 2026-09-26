@@ -26,13 +26,28 @@ from fighthealthinsurance.reliability_events import capture_reliability_event
 
 
 def _counter_value(name, **labels):
-    # Every fhi_ml_call* series carries the primary/backup leg and the
-    # purpose of the call (a bare helper call has no purpose in scope).
+    """Sum of the samples called ``name`` whose labels include ``labels``.
+
+    Every fhi_ml_call* series carries the primary/backup leg and the purpose
+    of the call; those default to a bare helper call's (primary, no purpose
+    in scope). The endpoint is summed over unless a test names one."""
     if name.startswith("fhi_ml_call"):
         labels.setdefault("leg", "primary")
         labels.setdefault("purpose", "other")
-    val = REGISTRY.get_sample_value(name, labels)
-    return val or 0.0
+    total = 0.0
+    for metric in REGISTRY.collect():
+        for sample in metric.samples:
+            if sample.name == name and all(
+                sample.labels.get(k) == v for k, v in labels.items()
+            ):
+                total += sample.value
+    return total
+
+
+def _refused_connection():
+    """A ClientSession.post stand-in whose connection is refused: the
+    transport failure without a real socket, so the test is hermetic."""
+    return MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
 
 
 def _completion(text):
@@ -63,13 +78,7 @@ class TestMetricHelpers:
             "fhi_ml_calls_total", model="metrics-model", outcome="ok"
         )
         assert after == before + 1
-        assert (
-            REGISTRY.get_sample_value(
-                "fhi_ml_call_seconds_count",
-                {"model": "metrics-model", "leg": "primary", "purpose": "other"},
-            )
-            >= 1
-        )
+        assert _counter_value("fhi_ml_call_seconds_count", model="metrics-model") >= 1
 
     def test_record_ml_failure_increments(self):
         before = _counter_value(
@@ -320,28 +329,90 @@ class TestMetricIdentity:
 
     def test_registry_name_wins_over_the_wire_id_once_stamped(self):
         m = RemoteFullOpenLike("http://h1:8000/v1", "tok", "wire-model")
-        assert m._metric_identity(None) == ("wire-model", "primary")
+        assert m._metric_identity(None)[0] == "wire-model"
         m.name = "fhi-2025"
-        assert m._metric_identity(None) == ("fhi-2025", "primary")
+        assert m._metric_identity(None)[0] == "fhi-2025"
 
     def test_backup_leg_is_told_apart_from_primary(self):
         m = RemoteFullOpenLike(
             "http://h1:8000/v1", "tok", "wire", backup_api_base="http://h2:9000/v1"
         )
         m.name = "fhi-2025"
-        assert m._metric_identity("http://h2:9000/v1") == ("fhi-2025", "backup")
-        assert m._metric_identity("http://h1:8000/v1") == ("fhi-2025", "primary")
+        assert m._metric_identity("http://h2:9000/v1") == (
+            "fhi-2025",
+            "backup",
+            "h2:9000",
+        )
+        assert m._metric_identity("http://h1:8000/v1") == (
+            "fhi-2025",
+            "primary",
+            "h1:8000",
+        )
+
+    def test_a_backup_served_from_the_primarys_host_is_the_backup_leg(self):
+        # Same host, different model: the model is all that tells them apart.
+        m = RemoteFullOpenLike(
+            "http://h1:8000/v1",
+            "tok",
+            "primary-model",
+            backup_api_base="http://h1:8000/v1",
+            backup_model="backup-model",
+        )
+        assert m._metric_identity("http://h1:8000/v1", "backup-model")[1] == "backup"
+        assert (
+            m._metric_identity("http://h1:8000/v1", "primary-model")[1] == "primary"
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_instances_under_one_name_are_told_apart_by_endpoint(self):
+        # Replicas (or two internal servers set to one model path) register
+        # under one name; a failing host must not be averaged into a healthy
+        # sibling's series.
+        name = "obs-shared-name"
+        first = RemoteFullOpenLike("http://first.example.invalid/v1", "tok", "wire")
+        second = RemoteFullOpenLike("http://second.example.invalid/v1", "tok", "wire")
+        first.name = second.name = name
+        before = _counter_value(
+            "fhi_ml_call_failures_total",
+            model=name,
+            reason="transport_error",
+            endpoint="first.example.invalid",
+        )
+        with patch("aiohttp.ClientSession.post", _refused_connection()):
+            result = await first._infer_no_context(
+                system_prompts=["sys"], prompt="hello", timeout=10.0
+            )
+        assert result is None
+        assert (
+            _counter_value(
+                "fhi_ml_call_failures_total",
+                model=name,
+                reason="transport_error",
+                endpoint="first.example.invalid",
+            )
+            == before + 1
+        )
+        assert (
+            _counter_value(
+                "fhi_ml_call_failures_total",
+                model=name,
+                reason="transport_error",
+                endpoint="second.example.invalid",
+            )
+            == 0
+        )
 
     @pytest.mark.asyncio
     async def test_stamped_instance_records_under_the_registry_name(self):
-        m = RemoteFullOpenLike("http://127.0.0.1:1/v1", "tok", "obs-wire-x")
+        m = RemoteFullOpenLike("http://backend.example.invalid/v1", "tok", "obs-wire-x")
         m.name = "obs-registry-x"
         before = _counter_value(
             "fhi_ml_call_failures_total", model="obs-registry-x", reason="transport_error"
         )
-        result = await m._infer_no_context(
-            system_prompts=["sys"], prompt="hello", timeout=10.0
-        )
+        with patch("aiohttp.ClientSession.post", _refused_connection()):
+            result = await m._infer_no_context(
+                system_prompts=["sys"], prompt="hello", timeout=10.0
+            )
         assert result is None
         assert (
             _counter_value(
@@ -404,9 +475,8 @@ class TestCallPurpose:
             == failures_before + 1
         )
         assert (
-            REGISTRY.get_sample_value(
-                "fhi_ml_call_seconds_count",
-                {"model": model_name, "leg": "primary", "purpose": "chat"},
+            _counter_value(
+                "fhi_ml_call_seconds_count", model=model_name, purpose="chat"
             )
             >= 1
         )
@@ -655,4 +725,81 @@ class TestClassifiedReasonsSurviveTheProbeRaise:
                 "fhi_ml_call_failures_total", model=model_name, reason="http_error"
             )
             == http_before
+        )
+
+
+class TestSkippedCallsKeepTheFailureRateHonest:
+    @pytest.mark.asyncio
+    async def test_a_call_skipped_for_the_transport_cooldown_has_its_own_reason(
+        self, make_fake_model_post
+    ):
+        """A call not made because the pair failed moments ago used to count as
+        a bare outcome=none call, so failures / calls fell toward zero for as
+        long as the outage that started the cooldown lasted."""
+        model_name = "obs-cooling-model"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        m._transport_cooldowns[(m.api_base, m.model)] = time.monotonic() + 300
+        before = _counter_value(
+            "fhi_ml_call_failures_total", model=model_name, reason="skipped_cooling"
+        )
+        fake_post = make_fake_model_post(200, json_data=_completion("never sent"))
+        with patch("aiohttp.ClientSession.post", fake_post):
+            result = await m._infer_no_context(
+                system_prompts=["sys"], prompt="hello", timeout=10.0
+            )
+        assert result is None
+        assert (
+            _counter_value(
+                "fhi_ml_call_failures_total",
+                model=model_name,
+                reason="skipped_cooling",
+            )
+            == before + 1
+        )
+
+
+class TestEveryCheckedInferenceHasOneResult:
+    """fhi_ml_results_total says what the appeal path made of a completion,
+    once per _checked_infer. Nothing back at all is an outage, which the call
+    series already classify, not a content rejection; and an inference that
+    raised used to record nothing."""
+
+    @pytest.mark.asyncio
+    async def test_no_completion_is_not_a_content_rejection(self):
+        model_name = "obs-result-nothing"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        m._infer_no_context = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        labels = dict(model=model_name, infer_type="medically_necessary")
+        nothing_before = _counter_value(
+            "fhi_ml_results_total", result="no_completion", **labels
+        )
+        rejected_before = _counter_value(
+            "fhi_ml_results_total", result="rejected_bad_result", **labels
+        )
+        assert await m._checked_infer(**_checked_infer_kwargs()) == []
+        assert (
+            _counter_value("fhi_ml_results_total", result="no_completion", **labels)
+            == nothing_before + 1
+        )
+        assert (
+            _counter_value(
+                "fhi_ml_results_total", result="rejected_bad_result", **labels
+            )
+            == rejected_before
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_inference_that_raises_is_an_error_result(self):
+        model_name = "obs-result-raises"
+        m = RemoteFullOpenLike("http://fake-backend.example/v1", "tok", model_name)
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("boom")
+        )
+        labels = dict(model=model_name, infer_type="medically_necessary")
+        before = _counter_value("fhi_ml_results_total", result="error", **labels)
+        with pytest.raises(RuntimeError):
+            await m._checked_infer(**_checked_infer_kwargs())
+        assert (
+            _counter_value("fhi_ml_results_total", result="error", **labels)
+            == before + 1
         )

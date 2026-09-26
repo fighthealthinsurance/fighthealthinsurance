@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fighthealthinsurance.generate_appeal import AppealGenerator
+from fighthealthinsurance.ml.ml_metrics import ML_CALL_PURPOSE
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import MLRouter
 
@@ -53,6 +54,42 @@ class TestSynthesizeAppeals(unittest.TestCase):
 
     async def _run_synthesize(self, **kwargs):
         return await self.generator.synthesize_appeals(**kwargs)
+
+    def _purpose_seen_by_synthesis(self, mock_router, mock_best_within, **kwargs):
+        seen = []
+
+        async def infer(**_kwargs):
+            seen.append(ML_CALL_PURPOSE.get())
+            return "A" * 100
+
+        mock_model = MagicMock(spec=RemoteModelLike)
+        mock_model._infer_no_context = infer
+        mock_router.internal_models_by_cost = [mock_model]
+
+        async def call_first_task(tasks, **_kwargs):
+            return await tasks[0]
+
+        mock_best_within.side_effect = call_first_task
+        asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals, **kwargs))
+        return seen
+
+    @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_synthesis_calls_are_appeal_traffic_by_default(
+        self, mock_router, mock_best_within
+    ):
+        seen = self._purpose_seen_by_synthesis(mock_router, mock_best_within)
+        self.assertEqual(seen, ["appeal"])
+
+    @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_the_chooser_keeps_its_synthesis_out_of_the_appeal_series(
+        self, mock_router, mock_best_within
+    ):
+        seen = self._purpose_seen_by_synthesis(
+            mock_router, mock_best_within, purpose="other"
+        )
+        self.assertEqual(seen, ["other"])
 
     def test_returns_none_with_empty_list(self):
         result = asyncio.run(self._run_synthesize(appeal_texts=[]))
