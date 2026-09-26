@@ -145,3 +145,33 @@ async def test_a_reset_that_did_not_come_from_the_socket_is_still_an_error(
 
     assert frame is not None and "ref " in frame["error"]
     assert cap.messages("ERROR"), "a DB-side reset must still be logged at ERROR"
+
+
+@pytest.mark.django_db
+@pytest.mark.asyncio
+async def test_a_hangup_on_a_send_no_handler_covers_is_not_an_error(log_capture):
+    """The replay-without-chat-id frame is written before the consumer's own
+    try. Before the send wrapper, uvicorn silently swallowed its
+    ClientDisconnected; ClientGone is not one, so without the mixin's
+    backstop it would reach uvicorn as "Exception in ASGI application" at
+    ERROR (review). The communicator surfaces an escaped exception as a
+    failure of the app future, so a clean exchange also proves it stayed in.
+    """
+    communicator = WebsocketCommunicator(
+        OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+    )
+    connected, _ = await communicator.connect()
+    assert connected
+    try:
+        with log_capture() as cap, _peer_gone_on_write():
+            await communicator.send_json_to(
+                {"replay": True, "session_key": "backstop-replay"}
+            )
+            assert await communicator.receive_nothing(timeout=3)
+    finally:
+        await communicator.disconnect()
+
+    assert cap.messages("ERROR") == []
+    assert any(
+        "client hung up" in message for message in cap.messages("WARNING")
+    ), f"expected the backstop's WARNING, got: {cap.messages('WARNING')}"

@@ -138,6 +138,27 @@ class TestToolErrorPathCleansSyntax:
         assert statuses  # the user was told something went wrong
 
     @pytest.mark.asyncio
+    async def test_a_departed_client_is_not_a_tool_failure(self):
+        """A status frame finding the client gone must end the turn, not be
+        logged as this tool breaking -- and no second status frame is tried
+        into the same closed socket (review)."""
+        from fighthealthinsurance.client_gone import ClientGone
+
+        class _TalkingTool(BaseTool):
+            pattern = r"\*\*talk\*\*"
+            name = "Talker"
+
+            async def execute(self, match, response_text, context, **kwargs):
+                await self.send_status_message("Processing...")
+                return response_text, context
+
+        status = AsyncMock(side_effect=ClientGone())
+        tool = _TalkingTool(status)
+        with pytest.raises(ClientGone):
+            await tool.handle("Answer. **talk**", "ctx")
+        assert status.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_no_match_passes_through(self):
         tool = _ExplodingTool(AsyncMock())
         text = "Nothing to see here."

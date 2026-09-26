@@ -10,7 +10,9 @@ Also covers the transactional persistence helper directly: two interleaved
 writers over the same chat row must not lose each other's messages.
 """
 
+import asyncio
 import contextlib
+import os
 import typing
 from unittest.mock import AsyncMock, patch
 
@@ -295,6 +297,48 @@ class ChatClientHangupTest(APITestCase):
             [f for f in recorder.frames if "error" in f],
             f"the still-connected user must get an error frame: {recorder.frames}",
         )
+
+
+class ChatHangupSeenOnlyByTheHeartbeatTest(APITestCase):
+    """The most common hangup: the user leaves during a long turn, and only
+    the heartbeat's status frame finds out.
+
+    The heartbeat swallows its own send failures, so this departure never
+    reached handle_chat_message: the turn ran on, was counted "ok", and then
+    sent its reply into the closed socket (review). The send path now
+    remembers the departure however the exception is handled after it.
+    """
+
+    async def test_the_turn_is_counted_as_client_gone_not_ok(self):
+        from fighthealthinsurance.client_gone import ClientGone
+
+        user, chat = await _make_professional_chat("hbgone1", "9999910031")
+
+        async def gone(_frame):
+            raise ClientGone()
+
+        interface = ChatInterface(send_json_message_func=gone, chat=chat, user=user)
+
+        async def slow_reply(*args, **kwargs):
+            # Long enough for several heartbeats at the interval below.
+            await asyncio.sleep(0.3)
+            return "Here is what I found about your MRI denial.", None
+
+        with patch.dict(os.environ, {"FHI_CHAT_HEARTBEAT_SECONDS": "0.05"}), patch(
+            "fighthealthinsurance.chat_interface.record_chat_turn"
+        ) as mock_record, _llm_call_fails(slow_reply):
+            # Must not raise: the reply is not sent into the closed socket.
+            await interface.handle_chat_message("Why was my MRI claim denied?")
+
+        outcomes = [call.args[0] for call in mock_record.call_args_list]
+        self.assertEqual(outcomes, ["client_gone"])
+
+        # ...and the reply is kept, so a reconnect replays it.
+        fresh = await OngoingChat.objects.aget(id=chat.id)
+        assistant = [
+            m for m in (fresh.chat_history or []) if m.get("role") == "assistant"
+        ]
+        self.assertEqual(len(assistant), 1)
 
 
 class PersistChatTurnHelperTest(APITestCase):

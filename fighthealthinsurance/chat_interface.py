@@ -152,11 +152,26 @@ class ChatInterface:
         state_hint: Optional[str] = None,
         debug_llm: bool = False,
     ):
-        def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
-            """Wraps the send_json_message_func to ensure it's always awaited."""
+        # Set by the first send that finds the client gone, and never unset:
+        # a disconnected socket does not come back, and a reconnect gets a
+        # new consumer and a new ChatInterface. Recorded HERE, at the one
+        # send path, because the ClientGone itself does not always reach
+        # handle_chat_message: the heartbeat task and BaseTool.process both
+        # catch send failures, and a turn that finishes after the user left
+        # was then counted "ok" and sent its reply into a closed socket
+        # (review).
+        self._client_gone = False
+
+        async def wrap_send_json_message_func(message: Dict[str, Any]) -> None:
+            """Every frame to the client: stamps the chat id, and remembers a
+            departure (see ``_client_gone``)."""
             if "chat_id" not in message:
                 message["chat_id"] = str(chat.id)
-            return send_json_message_func(message)
+            try:
+                await send_json_message_func(message)
+            except ClientGone:
+                self._client_gone = True
+                raise
 
         self.send_json_message_func = wrap_send_json_message_func
         self.pubmed_tools = PubMedTools()
@@ -261,6 +276,12 @@ class ChatInterface:
                 await asyncio.sleep(interval)
                 try:
                     await self.send_status_message("Still working on your reply...")
+                except ClientGone:
+                    # Nobody left to keep alive. The send path has recorded
+                    # the departure; the turn itself finishes and persists
+                    # its reply so a reconnect can replay it, and is counted
+                    # "client_gone" rather than "ok".
+                    return
                 except Exception:
                     # One failed send must not end heartbeats for the rest of
                     # the turn (a transient send error is exactly the flaky
@@ -1423,7 +1444,8 @@ class ChatInterface:
             # e: this try also wraps every tool handler and model call, and
             # a "connection reset by peer" out of Postgres or a model
             # backend is a real failure that the user (still here) must be
-            # told about (review).
+            # told about (review). A departure seen by a send that something
+            # else swallowed is in self._client_gone, checked below.
             if isinstance(e, ClientGone):
                 client_hung_up = True
                 logger.warning(
@@ -1503,6 +1525,15 @@ class ChatInterface:
             # Launch background summary after save so the task can read the latest history
             if background_summary_task is not None:
                 await fire_and_forget_in_new_threadpool(background_summary_task)
+            if self._client_gone:
+                # The reply is generated and persisted above, so a reconnect
+                # replays it; there is just nobody here to send it to.
+                logger.info(
+                    f"Chat {chat.id}: reply persisted but not sent; the "
+                    f"client left mid-turn"
+                )
+                record_chat_turn("client_gone")
+                return
             record_chat_turn("ok")
             # Side-by-side alternate answer (ChatGPT-style "here's another
             # take"): cleaned like the primary, dropped if cleaning leaves it
@@ -1557,7 +1588,7 @@ class ChatInterface:
                 logger.opt(exception=True).error(
                     f"Could not persist user message for failed turn in chat {chat.id}"
                 )
-            if client_hung_up:
+            if client_hung_up or self._client_gone:
                 # The user's message is persisted above, so a reconnect
                 # replays it. Everything below reports "a user got NOTHING",
                 # which is only true when there was a user left to get it:

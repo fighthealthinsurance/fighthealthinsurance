@@ -122,7 +122,14 @@ class PerConnectionThreadSensitiveMixin:
         or a ``ConnectionResetError`` from a model backend, and file a real
         outage as "the user left" (review). So every consumer's handler
         checks ``isinstance(e, ClientGone)`` and never sniffs the exception
-        itself.
+        itself, and ``websocket_receive`` below catches whatever no handler
+        does.
+
+        A consumer with an ``except Exception`` around its sends still needs
+        its own ``except ClientGone`` ahead of it: ClientGone IS an
+        Exception, and it must stay one -- a BaseException would fly past
+        the cleanup those handlers do (persisting the user's message, the
+        zero-appeal diagnostics). The backstop is for sends with no handler.
 
         ``accept()``/``close()`` bypass this on purpose (they call
         ``AsyncConsumer.send`` directly); only text/bytes frames come
@@ -155,6 +162,19 @@ class PerConnectionThreadSensitiveMixin:
     async def websocket_receive(self, message):
         try:
             await super().websocket_receive(message)  # type: ignore[misc]
+        except ClientGone:
+            # Backstop for a write outside any consumer's own handler (an
+            # early validation frame, say). Before the send wrapper existed,
+            # uvicorn's run_asgi silently swallowed its ClientDisconnected
+            # from such a write; ClientGone is not one, so re-raising it would
+            # turn a silent hangup into "Exception in ASGI application" at
+            # ERROR (review). Nothing to report and nobody to report it to.
+            #
+            # Swallowed, not re-raised, so the consumer lives on to receive
+            # the websocket.disconnect uvicorn queues whenever it marks a
+            # socket disconnected -- and websocket_disconnect below exits the
+            # thread-sensitive context as usual.
+            logger.warning(f"{type(self).__name__}: client hung up")
         except BaseException:
             # Several receive() bodies deliberately re-raise after logging
             # (diagnostics), which kills the whole consumer task -- and
@@ -838,7 +858,10 @@ class StreamingAppealsBackend(
                     status_count=status_count,
                     last_status_phase=last_status_phase,
                     transport="websocket",
-                    stream_error=str(e),
+                    # ClientGone carries no text of its own; the transport
+                    # error that caused it is what tells a tab close from a
+                    # proxy reap or a uvloop closed-transport (review).
+                    stream_error=repr(e.__cause__) if hung_up else str(e),
                     error_from_send=error_from_send,
                     client_disconnected=hung_up,
                     wire=wire.summary(),
@@ -1239,7 +1262,15 @@ class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsume
                 except Exception:
                     logger.debug("prior-auth ws: error closing proposal generator")
                 await asyncio.sleep(1)
-                await self.close()
+                # Guarded like the sibling consumers': close() skips the send
+                # wrapper, so on a departed peer it raises uvicorn's raw
+                # ClientDisconnected, which the outer except Exception would
+                # log at ERROR -- the hangup this handler just logged as a
+                # warning, reported a second time (review).
+                try:
+                    await self.close()
+                except Exception:
+                    logger.debug("prior-auth ws: error closing connection")
         except ClientGone:
             # A write before the loop (the initial status frame) found the
             # peer already gone. Same non-event as mid-stream.

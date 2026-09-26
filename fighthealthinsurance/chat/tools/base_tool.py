@@ -11,6 +11,8 @@ from typing import Awaitable, Callable, List, Optional, Set, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.client_gone import ClientGone
+
 # Identity/audit fields that LLM-supplied tool payloads must never overwrite,
 # even though they are concrete editable columns.
 _TOOL_FIELD_DENYLIST = {
@@ -187,6 +189,13 @@ class BaseTool(ABC):
             )
             return updated_response, updated_context, True
 
+        except ClientGone:
+            # A status frame found the client gone. That is not this tool
+            # failing: re-raised so the turn ends the way it does for any
+            # other status send (handle_chat_message's hangup path), instead
+            # of logging a tool-error traceback, trying a second status frame
+            # into the same closed socket, and generating on for nobody.
+            raise
         except Exception as e:
             logger.opt(exception=True).warning(f"Error executing {self.name} tool: {e}")
             try:
