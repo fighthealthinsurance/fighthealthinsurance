@@ -52,7 +52,10 @@ CHAT_TURNS_TOTAL = Counter(
 #   rejected_candidates -- a turn hard-rejected at least one repeated
 #       candidate in the primary pass (counted once per turn);
 #   delivered_repeat -- despite the ladder, the reply we delivered still
-#       repeated a recent reply (last-resort delivery; should stay rare).
+#       repeated a recent reply (last-resort delivery; should stay rare);
+#   replaced_by_stored_content_ack -- the same last resort on a turn whose
+#       content was stored (long paste / upload): the repeat was withheld
+#       and the stored-content acknowledgment sent instead.
 CHAT_REPEATED_RESPONSES_TOTAL = Counter(
     "fhi_chat_repeated_responses_total",
     "Chat turns where candidate replies repeated a recent reply, by action.",

@@ -11,6 +11,7 @@ This module depends only on the stdlib plus loguru (the project's standard
 logger) and must never log full message contents (PHI).
 """
 
+import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -84,6 +85,59 @@ _TRAILING_JOINERS = frozenset({chr(0x200D), chr(0x200C)})
 
 # Whitespace we always preserve, even when stripping control characters.
 _KEPT_WHITESPACE = "\t\n\r"
+
+
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def sanitize_document_name(name: Any) -> str:
+    """Collapse whitespace runs (newlines included) in a document name.
+
+    Document names arrive from the client and end up inside single-line chat
+    text -- the compact marker stored in history, the status line, and the
+    stored-content acknowledgment -- so a newline smuggled into one would
+    break that text apart. The value is raw client JSON, so anything that is
+    not already a string is stringified rather than allowed to raise (the
+    pre-sanitization code interpolated it the same way). Returns "" for
+    None/blank input so callers can apply their own fallback.
+    """
+    text = "" if name is None else str(name)
+    return _WHITESPACE_RUN_RE.sub(" ", text).strip()
+
+
+def paste_document_name(document_name: Any) -> str:
+    """The name a long paste is stored under: the client-supplied name
+    (sanitized) when there is one, else a timestamped default."""
+    return (
+        sanitize_document_name(document_name)
+        or f"pasted_message_{int(time.time())}.txt"
+    )
+
+
+def is_long_paste(
+    text: Optional[str],
+    *,
+    is_document: bool,
+    max_direct_chars: int = DIRECT_CHAT_SOFT_LIMIT_CHARS,
+) -> bool:
+    """Whether ``text`` is a long paste: stored as a document and replaced in
+    chat history by a compact marker instead of being sent verbatim.
+
+    The single definition shared by prepare_user_message_variants and the
+    chat turn, which needs the answer BEFORE building variants so it can
+    store the paste first and build them once, around the document name the
+    storage actually resolved to. Explicit uploads are stored upstream and
+    never re-routed here.
+    """
+    return not is_document and len(text or "") > max_direct_chars
+
+
+def build_long_paste_marker(char_count: int, doc_name: str) -> str:
+    """The compact text stored in chat history in place of a long paste."""
+    return (
+        f"You pasted a long message (~{char_count:,} chars). "
+        f"It has been stored for reference as {doc_name}."
+    )
 
 
 @dataclass
@@ -208,13 +262,10 @@ def _build_long_variants(
     caller (in document storage); these variants stay compact -- a preferred
     head+tail reference and a truncated last resort.
     """
-    doc_name = document_name or f"pasted_message_{int(time.time())}.txt"
+    doc_name = paste_document_name(document_name)
     head = safe_display_truncate(safe, DISPLAY_PREVIEW_CHARS)
     tail = _safe_tail(safe, TAIL_PREVIEW_CHARS)
-    marker = (
-        f"You pasted a long message (~{char_count:,} chars). "
-        f"It has been stored for reference as {doc_name}."
-    )
+    marker = build_long_paste_marker(char_count, doc_name)
     common_meta: Dict[str, Any] = {
         "document_name": doc_name,
         "char_count": char_count,
@@ -299,7 +350,7 @@ def prepare_user_message_variants(
     char_count = len(safe)
 
     variants: List[MessageVariant]
-    if char_count > max_direct_chars and not is_document:
+    if is_long_paste(safe, is_document=is_document, max_direct_chars=max_direct_chars):
         variants = _build_long_variants(
             safe, char_count, document_name, max_variant_chars
         )
