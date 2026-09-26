@@ -145,6 +145,20 @@ class ProfessionalPickAttributionTest(APITestCase):
             self._chosen().get().appeal_text, "Draft letter from model x, typo fixed"
         )
 
+    def test_a_pick_from_another_flow_survives_a_professional_reassembly(self):
+        # Replacement is limited to this flow's own picks: a consumer or
+        # share-flow pick on the same denial, or one recorded before this
+        # flow recorded any, is somebody else's decision.
+        other = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Draft letter from model y, picked elsewhere",
+            chosen=True,
+            model_name="model-y",
+        )
+        self._assemble("Draft letter from model x, first version")
+        self._assemble("Draft letter from model x, second version")
+        self.assertTrue(ProposedAppeal.objects.filter(id=other.id).exists())
+
     def test_a_letter_written_with_no_drafts_stored_is_not_a_pick(self):
         # No model was on offer, so there is nothing to attribute.
         ProposedAppeal.objects.filter(for_denial=self.denial).delete()

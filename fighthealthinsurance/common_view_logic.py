@@ -793,6 +793,7 @@ def mark_proposal_chosen(
     draft_unsaved: bool = False,
     arbitrary_text: bool = False,
     presented_ids: Optional[List[int]] = None,
+    professional_pick: bool = False,
 ) -> ProposedAppeal:
     """Create a chosen=True ProposedAppeal, copying model_name from the original
     generated row when we can identify which draft was picked.
@@ -948,6 +949,7 @@ def mark_proposal_chosen(
         synthesized=synthesized,
         context_level=context_level,
         presented_ids=shown,
+        professional_pick=professional_pick,
     )
     pa.save()
     return pa
@@ -966,8 +968,9 @@ def record_professional_pick(
     text is not a new pick, and a changed one replaces the pick an earlier
     assembly recorded rather than adding another -- a denial the professional
     iterated on would otherwise outweigh one they got right first time. Only
-    the flow's own rows are replaced: picks that carry an on-screen report
-    came from the appeals page. Nothing is recorded when no draft was ever
+    the flow's own rows are replaced (ProposedAppeal.professional_pick): a
+    consumer, share-flow or older pick on the same denial is somebody else's
+    decision and is never deleted. Nothing is recorded when no draft was ever
     stored for the denial: no model was on offer. Best-effort -- reporting
     must never cost the professional their appeal document, so a failure
     here is logged and swallowed.
@@ -999,13 +1002,14 @@ def record_professional_pick(
                 appeal_text,
                 proposed_appeal_id=proposed_appeal_id,
                 editted=None,
+                professional_pick=True,
             )
-            if denial.creating_professional_id is not None:
-                # A new row rather than an update, so the drafts this pick
-                # could have been made from are the ones stored before it.
-                ProposedAppeal.objects.filter(
-                    for_denial=denial, chosen=True, presented_ids__isnull=True
-                ).exclude(id=pa.id).delete()
+            # A new row rather than an update, so the drafts this pick could
+            # have been made from are the ones stored before it; only this
+            # flow's own earlier picks go.
+            ProposedAppeal.objects.filter(
+                for_denial=denial, chosen=True, professional_pick=True
+            ).exclude(id=pa.id).delete()
         return pa
     except Exception:
         logger.opt(exception=True).warning(

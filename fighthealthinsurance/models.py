@@ -2780,6 +2780,12 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # the win rate of whatever landed fourth. Null for picks recorded before
     # this existed and for flows that cannot say (share, professional).
     presented_ids = models.JSONField(null=True, blank=True)
+    # Chosen rows written by the professional flow (assemble_appeal). That flow
+    # keeps one pick per denial -- a re-assembly replaces the earlier pick --
+    # and this marker is what limits the replacement to its own rows: nothing
+    # else about a row says which flow wrote it, and a consumer, share-flow or
+    # pre-existing pick on the same denial must never be deleted.
+    professional_pick = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
