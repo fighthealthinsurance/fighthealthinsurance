@@ -933,8 +933,13 @@ class ShareAppealView(View):
             logger.debug(form.cleaned_data)
             denial.appeal_text = form.cleaned_data["appeal_text"]
             denial.save()
+            # arbitrary_text: what is shared may never have been a draft, so
+            # the model is never inferred from the denial's drafts.
             common_view_logic.mark_proposal_chosen(
-                denial, form.cleaned_data["appeal_text"], editted=True
+                denial,
+                form.cleaned_data["appeal_text"],
+                editted=True,
+                arbitrary_text=True,
             )
             return render(request, "thankyou.html")
 

@@ -7,8 +7,20 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db import connection
-from django.db.models import Avg, Count, F, Max, Min, QuerySet
-from django.db.models.functions import Lower
+from django.db.models import (
+    Avg,
+    Count,
+    F,
+    IntegerField,
+    Max,
+    Min,
+    OuterRef,
+    QuerySet,
+    Subquery,
+    Sum,
+    Value,
+)
+from django.db.models.functions import Coalesce, Lower
 from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.db.models import Q
@@ -1455,6 +1467,13 @@ class ModelUsageDashboardView(generic.TemplateView):
         drafts generated for denials picked in the window (a draft generated
         on day 0 and picked on day 1 still counts as presented in a 1-day
         window anchored on the pick).
+      * Presented counts each draft shown, once per pick it was shown on (a
+        model producing several drafts on one denial is counted once per
+        draft, the fan-out-neutral unit the chooser tables also use): the
+        drafts the browser reported on screen at the pick, or, for a pick
+        recorded without that report, every deliverable draft stored before
+        it. Both paths count per pick, so a re-pick cannot push a win rate
+        past 100%.
 
     All stored model names pass through normalize_model_label so historical
     object-repr values aggregate per class (without memory addresses) even
@@ -1474,7 +1493,10 @@ class ModelUsageDashboardView(generic.TemplateView):
         ]
         windows_ctx = []
         for slug, label, since in windows:
-            proposed = self._proposed_appeal_stats(since)
+            # What the window's picks reported on screen feeds both the
+            # model and the context-level tables: computed once per window.
+            shown_on_picks = self._shown_on_picks(self._chosen_in_window(since))
+            proposed = self._proposed_appeal_stats(since, shown_on_picks)
             chooser_appeal = self._chooser_stats("appeal_letter", since)
             chooser_chat = self._chooser_stats("chat_response", since)
             windows_ctx.append(
@@ -1482,7 +1504,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "slug": slug,
                     "label": label,
                     "proposed_appeal": proposed,
-                    "context_level": self._context_level_stats(since),
+                    "context_level": self._context_level_stats(since, shown_on_picks),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "chart_data_json": json.dumps(
@@ -1535,8 +1557,19 @@ class ModelUsageDashboardView(generic.TemplateView):
         }
 
     @staticmethod
+    def _chosen_in_window(since: Optional[datetime.datetime]) -> QuerySet:
+        """The picks the window covers: chosen rows, anchored on the pick."""
+        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
+        if since is not None:
+            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        return chosen_qs
+
+    @staticmethod
     def _proposed_appeal_stats(
         since: Optional[datetime.datetime],
+        shown_on_picks: Optional[
+            Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]
+        ] = None,
     ) -> List[Dict[str, Any]]:
         # Keep chosen rows with model_name=NULL: mark_proposal_chosen falls
         # back to None when a pick can't be matched to a draft, and those are
@@ -1545,9 +1578,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         # matching what the backfill stamps — while later rows fall under
         # UNKNOWN_MODEL_LABEL, so legacy gaps stay distinct from current
         # attribution misses.
-        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
-        if since is not None:
-            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        chosen_qs = ModelUsageDashboardView._chosen_in_window(since)
 
         # Tie the presented universe to denials picked within the window,
         # NOT to draft created_at: a draft generated on day 0 and picked on
@@ -1562,11 +1593,14 @@ class ModelUsageDashboardView(generic.TemplateView):
         # real internal model_name, so counting them would silently pad that
         # model's presented denominator and deflate its win rate). Matches the
         # speculative=False guard in _context_level_stats and the serving path.
-        presented_qs = ProposedAppeal.objects.filter(
-            chosen=False,
-            model_name__isnull=False,
-            speculative=False,
-            for_denial_id__in=chosen_denial_ids,
+        presented_qs = ModelUsageDashboardView._presented_before_pick(
+            ProposedAppeal.objects.filter(
+                chosen=False,
+                model_name__isnull=False,
+                speculative=False,
+                for_denial_id__in=chosen_denial_ids,
+            ),
+            chosen_qs,
         )
 
         chosen: Counter = Counter()
@@ -1585,17 +1619,107 @@ class ModelUsageDashboardView(generic.TemplateView):
         if unattributed_count:
             chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
         presented: Counter = Counter()
+        # Presented counts each draft shown, once per draft. On one denial
+        # every draft competes with every other, so the per-draft pick rate is
+        # the fan-out-neutral comparison (a model contributing two of three
+        # cards is picked two thirds of the time per denial but one third per
+        # draft, the same as a single-card model; counting per denial would
+        # reward fan-out instead), and it is the unit the chooser tables use.
+        # What was shown comes from the pick itself when the browser reported
+        # it (presented_ids): the appeals page folds drafts past its visible
+        # limit behind a button, so the drafts generated for a denial are not
+        # the drafts the user saw, and counting the folded ones charged
+        # whatever landed fourth with a loss. A pick recorded without that
+        # report counts every deliverable draft stored before it, once per
+        # such pick (_presented_before_pick's ``times``).
+        shown, identity = shown_on_picks or ModelUsageDashboardView._shown_on_picks(
+            chosen_qs
+        )
+        for draft_id, times in shown.items():
+            model_name, _level = identity.get(draft_id, (None, None))
+            presented_label = normalize_model_label(model_name)
+            if presented_label is not None:
+                presented[presented_label] += times
         for name, count in presented_qs.values_list("model_name").annotate(
-            c=Count("id")
+            c=Sum("times")
         ):
             presented_label = normalize_model_label(name)
-            if presented_label is not None:
+            if presented_label is not None and count:
                 presented[presented_label] += count
         return _merge_stats(
             dict(chosen),
             dict(presented),
             ModelUsageDashboardView._draft_quality_stats(since),
         )
+
+    @staticmethod
+    def _shown_on_picks(
+        chosen_qs: QuerySet,
+    ) -> Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]:
+        """What the in-window picks reported was on screen: a Counter of draft
+        id -> number of picks it was shown on, and each such draft's
+        (model_name, context_level)."""
+        shown: Counter = Counter()
+        for ids in (
+            chosen_qs.exclude(presented_ids__isnull=True)
+            .values_list("presented_ids", flat=True)
+            .iterator()
+        ):
+            if not ids:
+                continue
+            # A draft was on screen once per pick; a duplicated id in a
+            # report must not inflate the denominator.
+            shown.update({int(i) for i in ids if isinstance(i, int)})
+        identity: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
+        ids_shown = sorted(shown)
+        # The ids are query parameters, and sqlite caps those per statement
+        # (Postgres far higher), so a long All Time list goes in chunks.
+        for start in range(0, len(ids_shown), 500):
+            for draft_id, model_name, level in ProposedAppeal.objects.filter(
+                id__in=ids_shown[start : start + 500]
+            ).values_list("id", "model_name", "context_level"):
+                identity[draft_id] = (model_name, level)
+        return shown, identity
+
+    @staticmethod
+    def _presented_before_pick(presented_qs: QuerySet, chosen_qs: QuerySet) -> QuerySet:
+        """Narrow ``presented_qs`` to drafts on offer at an in-window pick that
+        carried no on-screen report, annotated with ``times``: how many such
+        picks on the draft's denial were made after it. Each is one
+        presentation, the per-pick unit the reported path uses, so a re-pick
+        counts its drafts again instead of pushing a win rate past 100%;
+        picks that carry a report are counted from it instead.
+
+        Every visit to the appeals page reruns generation, and a pick can
+        land mid-stream, so a denial keeps accumulating drafts after the user
+        chose. Counting those as candidates that lost deflated every model's
+        win rate in proportion to how often the page was reopened, and
+        charged models added later with phantom losses. Row ids are
+        monotonic and the chosen copy is always written after the drafts it
+        was picked from, so "id below the pick's id" means "on the screen at
+        pick time" without leaning on created_at (NULL on legacy rows).
+        """
+        later_unreported_picks = (
+            chosen_qs.filter(
+                presented_ids__isnull=True,
+                for_denial_id=OuterRef("for_denial_id"),
+                id__gt=OuterRef("id"),
+            )
+            .order_by()
+            .values("for_denial_id")
+            .annotate(n=Count("id"))
+            .values("n")
+        )
+        # No WHERE on ``times``: a draft with none sums to zero anyway, and
+        # filtering on the annotation evaluated the correlated subquery a
+        # second time per row. Callers skip zero totals.
+        bounded: QuerySet = presented_qs.annotate(
+            times=Coalesce(
+                Subquery(later_unreported_picks, output_field=IntegerField()),
+                Value(0),
+            )
+        )
+        return bounded
 
     @staticmethod
     def _draft_quality_stats(
@@ -1684,32 +1808,65 @@ class ModelUsageDashboardView(generic.TemplateView):
     @staticmethod
     def _context_level_stats(
         since: Optional[datetime.datetime],
+        shown_on_picks: Optional[
+            Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]
+        ] = None,
     ) -> List[Dict[str, Any]]:
         """Chosen/presented/win-rate bucketed by the context/shed level the
         appeal was generated at (full / tier1_shed / tier2_shed / speculative /
         synthesized / template). Shows whether users end up choosing shed or
         speculative appeals as often as full-context ones. Speculative drafts
         that were never promoted are excluded from the presented denominator
-        (they were held back, not shown)."""
-        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
-        if since is not None:
-            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        (they were held back, not shown).
+
+        Rows without a level follow the model table's rules, so the two
+        tables on the page agree on what a bucket means: a chosen row from
+        before timestamp tracking is LEGACY_UNATTRIBUTED_LABEL, a later one is
+        UNKNOWN_MODEL_LABEL, and level-less drafts are left out of the
+        presented denominator rather than fabricating a win rate for the
+        legacy volume."""
+        chosen_qs = ModelUsageDashboardView._chosen_in_window(since)
         chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
-        presented_qs = ProposedAppeal.objects.filter(
-            chosen=False,
-            speculative=False,
-            for_denial_id__in=chosen_denial_ids,
+        presented_qs = ModelUsageDashboardView._presented_before_pick(
+            ProposedAppeal.objects.filter(
+                chosen=False,
+                speculative=False,
+                context_level__isnull=False,
+                for_denial_id__in=chosen_denial_ids,
+            ).exclude(context_level=""),
+            chosen_qs,
         )
         chosen: Counter = Counter()
-        for level, count in chosen_qs.values_list("context_level").annotate(
-            c=Count("id")
+        for level, count in (
+            chosen_qs.filter(context_level__isnull=False)
+            .exclude(context_level="")
+            .values_list("context_level")
+            .annotate(c=Count("id"))
         ):
-            chosen[level or UNKNOWN_MODEL_LABEL] += count
+            chosen[level] += count
+        no_level = chosen_qs.filter(Q(context_level__isnull=True) | Q(context_level=""))
+        legacy_count = no_level.filter(created_at__isnull=True).count()
+        unattributed_count = no_level.filter(created_at__isnull=False).count()
+        if legacy_count:
+            chosen[LEGACY_UNATTRIBUTED_LABEL] += legacy_count
+        if unattributed_count:
+            chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
         presented: Counter = Counter()
+        # Per draft shown, as the model table counts (see there): the drafts
+        # the pick reported on screen when it carries them, else every
+        # deliverable draft stored before the pick.
+        shown, identity = shown_on_picks or ModelUsageDashboardView._shown_on_picks(
+            chosen_qs
+        )
+        for draft_id, times in shown.items():
+            _model_name, level = identity.get(draft_id, (None, None))
+            if level:
+                presented[level] += times
         for level, count in presented_qs.values_list("context_level").annotate(
-            c=Count("id")
+            c=Sum("times")
         ):
-            presented[level or UNKNOWN_MODEL_LABEL] += count
+            if count:
+                presented[level] += count
         # _merge_stats labels the bucket key "model_name"; the value here is the
         # context level. Reusing the shared table partial (which reads
         # model_name) keeps the key -- the template passes a "Context level"
@@ -1740,7 +1897,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         # the All Time window doesn't load every vote into a result cache.
         # Dedupe ids within a vote: a candidate was shown once per vote
         # event, and a duplicated id (buggy/hostile client, pre-dedupe
-        # historical rows) must not inflate the denominator.
+        # historical rows) must not inflate the denominator. Counted per
+        # DRAFT shown, as the page defines it: a model the refill seated
+        # twice in one task is charged two presentations, which is what it
+        # got (the refill now asks the models still owed a candidate first,
+        # so that stays rare).
         counter: Counter = Counter()
         for ids in chosen_qs.values_list(
             "presented_candidate_ids", flat=True
@@ -1974,8 +2135,12 @@ class ModelBackendStatusView(generic.TemplateView):
         last: Dict[str, datetime.datetime] = {}
         # .order_by() clears any Meta ordering, which would otherwise leak
         # into the GROUP BY and break the aggregation.
+        # chosen=False: a chosen row is the copy written when a user PICKS a
+        # draft (mark_proposal_chosen), stamped with the draft's model at
+        # pick time. Counting it kept a retired backend looking alive for
+        # as long as anyone kept picking its old drafts.
         for name, ts in (
-            ProposedAppeal.objects.filter(model_name__in=names)
+            ProposedAppeal.objects.filter(model_name__in=names, chosen=False)
             .order_by()
             .values_list("model_name")
             .annotate(latest=Max("created_at"))

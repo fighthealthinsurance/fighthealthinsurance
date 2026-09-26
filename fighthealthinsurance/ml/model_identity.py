@@ -27,9 +27,9 @@ Identity preference order (see ``canonical_model_name``):
    address-free; it should only ever be hit for hand-constructed instances
    outside the router registry.
 
-The special ``synthesized`` bucket (drafts combined from multiple model
-outputs) is a reserved pseudo-model name and passes through normalization
-unchanged.
+The special ``synthesized`` (drafts combined from multiple model outputs)
+and ``template`` (non-AI drafts built from the appeal templates) buckets are
+reserved pseudo-model names and pass through normalization unchanged.
 """
 
 import re
@@ -37,6 +37,12 @@ from typing import Any, Optional
 
 # Reserved pseudo-model name for outputs synthesized from multiple drafts.
 SYNTHESIZED_MODEL_NAME = "synthesized"
+
+# Reserved pseudo-model name for the non-AI drafts built from the site's
+# appeal templates (denial-type and medical-necessity templates). They are
+# presented and picked like any model's draft, so they carry a name rather
+# than NULL: downstream, NULL reads as "attribution failed".
+TEMPLATE_MODEL_NAME = "template"
 
 # Reporting label stamped by the backfill onto historical *chosen*
 # ProposedAppeal rows whose generating model cannot be recovered from any

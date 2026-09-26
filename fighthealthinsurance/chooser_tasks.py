@@ -332,6 +332,11 @@ async def _generate_appeal_candidates(task: ChooserTask):
     prompt = _build_appeal_prompt(task.context_json)
 
     candidate_index = 0
+    # Models that have already seated a candidate, so the retry pass asks
+    # the ones that have NOT first: re-sampling a model that already
+    # answered puts two of its drafts in one task, and the usage dashboard
+    # then charges it two presentations per vote it can win at most once.
+    produced: set[int] = set()
     # First pass: try each model once
     for model in models:
         try:
@@ -351,6 +356,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     content=response.strip(),
                     metadata={"source": "synthetic"},
                 )
+                produced.add(id(model))
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
         except Exception as e:
@@ -360,7 +366,8 @@ async def _generate_appeal_candidates(task: ChooserTask):
     retry_count = 0
     max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
     while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
-        for model in models:
+        # Stable sort: the models still owed a candidate come first.
+        for model in sorted(models, key=lambda m: id(m) in produced):
             if candidate_index >= CHOOSER_NUM_CANDIDATES:
                 break
             try:
@@ -381,6 +388,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                         content=response.strip(),
                         metadata={"source": "synthetic", "retry": True},
                     )
+                    produced.add(id(model))
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
             except Exception as e:
@@ -554,6 +562,9 @@ async def _generate_chat_candidates(task: ChooserTask):
     user_prompt = task.context_json.get("prompt", "")
 
     candidate_index = 0
+    # Same bookkeeping as the appeal candidates: the retry pass asks the
+    # models that have not answered yet first.
+    produced: set[int] = set()
     for model in models:
         try:
             # NOTE: the parameter is current_message_for_llm — passing
@@ -578,6 +589,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                         "has_history": len(chat_history) > 0,
                     },
                 )
+                produced.add(id(model))
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
         except Exception as e:
@@ -587,7 +599,8 @@ async def _generate_chat_candidates(task: ChooserTask):
     retry_count = 0
     max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
     while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
-        for model in models:
+        # Stable sort: the models still owed a candidate come first.
+        for model in sorted(models, key=lambda m: id(m) in produced):
             if candidate_index >= CHOOSER_NUM_CANDIDATES:
                 break
             try:
@@ -611,6 +624,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                             "retry": True,
                         },
                     )
+                    produced.add(id(model))
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
             except Exception as e:
@@ -746,6 +760,9 @@ async def _synthesize_appeal_candidate(
             denial_text=context.get("denial_text_preview"),
             procedure=context.get("procedure"),
             diagnosis=context.get("diagnosis"),
+            # Synthetic chooser traffic, not a user's appeal: kept out of the
+            # appeal series of the fhi_ml_call* metrics.
+            purpose="other",
         )
     except Exception as e:
         logger.opt(exception=True).warning(
