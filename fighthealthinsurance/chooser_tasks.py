@@ -15,12 +15,14 @@ calls relied on the router's internal-only default.
 """
 
 import asyncio
+import datetime
 import random
 import re
 import threading
 from typing import List, Optional, cast
 
 from django.conf import settings
+from django.utils import timezone
 
 from channels.db import database_sync_to_async
 from loguru import logger
@@ -58,6 +60,12 @@ CHOOSER_FALLBACK_ATTEMPTS = getattr(settings, "CHOOSER_FALLBACK_ATTEMPTS", 3)
 # trigger_prefill_async): a page load and an empty next-task fetch both ask.
 CHOOSER_PREFILL_THROTTLE_SECONDS = getattr(
     settings, "CHOOSER_PREFILL_THROTTLE_SECONDS", 60
+)
+# A QUEUED task younger than this marks a generation still running somewhere
+# (see _generation_underway); an older one was left behind by a process that
+# died mid-generation, and no longer holds prefills off.
+CHOOSER_GENERATION_CLAIM_SECONDS = getattr(
+    settings, "CHOOSER_GENERATION_CLAIM_SECONDS", 15 * 60
 )
 
 
@@ -137,27 +145,22 @@ def _labeled_fields(text: str) -> dict:
 def _parse_conversation(text: str):
     """``(history, final_user_prompt)`` from a USER:/ASSISTANT: transcript.
 
-    Labels may carry list or markdown decoration ("**USER:**"); continuation
-    lines are kept as written.
+    Every turn goes into the history in order, and only a trailing user turn
+    comes back out, as the question the candidates answer (None when the
+    transcript ends with the assistant). A user turn used to be held back
+    whenever it followed an assistant turn, so in a transcript with two
+    answered follow-ups the middle question was dropped and two assistant
+    turns sat side by side. Labels may carry list or markdown decoration
+    ("**USER:**"); continuation lines are kept as written.
     """
     history: list = []
-    final_user_prompt = None
     current_role = None
     current_content: list = []
 
     def flush():
-        nonlocal final_user_prompt
         content = " ".join(current_content).strip()
-        if not (current_role and content):
-            return
-        if current_role == "user":
-            if history and history[-1].get("role") == "assistant":
-                final_user_prompt = content
-            else:
-                history.append({"role": "user", "content": content})
-        else:
-            history.append({"role": "assistant", "content": content})
-            final_user_prompt = None
+        if current_role and content:
+            history.append({"role": current_role, "content": content})
 
     for raw in text.strip().split("\n"):
         cleaned = _clean_label_line(raw)
@@ -172,12 +175,10 @@ def _parse_conversation(text: str):
             current_content = [cleaned[10:].strip("*_` ").strip()]
         elif current_role and raw.strip():
             current_content.append(raw.strip())
-    # The last message: a trailing user turn is the question to answer.
-    content = " ".join(current_content).strip()
-    if current_role == "user" and content:
-        final_user_prompt = content
-    elif current_role == "assistant" and content:
-        history.append({"role": "assistant", "content": content})
+    flush()
+    if not history or history[-1]["role"] != "user":
+        return history, None
+    final_user_prompt = history.pop()["content"]
     return history, final_user_prompt
 
 
@@ -1003,12 +1004,37 @@ async def prefill_if_needed(min_ready: int = 1):
     for task_type in ["appeal", "chat"]:
         ready_count = await _count_ready_tasks(task_type)
         if ready_count < min_ready:
+            if await _generation_underway(task_type):
+                logger.debug(
+                    f"Chooser {task_type} tasks below minimum, but one is already "
+                    "being generated; not starting another"
+                )
+                continue
             logger.info(
                 f"Chooser {task_type} tasks below minimum ({ready_count} < {min_ready}). "
                 f"Triggering generation of 1 task."
             )
             # Fire and forget - don't wait for completion
             await fire_and_forget_in_new_threadpool(_generate_single_task(task_type))
+
+
+async def _generation_underway(task_type: str) -> bool:
+    """Whether a ``task_type`` task is being generated now, in any process.
+
+    The prefill throttle lives in the cache, which is per process
+    (LocMemCache), so every web worker could start its own generation while
+    the pool was empty, each one paying for a round of external calls. Every
+    generation creates its task QUEUED first and settles it READY or DISABLED
+    when done, so a recent QUEUED row is a sign every worker, and the refill
+    actor's batches, can see. It is a check, not a lock: two workers checking
+    in the same instant can both start one, but no longer every worker.
+    """
+    since = timezone.now() - datetime.timedelta(
+        seconds=CHOOSER_GENERATION_CLAIM_SECONDS
+    )
+    return await ChooserTask.objects.filter(
+        task_type=task_type, status="QUEUED", created_at__gte=since
+    ).aexists()
 
 
 def trigger_prefill_async() -> bool:
@@ -1018,7 +1044,9 @@ def trigger_prefill_async() -> bool:
 
     Throttled to one prefill per process per CHOOSER_PREFILL_THROTTLE_SECONDS:
     every chooser page load and every empty next-task fetch asks, and each
-    prefill is a full task generation. Returns whether a prefill was started.
+    prefill is a full task generation. Across processes, a prefill skips a
+    type that is already being generated (see _generation_underway). Returns
+    whether a prefill was started.
     """
     from django.core.cache import cache
 

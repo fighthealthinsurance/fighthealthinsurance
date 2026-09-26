@@ -10,9 +10,11 @@ Covers two behaviors added alongside synthesis tracking:
   individual models.
 """
 
+import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from django.utils import timezone
 
 from fighthealthinsurance.chooser_tasks import (
     _claim_refill,
@@ -23,6 +25,7 @@ from fighthealthinsurance.chooser_tasks import (
     _synthesize_appeal_candidate,
     _synthesize_chat_candidate,
     check_and_refill_task_pool,
+    prefill_if_needed,
 )
 from fighthealthinsurance.models import (
     ChooserCandidate,
@@ -328,6 +331,38 @@ class TestRefillGuard:
 
         assert _claim_refill(), "the guard was still held after the refill"
         _release_refill()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestPrefillSkipsAGenerationUnderway:
+    """The prefill throttle is per process, so each web worker could start a
+    generation while the pool was empty. A prefill now skips a type whose
+    task is already QUEUED, which every process can see."""
+
+    async def _prefilled_types(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
+            new=AsyncMock(),
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task",
+            new=MagicMock(return_value=None),
+        ) as single:
+            await prefill_if_needed(min_ready=1)
+        return [call.args[0] for call in single.call_args_list]
+
+    async def test_a_generation_underway_is_not_started_again(self):
+        await _make_task("appeal", status="QUEUED")
+
+        assert await self._prefilled_types() == ["chat"]
+
+    async def test_a_queued_task_left_behind_long_ago_holds_nothing_off(self):
+        task = await _make_task("appeal", status="QUEUED")
+        await ChooserTask.objects.filter(pk=task.pk).aupdate(
+            created_at=timezone.now() - datetime.timedelta(hours=1)
+        )
+
+        assert await self._prefilled_types() == ["appeal", "chat"]
 
 
 @pytest.mark.asyncio
