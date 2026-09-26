@@ -94,7 +94,7 @@
       Distinct chooser sessions: <strong>{{ w.totals.chooser_sessions }}</strong>.
     </p>
     <div id="chart-{{ w.slug }}" class="chart-container"></div>
-    <p class="note">Bars sit side by side, not stacked: real patients' picks (one per case) and anonymous chooser votes are different populations, so compare bars of one colour, never their sum.</p>
+    <p class="note">Bars sit side by side, not stacked: real patients' picks and anonymous chooser votes are different populations, so compare bars of one colour, never their sum.</p>
 
     <h3>ProposedAppeal <span class="source-label">(real denial flow &mdash; user-chosen)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.proposed_appeal kind="picks" show_state=True show_quality=True %}

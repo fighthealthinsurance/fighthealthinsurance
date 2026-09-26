@@ -1725,7 +1725,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "chooser_chat": chooser_chat,
                     "call_attempts": call_attempts.get(slug),
                     "totals": {
-                        # One latest pick per case, so this is distinct cases.
+                        # Every chosen row in the window, re-picks included.
                         "picks": sum(r["chosen"] for r in proposed),
                         "chooser_votes": sum(
                             r["chosen"] for r in chooser_appeal + chooser_chat
