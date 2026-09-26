@@ -89,7 +89,19 @@ class TestHealthStatus(TestCase):
         _HealthStatus._refresh(health_status)
 
         assert health_status.model_ok(citations) is True
-        assert health_status.get_snapshot()["alive_models"] == 2
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_a_context_only_backend_never_counts_as_alive(self, fake_router):
+        """alive_models tells the public status widget a model is ready to
+        write an appeal. A citations backend can't write one, so with every
+        generation backend down the count is zero even while it is healthy."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        fake_router.context_only_models_by_cost = [_ContextOnlyGood()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        assert health_status.get_snapshot()["alive_models"] == 0
 
     @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
     def test_details_list_failing_externals_and_no_internal_failures(
