@@ -2,6 +2,7 @@
 
 import datetime
 import json
+import re
 from types import SimpleNamespace
 from unittest import mock
 
@@ -20,6 +21,7 @@ from fighthealthinsurance.ml.model_identity import (
     legacy_unresolved_label,
 )
 from fighthealthinsurance.models import (
+    ChatTurn,
     ChooserCandidate,
     ChooserSkip,
     ChooserTask,
@@ -27,6 +29,7 @@ from fighthealthinsurance.models import (
     Denial,
     ModelBackendHealthCheckResult,
     ModelCallAttempt,
+    OngoingChat,
     ProposedAppeal,
 )
 from fighthealthinsurance.staff_views import (
@@ -1711,3 +1714,237 @@ class CallAttemptTableTest(StaffClientMixin, TestCase):
         self.assertEqual(windows["1d"]["call_attempts"]["rows"][0]["median_ms"], 100)
         self.assertEqual(windows["30d"]["call_attempts"]["rows"][0]["median_ms"], 150)
         self.assertContains(response, "Medians here use only the newest 2 OK calls")
+
+
+
+def _call(model, status="scored", ms=100, pass_kind="primary"):
+    return {
+        "model": model,
+        "backend": "",
+        "external": None,
+        "pass": pass_kind,
+        "depth": 0,
+        "history": "truncated",
+        "variant": "",
+        "status": status,
+        "error": "RuntimeError" if status == "error" else "",
+        "ms": None if status == "late" else ms,
+        "score": 1.0 if status == "scored" else None,
+    }
+
+
+class LiveChatSectionTest(StaffClientMixin, TestCase):
+    """The live chat model race from ChatTurn: a section per bounded window,
+    kept out of the chart."""
+
+    def setUp(self):
+        self._login_staff()
+        self.chat = OngoingChat.objects.create()
+
+    def _turn(self, days_ago=0, hours_ago=0, **fields):
+        defaults = dict(
+            outcome="ok",
+            use_external=True,
+            backends=["model-a"],
+            winner_model="model-a",
+            calls=[_call("model-a")],
+        )
+        defaults.update(fields)
+        turn = ChatTurn.objects.create(chat=self.chat, **defaults)
+        if days_ago or hours_ago:
+            ChatTurn.objects.filter(pk=turn.pk).update(
+                created_at=timezone.now()
+                - datetime.timedelta(days=days_ago, hours=hours_ago)
+            )
+        return turn
+
+    @staticmethod
+    def _rows(window):
+        return {r["model_name"]: r for r in window["live_chat"]["rows"]}
+
+    def test_only_the_bounded_windows_have_a_chat_section(self):
+        self._turn()
+        response, windows = self._windows()
+        self.assertIsNone(windows["global"]["live_chat"])
+        for slug in ("1d", "7d", "30d"):
+            self.assertIsNotNone(windows[slug]["live_chat"], slug)
+        self.assertContains(response, "<h3>Live chat <span")
+        self.assertContains(response, "turn records only exist since turn recording")
+
+    def test_turns_fall_in_the_windows_they_belong_to(self):
+        self._turn(hours_ago=2)
+        self._turn(days_ago=3)
+        self._turn(days_ago=10)
+        self._turn(days_ago=40)
+        _response, windows = self._windows()
+        self.assertEqual(
+            {
+                slug: windows[slug]["live_chat"]["summary"]["turns"]
+                for slug in ("1d", "7d", "30d")
+            },
+            {"1d": 1, "7d": 2, "30d": 3},
+        )
+
+    def test_win_rate_is_wins_over_turns_asked(self):
+        # model-a is listed twice, so it gets more calls than turns asked:
+        # the rate is per turn, not per call.
+        self._turn(
+            backends=["model-a", "model-a", "model-b"],
+            winner_model="model-a",
+            calls=[_call("model-a"), _call("model-a"), _call("model-b")],
+        )
+        self._turn(backends=["model-a", "model-b"], winner_model="model-b")
+        self._turn(backends=["model-a", "model-b"], winner_model="", outcome="failed")
+        _response, windows = self._windows()
+        rows = self._rows(windows["1d"])
+        self.assertEqual((rows["model-a"]["asked"], rows["model-a"]["wins"]), (3, 1))
+        self.assertAlmostEqual(rows["model-a"]["win_rate"], 100 / 3)
+        self.assertEqual((rows["model-b"]["asked"], rows["model-b"]["wins"]), (3, 1))
+
+    def test_a_model_never_asked_shows_a_dash_not_zero(self):
+        self._turn(calls=[_call("model-a"), _call("stray-model")])
+        response, windows = self._windows()
+        rows = self._rows(windows["1d"])
+        self.assertEqual(rows["stray-model"]["asked"], 0)
+        self.assertIsNone(rows["stray-model"]["win_rate"])
+        row_html = re.search(
+            r"<tr>\s*<td>stray-model</td>.*?</tr>", response.content.decode(), re.S
+        )
+        self.assertIsNotNone(row_html)
+        self.assertIn('<td class="num">&mdash;</td>', row_html.group(0))
+        self.assertNotIn("0.0%", row_html.group(0))
+
+    def test_fallbacks_count_as_asked_only_when_the_retry_ran(self):
+        self._turn(fallback_backends=["claude"], retry_ran=False)
+        self._turn(
+            fallback_backends=["claude"],
+            retry_ran=True,
+            retry_used=True,
+            winner_model="claude",
+            winner_external=True,
+            calls=[_call("model-a", "empty"), _call("claude", pass_kind="retry")],
+        )
+        _response, windows = self._windows()
+        rows = self._rows(windows["1d"])
+        self.assertEqual(rows["claude"]["asked"], 1)
+        self.assertEqual(rows["claude"]["wins"], 1)
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual((summary["retry_ran"], summary["retry_used"]), (1, 1))
+
+    def test_call_statuses_and_the_median_of_calls_that_answered(self):
+        self._turn(
+            calls=[
+                _call("model-a", "scored", ms=100),
+                _call("model-a", "repeat", ms=300),
+                _call("model-a", "empty", ms=500),
+                _call("model-a", "error", ms=9000),
+                _call("model-a", "late"),
+            ]
+        )
+        _response, windows = self._windows()
+        row = self._rows(windows["1d"])["model-a"]
+        self.assertEqual(row["calls"], 5)
+        self.assertEqual(
+            (row["late"], row["error"], row["empty"], row["repeat"]), (1, 1, 1, 1)
+        )
+        # The error's time is not an answer time.
+        self.assertEqual(row["median_ms"], 300)
+
+    def test_summary_counts_outcomes_outside_models_and_picks(self):
+        self._turn(winner_model="claude", winner_external=True)
+        self._turn(winner_external=False)
+        self._turn(use_external=False, winner_external=False)
+        self._turn(outcome="failed", winner_model="")
+        self._turn(outcome="timeout", winner_model="")
+        _response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(
+            (summary["turns"], summary["ok"], summary["failed"], summary["timeout"]),
+            (5, 3, 1, 1),
+        )
+        self.assertEqual(summary["external_allowed"], 4)
+        self.assertAlmostEqual(summary["external_share"], 80.0)
+        self.assertEqual(summary["external_wins"], 1)
+        self.assertAlmostEqual(summary["external_win_share"], 100 / 3)
+
+    def test_side_by_side_counts_only_pairs_from_two_models(self):
+        cross = dict(
+            alternate_offered=True, alternate_model="model-b", alternate_cross_model=True
+        )
+        self._turn(preferred="alternate", **cross)
+        self._turn(preferred="primary", **cross)
+        self._turn(**cross)
+        self._turn(
+            alternate_offered=True,
+            alternate_model="model-a",
+            alternate_cross_model=False,
+            preferred="alternate",
+        )
+        _response, windows = self._windows()
+        chat = windows["1d"]["live_chat"]
+        summary = chat["summary"]
+        self.assertEqual((summary["alternates"], summary["cross_alternates"]), (4, 3))
+        self.assertEqual(
+            (summary["picks"], summary["picked_primary"], summary["picked_alternate"]),
+            (3, 1, 2),
+        )
+        self.assertEqual(
+            (summary["same_model_pairs"], summary["same_model_picked_alternate"]), (1, 1)
+        )
+        self.assertEqual(
+            chat["pairs"],
+            [
+                {
+                    "primary_model": "model-a",
+                    "alternate_model": "model-b",
+                    "offered": 3,
+                    "answered": 2,
+                    "primary": 1,
+                    "alternate": 1,
+                }
+            ],
+        )
+        rows = self._rows(windows["1d"])
+        model_a = rows["model-a"]
+        self.assertEqual(
+            (model_a["sbs_shown"], model_a["sbs_answered"], model_a["sbs_preferred"]),
+            (3, 2, 1),
+        )
+        self.assertAlmostEqual(rows["model-b"]["sbs_rate"], 50.0)
+        self.assertEqual(
+            [r["model_name"] for r in chat["side_by_side_rows"]], ["model-a", "model-b"]
+        )
+
+    def test_a_pair_with_no_pick_has_no_pick_rate(self):
+        self._turn(
+            alternate_offered=True, alternate_model="model-b", alternate_cross_model=True
+        )
+        _response, windows = self._windows()
+        self.assertIsNone(self._rows(windows["1d"])["model-b"]["sbs_rate"])
+
+    def test_chat_models_stay_out_of_the_chart(self):
+        self._turn(backends=["chat-only-model"], winner_model="chat-only-model")
+        _response, windows = self._windows()
+        for w in windows.values():
+            self.assertNotIn(
+                "chat-only-model", json.loads(w["chart_data_json"])["labels"]
+            )
+
+    def test_chat_rows_carry_their_state_tag(self):
+        self._turn(
+            alternate_offered=True, alternate_model="model-b", alternate_cross_model=True
+        )
+        response, windows = self._windows()
+        for slug in ("1d", "7d", "30d"):
+            for row in windows[slug]["live_chat"]["rows"]:
+                self.assertIn("state", row, (slug, row["model_name"]))
+        self.assertContains(response, "Live chat side by side")
+        self.assertContains(response, "<td>model-b</td>")
+
+    def test_only_metadata_columns_are_read(self):
+        self._turn()
+        with CaptureQueriesContext(connection) as queries:
+            self.client.get(reverse("model_usage_dashboard"))
+        sql = "\n".join(q["sql"] for q in queries.captured_queries)
+        self.assertNotIn("chat_history", sql)
+        self.assertNotIn("summary_for_next_call", sql)

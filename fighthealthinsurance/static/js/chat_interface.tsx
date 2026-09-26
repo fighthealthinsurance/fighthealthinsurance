@@ -140,6 +140,9 @@ interface ChatMessage {
   // Optional side-by-side alternate answer (ephemeral: not persisted
   // server-side, so it only appears on live turns, not replays).
   alternate_content?: string;
+  // The server's id for the turn that offered the alternate, echoed back
+  // with the person's pick so it lands on that turn. Live turns only.
+  turn_id?: string;
   // Debug frames captured for the turn that produced this assistant
   // message (rendered as a collapsible panel under the bubble).
   debug_info?: ChatDebugInfo;
@@ -885,6 +888,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               ? restorePersonalInfo(data.alternate_content, userInfo)
               : data.alternate_content;
           }
+          const turnId: string | undefined =
+            typeof data.turn_id === "string" ? data.turn_id : undefined;
 
           // Attach any buffered debug frames to the assistant message they
           // belong to (cleared either way so a later turn can't inherit a
@@ -903,6 +908,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 role: data.role,
                 content: processedContent,
                 alternate_content: alternateContent,
+                turn_id: turnId,
                 debug_info: debugInfo,
                 timestamp: data.timestamp || new Date().toISOString(),
                 status: "done",
@@ -1051,8 +1057,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
   };
 
   // Lightweight feedback about a side-by-side alternate answer. Returns
-  // whether the frame was actually sent.
-  const sendAnswerFeedback = (preferred: "primary" | "alternate"): boolean => {
+  // whether the frame was actually sent. turn_id (when the server sent one)
+  // lets the server store the pick on the turn that offered the pair.
+  const sendAnswerFeedback = (
+    preferred: "primary" | "alternate",
+    turnId?: string,
+  ): boolean => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return false;
     }
@@ -1060,7 +1070,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       JSON.stringify({
         chat_id: state.chatId,
         session_key: getSessionKey(),
-        answer_feedback: { preferred },
+        answer_feedback: { preferred, turn_id: turnId },
       }),
     );
     return true;
@@ -1263,7 +1273,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 {!isUser && message.alternate_content && (
                   <AlternateAnswer
                     content={message.alternate_content}
-                    onPrefer={(preferred) => sendAnswerFeedback(preferred)}
+                    onPrefer={(preferred) =>
+                      sendAnswerFeedback(preferred, message.turn_id)
+                    }
                   />
                 )}
                 {!isUser && message.debug_info && (

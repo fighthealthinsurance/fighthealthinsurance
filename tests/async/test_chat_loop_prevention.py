@@ -8,6 +8,9 @@ Also covers the side-by-side alternate answer, the transient IP-derived
 state hint, and the LLM-input debug frame.
 """
 
+import asyncio
+import json
+import os
 import typing
 from unittest.mock import AsyncMock, patch
 
@@ -15,9 +18,10 @@ from django.contrib.auth import get_user_model
 from prometheus_client import REGISTRY
 from rest_framework.test import APITestCase
 
+from fighthealthinsurance import utils as fhi_utils
 from fighthealthinsurance.chat.retry_handler import ANTI_REPEAT_NOTE
 from fighthealthinsurance.chat_interface import ChatInterface
-from fighthealthinsurance.models import OngoingChat, ProfessionalUser
+from fighthealthinsurance.models import ChatTurn, OngoingChat, ProfessionalUser
 from tests.chat_fixtures import (
     FRESH_REPLY,
     LOOPED_REPLY,
@@ -304,6 +308,293 @@ class ChatAlternateAnswerTest(APITestCase):
         frame = content_frames[-1]
         assert frame["content"] == FRESH_REPLY
         assert "alternate_content" not in frame
+
+
+# A third distinct, presentable answer for the model-versus-model tests.
+THIRD_REPLY = (
+    "One more option to consider: ask your county office for the hardship "
+    "exemption form, since caregivers and people with a medical condition "
+    "can be excused from the hours rule entirely."
+)
+
+_real_best_two = fhi_utils.best_two_within_timelimit
+
+
+async def _short_race(calls, score_fn, timeout, extended_timeout=None):
+    """The primary race with a half-second window, so a stalled backend is
+    left running (late) without the test waiting the real 30s."""
+    return await _real_best_two(calls, score_fn, timeout=0.5, extended_timeout=0.0)
+
+
+_PATCH_SHORT_RACE = patch(
+    "fighthealthinsurance.chat_interface.best_two_within_timelimit", _short_race
+)
+
+
+class _RaisingModel(RecordingChatModel):
+    async def generate_chat_response(self, *args, **kwargs):
+        raise RuntimeError("Blue Shield denied the knee MRI")
+
+
+class _StalledModel(RecordingChatModel):
+    async def generate_chat_response(self, *args, **kwargs):
+        await asyncio.sleep(10)
+        return ("never delivered", "never delivered")
+
+
+async def _turn_rows(chat):
+    return [t async for t in ChatTurn.objects.filter(chat=chat).order_by("created_at")]
+
+
+def _row_blob(row):
+    """Every stored value of a ChatTurn row, as one string."""
+    return json.dumps(
+        {f.name: getattr(row, f.attname) for f in ChatTurn._meta.concrete_fields},
+        default=str,
+        # Unescaped, so text with non-ASCII characters is still found.
+        ensure_ascii=False,
+    )
+
+
+class ChatTurnRecordTest(APITestCase):
+    """Each model turn leaves one ChatTurn row: metadata about the race,
+    never any text."""
+
+    async def test_turn_row_names_the_winner_runner_up_and_alternate(self):
+        user, chat = await _make_chat(
+            "turnrow1", "9999930101", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        best_model = RecordingChatModel(
+            always_reply=FRESH_REPLY, model_quality=110, name="winner-model"
+        )
+        second_model = RecordingChatModel(
+            always_reply=SECOND_OPINION_REPLY, model_quality=100, name="second-model"
+        )
+
+        with _patched_router([best_model, second_model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        (row,) = await _turn_rows(chat)
+        assert row.outcome == "ok"
+        assert row.use_external is True
+        assert row.backends == ["winner-model", "second-model"]
+        assert (row.winner_model, row.winner_pass) == ("winner-model", "primary")
+        assert row.runner_up_model == "second-model"
+        assert row.winner_score > row.runner_up_score > 0
+        assert row.closely_tied is True
+        assert row.alternate_offered is True
+        assert row.alternate_model == "second-model"
+        assert row.alternate_cross_model is True
+        assert row.preferred == ""
+        assert [c["status"] for c in row.calls] == ["scored", "scored"]
+        assert row.fanout_ms is not None and row.turn_ms is not None
+        # The client gets the row's id with the pair, to echo with its pick.
+        frame = recorder.content_frames()[-1]
+        assert frame["alternate_content"] == SECOND_OPINION_REPLY
+        assert frame["turn_id"] == str(row.id)
+
+    async def test_turn_row_holds_no_text(self):
+        user, chat = await _make_chat(
+            "turnrow2", "9999930102", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(
+            send_json_message_func=recorder,
+            chat=chat,
+            user=user,
+            state_hint="Nebraska",
+        )
+        best_model = RecordingChatModel(
+            always_reply=FRESH_REPLY, model_quality=110, name="winner-model"
+        )
+        second_model = RecordingChatModel(
+            always_reply=SECOND_OPINION_REPLY, model_quality=100, name="second-model"
+        )
+        message = "My plan is Zanzibar Mutual and my doctor is Dr. Quillfeather"
+
+        with _patched_router([best_model, second_model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message(message)
+
+        (row,) = await _turn_rows(chat)
+        blob = _row_blob(row)
+        for text in (
+            "Zanzibar",
+            "Quillfeather",
+            "Nebraska",
+            "mock context summary",
+            FRESH_REPLY[:40],
+            SECOND_OPINION_REPLY[:40],
+            LOOPED_REPLY[:40],
+        ):
+            assert text not in blob, f"{text!r} stored on the turn row"
+
+    async def test_no_turn_id_without_an_alternate(self):
+        user, chat = await _make_chat(
+            "turnrow3", "9999930103", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        model = RecordingChatModel(always_reply=FRESH_REPLY, name="only-model")
+
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        frame = recorder.content_frames()[-1]
+        assert "turn_id" not in frame
+        (row,) = await _turn_rows(chat)
+        assert row.alternate_offered is False
+        assert row.alternate_model == ""
+
+    async def test_repeat_error_and_late_calls_are_recorded(self):
+        user, chat = await _make_chat(
+            "turnrow4", "9999930104", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        models = [
+            RecordingChatModel(
+                always_reply=LOOPED_REPLY, model_quality=110, name="looping-backend"
+            ),
+            _RaisingModel(name="raising-backend"),
+            _StalledModel(name="stalled-backend"),
+            RecordingChatModel(
+                always_reply=FRESH_REPLY, model_quality=100, name="fresh-backend"
+            ),
+        ]
+
+        with _patched_router(models), _PATCH_FIRE_AND_FORGET, _PATCH_SHORT_RACE:
+            await interface.handle_chat_message("CA")
+
+        (row,) = await _turn_rows(chat)
+        statuses = {c["model"]: c["status"] for c in row.calls}
+        assert statuses == {
+            "looping-backend": "repeat",
+            "raising-backend": "error",
+            "stalled-backend": "late",
+            "fresh-backend": "scored",
+        }
+        by_model = {c["model"]: c for c in row.calls}
+        assert by_model["raising-backend"]["error"] == "RuntimeError"
+        assert by_model["looping-backend"]["score"] is None
+        assert by_model["stalled-backend"]["ms"] is None
+        assert row.winner_model == "fresh-backend"
+        assert row.rejected_repeats == 1
+        assert row.retry_ran is False
+        assert "Blue Shield" not in _row_blob(row)
+
+    async def test_a_turn_over_budget_is_recorded_as_a_timeout(self):
+        user, chat = await _make_chat(
+            "turnrow5", "9999930105", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+
+        with (
+            patch.dict(os.environ, {"FHI_CHAT_TURN_BUDGET": "0.3"}),
+            _patched_router([_StalledModel(name="stalled-backend")]),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message("CA")
+
+        (row,) = await _turn_rows(chat)
+        assert row.outcome == "timeout"
+        assert row.winner_model == ""
+        assert [(c["model"], c["status"]) for c in row.calls] == [
+            ("stalled-backend", "late")
+        ]
+
+    async def test_a_turn_with_no_usable_answer_is_recorded_as_failed(self):
+        user, chat = await _make_chat(
+            "turnrow6", "9999930106", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        model = RecordingChatModel(always_reply="", name="empty-backend")
+
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        (row,) = await _turn_rows(chat)
+        assert row.outcome == "failed"
+        assert row.retry_ran is True
+        assert row.retry_used is False
+        assert row.winner_model == ""
+        passes = [(c["pass"], c["status"]) for c in row.calls]
+        assert ("retry", "empty") in passes
+
+    async def test_the_alternate_comes_from_another_model_when_one_ties(self):
+        """The runner-up is the winner's own model, but a different model's
+        answer is closely tied too: the pair shown is model versus model."""
+        user, chat = await _make_chat(
+            "turnrow7", "9999930107", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        models = [
+            RecordingChatModel(
+                always_reply=FRESH_REPLY, model_quality=110, name="model-a"
+            ),
+            RecordingChatModel(
+                always_reply=THIRD_REPLY, model_quality=108, name="model-a"
+            ),
+            RecordingChatModel(
+                always_reply=SECOND_OPINION_REPLY, model_quality=100, name="model-b"
+            ),
+        ]
+
+        with _patched_router(models), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        frame = recorder.content_frames()[-1]
+        assert frame["content"] == FRESH_REPLY
+        assert frame["alternate_content"] == SECOND_OPINION_REPLY
+        (row,) = await _turn_rows(chat)
+        assert row.runner_up_model == "model-a"
+        assert row.alternate_model == "model-b"
+        assert row.alternate_cross_model is True
+
+    async def test_the_same_model_runner_up_is_used_when_no_other_model_ties(self):
+        user, chat = await _make_chat(
+            "turnrow8", "9999930108", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        models = [
+            RecordingChatModel(
+                always_reply=FRESH_REPLY, model_quality=110, name="model-a"
+            ),
+            RecordingChatModel(
+                always_reply=THIRD_REPLY, model_quality=108, name="model-a"
+            ),
+            RecordingChatModel(
+                always_reply=SECOND_OPINION_REPLY, model_quality=60, name="model-b"
+            ),
+        ]
+
+        with _patched_router(models), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        frame = recorder.content_frames()[-1]
+        assert frame["alternate_content"] == THIRD_REPLY
+        (row,) = await _turn_rows(chat)
+        assert row.alternate_model == "model-a"
+        assert row.alternate_cross_model is False
+
+    async def test_early_replies_that_skip_the_models_leave_no_row(self):
+        user, chat = await _make_chat(
+            "turnrow9", "9999930109", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        model = RecordingChatModel(always_reply=FRESH_REPLY)
+
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("Please delete my data")
+
+        assert await _turn_rows(chat) == []
+        assert model.calls == []
 
 
 class ChatRepeatOffenderTest(APITestCase):

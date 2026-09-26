@@ -33,8 +33,11 @@ from fighthealthinsurance.chat.llm_client import (
     alternate_is_presentable,
     build_llm_calls,
     build_llm_calls_for_variants,
+    candidates_best_first,
     create_response_scorer,
     find_repeated_reply,
+    pick_side_by_side_alternate,
+    results_recorder,
     scores_closely_tied,
     user_requested_repeat,
     user_requested_transformation,
@@ -48,6 +51,14 @@ from fighthealthinsurance.chat.document_search import get_document_context_for_m
 from fighthealthinsurance.chat.retry_handler import (
     retry_llm_with_fallback,
     should_retry_response,
+)
+from fighthealthinsurance.chat.turn_record import (
+    PASS_PRIMARY,
+    PASS_RETRY,
+    PASS_TOOL,
+    CallLog,
+    TurnRecord,
+    arecord_chat_turn,
 )
 from fighthealthinsurance.chat.safety_filters import (
     CRISIS_RESOURCES,
@@ -205,6 +216,10 @@ class ChatInterface:
         # Per-session cap for medicaid_gov_lookup, kept out here because the
         # tool is rebuilt every turn (same shape as _doc_fetch_count).
         self._medicaid_gov_lookup_count: list[int] = [0]
+        # The model-race record of the turn in flight (one turn at a time
+        # per instance, like _candidate_alternate), written as one ChatTurn
+        # row when the turn ends. None outside a model turn.
+        self._turn: Optional[TurnRecord] = None
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -270,11 +285,16 @@ class ChatInterface:
             pass
 
     async def send_message_to_client(
-        self, message: str, alternate_content: Optional[str] = None
+        self,
+        message: str,
+        alternate_content: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ):
         """Sends a message to the client, optionally with a side-by-side
         alternate answer (rendered behind a toggle client-side; only the
-        primary message is persisted in chat history)."""
+        primary message is persisted in chat history). With an alternate,
+        ``turn_id`` names the turn's ChatTurn row so the client can echo it
+        back with the person's pick."""
         payload: Dict[str, Any] = {
             "content": message,
             "chat_id": str(self.chat.id),
@@ -282,7 +302,14 @@ class ChatInterface:
         }
         if alternate_content:
             payload["alternate_content"] = alternate_content
+            if turn_id:
+                payload["turn_id"] = turn_id
         await self.send_json_message_func(payload)
+
+    async def _write_turn_record(self, outcome: str) -> None:
+        """Write the turn's ChatTurn row, once. Never raises."""
+        turn, self._turn = self._turn, None
+        await arecord_chat_turn(self.chat.id, turn, outcome)
 
     async def _get_user_info(self) -> str:
         """Generates a descriptive string for the user (either professional or patient)."""
@@ -374,6 +401,9 @@ class ChatInterface:
         """
         if depth > 3:
             return None, None
+        # The turn's model-race record, when a turn is in flight. Every pass
+        # (primary, retry, recursive tool passes) adds its calls to it.
+        turn = self._turn
         if depth == 0:
             # Turn-scoped accumulator (same pattern as _candidate_alternate:
             # one turn in flight per instance). Recursive tool passes run
@@ -382,6 +412,8 @@ class ChatInterface:
             # depth==0 alone made it blind to repeats rejected only inside
             # a tool's follow-up pass.
             self._turn_saw_repeats = False
+        elif turn is not None:
+            turn.tool_passes += 1
         chat = self.chat
         history = history_for_llm
 
@@ -412,6 +444,11 @@ class ChatInterface:
         # the is-primary scoring bonus. Otherwise (recursive tool calls) fall
         # back to the single wrapped message, preserving existing behavior.
         call_labels: Dict[Awaitable, str] = {}
+        call_log = (
+            CallLog(PASS_PRIMARY if depth == 0 else PASS_TOOL, depth)
+            if turn is not None
+            else None
+        )
         if message_variants:
             calls, call_scores, primary_calls = build_llm_calls_for_variants(
                 model_backends=model_backends,
@@ -423,6 +460,7 @@ class ChatInterface:
                 full_history=full_history,
                 allow_repeated_reply=allow_repeat,
                 call_labels=call_labels,
+                call_log=call_log,
             )
         else:
             calls, call_scores = build_llm_calls(
@@ -435,6 +473,7 @@ class ChatInterface:
                 full_history=full_history,
                 allow_repeated_reply=allow_repeat,
                 call_labels=call_labels,
+                call_log=call_log,
             )
             primary_calls = calls
 
@@ -458,10 +497,21 @@ class ChatInterface:
             score_log=score_log,
             eligibility_verified=eligibility_verified or self._eligibility_computed[0],
         )
+        # The race hands back only its top two results. The top-level pass
+        # also keeps every completed result so the side-by-side alternate
+        # can come from a different model than the winner (see
+        # pick_side_by_side_alternate). Local to this pass, never recorded.
+        completed_results: Dict[Awaitable, Tuple[Optional[str], Optional[str]]] = {}
+        race_score_fn = (
+            results_recorder(score_fn, completed_results) if depth == 0 else score_fn
+        )
+        if call_log is not None:
+            race_score_fn = call_log.scoring(race_score_fn)
 
         llm_pass_started = time.monotonic()
         picked_model: Optional[str] = None
         picked_score: Optional[float] = None
+        picked_result: Optional[Tuple[Optional[str], Optional[str]]] = None
         runner_up_model: Optional[str] = None
         runner_up_score: Optional[float] = None
         runner_up_text: Optional[str] = None
@@ -473,7 +523,7 @@ class ChatInterface:
             # keeps the whole ladder inside the budget.
             best_two = await best_two_within_timelimit(
                 calls,
-                score_fn,
+                race_score_fn,
                 timeout=30.0,
                 extended_timeout=30.0,
             )
@@ -481,6 +531,7 @@ class ChatInterface:
                 best_two.best if best_two.best is not None else (None, None)
             )
             if best_two.best is not None:
+                picked_result = best_two.best
                 picked_score = best_two.best_score
                 if best_two.best_task is not None:
                     picked_model = call_labels.get(best_two.best_task)
@@ -493,6 +544,11 @@ class ChatInterface:
             logger.warning(f"Primary models all failed: {e}")
             response_text = None
             context_part = None
+        finally:
+            # Also on cancellation (the turn budget firing mid-race), so a
+            # timed-out turn still shows which calls were still running.
+            if call_log is not None and turn is not None:
+                turn.calls.extend(call_log.finish())
 
         response_text = response_text or ""
 
@@ -503,6 +559,8 @@ class ChatInterface:
         # flat while the ladder was working hard. That made the metric read as
         # "loops never happen" exactly when a backend started looping.
         saw_repeats = bool(rejection_stats.get("repeated_rejected"))
+        if turn is not None:
+            turn.rejected_repeats += rejection_stats.get("repeated_rejected", 0)
         if saw_repeats:
             # Counted once per turn (the stat itself is per candidate):
             # accumulate here at every depth, recorded by depth 0 at the
@@ -518,22 +576,30 @@ class ChatInterface:
         retry_used = False
         retry_debug: Dict[str, Any] = {}
         if should_retry_response(response_text):
-            retry_response, retry_context = await retry_llm_with_fallback(
-                model_backends=model_backends,
-                current_message=current_message_for_llm,
-                previous_context_summary=previous_context_summary,
-                history=history,
-                is_professional=is_professional,
-                is_logged_in=is_logged_in,
-                fallback_backends=fallback_backends,
-                timeout=35.0,
-                status_callback=self.send_status_message,
-                chat_history=chat.chat_history,
-                user_message_for_scoring=scoring_message,
-                anti_repeat=saw_repeats,
-                allow_repeated_reply=allow_repeat,
-                debug_info=retry_debug,
-            )
+            retry_log = CallLog(PASS_RETRY, depth) if turn is not None else None
+            if turn is not None:
+                turn.retry_ran = True
+            try:
+                retry_response, retry_context = await retry_llm_with_fallback(
+                    model_backends=model_backends,
+                    current_message=current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=history,
+                    is_professional=is_professional,
+                    is_logged_in=is_logged_in,
+                    fallback_backends=fallback_backends,
+                    timeout=35.0,
+                    status_callback=self.send_status_message,
+                    chat_history=chat.chat_history,
+                    user_message_for_scoring=scoring_message,
+                    anti_repeat=saw_repeats,
+                    allow_repeated_reply=allow_repeat,
+                    debug_info=retry_debug,
+                    call_log=retry_log,
+                )
+            finally:
+                if retry_log is not None and turn is not None:
+                    turn.calls.extend(retry_log.finish())
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response
                 context_part = retry_context
@@ -545,6 +611,9 @@ class ChatInterface:
                 runner_up_text = None
                 runner_up_model = None
                 runner_up_score = None
+
+        if depth == 0 and turn is not None:
+            turn.mark_fanout_done(llm_pass_started)
 
         logger.debug(f"Using best result {response_text:.20}...")
 
@@ -564,7 +633,15 @@ class ChatInterface:
         # recursive tool calls must not clobber it. Cleared again below if
         # tool processing changes the primary response (action flows don't
         # get a raw alternate).
+        #
+        # The side-by-side pick is a model-versus-model comparison, so the
+        # alternate is the best closely tied, presentable candidate from a
+        # DIFFERENT model than the winner, and the plain runner-up (usually
+        # the winner's own other call) only when no other model's candidate
+        # qualifies. A retry winner replaced the primary pass's answer, so
+        # nothing from that pass is comparable with it any more.
         closely_tied = False
+        alternate_model: Optional[str] = None
         if depth == 0:
             self._candidate_alternate = None
             closely_tied = (
@@ -572,18 +649,44 @@ class ChatInterface:
                 and runner_up_score is not None
                 and scores_closely_tied(picked_score, runner_up_score)
             )
-            if runner_up_text and closely_tied:
-                if alternate_is_presentable(
-                    runner_up_text,
+            if not retry_used:
+                choice = pick_side_by_side_alternate(
                     response_text,
+                    picked_model,
+                    picked_score,
+                    candidates_best_first(
+                        completed_results,
+                        score_log,
+                        call_labels,
+                        calls,
+                        exclude=picked_result,
+                    ),
+                    (
+                        (runner_up_model, runner_up_score, runner_up_text)
+                        if runner_up_text and runner_up_score is not None
+                        else None
+                    ),
                     chat_history=chat.chat_history,
                     current_message=scoring_message,
-                ):
-                    self._candidate_alternate = runner_up_text.strip()
-            elif runner_up_text:
-                logger.debug(
-                    f"Chat {chat.id}: runner-up not closely tied "
-                    f"({runner_up_score} vs {picked_score}); no alternate"
+                )
+                if choice is not None:
+                    self._candidate_alternate = choice.text
+                    alternate_model = choice.model
+                    if turn is not None:
+                        turn.set_alternate_candidate(choice.model, choice.cross_model)
+                elif runner_up_text and not closely_tied:
+                    logger.debug(
+                        f"Chat {chat.id}: runner-up not closely tied "
+                        f"({runner_up_score} vs {picked_score}); no alternate"
+                    )
+            if turn is not None:
+                turn.set_winner(
+                    picked_model,
+                    picked_score,
+                    retry_used,
+                    runner_up_model,
+                    runner_up_score,
+                    closely_tied,
                 )
 
         # One compact selection line per LLM pass at INFO: this is the
@@ -627,6 +730,7 @@ class ChatInterface:
                         # debugging down the wrong path when no alternate
                         # reached the client.
                         "alternate_candidate": bool(self._candidate_alternate),
+                        "alternate_candidate_model": alternate_model,
                         "candidate_count": len(calls),
                         "scored_candidates": scored_candidates,
                         "rejected_repeats": rejection_stats.get("repeated_rejected", 0),
@@ -767,6 +871,9 @@ class ChatInterface:
         # raw runner-up no longer corresponds to it, so drop the alternate.
         if depth == 0 and response_text != response_before_tools:
             self._candidate_alternate = None
+            if turn is not None:
+                turn.tool_rewrote = True
+                turn.clear_alternate_candidate()
 
         # One count per turn, covering the primary pass AND every recursive
         # tool pass (each ORs into the accumulator above).
@@ -791,6 +898,9 @@ class ChatInterface:
         # A stale alternate from a previous turn must never attach to this
         # turn's reply (early-return paths below don't go through the LLM).
         self._candidate_alternate = None
+        # Likewise the model-race record: only a turn that reaches the
+        # models gets one (created once the backends are known, below).
+        self._turn = None
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -1066,6 +1176,11 @@ class ChatInterface:
                 "Sorry, no language models are currently available."
             )
             return
+        self._turn = TurnRecord.start(
+            use_external=self.use_external_models,
+            primary_models=primary_models,
+            fallback_models=fallback_models,
+        )
 
         # Refresh from the DB so background-task updates (summaries, microsite
         # context) are visible for this LLM call. A full refetch is safe here:
@@ -1397,6 +1512,8 @@ class ChatInterface:
                     )
                 ):
                     record_chat_repeat("delivered_repeat")
+                    if self._turn is not None:
+                        self._turn.delivered_repeat = True
                     logger.warning(
                         f"Chat {chat.id}: delivering a reply that repeats a "
                         f"recent reply (all anti-repeat rungs exhausted)"
@@ -1509,12 +1626,23 @@ class ChatInterface:
                 ):
                     alternate_content = alt_cleaned
                     record_chat_alternate_offered()
+                    if self._turn is not None:
+                        self._turn.offer_alternate()
                     logger.info(f"Chat {chat.id}: offering an alternate answer")
                 else:
                     alternate_content = None
-            await self.send_message_to_client(
-                final_response_text, alternate_content=alternate_content
-            )
+            turn_id = str(self._turn.turn_id) if self._turn is not None else None
+            try:
+                await self.send_message_to_client(
+                    final_response_text,
+                    alternate_content=alternate_content,
+                    turn_id=turn_id,
+                )
+            finally:
+                # Awaited, not fire-and-forget: channels handles one frame at
+                # a time per connection, so this row exists before the
+                # person's side-by-side pick for it can arrive.
+                await self._write_turn_record("ok")
         else:
             # The turn failed after the user already committed their message:
             # persist it anyway so a reconnect/replay doesn't erase what they
@@ -1559,7 +1687,10 @@ class ChatInterface:
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
             )
-            await self.send_error_message(err_msg)
+            try:
+                await self.send_error_message(err_msg)
+            finally:
+                await self._write_turn_record("timeout" if turn_timed_out else "failed")
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client, minus internal
