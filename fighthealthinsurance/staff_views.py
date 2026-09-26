@@ -49,7 +49,13 @@ from fighthealthinsurance.chat.turn_record import (
     STATUS_ERROR,
     STATUS_LATE,
     STATUS_REPEAT,
+    STATUS_SKIPPED,
     STATUS_UNSCORED,
+)
+from fighthealthinsurance.utils import (
+    STAGE_AFTER_DELAY,
+    STAGE_EARLY,
+    STAGE_SKIPPED,
 )
 from fighthealthinsurance.models import (
     ChatTurn,
@@ -1484,6 +1490,7 @@ CHAT_TURN_FIELDS = (
     "alternate_model",
     "alternate_cross_model",
     "preferred",
+    "external_start",
 )
 
 
@@ -1509,6 +1516,9 @@ class _ChatTally:
         self.alternates = 0
         self.cross_alternates = 0
         self.picks: Counter = Counter()
+        # How the primary pass started the outside models, per
+        # ChatTurn.external_start value.
+        self.external_starts: Counter = Counter()
         self.same_model_pairs = 0
         self.same_model_picks: Counter = Counter()
         self.models: Dict[str, Dict[str, Any]] = {}
@@ -1525,6 +1535,7 @@ class _ChatTally:
                 "runner_up": 0,
                 "calls": 0,
                 **{status: 0 for status in CHAT_CALL_PROBLEMS},
+                STATUS_SKIPPED: 0,
                 "sbs_shown": 0,
                 "sbs_answered": 0,
                 "sbs_preferred": 0,
@@ -1549,6 +1560,7 @@ class _ChatTally:
             alternate,
             cross_model,
             preferred,
+            external_start,
         ) = row
         self.turns += 1
         self.outcomes[outcome] += 1
@@ -1558,12 +1570,26 @@ class _ChatTally:
             self.retry_ran += 1
         if retry_used:
             self.retry_used += 1
+        if external_start:
+            self.external_starts[external_start] += 1
 
         # A model counts as asked once per turn, however many calls it got:
         # every primary backend, and the fallbacks only when the retry ran.
+        # A model whose every call on the turn was held back and never sent
+        # (the routing policy's delay) was not asked.
         asked = {_chat_label(n) for n in (backends or [])}
         if retry_ran:
             asked |= {_chat_label(n) for n in (fallback_backends or [])}
+        sent: Counter = Counter()
+        held: Counter = Counter()
+        for call in calls or []:
+            if isinstance(call, dict):
+                label = _chat_label(call.get("model"))
+                if call.get("status") == STATUS_SKIPPED:
+                    held[label] += 1
+                else:
+                    sent[label] += 1
+        asked -= {label for label in held if not sent[label]}
         for label in asked:
             self._model(label)["asked"] += 1
         # Wins and outside-model wins go to the model whose reply was
@@ -1582,8 +1608,12 @@ class _ChatTally:
                 continue
             label = _chat_label(call.get("model"))
             model_row = self._model(label)
-            model_row["calls"] += 1
             status = call.get("status")
+            if status == STATUS_SKIPPED:
+                # Never sent, so not a call.
+                model_row[STATUS_SKIPPED] += 1
+                continue
+            model_row["calls"] += 1
             if status in CHAT_CALL_PROBLEMS:
                 model_row[status] += 1
             ms = call.get("ms")
@@ -1647,6 +1677,13 @@ class _ChatTally:
                 "external_win_share": _percent(self.external_wins, ok),
                 "retry_ran": self.retry_ran,
                 "retry_used": self.retry_used,
+                "externals_after_delay": self.external_starts[STAGE_AFTER_DELAY],
+                "externals_early": self.external_starts[STAGE_EARLY],
+                "externals_skipped": self.external_starts[STAGE_SKIPPED],
+                "externals_held_back": sum(
+                    self.external_starts[s]
+                    for s in (STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)
+                ),
                 "alternates": self.alternates,
                 "cross_alternates": self.cross_alternates,
                 "picks": sum(self.picks.values()),
@@ -1983,7 +2020,67 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["title"] = "ML Model Usage Dashboard"
         ctx["windows"] = windows_ctx
         ctx["duration_cap"] = CALL_DURATION_SAMPLE_CAP
+        ctx["chat_policy"] = self._chat_policy_panel()
         return ctx
+
+    @staticmethod
+    def _chat_policy_panel() -> Dict[str, Any]:
+        """The newest chat routing policy row (ChatRoutingPolicy), and
+        whether chat follows it now.
+
+        ``state`` is "none" (no row yet), "invalid" (the newest row does not
+        parse), "stale" (older than FHI_CHAT_POLICY_MAX_AGE_MINUTES),
+        "shadow" (fresh, but FHI_CHAT_POLICY_APPLY is off) or "applied".
+        Chat routes by the default policy in every state but "applied".
+        Reads one row of names and numbers; never calls a model.
+        """
+        from django.conf import settings
+
+        from fighthealthinsurance.ml import chat_policy
+
+        panel: Dict[str, Any] = {
+            "state": "none",
+            "apply": bool(settings.FHI_CHAT_POLICY_APPLY),
+            "max_age_minutes": settings.FHI_CHAT_POLICY_MAX_AGE_MINUTES,
+            "row": None,
+            "policy": None,
+            "usable_percent": None,
+            "cap_rows": [],
+        }
+        row = chat_policy.newest_policy_row()
+        if row is None:
+            return panel
+        panel["row"] = row
+        panel["age_minutes"] = max(
+            0, int((timezone.now() - row.created_at).total_seconds() // 60)
+        )
+        policy = chat_policy.policy_from_row(row)
+        if policy is None:
+            panel["state"] = "invalid"
+            return panel
+        panel["policy"] = policy
+        panel["usable_percent"] = (
+            policy.internal_usable_rate * 100.0
+            if policy.internal_usable_rate is not None
+            else None
+        )
+        if not chat_policy.policy_is_fresh(policy):
+            panel["state"] = "stale"
+        elif not panel["apply"]:
+            panel["state"] = "shadow"
+        else:
+            panel["state"] = "applied"
+        exhausted = set(policy.exhausted)
+        panel["cap_rows"] = [
+            {
+                "model": name,
+                "cap": policy.daily_call_caps.get(name),
+                "calls_today": policy.calls_today.get(name, 0),
+                "exhausted": name in exhausted,
+            }
+            for name in sorted(set(policy.daily_call_caps) | set(policy.calls_today))
+        ]
+        return panel
 
     @staticmethod
     def _chart_data(

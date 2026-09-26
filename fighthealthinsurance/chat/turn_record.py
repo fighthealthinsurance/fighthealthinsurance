@@ -73,13 +73,16 @@ PASS_TOOL = "tool"
 # returned nothing usable. unscored: returned text, but its pass stopped
 # comparing answers before scoring it (the turn budget ran out while the
 # race still waited on slower calls, for instance). error: raised. late:
-# still running (or never started) when the pass stopped waiting.
+# still running (or never started) when the pass stopped waiting. skipped:
+# held back by a staged fan-out and never sent, because one of our own
+# models answered first.
 STATUS_SCORED = "scored"
 STATUS_REPEAT = "repeat"
 STATUS_EMPTY = "empty"
 STATUS_UNSCORED = "unscored"
 STATUS_ERROR = "error"
 STATUS_LATE = "late"
+STATUS_SKIPPED = "skipped"
 CALL_STATUSES = (
     STATUS_SCORED,
     STATUS_REPEAT,
@@ -87,6 +90,7 @@ CALL_STATUSES = (
     STATUS_UNSCORED,
     STATUS_ERROR,
     STATUS_LATE,
+    STATUS_SKIPPED,
 )
 # Calls that returned an answer, usable or not. Their times feed the medians.
 COMPLETED_STATUSES = frozenset(
@@ -141,6 +145,10 @@ class _CallRecord:
     finished: Optional[float] = None
     error: str = ""
     has_text: bool = False
+    skipped: bool = False
+    # The backend call itself, kept only so a call that is never sent can
+    # be closed (see CallLog.mark_skipped).
+    inner: Optional[Awaitable[Any]] = None
 
 
 async def _observed(call: Awaitable[T], record: _CallRecord) -> T:
@@ -183,10 +191,29 @@ class CallLog:
             backend=_descriptor(backend),
             external=_is_external(backend),
             history=history,
+            inner=call,
         )
         wrapped = _observed(call, record)
         self._records[wrapped] = record
         return wrapped
+
+    def mark_skipped(self, calls: Sequence[Awaitable]) -> None:
+        """Note calls a staged fan-out held back and never sent.
+
+        Each one is closed along with the backend call it wraps: neither
+        will ever be awaited, and closing them keeps Python from warning
+        that they never were. A call that did start is left alone.
+        """
+        for call in calls:
+            record = self._records.get(call)
+            if record is None or record.started is not None:
+                continue
+            record.skipped = True
+            inner, record.inner = record.inner, None
+            for coroutine in (call, inner):
+                close = getattr(coroutine, "close", None)
+                if callable(close):
+                    close()
 
     def set_variant(self, call: Awaitable, kind: str) -> None:
         record = self._records.get(call)
@@ -213,15 +240,19 @@ class CallLog:
         text was a repeat; the retry scorer never hard-rejects repeats, so
         there a rejected call is always empty.
 
-        A call the scorer never saw goes by its own finish time: one that
+        A call held back and never sent is skipped, with no time. Any other
+        call the scorer never saw goes by its own finish time: one that
         finished is unscored when it returned text and empty when it did
         not, and keeps its time; only a call that never finished is late,
         with no time.
         """
         out: List[Dict[str, Any]] = []
         for call, record in self._records.items():
+            record.inner = None
             score = self._scores.get(call)
-            if record.error:
+            if record.skipped:
+                status = STATUS_SKIPPED
+            elif record.error:
                 status = STATUS_ERROR
             elif score is not None:
                 if math.isfinite(score):
@@ -238,7 +269,7 @@ class CallLog:
                 status = STATUS_EMPTY
             ms: Optional[int] = None
             if (
-                status != STATUS_LATE
+                status not in (STATUS_LATE, STATUS_SKIPPED)
                 and record.started is not None
                 and record.finished is not None
             ):
@@ -342,6 +373,11 @@ class TurnRecord:
     counted_outcome: str = ""
     # The turn's first race has started, so the models were asked.
     reached_models: bool = False
+    # How the primary pass started the outside models (the StagedStart
+    # outcomes in utils, or "" when it asked none) and how long it would
+    # hold them back (None when it asked none).
+    external_start: str = ""
+    external_delay_seconds: Optional[float] = None
 
     @classmethod
     def start(
@@ -363,6 +399,11 @@ class TurnRecord:
 
     def mark_fanout_done(self, pass_started: float) -> None:
         self.fanout_ms = _ms_since(pass_started)
+
+    def set_external_start(self, start: str, delay_seconds: Optional[float]) -> None:
+        """Record how the primary pass started the outside models."""
+        self.external_start = str(start)[:_ENUM_MAX]
+        self.external_delay_seconds = _finite_or_none(delay_seconds)
 
     def set_winner(
         self,
@@ -445,6 +486,8 @@ class TurnRecord:
             "alternate_cross_model": (
                 self.alternate_cross_model if self.alternate_offered else False
             ),
+            "external_start": self.external_start,
+            "external_delay_seconds": self.external_delay_seconds,
         }
 
 

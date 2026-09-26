@@ -1,10 +1,18 @@
 import pytest
 import asyncio
+import gc
+import inspect
 import threading
 import time
+import warnings
 from typing import Awaitable, TypeVar, Any
 
 from fighthealthinsurance.utils import (
+    STAGE_AFTER_DELAY,
+    STAGE_EARLY,
+    STAGE_IMMEDIATE,
+    STAGE_SKIPPED,
+    StagedStart,
     fire_and_forget_in_new_threadpool,
     best_two_within_timelimit,
     best_within_timelimit,
@@ -767,3 +775,273 @@ class TestBestWithinTimelimitCancellation:
         with pytest.raises(asyncio.CancelledError):
             await outer
         await asyncio.wait_for(child_cancelled.wait(), timeout=5.0)
+
+
+# --- Staged start: held-back tasks (the chat fan-out's "ours first") ----------
+
+
+class _Probe:
+    """Coroutines that note when (and whether) they started running."""
+
+    def __init__(self):
+        self.started = {}
+
+    async def call(self, name, result, delay, fail=False):
+        self.started[name] = asyncio.get_running_loop().time()
+        await asyncio.sleep(delay)
+        if fail:
+            raise RuntimeError("backend down")
+        return result
+
+
+def _scores(table):
+    def score_fn(result, _task):
+        return table.get(result, 1.0)
+
+    return score_fn
+
+
+def _never_awaited_warnings(caught):
+    return [w for w in caught if "never awaited" in str(w.message)]
+
+
+class TestStagedStart:
+    @pytest.mark.asyncio
+    async def test_a_usable_answer_of_ours_means_the_held_back_tasks_never_start(
+        self,
+    ):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.05)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = await best_two_within_timelimit(
+                [ours, theirs],
+                _scores({}),
+                timeout=2.0,
+                extended_timeout=0.0,
+                deferred=[theirs],
+                defer_seconds=1.0,
+                stage=stage,
+            )
+            assert inspect.getcoroutinestate(theirs) == inspect.CORO_CLOSED
+            del theirs
+            stage.skipped.clear()
+            gc.collect()
+
+        assert result.best == "ours-answer"
+        assert "theirs" not in probe.started
+        assert stage.outcome == STAGE_SKIPPED
+        assert stage.started_after is None
+        # It did not wait out the delay.
+        assert loop.time() - started < 0.5
+        assert _never_awaited_warnings(caught) == []
+
+    @pytest.mark.asyncio
+    async def test_the_skipped_tasks_are_reported(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        await best_two_within_timelimit(
+            [ours, theirs],
+            _scores({}),
+            timeout=2.0,
+            deferred=[theirs],
+            defer_seconds=1.0,
+            stage=stage,
+        )
+        assert stage.skipped == [theirs]
+
+    @pytest.mark.asyncio
+    async def test_the_held_back_tasks_start_when_the_delay_passes(self):
+        probe = _Probe()
+        loop = asyncio.get_running_loop()
+        race_start = loop.time()
+        ours = probe.call("ours", "ours-late", 0.8)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [ours, theirs],
+            _scores({"ours-late": 5.0, "their-answer": 1.0}),
+            timeout=2.0,
+            extended_timeout=0.0,
+            deferred=[theirs],
+            defer_seconds=0.2,
+            stage=stage,
+        )
+        assert stage.outcome == STAGE_AFTER_DELAY
+        assert 0.15 <= probe.started["theirs"] - race_start < 0.5
+        assert 0.15 <= stage.started_after < 0.5
+        # Ours still finished inside the main window and outscored theirs.
+        assert result.best == "ours-late"
+        assert result.runner_up == "their-answer"
+
+    @pytest.mark.asyncio
+    async def test_the_held_back_tasks_start_early_once_ours_have_all_failed(self):
+        probe = _Probe()
+        loop = asyncio.get_running_loop()
+        race_start = loop.time()
+        failing = probe.call("failing", None, 0.05, fail=True)
+        empty = probe.call("empty", "", 0.02)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [failing, empty, theirs],
+            _scores({}),
+            timeout=10.0,
+            deferred=[theirs],
+            defer_seconds=5.0,
+            stage=stage,
+        )
+        assert stage.outcome == STAGE_EARLY
+        assert result.best == "their-answer"
+        assert probe.started["theirs"] - race_start < 0.5
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_answer_of_ours_counts_as_failed(self):
+        probe = _Probe()
+        looped = probe.call("looped", "looped-reply", 0.02)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [looped, theirs],
+            _scores({"looped-reply": float("-inf")}),
+            timeout=10.0,
+            deferred=[theirs],
+            defer_seconds=5.0,
+            stage=stage,
+        )
+        assert stage.outcome == STAGE_EARLY
+        assert result.best == "their-answer"
+
+    @pytest.mark.asyncio
+    async def test_a_delay_of_zero_is_the_unstaged_race(self):
+        async def run(**staging):
+            probe = _Probe()
+            loop = asyncio.get_running_loop()
+            race_start = loop.time()
+            calls = [
+                probe.call("a", "answer-a", 0.03),
+                probe.call("theirs", "answer-b", 0.01),
+                probe.call("c", "answer-c", 0.02),
+            ]
+            if staging:
+                staging["deferred"] = [calls[1]]
+            result = await best_two_within_timelimit(
+                calls,
+                _scores({"answer-a": 2.0, "answer-b": 3.0, "answer-c": 2.0}),
+                timeout=2.0,
+                **staging,
+            )
+            return result, probe, race_start, calls
+
+        plain, _probe, _start, plain_calls = await run()
+        stage = StagedStart()
+        zero, probe, race_start, zero_calls = await run(defer_seconds=0.0, stage=stage)
+        assert (zero.best, zero.runner_up, zero.best_score, zero.runner_up_score) == (
+            plain.best,
+            plain.runner_up,
+            plain.best_score,
+            plain.runner_up_score,
+        )
+        assert zero.best_task is zero_calls[1]
+        assert plain.best_task is plain_calls[1]
+        assert stage.outcome == STAGE_IMMEDIATE
+        # Every task started at once.
+        assert max(probe.started.values()) - race_start < 0.05
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_held_back_when_nothing_else_would_start_first(self):
+        probe = _Probe()
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [theirs],
+            _scores({}),
+            timeout=2.0,
+            deferred=[theirs],
+            defer_seconds=5.0,
+            stage=stage,
+        )
+        assert result.best == "their-answer"
+        assert stage.outcome == STAGE_IMMEDIATE
+
+    @pytest.mark.asyncio
+    async def test_a_staged_race_fits_inside_the_same_windows(self):
+        """The delay comes out of the main window rather than adding to it,
+        and is capped at it, so the race's longest run is unchanged."""
+        loop = asyncio.get_running_loop()
+
+        async def hangs():
+            await asyncio.sleep(10)
+            return "never"
+
+        async def run(**staging):
+            calls = [hangs(), hangs()]
+            if staging:
+                staging["deferred"] = [calls[1]]
+            started = loop.time()
+            result = await best_two_within_timelimit(
+                calls, _scores({}), timeout=0.3, extended_timeout=0.2, **staging
+            )
+            return result, loop.time() - started
+
+        plain, plain_elapsed = await run()
+        stage = StagedStart()
+        staged, staged_elapsed = await run(defer_seconds=5.0, stage=stage)
+        assert plain.best is None and staged.best is None
+        assert stage.outcome == STAGE_AFTER_DELAY
+        # Started when the (capped) delay ran out: at the main window's end.
+        assert 0.25 <= stage.started_after < 0.4
+        assert staged_elapsed < 0.3 + 0.2 + 0.15
+        assert staged_elapsed <= plain_elapsed + 0.1
+
+    @pytest.mark.asyncio
+    async def test_exact_ties_still_go_to_the_earlier_listed_task(self):
+        """Results scored in different batches are still ranked in fan-out
+        order: the doubled lead backend's two answers tie exactly."""
+        probe = _Probe()
+        first = probe.call("first", "answer-a", 0.1)
+        second = probe.call("second", "answer-b", 0.02)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        result = await best_two_within_timelimit(
+            [first, second, theirs],
+            _scores({}),
+            timeout=2.0,
+            deferred=[theirs],
+            defer_seconds=1.0,
+            stage=StagedStart(),
+        )
+        assert result.best == "answer-a"
+        assert result.best_task is first
+        assert result.runner_up == "answer-b"
+
+    @pytest.mark.asyncio
+    async def test_cancelling_a_staged_race_closes_the_held_back_tasks(self):
+        probe = _Probe()
+        ours = probe.call("ours", "never", 30)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        outer = asyncio.create_task(
+            best_two_within_timelimit(
+                [ours, theirs],
+                _scores({}),
+                timeout=10.0,
+                deferred=[theirs],
+                defer_seconds=5.0,
+                stage=stage,
+            )
+        )
+        await asyncio.sleep(0.05)
+        outer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+        assert inspect.getcoroutinestate(theirs) == inspect.CORO_CLOSED
+        assert "theirs" not in probe.started
+        assert stage.outcome == STAGE_SKIPPED
+        assert stage.skipped == [theirs]

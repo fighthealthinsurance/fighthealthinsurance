@@ -188,6 +188,19 @@ class Base(Configuration):
     TYPESAFE_DENIAL_TRIAGE_ENABLED = (
         os.getenv("TYPESAFE_DENIAL_TRIAGE_ENABLED", "false").lower() == "true"
     )
+    # Chat routing policy (ml/chat_policy.py). Rows are computed from chat
+    # turn metadata by the compute_chat_policy command (or a scheduled job)
+    # and shown on the staff usage dashboard either way; chat follows the
+    # newest one only while this switch is on. Off by default, so a policy
+    # can be reviewed before it changes any routing.
+    FHI_CHAT_POLICY_APPLY = _env_flag("FHI_CHAT_POLICY_APPLY")
+    # A policy row older than this is ignored and chat routes by the default.
+    FHI_CHAT_POLICY_MAX_AGE_MINUTES = _env_int(
+        "FHI_CHAT_POLICY_MAX_AGE_MINUTES", 60, minimum=1, maximum=7 * 24 * 60
+    )
+    # Optional soft daily call caps for the chat fan-out, as a JSON object of
+    # {registry name: calls per UTC day}. Empty means no caps.
+    FHI_CHAT_DAILY_CALL_CAPS = os.getenv("FHI_CHAT_DAILY_CALL_CAPS", "")
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
@@ -885,6 +898,10 @@ class Test(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    # A developer's routing-policy settings must not change how test chats
+    # route; tests that need a policy opt in with override_settings.
+    FHI_CHAT_POLICY_APPLY = False
+    FHI_CHAT_DAILY_CALL_CAPS = ""
 
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
     # timeout would poll until it expires on every generate_appeals test.
@@ -939,6 +956,10 @@ class TestSync(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    # A developer's routing-policy settings must not change how test chats
+    # route; tests that need a policy opt in with override_settings.
+    FHI_CHAT_POLICY_APPLY = False
+    FHI_CHAT_DAILY_CALL_CAPS = ""
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
@@ -976,6 +997,10 @@ class TestActor(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    # A developer's routing-policy settings must not change how test chats
+    # route; tests that need a policy opt in with override_settings.
+    FHI_CHAT_POLICY_APPLY = False
+    FHI_CHAT_DAILY_CALL_CAPS = ""
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).

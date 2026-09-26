@@ -1,0 +1,55 @@
+{% comment %}
+The newest chat routing policy (ChatRoutingPolicy), from
+ModelUsageDashboardView._chat_policy_panel, and whether chat follows it now.
+Shown once, in the All Time section: a policy is not tied to a window.
+{% endcomment %}
+<h3 id="chat-routing-policy">Chat routing policy <span class="source-label">(ChatRoutingPolicy, newest row)</span></h3>
+{% if panel.state == "none" %}
+<p class="note">No routing policy has been computed yet (<code>manage.py compute_chat_policy</code> writes one). Chat routes by the default: when the person allowed outside models, every outside model the router picks is asked together with ours.</p>
+{% else %}
+<p class="window-totals">
+  {% if panel.state == "applied" %}<strong>Applied</strong>: chat follows this policy, except on a turn where none of our own models is selectable.
+  {% elif panel.state == "shadow" %}<strong>Shadow mode</strong>: FHI_CHAT_POLICY_APPLY is off, so chat routes by the default and this policy is shown for review only.
+  {% elif panel.state == "stale" %}<strong>Too old to follow</strong>: written {{ panel.age_minutes }} minutes ago, past the {{ panel.max_age_minutes }} minute limit, so chat routes by the default.{% if not panel.apply %} FHI_CHAT_POLICY_APPLY is off as well.{% endif %}
+  {% else %}<strong>Unreadable</strong>: the newest row could not be read, so chat routes by the default.
+  {% endif %}
+</p>
+{% with row=panel.row p=panel.policy %}
+<p class="note">Written {{ row.created_at|date:"Y-m-d H:i T" }} ({{ panel.age_minutes }} minutes ago) by the {{ row.get_source_display }}, from the last {{ row.window_minutes }} minutes of chat turns ({{ row.turns_considered }} turns). Reason: {{ row.reason|default:"none given" }}.</p>
+{% if p %}
+<ul class="intro-list">
+  <li>Outside models held back while ours answer: {% if p.external_delay_seconds %}up to <strong>{{ p.external_delay_seconds|floatformat:1 }} s</strong>{% else %}<strong>no</strong>, they are asked together with ours{% endif %}.</li>
+  <li>Outside models left out: {% if p.external_excluded %}<strong>{{ p.external_excluded|join:", " }}</strong>{% else %}none{% endif %}.</li>
+  <li>Our models over the last hour: {% if panel.usable_percent is None %}no turns{% else %}a usable answer on {{ panel.usable_percent|floatformat:1 }}% of turns{% endif %}. Time to our first usable answer, 75th percentile over the window: {% if p.internal_ttu_p75_ms is None %}no data{% else %}{{ p.internal_ttu_p75_ms }} ms{% endif %}.</li>
+</ul>
+{% if panel.cap_rows %}
+<table class="usage">
+  <thead>
+    <tr>
+      <th>Model</th>
+      <th class="num" title="Soft cap on chat calls per UTC day, from FHI_CHAT_DAILY_CALL_CAPS">Daily cap</th>
+      <th class="num" title="Chat calls sent since UTC midnight, when the policy was written">Calls today</th>
+      <th title="At or over its cap, so left out of the fan-out while our own models are selectable">At cap</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in panel.cap_rows %}
+    <tr>
+      <td>{{ c.model }}</td>
+      {% if c.cap is None %}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ c.cap }}</td>
+      {% endif %}
+      <td class="num">{{ c.calls_today }}</td>
+      <td>{% if c.exhausted %}yes{% else %}no{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="note">No chat calls since UTC midnight and no daily caps set.</p>
+{% endif %}
+{% endif %}
+{% endwith %}
+{% endif %}

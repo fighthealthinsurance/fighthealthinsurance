@@ -44,6 +44,7 @@ branch with a literal class so the contrast gate can measure every tag.
       <th class="num" title="The call failed">Error</th>
       <th class="num" title="Answered with nothing usable">Empty</th>
       <th class="num" title="Rejected for repeating a recent reply">Repeat</th>
+      <th class="num" title="Held back by the routing policy's delay and never sent, because one of our own models answered first. Not counted in Calls.">Skipped</th>
       <th class="num" title="Median time of calls that answered">Median time</th>
       {% elif kind == "sidebyside" %}
       <th class="num" title="Pairs from two different models that showed this model's answer">Pairs shown</th>
@@ -123,6 +124,7 @@ branch with a literal class so the contrast gate can measure every tag.
       <td class="num">{{ r.error }}</td>
       <td class="num">{{ r.empty }}</td>
       <td class="num">{{ r.repeat }}</td>
+      <td class="num">{{ r.skipped }}</td>
       {% if r.median_ms is None %}
       {# No call from this model answered in the window. #}
       <td class="num">&mdash;</td>
