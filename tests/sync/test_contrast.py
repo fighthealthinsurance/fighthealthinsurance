@@ -2696,7 +2696,6 @@ TEMPLATE_BASELINE: dict[str, int] = {
     "templates/admin_status.html": 4,
     "templates/denial_language_library.html": 3,
     "templates/faq.html": 3,
-    "templates/model_backend_status.html": 2,
     "templates/model_usage_dashboard.html": 1,
     "templates/other_resources.html": 4,
     "templates/preparing_2026.html": 2,
