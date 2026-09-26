@@ -982,18 +982,28 @@ def record_professional_pick(
             for_denial=denial, chosen=False, speculative=False
         ).exists():
             return None
-        # Unchanged text is not a new pick, compared the way picks are
-        # matched to drafts (a CRLF resubmit is the same letter). Chosen rows
-        # carry no stored fingerprint, so it is computed here.
-        target = ProposedAppeal.fingerprint(appeal_text)
-        for existing in ProposedAppeal.objects.filter(
-            for_denial=denial, chosen=True
-        ).values_list("appeal_text", flat=True):
-            if existing == appeal_text or (
-                target is not None and ProposedAppeal.fingerprint(existing) == target
-            ):
-                return None
         with transaction.atomic():
+            # One recording per denial at a time: two assemblies racing on the
+            # same denial would each keep their own row and delete the other's
+            # (the same row lock the health-history save takes).
+            Denial.objects.select_for_update().filter(pk=denial.pk).values_list(
+                "pk", flat=True
+            ).first()
+            # Unchanged text is not a new pick, compared the way picks are
+            # matched to drafts (a CRLF resubmit is the same letter) and only
+            # against this flow's own picks: a consumer or share-flow pick
+            # with the same text is somebody else's decision, and letting it
+            # suppress this one left the professional's older pick standing.
+            # Chosen rows carry no stored fingerprint, so it is computed here.
+            target = ProposedAppeal.fingerprint(appeal_text)
+            for existing in ProposedAppeal.objects.filter(
+                for_denial=denial, chosen=True, professional_pick=True
+            ).values_list("appeal_text", flat=True):
+                if existing == appeal_text or (
+                    target is not None
+                    and ProposedAppeal.fingerprint(existing) == target
+                ):
+                    return None
             # completed_appeal_text is post-editing text and this flow has no
             # textarea flag, so whether the pick was edited is read off the
             # text.

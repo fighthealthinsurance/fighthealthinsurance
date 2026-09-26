@@ -159,6 +159,23 @@ class ProfessionalPickAttributionTest(APITestCase):
         self._assemble("Draft letter from model x, second version")
         self.assertTrue(ProposedAppeal.objects.filter(id=other.id).exists())
 
+    def test_a_matching_pick_from_another_flow_does_not_suppress_this_one(self):
+        # A consumer already picked this exact letter; the professional's
+        # re-assembly to it is still their latest pick and replaces their
+        # earlier one.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Draft letter from model y",
+            chosen=True,
+            model_name="model-y",
+        )
+        self._assemble("Draft letter from model x, first version")
+        self._assemble("Draft letter from model y")
+        professional = ProposedAppeal.objects.filter(
+            for_denial=self.denial, professional_pick=True
+        )
+        self.assertEqual(professional.get().appeal_text, "Draft letter from model y")
+
     def test_a_letter_written_with_no_drafts_stored_is_not_a_pick(self):
         # No model was on offer, so there is nothing to attribute.
         ProposedAppeal.objects.filter(for_denial=self.denial).delete()
