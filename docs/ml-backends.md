@@ -27,6 +27,15 @@ wins, including the ones `scripts/run_local.sh` sets.
   (`Denial.use_external`, which defaults to on). See `make_appeals` in
   `fighthealthinsurance/generate_appeal.py`. With no internal backend
   configured, a user who turns that consent off gets no appeal.
+- **Summaries and appeal questions try our own model first too.** The router
+  asks the strongest general-purpose internal backend that looks healthy, and
+  keeps DeepInfra's `google/gemma-4-26B-A4B-it` as the backup, used only when
+  the caller allows external models (for patient data, that is the same
+  `Denial.use_external` consent). A summary moves on to it when no internal
+  is healthy or the healthy ones fail; question generation adds it only when
+  no healthy general-purpose internal is left. With no internal backend
+  configured, it does all of that work (`MLRouter.summarize_backends` and
+  `MLRouter.full_qa_backends`).
 - **The chooser always opts into external models**, because its inputs are
   synthetic, with no patient data (`fighthealthinsurance/chooser_tasks.py`).
 - **`fhi-legacy` is for appeals and prior auth.** It is an appeal-text

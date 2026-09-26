@@ -249,6 +249,15 @@ class BackendCheckResult:
     # so it can never produce a stored draft or a chooser candidate.
     context_only: bool = False
     started_at: Optional[datetime] = None
+    # Not persisted. The staff status page reads the model's routing traits
+    # from these: the instance the router registered, or, when there is none,
+    # the backend class, so it can still say what the model would be.
+    backend_cls: Optional[Type[RemoteModel]] = field(
+        default=None, repr=False, compare=False
+    )
+    router_instance: Optional[RemoteModelLike] = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def failed(self) -> bool:
@@ -280,6 +289,10 @@ class HealthCheckRunSummary:
         return [r for r in self.results if r.category == CATEGORY_PASS_UNREGISTERED]
 
 
+# Prefix of the deployment id used when no release variable is set.
+_UNVERSIONED_PREFIX = "unversioned-"
+
+
 def deployment_id() -> str:
     """Deployment/version identifier for this process.
 
@@ -294,7 +307,17 @@ def deployment_id() -> str:
         # that as an identifier made every such deploy share one leader slot.
         if value and value.strip() and value.strip().lower() != "unknown":
             return value.strip()
-    return "unversioned-" + datetime.now(dt_timezone.utc).strftime("%Y%m%d%H")
+    return _UNVERSIONED_PREFIX + datetime.now(dt_timezone.utc).strftime("%Y%m%d%H")
+
+
+def is_versioned_deployment_id(value: str) -> bool:
+    """Whether ``value`` names a real release rather than the hourly
+    fallback stamp.
+
+    Only a real release id says which deploy a health row belongs to. The
+    fallback changes every hour, so comparing it would call every row stale.
+    """
+    return not value.startswith(_UNVERSIONED_PREFIX)
 
 
 def environment_name() -> str:
@@ -456,6 +479,9 @@ def enumerate_backend_checks(
                 provider = backend_cls.provider_label()
             except Exception:
                 provider = backend_cls.__name__
+            # No backend_cls: with no catalog entry there is no model for the
+            # status page to read traits off, and a stand-in of a class whose
+            # catalog raises could raise there too.
             static_results.append(
                 BackendCheckResult(
                     provider=provider,
@@ -486,6 +512,7 @@ def enumerate_backend_checks(
                 model_name=desc.name,
                 internal_name=desc.internal_name,
                 category=CATEGORY_OTHER,
+                backend_cls=backend_cls,
             )
 
             if status == "not_configured":
@@ -501,6 +528,7 @@ def enumerate_backend_checks(
                 continue
 
             instance = _registered_instance(backend_cls, desc)
+            base.router_instance = instance
             base.ui_registered, base.reporting_registered, base.context_only = (
                 _registry_flags(desc, instance)
             )

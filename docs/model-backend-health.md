@@ -129,18 +129,24 @@ or roll back a deploy today:
   latency, and sanitized detail. The Job is deleted 10 seconds after it
   finishes (`ttlSecondsAfterFinished: 10`), so read this from your log
   aggregator or the staff page, not `kubectl logs`.
-- **Staff dashboard:** `/timbit/help/model_backends` shows, per configured
-  model, enabled/disabled state, provider, registry name, internal key,
-  selection-UI/reporting registration, the latest check result and timestamp,
-  and the last stored generation. It makes no model calls.
-  - A context-only backend (Perplexity) reads "context only": it builds
-    citations and never drafts, so it has no stored generations.
-  - An external backend outside the router's top-N external fan-out is
-    marked: it is registered and healthy but never asked for a draft.
+- **Staff dashboard:** `/timbit/help/model_backends` lists every backend the
+  code knows about, configured or not. For each it shows the kind, quality and
+  tier, which request paths this pod routes to it, the configuration and
+  registration state, the latest check result with the deploy and environment
+  it ran under, and the last stored generation. A panel above the table lists
+  each path's models with external models off and on. The page makes no model
+  calls.
+  - A context-only backend (Perplexity) reads "n/a (citations only)" under
+    "Last stored generation": it builds citations and never drafts.
+  - A registered backend that no request path picks, such as an external model
+    outside the router's top 3, reads "registered, not picked by any path".
   - "Last stored generation" counts drafts and chooser candidates, not the
     copies made when a user picks a draft.
-  - A disabled or unconfigured backend reads "not checked"; its stored
-    classification row is not shown as a failed check.
+  - A disabled or unconfigured backend reads "not checked". Its stored
+    classification row is not shown as a failed check. Once the backend is
+    configured, that row shows as a grey pill flagged "config changed since"
+    until a real check runs.
+  - The healthy count is out of the enabled backends only.
   `/timbit/help/model_usage` shows which models users actually pick.
 - **Database:** `ModelBackendHealthCheckResult` keeps one row per backend per
   run (including `NOT_CONFIGURED` and `DISABLED`). Skipped runs and

@@ -1883,49 +1883,159 @@ class ModelUsageDashboardView(generic.TemplateView):
 
 
 class ModelBackendStatusView(generic.TemplateView):
-    """Staff page showing the state of every configured model backend.
+    """Staff page listing every model backend the code knows about,
+    configured or not.
 
-    Per model: enabled/disabled, provider, configured (friendly) name,
-    internal/wire key, whether it is registered in the router pools that feed
-    the selection UI and recognized by usage reporting, the latest health
-    check outcome (category, latency, timestamp, sanitized error), and the
-    last time the model actually produced a stored generation
-    (ProposedAppeal / ChooserCandidate rows).
+    Per model: provider, registry and wire names, what kind of backend it is,
+    its routing quality and tier, which request paths use it and in what
+    role, whether it is configured, registered in the router and recognized
+    by usage reporting, the latest health-check row (with the deploy and
+    environment it ran under, flagged when it predates this deploy or the
+    configuration has changed since), and the last time the model produced a
+    stored generation (ProposedAppeal / ChooserCandidate rows).
 
-    Enumeration reuses the health-check module's configuration classification
-    but performs NO model invocations — this page must stay cheap to load.
-    Run ``python manage.py check_model_backends`` (or deploy) to refresh the
+    A panel above the table lists each request path's models in order, with
+    external models off and on. It comes from the router's own synchronous
+    selectors, so it can't drift from what requests do. Router and health
+    sweep state belong to the process, so the page shows the view of
+    whichever pod served it.
+
+    Loading the page never invokes a model and never waits on the network.
+    The routing panel reads cached health signals, and like any routed
+    request, the first read on a pod whose background health sweep hasn't
+    started yet starts it; that sweep probes the backends' ``/models``
+    endpoints in a background thread. Run
+    ``python manage.py check_model_backends`` (or deploy) to refresh the
     health data.
     """
 
     template_name = "model_backend_status.html"
 
+    # Row groups, in page order. Models this pod routes to come first, the
+    # ones it can't use last.
+    _GROUP_INTERNAL = 0
+    _GROUP_TOP_EXTERNAL = 1
+    _GROUP_EXTERNAL = 2
+    _GROUP_CONTEXT_ONLY = 3
+    _GROUP_BROKEN = 4
+    _GROUP_OFF = 5
+
     def get_context_data(self, **kwargs):
         from fighthealthinsurance.ml import model_health_check as mhc
+        from fighthealthinsurance.ml import routing_overview as ro
 
         ctx = super().get_context_data(**kwargs)
 
         static_results, checkable = mhc.enumerate_backend_checks()
         entries = list(static_results) + [pending for pending, _ in checkable]
-        entries.sort(key=lambda r: (not r.enabled, r.provider, r.model_name))
+
+        # Routing is a view of this pod's router. If reading it fails, the page
+        # says so and still shows the health rows, which are what staff need
+        # most when something is wrong.
+        routing: Optional[ro.RoutingOverview] = None
+        traits: Dict[int, Optional[ro.ModelTraits]] = {}
+        try:
+            routing = ro.build_routing_overview()
+            for r in entries:
+                traits[id(r)] = ro.row_traits(
+                    r.router_instance, r.backend_cls, r.internal_name
+                )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Model backend status: could not read routing from this pod"
+            )
+            routing = None
+            traits = {}
 
         names = [r.model_name for r in entries]
         latest_checks = self._latest_check_by_model(names)
         last_generation = self._last_generation_by_model(names)
-        fanout = self._default_fanout_by_name(checkable)
 
-        rows: List[Dict[str, Any]] = [
-            self._row(
-                r,
-                latest_checks.get(r.model_name),
-                last_generation.get(r.model_name),
-                fanout.get(r.model_name),
+        current_deployment = mhc.deployment_id()
+        current_environment = mhc.environment_name()
+        # The hourly fallback id changes on its own, so only a real release id
+        # can say a row came from an earlier deploy.
+        deployment_is_versioned = mhc.is_versioned_deployment_id(current_deployment)
+
+        rows: List[Dict[str, Any]] = []
+        for r in entries:
+            check = latest_checks.get(r.model_name)
+            # Static category from configuration classification (e.g.
+            # NOT_CONFIGURED / DISABLED / FAIL_MISSING_CREDENTIALS); empty for
+            # backends that need a live probe to judge.
+            config_category = r.category if r.category != mhc.CATEGORY_OTHER else ""
+            t = traits.get(id(r))
+            routed = bool(t and t.routed)
+            # Roles and rank follow the instance the router registered, since
+            # two backends can share a registry name while the router picks
+            # only one of them. Appeal roles come by name, as appeals route.
+            rank = (
+                routing.top_external_rank(r.router_instance)
+                if routing and routed
+                else None
             )
-            for r in entries
-        ]
+            stale_deployment = (
+                check is not None
+                and deployment_is_versioned
+                and check.deployment_id != current_deployment
+            )
+            stale_environment = (
+                check is not None and check.environment != current_environment
+            )
+            # The check run also persists its static classification of a
+            # backend it could not probe (NOT_CONFIGURED, DISABLED). While the
+            # backend is still off, that row only repeats the Config column,
+            # so the page says "not checked" instead of showing it as a
+            # failed check.
+            show_check = check is not None and (check.enabled or r.enabled)
+            rows.append(
+                {
+                    "provider": r.provider,
+                    "model_name": r.model_name,
+                    "internal_name": r.internal_name,
+                    "enabled": r.enabled,
+                    "config_category": config_category,
+                    # Missing credentials and a failed client construction keep
+                    # enabled=True, so they need their own flag or the page
+                    # would call them enabled.
+                    "config_failing": config_category in mhc.FAILURE_CATEGORIES,
+                    "config_detail": r.error,
+                    "ui_registered": r.ui_registered,
+                    "reporting_registered": r.reporting_registered,
+                    "kind": t.kind if t else "",
+                    "quality": t.quality if t else None,
+                    "tier": t.tier if t else "",
+                    "routed": routed,
+                    "roles": (
+                        routing.roles_for(r.model_name, r.router_instance)
+                        if routing and routed
+                        else []
+                    ),
+                    "top_external_rank": rank,
+                    "last_check": check,
+                    "show_check": show_check,
+                    "stale_deployment": stale_deployment,
+                    "stale_environment": stale_environment,
+                    "config_changed": check is not None and check.enabled != r.enabled,
+                    "last_generation": last_generation.get(r.model_name),
+                    # Citations only: never a generation candidate, so its
+                    # empty "Last stored generation" is not a symptom. Read
+                    # off the router's traits, or off the registered instance
+                    # when routing could not be read.
+                    "context_only": (
+                        t.kind == ro.KIND_CONTEXT_ONLY if t else r.context_only
+                    ),
+                    "has_traits": t is not None,
+                }
+            )
+        rows.sort(key=self._row_order)
 
         ctx["title"] = "Model Backend Status"
         ctx["rows"] = rows
+        ctx["routing"] = routing
+        ctx["current_deployment_id"] = current_deployment
+        ctx["current_environment"] = current_environment
+        ctx["deployment_is_versioned"] = deployment_is_versioned
         ctx["enabled_count"] = sum(1 for row in rows if row["enabled"])
         ctx["healthy_count"] = sum(
             1
@@ -1934,59 +2044,38 @@ class ModelBackendStatusView(generic.TemplateView):
         )
         return ctx
 
-    @staticmethod
-    def _row(
-        r: Any,
-        check: Optional[ModelBackendHealthCheckResult],
-        last_generation: Optional[datetime.datetime],
-        in_default_fanout: Optional[bool],
-    ) -> Dict[str, Any]:
-        """One table row from an enumerated backend and its stored evidence."""
-        from fighthealthinsurance.ml import model_health_check as mhc
+    @classmethod
+    def _row_group(cls, row: Dict[str, Any]) -> int:
+        from fighthealthinsurance.ml import routing_overview as ro
 
-        return {
-            "provider": r.provider,
-            "model_name": r.model_name,
-            "internal_name": r.internal_name,
-            "enabled": r.enabled,
-            # Static category from configuration classification (e.g.
-            # NOT_CONFIGURED / DISABLED / FAIL_MISSING_CREDENTIALS);
-            # empty for backends that need a live probe to judge.
-            "config_category": (r.category if r.category != mhc.CATEGORY_OTHER else ""),
-            "config_detail": r.error,
-            "ui_registered": r.ui_registered,
-            "reporting_registered": r.reporting_registered,
-            # Citations only: never a generation candidate, so "none
-            # recorded" would be the wrong reading of an empty column.
-            "context_only": r.context_only,
-            # For an enabled external generation model: whether it is in the
-            # router's default external fan-out right now. The router keeps
-            # the best few externals; one outside that slice is registered
-            # and healthy yet never asked for a draft, which is the other
-            # way an empty column is structural rather than a symptom.
-            "in_default_fanout": in_default_fanout,
-            "last_check": check,
-            "last_generation": last_generation,
-        }
+        if not row["enabled"]:
+            return cls._GROUP_OFF
+        if row["config_failing"]:
+            return cls._GROUP_BROKEN
+        if not row["has_traits"]:
+            # Routing couldn't be read, so there is nothing to rank by. Keep
+            # these between the routed models and the broken ones.
+            return cls._GROUP_EXTERNAL
+        if not row["routed"]:
+            # Configured but the router didn't register it: it can't be picked.
+            return cls._GROUP_BROKEN
+        if row["kind"] == ro.KIND_CONTEXT_ONLY:
+            return cls._GROUP_CONTEXT_ONLY
+        if row["kind"] != ro.KIND_EXTERNAL:
+            return cls._GROUP_INTERNAL
+        if row["top_external_rank"] is not None:
+            return cls._GROUP_TOP_EXTERNAL
+        return cls._GROUP_EXTERNAL
 
-    @staticmethod
-    def _default_fanout_by_name(checkable: Any) -> Dict[str, bool]:
-        """``{model_name: in_default_fanout}`` for the enabled external
-        generation backends. Best-effort and in-memory; on any router error
-        the page just omits the annotation."""
-        try:
-            from fighthealthinsurance.ml.ml_router import ml_router
-
-            chosen = {id(m) for m in ml_router.best_external_models()}
-        except Exception:
-            logger.opt(exception=True).debug("Could not compute the default fan-out")
-            return {}
-        out: Dict[str, bool] = {}
-        for pending, instance in checkable:
-            if not getattr(instance, "external", False) or pending.context_only:
-                continue
-            out[pending.model_name] = id(instance) in chosen
-        return out
+    @classmethod
+    def _row_order(cls, row: Dict[str, Any]) -> Tuple[int, int, int, str, str]:
+        return (
+            cls._row_group(row),
+            row["top_external_rank"] or 0,
+            -(row["quality"] or 0),
+            row["provider"],
+            row["model_name"],
+        )
 
     @staticmethod
     def _latest_check_by_model(
@@ -1994,20 +2083,23 @@ class ModelBackendStatusView(generic.TemplateView):
     ) -> Dict[str, ModelBackendHealthCheckResult]:
         """Most recent health-check row per model name.
 
-        One small query per model rather than a newest-N slice over all of
-        them: the slice let a backend whose rows had been pushed out by
-        repeated single-model runs of another read as "never checked".
+        One query finds the newest row id for each name on the page, and one
+        more fetches those rows. Row ids only grow, so the highest is the
+        newest. There is no cap across models: a cap on the newest rows
+        overall let a model checked often push another model's older
+        failing check off the page.
         """
-        latest: Dict[str, ModelBackendHealthCheckResult] = {}
-        for name in names:
-            row = (
-                ModelBackendHealthCheckResult.objects.filter(model_name=name)
-                .order_by("-created_at", "-id")
-                .first()
-            )
-            if row is not None:
-                latest[name] = row
-        return latest
+        latest_ids = list(
+            ModelBackendHealthCheckResult.objects.filter(model_name__in=names)
+            .order_by()
+            .values("model_name")
+            .annotate(latest_id=Max("id"))
+            .values_list("latest_id", flat=True)
+        )
+        return {
+            row.model_name: row
+            for row in ModelBackendHealthCheckResult.objects.filter(id__in=latest_ids)
+        }
 
     @staticmethod
     def _last_generation_by_model(

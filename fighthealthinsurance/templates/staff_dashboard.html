@@ -219,7 +219,7 @@
       <li>
         <a href="{% url 'model_backend_status' %}">
           <strong>Model Backend Status</strong>
-          <div class="link-description">Per-backend configuration, registry state, and latest deployment health-check results (auth / model-not-found / rate-limit / timeout categories)</div>
+          <div class="link-description">Every model backend the code knows about: which request paths route to it on this pod, its quality and tier, configuration and registry state, and its latest health check with the deploy it ran under, flagged when older than the current deploy</div>
         </a>
       </li>
     </ul>
