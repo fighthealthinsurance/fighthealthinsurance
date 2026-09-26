@@ -290,3 +290,11 @@ class TestRowValues:
         assert set(values) == set(dt.TRIAGE_COLUMNS)
         assert set(dt.cleared_values()) == set(dt.TRIAGE_COLUMNS)
         assert all(v is None for v in dt.cleared_values().values())
+
+    def test_the_source_names_the_answering_model_or_the_configured_one(self):
+        assert dt.SOURCE == f"typesafe/jev-1.13.0/rubric-{dt.RUBRIC_VERSION}"
+        assert dt.source_for({"model": "jev-1.13.0"}) == dt.SOURCE
+        with override_settings(TYPESAFE_MODEL="jev-latest"):
+            assert dt.source_for({}) == f"typesafe/jev-latest/rubric-{dt.RUBRIC_VERSION}"
+            assert dt.source_for({"model": "jev-1.14.0"}) == f"typesafe/jev-1.14.0/rubric-{dt.RUBRIC_VERSION}"
+            assert dt.source_for({"model": "a/b"}) == f"typesafe/jev-latest/rubric-{dt.RUBRIC_VERSION}"
