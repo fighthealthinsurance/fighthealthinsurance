@@ -922,14 +922,17 @@ def mark_proposal_chosen(
     shown: Optional[List[int]] = None
     if presented_ids is not None:
         # In the order the browser reported (the page ranks its cards, so
-        # the order says which sat on top), deduped, and only this denial's
-        # own rows. An empty report is kept as one: "nothing stored was on
-        # screen" is not "nobody said" (NULL), for which the dashboard falls
-        # back to every draft stored before the pick.
+        # the order says which sat on top), deduped, and only rows this
+        # denial could have served: its own, and not a held-back precompute
+        # row (speculative=True until served), which no page ever showed and
+        # the fallback path excludes too. An empty report is kept as one:
+        # "nothing stored was on screen" is not "nobody said" (NULL), for
+        # which the dashboard falls back to every draft stored before the
+        # pick.
         own = (
             set(
                 ProposedAppeal.objects.filter(
-                    for_denial=denial, id__in=presented_ids
+                    for_denial=denial, id__in=presented_ids, speculative=False
                 ).values_list("id", flat=True)
             )
             if presented_ids

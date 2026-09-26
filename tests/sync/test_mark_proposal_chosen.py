@@ -405,6 +405,24 @@ class MarkProposalChosenTest(TestCase):
         )
         self.assertEqual(pa.presented_ids, [shown.id])
 
+    def test_a_held_back_precompute_row_is_never_counted_as_shown(self):
+        # A speculative row is held back until served (and flipped then), so
+        # no page ever showed it; only a crafted report could name it.
+        shown = ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="shown", chosen=False, model_name="m"
+        )
+        held_back = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="held back",
+            chosen=False,
+            model_name="m",
+            speculative=True,
+        )
+        pa = mark_proposal_chosen(
+            self.denial, "shown", presented_ids=[shown.id, held_back.id]
+        )
+        self.assertEqual(pa.presented_ids, [shown.id])
+
     def test_no_report_leaves_presented_ids_null(self):
         pa = mark_proposal_chosen(self.denial, "anything")
         self.assertIsNone(pa.presented_ids)
