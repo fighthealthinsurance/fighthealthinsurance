@@ -87,7 +87,7 @@ from .ml.ml_models import (
     render_citations_context,
     repetition_penalty,
 )
-from .ml.ml_router import ml_router
+from .ml.ml_router import appeal_backup_names, ml_router
 
 
 class ExtractionUnavailable(Exception):
@@ -3309,14 +3309,10 @@ class AppealGenerator(object):
         # for a round of the same calls to fail the same way; for an opt-in
         # denial it is the external backends. The privacy boundary is
         # unchanged: use_external=False never yields an external name here.
-        primary_names = set(model_names)
-        backup_model_names = [
-            name
-            for name in ml_router.generate_text_backend_names(
-                use_external=denial.use_external
-            )
-            if name not in primary_names
-        ]
+        backup_model_names = appeal_backup_names(
+            ml_router.generate_text_backend_names(use_external=denial.use_external),
+            model_names,
+        )
         backup_calls = [
             full_letter_call(model_name) for model_name in backup_model_names
         ]
