@@ -1862,3 +1862,249 @@ class TestMedicaidIndeterminateWithQuestions(TestCase):
             determination_made=True,
         )
         self.assertNotIn("canNOT produce a Medicaid estimate", info)
+
+
+class TestGenerateAppealLetterPattern(TestCase):
+    """Detection and screening behavior for the generate_appeal_letter tool."""
+
+    def test_detects_anchored_call_with_markers(self):
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+
+        tool = GenerateAppealLetterTool(AsyncMock())
+        text = '**generate_appeal_letter**{"procedure": "MRI", "diagnosis": "back pain"}'
+        match = tool.detect(text)
+        self.assertIsNotNone(match)
+        self.assertEqual(
+            match.group(1), '{"procedure": "MRI", "diagnosis": "back pain"}'
+        )
+
+    def test_detects_call_after_prose_line(self):
+        """The pattern is ^...$-anchored; MULTILINE detect flags must find a
+        call that follows a sentence of prose."""
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+
+        tool = GenerateAppealLetterTool(AsyncMock())
+        text = 'On it -- drafting now.\ngenerate_appeal_letter {"procedure": "MRI"}\n'
+        self.assertIsNotNone(tool.detect(text))
+
+    def test_wrapped_call_is_removed_with_its_closing_markers(self):
+        """Models also bold the whole call (**tool {...}**). The closing **
+        belongs to the call; leaving it would put stray markdown in the
+        reply."""
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = GenerateAppealLetterTool(AsyncMock())
+        text = 'Drafting now.\n**generate_appeal_letter {"procedure": "MRI"}**\nThanks!'
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(result, "Drafting now.\n\nThanks!")
+
+    def test_counts_as_tool_invocation(self):
+        text = 'Sure.\n**generate_appeal_letter**{"procedure": "MRI"}\n'
+        self.assertEqual(count_tool_invocations(text), 1)
+
+    def test_bare_mention_is_not_an_invocation_but_blocks_alternates(self):
+        from fighthealthinsurance.chat.tools import contains_tool_call
+
+        prose = "I can use generate_appeal_letter to draft this for you."
+        self.assertEqual(count_tool_invocations(prose), 0)
+        # Action-token mention: an alternate answer carrying it must be
+        # screened out (only the winning reply runs state-mutating flows).
+        self.assertTrue(contains_tool_call(prose))
+
+
+class TestLetterRequestDetector(TestCase):
+    """looks_like_letter_request gates the total-failure letter fallback."""
+
+    def test_matches_draft_requests(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            looks_like_letter_request,
+        )
+
+        for message in [
+            "Please go ahead and draft a letter.",
+            "Can you write the appeal for me?",
+            "Generate an appeal letter to my insurer",
+            "please redo the letter with the new diagnosis",
+        ]:
+            with self.subTest(message=message):
+                self.assertTrue(looks_like_letter_request(message))
+
+    def test_ignores_non_draft_messages(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            looks_like_letter_request,
+        )
+
+        for message in [
+            "Why was my MRI claim denied?",
+            "I got a letter from my insurer yesterday",
+            "What is an appeal?",
+            "",
+            None,
+        ]:
+            with self.subTest(message=message):
+                self.assertFalse(looks_like_letter_request(message))
+
+
+class TestDenialLetterContextGate(TestCase):
+    """denial_has_letter_context: is there anything to write a letter about?"""
+
+    def test_denial_context_gate(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            denial_has_letter_context,
+        )
+
+        class Empty:
+            denial_text = "   "
+            procedure = ""
+            diagnosis = None
+
+        class HasProcedure(Empty):
+            procedure = "MRI"
+
+        self.assertFalse(denial_has_letter_context(None))
+        self.assertFalse(denial_has_letter_context(Empty()))
+        self.assertTrue(denial_has_letter_context(HasProcedure()))
+
+
+class TestParseAnchoredJsonPayload(TestCase):
+    """Precise payload extraction for the anchored **tool**{...} calls."""
+
+    def _match(self, text):
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+
+        match = GenerateAppealLetterTool(AsyncMock()).detect(text)
+        self.assertIsNotNone(match)
+        return match
+
+    def test_payload_stops_at_own_call_despite_later_braces(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            "Some prose in between.\n"
+            '**create_or_update_prior_auth**{"treatment": "PT"}'
+        )
+        payload, span = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(payload, {"procedure": "MRI"})
+        # The span covers only this call, so replacing it leaves the later
+        # tool call (and the prose) for its own handler.
+        self.assertEqual(span, '**generate_appeal_letter**{"procedure": "MRI"}')
+
+    def test_pretty_printed_multiline_payload_parses(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = '**generate_appeal_letter**{\n  "procedure": "MRI",\n  "diagnosis": "back pain"\n}'
+        payload, span = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(
+            payload, {"procedure": "MRI", "diagnosis": "back pain"}
+        )
+        self.assertEqual(span, text)
+
+    def test_invalid_payload_raises_json_error(self):
+        import json as json_mod
+
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        # A match whose captured region does not start a valid JSON object:
+        # the greedy pattern accepts it (there is a later } at end of line),
+        # but raw_decode must reject it so the handler's error path runs.
+        text = '**generate_appeal_letter**{invalid json}'
+        payload_match = self._match(text)
+        with self.assertRaises(json_mod.JSONDecodeError):
+            parse_anchored_json_payload(text, payload_match)
+
+
+class TestAnchoredCallRemoval(TestCase):
+    """Span-bounded removal must leave no raw tool syntax behind.
+
+    The reply these produce is what the user reads AND what is persisted to
+    chat_history, so a leftover call means its JSON payload -- which can
+    carry medical detail -- is shown and stored.
+    """
+
+    def _tool(self):
+        from fighthealthinsurance.chat.tools import AppealTool
+
+        return AppealTool(AsyncMock(), AsyncMock())
+
+    def test_strips_more_calls_than_the_old_fixed_cap(self):
+        from fighthealthinsurance.chat.tools.base_tool import strip_anchored_calls
+
+        tool = self._tool()
+        text = "Here you go.\n" + "\n".join(
+            '**create_or_update_appeal**{"procedure": "MRI %d"}' % i
+            for i in range(12)
+        )
+        result = strip_anchored_calls(tool, text)
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("MRI", result)
+        self.assertIn("Here you go.", result)
+
+    def test_malformed_multiline_payload_leaves_no_json_tail(self):
+        from fighthealthinsurance.chat.tools.base_tool import strip_anchored_calls
+
+        tool = self._tool()
+        text = (
+            "Saving that now.\n"
+            "**create_or_update_appeal**{\n"
+            '  "procedure": "MRI",\n'
+            '  "diagnosis": "chronic back pain",\n'
+            "  oops not valid json\n"
+            "}\n"
+            "Anything else?"
+        )
+        result = strip_anchored_calls(tool, text)
+        self.assertNotIn("create_or_update_appeal", result)
+        # None of the payload survives -- not the keys, not the values.
+        self.assertNotIn("chronic back pain", result)
+        self.assertNotIn("procedure", result)
+        self.assertIn("Saving that now.", result)
+        self.assertIn("Anything else?", result)
+
+    def test_malformed_call_does_not_swallow_the_next_call(self):
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            "**create_or_update_appeal**{\n  broken\n}\n"
+            '**create_or_update_appeal**{"procedure": "MRI"}'
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertNotIn("broken", result)
+        # The following call survives for its own handler pass.
+        self.assertIn('**create_or_update_appeal**{"procedure": "MRI"}', result)
+
+    def test_malformed_call_does_not_swallow_another_tools_call(self):
+        """The removal is bounded by the next call of ANY tool: bounded by
+        this tool's own calls only, a broken appeal body ran through a later
+        generate_appeal_letter call's closing brace and deleted it."""
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            '**create_or_update_appeal**{"procedure": "MRI", oops}\n'
+            "Now drafting the letter.\n"
+            '**generate_appeal_letter**{"procedure": "MRI"}'
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(
+            result,
+            '\nNow drafting the letter.\n**generate_appeal_letter**{"procedure": "MRI"}',
+        )
+
+    def test_tool_call_only_reply_never_returns_raw_payload(self):
+        """A reply that is nothing but a failed call must not fall back to
+        the original text -- that would show the user the raw JSON."""
+        tool = self._tool()
+        text = '**create_or_update_appeal**{"procedure": "MRI", "diagnosis": "back pain"}'
+        result = tool.strip_calls_on_error(text)
+        self.assertNotIn("create_or_update_appeal", result)
+        self.assertNotIn("back pain", result)
+        self.assertIn("problem saving", result)

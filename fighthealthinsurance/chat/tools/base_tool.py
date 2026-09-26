@@ -5,11 +5,15 @@ Tool handlers process specific "tool calls" that the LLM includes in responses.
 Each tool can detect its pattern in text, execute the tool action, and format results.
 """
 
+import json
 import re
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, List, Optional, Set, Tuple
 
+from django.db import models
 from loguru import logger
+
+from .patterns import next_tool_call_start
 
 # Identity/audit fields that LLM-supplied tool payloads must never overwrite,
 # even though they are concrete editable columns.
@@ -49,6 +53,158 @@ def is_safe_tool_field(key: str, allowed: Set[str]) -> bool:
     return key in allowed
 
 
+def set_tool_field(instance: Any, key: str, value: Any) -> None:
+    """Set an LLM-payload value on ``instance``, giving text columns text.
+
+    ``key`` must already have passed is_safe_tool_field. Payloads are
+    untrusted JSON: a CPT code arrives as a number, a diagnosis list as an
+    array. Django converts on save, but a plain setattr leaves the raw value
+    on the in-memory instance, and code reading it before any refetch --
+    the letter tool's context gate and template detection call str methods
+    on it -- crashes. So for a text column, a number is stringified and a
+    list of plain values is joined; a boolean or a nested object, never
+    meaningful there, is skipped. Other columns keep Django's conversion on
+    save (stringifying a bool would make False truthy in memory).
+    """
+    field = instance._meta.get_field(key)
+    if isinstance(field, (models.CharField, models.TextField)) and not (
+        value is None or isinstance(value, str)
+    ):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = str(value)
+        elif isinstance(value, list) and all(
+            isinstance(item, (str, int, float)) and not isinstance(item, bool)
+            for item in value
+        ):
+            value = ", ".join(str(item) for item in value)
+        else:
+            # The type only: payload values can carry medical detail.
+            logger.info(
+                f"Skipping tool payload field {key}: a {type(value).__name__} "
+                f"can't fill a text column"
+            )
+            return
+    setattr(instance, key, value)
+
+
+def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, str]:
+    """Parse the JSON payload of an anchored ``**tool**{...}`` call precisely.
+
+    The anchored patterns (create_or_update_appeal / _prior_auth /
+    generate_appeal_letter) capture ``(\\{.*\\})`` under DOTALL, so when two
+    tool calls share a reply the greedy group runs from the first call's
+    ``{`` through the LAST ``}`` in the text -- ``json.loads`` on the group
+    then fails and BOTH calls get stripped. Instead, decode from the
+    captured group's start with ``raw_decode``, which stops at the end of
+    the first complete JSON value (same approach as FinancialAssistanceTool
+    / the PA-requirement lookup). Returns ``(payload, call_span)`` where
+    ``call_span`` is the exact ``**tool**{...}`` substring of ``text`` to
+    replace -- handlers must replace it rather than ``match.group(0)``,
+    whose over-capture would swallow the text between the calls.
+
+    Raises ``json.JSONDecodeError`` for an undecodable or non-object
+    payload. NOTE for callers: the payload can carry medical/claim details,
+    so error paths must not log it or echo it back -- log sizes only.
+    """
+    start = match.start(1)
+    payload, end = json.JSONDecoder().raw_decode(text[start:])
+    if not isinstance(payload, dict):
+        raise json.JSONDecodeError(
+            "tool payload must be a JSON object", text[start : start + end], 0
+        )
+    span_end = start + end
+    # A closing wrapper (**tool {...}**) belongs to the call: leaving it
+    # behind would put a stray ** into the reply.
+    wrapper = len(text[span_end:]) - len(text[span_end:].lstrip("*"))
+    span_end += min(wrapper, 4)
+    return payload, text[match.start() : span_end]
+
+
+def remove_anchored_call(text: str, match: re.Match[str]) -> str:
+    """Remove ONE anchored ``**tool**{...}`` call from ``text`` precisely.
+
+    Uses the raw_decode span when the payload parses. When it does NOT
+    parse, the removal runs to the last ``}`` of the broken body -- bounded
+    by where the next tool call of ANY kind starts, so it can't swallow a
+    later call the way a ``re.sub`` over the greedy DOTALL pattern would.
+    (Bounding by this tool's own calls only let a broken
+    create_or_update_appeal body swallow a later generate_appeal_letter
+    call and the prose before it.) Cutting at the first newline instead
+    left the rest of a pretty-printed malformed payload behind, putting its
+    contents -- possibly medical detail -- in the reply and chat history.
+    """
+    start = match.start()
+    try:
+        _, span = parse_anchored_json_payload(text, match)
+        return text[:start] + text[start + len(span) :]
+    except json.JSONDecodeError:
+        pass
+
+    body_start = match.start(1)
+    # Never reach past the next tool call: it gets its own handler pass.
+    following = next_tool_call_start(text, body_start + 1)
+    limit = following if following is not None else len(text)
+    close = text.rfind("}", body_start, limit)
+    if close != -1:
+        end = close + 1
+    else:
+        # No closing brace at all (a truncated payload): fall back to the
+        # line bound, which at least takes the token and what follows it.
+        newline = text.find("\n", body_start)
+        end = min(newline if newline != -1 else limit, limit)
+    return text[:start] + text[end:]
+
+
+def strip_anchored_calls(
+    tool: "BaseTool",
+    response_text: str,
+    notice: Optional[str] = None,
+    empty_fallback: Optional[str] = None,
+) -> str:
+    """Span-bounded removal of EVERY remaining call of ``tool`` in the text.
+
+    The anchored tools' error/straggler cleanup: a loop of
+    ``remove_anchored_call`` so nothing between calls is lost. It runs until
+    no call is left rather than for a fixed number of rounds -- a fixed cap
+    returned the calls past it as raw syntax, payload included. Each removal
+    strictly shortens the text, so the loop terminates; the progress check
+    is defensive only.
+
+    ``notice`` is appended ONCE when anything was actually stripped. Pass it
+    whenever the dropped calls carried work that was never done: the
+    stripped reply is what the user reads AND what is persisted to
+    chat_history, so with no notice the model sees its call as accepted and
+    never retries it. The error path passes None -- a status message has
+    already gone out there.
+
+    ``empty_fallback`` is returned when the reply was NOTHING but tool calls
+    and stripping leaves it empty. Without one the original text is returned
+    (the historical behavior), which in that case hands the user the raw
+    call and its payload -- so the anchored tools pass a sentence instead.
+    """
+    text = response_text
+    removed = 0
+    while True:
+        match = tool.detect(text)
+        if not match:
+            break
+        shortened = remove_anchored_call(text, match)
+        if len(shortened) >= len(text):
+            logger.warning(
+                f"{tool.name}: tool-call removal made no progress; "
+                f"stopping with {len(text)} chars left"
+            )
+            break
+        text = shortened
+        removed += 1
+    text = text.strip()
+    if removed and notice:
+        text = f"{text}\n\n{notice}" if text else notice
+    if text:
+        return text
+    return empty_fallback if empty_fallback is not None else response_text
+
+
 class BaseTool(ABC):
     """
     Abstract base class for chat tool handlers.
@@ -69,6 +225,15 @@ class BaseTool(ABC):
 
     # Human-readable name for status messages
     name: str = "Tool"
+
+    # How many calls of THIS tool ``handle`` may execute in one reply. Most
+    # tools keep 1 -- their handlers either process every match internally
+    # via detect_all (medicaid, financial assistance) or run a recursive
+    # LLM pass that supersedes the reply. The anchored JSON tools raise it:
+    # since their execute() replaces only the exact call span, a second
+    # call in the same reply would otherwise survive unexecuted and render
+    # as raw tool syntax.
+    max_calls_per_reply: int = 1
 
     def __init__(
         self,
@@ -162,11 +327,44 @@ class BaseTool(ABC):
         """
         pass
 
+    def strip_calls_on_error(self, response_text: str) -> str:
+        """Remove this tool's raw syntax after execute() failed.
+
+        Default: regex-sub every match of the pattern. The anchored JSON
+        tools override this with span-bounded removal (strip_anchored_calls)
+        because a greedy DOTALL sub over their pattern would also delete
+        the text BETWEEN two calls -- including a different pending tool
+        call. Falls back to the original text when stripping leaves nothing.
+        """
+        stripped = re.sub(
+            self.pattern, "", response_text, flags=self.detect_all_flags
+        ).strip()
+        return stripped or response_text
+
+    def dropped_calls_notice(self) -> str:
+        """Sentence appended when calls past ``max_calls_per_reply`` are
+        dropped from a SUCCESSFUL reply.
+
+        Those calls carried updates that were never applied, and the reply
+        (minus them) is what both the user reads and the model sees in the
+        history, so saying nothing would leave the user thinking the change
+        landed and the model with no reason to retry.
+        """
+        return (
+            f"(Note: I could only apply the first {self.max_calls_per_reply} "
+            f"updates in one go, so anything after that hasn't been saved -- "
+            f"tell me what else to change and I'll take care of it.)"
+        )
+
     async def handle(
         self, response_text: str, context: str, **kwargs
     ) -> Tuple[str, str, bool]:
         """
         Detect and handle this tool if present in the response.
+
+        Executes up to ``max_calls_per_reply`` calls of this tool (each pass
+        re-detects against the updated text, so an execute() that replaces
+        its call span lets the next call be found).
 
         Args:
             response_text: The LLM response text
@@ -176,16 +374,43 @@ class BaseTool(ABC):
         Returns:
             Tuple of (updated_response_text, updated_context, was_handled)
         """
+        handled = False
+        stalled = False
         try:
-            match = self.detect(response_text)
-            if not match:
-                return response_text, context, False
-
-            logger.debug(f"{self.name} tool detected in response")
-            updated_response, updated_context = await self.execute(
-                match, response_text, context, **kwargs
-            )
-            return updated_response, updated_context, True
+            for _ in range(max(1, self.max_calls_per_reply)):
+                match = self.detect(response_text)
+                if not match:
+                    break
+                logger.debug(f"{self.name} tool detected in response")
+                updated, context = await self.execute(
+                    match, response_text, context, **kwargs
+                )
+                handled = True
+                if updated == response_text:
+                    # execute() declined without consuming the call (e.g. no
+                    # chat to attach to). Another pass would decline the same
+                    # way -- and repeat whatever error it sent the user.
+                    stalled = True
+                    break
+                response_text = updated
+            if handled and self.max_calls_per_reply > 1 and self.detect(response_text):
+                # Calls left over are stripped rather than left to render as
+                # raw tool syntax with their JSON payloads. Gated on
+                # max_calls_per_reply > 1, i.e. the anchored JSON tools:
+                # span-bounded removal assumes their `**tool**{...}` shape,
+                # and single-call tools keep their historical behavior.
+                if stalled:
+                    # Declined, not capped: no "first N updates" notice.
+                    response_text = self.strip_calls_on_error(response_text)
+                else:
+                    logger.info(
+                        f"{self.name}: more than {self.max_calls_per_reply} "
+                        f"calls in one reply; stripping the rest"
+                    )
+                    response_text = strip_anchored_calls(
+                        self, response_text, notice=self.dropped_calls_notice()
+                    )
+            return response_text, context, handled
 
         except Exception as e:
             logger.opt(exception=True).warning(f"Error executing {self.name} tool: {e}")
@@ -200,11 +425,7 @@ class BaseTool(ABC):
             # {...}` in the chat because a tool blew up mid-execution.
             cleaned_response = response_text
             try:
-                stripped = re.sub(
-                    self.pattern, "", response_text, flags=self.detect_all_flags
-                ).strip()
-                if stripped:
-                    cleaned_response = stripped
+                cleaned_response = self.strip_calls_on_error(response_text)
             except Exception:
                 logger.debug(f"{self.name}: could not strip tool syntax on error")
             return cleaned_response, context, True

@@ -1766,6 +1766,29 @@ def served_reserve_for_another_state() -> Q:
     )
 
 
+def servable_drafts(denial) -> QuerySet:
+    """The denial's ProposedAppeal rows that may be shown to the user.
+
+    The one serving rule, shared by the wizard's end-of-stream reconciliation
+    and the chat letter fallback so the two can't drift apart:
+
+    - never a chosen row -- those are copies of the user's own pick (for an
+      edited one, text the user wrote, which was never a draft);
+    - a held-back reserve only when it was written for the state on the row
+      now: it argues under that state's law;
+    - and a reserve already promoted keeps its stamp, so the same test
+      applies to it after promotion (served_reserve_for_another_state).
+
+    Deliverability (runt filtering) is separate -- see deliverable_candidates.
+    """
+    narrowed: QuerySet = (
+        ProposedAppeal.objects.filter(for_denial=denial, chosen=False)
+        .filter(Q(speculative=False) | Q(built_for_state=state_on_the_row_now()))
+        .exclude(served_reserve_for_another_state())
+    )
+    return narrowed
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -4133,6 +4156,187 @@ def scoring_redactions(denial: Denial) -> list[tuple[str, str]]:
     return out
 
 
+async def substitute_appeal_placeholders(content: str, denial) -> str:
+    """Fill denial and appeal placeholders in an appeal letter's text.
+
+    Replaces placeholders with values from ``denial`` -- insurance company,
+    claim ID, diagnosis, procedure, patient and professional names, and other
+    context-specific information -- and returns the substituted text. Values
+    that are unknown keep their placeholder.
+
+    Shared by every path that shows a generated letter (the appeal wizard's
+    stream and the chat letter tools), so the substitutions can't drift.
+    Reads ``primary_professional``, ``patient_user`` and ``domain`` (and their
+    users) off ``denial``: in async code load them with select_related first,
+    or each such lookup fails, is logged, and leaves its placeholder.
+    """
+    await asyncio.sleep(0)
+    insurance_company = "{insurance_company}"
+    if (
+        denial.insurance_company is not None
+        and denial.insurance_company != ""
+        and denial.insurance_company != "UNKNOWN"
+    ):
+        insurance_company = denial.insurance_company
+    claim_id = "{claim_id}"
+    if (
+        denial.claim_id is not None
+        and denial.claim_id != ""
+        and denial.claim_id != "UNKNOWN"
+        and denial.claim_id != insurance_company
+    ):
+        claim_id = denial.claim_id
+    diagnosis = "{diagnosis}"
+    if (
+        denial.diagnosis is not None
+        and denial.diagnosis != ""
+        and denial.diagnosis != "UNKNOWN"
+    ):
+        diagnosis = denial.diagnosis
+    procedure = "{procedure}"
+    if (
+        denial.procedure is not None
+        and denial.procedure != ""
+        and denial.procedure != "UNKNOWN"
+    ):
+        procedure = denial.procedure
+    # Substitutes for common terms - using {{PLACEHOLDER}} format
+    # matching data pipeline conventions
+    subs = {
+        # Insurance company substitutions
+        "Esteemed Members of the Appeals Committee": insurance_company,
+        "{{insurance_company}}": insurance_company,
+        "[insurance_company]": insurance_company,
+        "{insurance_company}": insurance_company,
+        "insurance_company": insurance_company,
+        "[Insurance Company Name]": insurance_company,
+        "[Insurance Company]": insurance_company,
+        "[Health Plan]": insurance_company,
+        "Dear Insurance Company": f"Dear {insurance_company}",
+        "Dear Health Plan": f"Dear {insurance_company}",
+        "Dear Sir/Madam": f"Dear {insurance_company}",
+        # Date
+        "[Insert Date]": denial.date or "{{date}}",
+        # Claim/Case ID
+        "{{CASEID}}": claim_id,
+        "[Reference Number from Denial Letter]": claim_id,
+        "[Claim ID]": claim_id,
+        "{claim_id}": claim_id,
+        # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
+        # for frontend (appeal.ts) to fill from localStorage
+        # using the actual subscriber_id and group_id values
+        # Diagnosis & Procedure
+        "[Diagnosis]": diagnosis,
+        "[Procedure]": procedure,
+        "{diagnosis}": diagnosis,
+        "{procedure}": procedure,
+        # Legacy $-prefixed keys (used in fixture templates)
+        "$insurance_company": insurance_company,
+        "$DATE": denial.date or "{{date}}",
+        "$diagnosis": diagnosis,
+        "$procedure": procedure,
+        "$claim_id": claim_id,
+        "$CASEID": claim_id,
+    }
+    # Each lookup individually guarded: one failing relation (e.g. a
+    # deleted professional profile) must not abort the LATER
+    # substitutions too, leaving [Patient Name]-style placeholders in
+    # the letter the user downloads.
+    try:
+        if denial.professional_to_finish and denial.primary_professional is not None:
+            prof_name = denial.primary_professional.get_full_name()
+            subs["{{Your Name}}"] = prof_name
+            subs["[Your Name]"] = prof_name
+            subs["YourNameMagic"] = prof_name
+            subs["$your_name_here"] = prof_name
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching professional name for denial sub "
+            f"{denial.denial_id}: {e}"
+        )
+    try:
+        if denial.patient_user is not None:
+            patient_name = denial.patient_user.get_legal_name()
+            subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
+            subs["[Patient Name]"] = patient_name
+            subs["[patient name]"] = patient_name
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching patient name for denial sub " f"{denial.denial_id}: {e}"
+        )
+    try:
+        if denial and denial.primary_professional is not None:
+            subs["[Professional Name]"] = denial.primary_professional.get_full_name()
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching professional display name for denial sub "
+            f"{denial.denial_id}: {e}"
+        )
+    try:
+        if denial.domain:
+            subs["[Professional Address]"] = denial.domain.get_address()
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Error fetching domain address for denial sub " f"{denial.denial_id}: {e}"
+        )
+    for k, v in subs.items():
+        if v and v != "" and v != "UNKNOWN":
+            content = content.replace(k, str(v))
+    # Second pass: regex-based fuzzy matching for model-generated
+    # placeholder variants like [Claim # Placeholder]
+    patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
+    prof_name_value = subs.get("{{Your Name}}", "")
+    professional_name_value = subs.get("[Professional Name]", "")
+    domain_address_value = subs.get("[Professional Address]", "")
+    fuzzy_subs = [
+        # Claim/Reference number variants
+        (r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[Case\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+        (r"\[CLAIM_NUMBER\]", claim_id),
+        # Diagnosis variants
+        (r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]", diagnosis),
+        # Procedure variants
+        (r"\[Procedure\s*(?:Code\s*)?(?:Placeholder)?\]", procedure),
+        # Insurance company variants
+        (
+            r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
+            insurance_company,
+        ),
+        (
+            r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
+            insurance_company,
+        ),
+        # Date variants
+        (
+            r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
+            denial.date or "{{date}}",
+        ),
+        # Patient name variants
+        (
+            r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+            patient_name_value,
+        ),
+        # Provider/professional name variants
+        (
+            r"\[(?:Provider|Professional|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+            prof_name_value or professional_name_value,
+        ),
+        # Address variants
+        (
+            r"\[(?:Provider|Professional|Practice)?\s*Address\s*(?:Placeholder)?\]",
+            domain_address_value,
+        ),
+    ]
+    for pattern, value in fuzzy_subs:
+        if not value or value == "" or value == "UNKNOWN":
+            continue
+        str_value = str(value)
+        escaped = str_value.replace("\\", r"\\")
+        content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
+    return content
+
+
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
@@ -4470,184 +4674,11 @@ class AppealsBackendHelper:
             return json.dumps(response) + "\n"
 
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
-            """
-            Performs dynamic substitution of denial and appeal-related fields into an appeal template.
-
-            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
-            """
-            await asyncio.sleep(0)
-            content = appeal["content"]
-            insurance_company = "{insurance_company}"
-            if (
-                denial.insurance_company is not None
-                and denial.insurance_company != ""
-                and denial.insurance_company != "UNKNOWN"
-            ):
-                insurance_company = denial.insurance_company
-            claim_id = "{claim_id}"
-            if (
-                denial.claim_id is not None
-                and denial.claim_id != ""
-                and denial.claim_id != "UNKNOWN"
-                and denial.claim_id != insurance_company
-            ):
-                claim_id = denial.claim_id
-            diagnosis = "{diagnosis}"
-            if (
-                denial.diagnosis is not None
-                and denial.diagnosis != ""
-                and denial.diagnosis != "UNKNOWN"
-            ):
-                diagnosis = denial.diagnosis
-            procedure = "{procedure}"
-            if (
-                denial.procedure is not None
-                and denial.procedure != ""
-                and denial.procedure != "UNKNOWN"
-            ):
-                procedure = denial.procedure
-            # Substitutes for common terms - using {{PLACEHOLDER}} format
-            # matching data pipeline conventions
-            subs = {
-                # Insurance company substitutions
-                "Esteemed Members of the Appeals Committee": insurance_company,
-                "{{insurance_company}}": insurance_company,
-                "[insurance_company]": insurance_company,
-                "{insurance_company}": insurance_company,
-                "insurance_company": insurance_company,
-                "[Insurance Company Name]": insurance_company,
-                "[Insurance Company]": insurance_company,
-                "[Health Plan]": insurance_company,
-                "Dear Insurance Company": f"Dear {insurance_company}",
-                "Dear Health Plan": f"Dear {insurance_company}",
-                "Dear Sir/Madam": f"Dear {insurance_company}",
-                # Date
-                "[Insert Date]": denial.date or "{{date}}",
-                # Claim/Case ID
-                "{{CASEID}}": claim_id,
-                "[Reference Number from Denial Letter]": claim_id,
-                "[Claim ID]": claim_id,
-                "{claim_id}": claim_id,
-                # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
-                # for frontend (appeal.ts) to fill from localStorage
-                # using the actual subscriber_id and group_id values
-                # Diagnosis & Procedure
-                "[Diagnosis]": diagnosis,
-                "[Procedure]": procedure,
-                "{diagnosis}": diagnosis,
-                "{procedure}": procedure,
-                # Legacy $-prefixed keys (used in fixture templates)
-                "$insurance_company": insurance_company,
-                "$DATE": denial.date or "{{date}}",
-                "$diagnosis": diagnosis,
-                "$procedure": procedure,
-                "$claim_id": claim_id,
-                "$CASEID": claim_id,
-            }
-            # Each lookup individually guarded: one failing relation (e.g. a
-            # deleted professional profile) must not abort the LATER
-            # substitutions too, leaving [Patient Name]-style placeholders in
-            # the letter the user downloads.
-            try:
-                if (
-                    denial.professional_to_finish
-                    and denial.primary_professional is not None
-                ):
-                    prof_name = denial.primary_professional.get_full_name()
-                    subs["{{Your Name}}"] = prof_name
-                    subs["[Your Name]"] = prof_name
-                    subs["YourNameMagic"] = prof_name
-                    subs["$your_name_here"] = prof_name
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching professional name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial.patient_user is not None:
-                    patient_name = denial.patient_user.get_legal_name()
-                    subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
-                    subs["[Patient Name]"] = patient_name
-                    subs["[patient name]"] = patient_name
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching patient name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial and denial.primary_professional is not None:
-                    subs["[Professional Name]"] = (
-                        denial.primary_professional.get_full_name()
-                    )
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching professional display name for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            try:
-                if denial.domain:
-                    subs["[Professional Address]"] = denial.domain.get_address()
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Error fetching domain address for denial sub "
-                    f"{denial.denial_id}: {e}"
-                )
-            for k, v in subs.items():
-                if v and v != "" and v != "UNKNOWN":
-                    content = content.replace(k, str(v))
-            # Second pass: regex-based fuzzy matching for model-generated
-            # placeholder variants like [Claim # Placeholder]
-            patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
-            prof_name_value = subs.get("{{Your Name}}", "")
-            professional_name_value = subs.get("[Professional Name]", "")
-            domain_address_value = subs.get("[Professional Address]", "")
-            fuzzy_subs = [
-                # Claim/Reference number variants
-                (r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[Case\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
-                (r"\[CLAIM_NUMBER\]", claim_id),
-                # Diagnosis variants
-                (r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]", diagnosis),
-                # Procedure variants
-                (r"\[Procedure\s*(?:Code\s*)?(?:Placeholder)?\]", procedure),
-                # Insurance company variants
-                (
-                    r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
-                    insurance_company,
-                ),
-                (
-                    r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
-                    insurance_company,
-                ),
-                # Date variants
-                (
-                    r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
-                    denial.date or "{{date}}",
-                ),
-                # Patient name variants
-                (
-                    r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
-                    patient_name_value,
-                ),
-                # Provider/professional name variants
-                (
-                    r"\[(?:Provider|Professional|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
-                    prof_name_value or professional_name_value,
-                ),
-                # Address variants
-                (
-                    r"\[(?:Provider|Professional|Practice)?\s*Address\s*(?:Placeholder)?\]",
-                    domain_address_value,
-                ),
-            ]
-            for pattern, value in fuzzy_subs:
-                if not value or value == "" or value == "UNKNOWN":
-                    continue
-                str_value = str(value)
-                escaped = str_value.replace("\\", r"\\")
-                content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
-            appeal["content"] = content
+            """Substitute placeholders in ``appeal["content"]`` from this
+            run's denial (see substitute_appeal_placeholders)."""
+            appeal["content"] = await substitute_appeal_placeholders(
+                appeal["content"], denial
+            )
             return appeal
 
         # If we've had a timeout on the initial call and we're on round 2
@@ -6425,17 +6456,11 @@ class AppealsBackendHelper:
             # another request mid-stream lands a chosen row (for an editted one,
             # text the user wrote, which was never a draft) in between that
             # query and this one, leaving it absent from served_keys.
-            async for row in deliverable_candidates(
-                ProposedAppeal.objects.filter(for_denial=denial, chosen=False).filter(
-                    # A held-back reserve written for another state argues
-                    # under that state's law: only a live row or a reserve
-                    # written for the state on the row now is served...
-                    Q(speculative=False)
-                    | Q(built_for_state=state_on_the_row_now())
-                )
-                # ...and a reserve already promoted keeps its stamp.
-                .exclude(served_reserve_for_another_state())
-            ).order_by("id"):
+            # servable_drafts: no chosen rows, and a reserve only when it was
+            # written for the state on the row now (promoted or not).
+            async for row in deliverable_candidates(servable_drafts(denial)).order_by(
+                "id"
+            ):
                 text = row.appeal_text
                 if not is_real_appeal(text):
                     continue

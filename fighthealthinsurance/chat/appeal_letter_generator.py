@@ -1,0 +1,436 @@
+"""Draft an appeal letter for a chat through the appeal-generation pipeline.
+
+The chat models historically wrote appeal letters inline (inside a
+``create_or_update_appeal`` payload). A full letter is the longest, most
+failure-prone generation a chat backend performs, and when every chat model
+fails the user gets a bare "all models are experiencing issues" error on
+exactly the turn that matters most ("Please go ahead and draft a letter.").
+
+This module routes letter drafting to ``AppealGenerator.make_appeals`` -- the
+dedicated appeal pipeline -- instead. Two callers:
+
+* ``GenerateAppealLetterTool``: the chat LLM emits a small
+  ``**generate_appeal_letter {...}**`` call instead of writing the letter
+  itself, so the chat pass stays short while appeal-tuned models write the
+  letter.
+* The total-failure fallback in ``ChatInterface.handle_chat_message``: when
+  every chat model failed on a turn that asked for a letter, the pipeline can
+  often still deliver -- it has no chat-style repeat-rejection failure mode,
+  its specialized denial-type templates need no model at all, and any
+  precomputed ``ProposedAppeal`` reserve is served straight from the DB.
+"""
+
+import asyncio
+import re
+import time
+from typing import TYPE_CHECKING, Any, List, NamedTuple, Optional
+
+from channels.db import database_sync_to_async
+from loguru import logger
+
+from fighthealthinsurance.exec import bridge_executor, letter_executor
+from fighthealthinsurance.ml.ml_models import _env_float
+from fighthealthinsurance.utils import is_real_appeal
+
+if TYPE_CHECKING:
+    from fighthealthinsurance.generate_appeal import GeneratedAppeal
+
+# A conservative "the user is asking us to produce the letter itself" test,
+# used only by the total-failure fallback (where the alternative is an error
+# message, so a rare false positive still hands the user something useful).
+# Requires a drafting verb and a letter/appeal noun in the same clause;
+# "how do I appeal?" or a bare "draft" alone does not match.
+_LETTER_REQUEST_RE = re.compile(
+    r"\b(?:draft|write|generate|create|compose|prepare|redo|redraft|rewrite)"
+    r"\b[^.!?\n]{0,80}?\b(?:appeal|letter)\b",
+    re.IGNORECASE,
+)
+
+# The denial relations substitute_appeal_placeholders reads -- the same set
+# the wizard loads its denial with. Loaded up front: async code cannot lazily
+# fetch a relation.
+_SUBSTITUTION_RELATIONS = (
+    "patient_user",
+    "patient_user__user",
+    "domain",
+    "primary_professional",
+    "primary_professional__user",
+)
+
+
+class DraftedLetter(NamedTuple):
+    """A produced appeal letter plus how it relates to the Appeal row.
+
+    ``saved_to_appeal`` lets callers word their reply honestly: a letter
+    that is not on the appeal is still delivered, but must not be presented
+    as "saved to Appeal #N". ``preserved_existing`` distinguishes WHY it
+    wasn't saved -- the appeal already carried a real (possibly
+    user-edited) letter that a reserve draft must not clobber -- from a
+    plain save failure, so callers can word the two differently.
+    """
+
+    text: str
+    saved_to_appeal: bool
+    preserved_existing: bool = False
+
+
+def looks_like_letter_request(text: Optional[str]) -> bool:
+    """Whether a user message asks us to draft/write an appeal letter."""
+    if not text:
+        return False
+    return bool(_LETTER_REQUEST_RE.search(text))
+
+
+def denial_has_letter_context(denial: Any) -> bool:
+    """Whether a denial carries enough substance to draft a letter from.
+
+    Any one of denial text, procedure, or diagnosis is workable -- the
+    pipeline's prompt degrades gracefully -- but with none of them every
+    model would be asked to write a letter about nothing.
+    """
+    if denial is None:
+        return False
+    return bool(
+        (denial.denial_text or "").strip()
+        or (denial.procedure or "").strip()
+        or (denial.diagnosis or "").strip()
+    )
+
+
+def _min_letter_chars() -> int:
+    """Length at which a model-written letter counts as a full draft."""
+    return int(_env_float("FHI_CHAT_LETTER_MIN_CHARS", 350.0))
+
+
+def is_full_model_draft(item: Optional["GeneratedAppeal"]) -> bool:
+    """A model-written letter long enough to be a real draft.
+
+    Not a zero-model template (model_name None) and not a short model
+    fragment accepted only because nothing better arrived. Only such a draft
+    may replace a letter already on the appeal: the user may have edited
+    that one, and no prior version is kept.
+    """
+    return bool(item and item.model_name and len(item.text) >= _min_letter_chars())
+
+
+async def fill_letter_placeholders(letter: str, denial: Any) -> str:
+    """Fill a letter's placeholders exactly as the wizard does.
+
+    Runs the shared substitute_appeal_placeholders against a fresh copy of
+    ``denial`` with the relations it reads loaded (names, address), so a
+    letter shown in chat gets the same substitutions as one shown in the
+    wizard -- dozens of placeholder spellings, not a hand-kept subset.
+    """
+    from fighthealthinsurance.common_view_logic import substitute_appeal_placeholders
+    from fighthealthinsurance.models import Denial
+
+    loaded = (
+        await Denial.objects.select_related(*_SUBSTITUTION_RELATIONS)
+        .filter(denial_id=denial.denial_id)
+        .afirst()
+    )
+    return await substitute_appeal_placeholders(letter, loaded or denial)
+
+
+async def find_reserve_letter(denial: Any) -> Optional[str]:
+    """Best already-generated ProposedAppeal text for ``denial``, or None.
+
+    Zero model calls: this is the rescue path for total model failure.
+    Candidates are exactly what the wizard would serve (servable_drafts: no
+    chosen rows, and a held-back reserve only when it was written for the
+    state on the row now -- it argues under that state's law). Live rows
+    are preferred over held-back reserves, as the wizard does; within a
+    group the draft main would rank first wins (letter_quality.sort_key:
+    grounded before ungrounded, then by quality score, unscored last), with
+    length as the final tie-break. Rows are only read -- reserve promotion
+    bookkeeping belongs to the wizard flow, not chat.
+    """
+    from django.db.models import F
+
+    from fighthealthinsurance.common_view_logic import (
+        deliverable_candidates,
+        servable_drafts,
+    )
+    from fighthealthinsurance.ml import letter_quality
+
+    # deliverable_candidates pushes the cheap runt filter into SQL (raw
+    # length upper-bounds meaningful length), so a pile of junk drafts --
+    # exactly what a degraded-model period produces -- can't fill the
+    # bounded window and evict the one deliverable reserve.
+    # is_real_appeal below stays the authority on what is served.
+    rows = [
+        row
+        async for row in deliverable_candidates(servable_drafts(denial)).order_by(
+            # created_at is NULL on legacy rows and Postgres sorts NULLs first
+            # on DESC, which would hand them the whole window (main fixed the
+            # same in the wizard's existing_appeals).
+            "speculative",
+            F("created_at").desc(nulls_last=True),
+        )[:10]
+    ]
+    for speculative_group in (False, True):
+        candidates = [
+            row
+            for row in rows
+            if row.speculative == speculative_group and is_real_appeal(row.appeal_text)
+        ]
+        if candidates:
+            best = max(
+                candidates,
+                key=lambda row: (
+                    letter_quality.sort_key(row.quality_score, row.grounding_score),
+                    len(row.appeal_text),
+                ),
+            )
+            return str(best.appeal_text)
+    return None
+
+
+async def generate_letter_for_denial(
+    denial: Any,
+    *,
+    use_external: bool = False,
+    deadline_seconds: Optional[float] = None,
+) -> Optional["GeneratedAppeal"]:
+    """Run the appeal-generation pipeline for ``denial`` and return one letter.
+
+    Blocking model work (``make_appeals`` runs its ladder synchronously and
+    returns a lazy iterator whose ``next()`` blocks on model futures) is
+    bridged onto the dedicated ``letter_executor``.
+    The first deliverable model-written letter wins (completion order == the
+    fastest healthy model, which is what a waiting chat user needs); the
+    specialized static templates serve as the zero-model fallback.
+
+    An oversized denial text is replaced by the wizard's summary of it
+    (MLAppealContextHelper.maybe_summarize_denial_text), bounded so the
+    drain keeps most of the deadline.
+
+    Returns the winning ``GeneratedAppeal`` with its placeholders NOT yet
+    filled (draft_letter_for_chat does that once, for whichever letter it
+    serves); callers use it to tell a full model draft from a template or a
+    reserve, and its model/context provenance reaches the log.
+    ``use_external`` is applied to the in-memory denial only -- it reflects
+    this chat session's consent and must not rewrite the denial's stored
+    opt-in. Never raises; a failed run returns None.
+    """
+    if deadline_seconds is None:
+        deadline_seconds = _env_float("FHI_CHAT_LETTER_DEADLINE", 75.0)
+    started = time.monotonic()
+    try:
+        # Lazy imports: common_view_logic pulls in a large graph and this
+        # module is imported from the chat tool package (see the speculative
+        # helper for the same pattern).
+        from fighthealthinsurance.common_view_logic import appealGenerator
+        from fighthealthinsurance.generate_appeal import (
+            AppealTemplateGenerator,
+            GeneratedAppeal,
+            detect_specialized_templates,
+        )
+
+        specialized_templates = detect_specialized_templates(
+            denial.denial_text,
+            denial.procedure,
+            denial.diagnosis,
+        )
+        non_ai_appeals: List[str] = []
+        for template in specialized_templates:
+            try:
+                non_ai_appeals.append(template.static_appeal())
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"chat letter: failed to render specialized template "
+                    f"{template.name}: {e}"
+                )
+
+        diagnostics: dict = {}
+
+        # A model item at least this long is accepted the moment it arrives
+        # (chat shows ONE letter, so latency matters); anything shorter --
+        # e.g. a medically_necessary one-liner passed through the empty
+        # template generator -- only wins at exhaustion if nothing longer
+        # (a full letter, a specialized static template) showed up.
+        min_letter_chars = _min_letter_chars()
+
+        # Absolute, and computed HERE rather than inside _drain: the drain
+        # may wait for a letter_executor thread first, and a deadline
+        # started on the far side of that wait would ignore the queue time
+        # -- defeating the caller's clamp to the remaining turn budget, and
+        # letting a task that was queued (and by then abandoned) hold its
+        # thread for the FULL window while others wait behind it. Against an
+        # absolute mark, a drain that reaches a thread past its deadline
+        # exits immediately instead.
+        drain_deadline = started + deadline_seconds
+
+        # This chat session's external-model consent, applied to the
+        # in-memory denial only (never saved) BEFORE any model call: the
+        # summarizer below and make_appeals' backup call list both route by
+        # denial.use_external, and the stored flag may say yes where this
+        # user said no.
+        denial.use_external = use_external
+
+        # Oversized denial text: use the wizard's summary of it, as its own
+        # generation does, instead of sending the full text to every model
+        # and leaning on the shed ladder. A cached or pre-warmed summary costs
+        # nothing; computing one is a model call, so it gets at most a third
+        # of the budget -- the time counts against drain_deadline either way.
+        denial_text_override: Optional[str] = None
+        try:
+            from fighthealthinsurance.ml.ml_appeal_context_helper import (
+                MLAppealContextHelper,
+            )
+
+            denial_text_override = await asyncio.wait_for(
+                MLAppealContextHelper.maybe_summarize_denial_text(denial),
+                timeout=min(20.0, deadline_seconds / 3),
+            )
+        except Exception as e:
+            logger.info(
+                f"chat letter: no denial summary for denial "
+                f"{denial.denial_id} ({type(e).__name__}); using the full text"
+            )
+
+        def _drain() -> Optional[GeneratedAppeal]:
+            """Blocking: run the models and pull the first usable letter."""
+            best: Optional[GeneratedAppeal] = None
+            for item in appealGenerator.make_appeals(
+                denial,
+                AppealTemplateGenerator([], [], []),
+                # NOT passing medical_reasons: with an empty template
+                # generator make_appeals would surface each raw reason
+                # string as an "appeal". Chat context reaches the models
+                # through denial.qa_context instead.
+                non_ai_appeals=non_ai_appeals,
+                specialized_templates=specialized_templates or None,
+                diagnostics_sink=diagnostics,
+                # Tags the persisted ModelCallAttempt rows so a chat-driven
+                # generation can be told apart from the wizard's live run
+                # and the background precompute when debugging a denial.
+                run_kind="chat",
+                deadline=drain_deadline,
+                # None for a normal-sized denial: full context preferred.
+                denial_text_override=denial_text_override,
+            ):
+                if not is_real_appeal(item.text):
+                    continue
+                if item.model_name and len(item.text) >= min_letter_chars:
+                    return item
+                if best is None or len(item.text) > len(best.text):
+                    best = item
+            return best
+
+        # thread_sensitive=False so concurrent drains don't serialize on one
+        # shared thread; letter_executor (not bridge_executor) so a burst of
+        # long drains -- a degraded-model period fires many fallbacks at
+        # once -- is capped by its small pool instead of crowding out the
+        # bridge pool's short hops.
+        item: Optional[GeneratedAppeal] = await database_sync_to_async(
+            _drain,
+            thread_sensitive=False,
+            executor=letter_executor,
+        )()
+
+        # make_appeals flushed what it knew before handing back its lazy
+        # iterator; the drain above consumed more of it, so flush the late
+        # per-model outcome records too.
+        recorder = diagnostics.get("attempt_recorder")
+        if recorder is not None:
+            await database_sync_to_async(
+                recorder.flush,
+                thread_sensitive=False,
+                executor=bridge_executor,
+            )()
+
+        logger.info(
+            f"chat letter: generation for denial {denial.denial_id} "
+            f"{'produced a letter' if item else 'produced nothing'} in "
+            f"{time.monotonic() - started:.1f}s "
+            f"(model={item.model_name if item else None}, "
+            f"winning_stage={diagnostics.get('winning_stage')}, "
+            f"models_tried={diagnostics.get('models_tried')})"
+        )
+        return item
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"chat letter: generation failed for denial "
+            f"{getattr(denial, 'denial_id', None)} after "
+            f"{time.monotonic() - started:.1f}s: {e}"
+        )
+        return None
+
+
+async def draft_letter_for_chat(
+    *,
+    appeal: Any,
+    denial: Any,
+    use_external: bool,
+    prefer_existing: bool = False,
+    deadline_seconds: Optional[float] = None,
+) -> Optional[DraftedLetter]:
+    """Produce an appeal letter for a chat-linked appeal and persist it.
+
+    ``prefer_existing=True`` serves an already-generated ProposedAppeal
+    first and only generates when none exists -- the total-failure fallback
+    uses it because a DB read is the one step guaranteed to work while
+    models are down. The tool path generates first (the user just asked for
+    a fresh draft) and falls back to the reserve.
+
+    On success the letter -- placeholders filled exactly as the wizard fills
+    them -- is saved to ``appeal.appeal_text``, EXCEPT that only a full
+    model-written draft (is_full_model_draft) may replace a real letter
+    already on the appeal: the user may have edited that one, and no prior
+    version is kept. A reserve, a zero-model template or a short fragment is
+    delivered in chat instead. Returns a ``DraftedLetter`` (text plus how it
+    relates to the appeal row), or None when no letter could be produced.
+
+    No ProposedAppeal row is written for a generated letter. Live drafts
+    belong to the denial's generation lease (generation_lease): the wizard
+    and the appeal journey write them only while holding it, so two runs
+    can't both fill the draft set. A chat-side insert would hold no lease,
+    sit beside whatever the real holder is writing, and be served and
+    counted by the wizard as one of its own. The chat's product is the
+    letter on the appeal; the attempts themselves stay attributable through
+    the run_kind="chat" ModelCallAttempt rows and the drafting log line.
+    """
+    letter: Optional[str] = None
+    generated_item: Optional["GeneratedAppeal"] = None
+    if prefer_existing:
+        letter = await find_reserve_letter(denial)
+    if not letter:
+        generated_item = await generate_letter_for_denial(
+            denial,
+            use_external=use_external,
+            deadline_seconds=deadline_seconds,
+        )
+        if generated_item:
+            letter = generated_item.text
+    if not letter and not prefer_existing:
+        letter = await find_reserve_letter(denial)
+    if not letter:
+        return None
+    letter = await fill_letter_placeholders(letter, denial)
+
+    if not is_full_model_draft(generated_item) and is_real_appeal(appeal.appeal_text):
+        logger.info(
+            f"chat letter: appeal {getattr(appeal, 'id', None)} already has "
+            f"a real letter and this one is not a full model draft; serving "
+            f"it without overwriting"
+        )
+        return DraftedLetter(
+            text=letter, saved_to_appeal=False, preserved_existing=True
+        )
+
+    saved_to_appeal = False
+    try:
+        appeal.appeal_text = letter
+        # Field-limited: `appeal` was read before drafting started, which can
+        # run for the whole deadline -- a full save would write every column
+        # from that stale snapshot over any concurrent update. mod_date is
+        # auto_now and must be listed to keep updating under update_fields.
+        await appeal.asave(update_fields=["appeal_text", "mod_date"])
+        saved_to_appeal = True
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"chat letter: could not save letter to appeal "
+            f"{getattr(appeal, 'id', None)}; delivering it unpersisted"
+        )
+    return DraftedLetter(text=letter, saved_to_appeal=saved_to_appeal)

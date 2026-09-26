@@ -41,14 +41,32 @@ MEDICAID_ELIGIBILITY_REGEX = r"(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:
 
 # Create or update appeal tool - captures JSON with appeal data
 # Matches: create_or_update_appeal {JSON} with optional ** markers
+#
+# The three anchored JSON tools (this one, create_or_update_prior_auth and
+# generate_appeal_letter) accept an optional closing ** wrapper AFTER the
+# JSON as well as the documented **tool**{JSON}: every other tool in the chat
+# prompt is written **tool {JSON}**, so models copy that shape, and a call
+# that didn't match was shown to the user raw -- payload included.
+# (The handlers extract the payload precisely; see
+# base_tool.parse_anchored_json_payload.)
 CREATE_OR_UPDATE_APPEAL_REGEX = (
-    r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*$"
+    r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*\*{0,4}\s*$"
 )
 
 # Create or update prior auth tool - captures JSON with prior auth data
 # Matches: create_or_update_prior_auth {JSON} with optional ** markers
 CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
-    r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
+    r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*\*{0,4}\s*$"
+)
+
+# Generate appeal letter tool - captures JSON with denial/appeal fields.
+# Matches: generate_appeal_letter {JSON} with optional ** markers.
+# Routes letter drafting to the dedicated appeal-generation pipeline instead
+# of having the chat model write the whole letter inline (the longest, most
+# failure-prone chat generation); same anchored line format as
+# CREATE_OR_UPDATE_APPEAL_REGEX.
+GENERATE_APPEAL_LETTER_REGEX = (
+    r"^\s*\*{0,4}generate_appeal_letter\*{0,4}\s*(\{.*\})\s*\*{0,4}\s*$"
 )
 
 # Medicaid.gov page lookup - captures JSON parameters
@@ -133,7 +151,8 @@ TOOL_DETECT_FLAGS = re.DOTALL | re.MULTILINE | re.IGNORECASE
 # Matches the bare name too -- the handlers tolerate 0-4 asterisks, so
 # requiring `**name**` adjacency missed the unadorned form.
 ACTION_TOKEN_MENTION_RE = re.compile(
-    r"\*{0,4}\b(?:create_or_update_appeal|create_or_update_prior_auth)\b\*{0,4}",
+    r"\*{0,4}\b(?:create_or_update_appeal|create_or_update_prior_auth"
+    r"|generate_appeal_letter)\b\*{0,4}",
     re.IGNORECASE,
 )
 
@@ -146,6 +165,7 @@ ALL_TOOL_PATTERNS = [
     MEDICAID_GOV_LOOKUP_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
+    GENERATE_APPEAL_LETTER_REGEX,
     FETCH_DOC_REGEX,
     USPSTF_LOOKUP_REGEX,
     LOOKUP_PA_REQUIREMENT_REGEX,
@@ -158,6 +178,18 @@ ALL_TOOL_PATTERNS = [
 # Compiled once: contains_tool_call runs per alternate candidate, and relying
 # on re's bounded internal cache makes that cost implicit.
 _COMPILED_TOOL_PATTERNS = [re.compile(p, TOOL_DETECT_FLAGS) for p in ALL_TOOL_PATTERNS]
+
+
+def next_tool_call_start(text: str, pos: int) -> Optional[int]:
+    """Where the next tool call of ANY kind starts at or after ``pos``.
+
+    Returns None when there is none. Bounds the removal of a malformed call:
+    its broken body must not run on past the start of a different tool's
+    call, which gets its own handler pass. (Anchored patterns only match at
+    a real line start -- ``^`` does not match at ``pos`` mid-line.)
+    """
+    starts = [m.start() for p in _COMPILED_TOOL_PATTERNS if (m := p.search(text, pos))]
+    return min(starts) if starts else None
 
 
 def count_tool_invocations(text: Optional[str]) -> int:
