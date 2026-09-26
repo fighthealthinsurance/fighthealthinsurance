@@ -2,12 +2,17 @@
 
 import datetime
 import json
+from types import SimpleNamespace
+from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance.ml import model_health_check as mhc
 from fighthealthinsurance.ml.model_identity import (
     LEGACY_UNATTRIBUTED_LABEL,
     SYNTHESIZED_MODEL_NAME,
@@ -15,15 +20,22 @@ from fighthealthinsurance.ml.model_identity import (
 )
 from fighthealthinsurance.models import (
     ChooserCandidate,
+    ChooserSkip,
     ChooserTask,
     ChooserVote,
     Denial,
+    ModelBackendHealthCheckResult,
+    ModelCallAttempt,
     ProposedAppeal,
 )
 from fighthealthinsurance.staff_views import (
+    NO_CONTEXT_LEVEL_LABEL,
+    SHARED_APPEAL_LABEL,
+    TEMPLATE_PICK_LABEL,
     UNKNOWN_MODEL_LABEL,
     ModelUsageDashboardView,
     _merge_stats,
+    _model_states,
 )
 
 User = get_user_model()
@@ -679,9 +691,12 @@ class ModelUsageDashboardChartTableAgreementTest(ChooserStatsHelperMixin, TestCa
         ProposedAppeal.objects.create(
             for_denial=denial, appeal_text="a", chosen=False, model_name="m1"
         )
-        ProposedAppeal.objects.create(
-            for_denial=denial, appeal_text="a", chosen=True, model_name="m1"
-        )
+        # Picked twice (a re-submit): the chart follows the table's one case,
+        # not the two chosen rows.
+        for _ in range(2):
+            ProposedAppeal.objects.create(
+                for_denial=denial, appeal_text="a", chosen=True, model_name="m1"
+            )
         task = self._make_task()
         a = self._make_candidate(task, 0, "model-a")
         b = self._make_candidate(task, 1, "model-b")
@@ -694,12 +709,14 @@ class ModelUsageDashboardChartTableAgreementTest(ChooserStatsHelperMixin, TestCa
         for w in response.context["windows"]:
             chart = json.loads(w["chart_data_json"])
             series_by_name = {s["name"]: s for s in chart["series"]}
-            for source_key, series_name in (
-                ("proposed_appeal", "ProposedAppeal (denial flow)"),
-                ("chooser_appeal", "Chooser - Appeal"),
-                ("chooser_chat", "Chooser - Chat"),
+            # Each series plots the count its table leads with: cases picked
+            # for the denial flow, votes won for the chooser.
+            for source_key, series_name, count_key in (
+                ("proposed_appeal", "ProposedAppeal (denial flow)", "cases_picked"),
+                ("chooser_appeal", "Chooser - Appeal", "chosen"),
+                ("chooser_chat", "Chooser - Chat", "chosen"),
             ):
-                table = {r["model_name"]: r["chosen"] for r in w[source_key]}
+                table = {r["model_name"]: r[count_key] for r in w[source_key]}
                 points = {
                     p["label"]: p["y"]
                     for p in series_by_name[series_name]["dataPoints"]
@@ -840,3 +857,717 @@ class DraftQualityColumnsTest(TestCase):
         rows = _merge_stats({"a": 1}, {"a": 2})
         self.assertIsNone(rows[0]["quality_avg"])
         self.assertEqual(rows[0]["quality_scored"], 0)
+
+
+class StaffClientMixin:
+    """A logged-in staff client and a fresh denial per call."""
+
+    def _login_staff(self):
+        User.objects.create_user(username="staff-x", password="pw123", is_staff=True)
+        self.client.login(username="staff-x", password="pw123")
+
+    def _denial(self, suffix="d"):
+        return Denial.objects.create(
+            hashed_email=f"hash-{suffix}",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def _draft(self, denial, model_name, text, **kwargs):
+        return ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=text,
+            chosen=False,
+            model_name=model_name,
+            **kwargs,
+        )
+
+    def _pick(self, denial, model_name, text="picked", days_ago=0, **kwargs):
+        pa = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=text,
+            chosen=True,
+            model_name=model_name,
+            **kwargs,
+        )
+        if days_ago:
+            ProposedAppeal.objects.filter(pk=pa.pk).update(
+                created_at=timezone.now() - datetime.timedelta(days=days_ago)
+            )
+        return pa
+
+    def _windows(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        return response, {w["slug"]: w for w in response.context["windows"]}
+
+
+class PerCasePickRateTest(StaffClientMixin, TestCase):
+    """The ProposedAppeal table counts cases, so its rate stays a rate."""
+
+    def setUp(self):
+        self._login_staff()
+
+    def _by_name(self, since=None):
+        return {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(since)
+        }
+
+    def test_a_repeat_pick_is_one_case_not_200_percent(self):
+        # The case that used to read 200%: one draft, picked twice.
+        denial = self._denial()
+        self._draft(denial, "m1", "draft")
+        self._pick(denial, "m1")
+        self._pick(denial, "m1")
+        row = self._by_name()["m1"]
+        # The row counts the backfill audit reads are unchanged.
+        self.assertEqual(row["chosen"], 2)
+        self.assertEqual(row["presented"], 1)
+        self.assertEqual(row["cases_picked"], 1)
+        self.assertEqual(row["cases_offered"], 1)
+        self.assertAlmostEqual(row["pick_rate"], 100.0)
+        # Only the ProposedAppeal table has a 100% here: the context-level
+        # table beside it still counts per draft.
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertContains(response, '<td class="num">100.0%</td>', count=4)
+
+    def test_two_drafts_in_one_case_do_not_halve_the_rate(self):
+        # m1 writes two drafts per case (full and medically necessary). Per
+        # draft it won 1 of 3; per case it was offered twice and picked once.
+        first = self._denial("a")
+        self._draft(first, "m1", "m1 full")
+        self._draft(first, "m1", "m1 medically necessary")
+        self._draft(first, "m2", "m2 full")
+        self._pick(first, "m1")
+        second = self._denial("b")
+        self._draft(second, "m1", "m1 full")
+        self._draft(second, "m2", "m2 full")
+        self._pick(second, "m2")
+        rows = self._by_name()
+        self.assertEqual(rows["m1"]["presented"], 3)
+        self.assertEqual(rows["m1"]["cases_offered"], 2)
+        self.assertEqual(rows["m1"]["cases_picked"], 1)
+        self.assertAlmostEqual(rows["m1"]["pick_rate"], 50.0)
+        self.assertEqual(rows["m2"]["cases_offered"], 2)
+        self.assertEqual(rows["m2"]["cases_picked"], 1)
+        self.assertAlmostEqual(rows["m2"]["pick_rate"], 50.0)
+
+    def test_the_pick_recorded_last_decides_the_case(self):
+        denial = self._denial()
+        self._draft(denial, "m1", "m1 draft")
+        self._draft(denial, "m2", "m2 draft")
+        self._pick(denial, "m1", text="m1 draft")
+        self._pick(denial, "m2", text="m2 draft")
+        rows = self._by_name()
+        self.assertEqual(rows["m2"]["cases_picked"], 1)
+        self.assertEqual(rows["m1"]["cases_picked"], 0)
+        self.assertAlmostEqual(rows["m1"]["pick_rate"], 0.0)
+        # The earlier pick still counts as a chosen row.
+        self.assertEqual(rows["m1"]["chosen"], 1)
+
+    def test_cases_follow_the_pick_window(self):
+        fresh = self._denial("fresh")
+        self._draft(fresh, "m1", "draft")
+        self._pick(fresh, "m1")
+        old = self._denial("old")
+        self._draft(old, "m1", "draft")
+        self._pick(old, "m1", days_ago=45)
+        since = timezone.now() - datetime.timedelta(days=30)
+        self.assertEqual(self._by_name(since)["m1"]["cases_offered"], 1)
+        self.assertEqual(self._by_name(None)["m1"]["cases_offered"], 2)
+
+    def test_a_bucket_with_no_offer_has_no_rate(self):
+        denial = self._denial()
+        self._pick(denial, None)
+        row = self._by_name()[UNKNOWN_MODEL_LABEL]
+        self.assertEqual(row["cases_picked"], 1)
+        self.assertEqual(row["cases_offered"], 0)
+        self.assertIsNone(row["pick_rate"])
+
+
+class UnattributedSplitTest(StaffClientMixin, TestCase):
+    """A pick with no model is a template letter, share-appeal text, a
+    pre-tracking row or a real miss, and each gets its own bucket."""
+
+    def setUp(self):
+        self._login_staff()
+
+    def test_null_model_picks_split_into_their_buckets(self):
+        self._pick(self._denial("t"), None, context_level="template")
+        # A template letter sent through the share form stays a template pick.
+        self._pick(self._denial("te"), None, context_level="template", editted=True)
+        self._pick(self._denial("s"), None, editted=True)
+        self._pick(self._denial("u"), None)
+        legacy = self._pick(self._denial("l"), None)
+        ProposedAppeal.objects.filter(pk=legacy.pk).update(created_at=None)
+        # A share-appeal pick whose text matched a draft is attributed and
+        # stays with its model.
+        attributed = self._denial("a")
+        self._draft(attributed, "m1", "draft")
+        self._pick(attributed, "m1", text="draft", editted=True)
+
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        expected = {
+            TEMPLATE_PICK_LABEL: 2,
+            SHARED_APPEAL_LABEL: 1,
+            UNKNOWN_MODEL_LABEL: 1,
+            LEGACY_UNATTRIBUTED_LABEL: 1,
+            "m1": 1,
+        }
+        self.assertEqual(
+            {name: row["chosen"] for name, row in rows.items()}, expected
+        )
+        self.assertEqual(
+            {name: row["cases_picked"] for name, row in rows.items()}, expected
+        )
+        # Pre-tracking rows stay out of every bounded window.
+        since = timezone.now() - datetime.timedelta(days=1)
+        bounded = {
+            r["model_name"] for r in ModelUsageDashboardView._proposed_appeal_stats(since)
+        }
+        self.assertNotIn(LEGACY_UNATTRIBUTED_LABEL, bounded)
+        self.assertIn(TEMPLATE_PICK_LABEL, bounded)
+
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertContains(response, f"<td>{TEMPLATE_PICK_LABEL}</td>")
+        self.assertContains(response, f"<td>{SHARED_APPEAL_LABEL}</td>")
+
+    def test_blank_and_whitespace_names_split_like_null(self):
+        # A blank or whitespace-only model_name is no name at all, so it gets
+        # the same template / share-appeal split as NULL, not the
+        # unattributed bucket.
+        self._pick(self._denial("bt"), "", context_level="template")
+        self._pick(self._denial("ws"), "   ", editted=True)
+        self._pick(self._denial("bu"), "")
+
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._proposed_appeal_stats(None)
+        }
+        expected = {
+            TEMPLATE_PICK_LABEL: 1,
+            SHARED_APPEAL_LABEL: 1,
+            UNKNOWN_MODEL_LABEL: 1,
+        }
+        self.assertEqual(
+            {name: row["chosen"] for name, row in rows.items()}, expected
+        )
+        self.assertEqual(
+            {name: row["cases_picked"] for name, row in rows.items()}, expected
+        )
+
+
+class ContextLevelLabelTest(StaffClientMixin, TestCase):
+    def setUp(self):
+        self._login_staff()
+
+    def test_levels_show_their_readable_names(self):
+        denial = self._denial()
+        self._draft(denial, "m1", "shed draft", context_level="tier1_shed")
+        self._draft(denial, "m2", "old draft")  # no level recorded
+        self._pick(denial, "m1", text="shed draft", context_level="tier1_shed")
+        rows = {
+            r["model_name"]: r
+            for r in ModelUsageDashboardView._context_level_stats(None)
+        }
+        # The key stays the stored level; only the shown label changes.
+        self.assertEqual(rows["tier1_shed"]["label"], "Tier-1 shed (enrichment dropped)")
+        self.assertEqual(rows[UNKNOWN_MODEL_LABEL]["label"], NO_CONTEXT_LEVEL_LABEL)
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertContains(response, "<td>Tier-1 shed (enrichment dropped)</td>")
+        self.assertContains(response, f"<td>{NO_CONTEXT_LEVEL_LABEL}</td>")
+        self.assertNotContains(response, "<td>tier1_shed</td>")
+
+
+class QualityColumnsOnlyWhereScoredTest(ChooserStatsHelperMixin, StaffClientMixin, TestCase):
+    """Only the ProposedAppeal table can carry scorer data."""
+
+    def setUp(self):
+        self._login_staff()
+
+    def test_chooser_and_context_tables_have_no_quality_columns(self):
+        task = self._make_task()
+        a = self._make_candidate(task, 0, "model-a")
+        self._vote(task, a, [a])
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertContains(response, "Votes won")
+        self.assertNotContains(response, "Ungrounded")
+        self.assertNotContains(response, "Other scorer")
+
+    def test_only_the_proposed_appeal_table_shows_them(self):
+        denial = self._denial()
+        self._draft(denial, "m1", "draft", context_level="full")
+        self._pick(denial, "m1", text="draft", context_level="full")
+        response = self.client.get(reverse("model_usage_dashboard"))
+        html = response.content.decode()
+        # Four windows, and in each only the ProposedAppeal table (not the
+        # context-level one beside it) has the column.
+        self.assertEqual(html.count(">Ungrounded</th>"), 4)
+        self.assertEqual(html.count(">Context level</th>"), 4)
+
+
+class WindowTotalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
+    def setUp(self):
+        self._login_staff()
+
+    def _vote_at(self, model_name, session, kind="appeal_letter", days_ago=0):
+        task = self._make_task("chat" if kind == "chat_response" else "appeal")
+        cand = self._make_candidate(task, 0, model_name, kind=kind)
+        vote = self._vote(task, cand, [cand], session=session)
+        if days_ago:
+            ChooserVote.objects.filter(pk=vote.pk).update(
+                created_at=timezone.now() - datetime.timedelta(days=days_ago)
+            )
+
+    def _skip_at(self, session, days_ago=0):
+        skip = ChooserSkip.objects.create(task=self._make_task(), session_key=session)
+        if days_ago:
+            ChooserSkip.objects.filter(pk=skip.pk).update(
+                created_at=timezone.now() - datetime.timedelta(days=days_ago)
+            )
+
+    def test_totals_count_cases_votes_skips_and_sessions(self):
+        today = self._denial("today")
+        self._draft(today, "m1", "draft")
+        self._pick(today, "m1", text="draft")
+        self._pick(today, "m1", text="draft")  # a re-submit, still one case
+        self._pick(self._denial("today-2"), None)
+        self._pick(self._denial("old"), "m1", days_ago=45)
+        self._vote_at("model-a", "session-key-1")
+        self._vote_at("chat-model", "session-key-2", kind="chat_response")
+        self._vote_at("model-a", "session-key-4", days_ago=45)
+        self._skip_at("session-key-3")
+        self._skip_at("session-key-1")  # voted and skipped: one session
+        self._skip_at("session-key-5", days_ago=45)
+
+        response, windows = self._windows()
+        self.assertEqual(
+            windows["1d"]["totals"],
+            {
+                "cases_picked": 2,
+                "chooser_votes": 2,
+                "chooser_skips": 2,
+                "chooser_sessions": 3,
+            },
+        )
+        self.assertEqual(
+            windows["global"]["totals"],
+            {
+                "cases_picked": 3,
+                "chooser_votes": 3,
+                "chooser_skips": 3,
+                "chooser_sessions": 5,
+            },
+        )
+        self.assertContains(response, "Distinct chooser sessions: <strong>3</strong>")
+        # Counts only: no session key reaches the page.
+        self.assertNotContains(response, "session-key-")
+
+
+class ChartTypeTest(StaffClientMixin, TestCase):
+    def setUp(self):
+        self._login_staff()
+
+    def test_populations_sit_side_by_side_with_a_caption(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertContains(response, 'type: "column"')
+        self.assertNotContains(response, "stackedColumn")
+        self.assertContains(response, "different populations")
+
+    def test_jump_links_reach_every_window_section(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        for w in response.context["windows"]:
+            anchor = f"window-{w['slug']}"
+            self.assertContains(response, f'<a href="#{anchor}">{w["label"]}</a>')
+            self.assertContains(
+                response, f'<div class="window-section" id="{anchor}">', count=1
+            )
+
+    def test_the_intro_names_each_bucket_on_its_own_line(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        for bucket in (
+            SYNTHESIZED_MODEL_NAME,
+            LEGACY_UNATTRIBUTED_LABEL,
+            "legacy-unresolved (Class)",
+            TEMPLATE_PICK_LABEL,
+            SHARED_APPEAL_LABEL,
+            UNKNOWN_MODEL_LABEL,
+            "unknown",
+        ):
+            self.assertContains(response, f"<li>&ldquo;{bucket}&rdquo;: ")
+
+    def test_staff_dashboard_link_names_every_window(self):
+        response = self.client.get(reverse("staff_dashboard"))
+        self.assertContains(response, "(all time / 1 day / 7 days / 30 days)")
+        # The call table skips All Time, so the link must not promise it.
+        self.assertContains(response, "appeal call outcomes (1 day / 7 days / 30 days)")
+
+
+def _check(model_name, category, ok, minutes_ago=0):
+    row = ModelBackendHealthCheckResult.objects.create(
+        run_id=f"run-{model_name}-{minutes_ago}",
+        model_name=model_name,
+        category=category,
+        ok=ok,
+        started_at=timezone.now(),
+    )
+    ModelBackendHealthCheckResult.objects.filter(pk=row.pk).update(
+        created_at=timezone.now() - datetime.timedelta(minutes=minutes_ago)
+    )
+
+
+def _backend(model_name, category=mhc.CATEGORY_OTHER, enabled=True):
+    return mhc.BackendCheckResult(
+        provider="Test",
+        model_name=model_name,
+        internal_name=model_name,
+        category=category,
+        enabled=enabled,
+    )
+
+
+INTERNAL = SimpleNamespace(external=False, context_only=False)
+EXTERNAL = SimpleNamespace(external=True, context_only=False)
+CONTEXT = SimpleNamespace(external=True, context_only=True)
+
+
+class ModelStateTagTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
+    """Every model row says what the model is today, from stored and
+    in-memory state only."""
+
+    def setUp(self):
+        self._login_staff()
+        static = [
+            _backend("off/not-configured", mhc.CATEGORY_NOT_CONFIGURED, enabled=False),
+            _backend("off/disabled", mhc.CATEGORY_DISABLED, enabled=False),
+            _backend("ext/no-key", mhc.CATEGORY_MISSING_CREDENTIALS),
+        ]
+        checkable = [
+            (_backend("fhi-internal"), INTERNAL),
+            (_backend("ext/good"), EXTERNAL),
+            (_backend("ctx/search"), CONTEXT),
+            (_backend("ext/broken"), EXTERNAL),
+            (_backend("ext/new"), EXTERNAL),
+            (_backend("fhi-new"), INTERNAL),
+            (_backend("ext/reconfigured"), EXTERNAL),
+            # Configured and constructable, but not in the router: the
+            # instance enumerate built is the only one there is.
+            (_backend("ext/unrouted"), EXTERNAL),
+        ]
+        registered = {
+            result.model_name: [instance]
+            for result, instance in checkable
+            if result.model_name != "ext/unrouted"
+        }
+        self.enumerate = mock.patch.object(
+            mhc, "enumerate_backend_checks", return_value=(static, checkable)
+        )
+        self.router = mock.patch(
+            "fighthealthinsurance.ml.ml_router.ml_router",
+            SimpleNamespace(models_by_name=registered),
+        )
+        self.enumerate.start()
+        self.router.start()
+        self.addCleanup(self.enumerate.stop)
+        self.addCleanup(self.router.stop)
+        _check("fhi-internal", mhc.CATEGORY_PASS, True)
+        _check("ext/good", mhc.CATEGORY_PASS, True)
+        _check("ctx/search", mhc.CATEGORY_PASS, True)
+        _check("ext/broken", mhc.CATEGORY_PASS, True, minutes_ago=90)
+        _check("ext/broken", mhc.CATEGORY_TIMEOUT, False, minutes_ago=5)
+        _check("ext/unrouted", mhc.CATEGORY_PASS_UNREGISTERED, True)
+        # Its newest row is the settings verdict from before it was
+        # configured, not a health result.
+        _check("ext/reconfigured", mhc.CATEGORY_NOT_CONFIGURED, False)
+
+    def test_each_state(self):
+        names = [
+            "fhi-internal",
+            "ext/good",
+            "ctx/search",
+            "ext/broken",
+            "ext/new",
+            "fhi-new",
+            "ext/reconfigured",
+            "ext/unrouted",
+            "off/not-configured",
+            "off/disabled",
+            "ext/no-key",
+            "gone/retired-model",
+            SYNTHESIZED_MODEL_NAME,
+            LEGACY_UNATTRIBUTED_LABEL,
+            legacy_unresolved_label("DeepInfra"),
+            UNKNOWN_MODEL_LABEL,
+            TEMPLATE_PICK_LABEL,
+            SHARED_APPEAL_LABEL,
+            "unknown",
+        ]
+        states = _model_states(names)
+        self.assertEqual(
+            {name: state["key"] for name, state in states.items()},
+            {
+                "fhi-internal": "internal_ok",
+                "ext/good": "external_ok",
+                "ctx/search": "context_only",
+                "ext/broken": "failing",
+                "ext/new": "external_unchecked",
+                "fhi-new": "internal_unchecked",
+                "ext/reconfigured": "external_unchecked",
+                "ext/unrouted": "external_ok",
+                "off/not-configured": "not_configured",
+                "off/disabled": "disabled",
+                "ext/no-key": "failing",
+                "gone/retired-model": "retired",
+                SYNTHESIZED_MODEL_NAME: "placeholder",
+                LEGACY_UNATTRIBUTED_LABEL: "placeholder",
+                legacy_unresolved_label("DeepInfra"): "placeholder",
+                UNKNOWN_MODEL_LABEL: "placeholder",
+                TEMPLATE_PICK_LABEL: "placeholder",
+                SHARED_APPEAL_LABEL: "placeholder",
+                "unknown": "placeholder",
+            },
+        )
+        self.assertEqual(states["ext/broken"]["category"], mhc.CATEGORY_TIMEOUT)
+        self.assertEqual(
+            states["ext/no-key"]["category"], mhc.CATEGORY_MISSING_CREDENTIALS
+        )
+
+    def test_a_failure_survives_many_newer_rows_for_other_models(self):
+        # ext/broken's newest row is a timeout. 2001 newer rows for another
+        # model must not push it out of the read and leave ext/broken looking
+        # unchecked.
+        ModelBackendHealthCheckResult.objects.bulk_create(
+            ModelBackendHealthCheckResult(
+                run_id=f"run-good-{i}",
+                model_name="ext/good",
+                category=mhc.CATEGORY_PASS,
+                ok=True,
+            )
+            for i in range(2001)
+        )
+        states = _model_states(["ext/broken", "ext/good"])
+        self.assertEqual(
+            states["ext/broken"], {"key": "failing", "category": mhc.CATEGORY_TIMEOUT}
+        )
+        self.assertEqual(states["ext/good"], {"key": "external_ok"})
+
+        denial = self._denial()
+        self._draft(denial, "ext/broken", "draft")
+        self._pick(denial, "ext/broken", text="draft")
+        response = self.client.get(reverse("model_usage_dashboard"))
+        status = reverse("model_backend_status")
+        self.assertContains(
+            response,
+            f'<a class="state-tag state-fail" href="{status}">failing: FAIL_TIMEOUT</a>',
+        )
+
+    def test_the_health_read_is_one_query(self):
+        with CaptureQueriesContext(connection) as queries:
+            _model_states(["fhi-internal", "ext/good", "ext/broken", "gone/x"])
+        self.assertEqual(len(queries.captured_queries), 1)
+
+    def test_every_model_row_renders_its_tag_with_a_literal_class(self):
+        task = self._make_task()
+        shown = [
+            self._make_candidate(task, i, name)
+            for i, name in enumerate(
+                ["ext/broken", "fhi-internal", "gone/retired-model", "ctx/search"]
+            )
+        ]
+        self._vote(task, shown[0], shown)
+        denial = self._denial()
+        self._draft(denial, "ext/new", "draft")
+        self._pick(denial, "ext/new", text="draft")
+        self._pick(self._denial("t"), None, context_level="template")
+        ModelCallAttempt.objects.create(
+            for_denial=denial, model_name="off/disabled", outcome="not_registered"
+        )
+
+        response, windows = self._windows()
+        status = reverse("model_backend_status")
+        for fragment in (
+            f'<a class="state-tag state-fail" href="{status}">failing: FAIL_TIMEOUT</a>',
+            f'<a class="state-tag state-ok" href="{status}">internal, healthy</a>',
+            f'<a class="state-tag state-off" href="{status}">not in the code any more</a>',
+            f'<a class="state-tag state-context" href="{status}">context only</a>',
+            f'<a class="state-tag state-warn" href="{status}">external, no health check yet</a>',
+            f'<a class="state-tag state-off" href="{status}">disabled</a>',
+            '<span class="state-tag state-placeholder">placeholder bucket</span>',
+        ):
+            self.assertContains(response, fragment)
+        for w in windows.values():
+            tables = [w["proposed_appeal"], w["chooser_appeal"], w["chooser_chat"]]
+            if w["call_attempts"]:
+                tables.append(w["call_attempts"]["rows"])
+            for rows in tables:
+                for row in rows:
+                    self.assertIn("state", row, (w["slug"], row["model_name"]))
+
+    def test_an_unreadable_catalog_costs_the_tags_not_the_page(self):
+        self.enumerate.stop()
+        with mock.patch.object(
+            mhc, "enumerate_backend_checks", side_effect=RuntimeError("bad config")
+        ):
+            states = _model_states(["ext/good", SYNTHESIZED_MODEL_NAME])
+            task = self._make_task()
+            a = self._make_candidate(task, 0, "ext/good")
+            self._vote(task, a, [a])
+            response = self.client.get(reverse("model_usage_dashboard"))
+        self.enumerate.start()
+        self.assertEqual(states["ext/good"]["key"], "unavailable")
+        self.assertEqual(states[SYNTHESIZED_MODEL_NAME]["key"], "placeholder")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ">state unavailable</a>")
+
+
+class ModelStateMakesNoCallsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
+    def setUp(self):
+        self._login_staff()
+
+    def test_the_page_never_probes_or_sweeps_a_backend(self):
+        from fighthealthinsurance.ml import health_status
+        from fighthealthinsurance.ml.ml_models import RemoteOpenLike
+
+        task = self._make_task()
+        a = self._make_candidate(task, 0, "anthropic/claude-sonnet-4-6")
+        b = self._make_candidate(task, 1, "gone/retired-model")
+        self._vote(task, a, [a, b])
+        with mock.patch.object(
+            RemoteOpenLike, "model_is_ok", side_effect=AssertionError("probe")
+        ) as probe, mock.patch.object(
+            health_status.health_status,
+            "get_snapshot",
+            side_effect=AssertionError("sweep"),
+        ) as snapshot, mock.patch.object(
+            health_status,
+            "compute_model_health_details",
+            side_effect=AssertionError("live details"),
+        ) as details, mock.patch(
+            "requests.sessions.Session.request",
+            side_effect=AssertionError("network"),
+        ) as network:
+            response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        for patched in (probe, snapshot, details, network):
+            self.assertFalse(patched.called, patched)
+
+
+class CallAttemptTableTest(StaffClientMixin, TestCase):
+    """Per-model appeal-generation call outcomes from ModelCallAttempt."""
+
+    def setUp(self):
+        self._login_staff()
+        self.denial = self._denial()
+
+    def _attempt(self, model_name, outcome, stage="primary", duration_ms=None,
+                 run_kind="live", hours_ago=0, **kwargs):
+        row = ModelCallAttempt.objects.create(
+            for_denial=self.denial,
+            model_name=model_name,
+            outcome=outcome,
+            stage=stage,
+            duration_ms=duration_ms,
+            run_kind=run_kind,
+            response_text="PHI-SENTINEL-RESPONSE",
+            error_detail="PHI-SENTINEL-ERROR",
+            **kwargs,
+        )
+        if hours_ago:
+            ModelCallAttempt.objects.filter(pk=row.pk).update(
+                created_at=timezone.now() - datetime.timedelta(hours=hours_ago)
+            )
+        return row
+
+    def _seed(self):
+        self._attempt("m1", "ok", duration_ms=100)
+        self._attempt("m1", "ok", stage="backup", duration_ms=600)
+        self._attempt("m1", "ok", duration_ms=200)
+        self._attempt("m1", "runt_only")
+        self._attempt("m1", "rejected_at_peek")
+        self._attempt("m1", "no_output")
+        self._attempt("m1", "error", stage="retry_tier_1")
+        self._attempt("m1", "not_registered")
+        self._attempt("m1", "no_prompt")
+        self._attempt("m1", "all_backends_failed")
+        # The background precompute is not what users waited on.
+        self._attempt("m1", "error", run_kind="speculative")
+        self._attempt("spec-only", "ok", run_kind="speculative", duration_ms=5)
+        # Ten days old: in the 30-day window only.
+        self._attempt("m1", "ok", duration_ms=900, hours_ago=240)
+        self._attempt("m3", "ok", duration_ms=100)
+        self._attempt("m3", "ok", duration_ms=200)
+        self._attempt("unknown", "all_backends_failed")
+
+    def test_outcomes_backup_share_and_median(self):
+        self._seed()
+        _, windows = self._windows()
+        rows = {r["model_name"]: r for r in windows["1d"]["call_attempts"]["rows"]}
+        m1 = rows["m1"]
+        self.assertEqual(
+            {k: m1[k] for k in (
+                "calls", "ok", "runt_only", "rejected_at_peek", "no_output",
+                "error", "other", "fallback",
+            )},
+            {
+                "calls": 10,
+                "ok": 3,
+                "runt_only": 1,
+                "rejected_at_peek": 1,
+                "no_output": 1,
+                "error": 1,
+                "other": 3,
+                "fallback": 2,
+            },
+        )
+        self.assertAlmostEqual(m1["fallback_share"], 20.0)
+        # The median of 100, 200 and 600 ms, not their 300 ms mean.
+        self.assertEqual(m1["median_ms"], 200)
+        self.assertEqual(rows["m3"]["median_ms"], 150)
+        self.assertIsNone(rows["unknown"]["median_ms"])
+        self.assertEqual(rows["unknown"]["state"]["key"], "placeholder")
+        self.assertNotIn("spec-only", rows)
+        month = {r["model_name"]: r for r in windows["30d"]["call_attempts"]["rows"]}
+        self.assertEqual(month["m1"]["calls"], 11)
+        self.assertEqual(month["m1"]["median_ms"], 400)
+
+    def test_all_time_is_skipped_and_says_why(self):
+        self._seed()
+        response, windows = self._windows()
+        self.assertIsNone(windows["global"]["call_attempts"])
+        for slug in ("1d", "7d", "30d"):
+            self.assertIsNotNone(windows[slug]["call_attempts"], slug)
+        self.assertContains(response, "Not shown for All Time")
+        self.assertContains(response, '<td class="num">200 ms</td>')
+
+    def test_no_phi_column_is_read_or_shown(self):
+        self._seed()
+        ProposedAppeal.objects.create(
+            for_denial=self.denial, appeal_text="PHI-SENTINEL-DRAFT", chosen=True,
+            model_name="m1",
+        )
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(reverse("model_usage_dashboard"))
+        sql = "\n".join(q["sql"] for q in queries.captured_queries)
+        for column in ("response_text", "error_detail", "appeal_text"):
+            self.assertNotIn(column, sql)
+        self.assertNotContains(response, "PHI-SENTINEL")
+
+    def test_the_duration_cap_flags_only_the_windows_it_cut(self):
+        self._attempt("m1", "ok", duration_ms=100, hours_ago=1)
+        self._attempt("m1", "ok", duration_ms=200, hours_ago=72)
+        self._attempt("m1", "ok", duration_ms=300, hours_ago=240)
+        with mock.patch("fighthealthinsurance.staff_views.CALL_DURATION_SAMPLE_CAP", 2):
+            response, windows = self._windows()
+        self.assertFalse(windows["1d"]["call_attempts"]["median_capped"])
+        self.assertTrue(windows["7d"]["call_attempts"]["median_capped"])
+        self.assertTrue(windows["30d"]["call_attempts"]["median_capped"])
+        # The 1-day window was read whole; the 30-day one lost its oldest row.
+        self.assertEqual(windows["1d"]["call_attempts"]["rows"][0]["median_ms"], 100)
+        self.assertEqual(windows["30d"]["call_attempts"]["rows"][0]["median_ms"], 150)
+        self.assertContains(response, "Medians here use only the newest 2 OK calls")

@@ -17,48 +17,105 @@
     table.usage td.num, table.usage th.num { text-align: right; }
     .source-label { font-size: 0.85em; color: #666; font-weight: normal; }
     .legend-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
-    .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
     .nav-back:hover { text-decoration: underline; }
     .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .intro-lead { color: #333; margin: 0 0 8px 0; }
+    .intro-list { color: #555; font-size: 0.9em; margin: 0 0 14px 0; padding-left: 20px; }
+    .intro-list li { margin: 4px 0; }
+    .intro-list ul { padding-left: 20px; }
+    .jump-links { color: #555; margin: 0 0 14px 0; }
+    .jump-links a { color: #0056b3; }
+    .note { color: #555; font-size: 0.9em; margin: 6px 0 12px 0; }
+    .window-totals { color: #333; margin: 0 0 12px 0; }
+    .state-legend { color: #555; font-size: 0.9em; margin: 0 0 18px 0; padding-left: 20px; }
+    .state-legend li { margin: 4px 0; }
+    .state-tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 0.85em; font-weight: bold; text-decoration: none; white-space: nowrap; }
+    a.state-tag:hover, a.state-tag:focus { text-decoration: underline; }
+    .state-ok { background: #d4edda; color: #155724; }
+    .state-context { background: #cce5ff; color: #004085; }
+    .state-warn { background: #fff3cd; color: #856404; }
+    .state-fail { background: #f8d7da; color: #721c24; }
+    .state-off { background: #e2e3e5; color: #383d41; }
+    .state-placeholder { background: #fff; color: #555; border: 1px dashed #888; }
   </style>
 </head>
 <body>
   <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
   <h1>{{ title }}</h1>
+  <p class="intro-lead">Which ML models get picked, and what state each one is in today.</p>
+  <nav class="jump-links" aria-label="Windows on this page">
+    Jump to:
+    {% for w in windows %}<a href="#window-{{ w.slug }}">{{ w.label }}</a>{% if not forloop.last %} &middot; {% endif %}{% endfor %}
+  </nav>
+  <ul class="intro-list">
+    <li><span class="legend-key" style="background:#1f77b4;"></span><strong>ProposedAppeal (denial flow)</strong>: real patients choosing among the drafts written for their own case. A case counts once, for the pick recorded last.</li>
+    <li><span class="legend-key" style="background:#ff7f0e;"></span><strong>Chooser - Appeal</strong> and <span class="legend-key" style="background:#2ca02c;"></span><strong>Chooser - Chat</strong>: anonymous votes on synthetic cases.</li>
+    <li><strong>Appeal generation calls</strong>: each model call made while writing appeals on live runs, by outcome (ModelCallAttempt). Shown for the last 1, 7 and 30 days, not All Time.</li>
+    <li><strong>Pick rate</strong> = cases picked / cases where the model had a draft on the page. <strong>Win rate</strong> = votes won / votes the model was shown in. A rate with no denominator shows as a dash, never 0%.</li>
+    <li><strong>Windows</strong> are rolling: last 24 hours / 7 days / 30 days, anchored on the pick or vote time. All Time additionally includes rows predating timestamp tracking.</li>
+    <li><strong>Buckets that are not models</strong>, with no offered or presented counts by design:
+      <ul>
+        <li>&ldquo;synthesized&rdquo;: drafts merged from several models.</li>
+        <li>&ldquo;legacy-unattributed&rdquo;: historical picks recorded before model tracking, whose generating model cannot be recovered.</li>
+        <li>&ldquo;legacy-unresolved (Class)&rdquo;: legacy chooser rows that stored a Python object repr, aggregated by model class.</li>
+        <li>&ldquo;(template, non-AI)&rdquo;: the non-AI template letter.</li>
+        <li>&ldquo;(shared-appeal text)&rdquo;: text submitted through the share-appeal form, which may never have been a draft.</li>
+        <li>&ldquo;(unattributed)&rdquo;: any other pick that could not be matched to a generated draft.</li>
+        <li>&ldquo;unknown&rdquo;: a call record with no model name.</li>
+      </ul>
+    </li>
+  </ul>
   <p class="summary-note">
-    Chosen counts and win rates per ML model. Sources:
-    <span class="legend-key" style="background:#1f77b4;"></span>ProposedAppeal (denial flow),
-    <span class="legend-key" style="background:#ff7f0e;"></span>Chooser&mdash;Appeal,
-    <span class="legend-key" style="background:#2ca02c;"></span>Chooser&mdash;Chat.
-    Win rate = chosen / presented, shown as &ldquo;&mdash;&rdquo; when nothing was
-    presented (no denominator). Windows are rolling (last 24 hours / 7 days /
-    30 days, anchored on the pick or vote time); All Time additionally includes
-    rows predating timestamp tracking. Synthesized appeals are bucketed as
-    model_name &ldquo;synthesized&rdquo;. Special buckets:
-    &ldquo;legacy-unattributed&rdquo; = historical picks recorded before model
-    tracking whose generating model cannot be recovered;
-    &ldquo;legacy-unresolved (Class)&rdquo; = legacy chooser rows that stored a
-    Python object repr, aggregated by model class;
-    &ldquo;(unattributed)&rdquo; = post-tracking picks that could not be matched
-    to a generated draft. Legacy buckets have no presented counts by design.
+    Each model row carries its state now, read from this deployment's model
+    settings and the stored health checks; this page never calls a model. The
+    counts beside it are history, so a retired model can still have picks.
+    Tags link to the <a href="{% url 'model_backend_status' %}">Model Backend Status</a> page.
   </p>
+  <ul class="state-legend">
+    <li><span class="state-tag state-ok">internal, healthy</span> <span class="state-tag state-ok">external, healthy</span> on our own servers (internal) or a paid provider (external), and the latest health check passed.</li>
+    <li><span class="state-tag state-warn">internal, no health check yet</span> <span class="state-tag state-warn">external, no health check yet</span> configured now, with no health check stored since.</li>
+    <li><span class="state-tag state-context">context only</span> used for context lookups, never to write letters.</li>
+    <li><span class="state-tag state-fail">failing: FAIL_TIMEOUT</span> the latest health check, or the configuration, failed with that category.</li>
+    <li><span class="state-tag state-off">not configured</span> <span class="state-tag state-off">disabled</span> its provider has no settings here, or ENABLED_REMOTE_MODELS leaves it out.</li>
+    <li><span class="state-tag state-off">not in the code any more</span> no backend in this deployment's code or model settings has this name.</li>
+    <li><span class="state-tag state-placeholder">placeholder bucket</span> not a model: one of the buckets above.</li>
+    <li><span class="state-tag state-off">state unavailable</span> the model settings could not be read; the server log says why.</li>
+  </ul>
 
   {% for w in windows %}
-  <div class="window-section">
+  <div class="window-section" id="window-{{ w.slug }}">
     <h2>{{ w.label }}</h2>
+    <p class="window-totals">
+      Cases picked: <strong>{{ w.totals.cases_picked }}</strong>.
+      Chooser votes: <strong>{{ w.totals.chooser_votes }}</strong>.
+      Chooser skips: <strong>{{ w.totals.chooser_skips }}</strong>.
+      Distinct chooser sessions: <strong>{{ w.totals.chooser_sessions }}</strong>.
+    </p>
     <div id="chart-{{ w.slug }}" class="chart-container"></div>
+    <p class="note">Bars sit side by side, not stacked: real patients' picks (one per case) and anonymous chooser votes are different populations, so compare bars of one colour, never their sum.</p>
 
     <h3>ProposedAppeal <span class="source-label">(real denial flow &mdash; user-chosen)</span></h3>
-    {% include "model_usage_table_partial.html" with rows=w.proposed_appeal %}
+    {% include "model_usage_table_partial.html" with rows=w.proposed_appeal kind="cases" show_state=True show_quality=True %}
 
     <h3>Context / shed level <span class="source-label">(user-chosen, by generation context)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.context_level label_header="Context level" %}
 
     <h3>ChooserVote &mdash; Appeal Letter <span class="source-label">(synthetic chooser)</span></h3>
-    {% include "model_usage_table_partial.html" with rows=w.chooser_appeal %}
+    {% include "model_usage_table_partial.html" with rows=w.chooser_appeal kind="votes" show_state=True %}
 
     <h3>ChooserVote &mdash; Chat Response <span class="source-label">(synthetic chooser)</span></h3>
-    {% include "model_usage_table_partial.html" with rows=w.chooser_chat %}
+    {% include "model_usage_table_partial.html" with rows=w.chooser_chat kind="votes" show_state=True %}
+
+    <h3>Appeal generation calls <span class="source-label">(ModelCallAttempt, live runs only)</span></h3>
+    {% if w.call_attempts %}
+    {% include "model_usage_table_partial.html" with rows=w.call_attempts.rows kind="calls" show_state=True %}
+    {% if w.call_attempts.median_capped %}
+    <p class="note">Medians here use only the newest {{ duration_cap }} OK calls, so they lean toward recent calls.</p>
+    {% endif %}
+    {% else %}
+    <p class="note">Not shown for All Time: call records only exist since call logging began and are deleted with their case, so an all-time total would look complete while missing most of the history. See the shorter windows below.</p>
+    {% endif %}
   </div>
   {% endfor %}
 
@@ -77,7 +134,7 @@
       windowData.forEach(function(w) {
         var data = w.chartData.series.map(function(s) {
           return {
-            type: "stackedColumn",
+            type: "column",
             name: s.name,
             color: s.color,
             showInLegend: true,
@@ -87,9 +144,9 @@
         var chart = new CanvasJS.Chart("chart-" + w.slug, {
           theme: "light1",
           animationEnabled: false,
-          title: { text: w.label + " - Chosen counts by model" },
+          title: { text: w.label + " - Picks and votes by model" },
           axisX: { interval: 1, labelAngle: -30 },
-          axisY: { title: "Chosen count", minimum: 0 },
+          axisY: { title: "Cases picked or votes won", minimum: 0 },
           toolTip: { shared: true },
           legend: { cursor: "pointer" },
           data: data
