@@ -28,7 +28,8 @@
     .jump-links a { color: #0056b3; }
     .view-picker { margin: 0 0 14px 0; }
     .view-picker label { font-weight: bold; margin-right: 6px; }
-    .view-picker select { padding: 4px 6px; font-size: 0.95em; }
+    /* 16px: a smaller field zooms iOS Safari on focus. rem, so no parent size compounds it. */
+    .view-picker select { padding: 4px 6px; font-size: 1rem; }
     .note { color: #555; font-size: 0.9em; margin: 6px 0 12px 0; }
     .window-totals { color: #333; margin: 0 0 12px 0; }
     .state-legend { color: #555; font-size: 0.9em; margin: 0 0 18px 0; padding-left: 20px; }
