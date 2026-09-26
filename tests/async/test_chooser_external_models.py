@@ -167,6 +167,30 @@ class TestLabelParsing:
         assert final == "What documents do I need to get started?"
         assert len(history) == 2
 
+    def test_every_answered_follow_up_stays_in_the_history(self):
+        """Only the trailing user turn is the question; a follow-up the
+        assistant already answered stays between its two assistant turns."""
+        history, final = _parse_conversation(
+            "USER: My MRI claim was denied.\n"
+            "ASSISTANT: I can help you appeal that denial.\n"
+            "USER: Do I need my doctor's notes?\n"
+            "ASSISTANT: Yes, ask for the notes from your last visit.\n"
+            "USER: How long do I have to file?"
+        )
+        assert final == "How long do I have to file?"
+        assert [m["role"] for m in history] == [
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ]
+        assert history[2]["content"] == "Do I need my doctor's notes?"
+
+    def test_a_transcript_ending_with_the_assistant_has_no_question(self):
+        history, final = _parse_conversation("USER: Hi there.\nASSISTANT: Hello!")
+        assert final is None
+        assert [m["role"] for m in history] == ["user", "assistant"]
+
 
 class TestSelectCandidateModels:
     def _fake(self, name, external):
