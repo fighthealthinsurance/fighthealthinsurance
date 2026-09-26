@@ -19,7 +19,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from loguru import logger
 
@@ -233,15 +233,17 @@ class _HealthStatus:
 
         # Choose a small, representative set of backends
         candidates = []
+        # ids of the context-only candidates: swept, never counted as alive.
+        context_only_ids: Set[int] = set()
         enumeration_error: Optional[str] = None
         try:
             logger.debug("Starting to look up the models")
             router = ml_router_module.ml_router
             # Context-only backends (citations) are swept too: they are in no
             # generation pool, so nothing checked them between deploys.
-            candidates = list(router.all_models_by_cost) + list(
-                getattr(router, "context_only_models_by_cost", [])
-            )
+            context_only = list(getattr(router, "context_only_models_by_cost", []))
+            context_only_ids = {id(m) for m in context_only}
+            candidates = list(router.all_models_by_cost) + context_only
             # Chat's own outside models live outside the general pools; the
             # sweep checks them too, so one that stops answering loses its
             # place in the chat roster.
@@ -305,7 +307,11 @@ class _HealthStatus:
                         err = f"timeout>{timeout_seconds}s"
                     new_health[_model_key(m)] = bool(ok)
                     if ok:
-                        alive_count += 1
+                        # alive_models is the public "a model is ready to
+                        # write your appeal" number, and a context-only
+                        # backend can't draft, so it never counts.
+                        if id(m) not in context_only_ids:
+                            alive_count += 1
                         if is_internal:
                             internal_alive += 1
                     elif is_internal:
