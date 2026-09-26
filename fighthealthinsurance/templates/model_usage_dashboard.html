@@ -22,7 +22,8 @@
     .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
     .view-picker { margin: 0 0 18px 0; }
     .view-picker label { font-weight: bold; margin-right: 6px; }
-    .view-picker select { padding: 4px 6px; font-size: 0.95em; }
+    /* 16px: a smaller field zooms iOS Safari on focus. rem, so no parent size compounds it. */
+    .view-picker select { padding: 4px 6px; font-size: 1rem; }
   </style>
 </head>
 <body>
