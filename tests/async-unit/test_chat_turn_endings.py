@@ -131,3 +131,35 @@ async def test_a_turn_cancelled_while_its_reply_goes_out_keeps_its_counted_row()
     after = _counted()
     assert after["ok"] == before["ok"] + 1
     assert (after["failed"], after["timeout"]) == (before["failed"], before["timeout"])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_turn_cancelled_while_its_row_is_written_keeps_its_row():
+    """The turn is cancelled while its ordinary row write still waits for
+    the chat's executor, so that write never runs. The counted row is
+    written by the isolated writer instead."""
+    chat = await _chat()
+    interface = ChatInterface(send_json_message_func=_Frames(), chat=chat, user=None)
+    model = RecordingChatModel(always_reply=FRESH_REPLY, name="answering-backend")
+    writing = asyncio.Event()
+
+    async def queued_write(*args, **kwargs):
+        writing.set()
+        await asyncio.sleep(30)
+
+    with (
+        _router([model]),
+        _no_background_tasks(),
+        patch("fighthealthinsurance.chat_interface.arecord_chat_turn", queued_write),
+    ):
+        task = asyncio.create_task(interface.handle_chat_message("CA"))
+        await asyncio.wait_for(writing.wait(), 10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 10)
+
+    rows = [row async for row in ChatTurn.objects.filter(chat=chat)]
+    assert [(row.outcome, row.winner_model) for row in rows] == [
+        ("ok", "answering-backend")
+    ]
