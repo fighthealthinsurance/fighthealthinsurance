@@ -16,8 +16,10 @@ stores or logs them. Errors are logged by class name only.
 Bounded, and kept off the chat's own work:
 
 * At most MAX_IN_FLIGHT tasks per process, and at most MAX_IN_FLIGHT of
-  their database threads still running (a turn over either limit is not
-  scored).
+  their database threads running, those a timed-out step left behind
+  included (a turn over either limit is not scored). The thread limit is
+  checked again as each step starts its thread, so tasks admitted together
+  cannot overshoot it.
 * Each database step (the identifier lookup, then the health note with
   the score write) runs through chat/isolated_db.py: on a thread with its
   own connection, never on the chat's thread-sensitive executor, waiting
@@ -135,6 +137,7 @@ async def _score_and_store(
                 chat_id,
                 timeout=DB_STEP_SECONDS,
                 name=DB_THREAD_NAME,
+                limit=MAX_IN_FLIGHT,
             )
         except Exception as e:
             # No identifier list means nothing is sent: the generic patterns
@@ -161,6 +164,7 @@ async def _score_and_store(
             None if result.outcome == chat_shadow.SCORED else result.failure,
             timeout=DB_STEP_SECONDS,
             name=DB_THREAD_NAME,
+            limit=MAX_IN_FLIGHT,
         )
     except asyncio.CancelledError:
         raise

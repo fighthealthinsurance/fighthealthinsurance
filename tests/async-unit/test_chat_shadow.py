@@ -459,6 +459,33 @@ async def test_scores_land_on_the_row_as_numbers_only():
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_job_that_finds_the_database_threads_full_sends_nothing(
+    monkeypatch,
+):
+    """Jobs admitted together can reach their database steps after the
+    threads have filled up, since admission counted them before any had
+    started. The step then starts no thread of its own, and with no
+    identifier lookup nothing is sent."""
+    chat, turn = await _chat_and_turn()
+    # Admission saw free slots; by the first step they are all taken.
+    monkeypatch.setattr(isolated_db, "running", lambda name: 0)
+    monkeypatch.setattr(
+        isolated_db,
+        "_running",
+        {shadow_scoring.DB_THREAD_NAME: shadow_scoring.MAX_IN_FLIGHT},
+    )
+    fake = _FakePost()
+    await _run_task(chat.id, turn.id, fake)
+
+    assert fake.states == []
+    assert (await ChatTurn.objects.aget(pk=turn.pk)).shadow_outcome == ""
+    assert isolated_db._running == {
+        shadow_scoring.DB_THREAD_NAME: shadow_scoring.MAX_IN_FLIGHT
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_a_failure_stores_the_outcome_and_no_scores():
     chat, turn = await _chat_and_turn()
     fake = _FakePost(typesafe.TypeSafeError("HTTP 529", status=529))
@@ -741,6 +768,10 @@ async def test_a_stuck_score_write_holds_up_neither_the_job_nor_the_chat(
 ):
     chat, turn = await _chat_and_turn()
     entered, release = _stuck_step(monkeypatch, "_record_result_sync", 0)
+    # The lookup before the write makes no query here: on the shared test
+    # database a real one can wait on a lock another test's thread still
+    # holds, time out, and end the job before it reaches the write.
+    monkeypatch.setattr(shadow_scoring, "chat_redactions", lambda chat_id: [])
     fake = _FakePost()
 
     count, waited, still_stuck = await _chat_next_orm_call_while_stuck(
