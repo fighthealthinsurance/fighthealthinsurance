@@ -109,6 +109,19 @@ class TestTypeSafeBudget:
             assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
             assert spend.allows(spend.DEEPINFRA, spend.CHAT)
 
+    def test_a_copy_that_stopped_refreshing_counts_as_unread(self):
+        """Another pod may have spent the month or paused TypeSafe: a copy
+        the worker has not refreshed for STALE_SECONDS refuses TypeSafe and
+        lets outside models through, as an unread one does."""
+        with override_settings(FHI_SPEND_BACKGROUND=True), patch.object(
+            spend._Ledger, "_ensure_worker"
+        ):
+            _load()
+            assert spend.allows(spend.TYPESAFE, spend.LETTERS)
+            spend._ledger._refreshed_at -= spend.STALE_SECONDS + 1
+            assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
+            assert spend.allows(spend.DEEPINFRA, spend.CHAT)
+
     def test_what_this_process_records_counts_at_once(self):
         _load(**{_k("typesafe", "chat"): {TODAY: 140_000}})
         assert spend.allows(spend.TYPESAFE, spend.CHAT)
