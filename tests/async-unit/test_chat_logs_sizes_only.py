@@ -633,6 +633,9 @@ class TestChatConsumerLogs:
             f"(frame_chars={len(frame)}, error_pos=12): JSONDecodeError"
         ) in _messages(records)
 
+    # django_db: resolve_chat_type runs the lookup through
+    # database_sync_to_async, which sweeps DB connections around it.
+    @pytest.mark.django_db
     @pytest.mark.asyncio
     async def test_non_professional_user_logged_by_id_not_username(self):
         user = MagicMock()
