@@ -2206,6 +2206,12 @@ class RemoteOpenLike(RemoteModel):
     # cadence (model_is_ok's /models check) while still self-healing on its own
     # after a redeploy brings the model back.
     MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 3600.0
+    # Time model_is_ok's /models requests get in all, shared between the
+    # endpoints it asks. Under the 10s the health sweep and the 8s the staff
+    # status page wait for a backend, so a primary that hangs rather than
+    # refusing still leaves the backup time to answer; an endpoint that is up
+    # answers in milliseconds.
+    MODEL_PROBE_BUDGET_SECONDS: ClassVar[float] = 7.0
 
     def __init__(
         self,
@@ -2269,16 +2275,35 @@ class RemoteOpenLike(RemoteModel):
         self._strike_lock = threading.Lock()
 
     def model_is_ok(self):
-        """Check that the backend supports this model, returns true if found in list.
-        Return false if not found. Logs supported models from the backend."""
+        """Check that an endpoint this backend infers against serves its
+        model: the primary, or else the backup. Logs what a failing endpoint
+        serves instead.
+
+        Inference falls back to the backup when the primary fails, and the
+        router drops a backend this sweep marks down, so probing the primary
+        alone took a backend whose backup was still answering out of the
+        appeal fan-out.
+        """
+        endpoints: list[tuple[str, str]] = []
         # A backup-only configuration (e.g. HEALTH_BACKUP_BACKEND_HOST set
         # without HEALTH_BACKEND_HOST) leaves api_base None while inference
-        # would still be served by the backup — probe whichever exists.
-        probe_base = self.api_base or self.backup_api_base
-        probe_model = self.model if self.api_base else self.backup_model
-        if not probe_base:
+        # would still be served by the backup.
+        if self.api_base:
+            endpoints.append((self.api_base, self.model))
+        backup = (self.backup_api_base, self.backup_model)
+        if self.backup_api_base and backup not in endpoints:
+            endpoints.append(backup)
+        if not endpoints:
             raise RuntimeError("No api_base configured for RemoteOpenLike.")
+        timeout = self.MODEL_PROBE_BUDGET_SECONDS / len(endpoints)
+        return any(
+            self._endpoint_serves(base, model, timeout) for base, model in endpoints
+        )
 
+    def _endpoint_serves(
+        self, probe_base: str, probe_model: str, timeout: float
+    ) -> bool:
+        """Whether ``probe_base`` lists ``probe_model`` among its /models."""
         url = f"{probe_base}/models"
 
         headers = {}
@@ -2286,7 +2311,7 @@ class RemoteOpenLike(RemoteModel):
             headers["Authorization"] = f"Bearer {self.token}"
 
         try:
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(url, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
             logger.warning(f"Unable to contact model backend at {url}")
             return False
@@ -2337,13 +2362,13 @@ class RemoteOpenLike(RemoteModel):
         if probe_model not in model_ids:
             available_sorted = sorted(model_ids)
             preview = available_sorted[:15]
-            # INFO, not DEBUG: this is the health sweep disabling the backend,
-            # and "why is this model not being used" should be answerable
-            # without debug logging. Sweep-frequency only, so it can't spam.
+            # INFO, not DEBUG: this is the health sweep disabling the backend
+            # (unless its other endpoint serves the model), and "why is this
+            # model not being used" should be answerable without debug
+            # logging. Sweep-frequency only, so it can't spam.
             logger.info(
-                f"Model '{probe_model}' is not served at {probe_base}; "
-                f"marking backend unhealthy. Backend serves "
-                f"{len(available_sorted)} model(s), e.g. {preview}"
+                f"Model '{probe_model}' is not served at {probe_base}. "
+                f"Backend serves {len(available_sorted)} model(s), e.g. {preview}"
             )
             return False
 
