@@ -3,8 +3,10 @@ and the compute_chat_policy command."""
 
 import datetime
 import io
+from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
+from django.db import OperationalError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -12,6 +14,7 @@ from fighthealthinsurance.ml.chat_policy import (
     aggregate_chat_turns,
     compute_and_store_chat_policy,
     configured_daily_call_caps,
+    prune_old_chat_policies,
 )
 from fighthealthinsurance.models import ChatRoutingPolicy, ChatTurn, OngoingChat
 
@@ -159,6 +162,7 @@ class StoreChatPolicyTest(_Seeded):
         ChatRoutingPolicy.objects.filter(pk=recent.pk).update(
             created_at=timezone.now() - datetime.timedelta(days=29)
         )
+        recent_before = ChatRoutingPolicy.objects.filter(pk=recent.pk).values().get()
         self._turn(timezone.now() - datetime.timedelta(minutes=5))
 
         row = compute_and_store_chat_policy(window_minutes=60, source="temporal")
@@ -173,6 +177,34 @@ class StoreChatPolicyTest(_Seeded):
         self.assertEqual(
             set(ChatRoutingPolicy.objects.values_list("pk", flat=True)),
             {recent.pk, row.pk},
+        )
+        # The row it kept is exactly as it was: rows are never edited.
+        self.assertEqual(
+            ChatRoutingPolicy.objects.filter(pk=recent.pk).values().get(),
+            recent_before,
+        )
+
+    def test_pruning_never_deletes_the_row_it_is_told_to_keep(self):
+        kept = ChatRoutingPolicy.objects.create(source="manual", window_minutes=60)
+        old = ChatRoutingPolicy.objects.create(source="manual", window_minutes=60)
+        ChatRoutingPolicy.objects.filter(pk__in=[kept.pk, old.pk]).update(
+            created_at=timezone.now() - datetime.timedelta(days=45)
+        )
+        self.assertEqual(prune_old_chat_policies(keep_pk=kept.pk), 1)
+        self.assertEqual(
+            list(ChatRoutingPolicy.objects.values_list("pk", flat=True)), [kept.pk]
+        )
+
+    def test_a_pruning_failure_keeps_the_new_row_and_does_not_fail_the_run(self):
+        self._turn(timezone.now() - datetime.timedelta(minutes=5))
+        with patch(
+            "fighthealthinsurance.ml.chat_policy.prune_old_chat_policies",
+            side_effect=OperationalError("statement timeout"),
+        ) as prune:
+            row = compute_and_store_chat_policy(window_minutes=60)
+        prune.assert_called_once_with(keep_pk=row.pk)
+        self.assertEqual(
+            list(ChatRoutingPolicy.objects.values_list("pk", flat=True)), [row.pk]
         )
 
     @override_settings(FHI_CHAT_DAILY_CALL_CAPS='{"claude": 1, "bad": "x"}')

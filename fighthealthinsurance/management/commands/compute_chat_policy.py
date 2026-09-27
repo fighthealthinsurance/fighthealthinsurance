@@ -1,8 +1,9 @@
 """Compute a chat routing policy from recent chat turns and store it.
 
 Reads ChatTurn metadata over a window, runs ``ml/chat_policy.compute_policy``
-and appends one ChatRoutingPolicy row, deleting rows older than 30 days. Run
-it by hand, or from a CronJob. Chat follows the newest row only while
+and appends one ChatRoutingPolicy row. Rows are never edited; once the new
+row is stored, rows older than 30 days are deleted. Run it by hand, or from
+a CronJob. Chat follows the newest row only while
 FHI_CHAT_POLICY_APPLY is on; either way the row shows on the staff ML Model
 Usage Dashboard.
 

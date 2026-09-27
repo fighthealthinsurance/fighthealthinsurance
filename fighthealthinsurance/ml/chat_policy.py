@@ -6,9 +6,13 @@ Two loops run at different speeds:
 * A slow one (the ``compute_chat_policy`` command, or a scheduled job) reads
   ChatTurn metadata over a window, runs the pure :func:`compute_policy` and
   appends one ChatRoutingPolicy row (:func:`compute_and_store_chat_policy`).
-* A fast one, on the chat path, reads the newest row through a short cache
-  (:func:`aget_chat_policy`) and hands it to the router, which narrows the
-  outside models, and to the fan-out, which holds them back.
+  Rows are never edited; rows older than POLICY_KEEP_DAYS (30) are deleted
+  after a new one is written.
+* A fast one, on the chat path, takes the newest row from a per-process
+  cache (:func:`aget_chat_policy`) and hands it to the router, which
+  narrows the outside models, and to the fan-out, which holds them back.
+  The cache is refreshed on a thread of its own, so a turn never waits on
+  the database for it.
 
 The safety rules:
 
@@ -17,8 +21,10 @@ The safety rules:
 * Chat follows a row only while FHI_CHAT_POLICY_APPLY is on and the row is
   newer than FHI_CHAT_POLICY_MAX_AGE_MINUTES. With the switch off (the
   default) rows are still computed and shown on the staff usage dashboard,
-  but chat routes by the default. An empty table, a row that does not
-  parse, a database error and a slow read all give the default too.
+  but chat routes by the default. An empty table and a row that does not
+  parse give the default too, and so does a database error or a stuck
+  read before any row has been read; a failed read keeps the row already
+  cached, and that row is followed only while it is fresh.
 * A policy can only narrow the outside models the router already picks
   (:func:`narrow_externals`). It never adds one, and it never overrides a
   person's choice to keep chat on our own models: with that choice the
@@ -30,10 +36,10 @@ Everything here is names and numbers. No message, reply or other chat text
 is read, kept or written.
 """
 
-import asyncio
 import datetime
 import json
 import math
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
@@ -47,8 +53,9 @@ T = TypeVar("T")
 # The ChatRoutingPolicy row layout this code writes and understands.
 SCHEMA_VERSION = 1
 
-# Reader bounds. A read slower than this gives the default policy for the
-# turn; the result (row or default) is reused for the cache time.
+# Reader bounds. Chat never waits on the read (see _PolicyCache): it runs
+# on a thread of its own, under this statement timeout on PostgreSQL, at
+# most once per cache period per process.
 POLICY_READ_TIMEOUT_SECONDS = 0.5
 POLICY_CACHE_SECONDS = 60.0
 # A row asking for a longer delay than this is not trusted (the default
@@ -61,7 +68,8 @@ _NAME_MAX = 200
 # The writer's defaults.
 DEFAULT_WINDOW_MINUTES = 24 * 60
 RECENT_MINUTES = 60
-# Rows older than this are deleted when a new one is written.
+# Retention: rows are never edited, and rows older than this are deleted
+# after a new one is written (prune_old_chat_policies).
 POLICY_KEEP_DAYS = 30
 
 # Reason tokens (ChatRoutingPolicy.reason is a comma-joined list of these).
@@ -454,50 +462,173 @@ def newest_policy_row() -> Any:
     return ChatRoutingPolicy.objects.order_by("-created_at", "-id").first()
 
 
-# (monotonic expiry, policy of the newest row or None). Rebound as one
-# tuple and read without a lock, so a reader always sees a matching pair.
-_cache: Tuple[float, Optional[ChatPolicy]] = (float("-inf"), None)
+def _bound_statements(connection: Any, ms: int) -> None:
+    """On PostgreSQL, end any statement of the current transaction that runs
+    past ``ms`` (waiting on a lock included). Nothing elsewhere: sqlite in
+    tests and development has no statement timeout."""
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        # set_config(..., true) is SET LOCAL: it ends with the transaction.
+        cursor.execute("SELECT set_config('statement_timeout', %s, true)", [str(ms)])
+
+
+def _read_newest_isolated() -> Optional[ChatPolicy]:
+    """Read the newest row on the calling thread's own connection, inside a
+    transaction bounded by a statement timeout on PostgreSQL, then close
+    that thread's connections (each refresh runs on a new thread, so nothing
+    else would).
+
+    Returns None for an empty table or a row that does not parse. Raises on
+    a database error, the statement timeout included.
+    """
+    from django.db import connection, connections, transaction
+
+    try:
+        with transaction.atomic():
+            _bound_statements(connection, int(POLICY_READ_TIMEOUT_SECONDS * 1000))
+            row = newest_policy_row()
+    finally:
+        connections.close_all()
+    return None if row is None else policy_from_row(row)
+
+
+class _PolicyCache:
+    """The newest row's policy for this process, and the refresh that keeps
+    it current.
+
+    Chat turns only ever read the cached value; none of them waits on the
+    database. A turn that finds the value due for a refresh starts one on a
+    thread of its own and goes on with the value it has (the default until
+    a first read lands). At most one refresh runs at a time per process;
+    turns that come along meanwhile use the cached value too.
+
+    A refresh that reads the table replaces the cached value, with None
+    when the table is empty or the newest row does not parse, since both
+    mean chat should route by the default. A refresh that fails (a database
+    error, the statement timeout) keeps the value already cached. Either
+    way the next refresh is due POLICY_CACHE_SECONDS later, so a failing
+    database is not asked again on every turn. How old the cached row is,
+    is checked on every call (aget_chat_policy), so a kept value stops
+    being followed once its row is older than
+    FHI_CHAT_POLICY_MAX_AGE_MINUTES, however long refreshes keep failing.
+
+    Why a thread and not database_sync_to_async or the native async ORM
+    (CLAUDE.md): both run on the connection's single thread-sensitive
+    executor, and cancelling an await there does not stop the query. A
+    read stuck on a lock or a dead connection would then hold that
+    executor, and the chat's next ORM call (loading the OngoingChat,
+    writing the ChatTurn) would queue behind it. The refresh's own thread
+    and connection, closed when it is done, keep the read off that
+    executor, and the statement timeout on PostgreSQL (with the connect
+    timeout in settings) bounds how long it can run.
+    """
+
+    def __init__(self) -> None:
+        # Held only to read or swap the fields below, never during a read.
+        self._lock = threading.Lock()
+        self._policy: Optional[ChatPolicy] = None
+        self._refresh_due = float("-inf")
+        # The refresh running now, if any, and a count that a reset bumps so
+        # a refresh started before it cannot write its result afterwards.
+        self._thread: Optional[threading.Thread] = None
+        self._generation = 0
+
+    def current(self) -> Optional[ChatPolicy]:
+        """The cached policy, starting a refresh first when one is due and
+        none is running. Never waits on the database."""
+        with self._lock:
+            policy = self._policy
+            if self._thread is not None or time.monotonic() < self._refresh_due:
+                return policy
+            thread = threading.Thread(
+                target=self._refresh,
+                args=(self._generation,),
+                name="fhi-chat-policy-read",
+                daemon=True,
+            )
+            self._thread = thread
+        try:
+            thread.start()
+        except Exception as e:
+            logger.warning(
+                f"Could not start a chat routing policy read: {type(e).__name__}"
+            )
+            with self._lock:
+                if self._thread is thread:
+                    self._thread = None
+                    self._refresh_due = time.monotonic() + POLICY_CACHE_SECONDS
+        return policy
+
+    def _refresh(self, generation: int) -> None:
+        read = False
+        policy: Optional[ChatPolicy] = None
+        try:
+            policy = _read_newest_isolated()
+            read = True
+        except Exception as e:
+            # Includes the statement timeout. The cached value stays.
+            logger.warning(
+                f"Could not read the chat routing policy: {type(e).__name__}"
+            )
+        with self._lock:
+            if generation != self._generation:
+                return
+            self._thread = None
+            self._refresh_due = time.monotonic() + POLICY_CACHE_SECONDS
+            if read:
+                self._policy = policy
+
+    def reset(self) -> Optional[threading.Thread]:
+        """Forget the cached value, so the next call starts a refresh.
+        Returns the refresh that was running, if any; its result is
+        dropped."""
+        with self._lock:
+            thread, self._thread = self._thread, None
+            self._generation += 1
+            self._policy = None
+            self._refresh_due = float("-inf")
+        return thread
+
+    def wait(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for the running refresh, if any.
+        Returns whether none is running now. For tests and scripts; the
+        chat path never waits."""
+        with self._lock:
+            thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+            return not thread.is_alive()
+        return True
+
+
+_policy_cache = _PolicyCache()
 
 
 def reset_chat_policy_cache() -> None:
-    global _cache
-    _cache = (float("-inf"), None)
+    _policy_cache.reset()
 
 
-async def _aread_newest() -> Optional[ChatPolicy]:
-    from fighthealthinsurance.models import ChatRoutingPolicy
-
-    try:
-        row = await asyncio.wait_for(
-            ChatRoutingPolicy.objects.order_by("-created_at", "-id").afirst(),
-            timeout=POLICY_READ_TIMEOUT_SECONDS,
-        )
-    except Exception as e:
-        # Includes the timeout. The turn goes on with the default.
-        logger.warning(f"Could not read the chat routing policy: {type(e).__name__}")
-        return None
-    if row is None:
-        return None
-    return policy_from_row(row)
+def wait_for_chat_policy_refresh(timeout: float = 5.0) -> bool:
+    """Wait for a running policy refresh to finish (see _PolicyCache.wait)."""
+    return _policy_cache.wait(timeout)
 
 
 async def aget_chat_policy() -> ChatPolicy:
-    """The policy chat should follow now. Never raises.
+    """The policy chat should follow now. Never raises, and never waits on
+    the database.
 
-    DEFAULT_POLICY unless FHI_CHAT_POLICY_APPLY is on and the newest row
-    parses and is newer than FHI_CHAT_POLICY_MAX_AGE_MINUTES. The row is
-    read at most once per POLICY_CACHE_SECONDS per process, under a
-    POLICY_READ_TIMEOUT_SECONDS bound; its age is checked on every call.
+    DEFAULT_POLICY unless FHI_CHAT_POLICY_APPLY is on and the cached newest
+    row parses and is newer than FHI_CHAT_POLICY_MAX_AGE_MINUTES; its age is
+    checked on every call. The cached row is refreshed in the background at
+    most once per POLICY_CACHE_SECONDS per process (see _PolicyCache), so
+    a turn that starts a refresh, like the first turn after a start, routes
+    by the value it already had.
     """
-    global _cache
     try:
         if not settings.FHI_CHAT_POLICY_APPLY:
             return DEFAULT_POLICY
-        now = time.monotonic()
-        expires, policy = _cache
-        if now >= expires:
-            policy = await _aread_newest()
-            _cache = (now + POLICY_CACHE_SECONDS, policy)
+        policy = _policy_cache.current()
         if policy is None or not policy_is_fresh(policy):
             return DEFAULT_POLICY
         return policy
@@ -635,20 +766,46 @@ def aggregate_chat_turns(
     return aggregates
 
 
+def prune_old_chat_policies(keep_pk: Any = None) -> int:
+    """Delete ChatRoutingPolicy rows written more than POLICY_KEEP_DAYS ago,
+    never the row ``keep_pk``. Returns how many were deleted. Synchronous.
+
+    This is retention, not an edit: no row is ever changed, and a row past
+    the retention period is deleted whole.
+    """
+    from fighthealthinsurance.models import ChatRoutingPolicy
+
+    cutoff = timezone.now() - datetime.timedelta(days=POLICY_KEEP_DAYS)
+    old = ChatRoutingPolicy.objects.filter(created_at__lt=cutoff)
+    if keep_pk is not None:
+        old = old.exclude(pk=keep_pk)
+    deleted, _by_model = old.delete()
+    return int(deleted)
+
+
 def compute_and_store_chat_policy(
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
     source: str = "manual",
     now: Optional[datetime.datetime] = None,
 ) -> Any:
-    """Compute a policy from the last ``window_minutes`` of ChatTurn rows,
-    append it as a ChatRoutingPolicy row and delete rows older than
-    POLICY_KEEP_DAYS. Returns the new row. Synchronous."""
+    """Compute a policy from the last ``window_minutes`` of ChatTurn rows and
+    append it as a new ChatRoutingPolicy row. Returns the new row.
+    Synchronous.
+
+    Rows are never edited: every run appends one. Once the new row is
+    stored, rows older than POLICY_KEEP_DAYS are deleted as a separate step
+    (prune_old_chat_policies). That step never touches the new row, and if
+    it fails the failure is logged (class name only) and the run still
+    returns the stored row.
+    """
     from fighthealthinsurance.models import ChatRoutingPolicy
 
     policy = compute_policy(
         aggregate_chat_turns(window_minutes, now=now), configured_daily_call_caps()
     )
     row = ChatRoutingPolicy.objects.create(source=source, **policy.row_fields())
-    cutoff = timezone.now() - datetime.timedelta(days=POLICY_KEEP_DAYS)
-    ChatRoutingPolicy.objects.filter(created_at__lt=cutoff).exclude(pk=row.pk).delete()
+    try:
+        prune_old_chat_policies(keep_pk=row.pk)
+    except Exception as e:
+        logger.warning(f"Could not prune old chat routing policies: {type(e).__name__}")
     return row

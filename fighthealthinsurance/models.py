@@ -3837,9 +3837,11 @@ class ChatTurn(models.Model):
 class ChatRoutingPolicy(models.Model):
     """One computed routing policy for the chat fan-out.
 
-    Rows are append-only and the newest one wins, so the table is also a
-    record of which policy was in force when. Written by
-    ``ml/chat_policy.compute_and_store_chat_policy`` (the
+    Rows are never edited: each computation appends a new row and the
+    newest one wins, so the table is also a record of which policy was in
+    force when, for the last 30 days. Rows older than that are deleted
+    after a new one is written (``ml/chat_policy.prune_old_chat_policies``).
+    Written by ``ml/chat_policy.compute_and_store_chat_policy`` (the
     ``compute_chat_policy`` command, or a scheduled job) from ChatTurn
     metadata, and read by ``ml/chat_policy.aget_chat_policy`` on the chat
     path. Holds model names and numbers only.
@@ -3856,7 +3858,15 @@ class ChatRoutingPolicy(models.Model):
         TEMPORAL = "temporal", "Temporal schedule"
         MANUAL = "manual", "compute_chat_policy command"
 
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text=(
+            "When the policy was computed. Rows are never edited; a new "
+            "policy is a new row, and rows older than 30 days are deleted "
+            "after a new one is written."
+        ),
+    )
     source = models.CharField(max_length=16, choices=Source.choices)
     # Readers ignore a row whose version they do not know.
     schema_version = models.PositiveSmallIntegerField(default=1)

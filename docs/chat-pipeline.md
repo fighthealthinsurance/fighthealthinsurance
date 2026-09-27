@@ -219,11 +219,18 @@ a model, and a person's choice to keep chat on our models always wins. When
 none of our models is selectable the router sets the whole policy aside.
 Chat follows the newest row only while `FHI_CHAT_POLICY_APPLY` is on (off by
 default) and the row is newer than `FHI_CHAT_POLICY_MAX_AGE_MINUTES` (60);
-an empty table, an unreadable row, a database error or a read slower than
-0.5s all give the default, which is the behaviour described above. The row
-is read at most once a minute per process. Rows come from
-`manage.py compute_chat_policy` (by hand or from a CronJob) and are shown on
-the staff ML Model Usage Dashboard whether or not chat follows them. Each
+an empty table or an unreadable row gives the default, which is the
+behaviour described above. A turn never waits on the database for the
+policy: it uses the row cached in its process, and a turn that finds the
+cache over a minute old starts a refresh on a thread of its own, with its
+own connection and a 0.5s statement timeout on PostgreSQL. Only one
+refresh runs at a time per process, and turns meanwhile use the cached
+row (the default before any row has been read). A refresh that fails
+keeps the cached row, which is still followed only while it is fresh.
+Rows come from `manage.py compute_chat_policy` (by hand or from a CronJob)
+and are shown on the staff ML Model Usage Dashboard whether or not chat
+follows them. Rows are never edited; rows older than 30 days are deleted
+after a new one is written. Each
 ChatTurn row records how its primary pass started the outside models
 (`external_start`: immediate, after_delay, early or skipped) and the delay
 it used; held-back calls that were never sent have the status "skipped".
@@ -388,8 +395,9 @@ Three levels, in increasing detail:
   FHI_CHAT_TURN_BUDGET.
 * The routing policy only narrows: it never adds a model, never asks an
   outside model without the person's consent, and is set aside when none
-  of our models is selectable. Its read is bounded and falls back to the
-  default, and a held-back start never makes a race run past its windows.
+  of our models is selectable. A turn never waits on its read, which runs
+  off the chat's database executor, and a held-back start never makes a
+  race run past its windows.
 * `user_requested_repeat` is the master switch that disables the whole
   ladder, so it must match an explicit REQUEST ("repeat that", "say that
   again"), never the topic. "repeat MRI", "repeat colonoscopy", "repeat

@@ -3,15 +3,21 @@
 Three parts: the pure compute_policy rules, the router narrowing (it may
 only narrow the outside models, never add one, never override a person's
 choice to keep chat on our own models, and it sets the policy aside when
-none of ours is selectable), and the reader's fallbacks to the default.
+none of ours is selectable), and the reader: its fallbacks to the default,
+its one-at-a-time background refresh, and that a stuck read holds up
+neither a turn nor the chat's database executor.
 """
 
 import asyncio
 import datetime
+import threading
+import time
+import types
 from unittest.mock import patch
 
 import pytest
-from asgiref.sync import sync_to_async
+from asgiref.sync import ThreadSensitiveContext, sync_to_async
+from django.db import OperationalError, connections
 from django.test import override_settings
 from django.utils import timezone
 
@@ -28,7 +34,7 @@ from fighthealthinsurance.ml.chat_policy import (
     policy_from_row,
 )
 from fighthealthinsurance.ml.ml_router import MLRouter
-from fighthealthinsurance.models import ChatRoutingPolicy
+from fighthealthinsurance.models import ChatRoutingPolicy, ChatTurn, OngoingChat
 
 # --- compute_policy ---------------------------------------------------------
 
@@ -351,6 +357,8 @@ def test_without_a_policy_the_router_calls_get_chat_backends_as_before():
 def _fresh_cache():
     chat_policy.reset_chat_policy_cache()
     yield
+    # A refresh a test left running must not land in the next test.
+    chat_policy.wait_for_chat_policy_refresh(5)
     chat_policy.reset_chat_policy_cache()
 
 
@@ -372,23 +380,70 @@ async def _store(minutes_ago=0, **fields):
     return row
 
 
+async def _policy_after_refresh():
+    """What chat follows once the refresh the first call starts has landed."""
+    await aget_chat_policy()
+    assert chat_policy.wait_for_chat_policy_refresh(5)
+    return await aget_chat_policy()
+
+
+def _counting_reads():
+    return patch.object(
+        chat_policy,
+        "_read_newest_isolated",
+        side_effect=chat_policy._read_newest_isolated,
+    )
+
+
+class _Clock:
+    """A stand-in for the time module in chat_policy, so a test can move the
+    cache's clock on without waiting."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+
+class _StuckRead:
+    """Stands in for the row read and blocks until released, like a query
+    waiting on a lock or a dead connection."""
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        self.entered.set()
+        self.release.wait(10)
+        return None
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_with_the_switch_off_the_default_is_used_without_a_read():
     await _store()
     with (
         override_settings(FHI_CHAT_POLICY_APPLY=False),
-        patch.object(chat_policy, "_aread_newest") as read,
+        _counting_reads() as read,
     ):
         assert await aget_chat_policy() is DEFAULT_POLICY
+        assert chat_policy.wait_for_chat_policy_refresh(5)
     read.assert_not_called()
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_fresh_row_is_followed():
+async def test_a_fresh_row_is_followed_once_the_background_read_lands():
     row = await _store()
     with override_settings(FHI_CHAT_POLICY_APPLY=True):
+        # The first call does not wait for the read: it routes by the
+        # default and starts the read in the background.
+        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert chat_policy.wait_for_chat_policy_refresh(5)
         policy = await aget_chat_policy()
     assert policy.row_id == row.pk
     assert policy.external_excluded == ("deepseek",)
@@ -401,7 +456,7 @@ async def test_the_newest_row_wins():
     await _store(minutes_ago=5, external_delay_seconds=6.0)
     newest = await _store(external_delay_seconds=9.0)
     with override_settings(FHI_CHAT_POLICY_APPLY=True):
-        policy = await aget_chat_policy()
+        policy = await _policy_after_refresh()
     assert policy.row_id == newest.pk
 
 
@@ -409,7 +464,7 @@ async def test_the_newest_row_wins():
 @pytest.mark.asyncio
 async def test_an_empty_table_gives_the_default():
     with override_settings(FHI_CHAT_POLICY_APPLY=True):
-        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert await _policy_after_refresh() is DEFAULT_POLICY
 
 
 @pytest.mark.django_db(transaction=True)
@@ -419,7 +474,7 @@ async def test_a_stale_row_gives_the_default():
     with override_settings(
         FHI_CHAT_POLICY_APPLY=True, FHI_CHAT_POLICY_MAX_AGE_MINUTES=60
     ):
-        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert await _policy_after_refresh() is DEFAULT_POLICY
 
 
 @pytest.mark.django_db(transaction=True)
@@ -428,7 +483,7 @@ async def test_a_cached_row_is_still_checked_for_age_on_every_call():
     await _store(minutes_ago=30)
     with override_settings(FHI_CHAT_POLICY_APPLY=True):
         with override_settings(FHI_CHAT_POLICY_MAX_AGE_MINUTES=60):
-            assert (await aget_chat_policy()).row_id is not None
+            assert (await _policy_after_refresh()).row_id is not None
         with override_settings(FHI_CHAT_POLICY_MAX_AGE_MINUTES=20):
             assert await aget_chat_policy() is DEFAULT_POLICY
 
@@ -450,7 +505,7 @@ async def test_a_cached_row_is_still_checked_for_age_on_every_call():
 async def test_a_row_that_does_not_parse_gives_the_default(fields):
     await _store(**fields)
     with override_settings(FHI_CHAT_POLICY_APPLY=True):
-        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert await _policy_after_refresh() is DEFAULT_POLICY
 
 
 @pytest.mark.django_db(transaction=True)
@@ -460,47 +515,197 @@ async def test_a_database_error_gives_the_default():
     with (
         override_settings(FHI_CHAT_POLICY_APPLY=True),
         patch.object(
-            ChatRoutingPolicy.objects, "order_by", side_effect=RuntimeError("db down")
+            chat_policy, "newest_policy_row", side_effect=RuntimeError("db down")
         ),
     ):
-        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert await _policy_after_refresh() is DEFAULT_POLICY
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_a_slow_read_gives_the_default_within_the_bound():
-    await _store()
+async def test_the_read_bounds_its_transaction_and_closes_its_own_connection(
+    monkeypatch,
+):
+    row = await _store()
+    seen = {}
 
-    class _SlowQuery:
-        async def afirst(self):
-            await asyncio.sleep(5)
+    def bound(connection, ms):
+        seen["in_transaction"] = connection.in_atomic_block
+        seen["ms"] = ms
 
-    loop = asyncio.get_running_loop()
-    started = loop.time()
+    closed_on = []
+    monkeypatch.setattr(chat_policy, "_bound_statements", bound)
+    monkeypatch.setattr(
+        connections, "close_all", lambda: closed_on.append(threading.get_ident())
+    )
+    with override_settings(FHI_CHAT_POLICY_APPLY=True):
+        policy = await _policy_after_refresh()
+
+    # The timeout is set inside the read's transaction, and the connection
+    # the read opened is closed afterwards, on the read's own thread.
+    assert policy.row_id == row.pk
+    assert seen == {"in_transaction": True, "ms": 500}
+    assert len(closed_on) == 1
+    assert closed_on[0] != threading.get_ident()
+
+
+def test_the_statement_timeout_applies_on_postgresql_only():
+    executed = []
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+    class _Connection:
+        def __init__(self, vendor):
+            self.vendor = vendor
+
+        def cursor(self):
+            return _Cursor()
+
+    chat_policy._bound_statements(_Connection("sqlite"), 500)
+    assert executed == []
+    chat_policy._bound_statements(_Connection("postgresql"), 500)
+    assert executed == [("SELECT set_config('statement_timeout', %s, true)", ["500"])]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_stuck_read_holds_up_neither_the_turn_nor_the_chats_executor():
+    """A policy read that hangs (a lock, a dead connection) must not make a
+    turn wait, and must not sit on the chat's thread-sensitive executor,
+    where the turn's next ORM calls (the OngoingChat load, the ChatTurn
+    write) would queue behind it."""
+    chat = await sync_to_async(OngoingChat.objects.create)(
+        chat_history=[], summary_for_next_call=[]
+    )
+    stuck = _StuckRead()
     with (
         override_settings(FHI_CHAT_POLICY_APPLY=True),
-        patch.object(chat_policy, "POLICY_READ_TIMEOUT_SECONDS", 0.05),
-        patch.object(ChatRoutingPolicy.objects, "order_by", return_value=_SlowQuery()),
+        patch.object(chat_policy, "newest_policy_row", side_effect=stuck),
     ):
-        assert await aget_chat_policy() is DEFAULT_POLICY
-    assert loop.time() - started < 1.0
+        # The socket's own executor, as PerConnectionThreadSensitiveMixin
+        # sets up.
+        async with ThreadSensitiveContext():
+            try:
+                started = time.monotonic()
+                policy = await asyncio.wait_for(aget_chat_policy(), 5)
+                waited = time.monotonic() - started
+                assert await asyncio.to_thread(stuck.entered.wait, 5)
+                # The turn's next ORM calls on the chat's executor run
+                # straight away.
+                loaded = await asyncio.wait_for(OngoingChat.objects.aget(pk=chat.pk), 2)
+                turns = await asyncio.wait_for(
+                    ChatTurn.objects.filter(chat=chat).acount(), 2
+                )
+                # A turn that comes along while the read is stuck does not
+                # wait either.
+                again = await asyncio.wait_for(aget_chat_policy(), 1)
+                still_stuck = not stuck.release.is_set()
+            finally:
+                stuck.release.set()
+
+    assert policy is DEFAULT_POLICY and again is DEFAULT_POLICY
+    assert waited < 0.5
+    assert (loaded.pk, turns) == (chat.pk, 0)
+    assert still_stuck
+    assert stuck.calls == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_concurrent_turns_start_one_read_and_use_the_cached_policy():
+    good = await _store()
+    clock = _Clock()
+    stuck = _StuckRead()
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "time", clock),
+    ):
+        assert (await _policy_after_refresh()).row_id == good.pk
+        clock.now += chat_policy.POLICY_CACHE_SECONDS
+        with patch.object(chat_policy, "newest_policy_row", side_effect=stuck):
+            try:
+                policies = await asyncio.gather(
+                    *(aget_chat_policy() for _ in range(20))
+                )
+                assert await asyncio.to_thread(stuck.entered.wait, 5)
+                policies += await asyncio.gather(
+                    *(aget_chat_policy() for _ in range(20))
+                )
+            finally:
+                stuck.release.set()
+            assert chat_policy.wait_for_chat_policy_refresh(5)
+
+    # One read for all forty turns, and every one of them had the cached
+    # policy while it ran.
+    assert stuck.calls == 1
+    assert {p.row_id for p in policies} == {good.pk}
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("db down"), OperationalError("statement timeout")]
+)
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_failed_refresh_keeps_the_good_cached_policy(error):
+    good = await _store()
+    clock = _Clock()
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "time", clock),
+    ):
+        assert (await _policy_after_refresh()).row_id == good.pk
+        clock.now += chat_policy.POLICY_CACHE_SECONDS
+        with patch.object(chat_policy, "newest_policy_row", side_effect=error) as read:
+            kept = await _policy_after_refresh()
+            assert read.call_count == 1
+            # Nor is the failing read tried again on the next turn.
+            assert (await aget_chat_policy()).row_id == good.pk
+            assert chat_policy.wait_for_chat_policy_refresh(5)
+            assert read.call_count == 1
+    assert kept.row_id == good.pk
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_refresh_that_finds_a_bad_newest_row_stops_following_the_cached_one():
+    good = await _store(minutes_ago=5)
+    clock = _Clock()
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "time", clock),
+    ):
+        assert (await _policy_after_refresh()).row_id == good.pk
+        await _store(schema_version=2)
+        clock.now += chat_policy.POLICY_CACHE_SECONDS
+        assert await _policy_after_refresh() is DEFAULT_POLICY
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_the_row_is_read_once_per_cache_period():
     await _store()
-    real = chat_policy._aread_newest
+    clock = _Clock()
     with (
         override_settings(FHI_CHAT_POLICY_APPLY=True),
-        patch.object(chat_policy, "_aread_newest", side_effect=real) as read,
+        patch.object(chat_policy, "time", clock),
+        _counting_reads() as read,
     ):
-        first = await aget_chat_policy()
+        first = await _policy_after_refresh()
+        clock.now += chat_policy.POLICY_CACHE_SECONDS - 1
         second = await aget_chat_policy()
+        assert chat_policy.wait_for_chat_policy_refresh(5)
         assert first == second
         assert read.call_count == 1
-        chat_policy.reset_chat_policy_cache()
-        await aget_chat_policy()
+        clock.now += 1
+        await _policy_after_refresh()
         assert read.call_count == 2
 
 
@@ -509,11 +714,61 @@ async def test_the_row_is_read_once_per_cache_period():
 async def test_a_failed_read_is_not_retried_on_every_turn():
     with (
         override_settings(FHI_CHAT_POLICY_APPLY=True),
-        patch.object(chat_policy, "_aread_newest", return_value=None) as read,
+        patch.object(
+            chat_policy, "newest_policy_row", side_effect=RuntimeError("db down")
+        ) as read,
+    ):
+        assert await _policy_after_refresh() is DEFAULT_POLICY
+        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert chat_policy.wait_for_chat_policy_refresh(5)
+    assert read.call_count == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_read_started_before_a_reset_cannot_write_its_result():
+    await _store()
+    stuck = _StuckRead()
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "_read_newest_isolated", side_effect=stuck),
+    ):
+        await aget_chat_policy()
+        assert await asyncio.to_thread(stuck.entered.wait, 5)
+        old = chat_policy._policy_cache.reset()
+        stuck.release.set()
+        old.join(5)
+        assert not old.is_alive()
+        # Had the old read written its result, the cache would count as
+        # read and this call would start no read of its own.
+        await aget_chat_policy()
+        assert chat_policy.wait_for_chat_policy_refresh(5)
+    assert stuck.calls == 2
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_read_that_cannot_start_gives_the_default_and_waits_its_turn():
+    await _store()
+
+    class _Unstartable(threading.Thread):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(
+            chat_policy, "threading", types.SimpleNamespace(Thread=_Unstartable)
+        ),
+        _counting_reads() as read,
     ):
         assert await aget_chat_policy() is DEFAULT_POLICY
+        # Not stuck "reading" forever: nothing is running, and the next
+        # read waits for the cache time like any failed one.
+        assert chat_policy._policy_cache._thread is None
         assert await aget_chat_policy() is DEFAULT_POLICY
-    assert read.call_count == 1
+    read.assert_not_called()
+    assert chat_policy._policy_cache._refresh_due > time.monotonic()
 
 
 def test_policy_from_row_reads_every_field():
