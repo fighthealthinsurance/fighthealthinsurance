@@ -10,7 +10,7 @@ models; pairs from one model get a line of their own.
   Outside models allowed on <strong>{{ s.external_allowed }}</strong> of them{% if s.external_share is not None %} ({{ s.external_share|floatformat:1 }}%){% endif %}.
   An outside model's answer was delivered on <strong>{{ s.external_wins }}</strong> of {{ s.ok }} OK turns{% if s.external_win_share is not None %} ({{ s.external_win_share|floatformat:1 }}%){% endif %}.
   Retry pass ran on <strong>{{ s.retry_ran }}</strong>, and delivered the answer on {{ s.retry_used }}.
-  Outside models held back while ours answered: <strong>{{ s.externals_held_back }}</strong> turns (started after the delay on {{ s.externals_after_delay }}, started early because ours all failed on {{ s.externals_early }}, started early because the check on ours did not pass on {{ s.externals_after_check }}, never sent on {{ s.externals_skipped }}{% if s.externals_skipped_retried %}, not sent at first but asked by the retry on {{ s.externals_skipped_retried }}{% endif %}).
+  Outside models held back while ours answered: <strong>{{ s.externals_held_back }}</strong> turns (started after the delay on {{ s.externals_after_delay }}, started early because ours all failed on {{ s.externals_early }}, started early because the check on ours did not pass on {{ s.externals_after_check }}, never sent on {{ s.externals_skipped }}{% if s.externals_skipped_later %}, not sent at first but asked later in the turn on {{ s.externals_skipped_later }}{% endif %}).
   Alternates offered: <strong>{{ s.alternates }}</strong> ({{ s.cross_alternates }} from a different model).
   Picks received: <strong>{{ s.picks }}</strong> (primary {{ s.picked_primary }}, alternate {{ s.picked_alternate }}).
 </p>

@@ -2051,11 +2051,24 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
             calls=[_call("model-a"), _call("claude", "skipped", ms=None), retried],
             retry_ran=True,
         )
+        # Nor when our reply asked for a tool and the follow-up pass sent
+        # one, with no retry.
+        followed_up = _call("deepseek", pass_kind="tool")
+        followed_up["external"] = True
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="skipped",
+            calls=[
+                _call("model-a"),
+                _call("claude", "skipped", ms=None),
+                followed_up,
+            ],
+        )
         response, windows = self._windows()
         rows = self._rows(windows["1d"])
         claude = rows["claude"]
         self.assertEqual((claude["asked"], claude["calls"]), (1, 1))
-        self.assertEqual(claude["skipped"], 3)
+        self.assertEqual(claude["skipped"], 4)
         self.assertAlmostEqual(claude["win_rate"], 100.0)
         self.assertEqual(rows["model-a"]["skipped"], 0)
         summary = windows["1d"]["live_chat"]["summary"]
@@ -2065,12 +2078,12 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
                 summary["externals_after_delay"],
                 summary["externals_early"],
                 summary["externals_skipped"],
-                summary["externals_skipped_retried"],
+                summary["externals_skipped_later"],
             ),
-            (5, 1, 1, 2, 1),
+            (6, 1, 1, 2, 2),
         )
         self.assertContains(response, "Outside models held back while ours answered")
-        self.assertContains(response, "asked by the retry on 1")
+        self.assertContains(response, "asked later in the turn on 2")
         self.assertContains(response, ">Skipped</th>")
 
 
@@ -2121,7 +2134,7 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         summary = windows["1d"]["live_chat"]["summary"]
         self.assertEqual((summary["gate_pass"], summary["gate_saved"]), (2, 1))
         self.assertEqual(
-            (summary["externals_skipped"], summary["externals_skipped_retried"]),
+            (summary["externals_skipped"], summary["externals_skipped_later"]),
             (1, 1),
         )
 

@@ -1535,10 +1535,10 @@ class _ChatTally:
         # How the primary pass started the outside models, per
         # ChatTurn.external_start value.
         self.external_starts: Counter = Counter()
-        # Turns whose first pass never sent the outside models but whose
-        # retry asked them (our reply was empty, too short or a false
-        # promise), so they were not "never sent".
-        self.externals_skipped_retried = 0
+        # Turns whose first pass never sent the outside models but a later
+        # pass did: the retry (our reply was empty, too short or a false
+        # promise) or a tool follow-up. They were not "never sent".
+        self.externals_skipped_later = 0
         # The live Jev check on our reply: turns it held the outside models
         # for, by outcome, and of the fails, how many our own checks decided
         # without sending the reply to Jev; turns whose outside calls it kept
@@ -1643,7 +1643,7 @@ class _ChatTally:
         if external_start:
             self.external_starts[external_start] += 1
             if external_start == STAGE_SKIPPED and external_sent:
-                self.externals_skipped_retried += 1
+                self.externals_skipped_later += 1
 
         # A model counts as asked once per turn, however many calls it got:
         # every primary backend, and the fallbacks only when the retry ran.
@@ -1754,8 +1754,8 @@ class _ChatTally:
                 "externals_after_check": self.external_starts[STAGE_AFTER_CHECK],
                 # Never sent in any pass.
                 "externals_skipped": self.external_starts[STAGE_SKIPPED]
-                - self.externals_skipped_retried,
-                "externals_skipped_retried": self.externals_skipped_retried,
+                - self.externals_skipped_later,
+                "externals_skipped_later": self.externals_skipped_later,
                 "externals_held_back": sum(
                     self.external_starts[s]
                     for s in (
