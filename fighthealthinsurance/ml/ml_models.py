@@ -2324,6 +2324,12 @@ class RemoteOpenLike(RemoteModel):
     # cadence (model_is_ok's /models check) while still self-healing on its own
     # after a redeploy brings the model back.
     MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 3600.0
+    # Time model_is_ok's /models requests get in all, shared between the
+    # endpoints it asks. Under the 10s the health sweep and the 8s the staff
+    # status page wait for a backend, so a primary that hangs rather than
+    # refusing still leaves the backup time to answer; an endpoint that is up
+    # answers in milliseconds.
+    MODEL_PROBE_BUDGET_SECONDS: ClassVar[float] = 7.0
 
     def __init__(
         self,
@@ -2404,21 +2410,39 @@ class RemoteOpenLike(RemoteModel):
         self._strike_lock = threading.Lock()
 
     def model_is_ok(self):
-        """Check that the backend supports this model, returns true if found in list.
-        Return false if not found. Logs supported models from the backend."""
-        # A backup-only configuration (e.g. HEALTH_BACKUP_BACKEND_HOST set
-        # without HEALTH_BACKEND_HOST) leaves api_base None while inference
-        # would still be served by the backup — probe whichever exists.
-        probe_base = self.api_base or self.backup_api_base
-        probe_model = self.model if self.api_base else self.backup_model
+        """Check that an endpoint this backend infers against serves its
+        model: the primary, or else the backup. Logs what a failing endpoint
+        serves instead.
+
+        Inference falls back to the backup when the primary fails, and the
+        router drops a backend this sweep marks down, so probing the primary
+        alone took a backend whose backup was still answering out of the
+        appeal fan-out.
+        """
         # The serving registry reads these after the sweep; a card must only
         # ever describe a probe that succeeded this round, so clear them
         # before anything can fail.
         self.last_model_card = None
         self.last_backup_model_card = None
-        if not probe_base:
+        # The legs in the registry's order, so a card lands on its own leg. A
+        # backup-only configuration (e.g. HEALTH_BACKUP_BACKEND_HOST set
+        # without HEALTH_BACKEND_HOST) leaves api_base None while inference
+        # would still be served by the backup.
+        endpoints = [(base, model) for _leg, base, model in self.serving_legs()]
+        if not endpoints:
             raise RuntimeError("No api_base configured for RemoteOpenLike.")
+        timeout = self.MODEL_PROBE_BUDGET_SECONDS / len(endpoints)
+        return any(
+            self._endpoint_serves(base, model, timeout, leg)
+            for leg, (base, model) in enumerate(endpoints)
+        )
 
+    def _endpoint_serves(
+        self, probe_base: str, probe_model: str, timeout: float, leg: int = 0
+    ) -> bool:
+        """Whether ``probe_base`` lists ``probe_model`` among its /models.
+        ``leg`` is the endpoint's place in serving_legs(), whose card it
+        records."""
         url = f"{probe_base}/models"
 
         headers = {}
@@ -2426,7 +2450,7 @@ class RemoteOpenLike(RemoteModel):
             headers["Authorization"] = f"Bearer {self.token}"
 
         try:
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(url, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
             logger.warning(f"Unable to contact model backend at {url}")
             return False
@@ -2477,19 +2501,25 @@ class RemoteOpenLike(RemoteModel):
         if probe_model not in model_ids:
             available_sorted = sorted(model_ids)
             preview = available_sorted[:15]
-            # INFO, not DEBUG: this is the health sweep disabling the backend,
-            # and "why is this model not being used" should be answerable
-            # without debug logging. Sweep-frequency only, so it can't spam.
+            # INFO, not DEBUG: this is the health sweep disabling the backend
+            # (unless its other endpoint serves the model), and "why is this
+            # model not being used" should be answerable without debug
+            # logging. Sweep-frequency only, so it can't spam.
             logger.info(
-                f"Model '{probe_model}' is not served at {probe_base}; "
-                f"marking backend unhealthy. Backend serves "
-                f"{len(available_sorted)} model(s), e.g. {preview}"
+                f"Model '{probe_model}' is not served at {probe_base}. "
+                f"Backend serves {len(available_sorted)} model(s), e.g. {preview}"
             )
             return False
 
         # Kept for the serving registry, which the health sweep feeds after
-        # each round (ml/health_status.py).
-        self.last_model_card = _model_card(payload, probe_model, probe_base)
+        # each round (ml/health_status.py). The card goes on the leg that
+        # answered: a backup answering for a down primary must not be
+        # recorded as what the primary serves.
+        card = _model_card(payload, probe_model, probe_base)
+        if leg:
+            self.last_backup_model_card = card
+            return True
+        self.last_model_card = card
         legs = self.serving_legs()
         if len(legs) > 1 and legs[1][1] == probe_base:
             # A backup leg on the same server answers from the same list.
