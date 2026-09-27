@@ -853,6 +853,25 @@ class ChatInterface:
                 and scores_closely_tied(picked_score, runner_up_score)
             )
             if not retry_used:
+                # What the person would see of the demoted reply, from any
+                # model: never offered, as a candidate or as the runner-up.
+                demoted_shown = (
+                    _shown_reply(demoted_reply) if demoted_reply is not None else None
+                )
+                runner_up_choice: Optional[Tuple[Optional[str], float, str]] = None
+                if (
+                    runner_up_text
+                    and runner_up_score is not None
+                    and (
+                        demoted_shown is None
+                        or _shown_reply((runner_up_text, None)) != demoted_shown
+                    )
+                ):
+                    runner_up_choice = (
+                        runner_up_model,
+                        runner_up_score,
+                        runner_up_text,
+                    )
                 choice = pick_side_by_side_alternate(
                     response_text,
                     picked_model,
@@ -864,7 +883,7 @@ class ChatInterface:
                             {
                                 call: result
                                 for call, result in completed_results.items()
-                                if _shown_reply(result) != _shown_reply(demoted_reply)
+                                if _shown_reply(result) != demoted_shown
                             }
                             if demoted_reply is not None
                             else completed_results
@@ -874,11 +893,7 @@ class ChatInterface:
                         calls,
                         exclude=picked_result,
                     ),
-                    (
-                        (runner_up_model, runner_up_score, runner_up_text)
-                        if runner_up_text and runner_up_score is not None
-                        else None
-                    ),
+                    runner_up_choice,
                     chat_history=chat.chat_history,
                     current_message=scoring_message,
                 )

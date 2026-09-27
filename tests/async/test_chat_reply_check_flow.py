@@ -75,6 +75,15 @@ class _OtherSummaryOursModel(_OursModel):
         return reply, "another context summary"
 
 
+class _CopyingOutsideModel(_OutsideModel):
+    """An outside model whose reply text matches ours, under its own
+    context summary."""
+
+    async def generate_chat_response(self, *args, **kwargs):
+        reply, _summary = await super().generate_chat_response(*args, **kwargs)
+        return reply, "an outside model's context summary"
+
+
 class _BrokenOutsideModel(_OutsideModel):
     async def generate_chat_response(self, *args, **kwargs):
         await super().generate_chat_response(*args, **kwargs)
@@ -362,8 +371,19 @@ class ChatReplyCheckTest(APITransactionTestCase):
         loop = asyncio.get_running_loop()
         started = loop.time()
         patches = [_policy(policy)] if policy is not None else []
+        # The check's time also covers the identifier lookup, which reads
+        # the shared test database from a thread of its own and can wait
+        # there on the turn's own writes. The default of 1.5 s then turns
+        # an answer the test set up into a timeout, so these turns allow
+        # 5 s unless a test sets its own.
         with (
-            override_settings(**{**ENABLED, **(settings or {})}),
+            override_settings(
+                **{
+                    **ENABLED,
+                    "FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS": 5.0,
+                    **(settings or {}),
+                }
+            ),
             _ours_selectable(),
             _router_returning([ours, *also_ours, outside]),
             _jev(jev),
@@ -501,6 +521,30 @@ class ChatReplyCheckTest(APITransactionTestCase):
         self.assertTrue(row.gate_demoted_delivered)
         self._assert_no_text(row, logs, FRESH_REPLY)
 
+    async def test_an_outside_copy_of_the_failed_reply_is_not_the_alternate(self):
+        """An outside model returning the very text Jev failed is not
+        demoted (only our calls are), so it can be the race's runner-up.
+        It is still the reply the check failed, so it is not offered beside
+        the outside answer that won."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        copy = _CopyingOutsideModel(
+            always_reply=FRESH_REPLY, model_quality=59, name="deepseek"
+        )
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate20", "9999931120", jev, also_ours=(copy,)
+        )
+        self.assertTrue(copy.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.winner_model, "claude")
+        # The race made the copy its runner-up.
+        self.assertEqual(row.runner_up_model, "deepseek")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertNotEqual(
+            frames.last_reply_frame().get("alternate_content"), FRESH_REPLY
+        )
+        self.assertNotEqual(row.alternate_model, "deepseek")
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
     async def test_a_too_short_outside_answer_does_not_beat_ours(self):
         """An outside answer too short to deliver ranks below the failed
         reply of ours even when its own score is higher: the first pass
@@ -616,12 +660,17 @@ class ChatReplyCheckTest(APITransactionTestCase):
 
     async def test_a_timeout_starts_the_outside_models(self):
         jev = _Jev(payload=_answers(), delay=5.0)
-        row, outside, _frames, elapsed, logs = await self._turn(
-            "gate5",
-            "9999931105",
-            jev,
-            settings={"FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS": 1.0},
-        )
+        # An instant lookup, so the second is Jev's alone to run out.
+        with patch(
+            "fighthealthinsurance.chat.reply_gate.chat_redactions",
+            new=lambda chat_id: [],
+        ):
+            row, outside, _frames, elapsed, logs = await self._turn(
+                "gate5",
+                "9999931105",
+                jev,
+                settings={"FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS": 1.0},
+            )
         self.assertTrue(outside.calls)
         self.assertLess(elapsed, 4.0)
         self.assertEqual(row.gate_outcome, "timeout")
