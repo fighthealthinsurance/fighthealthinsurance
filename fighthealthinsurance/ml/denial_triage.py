@@ -51,7 +51,9 @@ from fighthealthinsurance.ml import typesafe
 # from an older rubric is not "current" and gets redone. The model half is
 # the versioned model TypeSafe reports (the name the request sent when it
 # reports none); see letter_quality.scorer_for, which records it the same way.
-RUBRIC_VERSION = 1
+# 2: requests moved to the documented System One body and a pinned Jev
+# release, so a triage stored before then is redone.
+RUBRIC_VERSION = 2
 _RUBRIC_SUFFIX = f"/rubric-{RUBRIC_VERSION}"
 # The provenance under the default model; rows record source_for(payload).
 SOURCE = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"

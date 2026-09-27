@@ -14,6 +14,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance.ml import letter_quality
 from fighthealthinsurance.models import (
     Denial,
     ExternalServiceHealth,
@@ -803,7 +804,7 @@ class AdminStatusLetterScoringTest(TestCase):
             fields.update(
                 quality_score=0.8,
                 grounding_score=2.0,
-                quality_scorer="typesafe/speed_latest/rubric-1",
+                quality_scorer=letter_quality.SCORER,
                 quality_scored_at=stamp,
             )
         # auto_now_add wins on create, so the clock is set afterwards.
