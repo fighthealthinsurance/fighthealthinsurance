@@ -1168,7 +1168,7 @@ class ModelUsageDashboardCalendarViewTest(ChooserStatsHelperMixin, TestCase):
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
 
-    def _call_at(self, when):
+    def _call_at(self, when, duration_ms=None):
         denial = Denial.objects.create(
             hashed_email="hash",
             denial_text="denied",
@@ -1182,6 +1182,7 @@ class ModelUsageDashboardCalendarViewTest(ChooserStatsHelperMixin, TestCase):
             outcome="ok",
             stage="primary",
             run_kind="live",
+            duration_ms=duration_ms,
         )
         ModelCallAttempt.objects.filter(pk=call.pk).update(created_at=when)
 
@@ -1214,6 +1215,38 @@ class ModelUsageDashboardCalendarViewTest(ChooserStatsHelperMixin, TestCase):
         self.assertContains(
             response,
             "Not shown: this period ended before the first stored call record",
+        )
+
+    def _busy_month_after_a_quiet_one(self):
+        """This month holds more ok calls than its share of the duration
+        cap (4 between two periods: 2 each); last month holds one."""
+        this_month = self._this_month()
+        last_month = this_month - relativedelta(months=1)
+        self._vote_at("m", last_month + datetime.timedelta(days=1), "s1")
+        self._call_at(last_month + datetime.timedelta(days=2), duration_ms=900)
+        for seconds_ago, duration_ms in ((1, 100), (2, 200), (3, 300), (4, 400)):
+            self._call_at(
+                timezone.now() - datetime.timedelta(seconds=seconds_ago),
+                duration_ms=duration_ms,
+            )
+        with mock.patch("fighthealthinsurance.staff_views.CALL_DURATION_SAMPLE_CAP", 4):
+            response = self._get("monthly")
+        return response, [w["call_attempts"] for w in response.context["windows"]]
+
+    def test_an_older_period_keeps_its_median_when_a_newer_one_fills_the_cap(
+        self,
+    ):
+        """Periods don't nest: one newest-first read spent the whole cap on
+        the newest period, and the older ones showed no medians at all."""
+        _, (_, last_month) = self._busy_month_after_a_quiet_one()
+        self.assertEqual(last_month["rows"][0]["median_ms"], 900)
+
+    def test_a_period_the_cap_cut_says_so_with_its_own_share(self):
+        response, (this_month, _) = self._busy_month_after_a_quiet_one()
+        # Its two newest calls, 100 and 200 ms.
+        self.assertEqual(this_month["rows"][0]["median_ms"], 150)
+        self.assertContains(
+            response, "Medians here use only the newest 2 OK calls of this period"
         )
 
     def test_with_no_call_records_no_period_gets_a_call_table(self):

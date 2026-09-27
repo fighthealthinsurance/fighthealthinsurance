@@ -1632,8 +1632,9 @@ ATTEMPT_UNKNOWN_MODEL = "unknown"
 CALL_FAILURE_OUTCOMES = ("runt_only", "rejected_at_peek", "no_output", "error")
 
 # The medians read at most this many ok-call durations per page load, newest
-# first, so a busy month cannot turn the page into a table scan. The shorter
-# windows are filled before the longer ones lose anything.
+# first, so a busy month cannot turn the page into a table scan. The rolling
+# windows share one read, so the shorter ones are filled before the longer
+# ones lose anything; calendar periods each read an equal share of it.
 CALL_DURATION_SAMPLE_CAP = 10_000
 
 # Names on the usage tables that are buckets, not models. They have no
@@ -2724,7 +2725,6 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["view"] = view
         ctx["views"] = MODEL_USAGE_VIEWS
         ctx["time_zone"] = timezone.get_current_timezone_name()
-        ctx["duration_cap"] = CALL_DURATION_SAMPLE_CAP
         ctx["first_call"] = first_call
         ctx["first_turn"] = first_turn
         ctx["chat_shadow"] = self._chat_shadow_state()
@@ -3544,9 +3544,10 @@ class ModelUsageDashboardView(generic.TemplateView):
         Per model: calls, ok, the four failure outcomes worth a column
         (CALL_FAILURE_OUTCOMES) and the rest as "other", the share of calls
         made at the backup or retry stages, and the median duration of ok
-        calls. The median is computed in Python over a bounded, newest-first
-        read (CALL_DURATION_SAMPLE_CAP) so it works the same on sqlite and
-        Postgres; "median_capped" says when the cap cut into a window.
+        calls. The median is computed in Python over bounded, newest-first
+        reads (CALL_DURATION_SAMPLE_CAP rows in all) so it works the same on
+        sqlite and Postgres; "median_capped" says when a read's cap cut into
+        a window, and "median_cap" what that cap was.
 
         Only metadata columns are read. response_text is PHI and error_detail
         can carry free exception text, so neither is ever selected.
@@ -3618,25 +3619,48 @@ class ModelUsageDashboardView(generic.TemplateView):
                 "median_capped": False,
             }
 
-        widest = min(since for _slug, since, _until in windows)
+        # Windows that run to now nest, so one newest-first read serves them
+        # all. Bounded windows (calendar periods) don't: one read would spend
+        # the whole cap on the newest periods and leave the older ones with
+        # no medians at all, so each gets a read of its own.
+        open_ended = [w for w in windows if w[2] is None]
+        reads = ([open_ended] if open_ended else []) + [
+            [w] for w in windows if w[2] is not None
+        ]
+        cap = max(1, CALL_DURATION_SAMPLE_CAP // len(reads))
+        ok_calls = live.filter(outcome="ok", duration_ms__isnull=False)
+        for read in reads:
+            ModelUsageDashboardView._fill_duration_medians(out, ok_calls, read, cap)
+        return out
+
+    @staticmethod
+    def _fill_duration_medians(
+        out: Dict[str, Dict[str, Any]],
+        ok_calls: QuerySet,
+        windows: List[Tuple[str, datetime.datetime, Optional[datetime.datetime]]],
+        cap: int,
+    ) -> None:
+        """Set each row's median ok-call duration for ``windows`` from one
+        newest-first read of at most ``cap`` calls spanning them all."""
+        since = min(w_since for _slug, w_since, _until in windows)
+        untils = [w_until for _slug, _since, w_until in windows]
+        until = None if None in untils else max(u for u in untils if u is not None)
         samples = list(
-            live.filter(outcome="ok", duration_ms__isnull=False, created_at__gte=widest)
+            _within(ok_calls, since, until)
             .order_by("-created_at")
-            .values_list("model_name", "duration_ms", "created_at")[
-                :CALL_DURATION_SAMPLE_CAP
-            ]
+            .values_list("model_name", "duration_ms", "created_at")[:cap]
         )
-        capped = len(samples) >= CALL_DURATION_SAMPLE_CAP
+        capped = len(samples) >= cap
         oldest = samples[-1][2] if samples else None
-        for slug, since, until in windows:
+        for slug, w_since, w_until in windows:
             durations: Dict[str, List[int]] = defaultdict(list)
             for name, duration_ms, created_at in samples:
-                # duration_ms is never None here (filtered above); the check
-                # is for the type checker.
+                # duration_ms is never None here (filtered by the caller);
+                # the check is for the type checker.
                 if (
                     duration_ms is not None
-                    and created_at >= since
-                    and (until is None or created_at < until)
+                    and created_at >= w_since
+                    and (w_until is None or created_at < w_until)
                 ):
                     label = normalize_model_label(name) or ATTEMPT_UNKNOWN_MODEL
                     durations[label].append(duration_ms)
@@ -3648,9 +3672,9 @@ class ModelUsageDashboardView(generic.TemplateView):
             # Newest first: a window that starts after the oldest row read
             # was read whole, so only the windows reaching past it lost rows.
             out[slug]["median_capped"] = bool(
-                capped and oldest is not None and since <= oldest
+                capped and oldest is not None and w_since <= oldest
             )
-        return out
+            out[slug]["median_cap"] = cap
 
     @staticmethod
     def _chat_stats(
