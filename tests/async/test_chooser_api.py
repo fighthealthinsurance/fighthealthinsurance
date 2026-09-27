@@ -955,3 +955,20 @@ class ChooserVoteIntegrityTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("belong", response.json()["error"])
         self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_a_presented_candidate_out_of_rotation_is_rejected(self):
+        """The next-task endpoint serves active candidates only, so an
+        inactive one in the report was never on anyone's screen."""
+        retired = self.mine[2]
+        retired.is_active = False
+        retired.save()
+        data = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": self.mine[0].id,
+            "presented_candidate_ids": [self.mine[0].id, retired.id],
+        }
+        response = self.client.post(
+            reverse("chooser-vote"), json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ChooserVote.objects.count(), 0)
