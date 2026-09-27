@@ -318,9 +318,20 @@ class ChatInterface:
 
     async def _write_turn_record(self, outcome: str) -> bool:
         """Write the turn's ChatTurn row, once. Returns whether it was
-        written; never raises."""
+        written. Never raises, except that a cancellation still propagates.
+        A write cancelled while it waits for the chat's executor never runs,
+        so a counted turn's row is then written from a thread of its own
+        first, as in _end_cancelled_turn. The row's id is the turn's, so a
+        write that did run is not doubled."""
         turn, self._turn = self._turn, None
-        return await arecord_chat_turn(self.chat.id, turn, outcome)
+        try:
+            return await arecord_chat_turn(self.chat.id, turn, outcome)
+        except asyncio.CancelledError:
+            if turn is not None and turn.counted_outcome:
+                await arecord_chat_turn_isolated(
+                    self.chat.id, turn, turn.counted_outcome
+                )
+            raise
 
     def _start_shadow_scoring(
         self,
