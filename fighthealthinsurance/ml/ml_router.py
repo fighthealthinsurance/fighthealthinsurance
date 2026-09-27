@@ -715,16 +715,18 @@ class MLRouter(object):
         """The outside models for a chat turn: the FHI_CHAT_OUTSIDE_MODELS
         roster when it is set (else best_external_models, as before),
         narrowed by the policy when one is in force. The policy never adds
-        a model."""
+        a model: its learned order only reorders the roster as it is now, so
+        a model taken off the roster after the policy was computed is not
+        asked, and one added since keeps its roster place after the rest."""
         from django.conf import settings
 
         in_force = self.chat_policy_in_force(policy)
-        if getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None):
-            names = (
-                list(in_force.outside_order)
-                if in_force is not None and in_force.outside_order
-                else None
-            )
+        roster = list(getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or [])
+        if roster:
+            names: Optional[list[str]] = None
+            if in_force is not None and in_force.outside_order:
+                learned = [n for n in in_force.outside_order if n in roster]
+                names = learned + [n for n in roster if n not in learned]
             externals = self._explore(self.chat_outside_models(names, limit=50))
         else:
             externals = self.best_external_models()
@@ -856,7 +858,13 @@ class MLRouter(object):
             )
 
         fallback_models: list[RemoteModelLike] = []
-        if use_external:
+        # When the primary fan-out already has its outside models, the
+        # fallback adds none: a second pick could draw another exploration
+        # and send the retry to a model the turn never chose.
+        primary_has_external = any(
+            getattr(m, "external", False) is True for m in primary_models
+        )
+        if use_external and not primary_has_external:
             # Only externals NOT already in the primary fan-out. build_retry_calls
             # issues two calls per entry of model_backends AND two per entry of
             # fallback_backends, so a backend present in both lists received
