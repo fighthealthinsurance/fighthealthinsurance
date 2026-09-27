@@ -120,6 +120,22 @@ class StatusPageTestCase(TestCase):
         self.assertEqual(len(rows), 1, name)
         return rows[0]
 
+    # The table's columns after Model, where a row search starts.
+    COLUMNS = (
+        "Kind",
+        "Routing on this pod",
+        "Config",
+        "Last health check",
+        "Last stored generation",
+    )
+
+    def cell(self, response, name, column):
+        """The HTML of one cell in the table row of the model ``name``."""
+        html = response.content.decode()
+        row = html[html.index(f'<div class="mono">{name}</div>') :]
+        row = row[: row.index("</tr>")]
+        return row.split("<td>")[1 + self.COLUMNS.index(column)]
+
     @staticmethod
     def labels(row):
         return [role.label for role in row["roles"]]
@@ -250,6 +266,31 @@ class ModelBackendStatusContentTest(StatusPageTestCase):
         self.assertEqual(len(rows), 1)
         self.assertIsNone(rows[0]["last_generation"])
 
+    def test_a_still_unconfigured_backends_classification_is_not_a_check(self):
+        """The deploy check persists its static classifications too. While the
+        backend is still unconfigured, its NOT_CONFIGURED row is not a failed
+        health check, and the Config column keeps the detail."""
+        name = "anthropic/claude-sonnet-4-6"
+        ModelBackendHealthCheckResult.objects.create(
+            run_id="run-static",
+            model_name=name,
+            internal_name="claude-sonnet-4-6",
+            provider="Anthropic",
+            category="NOT_CONFIGURED",
+            enabled=False,
+            ok=False,
+            error="ANTHROPIC_API_KEY not set",
+            started_at=timezone.now(),
+        )
+        response = self.get_page()
+        self.assertFalse(self.row(response, name)["show_check"])
+        health = self.cell(response, name, "Last health check")
+        self.assertIn("not checked", health)
+        self.assertNotIn("NOT_CONFIGURED", health)
+        self.assertIn(
+            "ANTHROPIC_API_KEY not set", self.cell(response, name, "Config")
+        )
+
 
 class ModelBackendStatusRoutingTest(StatusPageTestCase):
     """The routing panel and columns match what the router would pick."""
@@ -322,6 +363,30 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             "sonar", [name for name, _q in response.context["routing"].top_external]
         )
         self.assertEqual(self.labels(sonar), ["Questions: fan-out (external allowed)"])
+
+    def test_a_context_only_backend_has_no_generations_to_record(self):
+        """sonar builds citations and never drafts, so its empty "Last stored
+        generation" says so instead of reading "none recorded"."""
+        self.configure(**PERPLEXITY)
+        response = self.get_page()
+        self.assertTrue(self.row(response, "sonar")["context_only"])
+        self.assertIn(
+            "n/a (citations only)",
+            self.cell(response, "sonar", "Last stored generation"),
+        )
+
+    def test_context_only_is_known_when_routing_fails(self):
+        """Read off the registered instance when the traits are unavailable."""
+        self.configure(**PERPLEXITY)
+        with patch.object(
+            MLRouter,
+            "get_chat_backends_with_fallback",
+            side_effect=RuntimeError("router broke"),
+        ):
+            response = self.get_page()
+        sonar = self.row(response, "sonar")
+        self.assertFalse(sonar["has_traits"])
+        self.assertTrue(sonar["context_only"])
 
     def test_internal_backends(self):
         self.configure(**ALPHA, **LEGACY)
@@ -703,6 +768,16 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
         self.assertTrue(self.row(response, self.MODEL)["config_changed"])
         self.assertContains(response, "config changed since")
 
+    def test_a_classification_row_is_not_shown_as_a_failure(self):
+        """Checked while not configured, configured now: the row still shows,
+        flagged, as the classification it was rather than a failed check."""
+        self.configure(**ANTHROPIC, FHI_DEPLOYMENT_ID="v-old")
+        self.check_row(enabled=False, ok=False, category="NOT_CONFIGURED")
+        health = self.cell(self.get_page(), self.MODEL, "Last health check")
+        self.assertIn('<span class="pill pill-off">NOT_CONFIGURED</span>', health)
+        self.assertNotIn("pill-fail", health)
+        self.assertIn("config changed since", health)
+
     def test_matching_enabled_state_is_not_flagged(self):
         self.configure(**ANTHROPIC, FHI_DEPLOYMENT_ID="v-old")
         self.check_row()
@@ -747,10 +822,22 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
         self.check_row()
         response = self.get_page()
         self.assertEqual(response.context["healthy_count"], 1)
-        self.assertContains(
-            response,
-            f"1 of {len(response.context['rows'])} passed their latest check",
+        enabled = response.context["enabled_count"]
+        self.assertEqual(
+            enabled, sum(1 for r in response.context["rows"] if r["enabled"])
         )
+        self.assertGreater(enabled, 1)
+        self.assertContains(
+            response, f"1 of {enabled} enabled backends passed their latest check"
+        )
+
+    def test_a_pass_from_before_a_backend_was_turned_off_is_not_healthy(self):
+        """The count is of the backends this pod has enabled: an old PASS for
+        one that is now unconfigured is not health."""
+        self.check_row()
+        response = self.get_page()
+        self.assertFalse(self.row(response, self.MODEL)["enabled"])
+        self.assertEqual(response.context["healthy_count"], 0)
 
 
 class ModelBackendStatusLayoutTest(StatusPageTestCase):
@@ -804,11 +891,9 @@ class ModelBackendStatusLayoutTest(StatusPageTestCase):
             enabled=True,
             started_at=timezone.now(),
         )
-        html = self.get_page().content.decode()
-        row = html[html.index("anthropic/claude-sonnet-4-6</div>") :]
-        row = row[: row.index("</tr>")]
-        # Model, Kind, Routing, Config, then the health check cell.
-        cell = row.split("<td>")[4]
+        cell = self.cell(
+            self.get_page(), "anthropic/claude-sonnet-4-6", "Last health check"
+        )
         for fact in (
             "FAIL_TIMEOUT",
             "842 ms",

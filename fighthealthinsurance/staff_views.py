@@ -855,10 +855,15 @@ class AdminStatusView(generic.TemplateView):
             # numbers describe one population and a scored draft that is
             # speculative or unconsented cannot make the level SCORING by
             # itself (review).
+            # chosen=False on both: choosing a draft inserts an unscored copy
+            # stamped with the pick time, which read as an eligible draft the
+            # scorer had missed and flipped the badge to NOT SCORING while
+            # scoring worked.
             out["scored"] = ProposedAppeal.objects.filter(
                 current,
                 quality_scored_at__gte=since,
                 speculative=False,
+                chosen=False,
                 for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
@@ -869,6 +874,7 @@ class AdminStatusView(generic.TemplateView):
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
+                chosen=False,
                 for_denial__use_external=True,
             ).exclude(current)
             out["unscored"] = eligible_unscored.count()
@@ -3248,6 +3254,12 @@ class ModelBackendStatusView(generic.TemplateView):
             stale_environment = (
                 check is not None and check.environment != current_environment
             )
+            # The check run also persists its static classification of a
+            # backend it could not probe (NOT_CONFIGURED, DISABLED). While the
+            # backend is still off, that row only repeats the Config column,
+            # so the page says "not checked" instead of showing it as a
+            # failed check.
+            show_check = check is not None and (check.enabled or r.enabled)
             rows.append(
                 {
                     "provider": r.provider,
@@ -3273,10 +3285,18 @@ class ModelBackendStatusView(generic.TemplateView):
                     ),
                     "top_external_rank": rank,
                     "last_check": check,
+                    "show_check": show_check,
                     "stale_deployment": stale_deployment,
                     "stale_environment": stale_environment,
                     "config_changed": check is not None and check.enabled != r.enabled,
                     "last_generation": last_generation.get(r.model_name),
+                    # Citations only: never a generation candidate, so its
+                    # empty "Last stored generation" is not a symptom. Read
+                    # off the router's traits, or off the registered instance
+                    # when routing could not be read.
+                    "context_only": (
+                        t.kind == ro.KIND_CONTEXT_ONLY if t else r.context_only
+                    ),
                     "has_traits": t is not None,
                 }
             )
@@ -3288,8 +3308,11 @@ class ModelBackendStatusView(generic.TemplateView):
         ctx["current_deployment_id"] = current_deployment
         ctx["current_environment"] = current_environment
         ctx["deployment_is_versioned"] = deployment_is_versioned
+        ctx["enabled_count"] = sum(1 for row in rows if row["enabled"])
         ctx["healthy_count"] = sum(
-            1 for row in rows if row["last_check"] is not None and row["last_check"].ok
+            1
+            for row in rows
+            if row["enabled"] and row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
 
