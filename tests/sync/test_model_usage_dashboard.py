@@ -2040,11 +2040,34 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         self._turn(external_start="after_delay")
         self._turn(external_start="skipped")
         self._turn(external_start="immediate")
+        # The first pass never sent them, but our reply was too short and
+        # the retry asked one: not "never sent".
+        retried = _call("deepseek", pass_kind="retry")
+        retried["external"] = True
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="skipped",
+            calls=[_call("model-a"), _call("claude", "skipped", ms=None), retried],
+            retry_ran=True,
+        )
+        # Nor when our reply asked for a tool and the follow-up pass sent
+        # one, with no retry.
+        followed_up = _call("deepseek", pass_kind="tool")
+        followed_up["external"] = True
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="skipped",
+            calls=[
+                _call("model-a"),
+                _call("claude", "skipped", ms=None),
+                followed_up,
+            ],
+        )
         response, windows = self._windows()
         rows = self._rows(windows["1d"])
         claude = rows["claude"]
         self.assertEqual((claude["asked"], claude["calls"]), (1, 1))
-        self.assertEqual(claude["skipped"], 2)
+        self.assertEqual(claude["skipped"], 4)
         self.assertAlmostEqual(claude["win_rate"], 100.0)
         self.assertEqual(rows["model-a"]["skipped"], 0)
         summary = windows["1d"]["live_chat"]["summary"]
@@ -2054,10 +2077,12 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
                 summary["externals_after_delay"],
                 summary["externals_early"],
                 summary["externals_skipped"],
+                summary["externals_skipped_later"],
             ),
-            (4, 1, 1, 2),
+            (6, 1, 1, 2, 2),
         )
         self.assertContains(response, "Outside models held back while ours answered")
+        self.assertContains(response, "asked later in the turn on 2")
         self.assertContains(response, ">Skipped</th>")
 
 
@@ -2068,12 +2093,11 @@ def _policy_row(minutes_ago=0, **fields):
         turns_considered=240,
         external_excluded=["claude-sonnet"],
         external_delay_seconds=8.0,
-        daily_call_caps={"claude-opus": 100},
-        calls_today={"claude-opus": 100, "fhi-local": 300},
-        exhausted=["claude-opus"],
+        outside_order=["claude-opus", "new-model", "deepseek"],
+        order_scores={"claude-opus": [0.05, 200], "deepseek": [0.0, 180]},
         internal_usable_rate=0.9,
         internal_ttu_p75_ms=8000,
-        reason="ok,capped",
+        reason="ok,ordered",
     )
     defaults.update(fields)
     row = ChatRoutingPolicy.objects.create(**defaults)
@@ -2111,7 +2135,7 @@ class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
         self.assertContains(response, "<strong>claude-sonnet</strong>")
         self.assertContains(response, "a usable answer on 90.0% of turns")
         self.assertContains(response, "8000 ms")
-        self.assertContains(response, "ok,capped")
+        self.assertContains(response, "ok,ordered")
 
     def test_a_fresh_policy_with_the_switch_on_is_applied(self):
         _policy_row()
@@ -2143,27 +2167,43 @@ class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
         self.assertEqual(response.context["chat_policy"]["state"], "invalid")
         self.assertContains(response, "<strong>Unreadable</strong>")
 
-    def test_caps_and_calls_today_are_listed(self):
+    def test_the_learned_order_is_listed_with_its_scores(self):
         _policy_row()
         response = self._page()
-        cap_rows = response.context["chat_policy"]["cap_rows"]
         self.assertEqual(
-            cap_rows,
+            response.context["chat_policy"]["order_rows"],
             [
                 {
+                    "place": 1,
                     "model": "claude-opus",
-                    "cap": 100,
-                    "calls_today": 100,
-                    "exhausted": True,
+                    "score_percent": 5.0,
+                    "turns": 200,
                 },
                 {
-                    "model": "fhi-local",
-                    "cap": None,
-                    "calls_today": 300,
-                    "exhausted": False,
+                    "place": 2,
+                    "model": "new-model",
+                    "score_percent": None,
+                    "turns": None,
                 },
+                {"place": 3, "model": "deepseek", "score_percent": 0.0, "turns": 180},
             ],
         )
+        self.assertContains(response, "Answer delivered")
+
+    def test_this_months_provider_spend_is_listed(self):
+        from fighthealthinsurance.ml import spend
+
+        spend._ledger.reset_for_tests()
+        spend.record(spend.TYPESAFE, spend.CHAT, 12_345)
+        spend.record(spend.AZURE, spend.CHAT, 7)
+        response = self._page()
+        rows = response.context["chat_policy"]["spend_rows"]
+        self.assertIn(
+            {"counter": "typesafe:chat", "amount": 0.012345, "calls": False}, rows
+        )
+        self.assertIn({"counter": "azure:chat", "amount": 7.0, "calls": True}, rows)
+        self.assertContains(response, "Provider spend this month")
+        self.assertContains(response, "7 calls")
 
     def test_the_panel_appears_once_in_the_all_time_section(self):
         _policy_row()

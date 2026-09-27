@@ -65,25 +65,21 @@ def _aggregates(**overrides):
                 external=True, asked=200, wins=0, calls=400, usable_calls=300
             ),
         },
-        calls_today={"claude-opus": 120, "deepseek": 30},
     )
     fields.update(overrides)
     return ChatAggregates(**fields)
 
 
+ROSTER = ["claude-sonnet", "new-model", "claude-opus", "deepseek"]
+
+
 def test_below_the_minimum_turns_the_routing_stays_the_default():
-    policy = compute_policy(_aggregates(turns=49))
+    policy = compute_policy(_aggregates(turns=49), roster=ROSTER, hold_seconds=8.0)
     assert policy.external_excluded == ()
     assert policy.external_delay_seconds == 0.0
+    assert policy.outside_order == ()
     assert policy.reason == "few_turns"
     assert policy.narrows_nothing
-
-
-def test_caps_apply_even_below_the_minimum_turns():
-    policy = compute_policy(_aggregates(turns=3), caps={"claude-opus": 100})
-    assert policy.exhausted == ("claude-opus",)
-    assert policy.external_excluded == ()
-    assert policy.reason == "few_turns,capped"
 
 
 def test_the_top_healthy_outside_model_is_kept_and_the_non_winners_go():
@@ -131,57 +127,55 @@ def test_every_outside_model_is_kept_when_none_looks_healthy():
     assert "keep_all_no_healthy_external" in policy.reason
 
 
-def test_the_delay_is_our_75th_percentile_time_to_a_usable_answer():
-    policy = compute_policy(_aggregates())
-    assert policy.internal_ttu_p75_ms == 8000
+def test_the_hold_is_the_setting_and_the_percentile_is_reported():
+    policy = compute_policy(_aggregates(), hold_seconds=8.0)
     assert policy.external_delay_seconds == 8.0
+    assert policy.internal_ttu_p75_ms == 8000
 
 
 @pytest.mark.parametrize(
-    "ttu_ms, expected",
-    [(1500, 5.0), (40000, 15.0)],
+    "hold, expected",
+    [(40.0, 15.0), (-1.0, 0.0), (float("nan"), 0.0), (0.0, 0.0)],
 )
-def test_the_delay_is_clamped(ttu_ms, expected):
-    policy = compute_policy(_aggregates(internal_ttu_ms=[ttu_ms] * 30))
+def test_the_hold_is_kept_within_bounds(hold, expected):
+    policy = compute_policy(_aggregates(), hold_seconds=hold)
     assert policy.external_delay_seconds == expected
 
 
-def test_no_delay_when_ours_mostly_failed_in_the_last_hour():
-    policy = compute_policy(_aggregates(recent_internal_usable_turns=5))
-    assert policy.external_delay_seconds == 0.0
-    assert policy.internal_usable_rate == pytest.approx(5 / 12)
-    assert "no_delay_internals_down" in policy.reason
+def test_the_roster_order_stands_until_models_have_enough_turns():
+    aggregates = _aggregates()
+    for name in ("claude-sonnet", "claude-opus", "deepseek"):
+        aggregates.models[name].asked = 29
+    policy = compute_policy(aggregates, roster=ROSTER)
+    assert policy.outside_order == tuple(ROSTER)
+    assert policy.order_scores == {}
+    assert "ordered" not in policy.reason
 
 
-def test_no_delay_after_a_quiet_hour():
-    policy = compute_policy(
-        _aggregates(recent_internal_turns=2, recent_internal_usable_turns=2)
+def test_well_sampled_models_reorder_among_their_own_places():
+    aggregates = _aggregates()
+    aggregates.models["deepseek"].wins = 5
+    aggregates.models["new-model"] = ModelAggregate(external=True, asked=5, wins=5)
+    policy = compute_policy(aggregates, roster=ROSTER)
+    # opus (10/200) and deepseek (5/200) move ahead of sonnet (0/200) into
+    # the places those three held; new-model, with too few turns, keeps
+    # its second place.
+    assert policy.outside_order == (
+        "claude-opus",
+        "new-model",
+        "deepseek",
+        "claude-sonnet",
     )
-    assert policy.external_delay_seconds == 0.0
-    assert "no_delay_quiet_hour" in policy.reason
+    assert policy.order_scores["claude-opus"] == (0.05, 200)
+    assert "new-model" not in policy.order_scores
+    assert "ordered" in policy.reason
 
 
-def test_no_delay_without_enough_timed_answers():
-    policy = compute_policy(_aggregates(internal_ttu_ms=[8000] * 19))
-    assert policy.external_delay_seconds == 0.0
-    assert "no_delay_few_samples" in policy.reason
-
-
-def test_a_model_at_its_cap_is_exhausted_and_bad_caps_are_ignored():
+def test_the_order_is_the_roster_deduplicated_and_nothing_else():
     policy = compute_policy(
-        _aggregates(),
-        caps={
-            "claude-opus": 120,
-            "deepseek": 31,
-            "bad-negative": -1,
-            "bad-bool": True,
-            7: 3,
-        },
+        _aggregates(), roster=["claude-opus", "claude-opus", "", "never-asked"]
     )
-    assert policy.exhausted == ("claude-opus",)
-    assert policy.daily_call_caps == {"claude-opus": 120, "deepseek": 31}
-    assert policy.calls_today == {"claude-opus": 120, "deepseek": 30}
-    assert policy.reason.endswith("capped")
+    assert policy.outside_order == ("claude-opus", "never-asked")
 
 
 def test_rules_are_knobs():
@@ -191,15 +185,15 @@ def test_rules_are_knobs():
 
 def test_compute_policy_needs_no_database():
     # No django_db mark: any query here would fail the test.
-    compute_policy(_aggregates(), caps={"claude-opus": 1})
+    compute_policy(_aggregates(), roster=ROSTER, hold_seconds=8.0)
 
 
 def test_a_computed_policy_holds_names_and_numbers_only():
-    fields = compute_policy(_aggregates(), caps={"deepseek": 5}).row_fields()
+    fields = compute_policy(_aggregates(), roster=ROSTER).row_fields()
     for value in fields.values():
         assert isinstance(value, (str, int, float, list, dict, type(None)))
-    for name in fields["external_excluded"] + fields["exhausted"]:
-        assert name in {"claude-opus", "claude-sonnet", "deepseek"}
+    for name in fields["external_excluded"] + fields["outside_order"]:
+        assert name in set(ROSTER) | {"claude-opus", "claude-sonnet", "deepseek"}
 
 
 # --- narrow_externals and the router ------------------------------------------
@@ -257,18 +251,13 @@ def _externals(models):
 
 def test_narrow_externals_only_ever_returns_a_subset_in_order():
     externals = ["a", "b", "c"]
-    policy = ChatPolicy(external_excluded=("b", "not-offered"), exhausted=("zzz",))
+    policy = ChatPolicy(external_excluded=("b", "not-offered"))
     assert narrow_externals(externals, policy) == ["a", "c"]
 
 
 def test_narrow_externals_keeps_the_best_one_when_all_are_left_out():
     policy = ChatPolicy(external_excluded=("a", "b", "c"))
     assert narrow_externals(["a", "b", "c"], policy) == ["a"]
-
-
-def test_narrow_externals_lets_caps_empty_the_list():
-    policy = ChatPolicy(exhausted=("a", "b"), external_excluded=("c",))
-    assert narrow_externals(["a", "b"], policy) == []
 
 
 def test_the_router_narrows_the_outside_models_with_a_policy():
@@ -286,9 +275,7 @@ def test_the_router_never_adds_a_model():
     default_primary, _ = router.get_chat_backends_with_fallback(use_external=True)
     # The fourth outside model is outside the default top three; leaving
     # out one of the three must not pull it in.
-    policy = ChatPolicy(
-        external_excluded=("claude-opus", "not-a-model"), exhausted=("deepseek",)
-    )
+    policy = ChatPolicy(external_excluded=("claude-opus", "not-a-model", "deepseek"))
     primary, fallback = router.get_chat_backends_with_fallback(
         use_external=True, policy=policy
     )
@@ -314,7 +301,7 @@ def test_the_router_sets_the_policy_aside_when_none_of_ours_is_selectable():
     policy = ChatPolicy(
         external_delay_seconds=10.0,
         external_excluded=("claude-sonnet", "deepseek"),
-        exhausted=("claude-opus",),
+        outside_order=("deepseek",),
     )
     primary, _ = router.get_chat_backends_with_fallback(
         use_external=True, policy=policy
@@ -348,6 +335,57 @@ def test_without_a_policy_the_router_calls_get_chat_backends_as_before():
     with patch.object(router, "get_chat_backends", return_value=[]) as mock_get:
         router.get_chat_backends_with_fallback(use_external=True)
     mock_get.assert_called_once_with(use_external=True)
+
+
+class _Named:
+    def __init__(self, name):
+        self.name = name
+
+    def __str__(self):
+        return self.name
+
+
+def test_exploration_gives_the_second_place_to_a_model_further_down():
+    from fighthealthinsurance.ml import ml_router
+
+    router = MLRouter.__new__(MLRouter)
+    candidates = [_Named(n) for n in ("a", "b", "c", "d", "e")]
+    with override_settings(FHI_CHAT_EXPLORE_RATE=0.2):
+        with patch.object(ml_router, "_explore_draw", side_effect=[0.1, 0.6]):
+            chosen = router._explore(list(candidates))
+        assert [str(m) for m in chosen] == ["a", "e", "c"]
+        with patch.object(ml_router, "_explore_draw", return_value=0.5):
+            chosen = router._explore(list(candidates))
+        assert [str(m) for m in chosen] == ["a", "b", "c"]
+
+
+def test_no_exploration_without_models_further_down_or_at_rate_zero():
+    from fighthealthinsurance.ml import ml_router
+
+    router = MLRouter.__new__(MLRouter)
+    three = [_Named(n) for n in ("a", "b", "c")]
+    with (
+        override_settings(FHI_CHAT_EXPLORE_RATE=1.0),
+        patch.object(ml_router, "_explore_draw", return_value=0.0),
+    ):
+        assert [str(m) for m in router._explore(list(three))] == ["a", "b", "c"]
+    five = [_Named(n) for n in ("a", "b", "c", "d", "e")]
+    with (
+        override_settings(FHI_CHAT_EXPLORE_RATE=0.0),
+        patch.object(ml_router, "_explore_draw", return_value=0.0),
+    ):
+        assert [str(m) for m in router._explore(list(five))] == ["a", "b", "c"]
+
+
+def test_a_policy_in_force_hands_its_learned_order_to_the_roster():
+    router = _router()
+    policy = ChatPolicy(outside_order=("deepseek", "claude-opus"))
+    with (
+        override_settings(FHI_CHAT_OUTSIDE_MODELS=["claude-opus", "deepseek"]),
+        patch.object(router, "chat_outside_models", return_value=[]) as roster,
+    ):
+        router.get_chat_backends_with_fallback(use_external=True, policy=policy)
+    assert roster.call_args.args[0] == ["deepseek", "claude-opus"]
 
 
 # --- The reader ---------------------------------------------------------------
@@ -496,8 +534,10 @@ async def test_a_cached_row_is_still_checked_for_age_on_every_call():
         {"external_delay_seconds": -1.0},
         {"external_excluded": "deepseek"},
         {"external_excluded": [7]},
-        {"exhausted": {"deepseek": 1}},
-        {"daily_call_caps": {"deepseek": "lots"}},
+        {"outside_order": {"deepseek": 1}},
+        {"order_scores": {"deepseek": "lots"}},
+        {"order_scores": {"deepseek": [1.5, 10]}},
+        {"order_scores": {"deepseek": [0.5, -1]}},
     ],
 )
 @pytest.mark.django_db(transaction=True)
@@ -746,6 +786,91 @@ async def test_a_read_started_before_a_reset_cannot_write_its_result():
     assert stuck.calls == 2
 
 
+class _StuckReads:
+    """Stands in for the row read. The first ``stuck`` reads block until
+    released, like reads on a connection that stopped answering; the ones
+    after them read the row. Build it before patching the reader."""
+
+    def __init__(self, stuck):
+        self.stuck = stuck
+        self.read = chat_policy._read_newest_isolated
+        self.release = threading.Event()
+        self.first_entered = threading.Event()
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def __call__(self):
+        with self._lock:
+            self.calls += 1
+            call = self.calls
+        if call <= self.stuck:
+            self.first_entered.set()
+            self.release.wait(10)
+            return None
+        return self.read()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_read_stuck_past_the_limit_is_given_up_and_a_new_one_lands():
+    row = await _store()
+    clock = _Clock()
+    reads = _StuckReads(stuck=1)
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "time", clock),
+        patch.object(chat_policy, "_read_newest_isolated", side_effect=reads),
+    ):
+        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert await asyncio.to_thread(reads.first_entered.wait, 5)
+        stuck = chat_policy._policy_cache._thread
+        clock.now += chat_policy.POLICY_READ_STUCK_SECONDS - 1
+        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert reads.calls == 1
+        clock.now += 1
+        await aget_chat_policy()
+        assert chat_policy.wait_for_chat_policy_refresh(5)
+        assert reads.calls == 2
+        assert (await aget_chat_policy()).row_id == row.pk
+        # The given-up read answers late (with no row); the cache keeps
+        # the newer read's value.
+        reads.release.set()
+        stuck.join(5)
+        assert not stuck.is_alive()
+        assert (await aget_chat_policy()).row_id == row.pk
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_no_more_than_max_stuck_reads_are_left_waiting():
+    await _store()
+    clock = _Clock()
+    reads = _StuckReads(stuck=100)
+    started = []
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "time", clock),
+        patch.object(chat_policy, "_read_newest_isolated", side_effect=reads),
+    ):
+        for _ in range(chat_policy.MAX_STUCK_READS + 3):
+            assert await aget_chat_policy() is DEFAULT_POLICY
+            thread = chat_policy._policy_cache._thread
+            if thread not in started:
+                started.append(thread)
+            clock.now += chat_policy.POLICY_READ_STUCK_SECONDS
+        # The first read plus one new read for each given up, and no more.
+        assert len(started) == chat_policy.MAX_STUCK_READS + 1
+        reads.release.set()
+        for thread in started:
+            thread.join(5)
+            assert not thread.is_alive()
+        # Once they have ended, reads start again when the next is due.
+        clock.now += chat_policy.POLICY_CACHE_SECONDS
+        await aget_chat_policy()
+        assert chat_policy.wait_for_chat_policy_refresh(5)
+        assert reads.calls == len(started) + 1
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_read_that_cannot_start_gives_the_default_and_waits_its_turn():
@@ -779,9 +904,8 @@ def test_policy_from_row_reads_every_field():
         turns_considered=80,
         external_excluded=["deepseek"],
         external_delay_seconds=5.5,
-        daily_call_caps={"claude-opus": 100},
-        calls_today={"claude-opus": 40},
-        exhausted=[],
+        outside_order=["claude-opus", "deepseek"],
+        order_scores={"claude-opus": [0.05, 200]},
         internal_usable_rate=0.9,
         internal_ttu_p75_ms=5500,
         reason="ok",
@@ -790,6 +914,7 @@ def test_policy_from_row_reads_every_field():
     policy = policy_from_row(row)
     assert policy is not None
     assert policy.row_id == 3
-    assert policy.daily_call_caps == {"claude-opus": 100}
+    assert policy.outside_order == ("claude-opus", "deepseek")
+    assert policy.order_scores == {"claude-opus": (0.05, 200)}
     assert policy.internal_ttu_p75_ms == 5500
     assert not policy.narrows_nothing

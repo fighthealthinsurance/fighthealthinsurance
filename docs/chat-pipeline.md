@@ -197,28 +197,42 @@ went through the consent form silently lost fallback).
 
 ### The routing policy ("ours first")
 
-A policy row (`ChatRoutingPolicy`, written by `ml/chat_policy.py`) can
-tune the fan-out above in two ways, both from ChatTurn metadata only:
+Chat's outside models come from a roster, `FHI_CHAT_OUTSIDE_MODELS`, in
+order (GPT-5.5 on Azure, then DeepInfra's Mistral-Small 3.2, GLM-5.3 Flash,
+DeepSeek V4.1 Flash and Qwen3.8-2.4T). At most three are asked, skipping any
+that is down or whose budget is spent (`ml/spend.py` counts spend as the
+calls happen). On `FHI_CHAT_EXPLORE_RATE` (20%) of turns the second place
+goes to a model further down, so every model keeps being asked often enough
+for its place to be learned.
 
+A policy row (`ChatRoutingPolicy`, written once a day by `ml/chat_policy.py`
+from a week of ChatTurn metadata) can tune that in three ways:
+
+* **Learn the order.** A model asked on at least 30 turns moves among the
+  places such models hold in the roster, by how often its answer was
+  delivered. A model with fewer turns keeps its place, so the roster is
+  the prior until the data says otherwise.
 * **Leave out outside models that do not win.** The top healthy outside
   model is always kept. Any other is left out once enough turns asked it
-  and it never won, except while our own models fail often. Optional soft
-  daily call caps (`FHI_CHAT_DAILY_CALL_CAPS`) mark a model exhausted too.
-* **Give our models a head start.** With `external_delay_seconds` above 0
-  the primary and tool passes start our own models' calls first and hold
-  the outside ones back. They start when the delay passes with nothing
-  usable, or at once when every call of ours has failed or been rejected.
-  If one of ours answers usably first they are never sent. The delay is
-  our 75th percentile time to a usable answer, clamped to 5-15s, and 0
-  when the last hour was quiet or ours were mostly not answering. The
-  race's windows still run from its start, so a turn never takes longer
-  than it would without the delay. The retry pass is never staged.
+  and it never won, except while our own models fail often.
+* **Give our models a head start.** With a hold above 0
+  (`FHI_CHAT_EXTERNAL_HOLD_SECONDS`, 8s, at most 15s) the primary and tool
+  passes start our own models' calls first and hold the outside ones back.
+  They start when the hold passes with nothing usable, or at once when
+  every call of ours has failed or been rejected. If one of ours answers
+  usably first they are never sent. The race's windows still run from its
+  start, so a turn never takes longer than it would without the hold. The
+  retry pass is never staged.
 
-Guard rails: a policy can only narrow `best_external_models()`, never add
-a model, and a person's choice to keep chat on our models always wins. When
+Spending caps are not in the policy: the router skips a provider whose
+budget is spent, and the transport refuses to send to one, as it happens.
+
+Guard rails: a policy can only reorder and narrow the roster, never add a
+model, and a person's choice to keep chat on our models always wins. When
 none of our models is selectable the router sets the whole policy aside.
 Chat follows the newest row only while `FHI_CHAT_POLICY_APPLY` is on (off by
-default) and the row is newer than `FHI_CHAT_POLICY_MAX_AGE_MINUTES` (60);
+default) and the row is newer than `FHI_CHAT_POLICY_MAX_AGE_MINUTES` (36
+hours, so one missed daily run does not drop it);
 an empty table or an unreadable row gives the default, which is the
 behaviour described above. A turn never waits on the database for the
 policy: it uses the row cached in its process, and a turn that finds the
@@ -246,10 +260,10 @@ it used; held-back calls that were never sent have the status "skipped".
 
 What we deliberately did NOT build for selection:
 
-* **Learned/persistent routing weights.** The feedback loop (below) should
-  produce data first; hand-tuning quality() numbers against real win/loss
-  and preference metrics is cheap and auditable. A learned router is
-  premature while the metric volume is small.
+* **A learned router beyond the outside order.** The policy reorders only
+  the outside models, from delivered answers, and only once a model has
+  enough turns; internal quality() numbers stay hand-tuned, which is cheap
+  and auditable while the metric volume is small.
 * **Latency-aware scoring.** best_two_within_timelimit already gives fast
   models an edge (slow ones miss the window); double-counting latency in
   scores would bias toward terse models.

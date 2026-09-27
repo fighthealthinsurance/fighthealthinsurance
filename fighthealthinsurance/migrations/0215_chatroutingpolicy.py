@@ -54,9 +54,8 @@ class Migration(migrations.Migration):
                 ("turns_considered", models.PositiveIntegerField(default=0)),
                 ("external_excluded", models.JSONField(blank=True, default=list)),
                 ("external_delay_seconds", models.FloatField(default=0.0)),
-                ("daily_call_caps", models.JSONField(blank=True, default=dict)),
-                ("calls_today", models.JSONField(blank=True, default=dict)),
-                ("exhausted", models.JSONField(blank=True, default=list)),
+                ("outside_order", models.JSONField(blank=True, default=list)),
+                ("order_scores", models.JSONField(blank=True, default=dict)),
                 ("internal_usable_rate", models.FloatField(blank=True, null=True)),
                 (
                     "internal_ttu_p75_ms",

@@ -45,10 +45,7 @@ class Command(BaseCommand):
             raise CommandError("--window-minutes must be between 1 and 43200")
 
         if options["dry_run"]:
-            policy = chat_policy.compute_policy(
-                chat_policy.aggregate_chat_turns(window),
-                chat_policy.configured_daily_call_caps(),
-            )
+            policy = chat_policy.compute_current_policy(window)
             fields = policy.row_fields()
             self.stdout.write("Dry run: nothing stored.")
         else:

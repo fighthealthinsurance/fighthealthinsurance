@@ -45,23 +45,22 @@ import typing
 from django.conf import settings
 from loguru import logger
 
-from fighthealthinsurance.ml import typesafe
+from fighthealthinsurance.ml import spend, typesafe
 
-MODEL = typesafe.DEFAULT_MODEL
 # Bump when the questions or the candidate rules change: a stored triage
 # from an older rubric is not "current" and gets redone. The model half is
-# whatever TypeSafe reports (the alias when it reports nothing); see
-# letter_quality.scorer_for for the same limit, accepted.
-RUBRIC_VERSION = 1
+# the versioned model TypeSafe reports (the name the request sent when it
+# reports none); see letter_quality.scorer_for, which records it the same way.
+# 2: requests moved to the documented System One body and a pinned Jev
+# release, so a triage stored before then is redone.
+RUBRIC_VERSION = 2
 _RUBRIC_SUFFIX = f"/rubric-{RUBRIC_VERSION}"
-SOURCE = f"typesafe/{MODEL}{_RUBRIC_SUFFIX}"
+# The provenance under the default model; rows record source_for(payload).
+SOURCE = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
 
 
 def source_for(payload: typing.Any) -> str:
-    answered = payload.get("model") if isinstance(payload, dict) else None
-    model = str(answered).strip() if answered else MODEL
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,48}", model):
-        model = MODEL
+    model = typesafe.reported_model(payload)
     return f"typesafe/{model}{_RUBRIC_SUFFIX}"  # <= 66 chars; column is 80
 
 
@@ -463,8 +462,10 @@ async def _post(
     document: str, questions: dict[str, typing.Any], timeout_seconds: float
 ) -> typing.Any:
     # Kept as a seam: tests stub this one function to stay off the network.
+    # The letter goes out as the request's state; the model comes from
+    # TYPESAFE_MODEL (typesafe.model_name).
     return await typesafe.ask(
-        document, questions, timeout_seconds=timeout_seconds, model=MODEL
+        document, questions, timeout_seconds=timeout_seconds, use=spend.TRIAGE
     )
 
 

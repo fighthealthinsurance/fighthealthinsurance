@@ -772,17 +772,31 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _scoring_failure_hint(summary: str) -> str:
-        """What a recorded scoring failure most likely means, for on-call."""
+        """What a recorded scoring failure most likely means, for on-call.
+        The statuses TypeSafe documents (401, 422, 429, 529) each get their
+        own phrase."""
         if summary == "HTTP 402":
             return "payment required: TypeSafe credits or billing"
         if summary in ("HTTP 401", "HTTP 403"):
             return "the API key was rejected"
+        if summary == "HTTP 422":
+            return "the request failed validation: TYPESAFE_MODEL or request shape"
         if summary == "HTTP 429":
-            return "rate limited"
+            return "rate limited: over the TypeSafe request or token limit"
+        if summary == "HTTP 529":
+            return "TypeSafe was overloaded"
         if summary.startswith("HTTP 5"):
             return "TypeSafe server error"
         if summary == "timeout":
             return "no answer within TYPESAFE_TIMEOUT_SECONDS"
+        if summary == "TypeSafeBudgetSpent":
+            return (
+                "not sent: this month's TypeSafe budget is spent (FHI_SPEND_TYPESAFE_*)"
+            )
+        if summary == "TypeSafeError":
+            # ml/typesafe.py refuses before sending: a non-https URL or a
+            # model setting that is not a model name.
+            return "not sent: check TYPESAFE_API_URL and TYPESAFE_MODEL"
         return ""
 
     @staticmethod
@@ -827,26 +841,34 @@ class AdminStatusView(generic.TemplateView):
 
             now = timezone.now()
             since = now - WINDOW
+            # Only a score from the current rubric counts, as wherever scores
+            # are compared: an older one is due to be redone, so its draft
+            # is still waiting for a score.
+            current = Q(
+                quality_score__isnull=False,
+                quality_scorer__startswith="typesafe/",
+                quality_scorer__endswith=letter_quality._RUBRIC_SUFFIX,
+            )
             # The same eligibility as the unscored count below, so the two
             # numbers describe one population and a scored draft that is
             # speculative or unconsented cannot make the level SCORING by
             # itself (review).
             out["scored"] = ProposedAppeal.objects.filter(
+                current,
                 quality_scored_at__gte=since,
                 speculative=False,
                 for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
             # real (not speculative), old enough that a score in flight would
-            # have landed, and still without one.
+            # have landed, and still without a current one.
             settled = now - datetime.timedelta(seconds=letter_quality.DRAIN_SECONDS)
             eligible_unscored = ProposedAppeal.objects.filter(
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
                 for_denial__use_external=True,
-                quality_score__isnull=True,
-            )
+            ).exclude(current)
             out["unscored"] = eligible_unscored.count()
 
             health = ExternalServiceHealth.objects.filter(
@@ -1519,6 +1541,10 @@ class _ChatTally:
         # How the primary pass started the outside models, per
         # ChatTurn.external_start value.
         self.external_starts: Counter = Counter()
+        # Turns whose first pass never sent the outside models but a later
+        # pass did: the retry (our reply was empty, too short or a false
+        # promise) or a tool follow-up. They were not "never sent".
+        self.externals_skipped_later = 0
         self.same_model_pairs = 0
         self.same_model_picks: Counter = Counter()
         self.models: Dict[str, Dict[str, Any]] = {}
@@ -1572,6 +1598,13 @@ class _ChatTally:
             self.retry_used += 1
         if external_start:
             self.external_starts[external_start] += 1
+            if external_start == STAGE_SKIPPED and any(
+                isinstance(call, dict)
+                and call.get("external") is True
+                and call.get("status") != STATUS_SKIPPED
+                for call in calls or []
+            ):
+                self.externals_skipped_later += 1
 
         # A model counts as asked once per turn, however many calls it got:
         # every primary backend, and the fallbacks only when the retry ran.
@@ -1679,7 +1712,10 @@ class _ChatTally:
                 "retry_used": self.retry_used,
                 "externals_after_delay": self.external_starts[STAGE_AFTER_DELAY],
                 "externals_early": self.external_starts[STAGE_EARLY],
-                "externals_skipped": self.external_starts[STAGE_SKIPPED],
+                # Never sent in any pass.
+                "externals_skipped": self.external_starts[STAGE_SKIPPED]
+                - self.externals_skipped_later,
+                "externals_skipped_later": self.externals_skipped_later,
                 "externals_held_back": sum(
                     self.external_starts[s]
                     for s in (STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)
@@ -2045,8 +2081,10 @@ class ModelUsageDashboardView(generic.TemplateView):
             "row": None,
             "policy": None,
             "usable_percent": None,
-            "cap_rows": [],
+            "order_rows": [],
+            "spend_rows": [],
         }
+        panel["spend_rows"] = ModelUsageDashboardView._spend_rows()
         row = chat_policy.newest_policy_row()
         if row is None:
             return panel
@@ -2070,17 +2108,44 @@ class ModelUsageDashboardView(generic.TemplateView):
             panel["state"] = "shadow"
         else:
             panel["state"] = "applied"
-        exhausted = set(policy.exhausted)
-        panel["cap_rows"] = [
+        panel["order_rows"] = [
             {
+                "place": place,
                 "model": name,
-                "cap": policy.daily_call_caps.get(name),
-                "calls_today": policy.calls_today.get(name, 0),
-                "exhausted": name in exhausted,
+                "score_percent": (
+                    policy.order_scores[name][0] * 100.0
+                    if name in policy.order_scores
+                    else None
+                ),
+                "turns": (
+                    policy.order_scores[name][1]
+                    if name in policy.order_scores
+                    else None
+                ),
             }
-            for name in sorted(set(policy.daily_call_caps) | set(policy.calls_today))
+            for place, name in enumerate(policy.outside_order, start=1)
         ]
         return panel
+
+    @staticmethod
+    def _spend_rows() -> List[Dict[str, Any]]:
+        """This month's spend per provider and use (ml/spend.py), from this
+        process's copy of the counters. Names and amounts only."""
+        from fighthealthinsurance.ml import spend
+
+        try:
+            summary = spend.month_summary()
+        except Exception as e:
+            logger.warning(f"Spend summary unavailable: {type(e).__name__}")
+            return []
+        return [
+            {
+                "counter": name,
+                "amount": amount,
+                "calls": name.startswith(spend.AZURE + ":"),
+            }
+            for name, amount in summary.items()
+        ]
 
     @staticmethod
     def _chart_data(

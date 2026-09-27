@@ -1,4 +1,5 @@
 import asyncio
+import random
 import threading
 from typing import List, Optional, Sequence, Tuple
 
@@ -6,6 +7,11 @@ from loguru import logger
 
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml.chat_policy import ChatPolicy, narrow_externals
+
+# How many outside models chat asks at most, and the draw exploration uses
+# (a seam, so tests can decide it).
+CHAT_OUTSIDE_LIMIT = 3
+_explore_draw = random.random
 from fighthealthinsurance.ml.ml_models import *
 
 # The hosted model that backs up our own models for summaries and appeal
@@ -24,6 +30,7 @@ class MLRouter(object):
     all_models_by_cost: List[RemoteModelLike]
     external_models_by_cost: List[RemoteModelLike]
     context_only_models_by_cost: List[RemoteModelLike]
+    chat_outside_models_by_name: dict[str, RemoteModelLike]
 
     def __init__(self):
         # Initialize instance attributes to avoid mutable class-level state
@@ -32,6 +39,7 @@ class MLRouter(object):
         self.all_models_by_cost = []
         self.external_models_by_cost = []
         self.context_only_models_by_cost = []
+        self.chat_outside_models_by_name = {}
         logger.debug("MLRouter: starting model registration")
         enabled_models = self._enabled_model_names()
         if enabled_models is not None:
@@ -142,6 +150,7 @@ class MLRouter(object):
             for x in sorted(building_context_only_models_by_cost)
             if x.model is not None
         ]
+        self._register_chat_outside_models()
         logger.info(
             f"MLRouter initialized with {len(self.all_models_by_cost)} total models, "
             f"{len(self.internal_models_by_cost)} internal, {len(self.external_models_by_cost)} external, "
@@ -151,6 +160,75 @@ class MLRouter(object):
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
+
+    def _register_chat_outside_models(self) -> None:
+        """Instances of the models backends serve to chat only
+        (``chat_models``), by name, outside every general pool. A backend
+        without its key, or a model that fails to build, is skipped."""
+        # The same allow-list as every other remote model: a provider the
+        # operator left out never gets chat text.
+        enabled_models = self._enabled_model_names()
+        for backend in sorted(candidate_model_backends, key=lambda c: c.__name__):
+            try:
+                descriptions = backend.chat_models()
+            except Exception as e:
+                logger.warning(f"Skipping chat models of {backend}: {type(e).__name__}")
+                continue
+            for m in descriptions:
+                if (
+                    enabled_models is not None
+                    and m.name not in enabled_models
+                    and m.internal_name not in enabled_models
+                ):
+                    logger.debug(
+                        f"MLRouter: skipping disabled chat model {m.name} "
+                        f"(not in ENABLED_REMOTE_MODELS)"
+                    )
+                    continue
+                try:
+                    if m.model is None:
+                        m.model = backend(model=m.internal_name)
+                    if getattr(m.model, "name", None) is None:
+                        m.model.name = m.name
+                    self.chat_outside_models_by_name[m.name] = m.model
+                except Exception as e:
+                    logger.warning(
+                        f"Skipping chat model {m.internal_name}: {type(e).__name__}"
+                    )
+
+    def chat_outside_models(
+        self, names: Optional[Sequence[str]] = None, limit: int = 3
+    ) -> list[RemoteModelLike]:
+        """The outside models chat asks, in ``names`` order (default
+        FHI_CHAT_OUTSIDE_MODELS): the chat-only models, or any registered
+        external model by name (Azure's GPT-5.5). Models that are down are
+        left out (failing open like the other filters), and so is any model
+        whose provider's chat budget is spent (never failing open: a spent
+        budget means no call)."""
+        from django.conf import settings
+
+        from fighthealthinsurance.ml import spend
+
+        if names is None:
+            names = getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or []
+        found: list[RemoteModelLike] = []
+        for name in names:
+            model = self.chat_outside_models_by_name.get(name)
+            if model is None:
+                model = next(
+                    (m for m in self.models_by_name.get(name, []) if m.external),
+                    None,
+                )
+            if model is not None and model not in found:
+                found.append(model)
+        available = self._filter_available(found, "chat-outside") if found else []
+        within_budget = [
+            m
+            for m in available
+            if getattr(m, "SPEND_PROVIDER", None) is None
+            or spend.allows(getattr(m, "SPEND_PROVIDER"), spend.CHAT)
+        ]
+        return within_budget[:limit]
 
     @staticmethod
     def _enabled_model_names() -> Optional[set[str]]:
@@ -634,13 +712,40 @@ class MLRouter(object):
         return in_force.external_delay_seconds if in_force is not None else 0.0
 
     def _chat_externals(self, policy: Optional[ChatPolicy]) -> list[RemoteModelLike]:
-        """The outside models for a chat turn: best_external_models, narrowed
-        by the policy when one is in force. Never adds a model."""
-        externals = self.best_external_models()
+        """The outside models for a chat turn: the FHI_CHAT_OUTSIDE_MODELS
+        roster when it is set (else best_external_models, as before),
+        narrowed by the policy when one is in force. The policy never adds
+        a model."""
+        from django.conf import settings
+
         in_force = self.chat_policy_in_force(policy)
+        if getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None):
+            names = (
+                list(in_force.outside_order)
+                if in_force is not None and in_force.outside_order
+                else None
+            )
+            externals = self._explore(self.chat_outside_models(names, limit=50))
+        else:
+            externals = self.best_external_models()
         if in_force is None:
             return externals
         return narrow_externals(externals, in_force)
+
+    def _explore(self, candidates: list[RemoteModelLike]) -> list[RemoteModelLike]:
+        """The first CHAT_OUTSIDE_LIMIT of ``candidates`` (the order chat
+        asks them in), except that on FHI_CHAT_EXPLORE_RATE of turns the
+        second place goes to one of the models further down, so every model
+        in the roster keeps being asked often enough for its place in the
+        order to be learned."""
+        from django.conf import settings
+
+        chosen = candidates[:CHAT_OUTSIDE_LIMIT]
+        further = candidates[CHAT_OUTSIDE_LIMIT:]
+        rate = float(getattr(settings, "FHI_CHAT_EXPLORE_RATE", 0.2) or 0.0)
+        if len(chosen) >= 2 and further and _explore_draw() < rate:
+            chosen[1] = further[int(_explore_draw() * len(further)) % len(further)]
+        return chosen
 
     def get_chat_backends(
         self, use_external=False, policy: Optional[ChatPolicy] = None

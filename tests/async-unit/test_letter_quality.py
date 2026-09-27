@@ -427,19 +427,29 @@ class TestRedact:
 
 class TestScorerIdentity:
     def test_scorer_names_model_and_rubric_version(self):
-        assert lq.SCORER == f"typesafe/{lq.MODEL}/rubric-{lq.RUBRIC_VERSION}"
+        assert lq.SCORER == f"typesafe/{typesafe.DEFAULT_MODEL}/rubric-{lq.RUBRIC_VERSION}"
+        assert lq.SCORER == f"typesafe/jev-1.13.0/rubric-{lq.RUBRIC_VERSION}"
 
     def test_the_answering_model_is_recorded_when_typesafe_names_it(self):
+        assert lq.scorer_for({"model": "jev-1.13.0"}) == f"typesafe/jev-1.13.0/rubric-{lq.RUBRIC_VERSION}"
         assert lq.scorer_for({"model": "speed_20260401"}) == f"typesafe/speed_20260401/rubric-{lq.RUBRIC_VERSION}"
         assert lq.scorer_for({}) == lq.SCORER
         assert lq.parse_answers({**_payload(), "model": "speed_20260401"}).scorer.startswith("typesafe/speed_20260401/")
 
+    def test_a_response_naming_no_model_records_the_configured_one(self):
+        with override_settings(TYPESAFE_MODEL="jev-latest"):
+            assert lq.scorer_for({}) == f"typesafe/jev-latest/rubric-{lq.RUBRIC_VERSION}"
+            assert lq.scorer_for({"model": "jev-1.13.0"}) == f"typesafe/jev-1.13.0/rubric-{lq.RUBRIC_VERSION}"
+
     def test_same_rubric_is_what_decides_reuse_and_the_whole_string_must_be_ours(self):
         assert lq.same_rubric(f"typesafe/anything/rubric-{lq.RUBRIC_VERSION}")
-        assert not lq.same_rubric(f"typesafe/{lq.MODEL}/rubric-{lq.RUBRIC_VERSION + 1}")
+        assert not lq.same_rubric(f"typesafe/{typesafe.DEFAULT_MODEL}/rubric-{lq.RUBRIC_VERSION + 1}")
         assert not lq.same_rubric(f"manual-import/rubric-{lq.RUBRIC_VERSION}")
         assert not lq.same_rubric(f"typesafe/x/y/rubric-{lq.RUBRIC_VERSION}")
         assert not lq.same_rubric(None)
+        # A score stored before the move to the documented body and a pinned
+        # Jev release is rescored, not ranked against fresh ones.
+        assert not lq.same_rubric("typesafe/speed_latest/rubric-1")
 
     def test_an_odd_model_name_in_the_answer_cannot_forge_provenance(self):
         assert lq.scorer_for({"model": "weird value!"}) == lq.SCORER
