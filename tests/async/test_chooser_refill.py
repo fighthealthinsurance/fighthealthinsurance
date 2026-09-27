@@ -180,12 +180,13 @@ class TestRefillThreshold:
 
 
 class _Backend:
-    """A router backend as the coverage check sees it: a stamped name and
-    an ``external`` flag."""
+    """A router backend as the coverage check sees it: a stamped name, an
+    ``external`` flag and the configured model id."""
 
-    def __init__(self, name, external):
+    def __init__(self, name, external, model=None):
         self.name = name
         self.external = external
+        self.model = model
 
 
 async def _fresh_task_with(task_type, *model_names):
@@ -208,17 +209,19 @@ class TestCoverageRefill:
     is refilled. READY is monotonic, so without this trigger a provider
     configured after the pool was bootstrapped never got a task."""
 
-    def _thresholds(self):
+    def _thresholds(self, backends=None):
+        if backends is None:
+            backends = [
+                _Backend("fhi-2025-may", external=False),
+                _Backend("azure-openai/gpt-5.5", external=True),
+            ]
         return [
             patch("fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 1),
             patch("fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 1),
             patch("fighthealthinsurance.chooser_tasks.CHOOSER_MAX_UNSCORED_TASKS", 10),
             patch(
                 "fighthealthinsurance.chooser_tasks._comparable_backends",
-                return_value=[
-                    _Backend("fhi-2025-may", external=False),
-                    _Backend("azure-openai/gpt-5.5", external=True),
-                ],
+                return_value=backends,
             ),
         ]
 
@@ -287,6 +290,28 @@ class TestCoverageRefill:
                 p.stop()
 
         assert reason is not None and "azure-openai/gpt-5.5" in reason
+
+    async def test_coverage_names_a_backend_as_its_candidates_are_stored(self):
+        # Candidates are stored under canonical_model_name, which falls back
+        # to the configured model id for a backend with no stamped name; the
+        # coverage check keyed on str(backend) instead and never saw them.
+        await _fresh_task_with("appeal", "fhi-2025-may", "gpt-5.5")
+
+        patches = self._thresholds(
+            backends=[
+                _Backend("fhi-2025-may", external=False),
+                _Backend(None, external=True, model="gpt-5.5"),
+            ]
+        )
+        for p in patches:
+            p.start()
+        try:
+            reason = await _refill_reason("appeal")
+        finally:
+            for p in patches:
+                p.stop()
+
+        assert reason is None
 
     async def test_coverage_refills_stop_at_the_unscored_ceiling(self):
         # A backend that never yields a usable candidate must not justify a

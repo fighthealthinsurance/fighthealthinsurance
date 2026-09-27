@@ -22,6 +22,7 @@ import threading
 from typing import List, Optional, cast
 
 from django.conf import settings
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from channels.db import database_sync_to_async
@@ -49,7 +50,10 @@ CHOOSER_NUM_CANDIDATES = getattr(settings, "CHOOSER_NUM_CANDIDATES", 4)
 CHOOSER_INCLUDE_SYNTHESIS = getattr(settings, "CHOOSER_INCLUDE_SYNTHESIS", True)
 # Ceiling for the coverage trigger (see check_and_refill_task_pool): once this
 # many fresh tasks exist, a backend that still has too few is not worth
-# another batch.
+# another batch. It sits above CHOOSER_MIN_READY_TASKS on purpose: a pool
+# bootstrapped with no votes yet is all fresh, and a lower ceiling would turn
+# the trigger off in exactly the pool it exists for, one built before a
+# provider was configured.
 CHOOSER_MAX_UNSCORED_TASKS = getattr(
     settings, "CHOOSER_MAX_UNSCORED_TASKS", 2 * CHOOSER_MIN_READY_TASKS
 )
@@ -334,19 +338,26 @@ def _comparable_backends(task_type: str) -> List:
     return cast(List, ml_router.get_chat_backends(use_external=True))
 
 
-async def _fresh_task_coverage(task_type: str) -> dict:
-    """How many fresh (READY, synthetic, unvoted) tasks of ``task_type`` hold
-    a candidate from each backend, keyed by the persisted model name."""
+def _fresh_tasks(task_type: str) -> "QuerySet[ChooserTask]":
+    """READY synthetic tasks of ``task_type`` with no vote yet: the fresh
+    ("unscored") tasks, the ones still able to gather new preference data."""
     from django.db.models import Count
 
-    fresh_ids = (
+    return (
         ChooserTask.objects.filter(
             task_type=task_type, status="READY", source="synthetic"
         )
         .annotate(vote_count=Count("votes"))
         .filter(vote_count=0)
-        .values("id")
     )
+
+
+async def _fresh_task_coverage(task_type: str) -> dict:
+    """How many fresh tasks of ``task_type`` hold a candidate from each
+    backend, keyed by the persisted model name."""
+    from django.db.models import Count
+
+    fresh_ids = _fresh_tasks(task_type).values("id")
     coverage: dict = {}
     # .order_by() clears the Meta ordering, which would otherwise leak into
     # the GROUP BY.
@@ -373,8 +384,9 @@ async def _external_backends_without_fresh_tasks(task_type: str) -> set:
     except Exception as e:
         logger.warning(f"Chooser: could not list backends for {task_type}: {e}")
         return set()
+    # Named the way candidates are stored, or the lookup below could miss.
     external = {
-        _model_display_name(m) for m in backends if getattr(m, "external", False)
+        canonical_model_name(m) for m in backends if getattr(m, "external", False)
     }
     if not external:
         return set()
@@ -403,19 +415,7 @@ async def _count_unscored_tasks(task_type: str) -> int:
     track unscored tasks separately from the overall READY pool.
     """
 
-    from django.db.models import Count
-
-    return cast(
-        int,
-        await database_sync_to_async(
-            ChooserTask.objects.filter(
-                task_type=task_type, status="READY", source="synthetic"
-            )
-            .annotate(vote_count=Count("votes"))
-            .filter(vote_count=0)
-            .count
-        )(),
-    )
+    return await _fresh_tasks(task_type).acount()
 
 
 async def _generate_batch_tasks(task_type: str, batch_size: int) -> int:
@@ -542,7 +542,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 f"disabling the task. Response started: {preview!r}"
             )
             task.status = "DISABLED"
-            await database_sync_to_async(task.save)()
+            await task.asave()
             return
 
         task.context_json = context
@@ -722,7 +722,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                     f"{CHOOSER_FALLBACK_ATTEMPTS} attempts; disabling the task"
                 )
                 task.status = "DISABLED"
-                await database_sync_to_async(task.save)()
+                await task.asave()
                 return
             final_user_prompt = final_user_prompt.strip().strip('"').strip("'").strip()
             history = []
