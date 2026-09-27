@@ -19,7 +19,11 @@ from asgiref.sync import ThreadSensitiveContext, sync_to_async
 from django.test import override_settings
 
 from fighthealthinsurance.chat import isolated_db, redaction, reply_gate
-from fighthealthinsurance.chat.safety_filters import DELETE_DATA_SENTINEL
+from fighthealthinsurance.chat.retry_handler import should_retry_response
+from fighthealthinsurance.chat.safety_filters import (
+    DELETE_DATA_SENTINEL,
+    detect_false_promises,
+)
 from fighthealthinsurance.chat.turn_record import TurnRecord
 from fighthealthinsurance.ml import chat_gate, typesafe
 from fighthealthinsurance.models import ChatTurn, ExternalServiceHealth, OngoingChat
@@ -32,15 +36,24 @@ REPLY = (
     "write to the plan. Want me to draft the appeal?"
 )
 TOOL_REPLY = '**medicaid_info {"state": "California", "topic": "", "limit": 5}**'
+# Replies our own checks reject (chat/retry_handler.should_retry_response).
+PROMISE_REPLY = (
+    "Good news: I guarantee your appeal will be approved. Send the plan the "
+    "denial letter and a note from your doctor."
+)
+SHORT_REPLY = "Ok."
 
 
-def _payload(answers=0.9, verdict=0.05, asks_again=0.05, model="jev-1.13.0"):
+def _payload(
+    answers=0.9, verdict=0.05, asks_again=0.05, promises=0.05, model="jev-1.13.0"
+):
     return {
         "model": model,
         "answers": {
             chat_gate.ANSWERS_QUESTION: {"type": "noul", "noul": answers},
             chat_gate.STATES_VERDICT: {"type": "noul", "noul": verdict},
             chat_gate.ASKS_AGAIN: {"type": "noul", "noul": asks_again},
+            chat_gate.PROMISES_OUTCOME: {"type": "noul", "noul": promises},
         },
         "usage": {"input_tokens": 321, "output_tokens": 30},
     }
@@ -129,19 +142,26 @@ class TestKnobs:
 
 class TestDecisionRule:
     def test_a_reply_that_answers_with_no_problem_passes(self):
-        assert chat_gate.passes(chat_gate.GateScores(0.9, 0.1, 0.1))
+        assert chat_gate.passes(chat_gate.GateScores(0.9, 0.1, 0.1, 0.1))
 
     def test_the_answers_threshold_is_inclusive(self):
-        assert chat_gate.passes(chat_gate.GateScores(0.7, 0.0, 0.0))
-        assert not chat_gate.passes(chat_gate.GateScores(0.69, 0.0, 0.0))
+        assert chat_gate.passes(chat_gate.GateScores(0.7, 0.0, 0.0, 0.0))
+        assert not chat_gate.passes(chat_gate.GateScores(0.69, 0.0, 0.0, 0.0))
 
     def test_each_problem_threshold_is_exclusive(self):
-        assert not chat_gate.passes(chat_gate.GateScores(1.0, 0.3, 0.0))
-        assert not chat_gate.passes(chat_gate.GateScores(1.0, 0.0, 0.3))
-        assert chat_gate.passes(chat_gate.GateScores(1.0, 0.29, 0.29))
+        assert not chat_gate.passes(chat_gate.GateScores(1.0, 0.3, 0.0, 0.0))
+        assert not chat_gate.passes(chat_gate.GateScores(1.0, 0.0, 0.3, 0.0))
+        assert not chat_gate.passes(chat_gate.GateScores(1.0, 0.0, 0.0, 0.3))
+        assert chat_gate.passes(chat_gate.GateScores(1.0, 0.29, 0.29, 0.29))
+
+    def test_a_promised_result_fails_a_reply_that_is_otherwise_fine(self):
+        assert not chat_gate.passes(chat_gate.GateScores(1.0, 0.0, 0.0, 0.9))
+        with override_settings(FHI_CHAT_JEV_GATE_MAX_PROBLEM=0.5):
+            assert not chat_gate.passes(chat_gate.GateScores(1.0, 0.0, 0.0, 0.5))
+            assert chat_gate.passes(chat_gate.GateScores(1.0, 0.0, 0.0, 0.49))
 
     def test_the_thresholds_are_settings(self):
-        scores = chat_gate.GateScores(0.65, 0.35, 0.0)
+        scores = chat_gate.GateScores(0.65, 0.35, 0.0, 0.0)
         assert not chat_gate.passes(scores)
         with override_settings(
             FHI_CHAT_JEV_GATE_MIN_ANSWERS=0.6, FHI_CHAT_JEV_GATE_MAX_PROBLEM=0.4
@@ -149,10 +169,41 @@ class TestDecisionRule:
             assert chat_gate.passes(scores)
 
 
+class TestOurOwnChecks:
+    """The requirements the retry holds our replies to, applied before Jev
+    is asked."""
+
+    @pytest.mark.parametrize(
+        "reply", [None, "", "   ", SHORT_REPLY, PROMISE_REPLY, REPLY, TOOL_REPLY]
+    )
+    def test_the_same_rule_as_the_retry(self, reply):
+        assert chat_gate.fails_our_checks(reply) is should_retry_response(reply)
+
+    def test_a_false_promise_a_short_reply_and_a_good_one(self):
+        assert detect_false_promises(PROMISE_REPLY)
+        assert chat_gate.fails_our_checks(PROMISE_REPLY)
+        assert chat_gate.fails_our_checks(SHORT_REPLY)
+        assert not chat_gate.fails_our_checks(REPLY)
+
+    def test_the_local_scorer_is_told_apart_from_jevs(self):
+        assert chat_gate.from_our_checks(chat_gate.LOCAL_SCORER)
+        assert chat_gate.from_our_checks("fhi/local-checks-2")
+        assert not chat_gate.from_our_checks(chat_gate.SCORER)
+        assert not chat_gate.from_our_checks("")
+        assert not chat_gate.from_our_checks(None)
+        assert not chat_gate.same_rubric(chat_gate.LOCAL_SCORER)
+
+
 class TestParseAnswers:
-    def test_reads_the_three_answers(self):
-        scores = chat_gate.parse_answers(_payload(0.8, 0.2, 0.1))
-        assert scores == chat_gate.GateScores(0.8, 0.2, 0.1)
+    def test_reads_the_four_answers(self):
+        scores = chat_gate.parse_answers(_payload(0.8, 0.2, 0.1, 0.15))
+        assert scores == chat_gate.GateScores(0.8, 0.2, 0.1, 0.15)
+
+    def test_a_payload_without_the_promise_answer_raises(self):
+        payload = _payload()
+        del payload["answers"][chat_gate.PROMISES_OUTCOME]
+        with pytest.raises(chat_gate.ChatGateError):
+            chat_gate.parse_answers(payload)
 
     @pytest.mark.parametrize(
         "payload",
@@ -163,6 +214,8 @@ class TestParseAnswers:
             _payload(answers=1.2),
             _payload(verdict=-0.1),
             _payload(asks_again=float("nan")),
+            _payload(promises=1.5),
+            _payload(promises=None),
             _payload(answers=True),
             _payload(answers="0.9"),
             "not json at all",
@@ -195,17 +248,26 @@ class TestState:
         assert len(state) <= chat_gate.STATE_CHAR_CAP
         assert state.endswith("R" * 20_000)
 
-    def test_the_questions_point_at_the_named_parts(self):
-        for question in chat_gate.QUESTIONS.values():
+    def test_four_questions_each_pointing_at_the_named_parts(self):
+        assert set(chat_gate.QUESTIONS) == {
+            chat_gate.ANSWERS_QUESTION,
+            chat_gate.STATES_VERDICT,
+            chat_gate.ASKS_AGAIN,
+            chat_gate.PROMISES_OUTCOME,
+        }
+        for name, question in chat_gate.QUESTIONS.items():
             assert question["type"] == "noul"
             assert "THE REPLY" in question["instructions"]
-            assert "THE PERSON'S MESSAGE" in question["instructions"] or (
-                question is chat_gate.QUESTIONS[chat_gate.STATES_VERDICT]
+            assert "THE PERSON'S MESSAGE" in question["instructions"] or name in (
+                chat_gate.STATES_VERDICT,
+                chat_gate.PROMISES_OUTCOME,
             )
 
     def test_the_scorer_names_the_answering_model_and_the_rubric(self):
+        assert chat_gate.RUBRIC_VERSION == 2
         scorer = chat_gate.scorer_for({"model": "jev-1.14.0"})
-        assert scorer == "typesafe/jev-1.14.0/chat-gate-rubric-1"
+        assert scorer == "typesafe/jev-1.14.0/chat-gate-rubric-2"
+        assert not chat_gate.same_rubric("typesafe/jev-1.14.0/chat-gate-rubric-1")
         assert chat_gate.same_rubric(scorer)
         assert not chat_gate.same_rubric("typesafe/jev-1.13.0/rubric-1")
         assert chat_gate.scorer_for({}) == chat_gate.SCORER
@@ -244,8 +306,8 @@ class TestCheckReply:
         ):
             result = await chat_gate.check_reply(MESSAGE, REPLY, timeout=1.0)
         assert result.outcome == chat_gate.PASS
-        assert result.scores == chat_gate.GateScores(0.9, 0.05, 0.05)
-        assert result.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-1"
+        assert result.scores == chat_gate.GateScores(0.9, 0.05, 0.05, 0.05)
+        assert result.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-2"
 
     @pytest.mark.asyncio
     async def test_a_reply_that_states_a_verdict_fails(self):
@@ -258,6 +320,18 @@ class TestCheckReply:
             result = await chat_gate.check_reply(MESSAGE, REPLY, timeout=1.0)
         assert result.outcome == chat_gate.FAIL
         assert result.scores is not None and result.scores.verdict == 0.8
+
+    @pytest.mark.asyncio
+    async def test_a_reply_jev_reads_as_a_promise_fails(self):
+        with (
+            override_settings(**ENABLED),
+            patch.object(
+                chat_gate, "_post", new=AsyncMock(return_value=_payload(promises=0.8))
+            ),
+        ):
+            result = await chat_gate.check_reply(MESSAGE, REPLY, timeout=1.0)
+        assert result.outcome == chat_gate.FAIL
+        assert result.scores is not None and result.scores.promises == 0.8
 
     @pytest.mark.asyncio
     async def test_the_request_carries_the_redacted_state_and_the_questions(self):
@@ -475,8 +549,8 @@ class TestReplyGate:
             assert await gate.judge(MESSAGE, REPLY, "fhi-local") is True
         gate.finish()
         assert gate.outcome == chat_gate.PASS
-        assert gate.scores == chat_gate.GateScores(0.9, 0.05, 0.05)
-        assert gate.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-1"
+        assert gate.scores == chat_gate.GateScores(0.9, 0.05, 0.05, 0.05)
+        assert gate.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-2"
         assert gate.model == "fhi-local"
         assert isinstance(gate.ms, int)
 
@@ -515,6 +589,43 @@ class TestReplyGate:
             assert await gate.judge(MESSAGE, reply, "fhi-local") is False
         post.assert_not_called()
         assert gate.outcome == chat_gate.SKIPPED
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reply", [PROMISE_REPLY, SHORT_REPLY])
+    async def test_a_reply_our_own_checks_reject_fails_without_being_sent(
+        self, reply
+    ):
+        gate = _gate()
+        lookup = AsyncMock(return_value=[])
+        post = AsyncMock(return_value=_payload())
+        with (
+            override_settings(**ENABLED),
+            patch.object(reply_gate, "_aredactions", new=lookup),
+            patch.object(chat_gate, "_post", new=post),
+        ):
+            assert await gate.judge(MESSAGE, reply, "fhi-local") is False
+        lookup.assert_not_called()
+        post.assert_not_called()
+        assert gate.outcome == chat_gate.FAIL
+        assert gate.scorer == chat_gate.LOCAL_SCORER == "fhi/local-checks-1"
+        assert gate.scores is None
+        assert gate.wants_demotion() is True
+        # Nothing reached TypeSafe, so its health is not noted.
+        assert gate._health is None
+
+    @pytest.mark.asyncio
+    async def test_our_own_checks_hold_while_typesafe_is_failing(self):
+        gate = _gate()
+        post = AsyncMock(side_effect=typesafe.TypeSafeError("HTTP 503", status=503))
+        with (
+            override_settings(**ENABLED),
+            _no_identifiers(),
+            patch.object(chat_gate, "_post", new=post),
+        ):
+            assert await gate.judge(MESSAGE, PROMISE_REPLY, "fhi-local") is False
+        post.assert_not_called()
+        assert gate.outcome == chat_gate.FAIL
+        assert gate.wants_demotion() is True
 
     @pytest.mark.asyncio
     async def test_no_identifier_list_means_nothing_is_sent(self):
@@ -630,6 +741,23 @@ class TestHealthRecord:
         with override_settings(**ENABLED):
             await gate.judge(MESSAGE, TOOL_REPLY, "fhi-local")
         await gate.anote_health()
+        assert not await sync_to_async(
+            ExternalServiceHealth.objects.filter(service=chat_gate.SERVICE).exists
+        )()
+
+    @pytest.mark.asyncio
+    async def test_a_reply_our_own_checks_reject_notes_nothing(self):
+        gate = _gate()
+        post = AsyncMock(return_value=_payload())
+        with (
+            override_settings(**ENABLED),
+            _no_identifiers(),
+            patch.object(chat_gate, "_post", new=post),
+        ):
+            await gate.judge(MESSAGE, PROMISE_REPLY, "fhi-local")
+        await gate.anote_health()
+        post.assert_not_called()
+        assert gate.outcome == chat_gate.FAIL
         assert not await sync_to_async(
             ExternalServiceHealth.objects.filter(service=chat_gate.SERVICE).exists
         )()
@@ -839,7 +967,9 @@ def test_a_turn_without_a_check_says_so():
         fields["gate_answers"],
         fields["gate_verdict"],
         fields["gate_asks_again"],
+        fields["gate_promises"],
     ) == (
+        None,
         None,
         None,
         None,
@@ -855,8 +985,8 @@ def test_the_row_carries_the_check_numbers_only():
     turn = TurnRecord.start(True, [_Named("a")])
     turn.set_gate(
         chat_gate.FAIL,
-        (0.4, 0.1, float("nan")),
-        "typesafe/jev-1.13.0/chat-gate-rubric-1",
+        (0.4, 0.1, float("nan"), 0.85),
+        "typesafe/jev-1.13.0/chat-gate-rubric-2",
         412,
         "fhi-local",
     )
@@ -864,10 +994,21 @@ def test_the_row_carries_the_check_numbers_only():
     assert fields["gate_used"] is True
     assert fields["gate_outcome"] == "fail"
     assert (fields["gate_answers"], fields["gate_verdict"]) == (0.4, 0.1)
+    assert fields["gate_promises"] == 0.85
     # Postgres jsonb and float columns take no NaN: a non-finite answer is null.
     assert fields["gate_asks_again"] is None
     assert fields["gate_ms"] == 412
     assert fields["gate_model"] == "fhi-local"
+
+
+def test_the_row_records_a_fail_by_our_own_checks():
+    turn = TurnRecord.start(True, [_Named("a")])
+    turn.set_gate(chat_gate.FAIL, None, chat_gate.LOCAL_SCORER, 3, "fhi-local")
+    fields = turn.row_fields("ok")
+    assert fields["gate_outcome"] == "fail"
+    assert fields["gate_scorer"] == "fhi/local-checks-1"
+    assert fields["gate_promises"] is None
+    assert fields["gate_answers"] is None
 
 
 def test_the_row_records_the_demotion():

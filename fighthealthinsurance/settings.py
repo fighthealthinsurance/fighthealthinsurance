@@ -246,8 +246,9 @@ class Base(Configuration):
     )
     # The decision rule: our reply passes when Jev's "responds to the
     # message" answer is at least MIN_ANSWERS and its "states a coverage or
-    # eligibility verdict" and "asks for what was already given" answers
-    # are each below MAX_PROBLEM (all probabilities from 0 to 1).
+    # eligibility verdict", "asks for what was already given" and "promises
+    # a result" answers are each below MAX_PROBLEM (all probabilities from
+    # 0 to 1). A reply our own checks reject fails before Jev is asked.
     FHI_CHAT_JEV_GATE_MIN_ANSWERS = _env_float(
         "FHI_CHAT_JEV_GATE_MIN_ANSWERS", 0.7, minimum=0.0, maximum=1.0
     )

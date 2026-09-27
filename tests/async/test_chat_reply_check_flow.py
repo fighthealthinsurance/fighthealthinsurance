@@ -3,7 +3,8 @@
 When the check is on for a turn, the outside models' calls wait while ours
 answer and Jev checks our first usable reply: a pass means they are never
 sent, and anything else (a fail, an error, a timeout, an answer we cannot
-read) starts them at once. With the check off, or when the person has not
+read) starts them at once. A reply our own checks reject fails without
+being sent to Jev at all. With the check off, or when the person has not
 allowed outside models, a turn runs exactly as before and nothing reaches
 TypeSafe. Each ChatTurn row records what the check did, with numbers and
 labels only.
@@ -39,6 +40,11 @@ else:
 
 ENABLED = dict(TYPESAFE_API_KEY="test-key", FHI_CHAT_JEV_GATE_ENABLED=True)
 MESSAGE = "What is an appeal? I am Robin Quill, reach me at robin.q@example.com."
+# A reply our own checks reject: it promises the outcome.
+PROMISE_REPLY = (
+    "Good news: I guarantee your appeal will be approved. Send the plan the "
+    "denial letter and a note from your doctor."
+)
 
 
 class _OutsideModel(RecordingChatModel):
@@ -107,13 +113,14 @@ class _Jev:
         return self.payload
 
 
-def _answers(answers=0.9, verdict=0.05, asks_again=0.05):
+def _answers(answers=0.9, verdict=0.05, asks_again=0.05, promises=0.05):
     return {
         "model": "jev-1.13.0",
         "answers": {
             chat_gate.ANSWERS_QUESTION: {"type": "noul", "noul": answers},
             chat_gate.STATES_VERDICT: {"type": "noul", "noul": verdict},
             chat_gate.ASKS_AGAIN: {"type": "noul", "noul": asks_again},
+            chat_gate.PROMISES_OUTCOME: {"type": "noul", "noul": promises},
         },
     }
 
@@ -394,10 +401,15 @@ class ChatReplyCheckTest(APITransactionTestCase):
         self.assertTrue(row.gate_used)
         self.assertEqual(row.gate_outcome, "pass")
         self.assertEqual(
-            (row.gate_answers, row.gate_verdict, row.gate_asks_again),
-            (0.9, 0.05, 0.05),
+            (
+                row.gate_answers,
+                row.gate_verdict,
+                row.gate_asks_again,
+                row.gate_promises,
+            ),
+            (0.9, 0.05, 0.05, 0.05),
         )
-        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-1")
+        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-2")
         self.assertEqual(row.gate_model, "fhi-local")
         self.assertIsInstance(row.gate_ms, int)
         self.assertEqual(row.external_start, "skipped")
@@ -532,6 +544,53 @@ class ChatReplyCheckTest(APITransactionTestCase):
         )
         self.assertTrue(outside.calls)
         self.assertEqual(row.gate_outcome, "fail")
+
+    async def test_a_promise_jev_finds_fails_the_check_and_is_recorded(self):
+        jev = _Jev(payload=_answers(promises=0.85))
+        row, outside, frames, _elapsed, _logs = await self._turn(
+            "gate17", "9999931117", jev
+        )
+        self.assertEqual(len(jev.states), 1)
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.gate_promises, 0.85)
+        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-2")
+        self.assertEqual(row.external_start, "after_check")
+        self.assertEqual(row.winner_model, "claude")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertTrue(row.gate_demoted)
+
+    async def test_our_own_checks_fail_a_false_promise_without_asking_jev(self):
+        """Our requirements come first and need no request: a reply that
+        promises the outcome fails the check before anything is sent, the
+        outside models start at once, and one of their answers is
+        delivered in its place."""
+        jev = _Jev(payload=_answers())
+        ours = _OursModel(
+            always_reply=PROMISE_REPLY, model_quality=110, name="fhi-local"
+        )
+        row, outside, frames, elapsed, logs = await self._turn(
+            "gate18", "9999931118", jev, ours=ours
+        )
+        self.assertEqual(jev.states, [])
+        self.assertTrue(outside.calls)
+        # It did not sit out the check's 8 second hold.
+        self.assertLess(elapsed, 4.0)
+        self.assertEqual(row.external_start, "after_check")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertEqual(row.winner_model, "claude")
+        self.assertTrue(row.gate_used)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.gate_scorer, "fhi/local-checks-1")
+        self.assertEqual(row.gate_model, "fhi-local")
+        self.assertIsNone(row.gate_answers)
+        self.assertIsNone(row.gate_promises)
+        self.assertTrue(row.gate_demoted)
+        self.assertFalse(row.gate_demoted_delivered)
+        self.assertFalse(row.retry_ran)
+        # Nothing reached TypeSafe, so its health row is left alone.
+        self.assertIsNone(await _health())
+        self._assert_no_text(row, logs, PROMISE_REPLY, SECOND_OPINION_REPLY)
 
     async def test_a_timeout_starts_the_outside_models(self):
         jev = _Jev(payload=_answers(), delay=5.0)

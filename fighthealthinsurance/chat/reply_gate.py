@@ -1,20 +1,25 @@
 """The live Jev check on our own chat reply, inside the chat fan-out
-(ml/chat_gate.py holds the questions and the decision rule).
+(ml/chat_gate.py holds our own checks, the questions and the decision rule).
 
 When the check is on for a turn, the primary pass holds the outside models'
-calls back while ours answer. The first usable reply of ours is checked:
+calls back while ours answer. The first usable reply of ours is checked,
+by our own checks first: a reply they reject (empty, too short or a false
+promise, the rule the retry uses) fails the check without being sent to
+TypeSafe, so our requirements hold whether or not Jev can be reached. Any
+other reply goes to Jev with four questions. The outcome:
 
 * pass: the primary pass never sends the outside calls, and picks among
   our models' answers. The retry, which runs only when our own checks
   reject the reply (empty, too short or a false promise), may still ask
   them;
-* fail, error or timeout: the outside calls start at once, and the usual
-  scoring picks the winner among everything that answers. After a fail
-  (not an error or a timeout), and while FHI_CHAT_JEV_GATE_DEMOTE_FAILED is
-  on, the judged reply, and any with the same text, ranks just below the
-  best outside answer that could be delivered, so it wins only when no
-  such answer arrives; our other replies keep their scores
-  (utils.best_two_within_timelimit's ``demote_failed``).
+* fail (from Jev or from our own checks), error or timeout: the outside
+  calls start at once, and the usual scoring picks the winner among
+  everything that answers. After a fail (not an error or a timeout), and
+  while FHI_CHAT_JEV_GATE_DEMOTE_FAILED is on, the judged reply, and any
+  with the same text, ranks just below the best outside answer that could
+  be delivered, so it wins only when no such answer arrives; our other
+  replies keep their scores (utils.best_two_within_timelimit's
+  ``demote_failed``).
 
 The outside calls are held for at most FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS
 (or the routing policy's delay, when that is longer), whether or not a
@@ -32,7 +37,7 @@ models selectable. The fan-out adds the last condition: the pass must have
 outside calls to hold back and calls of ours to start first.
 
 Nothing here stores or logs text. The texts are held in memory while the
-check runs; the turn row gets the three numbers, the scorer string, the
+check runs; the turn row gets the four numbers, the scorer string, the
 outcome, the time the check took and the judged model's label. Errors are
 logged by class name only.
 
@@ -204,6 +209,13 @@ class ReplyGate:
             or not chat_gate.judgeable(message)
         ):
             self.outcome = chat_gate.SKIPPED
+            return False
+        # Our own requirements first, and without sending anything: a reply
+        # the retry would reject fails here whether or not Jev can be
+        # reached. Nothing reached TypeSafe, so there is no health to note.
+        if chat_gate.fails_our_checks(reply):
+            self.outcome = chat_gate.FAIL
+            self.scorer = chat_gate.LOCAL_SCORER
             return False
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.timeout_seconds

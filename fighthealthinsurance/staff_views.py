@@ -43,6 +43,7 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.chat.llm_client import MIN_RESPONSE_LENGTH
 from fighthealthinsurance.chat.turn_record import (
     COMPLETED_STATUSES,
     STATUS_EMPTY,
@@ -1504,6 +1505,7 @@ CHAT_TURN_FIELDS = (
     "external_start",
     "gate_used",
     "gate_outcome",
+    "gate_scorer",
     "gate_demoted_delivered",
 )
 
@@ -1538,12 +1540,14 @@ class _ChatTally:
         # promise), so they were not "never sent".
         self.externals_skipped_retried = 0
         # The live Jev check on our reply: turns it held the outside models
-        # for, by outcome; turns whose outside calls it kept from being sent;
-        # and, of the OK turns where the check failed, how many delivered an
-        # outside model's answer, and how many still delivered our demoted
-        # reply because nothing else usable arrived.
+        # for, by outcome, and of the fails, how many our own checks decided
+        # without sending the reply to Jev; turns whose outside calls it kept
+        # from being sent; and, of the OK turns where the check failed, how
+        # many delivered an outside model's answer, and how many still
+        # delivered our demoted reply because nothing else usable arrived.
         self.gate_turns = 0
         self.gate_outcomes: Counter = Counter()
+        self.gate_fail_local = 0
         self.gate_saved = 0
         self.gate_fail_ok = 0
         self.gate_fail_external_wins = 0
@@ -1592,6 +1596,7 @@ class _ChatTally:
             external_start,
             gate_used,
             gate_outcome,
+            gate_scorer,
             gate_demoted_delivered,
         ) = row
         self.turns += 1
@@ -1608,6 +1613,10 @@ class _ChatTally:
         if gate_used:
             self.gate_turns += 1
             self.gate_outcomes[gate_outcome] += 1
+            if gate_outcome == chat_gate.FAIL and chat_gate.from_our_checks(
+                gate_scorer
+            ):
+                self.gate_fail_local += 1
             if (
                 gate_outcome == chat_gate.PASS
                 and external_start == STAGE_SKIPPED
@@ -1754,6 +1763,7 @@ class _ChatTally:
                 "gate_turns": self.gate_turns,
                 "gate_pass": self.gate_outcomes[chat_gate.PASS],
                 "gate_fail": self.gate_outcomes[chat_gate.FAIL],
+                "gate_fail_local": self.gate_fail_local,
                 "gate_error": self.gate_outcomes[chat_gate.ERROR],
                 "gate_timeout": self.gate_outcomes[chat_gate.TIMEOUT],
                 "gate_skipped": self.gate_outcomes[chat_gate.SKIPPED],
@@ -2119,6 +2129,8 @@ class ModelUsageDashboardView(generic.TemplateView):
             "min_answers": chat_gate.min_answers(),
             "max_problem": chat_gate.max_problem(),
             "demote_failed": chat_gate.demote_failed(),
+            # Our own checks, which come before Jev is asked.
+            "min_response_length": MIN_RESPONSE_LENGTH,
             "last_success_at": None,
             "last_failure_at": None,
             "last_failure": "",

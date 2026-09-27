@@ -719,6 +719,7 @@ class ChatInterface:
                             gate_scores.answers,
                             gate_scores.verdict,
                             gate_scores.asks_again,
+                            gate_scores.promises,
                         )
                         if gate_scores is not None
                         else None

@@ -3835,12 +3835,14 @@ class ChatTurn(models.Model):
     external_delay_seconds = models.FloatField(null=True, blank=True)
     # The live Jev check on our first usable reply (chat/reply_gate.py):
     # whether the primary pass held the outside models back for it, and how
-    # it came out. The three answers are Jev's probabilities (0 to 1) that
+    # it came out. The four answers are Jev's probabilities (0 to 1) that
     # the reply responds to the message, states a coverage or eligibility
-    # verdict, and asks for something the message already gives; null
-    # unless Jev answered. The scorer names the model that answered and the
-    # rubric version. gate_model is the label of the model whose reply was
-    # judged. Numbers and labels only, never text.
+    # verdict, asks for something the message already gives, and promises
+    # a result; null unless Jev answered. The scorer names the model that
+    # answered and the rubric version, or is fhi/local-checks-N when our
+    # own checks failed the reply before Jev was asked. gate_model is the
+    # label of the model whose reply was judged. Numbers and labels only,
+    # never text.
     gate_used = models.BooleanField(default=False)
     gate_outcome = models.CharField(
         max_length=16, blank=True, default="", choices=GateOutcome.choices
@@ -3848,6 +3850,7 @@ class ChatTurn(models.Model):
     gate_answers = models.FloatField(null=True, blank=True)
     gate_verdict = models.FloatField(null=True, blank=True)
     gate_asks_again = models.FloatField(null=True, blank=True)
+    gate_promises = models.FloatField(null=True, blank=True)
     gate_scorer = models.CharField(max_length=80, blank=True, default="")
     gate_ms = models.PositiveIntegerField(null=True, blank=True)
     gate_model = models.CharField(max_length=200, blank=True, default="")

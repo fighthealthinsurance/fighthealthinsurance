@@ -28,7 +28,8 @@ LABEL_AND_ENUM_FIELDS = {
     "preferred",
     "external_start",
     "gate_outcome",
-    # The scorer string: "typesafe/<model>/chat-gate-rubric-<n>".
+    # The scorer string: "typesafe/<model>/chat-gate-rubric-<n>", or
+    # "fhi/local-checks-<n>" when our own checks failed the reply.
     "gate_scorer",
     "gate_model",
 }
@@ -177,7 +178,8 @@ class ChatTurnReplyCheckTest(TestCase):
             gate_answers=0.4,
             gate_verdict=0.1,
             gate_asks_again=0.05,
-            gate_scorer="typesafe/jev-1.13.0/chat-gate-rubric-1",
+            gate_promises=0.02,
+            gate_scorer="typesafe/jev-1.13.0/chat-gate-rubric-2",
             gate_ms=380,
             gate_model="fhi-local",
             gate_demoted=True,
@@ -189,6 +191,7 @@ class ChatTurnReplyCheckTest(TestCase):
             (row.gate_outcome, row.gate_answers, row.gate_ms, row.gate_model),
             ("fail", 0.4, 380, "fhi-local"),
         )
+        self.assertEqual(row.gate_promises, 0.02)
         self.assertTrue(row.gate_demoted)
         self.assertTrue(row.gate_demoted_delivered)
         self.assertEqual(row.external_start, "after_check")
@@ -202,6 +205,7 @@ class ChatTurnReplyCheckTest(TestCase):
             (row.gate_outcome, row.gate_answers, row.gate_scorer, row.gate_ms),
             ("", None, "", None),
         )
+        self.assertIsNone(row.gate_promises)
 
     def test_the_admin_filters_by_the_check(self):
         self.assertIn("gate_outcome", admin.site._registry[ChatTurn].list_filter)

@@ -5,10 +5,17 @@ This is the cascade TypeSafe documents (docs.typesafe.ai/cookbooks/
 sde_cascade): the cheap model answers first, Jev checks the answer, and the
 expensive models are asked only when the check does not pass. In chat,
 "cheap" is our own models and "expensive" is the outside ones.
-chat/reply_gate.py runs it inside the chat fan-out; this module holds the
-questions, the decision rule and the request.
+chat/reply_gate.py runs it inside the chat fan-out; this module holds our
+own checks, the questions, the decision rule and the request.
 
-The questions. Three yes/no ("noul") questions about the reply, each read
+Our own checks come first. Before anything is sent, the reply must pass
+the rule the retry uses (chat/retry_handler.should_retry_response): not
+empty, at least MIN_RESPONSE_LENGTH characters, and no promised outcome
+(chat/safety_filters.detect_false_promises). A reply that fails them fails
+the check with the scorer LOCAL_SCORER and is never sent to TypeSafe, so
+these requirements hold whether or not Jev can be reached.
+
+The questions. Four yes/no ("noul") questions about the reply, read
 against the person's latest message, written for Jev's literal reading
 (docs.typesafe.ai/model-jaggedness/jev-1.13): the state names its two parts
 in capitals and each question points at them by name.
@@ -19,6 +26,9 @@ in capitals and each question points at them by name.
   as a settled fact? Yes is a problem: the reply cannot know that.
 * ``asks_again``: does the reply ask for something the message already
   gives? Yes is a problem.
+* ``promises_outcome``: does the reply promise or guarantee a result, such
+  as an approval or a win? Yes is a problem: the same rule as our own
+  false-promise check, asked of Jev too.
 
 The decision rule. A reply passes when ``answers_question`` is at least
 FHI_CHAT_JEV_GATE_MIN_ANSWERS (default 0.7) and each problem answer is
@@ -38,7 +48,7 @@ address and North American style phone number in the text, each value with
 its own stable token. That is a reduction, not de-identification. A request goes out
 only when the person allowed outside models for the chat, and the module is
 inert until BOTH ``TYPESAFE_API_KEY`` and ``FHI_CHAT_JEV_GATE_ENABLED`` are
-set. Kept: the three numbers, the scorer string and an outcome. The text is
+set. Kept: the four numbers, the scorer string and an outcome. The text is
 never stored and never logged, and a failure is kept as an HTTP status,
 "timeout" or an exception class name.
 """
@@ -52,6 +62,7 @@ import typing
 from django.conf import settings
 from loguru import logger
 
+from fighthealthinsurance.chat.retry_handler import should_retry_response
 from fighthealthinsurance.ml import letter_quality, typesafe
 
 # Key of the cross-pod health record (models.ExternalServiceHealth). Its own
@@ -60,13 +71,19 @@ SERVICE = "typesafe-chat-gate"
 
 # Recorded with every answered check. Bump RUBRIC_VERSION whenever a question
 # changes, so rows under another rubric can be told apart.
-RUBRIC_VERSION = 1
+RUBRIC_VERSION = 2
 _RUBRIC_SUFFIX = f"/chat-gate-rubric-{RUBRIC_VERSION}"
 SCORER = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
 _SCORER_RE = re.compile(r"^typesafe/([A-Za-z0-9._-]{1,48})/chat-gate-rubric-(\d{1,4})$")
 
+# Recorded instead when our own checks failed the reply before Jev was asked
+# (fails_our_checks). Bump the number whenever those checks change.
+LOCAL_SCORER = "fhi/local-checks-1"
+_LOCAL_SCORER_RE = re.compile(r"^fhi/local-checks-\d{1,4}$")
+
 # Outcomes stored on ChatTurn.gate_outcome. pass: Jev answered and the reply
-# met the thresholds. fail: Jev answered and it did not. error: the request
+# met the thresholds. fail: Jev answered and it did not, or our own checks
+# failed the reply before anything was sent. error: the request
 # failed, was refused or came back in a shape we could not read. timeout: no
 # answer in time. skipped: the check was on for the turn but nothing was
 # judged (no usable reply of ours in time, or one that could not be judged).
@@ -80,6 +97,7 @@ OUTCOMES = (PASS, FAIL, ERROR, TIMEOUT, SKIPPED)
 ANSWERS_QUESTION = "answers_question"
 STATES_VERDICT = "states_verdict"
 ASKS_AGAIN = "asks_again"
+PROMISES_OUTCOME = "promises_outcome"
 
 QUESTIONS: dict[str, dict[str, typing.Any]] = {
     ANSWERS_QUESTION: {
@@ -130,6 +148,21 @@ QUESTIONS: dict[str, dict[str, typing.Any]] = {
             ),
         },
     },
+    PROMISES_OUTCOME: {
+        "type": "noul",
+        "instructions": (
+            "Does THE REPLY promise or guarantee the person a result: that an "
+            "appeal, claim or request will be approved, will succeed or will "
+            "be won, or that something always works?"
+        ),
+        "criteria": {
+            "true": "It promises or guarantees a result, or says one is certain.",
+            "false": (
+                "It promises no result: it may say what could help, or how "
+                "such cases often go, without guaranteeing an outcome."
+            ),
+        },
+    },
 }
 
 MESSAGE_HEADER = "THE PERSON'S MESSAGE:\n"
@@ -160,6 +193,7 @@ class GateScores:
     answers: float  # 0..1, yes = responds to the message
     verdict: float  # 0..1, yes = states a coverage or eligibility verdict
     asks_again: float  # 0..1, yes = asks for what the message already gives
+    promises: float  # 0..1, yes = promises or guarantees a result
 
 
 @dataclasses.dataclass(frozen=True)
@@ -234,13 +268,22 @@ def demote_failed() -> bool:
 
 def passes(scores: GateScores) -> bool:
     """The decision rule: the reply responds to the message (at least
-    min_answers) and neither problem is likely (each below max_problem)."""
+    min_answers) and no problem is likely (each below max_problem)."""
     limit = max_problem()
     return (
         scores.answers >= min_answers()
         and scores.verdict < limit
         and scores.asks_again < limit
+        and scores.promises < limit
     )
+
+
+def fails_our_checks(reply: typing.Optional[str]) -> bool:
+    """Whether our own requirements reject the reply, by the rule the retry
+    uses (chat/retry_handler.should_retry_response): empty, shorter than
+    MIN_RESPONSE_LENGTH, or a false promise. No request is involved, so it
+    works whether or not Jev can be reached."""
+    return should_retry_response(reply)
 
 
 def scorer_for(payload: typing.Any) -> str:
@@ -252,6 +295,12 @@ def same_rubric(scorer: typing.Optional[str]) -> bool:
     """Whether a stored scorer string is ours and names the current rubric."""
     match = _SCORER_RE.match(str(scorer or ""))
     return match is not None and int(match.group(2)) == RUBRIC_VERSION
+
+
+def from_our_checks(scorer: typing.Optional[str]) -> bool:
+    """Whether a stored scorer string says our own checks failed the reply
+    before Jev was asked, under any version of those checks."""
+    return _LOCAL_SCORER_RE.match(str(scorer or "")) is not None
 
 
 def judgeable(text: typing.Optional[str]) -> bool:
@@ -293,6 +342,7 @@ def parse_answers(payload: typing.Any) -> GateScores:
             answers=_probability(answers[ANSWERS_QUESTION]["noul"]),
             verdict=_probability(answers[STATES_VERDICT]["noul"]),
             asks_again=_probability(answers[ASKS_AGAIN]["noul"]),
+            promises=_probability(answers[PROMISES_OUTCOME]["noul"]),
         )
     except ChatGateError:
         raise

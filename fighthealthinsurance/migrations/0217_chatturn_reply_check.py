@@ -2,7 +2,7 @@
 #
 # The live Jev check on our own chat reply, on each chat turn row: whether
 # the primary pass held the outside models back for it, its outcome, Jev's
-# three answers, the scorer string, how long it took and the judged model's
+# four answers, the scorer string, how long it took and the judged model's
 # label. Numbers and labels only, never text. Also the external_start value
 # for outside models started because the check did not pass.
 
@@ -71,6 +71,11 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="chatturn",
             name="gate_asks_again",
+            field=models.FloatField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="chatturn",
+            name="gate_promises",
             field=models.FloatField(blank=True, null=True),
         ),
         migrations.AddField(

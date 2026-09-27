@@ -242,7 +242,8 @@ The cascade TypeSafe documents (docs.typesafe.ai/cookbooks/sde_cascade):
 our models answer first, TypeSafe's Jev checks the answer, and the paid
 outside models are asked only when the check does not pass.
 `chat/reply_gate.py` runs it inside the primary pass's staged fan-out;
-`ml/chat_gate.py` holds the questions and the decision rule.
+`ml/chat_gate.py` holds our own checks, the questions and the decision
+rule.
 
 * **When.** Only when all of these hold: `FHI_CHAT_JEV_GATE_ENABLED` is on
   (off by default, forced off in every test configuration), the TypeSafe
@@ -256,17 +257,27 @@ outside models are asked only when the check does not pass.
   judged, or `FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS` (8s) passes, whichever
   comes first; when the routing policy's delay is longer, that is the hold.
   They start at once when ours all fail.
+* **Our own checks first.** Before anything is sent, our first usable
+  reply (as cleaned for delivery) must pass the rule the retry uses
+  (`chat/retry_handler.should_retry_response`): not empty, at least
+  `MIN_RESPONSE_LENGTH` (5) characters, and no promised outcome
+  (`safety_filters.detect_false_promises`). A reply that fails them fails
+  the check with the scorer `fhi/local-checks-1`, is never sent to
+  TypeSafe, and leaves the health row alone. These requirements hold
+  whether or not Jev can be reached.
 * **The check.** One request per turn: the person's latest message and our
   first usable reply (as cleaned for delivery), redacted as letter scoring
   redacts with the identifiers `chat/redaction.py` collects for the chat's
   accounts and its linked appeals and prior authorization requests (if
-  that list cannot be read, nothing is sent), with three yes/no questions: does the reply respond to what the
-  message asks or says; does it state a coverage or eligibility outcome as
-  a settled fact; does it ask for something the message already gives. It
-  passes when the first answer is at least `FHI_CHAT_JEV_GATE_MIN_ANSWERS`
-  (0.7) and the other two are each below `FHI_CHAT_JEV_GATE_MAX_PROBLEM`
-  (0.3). A reply carrying a tool call or the data-deletion handoff is not
-  sent; the outside calls start instead.
+  that list cannot be read, nothing is sent), with four yes/no questions:
+  does the reply respond to what the message asks or says; does it state
+  a coverage or eligibility outcome as a settled fact; does it ask for
+  something the message already gives; does it promise or guarantee a
+  result (our own false-promise rule, asked of Jev too). It passes when
+  the first answer is at least `FHI_CHAT_JEV_GATE_MIN_ANSWERS` (0.7) and
+  the other three are each below `FHI_CHAT_JEV_GATE_MAX_PROBLEM` (0.3). A
+  reply carrying a tool call or the data-deletion handoff is not sent; the
+  outside calls start instead.
 * **Database work.** The identifier lookup and the health note after the
   turn each run on a thread of their own with their own connection, closed
   afterwards, inside a transaction with a statement timeout on PostgreSQL
@@ -286,9 +297,9 @@ outside models are asked only when the check does not pass.
   start at once and the usual scoring picks among everything. The check
   never holds the reply back, and the race's windows still run from its
   start.
-* **A failed reply is demoted.** After a fail (never an error, a timeout
-  or a reply that was not judged), and while
-  `FHI_CHAT_JEV_GATE_DEMOTE_FAILED` is on (the default; pinned on in every
+* **A failed reply is demoted.** After a fail, from Jev or from our own
+  checks (never an error, a timeout or a reply that was not judged), and
+  while `FHI_CHAT_JEV_GATE_DEMOTE_FAILED` is on (the default; pinned on in every
   test configuration), the judged reply, and any reply with the same
   text whatever its context summary, ranks one point below the best
   outside answer that has arrived and could be delivered (not empty, too
@@ -299,13 +310,15 @@ outside models are asked only when the check does not pass.
   demoted reply is never the runner-up or the side-by-side alternate, and
   it is still delivered when nothing else usable arrives.
 * **Recorded** on the ChatTurn row: `gate_used`, `gate_outcome` (pass,
-  fail, error, timeout, or skipped when nothing was judged), Jev's three
+  fail, error, timeout, or skipped when nothing was judged), Jev's four
   answers, `gate_scorer` (the model TypeSafe reports plus the rubric
-  version), `gate_ms`, `gate_model` (whose reply was judged),
+  version, or `fhi/local-checks-1` when our own checks failed the reply
+  before Jev was asked), `gate_ms`, `gate_model` (whose reply was judged),
   `gate_demoted` (a fail demoted it) and `gate_demoted_delivered` (the
   primary pass still delivered it). The
   outcome also goes to the `typesafe-chat-gate` ExternalServiceHealth row
-  after the reply is sent. The staff usage dashboard shows the counts, how
+  after the reply is sent. The staff usage dashboard shows the counts
+  (and how many fails our own checks decided without asking Jev), how
   often the outside models were never sent because the check passed, and
   how often an outside model's answer was delivered after a failed check,
   and how often our demoted reply was delivered because nothing else
@@ -478,8 +491,10 @@ Three levels, in increasing detail:
 * The reply check sends text to TypeSafe only with the person's consent to
   outside models, and only while its own switch and the key are set. It
   fails open: anything but a pass starts the outside models, and nothing
-  it waits on runs past the race's windows. Only its numbers, outcome,
-  scorer, time and the judged model's label are kept.
+  it waits on runs past the race's windows. Our own checks run before it
+  and send nothing, so a reply they reject fails even when Jev is
+  unreachable. Only its numbers, outcome, scorer, time and the judged
+  model's label are kept.
 * `user_requested_repeat` is the master switch that disables the whole
   ladder, so it must match an explicit REQUEST ("repeat that", "say that
   again"), never the topic. "repeat MRI", "repeat colonoscopy", "repeat

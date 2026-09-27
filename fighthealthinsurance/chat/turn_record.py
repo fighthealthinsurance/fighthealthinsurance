@@ -382,13 +382,14 @@ class TurnRecord:
     external_delay_seconds: Optional[float] = None
     # The live Jev check on our first usable reply (chat/reply_gate.py):
     # whether the primary pass held the outside models back for it, its
-    # outcome, Jev's three answers, the scorer string, how long it took and
+    # outcome, Jev's four answers, the scorer string, how long it took and
     # which model's reply it judged. Numbers and labels only.
     gate_used: bool = False
     gate_outcome: str = ""
     gate_answers: Optional[float] = None
     gate_verdict: Optional[float] = None
     gate_asks_again: Optional[float] = None
+    gate_promises: Optional[float] = None
     gate_scorer: str = ""
     gate_ms: Optional[int] = None
     gate_model: str = ""
@@ -433,16 +434,17 @@ class TurnRecord:
         model: str,
     ) -> None:
         """Record the check the primary pass held the outside models for.
-        ``scores`` is (answers, verdict, asks_again), or None when Jev gave
-        no answer."""
+        ``scores`` is (answers, verdict, asks_again, promises), or None when
+        Jev gave no answer."""
         self.gate_used = True
         self.gate_outcome = str(outcome or "")[:_ENUM_MAX]
-        answers, verdict, asks_again = (
-            tuple(scores) if scores is not None else (None, None, None)
+        answers, verdict, asks_again, promises = (
+            tuple(scores) if scores is not None else (None, None, None, None)
         )
         self.gate_answers = _finite_or_none(answers)
         self.gate_verdict = _finite_or_none(verdict)
         self.gate_asks_again = _finite_or_none(asks_again)
+        self.gate_promises = _finite_or_none(promises)
         self.gate_scorer = str(scorer or "")[:_SCORER_MAX]
         self.gate_ms = max(0, int(ms)) if isinstance(ms, int) else None
         self.gate_model = str(model or "")[:_MODEL_LABEL_MAX]
@@ -541,6 +543,7 @@ class TurnRecord:
             "gate_answers": self.gate_answers,
             "gate_verdict": self.gate_verdict,
             "gate_asks_again": self.gate_asks_again,
+            "gate_promises": self.gate_promises,
             "gate_scorer": self.gate_scorer,
             "gate_ms": self.gate_ms,
             "gate_model": self.gate_model,

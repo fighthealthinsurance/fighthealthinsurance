@@ -2179,6 +2179,34 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
             "delivered arrived",
         )
         self.assertContains(response, "started early because the check on ours did not pass")
+        self.assertEqual(summary["gate_fail_local"], 0)
+        self.assertNotContains(response, "failed our own checks")
+
+    def test_fails_by_our_own_checks_are_counted(self):
+        """A reply our own checks rejected failed the check without being
+        sent to Jev: counted with the fails, and on its own."""
+        self._checked(
+            "fail",
+            "after_check",
+            gate_scorer="fhi/local-checks-1",
+            winner_model="claude",
+            winner_external=True,
+            gate_demoted=True,
+        )
+        self._checked(
+            "fail",
+            "after_check",
+            gate_scorer="typesafe/jev-1.13.0/chat-gate-rubric-2",
+            gate_demoted=True,
+        )
+        # Not a fail: never counted as one of ours, whatever the scorer.
+        self._checked("error", "after_check", gate_scorer="fhi/local-checks-1")
+        response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual((summary["gate_fail"], summary["gate_fail_local"]), (2, 1))
+        self.assertContains(
+            response, "(1 failed our own checks and were not sent to Jev)"
+        )
 
     def test_no_rate_without_a_denominator(self):
         self._checked("pass", "skipped")
@@ -2209,6 +2237,14 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         )
         self.assertContains(response, 'id="chat-reply-check"')
         self.assertContains(response, "FHI_CHAT_JEV_GATE_ENABLED is off")
+        self.assertEqual(state["min_response_length"], 5)
+        self.assertContains(
+            response,
+            "Before Jev is asked, the reply must pass our own checks, the rule "
+            "the retry uses: not empty, at least 5 characters, and no promised "
+            "outcome.",
+        )
+        self.assertContains(response, "&ldquo;promises a result&rdquo;")
         self.assertTrue(state["demote_failed"])
         self.assertContains(
             response, "A reply that fails the check ranks just below the outside"
