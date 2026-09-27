@@ -917,6 +917,8 @@ class ChatJevTiersTest(_CheckedTurns, APITransactionTestCase):
         )
         self.assertIn(("claude", "skipped"), _statuses(row))
         self.assertIn(("kimi", "scored"), _statuses(row))
+        # Listed with the turn's backends, as an outside model.
+        self.assertIn("kimi", row.backends)
 
     async def test_an_ordinary_pass_never_sends_the_side_by_side_model(self):
         kimi = self._kimi()

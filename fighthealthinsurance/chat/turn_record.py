@@ -443,6 +443,15 @@ class TurnRecord:
             external_by_label=external_by_label,
         )
 
+    def add_reserved_backend(self, backend: Any) -> None:
+        """A backend the primary pass reserved (the crucial side-by-side
+        model): listed with the turn's backends, so the dashboard counts it
+        as asked when a call was sent and knows whether it is outside."""
+        label = _label(backend)
+        if label not in self.backends:
+            self.backends.append(label)
+        self.external_by_label.setdefault(label, _is_external(backend))
+
     def mark_fanout_done(self, pass_started: float) -> None:
         self.fanout_ms = _ms_since(pass_started)
 

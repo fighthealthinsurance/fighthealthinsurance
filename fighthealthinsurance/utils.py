@@ -1782,7 +1782,14 @@ async def best_two_within_timelimit(
             outcome = ""
             verdict: Optional[CheckVerdict] = None
             while not outcome:
-                if check_task is not None and check_task.done():
+                # A verdict counts only inside the stage window: one that
+                # finished after the delay ran out (the loop resumed late)
+                # is ignored, and the held-back tasks start as after a delay.
+                if (
+                    check_task is not None
+                    and check_task.done()
+                    and loop.time() <= defer_deadline
+                ):
                     verdict = _check_verdict(check_task)
                     passed = verdict.passed
                     if stage is not None:

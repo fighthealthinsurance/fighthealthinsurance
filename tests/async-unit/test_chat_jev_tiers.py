@@ -406,3 +406,74 @@ async def test_each_ranked_call_keeps_jevs_score():
     log.note_jev(object(), 0.5)
     assert rows[0]["jev"] == 0.8765
     assert "jev" not in rows[1]
+
+
+# --- What may be ranked or shown beside the reply ------------------------------
+
+
+def _interface():
+    from fighthealthinsurance.chat_interface import ChatInterface
+
+    return ChatInterface.__new__(ChatInterface)
+
+
+class TestCandidates:
+    def _completed(self, *texts):
+        calls = [object() for _ in texts]
+        completed = {c: (t, None) for c, t in zip(calls, texts)}
+        scores = {c: float(100 - i) for i, c in enumerate(calls)}
+        return calls, completed, scores
+
+    def test_the_ranking_leaves_out_replies_that_would_not_be_shown_as_they_are(self):
+        from fighthealthinsurance.chat.safety_filters import DELETE_DATA_SENTINEL
+        from fighthealthinsurance.chat_interface import ChatInterface
+
+        tool = 'Let me check. **medicaid_info {"state": "CA", "topic": "", "limit": 5}**'
+        calls, completed, scores = self._completed(
+            REPLY, tool, f"Sure, I can do that. {DELETE_DATA_SENTINEL}", "Ok.", OTHER
+        )
+        ranked = ChatInterface._rank_candidates(completed, scores, calls, 4)
+        assert ranked == [calls[0], calls[4]]
+
+    def test_the_crucial_side_by_side_never_offers_the_demoted_reply(self):
+        from fighthealthinsurance.chat_interface import _shown_reply
+
+        calls, completed, scores = self._completed(OTHER, REPLY)
+        labels = {calls[0]: "claude", calls[1]: "fhi-local"}
+        picked = completed[calls[0]]
+        choice = _interface()._crucial_alternate(
+            picked, "claude", [], [], completed, scores, calls, labels,
+            excluded=_shown_reply(completed[calls[1]]),
+        )
+        assert choice is None
+        # Without the exclusion, ours would have been the side-by-side.
+        choice = _interface()._crucial_alternate(
+            picked, "claude", [], [], completed, scores, calls, labels
+        )
+        assert choice is not None and choice.model == "fhi-local"
+
+
+def test_the_reserved_backend_joins_the_turns_backends():
+    class _Kimi:
+        external = True
+
+        def __str__(self):
+            return "kimi"
+
+    turn = TurnRecord.start(use_external=True, primary_models=[])
+    turn.add_reserved_backend(_Kimi())
+    turn.add_reserved_backend(_Kimi())
+    assert turn.backends == ["kimi"]
+    assert turn.external_by_label["kimi"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_turn_drops_the_identifier_list():
+    gate, _verdict = await _judge(_payload(answers=0.8))
+    assert gate._identifiers == []
+    interface = _interface()
+    interface._turn = None
+    interface._reply_gate = gate
+    await interface._end_cancelled_turn()
+    assert interface._reply_gate is None
+    assert gate._identifiers is None

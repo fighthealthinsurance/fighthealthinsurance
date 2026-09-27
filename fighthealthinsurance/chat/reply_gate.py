@@ -342,6 +342,12 @@ class ReplyGate:
             self._health = result.failure
         return result
 
+    def forget(self) -> None:
+        """Drop the identifier list: once the ranking is done or skipped,
+        and when a turn ends without its health note (cancelled, or failed
+        before the models)."""
+        self._identifiers = None
+
     def wants_demotion(self) -> bool:
         """The fan-out's demotion rule (utils.best_two_within_timelimit
         ``demote_failed``): only a fail, never an error, a timeout or a

@@ -86,6 +86,7 @@ from fighthealthinsurance.chat.safety_filters import (
     detect_delete_data_request,
     llm_requested_delete_handoff,
 )
+from fighthealthinsurance.chat.tools.patterns import contains_tool_call
 from fighthealthinsurance.chat.tools import (
     AppealTool,
     ClinicalTrialsTool,
@@ -180,6 +181,20 @@ def _shown_reply(result: Optional[Tuple[Optional[str], Optional[str]]]) -> Any:
     differ only there are the same reply."""
     text = result[0] if result else None
     return _clean_reply(text) if text else None
+
+
+def _rankable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
+    """Whether a fan-out result could be shown the person exactly as it is,
+    so Jev may rank it or it may be the side-by-side: deliverable, and
+    neither a tool call (another pass follows it) nor the data-deletion
+    handoff (a canned reply replaces it), the same replies the check never
+    sends."""
+    text = result[0] if result else None
+    if not text or not _deliverable(result):
+        return False
+    return not (
+        contains_tool_call(text) or "🐼" in text or llm_requested_delete_handoff(text)
+    )
 
 
 def _deliverable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
@@ -416,6 +431,9 @@ class ChatInterface:
         if not turn.counted_outcome:
             if not turn.reached_models:
                 self._turn = None
+                gate, self._reply_gate = self._reply_gate, None
+                if gate is not None:
+                    gate.forget()
                 return
             self._count_turn(OUTCOME_FAILED)
         await self._write_turn_record(turn.counted_outcome)
@@ -426,6 +444,9 @@ class ChatInterface:
         thread of its own with a bounded wait so it cannot hold up the
         socket's teardown. Never raises beyond a further cancellation."""
         turn, self._turn = self._turn, None
+        gate, self._reply_gate = self._reply_gate, None
+        if gate is not None:
+            gate.forget()
         if turn is None or not turn.counted_outcome:
             return
         await arecord_chat_turn_isolated(self.chat.id, turn, turn.counted_outcome)
@@ -489,9 +510,7 @@ class ChatInterface:
         usable = [
             call
             for call, result in completed.items()
-            if result
-            and _deliverable(result)
-            and math.isfinite(scores.get(call, float("-inf")))
+            if _rankable(result) and math.isfinite(scores.get(call, float("-inf")))
         ]
         usable.sort(key=lambda c: (-scores[c], order.get(id(c), len(order))))
         seen: Set[Any] = set()
@@ -516,21 +535,26 @@ class ChatInterface:
         scores: Dict[Awaitable, float],
         calls: Sequence[Awaitable],
         labels: Dict[Awaitable, str],
+        excluded: Any = None,
     ) -> Optional[AlternateChoice]:
         """The reply to show beside the delivered one at a crucial moment:
         Jev's best other reply when it ranked them, else the side-by-side
-        model's, else the best other model's. Never the delivered reply, and
-        never one from the same model unless Jev ranked it."""
+        model's, else the best other model's. Never the delivered reply,
+        never ``excluded`` (what the person would see of a reply the check
+        failed and demoted), and never one from the same model unless Jev
+        ranked it."""
         if picked is None:
             return None
         delivered = _shown_reply(picked)
 
         def choice(call: Awaitable) -> Optional[AlternateChoice]:
             result = completed.get(call)
-            if not result or not result[0] or not _deliverable(result):
+            if not result or not result[0] or not _rankable(result):
                 return None
             shown = _shown_reply(result)
             if not shown or shown == delivered:
+                return None
+            if excluded is not None and shown == excluded:
                 return None
             model = labels.get(call)
             return AlternateChoice(
@@ -730,6 +754,8 @@ class ChatInterface:
             )
             calls = list(calls) + list(reserved_calls)
             call_scores.update(reserved_scores)
+            if turn is not None:
+                turn.add_reserved_backend(side_by_side_backend)
         if gate is not None:
             reply_gate: ReplyGate = gate
             reply_gate.used = True
@@ -924,6 +950,9 @@ class ChatInterface:
                         picked_model = call_labels.get(top)
                         picked_score = score_log.get(top, picked_score)
                 turn.set_rank(gate.rank_outcome, gate.rank_ms, gate.rank_count, changed)
+        if gate is not None:
+            # The identifier list is needed no further than the ranking.
+            gate.forget()
 
         response_text = response_text or ""
 
@@ -1056,6 +1085,11 @@ class ChatInterface:
                     score_log,
                     calls,
                     call_labels,
+                    excluded=(
+                        _shown_reply(demoted_reply)
+                        if demoted_reply is not None
+                        else None
+                    ),
                 )
                 if crucial_choice is not None:
                     self._candidate_alternate = crucial_choice.text

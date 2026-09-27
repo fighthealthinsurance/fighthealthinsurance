@@ -1846,3 +1846,36 @@ class TestReservedTasks:
         assert stage.outcome == STAGE_SKIPPED
         assert stage.check_passed is False
         assert "a" not in probe.started
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_that_lands_after_the_delay_is_ignored():
+    """The check finished, but only after the stage window closed (here the
+    check itself holds the loop past it): its verdict must not start the
+    reserved task, and the held-back tasks start as after a delay."""
+    import time as _time
+
+    probe = _Probe()
+    ours = probe.call("ours", "ours-answer", 0.01)
+    a = probe.call("a", "a-answer", 0.01)
+    kimi = probe.call("kimi", "kimi-answer", 0.01)
+    stage = StagedStart()
+
+    async def late_check(result, task):
+        _time.sleep(0.3)
+        return CheckVerdict(passed=True, start=[kimi])
+
+    await best_two_within_timelimit(
+        [ours, a, kimi],
+        _scores({}),
+        timeout=2.0,
+        extended_timeout=0.0,
+        deferred=[a],
+        reserved=[kimi],
+        defer_seconds=0.1,
+        stage=stage,
+        check=late_check,
+    )
+    assert stage.outcome == STAGE_AFTER_DELAY
+    assert "kimi" not in probe.started
+    assert "a" in probe.started
