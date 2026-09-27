@@ -32,6 +32,7 @@ from fhi_users.audit import (
     guess_us_state,
 )
 from fighthealthinsurance.ml.ml_metrics import record_answer_feedback
+from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
@@ -1226,22 +1227,6 @@ class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsume
         return prior_auth
 
 
-# A chat session key identifies an anonymous chat and works as its password,
-# so log lines carry at most this many leading characters of one.
-_SESSION_KEY_LOG_CHARS = 8
-
-
-def _session_key_prefix_for_log(session_key: object) -> str:
-    """The first 8 characters of a session key, repr'd, or "none" if absent.
-
-    The key comes from client JSON and can be any type, so it is converted
-    with str() before slicing, and repr() escapes newlines and quotes.
-    """
-    if not session_key:
-        return "none"
-    return repr(str(session_key)[:_SESSION_KEY_LOG_CHARS])
-
-
 async def resolve_chat_type(
     user,
     is_authenticated: bool,
@@ -1267,7 +1252,7 @@ async def resolve_chat_type(
             if lead and not lead.drug:
                 logger.debug(
                     "Trial professional chat for session "
-                    f"{_session_key_prefix_for_log(session_key)}"
+                    f"{session_key_prefix_for_log(session_key)}"
                 )
                 return ChatType.TRIAL_PROFESSIONAL, None
             # lead with drug or no lead → patient
@@ -1604,7 +1589,7 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             f"iterate_on_appeal={str(iterate_on_appeal)[:64]!r} "
             f"iterate_on_prior_auth={str(iterate_on_prior_auth)[:64]!r} "
             f"is_patient={bool(is_patient)} "
-            f"session_key={_session_key_prefix_for_log(session_key)} "
+            f"session_key={session_key_prefix_for_log(session_key)} "
             f"microsite_slug={microsite_slug} "
             f"use_external_models={bool(use_external_models)}"
         )
@@ -1863,7 +1848,7 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         chat_user = user if (user and user.is_authenticated) else None
 
         session_note = (
-            f" for session {_session_key_prefix_for_log(session_key)}"
+            f" for session {session_key_prefix_for_log(session_key)}"
             if session_key
             else ""
         )
