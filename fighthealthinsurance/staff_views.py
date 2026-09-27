@@ -813,26 +813,34 @@ class AdminStatusView(generic.TemplateView):
 
             now = timezone.now()
             since = now - WINDOW
+            # Only a score from the current rubric counts, as wherever scores
+            # are compared: an older one is due to be redone, so its draft
+            # is still waiting for a score.
+            current = Q(
+                quality_score__isnull=False,
+                quality_scorer__startswith="typesafe/",
+                quality_scorer__endswith=letter_quality._RUBRIC_SUFFIX,
+            )
             # The same eligibility as the unscored count below, so the two
             # numbers describe one population and a scored draft that is
             # speculative or unconsented cannot make the level SCORING by
             # itself (review).
             out["scored"] = ProposedAppeal.objects.filter(
+                current,
                 quality_scored_at__gte=since,
                 speculative=False,
                 for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
             # real (not speculative), old enough that a score in flight would
-            # have landed, and still without one.
+            # have landed, and still without a current one.
             settled = now - datetime.timedelta(seconds=letter_quality.DRAIN_SECONDS)
             eligible_unscored = ProposedAppeal.objects.filter(
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
                 for_denial__use_external=True,
-                quality_score__isnull=True,
-            )
+            ).exclude(current)
             out["unscored"] = eligible_unscored.count()
 
             health = ExternalServiceHealth.objects.filter(
