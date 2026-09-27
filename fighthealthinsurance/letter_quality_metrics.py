@@ -14,7 +14,8 @@ an empty scrape, never a 500 on ``/metrics``.
 ``scorer`` is the provenance string recorded on the row (the model TypeSafe
 reported plus our rubric version), so a provider-side repoint of the alias
 shows up as a second series rather than a blended one -- when TypeSafe names
-the model it used; a response without one records the alias.
+the model it used; a response without one records the model the request
+named (TYPESAFE_MODEL).
 - ``fhi_letter_quality_requests_total{outcome}`` -- process-local scorer calls
   by outcome (scored / failed / skipped), so a dead key or a rate limit shows
   up as ``failed`` climbing while ``scored`` stops
