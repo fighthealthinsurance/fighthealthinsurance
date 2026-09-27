@@ -5,6 +5,7 @@ import time
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
+from django.conf import settings as django_settings
 from django.utils import timezone
 
 # channels' database_sync_to_async (NOT asgiref's sync_to_async): chat runs
@@ -102,6 +103,7 @@ from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
+    ChatTurn,
     ChatType,
     OngoingChat,
     PolicyDocument,
@@ -201,6 +203,9 @@ class ChatInterface:
         # offered to the client as a side-by-side alternate when presentable
         # AND closely tied with the winner (see scores_closely_tied).
         self._candidate_alternate: Optional[str] = None
+        # Side-by-sides this chat has been shown (see _side_by_side_allowed);
+        # read from its turn rows on first use.
+        self._side_by_sides_shown: Optional[int] = None
         # Whether any pass of the turn in flight (the primary pass or a
         # recursive tool pass) hard-rejected a repeated candidate. Reset by
         # _call_llm_with_actions at depth 0, ORed into at every depth, and
@@ -325,6 +330,26 @@ class ChatInterface:
                     self.chat.id, turn, turn.counted_outcome
                 )
             raise
+
+    async def _side_by_side_allowed(self, chat: OngoingChat) -> bool:
+        """Whether this chat may be shown another side-by-side: at most
+        FHI_CHAT_SIDE_BY_SIDES_PER_CHAT, counted from its ChatTurn rows the
+        first time and kept here after. A count that fails means no
+        side-by-side. Never raises."""
+        limit = int(getattr(django_settings, "FHI_CHAT_SIDE_BY_SIDES_PER_CHAT", 2))
+        if limit <= 0:
+            return False
+        if self._side_by_sides_shown is None:
+            try:
+                self._side_by_sides_shown = await ChatTurn.objects.filter(
+                    chat_id=chat.id, alternate_offered=True
+                ).acount()
+            except Exception as e:
+                logger.warning(
+                    f"Chat {chat.id}: side-by-side count failed: {type(e).__name__}"
+                )
+                return False
+        return self._side_by_sides_shown < limit
 
     def _count_turn(self, outcome: str) -> None:
         """Count the turn in fhi_chat_turns_total and note the outcome on its
@@ -1741,13 +1766,18 @@ class ChatInterface:
                         f"delete-data handoff"
                     )
                     alt_cleaned = ""
-                if alt_cleaned and alternate_is_presentable(
-                    alt_cleaned,
-                    final_response_text,
-                    chat_history=chat.chat_history,
-                    current_message=user_message,
+                if (
+                    alt_cleaned
+                    and alternate_is_presentable(
+                        alt_cleaned,
+                        final_response_text,
+                        chat_history=chat.chat_history,
+                        current_message=user_message,
+                    )
+                    and await self._side_by_side_allowed(chat)
                 ):
                     alternate_content = alt_cleaned
+                    self._side_by_sides_shown = (self._side_by_sides_shown or 0) + 1
                     record_chat_alternate_offered()
                     if self._turn is not None:
                         self._turn.offer_alternate()

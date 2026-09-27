@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 from django.contrib.auth import get_user_model
 from django.db import OperationalError
+from django.test import override_settings
 from prometheus_client import REGISTRY
 from rest_framework.test import APITestCase
 
@@ -399,9 +400,91 @@ def _row_blob(row):
     )
 
 
+class _TurnVaryingModel(RecordingChatModel):
+    """Answers each turn with a wholly different reply of its own, so no
+    turn is rejected as a repeat of an earlier one."""
+
+    def __init__(self, replies, **kwargs):
+        super().__init__(always_reply=replies[0], **kwargs)
+        self._replies = replies
+
+    async def generate_chat_response(self, *args, **kwargs):
+        # One call per turn in these tests (no retries, no tool passes).
+        turn = min(len(self.calls), len(self._replies) - 1)
+        self._always_reply = self._replies[turn]
+        return await super().generate_chat_response(*args, **kwargs)
+
+
+_WINNER_REPLIES = [
+    FRESH_REPLY,
+    "In Texas, Medicaid renewals arrive by mail about sixty days before your "
+    "coverage ends, so watch for that envelope and answer by its due date. "
+    "Want me to walk through the form?",
+    "New York lets you renew Medicaid online through NY State of Health, and "
+    "most people only confirm their income. Shall I list the documents?",
+]
+_SECOND_REPLIES = [
+    SECOND_OPINION_REPLY,
+    "Another way to look at Texas: call 2-1-1 and ask for the renewal packet "
+    "status, which tells you whether anything is missing. Want the number?",
+    "For New York, a navigator at a local clinic can file the renewal with "
+    "you for free. Would a list of nearby navigators help?",
+]
+
+
 class ChatTurnRecordTest(APITestCase):
     """Each model turn leaves one ChatTurn row: metadata about the race,
     never any text."""
+
+    async def test_a_chat_gets_at_most_two_side_by_sides(self):
+        """Three close calls in one chat: the first two offer a side-by-side,
+        the third does not, and a new socket for the same chat counts the
+        earlier ones from the turn rows."""
+        user, chat = await _make_chat(
+            "sidebyside1", "9999930131", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        best_model = _TurnVaryingModel(
+            _WINNER_REPLIES, model_quality=110, name="winner-model"
+        )
+        second_model = _TurnVaryingModel(
+            _SECOND_REPLIES, model_quality=100, name="second-model"
+        )
+        offered = []
+        with _patched_router([best_model, second_model]), _PATCH_FIRE_AND_FORGET:
+            for message in ("CA", "TX"):
+                interface = ChatInterface(
+                    send_json_message_func=recorder, chat=chat, user=user
+                )
+                await interface.handle_chat_message(message)
+                offered.append("alternate_content" in recorder.content_frames()[-1])
+            # A fresh socket (reconnect) for the same chat.
+            interface = ChatInterface(
+                send_json_message_func=recorder, chat=chat, user=user
+            )
+            await interface.handle_chat_message("NY")
+            offered.append("alternate_content" in recorder.content_frames()[-1])
+        assert offered == [True, True, False]
+        rows = await _turn_rows(chat)
+        assert sum(1 for row in rows if row.alternate_offered) == 2
+
+    async def test_the_side_by_side_limit_comes_from_settings(self):
+        user, chat = await _make_chat(
+            "sidebyside2", "9999930132", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        best_model = RecordingChatModel(
+            always_reply=FRESH_REPLY, model_quality=110, name="winner-model"
+        )
+        second_model = RecordingChatModel(
+            always_reply=SECOND_OPINION_REPLY, model_quality=100, name="second-model"
+        )
+        with override_settings(FHI_CHAT_SIDE_BY_SIDES_PER_CHAT=0), _patched_router(
+            [best_model, second_model]
+        ), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+        assert "alternate_content" not in recorder.content_frames()[-1]
 
     async def test_turn_row_names_the_winner_runner_up_and_alternate(self):
         user, chat = await _make_chat(
