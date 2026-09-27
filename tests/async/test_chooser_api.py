@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 
 from rest_framework import status
@@ -267,17 +268,13 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertTrue(synthesized[0]["synthesized"])
 
     def test_get_next_task_no_tasks_available(self):
-        """Test getting next task when none are available and generation fails."""
+        """Test getting next task when none are available."""
         # Delete all tasks
         ChooserTask.objects.all().delete()
 
-        # Mock the task generation to simulate failure (no models available)
-        with patch(
-            "fighthealthinsurance.chooser_tasks._generate_single_task"
-        ) as mock_generate:
-            # Make generation not create any tasks
-            mock_generate.return_value = None
-
+        # The view hands generation to a background prefill thread; keep it
+        # from starting one (and from reaching any model) in the test.
+        with patch("fighthealthinsurance.chooser_tasks.trigger_prefill_async"):
             url = reverse("chooser-next-appeal")
             response = self.client.get(url)
 
@@ -298,17 +295,18 @@ class ChooserNextTaskAPITest(APITestCase):
             session_key=session_key,
         )
 
-        # Mock the task generation to prevent on-demand generation
+        # Keep the background prefill from starting a real generation
         with patch(
-            "fighthealthinsurance.chooser_tasks._generate_single_task"
-        ) as mock_generate:
-            mock_generate.return_value = None
-
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+        ) as mock_prefill:
             # Since we only have one task and already voted, should get 404
             url = reverse("chooser-next-appeal")
             response = self.client.get(url)
 
             self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        # The pool is not empty, so the prefill has to be told this session
+        # used the appeals up or it would never make another.
+        mock_prefill.assert_called_once_with(exhausted="appeal")
 
 
 class ChooserNextTaskDoesNotGenerateInlineTest(APITestCase):
@@ -691,6 +689,42 @@ class ChooserPrefillTest(APITestCase):
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             mock_prefill.assert_called_once()
+
+
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "chooser-prefill-throttle-test",
+        }
+    }
+)
+class ChooserPrefillThrottleTest(SimpleTestCase):
+    """Page loads and empty next-task fetches share the prefill throttle, but
+    a fetch from a session that used a type up must not be swallowed by a
+    page load's prefill a moment before: that prefill found the pool stocked
+    and made nothing."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        # No background prefill thread: only the throttle is under test.
+        thread = patch("fighthealthinsurance.chooser_tasks.threading.Thread")
+        thread.start()
+        self.addCleanup(thread.stop)
+
+    def test_a_page_load_prefill_does_not_hold_off_a_used_up_type(self):
+        from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+
+        trigger_prefill_async()
+        self.assertTrue(trigger_prefill_async(exhausted="appeal"))
+
+    def test_a_used_up_type_is_still_throttled(self):
+        from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+
+        trigger_prefill_async(exhausted="appeal")
+        self.assertFalse(trigger_prefill_async(exhausted="appeal"))
 
 
 class ChooserSkipModelTest(APITestCase):

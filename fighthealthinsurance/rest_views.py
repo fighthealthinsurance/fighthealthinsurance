@@ -2545,10 +2545,12 @@ class ChooserViewSet(viewsets.ViewSet):
             # paid providers, holding a worker for minutes, on demand. Hand
             # the pool to the throttled background prefill instead and tell
             # the client to come back; the refill actor tops the pool up too.
+            # The pool may not be short at all, only used up by this session,
+            # so say which type ran out.
             from fighthealthinsurance.chooser_tasks import trigger_prefill_async
 
             try:
-                trigger_prefill_async()
+                trigger_prefill_async(exhausted=task_type)
             except Exception as e:
                 logger.warning(f"Could not trigger chooser prefill: {e}")
             return Response(
