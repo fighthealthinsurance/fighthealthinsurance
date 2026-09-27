@@ -3,7 +3,8 @@
 A server-side exception used to be echoed to the client verbatim
 (``{"error": f"Server error: {str(e)}"}``), which can leak hostnames, SQL,
 and model names. Now the client gets a generic message with a short
-correlation ref, and the full exception goes to the server log at ERROR.
+correlation ref, and the full exception goes to the server log at ERROR as
+the record's traceback, with only its class name in the message.
 """
 
 from unittest.mock import patch
@@ -68,7 +69,15 @@ async def test_chat_ws_error_logged_at_error_level(log_capture):
         finally:
             await communicator.disconnect()
 
-    error_messages = cap.messages("ERROR")
+    error_records = [r for r in cap.records if r["level"].name == "ERROR"]
+    # The message names the exception class; the detail travels in the
+    # traceback attached to the same record.
     assert any(
-        SECRET_DETAIL in m for m in error_messages
-    ), f"expected the exception detail in an ERROR log, got: {error_messages}"
+        "Error in ongoing chat: RuntimeError" in r["message"]
+        and SECRET_DETAIL not in r["message"]
+        for r in error_records
+    ), f"expected the class name in an ERROR log, got: {error_records}"
+    assert any(
+        r["exception"] is not None and SECRET_DETAIL in str(r["exception"])
+        for r in error_records
+    ), f"expected the exception detail in an ERROR traceback, got: {error_records}"

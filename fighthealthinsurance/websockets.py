@@ -1284,7 +1284,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 await enqueue_denied_items_analysis(chat_id=self.chat_id)
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    f"Failed to enqueue denied-item analysis for chat {self.chat_id}: {e}"
+                    "Failed to enqueue denied-item analysis for chat "
+                    f"{self.chat_id}: {type(e).__name__}"
                 )
 
     @classmethod
@@ -1302,7 +1303,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         """
         Analyzes the chat history to identify denied items and reasons.
         This is run when the websocket disconnects to avoid blocking the chat flow.
-        Adds logging for the prompt and guardrails to avoid storing unclear denials.
+        Logs prompt and answer sizes (never their text) and applies guardrails
+        to avoid storing unclear denials.
         """
         try:
             chat: OngoingChat = await OngoingChat.objects.aget(id=chat_id)
@@ -1335,8 +1337,12 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 )
 
                 full_prompt = f"{history_text}\n{analysis_prompt}"
+                # Sizes only: the prompt carries the whole conversation.
                 logger.debug(
-                    f"Prompt for denied item extraction (chat {chat_id}):\n{full_prompt}"
+                    f"Denied item extraction for chat {chat_id} "
+                    f"(prompt_chars={len(full_prompt)}, "
+                    f"history_chars={len(history_text)}, "
+                    f"history_msgs={len(chat.chat_history or [])})"
                 )
 
                 # Get the analysis from the model
@@ -1358,7 +1364,10 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                             denied_reason = analysis_data.get("denied_reason")
 
                             logger.debug(
-                                f"Analysis for chat {chat_id}: denied_item={denied_item!r} denied_reason={denied_reason!r} raw={analysis_data!r}"
+                                f"Analysis for chat {chat_id}: "
+                                f"item_len={len(str(denied_item)) if denied_item else 0} "
+                                f"reason_len={len(str(denied_reason)) if denied_reason else 0} "
+                                f"raw_type={type(analysis_data).__name__}"
                             )
 
                             # Guardrails: Only store if non-empty, not null, and not generic/unclear
@@ -1423,11 +1432,13 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                                 )
                         except json.JSONDecodeError:
                             logger.warning(
-                                f"Could not parse JSON from analysis response: {response_text}"
+                                "Could not parse JSON from analysis response for "
+                                f"chat {chat_id} (response_chars={len(response_text)})"
                             )
                     else:
                         logger.warning(
-                            f"No JSON found in analysis response: {response_text}"
+                            "No JSON found in analysis response for chat "
+                            f"{chat_id} (response_chars={len(response_text)})"
                         )
                 else:
                     logger.warning(f"No response from model for denied item analysis")
@@ -1435,7 +1446,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 logger.info(f"Chat {chat_id} already has denied item information")
         except Exception as e:
             logger.opt(exception=True).error(
-                f"Error analyzing denied items for chat {chat_id}: {e}"
+                f"Error analyzing denied items for chat {chat_id}: "
+                f"{type(e).__name__}"
             )
 
     @staticmethod
@@ -1732,7 +1744,7 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             # internals (hostnames, SQL, model names) and is useless to users.
             err_ref = uuid.uuid4().hex[:8]
             logger.opt(exception=True).error(
-                f"[chat-err {err_ref}] Error in ongoing chat: {e}"
+                f"[chat-err {err_ref}] Error in ongoing chat: {type(e).__name__}"
             )
             await self.send_json_message(
                 {

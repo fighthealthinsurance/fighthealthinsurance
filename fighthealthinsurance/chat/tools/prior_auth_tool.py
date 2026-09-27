@@ -116,7 +116,8 @@ class PriorAuthTool(BaseTool):
 
         except json.JSONDecodeError:
             logger.warning(
-                f"Invalid JSON data in create_or_update_prior_auth token: {json_data}"
+                "Invalid JSON in create_or_update_prior_auth token "
+                f"(payload_chars={len(json_data)})"
             )
             await self.send_status_message(
                 "Error processing prior auth data: Invalid JSON format."
@@ -124,7 +125,9 @@ class PriorAuthTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(f"Error processing prior auth data: {e}")
+            logger.opt(exception=True).warning(
+                f"Error processing prior auth data: {type(e).__name__}"
+            )
             await self.send_status_message(
                 f"Error processing prior auth data: {str(e)}"
             )

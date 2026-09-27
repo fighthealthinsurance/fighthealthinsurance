@@ -117,14 +117,15 @@ class MedicaidInfoTool(BaseTool):
                 f"Found {len(all_matches)} Medicaid tool calls, processing only the first one"
             )
 
-        logger.debug(f"Medicaid tool call detected: {match.group(0)}")
-
         json_data = match.group(1).strip()
-        logger.debug(f"Extracted JSON data: {json_data}")
+        logger.debug(f"Medicaid tool call detected (payload_chars={len(json_data)})")
 
         try:
             medicaid_info_data = json.loads(json_data)
-            logger.debug(f"Parsed JSON data: {medicaid_info_data}")
+            logger.debug(
+                "Parsed Medicaid tool payload "
+                f"(type={type(medicaid_info_data).__name__})"
+            )
 
             await self.send_status_message("Processing Medicaid info lookup data...")
 
@@ -148,7 +149,12 @@ class MedicaidInfoTool(BaseTool):
                 # Falling through to the None path below re-asked "Which
                 # state are you in?" forever against a user who had already
                 # answered, with no way to ever succeed.
-                logger.warning(f"Medicaid info unavailable: {unavailable}")
+                # The reason is one of medicaid_api's fixed strings; the
+                # state stays out of the log.
+                logger.warning(
+                    f"Medicaid info unavailable: {type(unavailable).__name__} "
+                    f"({unavailable.reason})"
+                )
                 await self.send_status_message(
                     f"No Medicaid contact data available for {unavailable.state}."
                 )
@@ -164,7 +170,8 @@ class MedicaidInfoTool(BaseTool):
                     context,
                 )
             logger.debug(
-                f"Got Medicaid info response: {medicaid_info[:200] if medicaid_info else 'None'}..."
+                "Got Medicaid info response "
+                f"(info_chars={len(medicaid_info) if medicaid_info else 0})"
             )
 
             if medicaid_info:
@@ -212,7 +219,8 @@ class MedicaidInfoTool(BaseTool):
                     )
 
                     logger.debug(
-                        f"Medicaid with intro/conclusion: {medicaid_info[:200]}..."
+                        "Medicaid with intro/conclusion (additional_chars="
+                        f"{len(additional_response) if additional_response else 0})"
                     )
 
                     if cleaned_response and additional_response:
@@ -244,7 +252,9 @@ class MedicaidInfoTool(BaseTool):
                 )
 
         except json.JSONDecodeError:
-            logger.warning(f"Invalid JSON data in medicaid_info token: {json_data}")
+            logger.warning(
+                f"Invalid JSON in medicaid_info token (payload_chars={len(json_data)})"
+            )
             await self.send_status_message(
                 "Error processing Medicaid info data: Invalid JSON format."
             )
@@ -252,7 +262,7 @@ class MedicaidInfoTool(BaseTool):
 
         except Exception as e:
             logger.opt(exception=True).warning(
-                f"Error processing Medicaid info data: {e}"
+                f"Error processing Medicaid info data: {type(e).__name__}"
             )
             await self.send_status_message(
                 f"Error processing Medicaid info data: {str(e)}"
@@ -363,7 +373,10 @@ class MedicaidEligibilityTool(BaseTool):
         Returns:
             Tuple of (updated_response, updated_context)
         """
-        logger.debug(f"Medicaid eligibility tool call detected: {match.group(0)}")
+        logger.debug(
+            "Medicaid eligibility tool call detected "
+            f"(match_chars={len(match.group(0))})"
+        )
 
         # Find all matches for cleaning purposes
         all_matches = self.detect_all(response_text)
@@ -377,14 +390,15 @@ class MedicaidEligibilityTool(BaseTool):
 
         # Parse JSON from the provided match (not re-detecting)
         json_data = match.group(1).strip()
-        logger.debug(f"Extracted JSON data: {json_data}")
+        logger.debug(f"Extracted eligibility payload (payload_chars={len(json_data)})")
 
         try:
             loaded = json.loads(json_data)
-            logger.debug(f"Parsed JSON data: {loaded}")
+            logger.debug(f"Parsed eligibility payload (type={type(loaded).__name__})")
         except json.JSONDecodeError as e:
             logger.warning(
-                f"Invalid JSON in medicaid_eligibility token: {json_data} - {e}"
+                "Invalid JSON in medicaid_eligibility token "
+                f"(payload_chars={len(json_data)}): {type(e).__name__}"
             )
             await self.send_status_message(
                 "Error processing Medicaid eligibility data: Invalid JSON format."
@@ -583,7 +597,8 @@ class MedicaidEligibilityTool(BaseTool):
 
         except Exception as e:
             logger.opt(exception=True).debug(
-                f"Error parsing params for medicaid eligibility tool: {e}"
+                f"Error parsing params for medicaid eligibility tool: "
+                f"{type(e).__name__}"
             )
             return (
                 "Something went wrong trying to figure out eligibility. "

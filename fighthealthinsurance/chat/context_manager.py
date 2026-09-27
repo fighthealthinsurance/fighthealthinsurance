@@ -251,7 +251,7 @@ async def _summarize_history(
         return existing_summary
 
     except Exception as e:
-        logger.warning(f"Failed to summarize chat history: {e}")
+        logger.warning(f"Failed to summarize chat history: {type(e).__name__}")
         return existing_summary
 
 
@@ -345,7 +345,7 @@ async def background_generate_summary(chat_id: uuid.UUID, placeholder_tag: str) 
     except Exception as e:
         logger.warning(
             f"Background summary generation failed for chat {chat_id}: "
-            f"{type(e).__name__}: {e}"
+            f"{type(e).__name__}"
         )
         return
 

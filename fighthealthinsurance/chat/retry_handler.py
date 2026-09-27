@@ -274,7 +274,7 @@ async def retry_llm_with_fallback(
             return retry_response, retry_context
 
     except Exception as e:
-        logger.warning(f"Fallback models also failed: {e}")
+        logger.warning(f"Fallback models also failed: {type(e).__name__}")
 
     return None, None
 

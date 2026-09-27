@@ -132,7 +132,7 @@ class MedicaidGovLookupTool(BaseTool):
         try:
             params = json.loads(match.group(1).strip())
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in medicaid_gov_lookup: {e}")
+            logger.warning(f"Invalid JSON in medicaid_gov_lookup: {type(e).__name__}")
             return cleaned_response, context
         if not isinstance(params, dict):
             logger.warning("medicaid_gov_lookup called with non-object JSON")
@@ -181,7 +181,9 @@ class MedicaidGovLookupTool(BaseTool):
                 url, url_validator=validate_url
             )
         except Exception as e:
-            logger.warning(f"medicaid_gov_lookup failed to fetch {safe_url}: {e}")
+            logger.warning(
+                f"medicaid_gov_lookup failed to fetch {safe_url}: {type(e).__name__}"
+            )
             await self.send_status_message(f"Couldn't reach {safe_url}.")
             return cleaned_response, context
 

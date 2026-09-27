@@ -423,7 +423,8 @@ def score_llm_response(
                 if doc_name.lower() in response_lower:
                     score += 150
                     logger.debug(
-                        f"Response references uploaded document '{doc_name}', boosting score"
+                        "Response references an uploaded document by name, "
+                        "boosting score"
                     )
                     break
 

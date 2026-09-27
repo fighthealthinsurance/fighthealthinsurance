@@ -106,7 +106,8 @@ class AppealTool(BaseTool):
 
         except json.JSONDecodeError as e:
             logger.warning(
-                f"Invalid JSON data {e} in create_or_update_appeal token: {json_data}"
+                "Invalid JSON in create_or_update_appeal token "
+                f"(payload_chars={len(json_data)}): {type(e).__name__}"
             )
             await self.send_error_message(
                 f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
@@ -114,7 +115,9 @@ class AppealTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(f"Error processing appeal data: {e}")
+            logger.opt(exception=True).warning(
+                f"Error processing appeal data: {type(e).__name__}"
+            )
             await self.send_error_message(f"Error processing appeal data: {str(e)}")
             raise
 

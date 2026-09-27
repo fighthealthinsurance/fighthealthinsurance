@@ -239,7 +239,7 @@ class ChatInterface:
 
     async def send_status_message(self, message: str):
         """Sends a status message to the client."""
-        logger.debug(f"Chat {self.chat.id} status: {message}")
+        logger.debug(f"Chat {self.chat.id} status (status_chars={len(message)})")
         await self.send_json_message_func(
             {"status": message, "chat_id": str(self.chat.id)}
         )
@@ -289,7 +289,7 @@ class ChatInterface:
         try:
             return cast(str, await database_sync_to_async(self.chat.summarize_user)())
         except Exception as e:
-            logger.warning(f"Could not generate detailed user info: {e}")
+            logger.warning(f"Could not generate detailed user info: {type(e).__name__}")
             return "a user"
 
     async def _denial_context_for_chat(self, chat: OngoingChat) -> Optional[str]:
@@ -490,7 +490,7 @@ class ChatInterface:
                 if best_two.runner_up_task is not None:
                     runner_up_model = call_labels.get(best_two.runner_up_task)
         except Exception as e:
-            logger.warning(f"Primary models all failed: {e}")
+            logger.warning(f"Primary models all failed: {type(e).__name__}")
             response_text = None
             context_part = None
 
@@ -546,7 +546,9 @@ class ChatInterface:
                 runner_up_model = None
                 runner_up_score = None
 
-        logger.debug(f"Using best result {response_text:.20}...")
+        logger.debug(
+            f"Using best result (response_chars={len(response_text) if response_text else 0})"
+        )
 
         if not response_text:
             logger.debug("Got empty response from LLM")
@@ -843,7 +845,8 @@ class ChatInterface:
             doc_name = document_name or "uploaded_document"
             char_count = len(user_message)
             logger.info(
-                f"Document uploaded in chat {chat.id}: {doc_name} ({char_count} chars)"
+                f"Document uploaded in chat {chat.id} "
+                f"(name_chars={len(doc_name)}, {char_count} chars)"
             )
 
             denial_context = await self._denial_context_for_chat(chat)
@@ -976,7 +979,7 @@ class ChatInterface:
                                 )
                         except Exception as e:
                             logger.opt(exception=True).warning(
-                                f"Error loading microsite context: {e}"
+                                f"Error loading microsite context: {type(e).__name__}"
                             )
 
                     await fire_and_forget_in_new_threadpool(fetch_microsite_context())
@@ -985,7 +988,9 @@ class ChatInterface:
                         f"Could not find microsite for slug {chat.microsite_slug}"
                     )
             except Exception as e:
-                logger.warning(f"Error loading microsite for chat {chat.id}: {e}")
+                logger.warning(
+                    f"Error loading microsite for chat {chat.id}: {type(e).__name__}"
+                )
 
         # Check for policy document analysis request
         if _detect_policy_analysis_request(user_message):
@@ -1129,7 +1134,7 @@ class ChatInterface:
             )
             logger.info(
                 f"Long pasted message in chat {chat.id}: storing {char_count} chars "
-                f"as {doc_name} for reference"
+                f"for reference (name_chars={len(doc_name)})"
             )
             denial_context = await self._denial_context_for_chat(chat)
             await process_uploaded_document(
@@ -1251,7 +1256,9 @@ class ChatInterface:
                 chat.id, user_message
             )
         except Exception as e:
-            logger.warning(f"Skipping document context for chat {chat.id}: {e}")
+            logger.warning(
+                f"Skipping document context for chat {chat.id}: {type(e).__name__}"
+            )
         if doc_context_str:
             summarized_context = (
                 f"{doc_context_str}\n\n{summarized_context}"
@@ -1358,6 +1365,8 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
+        # Exception class name only, for the failure log below.
+        turn_error: Optional[str] = None
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -1411,8 +1420,9 @@ class ChatInterface:
             turn_timed_out = True
             record_chat_turn("timeout")
         except Exception as e:
+            turn_error = type(e).__name__
             logger.opt(exception=True).error(
-                f"Chat generation failed for chat {chat.id}: {e}"
+                f"Chat generation failed for chat {chat.id}: {turn_error}"
             )
             logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
         finally:
@@ -1547,9 +1557,12 @@ class ChatInterface:
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
+            # Sizes, the error class and flags only: message text is PHI.
             logger.error(
-                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
-                f"after trying all models. use_external_models={self.use_external_models}"
+                f"Failed to generate a response in chat {chat.id} after trying "
+                f"all models (message_chars={len(user_message or '')}, "
+                f"error={turn_error or 'none'}, timed_out={turn_timed_out}, "
+                f"use_external_models={self.use_external_models})"
             )
             if not turn_timed_out:
                 record_chat_turn("failed")
@@ -1687,7 +1700,8 @@ class ChatInterface:
 
         except Exception as e:
             logger.opt(exception=True).warning(
-                f"Error handling policy analysis for chat {chat.id}: {e}"
+                f"Error handling policy analysis for chat {chat.id}: "
+                f"{type(e).__name__}"
             )
             await self.send_error_message(
                 "There was an error analyzing your policy document. "

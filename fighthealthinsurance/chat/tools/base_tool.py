@@ -188,7 +188,9 @@ class BaseTool(ABC):
             return updated_response, updated_context, True
 
         except Exception as e:
-            logger.opt(exception=True).warning(f"Error executing {self.name} tool: {e}")
+            logger.opt(exception=True).warning(
+                f"Error executing {self.name} tool: {type(e).__name__}"
+            )
             try:
                 await self.send_status_message(
                     f"Error processing {self.name} request. Continuing with original response."

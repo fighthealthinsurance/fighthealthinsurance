@@ -152,7 +152,8 @@ class JsonFollowupTool(BaseTool):
             params = json.loads(json_data)
         except json.JSONDecodeError as e:
             logger.warning(
-                f"Invalid JSON in {self.name} tool call (length={len(json_data)}): {e}"
+                f"Invalid JSON in {self.name} tool call (length={len(json_data)}): "
+                f"{type(e).__name__}"
             )
             await self.send_status_message(
                 f"Could not parse {self.name} parameters: invalid JSON."
@@ -174,7 +175,9 @@ class JsonFollowupTool(BaseTool):
                 params, current_message_for_llm=current_message_for_llm
             )
         except Exception as e:
-            logger.opt(exception=True).warning(f"{self.name} lookup failed: {e}")
+            logger.opt(exception=True).warning(
+                f"{self.name} lookup failed: {type(e).__name__}"
+            )
             await self.send_status_message(
                 f"{self.name} lookup failed; continuing without it."
             )

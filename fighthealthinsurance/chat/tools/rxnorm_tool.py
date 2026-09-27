@@ -59,7 +59,9 @@ class RxNormLookupTool(BaseTool):
         cleaned_response = self.clean_response(response_text, match)
 
         if not drug_name or "drug name" in drug_name.lower():
-            logger.debug(f"Ignoring empty/placeholder rxnorm_lookup: {drug_name!r}")
+            logger.debug(
+                f"Ignoring empty/placeholder rxnorm_lookup (name_chars={len(drug_name)})"
+            )
             return cleaned_response, context
 
         await self.send_status_message(f"Normalizing drug name: {drug_name}...")

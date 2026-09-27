@@ -146,7 +146,10 @@ class DocFetcherTool(BaseTool):
         try:
             params = json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in fetch_doc: {json_str}: {e}")
+            logger.warning(
+                f"Invalid JSON in fetch_doc (payload_chars={len(json_str)}): "
+                f"{type(e).__name__}"
+            )
             return cleaned_response, context
 
         if not isinstance(params, dict):
@@ -191,7 +194,9 @@ class DocFetcherTool(BaseTool):
                 url_validator=validate_url,
             )
         except Exception as e:
-            logger.warning(f"Failed to fetch document from {safe_url}: {e}")
+            logger.warning(
+                f"Failed to fetch document from {safe_url}: {type(e).__name__}"
+            )
             await self.send_status_message(f"Failed to fetch document: {e}")
             return cleaned_response, context
 
@@ -217,7 +222,7 @@ class DocFetcherTool(BaseTool):
                     "Document stored for analysis and future reference."
                 )
             except Exception as e:
-                logger.warning(f"Failed to store fetched document: {e}")
+                logger.warning(f"Failed to store fetched document: {type(e).__name__}")
 
         # Truncate for immediate LLM context only. Include the user's actual
         # question in the follow-up prompt -- without it the model was asked
