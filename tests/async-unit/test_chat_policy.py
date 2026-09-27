@@ -424,6 +424,34 @@ def test_a_policy_in_force_hands_its_learned_order_to_the_roster():
     assert roster.call_args.args[0] == ["deepseek", "claude-opus"]
 
 
+def test_the_learned_order_only_reorders_the_roster_as_it_is_now():
+    router = _router()
+    # "gone" was taken off the roster after the policy was computed, and
+    # "newcomer" was added since.
+    policy = ChatPolicy(outside_order=("gone", "deepseek", "claude-opus"))
+    with (
+        override_settings(
+            FHI_CHAT_OUTSIDE_MODELS=["claude-opus", "deepseek", "newcomer"]
+        ),
+        patch.object(router, "chat_outside_models", return_value=[]) as roster,
+    ):
+        router.get_chat_backends_with_fallback(use_external=True, policy=policy)
+    assert roster.call_args.args[0] == ["deepseek", "claude-opus", "newcomer"]
+
+
+def test_the_outside_models_are_drawn_once_per_turn():
+    """The fallback list adds none when the primary list has its outside
+    models, so a second exploration draw cannot add a model to the retry."""
+    router = _router()
+    with patch.object(
+        router, "_chat_externals", wraps=router._chat_externals
+    ) as draws:
+        primary, fallback = router.get_chat_backends_with_fallback(use_external=True)
+    assert _externals(primary)
+    assert fallback == []
+    assert draws.call_count == 1
+
+
 # --- The reader ---------------------------------------------------------------
 
 
