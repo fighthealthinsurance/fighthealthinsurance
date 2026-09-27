@@ -47,3 +47,25 @@ class SpendLedgerTest(TestCase):
         spend._ledger._local_pauses.clear()
         self.assertFalse(spend.allows(spend.DEEPINFRA, spend.CHAT))
         self.assertNotIn("paused:deepinfra:chat", spend.month_summary())
+
+    def test_a_failed_write_is_retried_and_nothing_is_lost(self):
+        spend.record(spend.DEEPINFRA, spend.CHAT, 100)
+        real_store = spend._Ledger._store
+        calls = []
+
+        def failing_once(ledger, name, day, amount):
+            calls.append(amount)
+            if len(calls) == 1:
+                raise RuntimeError("database away")
+            return real_store(ledger, name, day, amount)
+
+        from unittest.mock import patch
+
+        with patch.object(spend._Ledger, "_store", failing_once):
+            with self.assertRaises(RuntimeError):
+                spend._ledger.flush_sync_for_tests()
+            # More spend while the database was away.
+            spend.record(spend.DEEPINFRA, spend.CHAT, 50)
+            spend._ledger.flush_sync_for_tests()
+        self.assertEqual(SpendCounter.objects.get(name="deepinfra:chat").amount, 150)
+        self.assertEqual(spend._ledger._pending, {})
