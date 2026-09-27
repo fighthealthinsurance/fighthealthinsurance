@@ -1,8 +1,10 @@
 """Tests for ``ChatRoutingPolicyWorkflow`` orchestration (activity mocked).
 
 The workflow calls one activity and returns the row id it gets back. These
-check the window reaches the activity, the bounded retry, and that the run's
-history carries numbers only. The activity itself has its own tests.
+check the window and the run's own id reach the activity (the same id on
+every attempt, which is what keeps a run to one row), the bounded retry,
+and that the run's history carries numbers and ids only. The activity
+itself has its own tests.
 
 Requires the Temporal test server, which ``temporalio`` downloads on first run.
 """
@@ -36,8 +38,10 @@ class _Recorder:
         rec = self
 
         @activity.defn(name="compute_and_store_chat_policy")
-        async def compute_and_store_chat_policy(window_minutes: int) -> int:
-            rec.calls.append(window_minutes)
+        async def compute_and_store_chat_policy(
+            window_minutes: int, run_id: str
+        ) -> int:
+            rec.calls.append((window_minutes, run_id))
             if len(rec.calls) <= rec.fail_times:
                 raise ApplicationError(
                     "OperationalError storing the chat routing policy",
@@ -69,18 +73,21 @@ async def _run(env, rec, window_minutes=90):
 async def test_a_run_stores_one_policy_and_returns_its_row_id():
     rec = _Recorder(row_id=41)
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        _, result = await _run(env, rec, window_minutes=90)
+        handle, result = await _run(env, rec, window_minutes=90)
     assert result == 41
-    assert rec.calls == [90]
+    assert rec.calls == [(90, handle.result_run_id)]
+    assert handle.result_run_id
 
 
 @pytest.mark.asyncio
 async def test_a_transient_failure_is_retried():
     rec = _Recorder(row_id=7, fail_times=2)
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        _, result = await _run(env, rec)
+        handle, result = await _run(env, rec)
     assert result == 7
-    assert len(rec.calls) == 3
+    # Every attempt carries the same run id, so the activity stores one row
+    # for the run however many attempts it takes.
+    assert rec.calls == [(90, handle.result_run_id)] * 3
 
 
 @pytest.mark.asyncio
@@ -121,7 +128,7 @@ def _decoded_payloads(history):
 
 
 @pytest.mark.asyncio
-async def test_history_holds_the_window_and_the_row_id_and_nothing_else():
+async def test_history_holds_the_window_the_run_id_and_the_row_id_and_nothing_else():
     rec = _Recorder(row_id=41)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         handle, _ = await _run(env, rec, window_minutes=90)
@@ -130,6 +137,7 @@ async def test_history_holds_the_window_and_the_row_id_and_nothing_else():
     assert payloads == [
         ("workflow_execution_started_event_attributes", {"window_minutes": 90}),
         ("activity_task_scheduled_event_attributes", 90),
+        ("activity_task_scheduled_event_attributes", handle.result_run_id),
         ("activity_task_completed_event_attributes", 41),
         ("workflow_execution_completed_event_attributes", 41),
     ]

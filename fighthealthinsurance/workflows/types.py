@@ -65,8 +65,8 @@ class ChatRoutingPolicyInput:
 
     Unlike the other inputs this names no case at all: the workflow reads
     ChatTurn metadata over a time window and writes one ChatRoutingPolicy
-    row, so its history holds this number, the row id it returns and
-    nothing else.
+    row, so its history holds this number, the run's own id (which the
+    workflow hands its activity), the row id it returns and nothing else.
 
     Attributes:
         window_minutes: How many minutes of chat turns the policy is

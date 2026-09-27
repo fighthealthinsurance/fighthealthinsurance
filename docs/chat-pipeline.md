@@ -232,8 +232,10 @@ Rows come from the `chat-routing-policy` Temporal Schedule, which runs
 appeal-worker pods while `TEMPORAL_ENABLED` and
 `TEMPORAL_CHAT_POLICY_ENABLED` are on (off by default; see
 `k8s/temporal/README.md`), or from `manage.py compute_chat_policy` (by hand
-or from a CronJob). Both write the same row, and its `source` says which.
-The Schedule's history holds the window and the row id only, and Temporal
+or from a CronJob). Both write the same row, and its `source` says which;
+a Schedule run's row also carries its run id, so each run writes one row
+at most, and the command writes a new row every time. The Schedule's
+history holds the window, the run id and the row id only, and Temporal
 is never on the turn path: if runs stop, the newest row passes the age
 limit above and chat routes by the default. Rows are shown on the staff ML
 Model Usage Dashboard whether or not chat follows them. Rows are never

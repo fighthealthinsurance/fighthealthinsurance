@@ -210,7 +210,7 @@ def _appeal_activities():
 
 def _chat_policy_activities():
     @activity.defn(name="compute_and_store_chat_policy")
-    async def compute_and_store_chat_policy(window_minutes: int) -> int:
+    async def compute_and_store_chat_policy(window_minutes: int, run_id: str) -> int:
         return 1
 
     return [compute_and_store_chat_policy]

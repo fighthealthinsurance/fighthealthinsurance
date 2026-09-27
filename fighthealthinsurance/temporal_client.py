@@ -443,7 +443,8 @@ def _intake_enabled() -> bool:
 
 # One Schedule, kept by the appeal-worker process at start-up (see
 # run_temporal_worker) and by `manage.py ensure_temporal_schedules`. Each run
-# writes one ChatRoutingPolicy row; history holds the window and the row id.
+# writes one ChatRoutingPolicy row; history holds the window, the run id and
+# the row id.
 CHAT_POLICY_SCHEDULE_ID = "chat-routing-policy"
 # Scheduled runs get this id with the scheduled time appended by Temporal.
 CHAT_POLICY_WORKFLOW_ID = "chat-routing-policy-run"

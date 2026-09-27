@@ -327,7 +327,9 @@ is never on the chat path, so chat behaves the same with all of this off.
   overlap SKIP; a catch-up window of 10 minutes, so an outage never ends in
   a burst of runs; each run has a 5-minute execution timeout. A run makes
   up to three attempts at its one activity, and after that the next run is
-  the retry.
+  the retry. The row carries the run's id, unique in the table, so however
+  often an attempt is retried, or finishes after Temporal gave up on it, a
+  run writes one row at most.
 - **Kept in step at start-up:** after connecting, each `fhi-appeal-worker`
   pod creates the Schedule, or updates it in place and unpauses it, when
   the flag is on, and pauses it when the flag is off. Both replicas doing
@@ -337,7 +339,12 @@ is never on the chat path, so chat behaves the same with all of this off.
 - **Turning it off:** set the flag to false and restart `fhi-appeal-worker`,
   or run `ensure_temporal_schedules`. Runs show in the Temporal UI at
   `/timbit/temporal/`, which is read-only, so the flag is the control.
-- **History:** a number of minutes in, the new row's id out. No chat text.
+- **Appeal work is not held up:** the activity reads ChatTurn and writes the
+  row on a thread and database connection of its own, each statement ending
+  after 30s on PostgreSQL, not on the executor the appeal activities in the
+  same process share.
+- **History:** a number of minutes and the run's id in, the new row's id
+  out. No chat text.
 
 ## Protecting user data in workflow history
 

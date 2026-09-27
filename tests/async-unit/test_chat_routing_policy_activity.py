@@ -9,29 +9,41 @@ database left open by an earlier test would refuse.
 
 The aggregation and the policy rules have their own tests
 (tests/sync/test_chat_policy_command.py, tests/async-unit/test_chat_policy.py);
-these check the Temporal wrapper: it writes one row marked "temporal",
-returns the row id, rejects a bad window without retrying, and reports
-failures by exception class name only.
+these check the Temporal wrapper: it writes one row marked "temporal" per
+workflow run however often an attempt is retried, returns the row id,
+rejects a bad input without retrying, reports failures by exception class
+name only, and does its database work on a thread and connection of its
+own, so a stuck policy query never holds up an appeal activity.
 """
 
+import asyncio
 import datetime
+import threading
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from asgiref.sync import ThreadSensitiveContext
+from django.db import connections
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 from loguru import logger
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
+from fighthealthinsurance.activities import appeal_journey as journey_activities
 from fighthealthinsurance.activities import chat_routing_policy as policy_activities
+from fighthealthinsurance.appeal_journey_core import STATUS_NOT_FOUND
+from fighthealthinsurance.ml import chat_policy
 from fighthealthinsurance.models import ChatRoutingPolicy, ChatTurn, OngoingChat
 
 _MOD = "fighthealthinsurance.activities.chat_routing_policy"
 
 # Stands in for text an exception message could carry.
 _SECRET = "my insulin was denied"
+
+# A workflow run id, the shape Temporal gives them.
+_RUN = "0199a0c2-6f4e-7b41-9c1d-2f3e4a5b6c7d"
 
 
 def _call(model, status="scored", ms=1000, external=False):
@@ -83,10 +95,60 @@ def seeded(transactional_db):
     return chat
 
 
-# The database tests run their ORM work inside a ThreadSensitiveContext, so
-# the activity's database_sync_to_async calls use a thread of their own that
-# ends with the test and leave no connection open on the shared one (an
-# in-memory test database ignores close).
+async def _run(window=60, run_id=_RUN):
+    return await ActivityEnvironment().run(
+        policy_activities.compute_and_store_chat_policy, window, run_id
+    )
+
+
+class _StuckOnce:
+    """Stands in for the ChatTurn read. The first call blocks until
+    released, like a scan waiting on a lock or a dead connection; later
+    calls, and the first once released, read as usual."""
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+        self._real = chat_policy.aggregate_chat_turns
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            self.entered.set()
+            self.release.wait(10)
+        return self._real(*args, **kwargs)
+
+
+class _Finishes:
+    """Wraps the activity's _store and records how each call on its thread
+    ended, so a test can wait for a store an attempt stopped waiting for."""
+
+    def __init__(self):
+        self.outcomes = []
+        self._real = policy_activities._store
+
+    def __call__(self, *args):
+        try:
+            result = self._real(*args)
+        except Exception as e:
+            self.outcomes.append(e)
+            raise
+        self.outcomes.append(result)
+        return result
+
+    async def wait_for(self, count, timeout=5.0):
+        for _ in range(int(timeout / 0.05)):
+            if len(self.outcomes) >= count:
+                return True
+            await asyncio.sleep(0.05)
+        return False
+
+
+# Most database tests run their ORM work inside a ThreadSensitiveContext, so
+# the test's own ORM calls use a thread of their own that ends with the test
+# and leave no connection open on the shared one (an in-memory test database
+# ignores close). The activity's store runs on a thread of its own either way.
 
 
 @pytest.mark.django_db(transaction=True)
@@ -94,13 +156,12 @@ def seeded(transactional_db):
 async def test_the_activity_stores_one_temporal_row_from_the_turns(seeded):
     async with ThreadSensitiveContext():
         before = await ChatRoutingPolicy.objects.acount()
-        row_id = await ActivityEnvironment().run(
-            policy_activities.compute_and_store_chat_policy, 60
-        )
+        row_id = await _run(60)
         assert isinstance(row_id, int)
         assert await ChatRoutingPolicy.objects.acount() == before + 1
         row = await ChatRoutingPolicy.objects.aget(pk=row_id)
     assert row.source == ChatRoutingPolicy.Source.TEMPORAL
+    assert row.run_id == _RUN
     assert (row.window_minutes, row.turns_considered) == (60, 3)
     # Three turns are far below the minimum: the default routing.
     assert row.reason == "few_turns"
@@ -115,12 +176,8 @@ async def test_the_activity_stores_one_temporal_row_from_the_turns(seeded):
 @pytest.mark.asyncio
 async def test_each_run_appends_and_the_newest_row_is_the_last_one(seeded):
     async with ThreadSensitiveContext():
-        first = await ActivityEnvironment().run(
-            policy_activities.compute_and_store_chat_policy, 60
-        )
-        second = await ActivityEnvironment().run(
-            policy_activities.compute_and_store_chat_policy, 24 * 60
-        )
+        first = await _run(60, run_id=str(uuid.uuid4()))
+        second = await _run(24 * 60, run_id=str(uuid.uuid4()))
         newest = await ChatRoutingPolicy.objects.order_by("-created_at", "-id").afirst()
     assert second != first
     assert newest.pk == second
@@ -129,38 +186,176 @@ async def test_each_run_appends_and_the_newest_row_is_the_last_one(seeded):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_a_retried_attempt_returns_the_runs_row_and_writes_no_other(seeded):
+    """A retry, or an attempt whose completion Temporal never heard about,
+    finds the row its run already stored: it reads no turns and writes and
+    prunes nothing."""
+    with (
+        patch.object(
+            chat_policy,
+            "aggregate_chat_turns",
+            side_effect=chat_policy.aggregate_chat_turns,
+        ) as read,
+        patch.object(
+            chat_policy,
+            "prune_old_chat_policies",
+            side_effect=chat_policy.prune_old_chat_policies,
+        ) as prune,
+    ):
+        async with ThreadSensitiveContext():
+            first = await _run(60)
+            again = await _run(60)
+            rows = [r async for r in ChatRoutingPolicy.objects.values("pk", "run_id")]
+    assert again == first
+    assert rows == [{"pk": first, "run_id": _RUN}]
+    assert read.call_count == 1
+    assert prune.call_count == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_pruning_failure_neither_fails_the_attempt_nor_adds_a_row(seeded):
+    with patch.object(
+        chat_policy,
+        "prune_old_chat_policies",
+        side_effect=OperationalError("statement timeout"),
+    ):
+        async with ThreadSensitiveContext():
+            first = await _run(60)
+            again = await _run(60)
+            count = await ChatRoutingPolicy.objects.acount()
+    assert again == first
+    assert count == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_attempt_that_stops_waiting_leaves_one_row_for_its_run(seeded):
+    """The first attempt's store is stuck, so the attempt stops waiting and
+    fails with a retryable error. The retry stores the run's row. When the
+    first store gets going again its insert meets that row, and it returns
+    that row instead of adding a second."""
+    stuck = _StuckOnce()
+    finishes = _Finishes()
+    with (
+        patch.object(chat_policy, "aggregate_chat_turns", side_effect=stuck),
+        patch.object(policy_activities, "_store", side_effect=finishes),
+        patch.object(policy_activities, "STORE_WAIT_SECONDS", 0.5),
+    ):
+        async with ThreadSensitiveContext():
+            try:
+                with pytest.raises(ApplicationError) as caught:
+                    await _run(60)
+                # The first store is stuck before the retry starts.
+                assert await asyncio.to_thread(stuck.entered.wait, 5)
+                retried = await _run(60)
+            finally:
+                stuck.release.set()
+            # The retry's store was awaited; the first ends once released.
+            assert await finishes.wait_for(2)
+            rows = [r async for r in ChatRoutingPolicy.objects.values("pk", "run_id")]
+    assert not caught.value.non_retryable
+    assert "TimeoutError" in str(caught.value)
+    assert rows == [{"pk": retried, "run_id": _RUN}]
+    assert finishes.outcomes == [retried, retried]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_stuck_policy_query_does_not_hold_up_an_appeal_activity(seeded):
+    """The worker process runs the appeal activities' ORM calls on the one
+    process-wide thread-sensitive executor (no ThreadSensitiveContext, as
+    here). A policy query that hangs must not sit on that executor, where
+    the appeal activities' reads, writes and lease renewals would queue
+    behind it."""
+    stuck = _StuckOnce()
+    with patch.object(chat_policy, "aggregate_chat_turns", side_effect=stuck):
+        policy = asyncio.ensure_future(_run(60))
+        try:
+            assert await asyncio.to_thread(stuck.entered.wait, 5)
+            # A real appeal activity, for a denial that does not exist: its
+            # connection refresh and its lookup both run on that executor.
+            status = await asyncio.wait_for(
+                ActivityEnvironment().run(
+                    journey_activities.precheck_appeal_journey,
+                    "hashed",
+                    str(uuid.uuid4()),
+                ),
+                2,
+            )
+            turns = await asyncio.wait_for(ChatTurn.objects.acount(), 2)
+            still_stuck = not stuck.release.is_set() and not policy.done()
+        finally:
+            stuck.release.set()
+        row_id = await asyncio.wait_for(policy, 10)
+
+    assert status == STATUS_NOT_FOUND
+    assert turns == 4
+    assert still_stuck
+    assert isinstance(row_id, int)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_store_runs_in_bounded_transactions_on_its_own_thread(
+    seeded, monkeypatch
+):
+    """Each step (the lookup by run id, the ChatTurn read, the insert, the
+    pruning) runs in a transaction whose statements are bounded on
+    PostgreSQL, on the store's own thread, and that thread closes its
+    connections when it is done."""
+    bounded = []
+    closed_on = []
+
+    def bound(connection, ms):
+        bounded.append((connection.in_atomic_block, ms, threading.get_ident()))
+
+    real_read = chat_policy.aggregate_chat_turns
+    read_on = []
+
+    def read(*args, **kwargs):
+        read_on.append(threading.get_ident())
+        return real_read(*args, **kwargs)
+
+    monkeypatch.setattr(chat_policy, "_bound_statements", bound)
+    monkeypatch.setattr(chat_policy, "aggregate_chat_turns", read)
+    monkeypatch.setattr(
+        connections, "close_all", lambda: closed_on.append(threading.get_ident())
+    )
+    async with ThreadSensitiveContext():
+        row_id = await _run(60)
+    here = threading.get_ident()
+    assert isinstance(row_id, int)
+    assert [(in_atomic, ms) for in_atomic, ms, _ in bounded] == [(True, 30_000)] * 4
+    threads = {t for _, _, t in bounded} | set(read_on) | set(closed_on)
+    assert len(threads) == 1 and here not in threads
+    assert len(closed_on) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 @pytest.mark.parametrize("window", [0, -5, 30 * 24 * 60 + 1, True])
 async def test_a_bad_window_fails_without_retry_and_stores_nothing(window):
     async with ThreadSensitiveContext():
         with pytest.raises(ApplicationError) as caught:
-            await ActivityEnvironment().run(
-                policy_activities.compute_and_store_chat_policy, window
-            )
+            await _run(window)
         stored = await ChatRoutingPolicy.objects.acount()
     assert caught.value.non_retryable
     assert stored == 0
 
 
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
-async def test_connections_are_refreshed_before_the_read():
-    order = []
-    with (
-        patch(
-            f"{_MOD}._aclose_old_connections",
-            AsyncMock(side_effect=lambda: order.append("close")),
-        ),
-        patch(
-            f"{_MOD}._astore",
-            AsyncMock(side_effect=lambda window: order.append("store") or 5),
-        ),
-    ):
-        assert (
-            await ActivityEnvironment().run(
-                policy_activities.compute_and_store_chat_policy, 60
-            )
-            == 5
-        )
-    assert order == ["close", "store"]
+@pytest.mark.parametrize("run_id", ["", "r" * 65, None, 7])
+async def test_a_missing_or_bad_run_id_fails_without_retry_and_stores_nothing(
+    run_id,
+):
+    async with ThreadSensitiveContext():
+        with pytest.raises(ApplicationError) as caught:
+            await _run(60, run_id=run_id)
+        stored = await ChatRoutingPolicy.objects.acount()
+    assert caught.value.non_retryable
+    assert stored == 0
 
 
 class _Logs:
@@ -175,14 +370,11 @@ class _Logs:
 
 async def _fail_with(error):
     with (
-        patch(f"{_MOD}._aclose_old_connections", AsyncMock()),
         patch(f"{_MOD}._astore", AsyncMock(side_effect=error)),
         _Logs() as logs,
     ):
         with pytest.raises(ApplicationError) as caught:
-            await ActivityEnvironment().run(
-                policy_activities.compute_and_store_chat_policy, 60
-            )
+            await _run(60)
     return caught.value, logs.lines
 
 
@@ -212,3 +404,20 @@ async def test_any_other_error_is_reported_by_class_name_only():
     assert "ValueError" in str(err)
     assert _SECRET not in str(err)
     assert not any(_SECRET in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_an_error_on_the_stores_thread_reaches_the_activity_by_class():
+    """An error raised on the store's thread is classed like any other: a
+    schema error is not retried, and its message stays out of the error
+    and the logs."""
+    with (
+        patch(f"{_MOD}._store", side_effect=ProgrammingError(_SECRET)),
+        _Logs() as logs,
+    ):
+        with pytest.raises(ApplicationError) as caught:
+            await _run(60)
+    assert caught.value.non_retryable
+    assert "ProgrammingError" in str(caught.value)
+    assert _SECRET not in str(caught.value)
+    assert not any(_SECRET in line for line in logs.lines)
