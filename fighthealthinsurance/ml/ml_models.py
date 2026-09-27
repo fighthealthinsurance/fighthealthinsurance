@@ -2388,8 +2388,8 @@ class RemoteOpenLike(RemoteModel):
         # different endpoints/models.
         self._missing_models: dict[tuple[str, str], float] = {}
         # Short cooldown for repeated TRANSPORT failures (refused/DNS/timeout)
-        # between health sweeps: recent strike timestamps per (api_base,
-        # model), and pairs currently cooling down. See
+        # between health sweeps: when each recent strike stops counting, per
+        # (api_base, model), and pairs currently cooling down. See
         # _note_transport_failure.
         self._transport_strikes: dict[tuple[str, str], list[float]] = {}
         self._transport_cooldowns: dict[tuple[str, str], float] = {}
@@ -3534,12 +3534,18 @@ class RemoteOpenLike(RemoteModel):
     # Transport-failure cooldown: the hourly health sweep can leave a dead
     # backend routable for up to an hour, and every request fanned to it
     # burns its whole timeout. Three transport-classified failures inside a
-    # minute put the (api_base, model) pair on a short cooldown so the next
-    # requests skip it instantly; the pair is re-probed when the cooldown
-    # expires. The startup probe path (raise_http_errors=True) neither counts
-    # strikes nor honors the skip, so probes always see current reality.
+    # minute (budget timeouts: inside TIMEOUT_STRIKE_KEEP_SECONDS) put the
+    # (api_base, model) pair on a short cooldown so the next requests skip it
+    # instantly; the pair is re-probed when the cooldown expires. The startup
+    # probe path (raise_http_errors=True) neither counts strikes nor honors
+    # the skip, so probes always see current reality.
     TRANSPORT_STRIKE_WINDOW_SECONDS: ClassVar[float] = 60.0
     TRANSPORT_STRIKES_TO_COOL: ClassVar[int] = 3
+    # How long a budget-timeout strike counts. Those are deduped to one per
+    # strike window (see _note_budget_timeout), so while they counted for
+    # only that window no two ever counted at once, and a backend that only
+    # hangs never cooled down.
+    TIMEOUT_STRIKE_KEEP_SECONDS: ClassVar[float] = 600.0
 
     def _transport_cooling(self, api_base: str, model: str) -> bool:
         """Whether the pair is inside a transport-failure cooldown.
@@ -3555,21 +3561,30 @@ class RemoteOpenLike(RemoteModel):
             return False
         return True
 
-    def _note_transport_failure(self, api_base: str, model: str, detail: str) -> None:
+    def _note_transport_failure(
+        self,
+        api_base: str,
+        model: str,
+        detail: str,
+        keep_for: Optional[float] = None,
+    ) -> None:
         """Record a transport failure; start a cooldown on repeated strikes.
 
-        Locked: callers run on parallel executor threads, and the strike
-        list is a read-modify-write.
+        The strike counts for ``keep_for`` seconds, by default
+        TRANSPORT_STRIKE_WINDOW_SECONDS, so the list holds when each strike
+        stops counting. Locked: callers run on parallel executor threads, and
+        the strike list is a read-modify-write.
         """
         now = time.monotonic()
         key = (api_base, model)
+        keep = self.TRANSPORT_STRIKE_WINDOW_SECONDS if keep_for is None else keep_for
         with self._strike_lock:
             strikes = [
-                t
-                for t in self._transport_strikes.get(key, [])
-                if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
+                expires
+                for expires in self._transport_strikes.get(key, [])
+                if expires > now
             ]
-            strikes.append(now)
+            strikes.append(now + keep)
             cooled = len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL
             if cooled:
                 cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
@@ -3579,9 +3594,8 @@ class RemoteOpenLike(RemoteModel):
                 self._transport_strikes[key] = strikes
         if cooled:
             logger.warning(
-                f"{self}: {model} at {api_base} hit {len(strikes)} transport "
-                f"failures within {self.TRANSPORT_STRIKE_WINDOW_SECONDS:.0f}s "
-                f"({detail}); cooling down for {cooldown:.0f}s"
+                f"{self}: {model} at {api_base} hit {len(strikes)} recent "
+                f"transport failures ({detail}); cooling down for {cooldown:.0f}s"
             )
 
     def _note_budget_timeout(
@@ -3601,7 +3615,9 @@ class RemoteOpenLike(RemoteModel):
         Deduped, one busy episode is one strike (harmless, decays), while an
         accept-then-hang backend keeps striking across requests and cools down
         instead of burning every caller's full budget until the hourly health
-        sweep. Genuinely-unreachable hosts still strike within seconds via the
+        sweep: each strike counts for TIMEOUT_STRIKE_KEEP_SECONDS, well past
+        the dedup window, so the strikes of separate hung calls add up.
+        Genuinely-unreachable hosts still strike within seconds via the
         connect-phase handler.
         """
         if timeout < 120.0 or not api_base:
@@ -3621,6 +3637,7 @@ class RemoteOpenLike(RemoteModel):
                 api_base,
                 model,
                 f"no answer within a generous {timeout:.0f}s window",
+                keep_for=self.TIMEOUT_STRIKE_KEEP_SECONDS,
             )
 
     def is_available(self) -> bool:
