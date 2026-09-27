@@ -2698,11 +2698,15 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Every presented id must be one of this task's candidates: the usage
-        # dashboard counts each as a presentation of its model, so an id from
-        # another task could deflate that model's win rate at will.
+        # Every presented id must be one of this task's active candidates,
+        # the only ones the next-task endpoint serves: the usage dashboard
+        # counts each as a presentation of its model, so an id from another
+        # task, or a candidate taken out of rotation, could deflate that
+        # model's win rate at will.
         task_candidate_ids = set(
-            ChooserCandidate.objects.filter(task=task).values_list("id", flat=True)
+            ChooserCandidate.objects.filter(task=task, is_active=True).values_list(
+                "id", flat=True
+            )
         )
         if any(cid not in task_candidate_ids for cid in presented_candidate_ids):
             return Response(
