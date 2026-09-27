@@ -7,11 +7,13 @@ Covers:
 - Hash-unchanged short-circuit (no UCRLookup insert when nothing changed).
 - prune_lookups preserves Denial.latest_ucr_lookup regardless of age.
 - is_under_reimbursement_claim regex gate.
+- dispatch_ucr_refresh attaching to the running actor from a web request.
 """
 
 import datetime
+from unittest.mock import MagicMock, PropertyMock, patch
 
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from fighthealthinsurance.models import (
@@ -28,8 +30,10 @@ from fighthealthinsurance.ucr_constants import (
 from fighthealthinsurance.ucr_helper import (
     RateRow,
     UCREnrichmentHelper,
+    dispatch_ucr_refresh,
     is_under_reimbursement_claim,
 )
+from fighthealthinsurance.ucr_refresh_actor_ref import UCRRefreshActorRef
 
 
 def _make_rate(area, *, percentile, amount_cents, source=UCRSource.MEDICARE_PFS):
@@ -271,3 +275,41 @@ class PruneLookupsTests(TestCase):
 
         UCREnrichmentHelper.prune_lookups(self.denial)
         self.assertTrue(UCRLookup.objects.filter(pk=active.pk).exists())
+
+
+class DispatchAttachesToTheRunningActorTests(SimpleTestCase):
+    """Web requests dispatch UCR work. ``ucr_refresh_actor_ref.get``
+    health-checks the running actor (up to 10s) and can kill and replace it
+    (up to 30s more), so a request attaches to it by name instead."""
+
+    def _dispatch(self, running):
+        """dispatch_ucr_refresh(42) against a cluster where the actor is
+        ``running`` or not; the actor handle and the launcher path's mock."""
+        handle = MagicMock()
+        if running:
+            lookup = patch("ray.get_actor", return_value=handle)
+        else:
+            lookup = patch("ray.get_actor", side_effect=ValueError("not found"))
+        with patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=True,
+        ), lookup, patch.object(
+            UCRRefreshActorRef,
+            "get",
+            new_callable=PropertyMock,
+            return_value=(handle, None),
+        ) as launcher_get:
+            dispatch_ucr_refresh(42)
+        return handle, launcher_get
+
+    def test_a_running_actor_is_used_without_the_launcher_path(self):
+        _, launcher_get = self._dispatch(running=True)
+        launcher_get.assert_not_called()
+
+    def test_a_running_actor_gets_the_work(self):
+        handle, _ = self._dispatch(running=True)
+        handle.refresh_denial.remote.assert_called_once_with(42)
+
+    def test_a_missing_actor_is_started_through_the_launcher_path(self):
+        handle, launcher_get = self._dispatch(running=False)
+        launcher_get.assert_called_once()
