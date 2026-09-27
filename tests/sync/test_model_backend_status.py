@@ -915,6 +915,26 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
             response, f"1 of {enabled} enabled backends passed their latest check"
         )
 
+    def test_a_failing_configuration_is_not_counted_as_enabled(self):
+        """Missing credentials keep enabled=True, but the Config column shows
+        a failing pill rather than "enabled", and the summary agrees, even
+        when the check before the credentials broke had passed."""
+        gpt = "azure-openai/gpt-5.5"
+        self.configure(**ANTHROPIC, AZURE_OPENAI_API_KEY="test-azure-openai-key")
+        self.check_row(model_name=gpt, internal_name="gpt-5.5", provider="Azure OpenAI")
+        response = self.get_page()
+        row = self.row(response, gpt)
+        self.assertTrue(row["enabled"] and row["config_failing"])
+        self.assertEqual(
+            response.context["enabled_count"],
+            sum(
+                1
+                for r in response.context["rows"]
+                if r["enabled"] and not r["config_failing"]
+            ),
+        )
+        self.assertEqual(response.context["healthy_count"], 0)
+
     def test_a_pass_from_before_a_backend_was_turned_off_is_not_healthy(self):
         """The count is of the backends this pod has enabled: an old PASS for
         one that is now unconfigured is not health."""
