@@ -58,6 +58,12 @@ SCHEMA_VERSION = 1
 # most once per cache period per process.
 POLICY_READ_TIMEOUT_SECONDS = 0.5
 POLICY_CACHE_SECONDS = 60.0
+# The statement timeout ends a slow query on the server, not a read waiting
+# on a connection that stopped answering. A read running longer than this
+# is given up on (its result is dropped) so a new one can start, with at
+# most MAX_STUCK_READS given-up reads still waiting per process.
+POLICY_READ_STUCK_SECONDS = 30.0
+MAX_STUCK_READS = 2
 # A row asking for a longer delay than this is not trusted (the default
 # policy is used instead): the delay comes out of the fan-out's window.
 MAX_EXTERNAL_DELAY_SECONDS = 15.0
@@ -522,6 +528,13 @@ class _PolicyCache:
     and connection, closed when it is done, keep the read off that
     executor, and the statement timeout on PostgreSQL (with the connect
     timeout in settings) bounds how long it can run.
+
+    Neither bounds a connection that stops answering mid-read, so a read
+    still running after POLICY_READ_STUCK_SECONDS is given up on: the next
+    turn starts a new one, and the old one's result, should it ever come,
+    is dropped like one from before a reset. Once MAX_STUCK_READS given-up
+    reads are still waiting, no more are started until one ends, and chat
+    keeps the value it has (the default, once that value is too old).
     """
 
     def __init__(self) -> None:
@@ -532,14 +545,23 @@ class _PolicyCache:
         # The refresh running now, if any, and a count that a reset bumps so
         # a refresh started before it cannot write its result afterwards.
         self._thread: Optional[threading.Thread] = None
+        self._started = 0.0
         self._generation = 0
+        # Reads given up on as stuck that may still be waiting.
+        self._stuck: list[threading.Thread] = []
 
     def current(self) -> Optional[ChatPolicy]:
         """The cached policy, starting a refresh first when one is due and
         none is running. Never waits on the database."""
         with self._lock:
             policy = self._policy
-            if self._thread is not None or time.monotonic() < self._refresh_due:
+            now = time.monotonic()
+            if self._thread is not None:
+                if now - self._started < POLICY_READ_STUCK_SECONDS:
+                    return policy
+                if not self._give_up_on_running_read():
+                    return policy
+            elif now < self._refresh_due:
                 return policy
             thread = threading.Thread(
                 target=self._refresh,
@@ -548,6 +570,7 @@ class _PolicyCache:
                 daemon=True,
             )
             self._thread = thread
+            self._started = now
         try:
             thread.start()
         except Exception as e:
@@ -559,6 +582,21 @@ class _PolicyCache:
                     self._thread = None
                     self._refresh_due = time.monotonic() + POLICY_CACHE_SECONDS
         return policy
+
+    def _give_up_on_running_read(self) -> bool:
+        """Stop counting the running read as the one in flight, so a new
+        one can start, and drop its result. Returns False, leaving it as the
+        one in flight, when MAX_STUCK_READS given-up reads are still
+        waiting. Call with the lock held."""
+        self._stuck = [t for t in self._stuck if t.is_alive()]
+        if len(self._stuck) >= MAX_STUCK_READS:
+            return False
+        logger.warning("Giving up on a stuck chat routing policy read")
+        if self._thread is not None:
+            self._stuck.append(self._thread)
+        self._thread = None
+        self._generation += 1
+        return True
 
     def _refresh(self, generation: int) -> None:
         read = False

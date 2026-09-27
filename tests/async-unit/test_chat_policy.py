@@ -746,6 +746,91 @@ async def test_a_read_started_before_a_reset_cannot_write_its_result():
     assert stuck.calls == 2
 
 
+class _StuckReads:
+    """Stands in for the row read. The first ``stuck`` reads block until
+    released, like reads on a connection that stopped answering; the ones
+    after them read the row. Build it before patching the reader."""
+
+    def __init__(self, stuck):
+        self.stuck = stuck
+        self.read = chat_policy._read_newest_isolated
+        self.release = threading.Event()
+        self.first_entered = threading.Event()
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def __call__(self):
+        with self._lock:
+            self.calls += 1
+            call = self.calls
+        if call <= self.stuck:
+            self.first_entered.set()
+            self.release.wait(10)
+            return None
+        return self.read()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_read_stuck_past_the_limit_is_given_up_and_a_new_one_lands():
+    row = await _store()
+    clock = _Clock()
+    reads = _StuckReads(stuck=1)
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "time", clock),
+        patch.object(chat_policy, "_read_newest_isolated", side_effect=reads),
+    ):
+        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert await asyncio.to_thread(reads.first_entered.wait, 5)
+        stuck = chat_policy._policy_cache._thread
+        clock.now += chat_policy.POLICY_READ_STUCK_SECONDS - 1
+        assert await aget_chat_policy() is DEFAULT_POLICY
+        assert reads.calls == 1
+        clock.now += 1
+        await aget_chat_policy()
+        assert chat_policy.wait_for_chat_policy_refresh(5)
+        assert reads.calls == 2
+        assert (await aget_chat_policy()).row_id == row.pk
+        # The given-up read answers late (with no row); the cache keeps
+        # the newer read's value.
+        reads.release.set()
+        stuck.join(5)
+        assert not stuck.is_alive()
+        assert (await aget_chat_policy()).row_id == row.pk
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_no_more_than_max_stuck_reads_are_left_waiting():
+    await _store()
+    clock = _Clock()
+    reads = _StuckReads(stuck=100)
+    started = []
+    with (
+        override_settings(FHI_CHAT_POLICY_APPLY=True),
+        patch.object(chat_policy, "time", clock),
+        patch.object(chat_policy, "_read_newest_isolated", side_effect=reads),
+    ):
+        for _ in range(chat_policy.MAX_STUCK_READS + 3):
+            assert await aget_chat_policy() is DEFAULT_POLICY
+            thread = chat_policy._policy_cache._thread
+            if thread not in started:
+                started.append(thread)
+            clock.now += chat_policy.POLICY_READ_STUCK_SECONDS
+        # The first read plus one new read for each given up, and no more.
+        assert len(started) == chat_policy.MAX_STUCK_READS + 1
+        reads.release.set()
+        for thread in started:
+            thread.join(5)
+            assert not thread.is_alive()
+        # Once they have ended, reads start again when the next is due.
+        clock.now += chat_policy.POLICY_CACHE_SECONDS
+        await aget_chat_policy()
+        assert chat_policy.wait_for_chat_policy_refresh(5)
+        assert reads.calls == len(started) + 1
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_read_that_cannot_start_gives_the_default_and_waits_its_turn():
