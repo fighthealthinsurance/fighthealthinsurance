@@ -136,7 +136,7 @@
     {% endif %}
     {% include "model_usage_table_partial.html" with rows=w.call_attempts.rows kind="calls" show_state=True %}
     {% if w.call_attempts.median_capped %}
-    <p class="note">Medians here use only the newest {{ duration_cap }} OK calls, so they lean toward recent calls.</p>
+    <p class="note">Medians here use only the newest {{ w.call_attempts.median_cap }} OK calls {% if view == "rolling" %}in this window{% else %}of this period{% endif %}, so they lean toward its most recent calls.</p>
     {% endif %}
     {% elif view == "rolling" %}
     <p class="note">Not shown for All Time: call records only exist since call logging began and are deleted with their case, so an all-time total would look complete while missing most of the history. See the shorter windows below.</p>
