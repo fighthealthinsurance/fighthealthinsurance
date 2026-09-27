@@ -55,16 +55,22 @@ GRPC_CHANNEL_WATCHER_MARKER = "Cannot monitor channel state"
 # scale-down, node drain) is routine, and this artifact of the shutdown path
 # says nothing about why it stopped.
 #
-# Dropped ONLY when the whole event is shutdown: a SystemExit, and nothing but
-# SystemExit and RuntimeError beside it. On its own the message means code
-# called close() on a running loop, which is a bug; and a real crash that
-# chains into the teardown (a KeyError, say, then the SIGTERM) must keep its
-# root cause, so any other exception type keeps the whole event (review).
-# RuntimeError is admitted as a type, not just this one message, because the
-# runner's unwinding raises more than one of them: the production event this
-# filter exists for carried two RuntimeErrors beside its SystemExit.
+# Dropped ONLY when the whole event is a SIGTERM shutdown: a SystemExit whose
+# code is 15, and nothing beside it but the runner's own teardown
+# RuntimeErrors. On its own the message means code called close() on a
+# running loop, which is a bug; a failed exit (SystemExit: 1) is not a routine
+# stop; and a real crash that chains into the teardown (a KeyError, or an
+# application RuntimeError, then the SIGTERM) must keep its root cause, so
+# anything else keeps the whole event (review). More than one RuntimeError is
+# admitted because the runner's unwinding raises more than one: the
+# production event this filter exists for carried two beside its SystemExit.
 EVENT_LOOP_SHUTDOWN_MARKER = "Cannot close a running event loop"
-SHUTDOWN_EXCEPTION_TYPES = frozenset({"SystemExit", "RuntimeError"})
+SIGTERM_EXIT_CODE = "15"
+SHUTDOWN_RUNTIME_ERROR_MARKERS = (
+    EVENT_LOOP_SHUTDOWN_MARKER,
+    # asyncio's "Event loop stopped before Future completed."
+    "Event loop stopped",
+)
 
 # Channels raises this for a websocket path that matches no route. It escapes
 # the ASGI app, uvicorn logs it at ERROR with exc_info, and the default
@@ -144,6 +150,17 @@ def exception_values(event: Any) -> List[Dict[str, Any]]:
     return [value for value in values if isinstance(value, dict)]
 
 
+def is_sigterm_teardown(exc: dict) -> bool:
+    """True for one link of a SIGTERM shutdown's exception chain."""
+    exc_type = exc.get("type")
+    exc_value = as_text(exc.get("value"))
+    if exc_type == "SystemExit":
+        return exc_value.strip() == SIGTERM_EXIT_CODE
+    if exc_type == "RuntimeError":
+        return any(marker in exc_value for marker in SHUTDOWN_RUNTIME_ERROR_MARKERS)
+    return False
+
+
 def before_send_filter(event: Any, hint: Any) -> Any:
     """Drop known-noise error events. Returns the event, or None to discard.
 
@@ -166,7 +183,7 @@ def before_send_filter(event: Any, hint: Any) -> Any:
 
     values = exception_values(event)
     shutting_down = any(exc.get("type") == "SystemExit" for exc in values) and all(
-        exc.get("type") in SHUTDOWN_EXCEPTION_TYPES for exc in values
+        is_sigterm_teardown(exc) for exc in values
     )
     # Same guard as shutting_down: a real crash chained with the watcher
     # race must still reach Sentry, so the event is dropped only when the

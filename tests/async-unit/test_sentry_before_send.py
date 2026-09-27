@@ -164,6 +164,38 @@ class TestInfrastructureTeardownNoiseIsDropped:
         }
         assert before_send_filter(event, {}) is event
 
+    def test_a_failed_exit_is_not_a_routine_shutdown(self):
+        """SystemExit: 1 is a process failing, not being told to stop."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "SystemExit", "value": "1"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_an_application_runtimeerror_in_the_shutdown_is_kept(self):
+        """RuntimeError is admitted only for the runner's own teardown
+        messages; an application one is a root cause (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "RuntimeError", "value": "fax queue is wedged"},
+                    {"type": "SystemExit", "value": "15"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
     def test_a_systemexit_alone_is_kept(self):
         """Only the teardown artifact is noise; an exit on its own is not."""
         event = _exc_event("SystemExit", "15")
