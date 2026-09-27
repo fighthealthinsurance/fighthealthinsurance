@@ -3522,11 +3522,17 @@ class ModelBackendStatusView(generic.TemplateView):
         ctx["current_deployment_id"] = current_deployment
         ctx["current_environment"] = current_environment
         ctx["deployment_is_versioned"] = deployment_is_versioned
-        ctx["enabled_count"] = sum(1 for row in rows if row["enabled"])
+        # "Enabled" as the Config column uses the word: missing credentials
+        # and a failed client construction keep enabled=True but show a
+        # failing pill there, so they are not counted as enabled here either.
+        enabled_rows = [
+            row for row in rows if row["enabled"] and not row["config_failing"]
+        ]
+        ctx["enabled_count"] = len(enabled_rows)
         ctx["healthy_count"] = sum(
             1
-            for row in rows
-            if row["enabled"] and row["last_check"] is not None and row["last_check"].ok
+            for row in enabled_rows
+            if row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
 
