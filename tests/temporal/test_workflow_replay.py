@@ -37,10 +37,14 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
 from fighthealthinsurance.workflows import registry as workflow_registry
+from fighthealthinsurance.workflows.chat_routing_policy import (
+    ChatRoutingPolicyWorkflow,
+)
 from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
 from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 from fighthealthinsurance.workflows.types import (
+    ChatRoutingPolicyInput,
     GenerateAppealInput,
     IntakeJourneyInput,
     SendFaxInput,
@@ -204,6 +208,14 @@ def _appeal_activities():
     return [precheck_appeal_journey, generate_and_store_appeals]
 
 
+def _chat_policy_activities():
+    @activity.defn(name="compute_and_store_chat_policy")
+    async def compute_and_store_chat_policy(window_minutes: int) -> int:
+        return 1
+
+    return [compute_and_store_chat_policy]
+
+
 async def _capture(
     env, task_queue, workflows, activities, entry, arg, signal_completion=True
 ):
@@ -291,6 +303,13 @@ async def test_capture_baseline_histories():
                     hashed_email="h", denial_uuid="u", contact_opt_in=True
                 ),
             ),
+            (
+                "chat_routing_policy_completed",
+                [ChatRoutingPolicyWorkflow],
+                _chat_policy_activities(),
+                ChatRoutingPolicyWorkflow.run,
+                ChatRoutingPolicyInput(window_minutes=24 * 60),
+            ),
         ]
         for name, workflows, activities, entry, arg in plans:
             # The abandoned journey must NOT be signalled: it runs the nudge
@@ -331,10 +350,12 @@ def test_the_worker_hands_the_registry_result_to_the_worker_unmodified():
     ).read_text()
     assert "workflow_registry.fax_workflows()" in source
     assert "workflow_registry.appeal_workflows(" in source
+    assert "workflow_registry.chat_policy_workflows()" in source
     # No hand-rolled list left behind.
     assert "fax_workflows: List[type] = [SendFaxWorkflow]" not in source
-    # ...and nothing added to either list after the registry produced it.
-    for name in ("fax_workflows", "appeal_workflows"):
+    assert "workflows=[ChatRoutingPolicyWorkflow]" not in source
+    # ...and nothing added to any list after the registry produced it.
+    for name in ("fax_workflows", "appeal_workflows", "policy_workflows"):
         assert f"{name}.append(" not in source, f"{name} is mutated after the registry"
         assert f"{name} +=" not in source, f"{name} is extended after the registry"
         assert f"workflows={name}" in source, f"{name} is not what Worker receives"

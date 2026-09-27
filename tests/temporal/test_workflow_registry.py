@@ -66,7 +66,34 @@ def test_all_enabled_is_the_maximal_set_the_replay_gate_must_cover():
         "SendFaxWorkflow",
         "GenerateAppealWorkflow",
         "IntakeJourneyWorkflow",
+        "ChatRoutingPolicyWorkflow",
     }
+
+
+def test_the_policy_workflow_appears_only_with_its_own_flag():
+    """Its own kill switch, independent of the journey flags."""
+    for role in ("appeal", "all"):
+        assert "ChatRoutingPolicyWorkflow" not in _names(
+            registry.workflows_for_role(role, journey_enabled=True, intake_enabled=True)
+        )
+    assert _names(
+        registry.workflows_for_role(
+            "appeal", journey_enabled=False, intake_enabled=False, policy_enabled=True
+        )
+    ) == ["ChatRoutingPolicyWorkflow"]
+    assert _names(
+        registry.workflows_for_role(
+            "all", journey_enabled=True, intake_enabled=False, policy_enabled=True
+        )
+    ) == ["SendFaxWorkflow", "GenerateAppealWorkflow", "ChatRoutingPolicyWorkflow"]
+
+
+def test_the_fax_role_never_hosts_the_policy_workflow():
+    assert _names(
+        registry.workflows_for_role(
+            "fax", journey_enabled=True, intake_enabled=True, policy_enabled=True
+        )
+    ) == ["SendFaxWorkflow"]
 
 
 def test_an_unknown_role_registers_nothing():

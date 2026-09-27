@@ -165,6 +165,14 @@ class Base(Configuration):
     TEMPORAL_INTAKE_JOURNEY_ENABLED = (
         os.getenv("TEMPORAL_INTAKE_JOURNEY_ENABLED", "false").lower() == "true"
     )
+    # The chat routing policy Schedule (ChatRoutingPolicyWorkflow, every ten
+    # minutes) is gated on its own, independent of the journey flags. It
+    # only takes effect when TEMPORAL_ENABLED is also true. With it on, the
+    # appeal-worker process hosts the policy queue and keeps the Schedule
+    # running; with it off, that process pauses the Schedule at start-up.
+    TEMPORAL_CHAT_POLICY_ENABLED = (
+        os.getenv("TEMPORAL_CHAT_POLICY_ENABLED", "false").lower() == "true"
+    )
 
     # TypeSafe System One letter scoring (ml/letter_quality.py). Inert until
     # BOTH the key and the flag are set: the key alone must not start sending
@@ -209,6 +217,12 @@ class Base(Configuration):
     # (separate failure domain; PR #963 review). Point a dedicated
     # worker deployment at it for full resource isolation.
     TEMPORAL_APPEAL_TASK_QUEUE = os.getenv("TEMPORAL_APPEAL_TASK_QUEUE", "fhi-appeals")
+    # The chat routing policy runs on its own queue too, hosted as its own
+    # Worker in the appeal-worker process, so a slow generation holding the
+    # appeal Worker's slots never delays it.
+    TEMPORAL_CHAT_POLICY_TASK_QUEUE = os.getenv(
+        "TEMPORAL_CHAT_POLICY_TASK_QUEUE", "fhi-chat-policy"
+    )
     # In-cluster address of the Temporal Web UI, reached only through the
     # staff-only reverse proxy at /timbit/temporal/ (never exposed directly).
     TEMPORAL_UI_UPSTREAM = os.getenv("TEMPORAL_UI_UPSTREAM", "http://temporal-web:8080")

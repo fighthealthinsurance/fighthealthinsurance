@@ -289,6 +289,8 @@ required.
 
 - **Now:** `SendFaxWorkflow` (immediate fax send; durable 1-hour delay timer
   available via `delay_send`).
+- **Behind its own flag:** the `chat-routing-policy` Schedule (below), the
+  first Temporal Schedule here.
 - **Next:** point fax creation at `delay_send=True` to retire the
   `FaxPollingActor`; then convert the refresh/prefetch actors to Temporal
   Schedules and the email-polling actor to a workflow. See the migration notes
@@ -298,6 +300,44 @@ required.
 > hashed email + fax uuid + booleans — **no PHI** is written to Temporal
 > history. Any future workflow that must carry PHI should add an encryption
 > `PayloadCodec` (see the Temporal data-handling reference) before doing so.
+
+## The chat routing policy Schedule
+
+`ChatRoutingPolicyWorkflow` runs every ten minutes. It reads ChatTurn
+metadata over the last day, computes a chat routing policy and appends one
+`ChatRoutingPolicy` row: the same row `manage.py compute_chat_policy` writes
+by hand (see `docs/chat-pipeline.md` §4). Chat reads the newest row through a
+short cache and follows it only while `FHI_CHAT_POLICY_APPLY` is on. Temporal
+is never on the chat path, so chat behaves the same with all of this off.
+
+| Setting | Default | Where |
+| --- | --- | --- |
+| `TEMPORAL_CHAT_POLICY_ENABLED` | off | shared app secret, next to the journey flags |
+| `TEMPORAL_CHAT_POLICY_TASK_QUEUE` | `fhi-chat-policy` | `appeal-worker.yaml` |
+
+- **Flag:** takes effect only with `TEMPORAL_ENABLED`, and does not need the
+  journey flags.
+- **Where it runs:** the `fhi-appeal-worker` pods host the policy queue as a
+  Worker of its own with one activity slot, so a run never waits behind an
+  appeal generation. With the journey flags off and this flag on, those
+  pods host only the policy queue. The fax worker never hosts it. The
+  queue-labelled alerts in `worker-alerts.yaml` (schedule-to-start, activity
+  failures, the `fhi-.*` backlog) cover it with no change.
+- **The Schedule:** id `chat-routing-policy`; an interval of 10 minutes;
+  overlap SKIP; a catch-up window of 10 minutes, so an outage never ends in
+  a burst of runs; each run has a 5-minute execution timeout. A run makes
+  up to three attempts at its one activity, and after that the next run is
+  the retry.
+- **Kept in step at start-up:** after connecting, each `fhi-appeal-worker`
+  pod creates the Schedule, or updates it in place and unpauses it, when
+  the flag is on, and pauses it when the flag is off. Both replicas doing
+  this at once is harmless. If Temporal refuses, the pod logs the error
+  class and goes on hosting. `manage.py ensure_temporal_schedules` does the
+  same by hand from any pod that has the Temporal settings.
+- **Turning it off:** set the flag to false and restart `fhi-appeal-worker`,
+  or run `ensure_temporal_schedules`. Runs show in the Temporal UI at
+  `/timbit/temporal/`, which is read-only, so the flag is the control.
+- **History:** a number of minutes in, the new row's id out. No chat text.
 
 ## Protecting user data in workflow history
 
