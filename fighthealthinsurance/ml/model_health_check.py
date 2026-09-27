@@ -106,20 +106,33 @@ _OK_NEGATION_TOKENS = frozenset(
         "isnt",
     }
 )
+# "OK, no problem" acknowledges: "no" before one of these is not a negation.
+_OK_NO_ACKNOWLEDGES = frozenset({"problem", "problems", "worries"})
 _MAX_OK_REPLY_WORDS = 4
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
+
+
+def _negates(words: list[str], i: int) -> bool:
+    """Whether ``words[i]`` contradicts an OK in the same reply."""
+    if words[i] not in _OK_NEGATION_TOKENS:
+        return False
+    following = words[i + 1] if i + 1 < len(words) else ""
+    return not (words[i] == "no" and following in _OK_NO_ACKNOWLEDGES)
 
 
 def _looks_like_ok(text: str) -> bool:
     """Whether a probe reply plausibly acknowledges the 'Reply with exactly:
     OK' instruction: at most a few words, one of them OK/okay, none a
     negation, none a bare number (a status line such as "200 OK")."""
-    words = [w.lower() for w in _WORD_RE.findall(text or "")]
+    # Quotes around a word are not part of it: 'OK' is OK. An apostrophe
+    # inside one ("can't") stays.
+    words = [w.strip("'").lower() for w in _WORD_RE.findall(text or "")]
+    words = [w for w in words if w]
     if not words or len(words) > _MAX_OK_REPLY_WORDS:
         return False
     if not any(w in _OK_WORD_TOKENS for w in words):
         return False
-    if any(w in _OK_NEGATION_TOKENS for w in words):
+    if any(_negates(words, i) for i in range(len(words))):
         return False
     return not any(w.isdigit() for w in words)
 
@@ -278,6 +291,10 @@ class HealthCheckRunSummary:
     # opposed to a lost leader claim: the deploy hook fails a strict deploy
     # on the former and exits quietly on the latter.
     crashed: bool = False
+    # True when ran_checks is False because the leader claim itself failed
+    # (a database error, or the schema not migrated yet): nothing ran, and
+    # no other process is known to have run it either. Treated as a crash.
+    claim_failed: bool = False
     email_sent: bool = False
     persisted: bool = False
 
@@ -473,6 +490,12 @@ def enumerate_backend_checks(
             logger.opt(exception=True).warning(
                 f"model_catalog() failed for {backend_cls.__name__}: {e}"
             )
+            if only_models and backend_cls.__name__ not in only_models:
+                # A check of other models: without a catalog there is no
+                # telling whether this class serves them, and its failure
+                # row would fail that check and hide a filter that matched
+                # nothing. The warning above still says what happened.
+                continue
             # A provider whose catalog cannot even be listed vanished from
             # the report (and from the router) without a row; give it one so
             # the failure is visible where the others are.
@@ -903,13 +926,15 @@ def _send_consolidated_alert(summary: HealthCheckRunSummary) -> bool:
         return False
 
 
-def try_claim_deployment_leader(deploy_id: str) -> bool:
+def try_claim_deployment_leader(deploy_id: str) -> Optional[bool]:
     """Claim the once-per-deployment leader slot via the shared database.
 
     Exactly one caller across every pod/process sharing the database wins for
     a given deployment id (within ``LEADER_CLAIM_WINDOW_SECONDS``). On any
-    database error we return ``False`` — better to occasionally skip the check
-    than to have every worker run it and email support in parallel.
+    database error we return ``None``, which callers must not run the check
+    on either — better to occasionally skip the check than to have every
+    worker run it and email support in parallel — but must not report as a
+    lost claim, since no other process is known to have run it.
     """
     try:
         from django.db import close_old_connections
@@ -925,7 +950,7 @@ def try_claim_deployment_leader(deploy_id: str) -> bool:
             "Model-backend health leader claim unavailable (DB error or "
             "migrations not applied); skipping to avoid duplicate runs"
         )
-        return False
+        return None
 
 
 def run_health_check(
@@ -940,7 +965,8 @@ def run_health_check(
 
     * ``require_leader`` — claim the per-deployment leader slot first; when the
       claim is lost (another process already ran for this deployment) the
-      returned summary has ``ran_checks=False`` and nothing is invoked.
+      returned summary has ``ran_checks=False`` and nothing is invoked. When
+      the claim cannot be made at all, ``claim_failed`` is set too.
     * ``send_alert_email`` — send the single consolidated failure email
       (subject to :func:`alert_emails_enabled`; only meaningful together with
       ``require_leader`` so exactly one email can exist per deployment).
@@ -956,13 +982,19 @@ def run_health_check(
         environment=environment_name(),
     )
 
-    if require_leader and not try_claim_deployment_leader(deploy_id):
-        logger.info(
-            f"Model-backend health check: another process already ran for "
-            f"deployment {deploy_id}; skipping"
-        )
-        summary.ran_checks = False
-        return summary
+    if require_leader:
+        claimed = try_claim_deployment_leader(deploy_id)
+        if claimed is None:
+            summary.ran_checks = False
+            summary.claim_failed = True
+            return summary
+        if not claimed:
+            logger.info(
+                f"Model-backend health check: another process already ran for "
+                f"deployment {deploy_id}; skipping"
+            )
+            summary.ran_checks = False
+            return summary
 
     try:
         summary.results = async_to_sync(run_checks_async)(
