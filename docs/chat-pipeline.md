@@ -169,7 +169,10 @@ get_chat_backends_with_fallback builds the fan-out:
 * the lead fhi backend, doubled (redundancy against a slow pod). The lead
   is the strongest fhi backend by quality that follows instructions and
   looks healthy, with equal quality going to the name that sorts first so
-  every pod picks the same one. Each step fails open like the other
+  every pod picks the same one. The lead is chosen per backend, not per
+  name: when two backends share a name (alpha and the May fine-tune set to
+  the same model path), only the stronger leads and the other takes an
+  ordinary internal slot. Each step fails open like the other
   filters: with every fhi backend marked down the strongest still leads.
   With alpha and the May fine-tune both registered, alpha leads with two
   calls and the May fine-tune gets one. The lead used to be whichever fhi

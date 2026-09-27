@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from loguru import logger as loguru_logger
 
+from fighthealthinsurance.chooser_tasks import _select_candidate_models
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.ml.ml_router import MLRouter
 
@@ -235,3 +236,61 @@ class TestChatLeadByQuality:
         # still leads and the rest still fan out, and the fallback is logged.
         assert models == [zeta, zeta, alpha]
         assert "failing open" in sink.getvalue()
+
+
+class TestChatLeadSharingAName:
+    """Two backends can register under one name, e.g. alpha and the May
+    fine-tune set to the same model path. The lead is the stronger INSTANCE,
+    not every backend under the winning name."""
+
+    @staticmethod
+    def _shared_name_router():
+        router = _bare_router()
+        # Cost order, the way MLRouter.__init__ keeps each name's backends:
+        # the May fine-tune (cost 2) before alpha (cost 3).
+        may = _internal_model("may-instance", 200)
+        alpha = _internal_model("alpha-instance", 210)
+        for m in (may, alpha):
+            # The friendly name MLRouter stamps on every instance.
+            m.name = "fhi-local"
+        router.models_by_name = {"fhi-local": [may, alpha]}
+        router.internal_models_by_cost = [may, alpha]
+        router.all_models_by_cost = [may, alpha]
+        return router, may, alpha
+
+    def test_only_the_stronger_backend_leads(self):
+        router, may, alpha = self._shared_name_router()
+
+        with _health_map({"may-instance": True, "alpha-instance": True}):
+            models = router.get_chat_backends(use_external=False)
+
+        # alpha twice, and the May fine-tune in an ordinary internal slot.
+        assert models == [alpha, alpha, may]
+
+    def test_list_heads_pick_the_stronger_backend(self):
+        """Denied-item analysis asks models[0], and the chooser keeps the
+        first backend it sees under each name, so both get alpha."""
+        router, may, alpha = self._shared_name_router()
+
+        with _health_map({"may-instance": True, "alpha-instance": True}):
+            models = router.get_chat_backends(use_external=False)
+
+        assert models[0] is alpha
+        assert _select_candidate_models(models, 4) == [alpha]
+
+    def test_equal_quality_backends_under_the_lead_name_both_lead(self):
+        """Two servers of the same model under one name share the doubled
+        slot, cheapest first. A weaker backend under that name still takes
+        an ordinary internal slot."""
+        router = _bare_router()
+        first = _internal_model("first-server", 210)
+        second = _internal_model("second-server", 210)
+        weaker = _internal_model("weaker-server", 200)
+        router.models_by_name = {"fhi-local": [first, weaker, second]}
+        router.internal_models_by_cost = [first, weaker, second]
+        router.all_models_by_cost = [first, weaker, second]
+
+        with _health_map({}):
+            models = router.get_chat_backends(use_external=False)
+
+        assert models == [first, second, first, second, weaker]

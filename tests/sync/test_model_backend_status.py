@@ -10,6 +10,10 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance.chooser_tasks import (
+    CHOOSER_NUM_CANDIDATES,
+    _select_candidate_models,
+)
 from fighthealthinsurance.ml import health_status as health_status_module
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
@@ -391,6 +395,53 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             ["fhi-local on FHI Internal"],
         )
         self.assertContains(response, "2 backends, tried in turn")
+
+    def test_backends_sharing_a_name_lead_with_the_stronger_one(self):
+        """ALPHA (210) and NEW (200) both register as fhi-local and both look
+        healthy. Only ALPHA leads chat, with two calls; NEW gets one ordinary
+        call. Denied-item analysis asks the head of the chat list and the
+        chooser keeps the first backend under each name, so both use ALPHA."""
+        self.configure(**ALPHA, **NEW_SAME_PATH)
+        router = ml_router_module._get_ml_router()
+        backends = router.models_by_name["fhi-local"]
+        self.assertEqual(len(backends), 2)
+        alpha = next(m for m in backends if isinstance(m, AlphaRemoteInternal))
+        new = next(m for m in backends if m is not alpha)
+        for m in backends:
+            health_status._health_map[_model_key(m)] = True
+
+        self.assertEqual(
+            router.get_chat_backends(use_external=False), [alpha, alpha, new]
+        )
+        self.assertIs(router.get_chat_backends(use_external=False)[0], alpha)
+        chooser_picks = _select_candidate_models(
+            router.get_chat_backends(use_external=True), CHOOSER_NUM_CANDIDATES
+        )
+        self.assertEqual(chooser_picks, [alpha])
+
+        response = self.get_page()
+        rows = {
+            r["provider"]: r
+            for r in response.context["rows"]
+            if r["model_name"] == "fhi-local"
+        }
+        self.assertIn("Chat: lead, 2 calls", self.labels(rows["FHI Internal (alpha)"]))
+        self.assertEqual(
+            [
+                label
+                for label in self.labels(rows["FHI Internal"])
+                if label.startswith("Chat")
+            ],
+            ["Chat: fan-out"],
+        )
+        chat = self.plan(response, "Chat").internal_only
+        self.assertEqual(
+            [(e.name, e.calls) for e in chat],
+            [
+                ("fhi-local on FHI Internal (alpha)", 2),
+                ("fhi-local on FHI Internal", 1),
+            ],
+        )
 
     def test_unregistered_rows_read_traits_without_being_routed(self):
         response = self.get_page()

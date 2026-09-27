@@ -605,32 +605,47 @@ class MLRouter(object):
         """
         return self._filter_available(self.internal_models_by_cost, "prior-auth")[:3]
 
-    def _chat_lead_name(self) -> Optional[str]:
-        """The fhi registry name whose backends lead the chat fan-out.
+    def _chat_lead(self) -> list[RemoteModelLike]:
+        """The fhi backend instance(s) that lead the chat fan-out.
 
         The strongest fhi backend that follows instructions and looks
-        healthy, by quality. Equal quality goes to the name that sorts
-        first, so every pod picks the SAME lead whatever order the backends
-        registered in. Each step fails open like ``_filter_available``: with
-        no general-purpose fhi backend the appeal fine-tune can still lead,
-        and with every candidate marked down the strongest one still leads,
-        because a doubled slot on a long shot beats no fhi call at all.
-        None when no fhi backend is registered.
+        healthy, by quality. Equal quality across names goes to the name
+        that sorts first, so every pod picks the SAME lead whatever order
+        the backends registered in. Each step fails open like
+        ``_filter_available``: with no general-purpose fhi backend the
+        appeal fine-tune can still lead, and with every candidate marked
+        down the strongest one still leads, because a doubled slot on a long
+        shot beats no fhi call at all.
+
+        Chosen per INSTANCE, not per name: two backends can share a registry
+        name (alpha and the May fine-tune set to the same model path both
+        register as one name), and only the strongest of them leads. The
+        others under that name take ordinary internal slots. Instances that
+        tie on that quality under the chosen name all lead, cheapest first
+        (``models_by_name`` keeps each name's backends in cost order). Empty
+        when no fhi backend is registered.
         """
-        candidates = [
-            (name, m)
-            for name, backends in self.models_by_name.items()
-            if name.startswith("fhi-")
-            for m in backends
-        ]
-        general = [(n, m) for n, m in candidates if m.supports_general_instructions()]
-        candidates = general or candidates
-        healthy = [(n, m) for n, m in candidates if self._selectable(m)]
-        candidates = healthy or candidates
+        registry_name: dict[int, str] = {}
+        fhi: list[RemoteModelLike] = []
+        for name, backends in self.models_by_name.items():
+            if name.startswith("fhi-"):
+                for m in backends:
+                    registry_name[id(m)] = name
+                    fhi.append(m)
+        candidates = self._filter_available(
+            self._general_purpose_only(fhi, "chat-fhi"), "chat-fhi"
+        )
         if not candidates:
-            return None
-        name, _model = min(candidates, key=lambda c: (-c[1].quality(), c[0]))
-        return name
+            return []
+        strongest = max(m.quality() for m in candidates)
+        lead_name = min(
+            registry_name[id(m)] for m in candidates if m.quality() == strongest
+        )
+        return [
+            m
+            for m in candidates
+            if registry_name[id(m)] == lead_name and m.quality() == strongest
+        ]
 
     def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
@@ -648,20 +663,10 @@ class MLRouter(object):
 
         models = []
         # The lead fhi backend is asked twice, for redundancy against a slow
-        # pod. It is picked by quality (see _chat_lead_name), so the doubled
-        # slot goes to our strongest model rather than whichever name sorts
-        # first.
-        lead: list[RemoteModelLike] = []
-        lead_name = self._chat_lead_name()
-        if lead_name is not None:
-            # Filtered again per INSTANCE, not just per name: a name can hold
-            # a mix of backends, and _general_purpose_only logs (and fails
-            # open) if they are all narrow.
-            lead = self._general_purpose_only(
-                self._filter_available(self.models_by_name[lead_name], "chat-fhi"),
-                "chat-fhi",
-            )
-            models += lead * 2
+        # pod. It is picked by quality (see _chat_lead), so the doubled slot
+        # goes to our strongest model rather than whichever name sorts first.
+        lead = self._chat_lead()
+        models += lead * 2
         if use_external:
             models += self.best_external_models()
         # Strongest available internals, not cheapest: the cost ordering was
