@@ -8,11 +8,13 @@ workflows.
 
 This module builds the introduction email -- optionally personalized by an
 (external) LLM and always falling back to a safe approved base template -- and
-sends it with the professional contact address CC'd (the copy asks the recipient
-to reach out to that address to schedule a demo or learn more). A Cofactor AI CC
-can be enabled per-deployment via COFACTOR_CC_EMAIL but is off by default. Staff
-review and edit every draft before it is sent; nothing here sends
-automatically.
+sends it to the professional with both the FHI professional contact address and
+Cofactor AI's contact (COFACTOR_CC_EMAIL, Rebeca Morales by default) CC'd. The
+copy introduces the recipient to that contact by name ("Let me introduce you
+to ..."). A deployment can turn the Cofactor CC off, in which case the copy
+introduces Cofactor AI generally and asks the recipient to reach out to the
+professional contact address instead. Staff review and edit every draft before
+it is sent; nothing here sends automatically.
 
 Wording constraints (enforced by ``_is_safe_intro_draft``):
   * Never describe Cofactor AI as a "partner" or say FHI "partnered" with them.
@@ -23,6 +25,7 @@ Wording constraints (enforced by ``_is_safe_intro_draft``):
 
 import re
 import urllib.parse
+from email.utils import parseaddr
 from typing import Any, Iterable, Optional
 
 from asgiref.sync import async_to_sync
@@ -43,10 +46,13 @@ from fighthealthinsurance.utils import send_fallback_email
 # Fallback CC address when no professional/support email setting is configured.
 DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
 
-# COFACTOR_CC_EMAIL value that explicitly disables the Cofactor AI CC. The CC
-# is already off when the setting is unset/empty (the default); the sentinel is
-# kept so a deployment can spell out "off" rather than relying on a blank
-# looking intentional (see get_cofactor_cc_email).
+# Cofactor AI contact CC'd on (and introduced by name in) intro emails when the
+# COFACTOR_CC_EMAIL setting is absent.
+DEFAULT_COFACTOR_CC_EMAIL = "Rebeca Morales <rmorales@cofactorai.com>"
+
+# COFACTOR_CC_EMAIL value that explicitly disables the Cofactor AI CC. An empty
+# setting is off too; the sentinel is kept so a deployment can spell out "off"
+# rather than relying on a blank looking intentional (see get_cofactor_cc_email).
 CC_DISABLED_SENTINEL = "none"
 
 # Obvious test / spam signups we never introduce. These are filtered out of the
@@ -133,17 +139,20 @@ _UNSAFE_TITLE_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 # personalized from it, and it is the always-safe fallback when AI drafting is
 # unavailable or produces unsafe output. ``{greeting_name}`` is filled with the
 # professional's name or a neutral greeting when the name is missing.
+# ``{introducee}`` and ``{call_to_action}`` depend on whether Cofactor AI's
+# contact is CC'd (see _intro_format_kwargs): by default the email introduces
+# the recipient to that person, who is copied and picks up the thread.
 BASE_INTRO_EMAIL = """Dear {greeting_name},
 
-Thank you so much for your interest in the professional version of Fight Health Insurance.
+Thank you so much for your interest in the professional version of Fight Health Insurance. Let me introduce you to {introducee}.
 
-We're excited to introduce you to Cofactor AI. After our initial work launching Fight Paperwork, we've refocused Fight Health Insurance on our consumer mission, and we now have a sourcing agreement with Cofactor AI to introduce interested professionals who may benefit from their AI-powered support for appeals, prior authorization, and related backend workflows.
+After our initial work launching Fight Paperwork, we've refocused Fight Health Insurance on our consumer mission, and we now have a sourcing agreement with Cofactor AI to introduce interested professionals who may benefit from their AI-powered support for appeals, prior authorization, and related backend workflows.
 
 As part of this sourcing agreement, Fight Health Insurance may receive compensation if you choose to work with Cofactor AI; that support helps us continue our consumer-focused mission.
 
 We've spent a lot of time talking with the Cofactor AI team, and they've built some truly impressive AI agents for appeals and administrative tasks. We think they may be a strong fit for the kinds of professional workflows many of you reached out to us about.
 
-To schedule a demo or learn more, reach out to {contact_email} and we'll get the process started.
+{call_to_action}
 
 Thank you again for your interest and for trusting us with this work.
 
@@ -192,10 +201,10 @@ INTRO_SYSTEM_PROMPT = (
     "consumer mission and has a SOURCING AGREEMENT to introduce interested "
     "professionals to Cofactor AI.\n\n"
     "Hard rules:\n"
-    "- Keep the call to action from the base email unchanged: to schedule a "
-    "demo or learn more, the recipient should reach out to the contact email "
-    "address given there. Do NOT say Cofactor AI is CC'd or copied on the "
-    "email, and do NOT change or drop the contact address.\n"
+    "- Keep the 'Let me introduce you to ...' introduction and the call to "
+    "action from the base email unchanged, including who the base email says "
+    "is copied on it and the contact email address it gives. Do NOT say anyone "
+    "else is CC'd or copied, and do NOT change or drop the contact address.\n"
     "- Do NOT call Cofactor AI a 'partner' and do NOT say FHI 'partnered' with "
     "them. Use 'sourcing agreement' or 'agreement to introduce interested "
     "professionals' instead. We are NOT announcing a partnership.\n"
@@ -223,17 +232,29 @@ def get_professional_cc_email() -> str:
 def get_cofactor_cc_email() -> Optional[str]:
     """Cofactor AI's CC address for intro emails, or ``None`` when turned off.
 
-    OFF by default: the intro copy asks the recipient to reach out to the
-    professional contact address, so nothing in the email depends on Cofactor
-    AI being CC'd. A deployment that wants the CC sets ``COFACTOR_CC_EMAIL``
-    to an address; unset/empty and the explicit ``"none"`` sentinel (any case)
-    both mean no CC.
+    ON by default (:data:`DEFAULT_COFACTOR_CC_EMAIL`): the intro copy
+    introduces the recipient to this contact, who is copied so they can pick up
+    the thread. The value may be a bare address or ``"Name <address>"``; the
+    name is who the copy introduces (see :func:`get_cofactor_contact_name`).
+    An empty ``COFACTOR_CC_EMAIL`` and the explicit ``"none"`` sentinel (any
+    case) both mean no CC.
     """
-    value = getattr(settings, "COFACTOR_CC_EMAIL", None)
+    value = getattr(settings, "COFACTOR_CC_EMAIL", DEFAULT_COFACTOR_CC_EMAIL)
     cleaned = str(value).strip() if value is not None else ""
     if not cleaned or cleaned.lower() == CC_DISABLED_SENTINEL:
         return None
     return cleaned
+
+
+def get_cofactor_contact_name() -> Optional[str]:
+    """Display name of the Cofactor AI contact CC'd on intros, or ``None``.
+
+    ``None`` when the CC is off or configured as a bare address with no name.
+    """
+    address = get_cofactor_cc_email()
+    if address is None:
+        return None
+    return parseaddr(address)[0].strip() or None
 
 
 def cofactor_cc_problem() -> Optional[str]:
@@ -241,20 +262,20 @@ def cofactor_cc_problem() -> Optional[str]:
 
     A typo'd (no ``@``) or blocked-domain ``COFACTOR_CC_EMAIL`` is *silently*
     dropped from the CC list by ``send_fallback_email``, which then reports a
-    successful send -- so a deployment that explicitly enabled the CC would
-    believe Cofactor AI received the intro when they never did. Real sends fail
-    closed on this instead (see :func:`_intro_cc_recipients`). The CC being off
-    (the default, or the ``"none"`` sentinel) is a choice, not a problem, so
-    that returns ``None``.
+    successful send -- so staff would believe Cofactor AI received the intro
+    (which tells the recipient they are copied) when they never did. Real sends
+    fail closed on this instead (see :func:`_intro_cc_recipients`). The CC
+    being off (an empty setting, or the ``"none"`` sentinel) is a choice, not a
+    problem, so that returns ``None``.
     """
     address = get_cofactor_cc_email()
-    if address is None or is_sendable_email(address):
+    if address is None or is_sendable_email(parseaddr(address)[1]):
         return None
     return (
         f"COFACTOR_CC_EMAIL is set to '{address}', which is not a sendable "
-        f"address, so Cofactor AI would be silently dropped from the CC. Fix the "
-        f"setting, or unset it (or set it to '{CC_DISABLED_SENTINEL}') to send "
-        f"intros without CC'ing Cofactor AI."
+        f"address (expected 'Name <address>' or a bare address), so Cofactor AI "
+        f"would be silently dropped from the CC. Fix the setting, or set it to "
+        f"'{CC_DISABLED_SENTINEL}' to send intros without CC'ing Cofactor AI."
     )
 
 
@@ -270,10 +291,34 @@ def _intro_format_kwargs(pro: InterestedProfessional) -> dict[str, str]:
     Kept in one place so a new placeholder is added to the templates and to
     their renderers together; otherwise whichever renderer was missed raises
     ``KeyError`` the first time it runs.
+
+    ``introducee``/``call_to_action`` follow the Cofactor CC: with it on (the
+    default) the email introduces the copied contact by name and they take it
+    from a reply-all; with it off, the email introduces Cofactor AI and points
+    at the professional contact address, as the printed letter does.
     """
+    contact_email = get_professional_cc_email()
+    if get_cofactor_cc_email() is None:
+        introducee = "Cofactor AI"
+        call_to_action = (
+            f"To schedule a demo or learn more, reach out to {contact_email} "
+            "and we'll get the process started."
+        )
+    else:
+        contact_name = get_cofactor_contact_name()
+        introducee = (
+            f"{contact_name} at Cofactor AI" if contact_name else "the Cofactor AI team"
+        ) + " (copied on this email)"
+        call_to_action = (
+            "To schedule a demo or learn more, just reply all and "
+            f"{contact_name or 'the Cofactor AI team'} can take it from there. "
+            f"You can also reach us any time at {contact_email}."
+        )
     return {
         "greeting_name": _greeting_name(pro),
-        "contact_email": get_professional_cc_email(),
+        "contact_email": contact_email,
+        "introducee": introducee,
+        "call_to_action": call_to_action,
     }
 
 
@@ -618,13 +663,18 @@ def generate_intro_email(pro: InterestedProfessional) -> str:
 
 
 def _dedup_addresses(addresses: Iterable[Optional[str]]) -> list[str]:
-    """Drop blanks/``None`` and case-insensitive duplicates, preserving order."""
+    """Drop blanks/``None`` and case-insensitive duplicates, preserving order.
+
+    Duplicates are judged on the bare address, so ``"Name <a@b.com>"`` and
+    ``"a@b.com"`` count as the same recipient (the first spelling is kept).
+    """
     recipients: list[str] = []
     seen: set[str] = set()
     for addr in addresses:
         cleaned = (addr or "").strip()
-        if cleaned and cleaned.lower() not in seen:
-            seen.add(cleaned.lower())
+        key = (parseaddr(cleaned)[1] or cleaned).lower()
+        if cleaned and key not in seen:
+            seen.add(key)
             recipients.append(cleaned)
     return recipients
 
@@ -632,10 +682,10 @@ def _dedup_addresses(addresses: Iterable[Optional[str]]) -> list[str]:
 def default_intro_cc_recipients() -> list[str]:
     """Addresses always CC'd on an intro email.
 
-    The FHI professional contact address -- the intro copy asks the recipient to
-    reach out to it, so having it on the CC keeps the thread visible to the team
-    that will follow up -- plus Cofactor AI's contact when a deployment has
-    enabled that CC (off by default). Both are configurable (see
+    The FHI professional contact address -- having it on the CC keeps the
+    thread visible to the team that will follow up -- plus Cofactor AI's
+    contact, whom the copy introduces and who picks up the thread (on by
+    default; a deployment can turn it off). Both are configurable (see
     :func:`get_professional_cc_email` / :func:`get_cofactor_cc_email`), so
     they're deduplicated in case a deployment points both settings at the same
     address.
@@ -666,7 +716,7 @@ def send_proconnector_intro_email(
     cc: Optional[list[str]] = None,
 ) -> None:
     """Send the (edited) intro email to ``pro`` now, always CC'ing the
-    professional address (and Cofactor AI where that CC is enabled).
+    professional address (and Cofactor AI's contact unless that CC is off).
 
     The default CC list comes from :func:`default_intro_cc_recipients`; any
     caller-supplied ``cc`` is treated as *additional* recipients, deduplicated
