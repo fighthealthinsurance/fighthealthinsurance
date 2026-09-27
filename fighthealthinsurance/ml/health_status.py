@@ -212,7 +212,16 @@ class _HealthStatus:
         enumeration_error: Optional[str] = None
         try:
             logger.debug("Starting to look up the models")
-            candidates = ml_router_module.ml_router.all_models_by_cost
+            router = ml_router_module.ml_router
+            candidates = list(router.all_models_by_cost)
+            # Chat's own outside models live outside the general pools; the
+            # sweep checks them too, so one that stops answering loses its
+            # place in the chat roster.
+            candidates += [
+                m
+                for m in getattr(router, "chat_outside_models_by_name", {}).values()
+                if m not in candidates
+            ]
             logger.debug(f"Considering candidates {candidates}")
         except Exception as e:
             enumeration_error = f"{type(e).__name__}: {e}"

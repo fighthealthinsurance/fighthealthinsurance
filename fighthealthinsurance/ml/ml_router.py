@@ -23,6 +23,7 @@ class MLRouter(object):
     all_models_by_cost: List[RemoteModelLike]
     external_models_by_cost: List[RemoteModelLike]
     context_only_models_by_cost: List[RemoteModelLike]
+    chat_outside_models_by_name: dict[str, RemoteModelLike]
 
     def __init__(self):
         # Initialize instance attributes to avoid mutable class-level state
@@ -31,6 +32,7 @@ class MLRouter(object):
         self.all_models_by_cost = []
         self.external_models_by_cost = []
         self.context_only_models_by_cost = []
+        self.chat_outside_models_by_name = {}
         logger.debug("MLRouter: starting model registration")
         enabled_models = self._enabled_model_names()
         if enabled_models is not None:
@@ -141,6 +143,7 @@ class MLRouter(object):
             for x in sorted(building_context_only_models_by_cost)
             if x.model is not None
         ]
+        self._register_chat_outside_models()
         logger.info(
             f"MLRouter initialized with {len(self.all_models_by_cost)} total models, "
             f"{len(self.internal_models_by_cost)} internal, {len(self.external_models_by_cost)} external, "
@@ -150,6 +153,75 @@ class MLRouter(object):
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
+
+    def _register_chat_outside_models(self) -> None:
+        """Instances of the models backends serve to chat only
+        (``chat_models``), by name, outside every general pool. A backend
+        without its key, or a model that fails to build, is skipped."""
+        # The same allow-list as every other remote model: a provider the
+        # operator left out never gets chat text.
+        enabled_models = self._enabled_model_names()
+        for backend in sorted(candidate_model_backends, key=lambda c: c.__name__):
+            try:
+                descriptions = backend.chat_models()
+            except Exception as e:
+                logger.warning(f"Skipping chat models of {backend}: {type(e).__name__}")
+                continue
+            for m in descriptions:
+                if (
+                    enabled_models is not None
+                    and m.name not in enabled_models
+                    and m.internal_name not in enabled_models
+                ):
+                    logger.debug(
+                        f"MLRouter: skipping disabled chat model {m.name} "
+                        f"(not in ENABLED_REMOTE_MODELS)"
+                    )
+                    continue
+                try:
+                    if m.model is None:
+                        m.model = backend(model=m.internal_name)
+                    if getattr(m.model, "name", None) is None:
+                        m.model.name = m.name
+                    self.chat_outside_models_by_name[m.name] = m.model
+                except Exception as e:
+                    logger.warning(
+                        f"Skipping chat model {m.internal_name}: {type(e).__name__}"
+                    )
+
+    def chat_outside_models(
+        self, names: Optional[Sequence[str]] = None, limit: int = 3
+    ) -> list[RemoteModelLike]:
+        """The outside models chat asks, in ``names`` order (default
+        FHI_CHAT_OUTSIDE_MODELS): the chat-only models, or any registered
+        external model by name (Azure's GPT-5.5). Models that are down are
+        left out (failing open like the other filters), and so is any model
+        whose provider's chat budget is spent (never failing open: a spent
+        budget means no call)."""
+        from django.conf import settings
+
+        from fighthealthinsurance.ml import spend
+
+        if names is None:
+            names = getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or []
+        found: list[RemoteModelLike] = []
+        for name in names:
+            model = self.chat_outside_models_by_name.get(name)
+            if model is None:
+                model = next(
+                    (m for m in self.models_by_name.get(name, []) if m.external),
+                    None,
+                )
+            if model is not None and model not in found:
+                found.append(model)
+        available = self._filter_available(found, "chat-outside") if found else []
+        within_budget = [
+            m
+            for m in available
+            if getattr(m, "SPEND_PROVIDER", None) is None
+            or spend.allows(getattr(m, "SPEND_PROVIDER"), spend.CHAT)
+        ]
+        return within_budget[:limit]
 
     @staticmethod
     def _enabled_model_names() -> Optional[set[str]]:
@@ -650,7 +722,7 @@ class MLRouter(object):
                 * 2
             )
         if use_external:
-            models += self.best_external_models()
+            models += self._chat_externals()
         # Strongest available internals, not cheapest: the cost ordering was
         # picking the 6 CHEAPEST internal backends for chat, which is the
         # wrong end of the list when strong and weak internals coexist. The
@@ -667,6 +739,15 @@ class MLRouter(object):
             f"{[str(m) for m in models]}"
         )
         return models
+
+    def _chat_externals(self) -> list[RemoteModelLike]:
+        """Chat's outside models: the FHI_CHAT_OUTSIDE_MODELS roster when it
+        is set, else the best externals as before."""
+        from django.conf import settings
+
+        if getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None):
+            return self.chat_outside_models()
+        return self.best_external_models()
 
     def get_chat_backends_with_fallback(
         self, use_external=False
@@ -711,7 +792,7 @@ class MLRouter(object):
             # with no added diversity.
             already_primary = {id(m) for m in primary_models}
             fallback_models = [
-                m for m in self.best_external_models() if id(m) not in already_primary
+                m for m in self._chat_externals() if id(m) not in already_primary
             ]
 
         return primary_models, fallback_models
