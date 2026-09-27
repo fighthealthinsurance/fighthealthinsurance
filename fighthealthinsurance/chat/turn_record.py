@@ -583,6 +583,12 @@ async def arecord_chat_turn(
 # How long a turn being cancelled waits for its row, and the statement
 # timeout that bounds the write itself on PostgreSQL.
 CANCELLED_TURN_WRITE_SECONDS = 2.0
+# The statement timeout ends a slow query, not a write waiting on a
+# connection that stopped answering, so a write can outlive its caller's
+# wait. At most this many run at once per process; past that a cancelled
+# turn's row is dropped rather than start another thread and connection.
+MAX_ISOLATED_TURN_WRITES = 4
+_isolated_writes = threading.BoundedSemaphore(MAX_ISOLATED_TURN_WRITES)
 
 
 def _bound_statements(connection: Any, ms: int) -> None:
@@ -631,9 +637,18 @@ async def arecord_chat_turn_isolated(
     for. So the write runs on a daemon thread with its own database
     connection, closed when it is done, under a statement timeout on
     PostgreSQL; the caller stops waiting after ``timeout`` seconds and
-    leaves the thread to finish or fail on its own.
+    leaves the thread to finish or fail on its own. While
+    MAX_ISOLATED_TURN_WRITES earlier writes are still running, the row is
+    dropped instead.
     """
     if turn is None or outcome not in TURN_OUTCOMES:
+        return False
+    fields = turn.row_fields(outcome)
+    if not _isolated_writes.acquire(blocking=False):
+        logger.warning(
+            f"Chat turn record for chat {chat_id} dropped: "
+            f"{MAX_ISOLATED_TURN_WRITES} earlier writes are still running"
+        )
         return False
     loop = asyncio.get_running_loop()
     done: "asyncio.Future[bool]" = loop.create_future()
@@ -651,6 +666,8 @@ async def arecord_chat_turn_isolated(
             logger.warning(
                 f"Could not record chat turn for chat {chat_id}: {type(e).__name__}"
             )
+        finally:
+            _isolated_writes.release()
         try:
             loop.call_soon_threadsafe(settle, written)
         except RuntimeError:
@@ -660,11 +677,12 @@ async def arecord_chat_turn_isolated(
     try:
         threading.Thread(
             target=write,
-            args=(turn.row_fields(outcome),),
+            args=(fields,),
             name="fhi-chat-turn-record",
             daemon=True,
         ).start()
     except Exception as e:
+        _isolated_writes.release()
         logger.warning(
             f"Could not record chat turn for chat {chat_id}: {type(e).__name__}"
         )

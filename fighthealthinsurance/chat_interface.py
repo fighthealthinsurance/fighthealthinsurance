@@ -5,6 +5,7 @@ import time
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
+from django.conf import settings as django_settings
 from django.utils import timezone
 
 # channels' database_sync_to_async (NOT asgiref's sync_to_async): chat runs
@@ -104,6 +105,7 @@ from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
+    ChatTurn,
     ChatType,
     OngoingChat,
     PolicyDocument,
@@ -220,6 +222,8 @@ class ChatInterface:
         # offered to the client as a side-by-side alternate when presentable
         # AND closely tied with the winner (see scores_closely_tied).
         self._candidate_alternate: Optional[str] = None
+        # Side-by-sides this socket has offered (see _side_by_side_allowed).
+        self._side_by_sides_shown: Optional[int] = None
         # Whether any pass of the turn in flight (the primary pass or a
         # recursive tool pass) hard-rejected a repeated candidate. Reset by
         # _call_llm_with_actions at depth 0, ORed into at every depth, and
@@ -339,12 +343,44 @@ class ChatInterface:
 
     async def _write_turn_record(self, outcome: str) -> None:
         """Write the turn's ChatTurn row, once, then the reply check's
-        health record when the turn ran a check. Never raises."""
+        health record when the turn ran a check. Never raises, except that a
+        cancellation still propagates. A write cancelled while it waits for
+        the chat's executor never runs, so a counted turn's row is then
+        written from a thread of its own first, as in _end_cancelled_turn.
+        The row's id is the turn's, so a write that did run is not doubled."""
         turn, self._turn = self._turn, None
         gate, self._reply_gate = self._reply_gate, None
-        await arecord_chat_turn(self.chat.id, turn, outcome)
+        try:
+            await arecord_chat_turn(self.chat.id, turn, outcome)
+        except asyncio.CancelledError:
+            if turn is not None and turn.counted_outcome:
+                await arecord_chat_turn_isolated(
+                    self.chat.id, turn, turn.counted_outcome
+                )
+            raise
         if gate is not None:
             await gate.anote_health()
+
+    async def _side_by_side_allowed(self, chat: OngoingChat) -> bool:
+        """Whether this chat may be shown another side-by-side: at most
+        FHI_CHAT_SIDE_BY_SIDES_PER_CHAT. Counted from its ChatTurn rows each
+        time, so every socket open on the chat sees the others' offers, and
+        never below what this socket has offered itself (a row whose write
+        failed is still counted here). A count that fails means no
+        side-by-side. Never raises."""
+        limit = int(getattr(django_settings, "FHI_CHAT_SIDE_BY_SIDES_PER_CHAT", 2))
+        if limit <= 0:
+            return False
+        try:
+            recorded = await ChatTurn.objects.filter(
+                chat_id=chat.id, alternate_offered=True
+            ).acount()
+        except Exception as e:
+            logger.warning(
+                f"Chat {chat.id}: side-by-side count failed: {type(e).__name__}"
+            )
+            return False
+        return max(recorded, self._side_by_sides_shown or 0) < limit
 
     def _count_turn(self, outcome: str) -> None:
         """Count the turn in fhi_chat_turns_total and note the outcome on its
@@ -1930,13 +1966,18 @@ class ChatInterface:
                         f"delete-data handoff"
                     )
                     alt_cleaned = ""
-                if alt_cleaned and alternate_is_presentable(
-                    alt_cleaned,
-                    final_response_text,
-                    chat_history=chat.chat_history,
-                    current_message=user_message,
+                if (
+                    alt_cleaned
+                    and alternate_is_presentable(
+                        alt_cleaned,
+                        final_response_text,
+                        chat_history=chat.chat_history,
+                        current_message=user_message,
+                    )
+                    and await self._side_by_side_allowed(chat)
                 ):
                     alternate_content = alt_cleaned
+                    self._side_by_sides_shown = (self._side_by_sides_shown or 0) + 1
                     record_chat_alternate_offered()
                     if self._turn is not None:
                         self._turn.offer_alternate()
