@@ -131,3 +131,52 @@ async def test_stuck_work_holds_up_neither_its_caller_nor_the_chats_executor():
             break
         await asyncio.sleep(0.02)
     assert isolated_db.running("t-stuck") == 0
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_limit_counts_threads_whose_callers_stopped_waiting():
+    """Threads stuck on a connection that stopped answering outlive their
+    callers' waits. With ``limit``, callers that come along meanwhile, all
+    at once included, get Busy and start no thread; once the threads end,
+    work runs again."""
+    release = threading.Event()
+    ran = []
+
+    def stuck():
+        ran.append(threading.get_ident())
+        release.wait(10)
+
+    try:
+        for _ in range(2):
+            with pytest.raises(asyncio.TimeoutError):
+                await isolated_db.run_isolated(
+                    stuck, timeout=0.05, name="t-limit", limit=2
+                )
+        crowd = await asyncio.gather(
+            *(
+                isolated_db.run_isolated(
+                    stuck, timeout=0.05, name="t-limit", limit=2
+                )
+                for _ in range(5)
+            ),
+            return_exceptions=True,
+        )
+        running = isolated_db.running("t-limit")
+    finally:
+        release.set()
+
+    assert all(isinstance(result, isolated_db.Busy) for result in crowd)
+    assert running == 2
+    for _ in range(100):
+        if isolated_db.running("t-limit") == 0:
+            break
+        await asyncio.sleep(0.02)
+    assert isolated_db.running("t-limit") == 0
+    assert len(ran) == 2
+    assert (
+        await isolated_db.run_isolated(
+            lambda: "done", timeout=2, name="t-limit", limit=2
+        )
+        == "done"
+    )

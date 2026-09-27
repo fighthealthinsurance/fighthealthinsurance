@@ -15,7 +15,9 @@ own, with that thread's own database connection, closed when the function
 returns. The function runs inside a transaction, and on PostgreSQL every
 statement in it is ended once it runs past the same bound the caller waits.
 The caller stops waiting after ``timeout`` seconds and leaves the thread to
-finish or fail on its own.
+finish or fail on its own. A statement timeout does not end a thread waiting
+on a connection that stopped answering, so a caller that must bound how many
+of its threads run at once passes ``limit``.
 """
 
 import asyncio
@@ -33,6 +35,22 @@ def running(name: str) -> int:
     including any whose caller already stopped waiting."""
     with _lock:
         return _running.get(name, 0)
+
+
+class Busy(Exception):
+    """``limit`` threads under the name are still running."""
+
+
+def _reserve(name: str, limit: Optional[int]) -> bool:
+    """Count one more thread under ``name``, unless ``limit`` are already
+    running. One step under the lock, so concurrent callers cannot all pass
+    the check before any of them is counted."""
+    with _lock:
+        now = _running.get(name, 0)
+        if limit is not None and now >= limit:
+            return False
+        _running[name] = now + 1
+        return True
 
 
 def _count(name: str, step: int) -> None:
@@ -77,7 +95,11 @@ def _retrieve(future: "asyncio.Future[Any]") -> None:
 
 
 async def run_isolated(
-    fn: Callable[..., T], *args: Any, timeout: float, name: str
+    fn: Callable[..., T],
+    *args: Any,
+    timeout: float,
+    name: str,
+    limit: Optional[int] = None,
 ) -> T:
     """Run the sync ``fn(*args)`` on a thread of its own, as described
     above, and return its result.
@@ -85,6 +107,9 @@ async def run_isolated(
     Raises TimeoutError when it takes longer than ``timeout`` seconds, and
     whatever ``fn`` raised otherwise. A cancelled caller stops waiting the
     same way; the thread carries on until its statements finish or time out.
+    With ``limit``, raises Busy without starting a thread while ``limit``
+    threads under ``name`` are still running, those whose callers stopped
+    waiting included.
     """
     loop = asyncio.get_running_loop()
     done: "asyncio.Future[T]" = loop.create_future()
@@ -114,7 +139,8 @@ async def run_isolated(
             # The event loop closed while the work ran: nobody is waiting.
             pass
 
-    _count(name, 1)
+    if not _reserve(name, limit):
+        raise Busy()
     try:
         threading.Thread(target=work, name=name, daemon=True).start()
     except BaseException:
