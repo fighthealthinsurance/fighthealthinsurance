@@ -2081,8 +2081,10 @@ class ModelUsageDashboardView(generic.TemplateView):
             "row": None,
             "policy": None,
             "usable_percent": None,
-            "cap_rows": [],
+            "order_rows": [],
+            "spend_rows": [],
         }
+        panel["spend_rows"] = ModelUsageDashboardView._spend_rows()
         row = chat_policy.newest_policy_row()
         if row is None:
             return panel
@@ -2106,17 +2108,44 @@ class ModelUsageDashboardView(generic.TemplateView):
             panel["state"] = "shadow"
         else:
             panel["state"] = "applied"
-        exhausted = set(policy.exhausted)
-        panel["cap_rows"] = [
+        panel["order_rows"] = [
             {
+                "place": place,
                 "model": name,
-                "cap": policy.daily_call_caps.get(name),
-                "calls_today": policy.calls_today.get(name, 0),
-                "exhausted": name in exhausted,
+                "score_percent": (
+                    policy.order_scores[name][0] * 100.0
+                    if name in policy.order_scores
+                    else None
+                ),
+                "turns": (
+                    policy.order_scores[name][1]
+                    if name in policy.order_scores
+                    else None
+                ),
             }
-            for name in sorted(set(policy.daily_call_caps) | set(policy.calls_today))
+            for place, name in enumerate(policy.outside_order, start=1)
         ]
         return panel
+
+    @staticmethod
+    def _spend_rows() -> List[Dict[str, Any]]:
+        """This month's spend per provider and use (ml/spend.py), from this
+        process's copy of the counters. Names and amounts only."""
+        from fighthealthinsurance.ml import spend
+
+        try:
+            summary = spend.month_summary()
+        except Exception as e:
+            logger.warning(f"Spend summary unavailable: {type(e).__name__}")
+            return []
+        return [
+            {
+                "counter": name,
+                "amount": amount,
+                "calls": name.startswith(spend.AZURE + ":"),
+            }
+            for name, amount in summary.items()
+        ]
 
     @staticmethod
     def _chart_data(

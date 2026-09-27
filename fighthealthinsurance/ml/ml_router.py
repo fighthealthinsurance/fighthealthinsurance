@@ -1,4 +1,5 @@
 import asyncio
+import random
 import threading
 from typing import List, Optional, Sequence, Tuple
 
@@ -6,6 +7,11 @@ from loguru import logger
 
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml.chat_policy import ChatPolicy, narrow_externals
+
+# How many outside models chat asks at most, and the draw exploration uses
+# (a seam, so tests can decide it).
+CHAT_OUTSIDE_LIMIT = 3
+_explore_draw = random.random
 from fighthealthinsurance.ml.ml_models import *
 
 # The hosted model that backs up our own models for summaries and appeal
@@ -699,14 +705,34 @@ class MLRouter(object):
         a model."""
         from django.conf import settings
 
+        in_force = self.chat_policy_in_force(policy)
         if getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None):
-            externals = self.chat_outside_models()
+            names = (
+                list(in_force.outside_order)
+                if in_force is not None and in_force.outside_order
+                else None
+            )
+            externals = self._explore(self.chat_outside_models(names, limit=50))
         else:
             externals = self.best_external_models()
-        in_force = self.chat_policy_in_force(policy)
         if in_force is None:
             return externals
         return narrow_externals(externals, in_force)
+
+    def _explore(self, candidates: list[RemoteModelLike]) -> list[RemoteModelLike]:
+        """The first CHAT_OUTSIDE_LIMIT of ``candidates`` (the order chat
+        asks them in), except that on FHI_CHAT_EXPLORE_RATE of turns the
+        second place goes to one of the models further down, so every model
+        in the roster keeps being asked often enough for its place in the
+        order to be learned."""
+        from django.conf import settings
+
+        chosen = candidates[:CHAT_OUTSIDE_LIMIT]
+        further = candidates[CHAT_OUTSIDE_LIMIT:]
+        rate = float(getattr(settings, "FHI_CHAT_EXPLORE_RATE", 0.2) or 0.0)
+        if len(chosen) >= 2 and further and _explore_draw() < rate:
+            chosen[1] = further[int(_explore_draw() * len(further)) % len(further)]
+        return chosen
 
     def get_chat_backends(
         self, use_external=False, policy: Optional[ChatPolicy] = None
