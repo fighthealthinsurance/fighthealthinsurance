@@ -71,9 +71,11 @@ def _shadow_fields(result: chat_shadow.ShadowResult) -> Dict[str, Any]:
         "shadow_winner_answers": winner.answers if winner else None,
         "shadow_winner_verdict": winner.verdict if winner else None,
         "shadow_winner_asks_again": winner.asks_again if winner else None,
+        "shadow_winner_promises": winner.promises if winner else None,
         "shadow_second_answers": second.answers if second else None,
         "shadow_second_verdict": second.verdict if second else None,
         "shadow_second_asks_again": second.asks_again if second else None,
+        "shadow_second_promises": second.promises if second else None,
     }
 
 

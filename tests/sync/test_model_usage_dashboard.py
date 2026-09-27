@@ -1982,11 +1982,14 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         self.assertNotIn("summary_for_next_call", sql)
 
 
-SHADOW_SCORER = "typesafe/jev-1.13.0/chat-rubric-1"
+SHADOW_SCORER = "typesafe/jev-1.13.0/chat-rubric-2"
+# The rubric before the promise question: never averaged in.
+RUBRIC_ONE_SCORER = "typesafe/jev-1.13.0/chat-rubric-1"
 
 
 def _shadow(winner=None, second=None, outcome="scored", scorer=SHADOW_SCORER):
-    """ChatTurn shadow fields: winner/second are (answers, verdict, asks_again)."""
+    """ChatTurn shadow fields: winner/second are (answers, verdict,
+    asks_again, promises)."""
     fields = {"shadow_outcome": outcome, "shadow_scorer": scorer}
     for side, scores in (("winner", winner), ("second", second)):
         if scores is not None:
@@ -1994,13 +1997,14 @@ def _shadow(winner=None, second=None, outcome="scored", scorer=SHADOW_SCORER):
                 fields[f"shadow_{side}_answers"],
                 fields[f"shadow_{side}_verdict"],
                 fields[f"shadow_{side}_asks_again"],
+                fields[f"shadow_{side}_promises"],
             ) = scores
     return fields
 
 
 # Composite 1.0 and 0.0 (ml/chat_shadow.composite_score).
-GOOD = (2.0, 0.0, 0.0)
-POOR = (0.0, 1.0, 1.0)
+GOOD = (2.0, 0.0, 0.0, 0.0)
+POOR = (0.0, 1.0, 1.0, 1.0)
 
 
 class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
@@ -2038,13 +2042,13 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
 
     def test_means_per_model_and_the_second_answer_goes_to_the_right_model(self):
         # No alternate: the second answer is the runner-up's (model-b).
-        self._turn(**_shadow((2.0, 0.2, 0.0), (1.0, 0.6, 0.4)))
-        self._turn(**_shadow((1.0, 0.0, 0.2), None))
+        self._turn(**_shadow((2.0, 0.2, 0.0, 0.1), (1.0, 0.6, 0.4, 0.5)))
+        self._turn(**_shadow((1.0, 0.0, 0.2, 0.3), None))
         # An alternate was shown: the second answer is the alternate's.
         self._turn(
             alternate_offered=True,
             alternate_model="model-c",
-            **_shadow((1.5, 0.1, 0.1), (0.5, 0.9, 0.0)),
+            **_shadow((1.5, 0.1, 0.1, 0.2), (0.5, 0.9, 0.0, 0.8)),
         )
         rows = {r["model_name"]: r for r in self._shadow_window()["rows"]}
         self.assertEqual(
@@ -2055,20 +2059,59 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
         self.assertAlmostEqual(a["shadow_answers"], 1.5)
         self.assertAlmostEqual(a["shadow_verdict"], 0.1)
         self.assertAlmostEqual(a["shadow_asks_again"], 0.1)
+        self.assertAlmostEqual(a["shadow_promises"], 0.2)
         self.assertAlmostEqual(
             a["shadow_composite"],
-            ((1.0 + 0.8 + 1.0) + (0.5 + 1.0 + 0.8) + (0.75 + 0.9 + 0.9)) / 9,
+            (
+                (1.0 + 0.8 + 1.0 + 0.9)
+                + (0.5 + 1.0 + 0.8 + 0.7)
+                + (0.75 + 0.9 + 0.9 + 0.8)
+            )
+            / 12,
         )
         self.assertAlmostEqual(rows["model-b"]["shadow_answers"], 1.0)
+        self.assertAlmostEqual(rows["model-b"]["shadow_promises"], 0.5)
         self.assertAlmostEqual(rows["model-c"]["shadow_verdict"], 0.9)
+        self.assertAlmostEqual(rows["model-c"]["shadow_promises"], 0.8)
+
+    def test_the_promises_mean_is_shown_and_rubric_one_rows_are_left_out(self):
+        self._at(self._turn(**_shadow((2.0, 0.0, 0.0, 0.2), None)), 30)
+        self._at(self._turn(**_shadow((2.0, 0.0, 0.0, 0.4), None)), 20)
+        # Newer rows from the same Jev version under rubric 1: one as rubric
+        # 1 wrote it (no promise answer), one with every column filled, so
+        # only the rubric check can keep them out.
+        self._at(
+            self._turn(
+                shadow_outcome="scored",
+                shadow_scorer=RUBRIC_ONE_SCORER,
+                shadow_winner_answers=0.0,
+                shadow_winner_verdict=1.0,
+                shadow_winner_asks_again=1.0,
+            ),
+            10,
+        )
+        self._at(self._turn(**_shadow(POOR, POOR, scorer=RUBRIC_ONE_SCORER)), 5)
+        response, windows = self._windows()
+        shadow = windows["1d"]["live_chat"]["shadow"]
+        self.assertEqual(shadow["summary"]["scorer"], SHADOW_SCORER)
+        self.assertEqual(shadow["summary"]["other_scorer"], 2)
+        (row,) = shadow["rows"]
+        self.assertEqual(row["shadow_scored"], 2)
+        self.assertAlmostEqual(row["shadow_promises"], 0.3)
+        self.assertAlmostEqual(row["shadow_composite"], (3.8 + 3.6) / 8)
+        self.assertContains(
+            response,
+            '<th class="num" title="Mean probability, 0 to 1, that the reply '
+            'promises or guarantees a result">Promises a result</th>',
+            html=True,
+        )
+        self.assertContains(response, '<td class="num">0.30</td>', html=True)
 
     def test_outcomes_are_counted_and_other_rubrics_never_averaged(self):
         self._turn(**_shadow(GOOD, None))
         self._turn(**_shadow(outcome="failed", scorer=""))
         self._turn(**_shadow(outcome="timeout", scorer=""))
-        self._turn(
-            **_shadow(POOR, None, scorer="typesafe/jev-1.13.0/chat-rubric-0")
-        )
+        self._turn(**_shadow(POOR, None, scorer=RUBRIC_ONE_SCORER))
         # A letter scorer string is not a chat rubric either.
         self._turn(**_shadow(POOR, None, scorer="typesafe/jev-1.13.0/rubric-1"))
         self._turn()
@@ -2094,7 +2137,7 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
         )
 
     def test_only_the_newest_scorer_is_averaged_and_the_page_names_it(self):
-        newer = "typesafe/jev-1.14.0/chat-rubric-1"
+        newer = "typesafe/jev-1.14.0/chat-rubric-2"
         # The newer model version scored the newest turns, so its scores
         # are the ones averaged.
         self._at(self._turn(**_shadow(GOOD, GOOD, scorer=newer)), 5)
@@ -2128,7 +2171,7 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
     def test_the_scorer_choice_does_not_depend_on_row_order(self):
         from fighthealthinsurance.staff_views import _ShadowTally
 
-        newer = "typesafe/jev-1.14.0/chat-rubric-1"
+        newer = "typesafe/jev-1.14.0/chat-rubric-2"
         now = timezone.now()
         rows = [
             (now - datetime.timedelta(minutes=1), newer),
@@ -2146,9 +2189,7 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
             self.assertEqual((summary["scorer"], summary["other_scorer"]), (newer, 2))
 
     def test_no_current_scorer_says_so(self):
-        self._turn(
-            **_shadow(POOR, None, scorer="typesafe/jev-1.13.0/chat-rubric-0")
-        )
+        self._turn(**_shadow(POOR, None, scorer=RUBRIC_ONE_SCORER))
         response, windows = self._windows()
         shadow = windows["1d"]["live_chat"]["shadow"]
         self.assertEqual(shadow["summary"]["scorer"], "")
@@ -2204,6 +2245,7 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
         response, windows = self._windows()
         self.assertContains(response, "Live chat shadow scores")
         self.assertContains(response, "Answers the question")
+        self.assertContains(response, "Promises a result")
         for slug in ("1d", "7d", "30d"):
             for row in windows[slug]["live_chat"]["shadow"]["rows"]:
                 self.assertIn("state", row)

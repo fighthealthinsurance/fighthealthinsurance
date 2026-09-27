@@ -257,13 +257,16 @@ that data disagrees with the quality map, adjust the map.
 
 With `TYPESAFE_CHAT_SHADOW_ENABLED` and `TYPESAFE_API_KEY` set, and only in
 chats where the person allowed outside models, each delivered turn gets a
-background task (chat/shadow_scoring.py) that asks TypeSafe's Jev three
+background task (chat/shadow_scoring.py) that asks TypeSafe's Jev four
 questions about the delivered reply and about the turn's second answer
 (the alternate when one was shown, otherwise the runner-up), each read
 against the person's message: does it answer what was asked (0 to 2),
-does it state a coverage or eligibility outcome as fact, and does it ask
-for something the message already gave (both 0 to 1). ml/chat_shadow.py
-holds the rubric.
+does it state a coverage or eligibility outcome as fact, does it ask for
+something the message already gave, and does it promise or guarantee a
+result (the last three 0 to 1). The last is our own false-promise rule
+(chat/safety_filters.detect_false_promises) put as a question, and the
+rule itself stays in place. ml/chat_shadow.py holds the rubric, and folds
+the four into one composite score for the agreement table.
 
 * It starts after the reply frame has gone out and the ChatTurn row
   exists, and nothing waits for it: the scores land on that row later.

@@ -1500,9 +1500,11 @@ CHAT_TURN_FIELDS = (
     "shadow_winner_answers",
     "shadow_winner_verdict",
     "shadow_winner_asks_again",
+    "shadow_winner_promises",
     "shadow_second_answers",
     "shadow_second_verdict",
     "shadow_second_asks_again",
+    "shadow_second_promises",
 )
 
 
@@ -1532,9 +1534,9 @@ class _ShadowSeries:
         self.picks_unscored = 0
 
     def add_reply(
-        self, model: Any, answers: Any, verdict: Any, asks_again: Any
+        self, model: Any, answers: Any, verdict: Any, asks_again: Any, promises: Any
     ) -> Optional[float]:
-        score = chat_shadow.composite_score(answers, verdict, asks_again)
+        score = chat_shadow.composite_score(answers, verdict, asks_again, promises)
         if score is None:
             return None
         label = _chat_label(model)
@@ -1546,6 +1548,7 @@ class _ShadowSeries:
                 "_answers": 0.0,
                 "_verdict": 0.0,
                 "_asks_again": 0.0,
+                "_promises": 0.0,
                 "_composite": 0.0,
             }
             self.models[label] = row
@@ -1553,6 +1556,7 @@ class _ShadowSeries:
         row["_answers"] += float(answers)
         row["_verdict"] += float(verdict)
         row["_asks_again"] += float(asks_again)
+        row["_promises"] += float(promises)
         row["_composite"] += score
         return score
 
@@ -1593,8 +1597,8 @@ class _ShadowTally:
         preferred: str,
         outcome: str,
         scorer: str,
-        winner_scores: Tuple[Any, Any, Any],
-        second_scores: Tuple[Any, Any, Any],
+        winner_scores: Tuple[Any, Any, Any, Any],
+        second_scores: Tuple[Any, Any, Any, Any],
     ) -> None:
         if outcome:
             self.outcomes[outcome] += 1
@@ -1672,6 +1676,7 @@ class _ShadowTally:
                     "shadow_answers": row["_answers"] / n,
                     "shadow_verdict": row["_verdict"] / n,
                     "shadow_asks_again": row["_asks_again"] / n,
+                    "shadow_promises": row["_promises"] / n,
                     "shadow_composite": row["_composite"] / n,
                 }
             )
@@ -1768,8 +1773,8 @@ class _ChatTally:
             preferred,
             shadow_outcome,
             shadow_scorer,
-            (shadow_scores[0], shadow_scores[1], shadow_scores[2]),
-            (shadow_scores[3], shadow_scores[4], shadow_scores[5]),
+            (shadow_scores[0], shadow_scores[1], shadow_scores[2], shadow_scores[3]),
+            (shadow_scores[4], shadow_scores[5], shadow_scores[6], shadow_scores[7]),
         )
         self.outcomes[outcome] += 1
         if use_external:

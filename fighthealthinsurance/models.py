@@ -3823,13 +3823,16 @@ class ChatTurn(models.Model):
     # "typesafe/<model that answered>/chat-rubric-<n>", empty unless scored.
     shadow_scorer = models.CharField(max_length=80, blank=True, default="")
     # answers the question asked, 0..2; states a coverage or eligibility
-    # verdict, 0..1; asks for information the message already gave, 0..1.
+    # verdict, 0..1; asks for information the message already gave, 0..1;
+    # promises or guarantees a result, 0..1.
     shadow_winner_answers = models.FloatField(null=True, blank=True)
     shadow_winner_verdict = models.FloatField(null=True, blank=True)
     shadow_winner_asks_again = models.FloatField(null=True, blank=True)
+    shadow_winner_promises = models.FloatField(null=True, blank=True)
     shadow_second_answers = models.FloatField(null=True, blank=True)
     shadow_second_verdict = models.FloatField(null=True, blank=True)
     shadow_second_asks_again = models.FloatField(null=True, blank=True)
+    shadow_second_promises = models.FloatField(null=True, blank=True)
 
     class Meta:
         indexes = [

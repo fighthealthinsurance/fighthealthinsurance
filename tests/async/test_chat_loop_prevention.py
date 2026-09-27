@@ -799,13 +799,14 @@ class ChatTurnRecordTest(APITestCase):
 _SHADOW_ON = dict(TYPESAFE_API_KEY="test-key", TYPESAFE_CHAT_SHADOW_ENABLED=True)
 
 
-def _shadow_answer(answers=1.5, verdict=0.1, asks_again=0.0):
+def _shadow_answer(answers=1.5, verdict=0.1, asks_again=0.0, promises=0.05):
     return {
         "model": "jev-1.13.0",
         "answers": {
             "answers_question": {"type": "score", "score": answers},
             "asserts_verdict": {"type": "noul", "noul": verdict},
             "asks_again": {"type": "noul", "noul": asks_again},
+            "promises_outcome": {"type": "noul", "noul": promises},
         },
     }
 
@@ -878,9 +879,11 @@ class ChatShadowScoringTest(APITransactionTestCase):
 
         (row,) = await _turn_rows(chat)
         assert row.shadow_outcome == "scored"
-        assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-1"
+        assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-2"
         assert row.shadow_winner_answers == 1.5
         assert row.shadow_second_answers == 1.5
+        assert row.shadow_winner_promises == 0.05
+        assert row.shadow_second_promises == 0.05
         # The delivered reply, then the alternate that was shown beside it.
         assert len(post.states) == 2
         assert post.states[0].endswith(FRESH_REPLY)

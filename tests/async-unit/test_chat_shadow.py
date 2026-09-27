@@ -56,13 +56,16 @@ SECOND = (
 IDENTIFIERS = [("Wilhelmina Quillfeather", "PATIENT#patient")]
 
 
-def _answers(answers=1.6, verdict=0.1, asks_again=0.05, model="jev-1.13.0"):
+def _answers(
+    answers=1.6, verdict=0.1, asks_again=0.05, promises=0.05, model="jev-1.13.0"
+):
     return {
         "model": model,
         "answers": {
             chat_shadow.ANSWERS_QUESTION: {"type": "score", "score": answers},
             chat_shadow.ASSERTS_VERDICT: {"type": "noul", "noul": verdict},
             chat_shadow.ASKS_AGAIN: {"type": "noul", "noul": asks_again},
+            chat_shadow.PROMISES_OUTCOME: {"type": "noul", "noul": promises},
         },
         "usage": {"input_tokens": 300, "output_tokens": 20},
     }
@@ -146,22 +149,47 @@ class TestState:
         assert len(state) <= chat_shadow.STATE_CHAR_CAP
         assert state.endswith(REPLY)
 
-    def test_the_rubric_is_the_three_questions(self):
+    def test_the_rubric_is_the_four_questions(self):
         assert set(chat_shadow.QUESTIONS) == {
             "answers_question",
             "asserts_verdict",
             "asks_again",
+            "promises_outcome",
         }
         assert chat_shadow.QUESTIONS["answers_question"]["type"] == "score"
         assert len(chat_shadow.QUESTIONS["answers_question"]["criteria"]) == 3
-        for noul in ("asserts_verdict", "asks_again"):
+        for noul in ("asserts_verdict", "asks_again", "promises_outcome"):
             assert chat_shadow.QUESTIONS[noul]["type"] == "noul"
+
+    def test_the_promise_question_is_word_for_word_the_agreed_one(self):
+        # The live reply gate asks this same question, and these scores are
+        # the check on it, so the wording must not drift on either side.
+        assert chat_shadow.QUESTIONS["promises_outcome"] == {
+            "type": "noul",
+            "instructions": (
+                "Does THE REPLY promise or guarantee the person a result: "
+                "that an appeal, claim or request will be approved, will "
+                "succeed or will be won, or that something always works?"
+            ),
+            "criteria": {
+                "true": "It promises or guarantees a result, or says one is certain.",
+                "false": (
+                    "It promises no result: it may say what could help, or "
+                    "how such cases often go, without guaranteeing an outcome."
+                ),
+            },
+        }
 
 
 class TestParse:
     def test_a_full_answer_parses(self):
-        scores = chat_shadow.parse_answers(_answers(2.0, 0.0, 1.0))
-        assert (scores.answers, scores.verdict, scores.asks_again) == (2.0, 0.0, 1.0)
+        scores = chat_shadow.parse_answers(_answers(2.0, 0.0, 1.0, 0.25))
+        assert (
+            scores.answers,
+            scores.verdict,
+            scores.asks_again,
+            scores.promises,
+        ) == (2.0, 0.0, 1.0, 0.25)
 
     @pytest.mark.parametrize(
         "broken",
@@ -169,6 +197,8 @@ class TestParse:
             _answers(answers=2.5),
             _answers(verdict=-0.1),
             _answers(asks_again=1.2),
+            _answers(promises=1.01),
+            _answers(promises=None),
             _answers(answers=True),
             _answers(verdict="0.5"),
             _answers(answers=float("nan")),
@@ -181,32 +211,56 @@ class TestParse:
         with pytest.raises(chat_shadow.ShadowScoringError):
             chat_shadow.parse_answers(broken)
 
+    def test_an_answer_without_the_promise_question_is_refused(self):
+        # What a rubric 1 answer looks like: three questions, no promises.
+        payload = _answers()
+        del payload["answers"][chat_shadow.PROMISES_OUTCOME]
+        with pytest.raises(chat_shadow.ShadowScoringError):
+            chat_shadow.parse_answers(payload)
+
 
 class TestComposite:
     def test_higher_is_better_and_yes_answers_count_against(self):
-        best = chat_shadow.composite_score(2.0, 0.0, 0.0)
-        worst = chat_shadow.composite_score(0.0, 1.0, 1.0)
+        best = chat_shadow.composite_score(2.0, 0.0, 0.0, 0.0)
+        worst = chat_shadow.composite_score(0.0, 1.0, 1.0, 1.0)
         assert best == pytest.approx(1.0)
         assert worst == pytest.approx(0.0)
-        assert chat_shadow.composite_score(1.0, 0.5, 0.5) == pytest.approx(0.5)
-        assert chat_shadow.composite_score(2.0, 1.0, 0.0) < best
+        assert chat_shadow.composite_score(1.0, 0.5, 0.5, 0.5) == pytest.approx(0.5)
+        assert chat_shadow.composite_score(2.0, 1.0, 0.0, 0.0) < best
+
+    def test_the_four_parts_weigh_the_same(self):
+        assert chat_shadow.composite_score(1.6, 0.1, 0.05, 0.3) == pytest.approx(
+            (0.8 + 0.9 + 0.95 + 0.7) / 4
+        )
+
+    def test_a_promised_result_lowers_the_composite(self):
+        clean = chat_shadow.composite_score(2.0, 0.0, 0.0, 0.0)
+        promised = chat_shadow.composite_score(2.0, 0.0, 0.0, 1.0)
+        assert promised == pytest.approx(0.75)
+        assert promised < clean
+        assert chat_shadow.ReplyScores(2.0, 0.0, 0.0, 1.0).composite == promised
 
     def test_a_missing_part_means_no_composite(self):
-        assert chat_shadow.composite_score(None, 0.0, 0.0) is None
-        assert chat_shadow.composite_score(1.0, True, 0.0) is None
-        assert chat_shadow.composite_score(1.0, 0.0, float("inf")) is None
+        assert chat_shadow.composite_score(None, 0.0, 0.0, 0.0) is None
+        assert chat_shadow.composite_score(1.0, True, 0.0, 0.0) is None
+        assert chat_shadow.composite_score(1.0, 0.0, float("inf"), 0.0) is None
+        # A row scored before the promise question existed has no promises.
+        assert chat_shadow.composite_score(2.0, 0.0, 0.0, None) is None
+        assert chat_shadow.composite_score(2.0, 0.0, 0.0, float("nan")) is None
 
 
 class TestScorer:
     def test_scorer_names_the_answering_model_and_the_chat_rubric(self):
         assert chat_shadow.scorer_for(_answers(model="jev-1.14.0")) == (
-            "typesafe/jev-1.14.0/chat-rubric-1"
+            "typesafe/jev-1.14.0/chat-rubric-2"
         )
-        assert chat_shadow.SCORER == "typesafe/jev-1.13.0/chat-rubric-1"
+        assert chat_shadow.SCORER == "typesafe/jev-1.13.0/chat-rubric-2"
 
     def test_only_the_current_chat_rubric_counts(self):
-        assert chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-1")
-        assert not chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-2")
+        assert chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-2")
+        # Rubric 1 had no promise question: its rows are never averaged in.
+        assert not chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-1")
+        assert not chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-3")
         # A letter score is a different rubric altogether.
         assert not chat_shadow.same_rubric(letter_quality.SCORER)
         assert not chat_shadow.same_rubric("")
@@ -214,15 +268,15 @@ class TestScorer:
 
 class TestScoreTurn:
     def test_each_reply_is_asked_about_separately_and_redacted(self):
-        fake = _FakePost(_answers(1.8, 0.1, 0.0), _answers(0.9, 0.7, 0.2))
+        fake = _FakePost(_answers(1.8, 0.1, 0.0, 0.05), _answers(0.9, 0.7, 0.2, 0.6))
         with override_settings(**ENABLED), patch.object(chat_shadow, "_post", fake):
             result = _run(
                 chat_shadow.score_turn(MESSAGE, REPLY, SECOND, identifiers=IDENTIFIERS)
             )
         assert result.outcome == chat_shadow.SCORED
-        assert result.scorer == "typesafe/jev-1.13.0/chat-rubric-1"
-        assert result.winner == chat_shadow.ReplyScores(1.8, 0.1, 0.0)
-        assert result.second == chat_shadow.ReplyScores(0.9, 0.7, 0.2)
+        assert result.scorer == "typesafe/jev-1.13.0/chat-rubric-2"
+        assert result.winner == chat_shadow.ReplyScores(1.8, 0.1, 0.0, 0.05)
+        assert result.second == chat_shadow.ReplyScores(0.9, 0.7, 0.2, 0.6)
         assert len(fake.states) == 2
         assert fake.states[0].endswith(REPLY) and fake.states[1].endswith(SECOND)
         for state in fake.states:
@@ -432,22 +486,24 @@ async def _health(service):
 @pytest.mark.asyncio
 async def test_scores_land_on_the_row_as_numbers_only():
     chat, turn = await _chat_and_turn()
-    fake = _FakePost(_answers(1.8, 0.1, 0.0), _answers(0.9, 0.7, 0.2))
+    fake = _FakePost(_answers(1.8, 0.1, 0.0, 0.05), _answers(0.9, 0.7, 0.2, 0.6))
     await _run_task(chat.id, turn.id, fake)
 
     row = await ChatTurn.objects.aget(pk=turn.pk)
     assert row.shadow_outcome == "scored"
-    assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-1"
+    assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-2"
     assert (
         row.shadow_winner_answers,
         row.shadow_winner_verdict,
         row.shadow_winner_asks_again,
-    ) == (1.8, 0.1, 0.0)
+        row.shadow_winner_promises,
+    ) == (1.8, 0.1, 0.0, 0.05)
     assert (
         row.shadow_second_answers,
         row.shadow_second_verdict,
         row.shadow_second_asks_again,
-    ) == (0.9, 0.7, 0.2)
+        row.shadow_second_promises,
+    ) == (0.9, 0.7, 0.2, 0.6)
     blob = _row_blob(row)
     for text in ("Quillfeather", "knee MRI", REPLY[:30], SECOND[:30], "PATIENT_1"):
         assert text not in blob, f"{text!r} stored on the turn row"
@@ -495,6 +551,7 @@ async def test_a_failure_stores_the_outcome_and_no_scores():
     assert row.shadow_outcome == "failed"
     assert row.shadow_scorer == ""
     assert row.shadow_winner_answers is None and row.shadow_second_answers is None
+    assert row.shadow_winner_promises is None and row.shadow_second_promises is None
     health = await _health(chat_shadow.SERVICE)
     assert health.last_failure == "HTTP 529" and health.last_success_at is None
 

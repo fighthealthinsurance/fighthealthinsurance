@@ -55,7 +55,8 @@ branch with a literal class so the contrast gate can measure every tag.
       <th class="num" title="Mean score, 0 (does not address the message) to 2 (answers it directly)">Answers the question</th>
       <th class="num" title="Mean probability, 0 to 1, that the reply states a coverage or eligibility outcome as fact">States a verdict</th>
       <th class="num" title="Mean probability, 0 to 1, that the reply asks for something the message already gave">Asks again</th>
-      <th class="num" title="The three folded into one number, 0 to 1, higher is better">Composite</th>
+      <th class="num" title="Mean probability, 0 to 1, that the reply promises or guarantees a result">Promises a result</th>
+      <th class="num" title="The four folded into one number, 0 to 1, higher is better">Composite</th>
       {% else %}
       <th class="num">Chosen</th>
       <th class="num">Presented</th>
@@ -150,6 +151,7 @@ branch with a literal class so the contrast gate can measure every tag.
       <td class="num">{{ r.shadow_answers|floatformat:2 }}</td>
       <td class="num">{{ r.shadow_verdict|floatformat:2 }}</td>
       <td class="num">{{ r.shadow_asks_again|floatformat:2 }}</td>
+      <td class="num">{{ r.shadow_promises|floatformat:2 }}</td>
       <td class="num">{{ r.shadow_composite|floatformat:2 }}</td>
       {% else %}
       <td class="num">{{ r.chosen }}</td>

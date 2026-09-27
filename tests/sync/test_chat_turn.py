@@ -36,9 +36,11 @@ SHADOW_SCORE_FIELDS = {
     "shadow_winner_answers",
     "shadow_winner_verdict",
     "shadow_winner_asks_again",
+    "shadow_winner_promises",
     "shadow_second_answers",
     "shadow_second_verdict",
     "shadow_second_asks_again",
+    "shadow_second_promises",
 }
 # JSON fields: lists of model labels, and the per-call metadata dicts
 # (chat/turn_record.py CallLog.finish).

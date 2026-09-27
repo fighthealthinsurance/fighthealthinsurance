@@ -1,7 +1,7 @@
 """Shadow scores for chat replies, from TypeSafe's System One API (Jev).
 
-After a chat reply has been delivered, a background task asks Jev three
-questions about that reply, and the same three about the turn's second
+After a chat reply has been delivered, a background task asks Jev four
+questions about that reply, and the same four about the turn's second
 answer, each read against the person's latest message. Nothing uses the
 answers to choose, order or change a reply: they are stored on the turn's
 ChatTurn row, so the staff dashboard can show how Jev rates each model's
@@ -12,9 +12,14 @@ What the numbers are, and are not. The questions below have not been
 validated against people's judgement of chat replies; the agreement panel on
 the dashboard is that check, and until it says otherwise these are a signal
 to read beside the picks, not a quality measure. ``answers_question`` is a
-Score from 0 to 2. ``asserts_verdict`` and ``asks_again`` are yes/no
-questions, answered as a probability from 0 to 1. ``composite_score`` folds
-the three into one 0 to 1 number, higher is better, for the agreement panel.
+Score from 0 to 2. ``asserts_verdict``, ``asks_again`` and
+``promises_outcome`` are yes/no questions, answered as a probability from 0
+to 1. ``composite_score`` folds the four into one 0 to 1 number, higher is
+better, for the agreement panel.
+
+``promises_outcome`` is our own false-promise rule
+(chat/safety_filters.detect_false_promises) put to Jev as a question. The
+rule itself stays where it is, so it still holds when Jev is unavailable.
 
 The second answer is the side-by-side alternate when one was shown, and
 otherwise the turn's runner-up. The chat (chat_interface.py) never hands
@@ -52,8 +57,8 @@ SERVICE = "typesafe-chat"
 # Recorded on every scored row. Bump RUBRIC_VERSION whenever a question or
 # the composite changes. The dashboard averages one exact scorer string at a
 # time; rows under another rubric or model version are counted, never
-# averaged with it.
-RUBRIC_VERSION = 1
+# averaged with it. Rubric 2 added PROMISES_OUTCOME.
+RUBRIC_VERSION = 2
 _RUBRIC_SUFFIX = f"/chat-rubric-{RUBRIC_VERSION}"
 SCORER = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
 _SCORER_RE = re.compile(r"^typesafe/([A-Za-z0-9._-]{1,48})/chat-rubric-(\d{1,4})$")
@@ -67,6 +72,7 @@ TIMEOUT = "timeout"
 ANSWERS_QUESTION = "answers_question"
 ASSERTS_VERDICT = "asserts_verdict"
 ASKS_AGAIN = "asks_again"
+PROMISES_OUTCOME = "promises_outcome"
 
 # The state names its two parts in capitals so each question can point at
 # them by name (TypeSafe's guidance for jev-1.13, which reads literally).
@@ -112,6 +118,21 @@ QUESTIONS: dict[str, dict[str, typing.Any]] = {
             ),
         },
     },
+    PROMISES_OUTCOME: {
+        "type": "noul",
+        "instructions": (
+            "Does THE REPLY promise or guarantee the person a result: that an "
+            "appeal, claim or request will be approved, will succeed or will "
+            "be won, or that something always works?"
+        ),
+        "criteria": {
+            "true": "It promises or guarantees a result, or says one is certain.",
+            "false": (
+                "It promises no result: it may say what could help, or how "
+                "such cases often go, without guaranteeing an outcome."
+            ),
+        },
+    },
 }
 MAX_ANSWERS_SCORE = 2.0
 
@@ -134,12 +155,15 @@ class ReplyScores:
     answers: float  # 0..2
     verdict: float  # 0..1, yes = states a verdict
     asks_again: float  # 0..1, yes = asks for what was already given
+    promises: float  # 0..1, yes = promises or guarantees a result
 
     @property
     def composite(self) -> float:
         # parse_answers only builds finite, in-range values, so this is
         # never None.
-        value = composite_score(self.answers, self.verdict, self.asks_again)
+        value = composite_score(
+            self.answers, self.verdict, self.asks_again, self.promises
+        )
         return 0.0 if value is None else value
 
 
@@ -175,19 +199,20 @@ def composite_score(
     answers: typing.Optional[float],
     verdict: typing.Optional[float],
     asks_again: typing.Optional[float],
+    promises: typing.Optional[float],
 ) -> typing.Optional[float]:
-    """One 0..1 number per reply, higher is better: the three questions
-    weighted equally, with a yes to either yes/no question counting against
+    """One 0..1 number per reply, higher is better: the four questions
+    weighted equally, with a yes to any yes/no question counting against
     the reply. None when any part is missing."""
     values: list[float] = []
-    for part in (answers, verdict, asks_again):
+    for part in (answers, verdict, asks_again, promises):
         if isinstance(part, bool) or not isinstance(part, (int, float)):
             return None
         if not math.isfinite(part):
             return None
         values.append(float(part))
-    a, v, k = values
-    return (a / MAX_ANSWERS_SCORE + (1.0 - v) + (1.0 - k)) / 3.0
+    a, v, k, p = values
+    return (a / MAX_ANSWERS_SCORE + (1.0 - v) + (1.0 - k) + (1.0 - p)) / 4.0
 
 
 def build_state(message: str, reply: str, redactor: letter_quality.Redactor) -> str:
@@ -224,6 +249,7 @@ def parse_answers(payload: typing.Any) -> ReplyScores:
             answers=_bounded(answers[ANSWERS_QUESTION]["score"], MAX_ANSWERS_SCORE),
             verdict=_bounded(answers[ASSERTS_VERDICT]["noul"], 1.0),
             asks_again=_bounded(answers[ASKS_AGAIN]["noul"], 1.0),
+            promises=_bounded(answers[PROMISES_OUTCOME]["noul"], 1.0),
         )
     except ShadowScoringError:
         raise
