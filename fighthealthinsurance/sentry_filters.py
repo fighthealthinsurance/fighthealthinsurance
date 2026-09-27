@@ -168,6 +168,14 @@ def before_send_filter(event: Any, hint: Any) -> Any:
     shutting_down = any(exc.get("type") == "SystemExit" for exc in values) and all(
         exc.get("type") in SHUTDOWN_EXCEPTION_TYPES for exc in values
     )
+    # Same guard as shutting_down: a real crash chained with the watcher
+    # race must still reach Sentry, so the event is dropped only when the
+    # race is all it holds (review).
+    only_grpc_watcher_race = bool(values) and all(
+        exc.get("type") == "ValueError"
+        and GRPC_CHANNEL_WATCHER_MARKER in as_text(exc.get("value"))
+        for exc in values
+    )
     for exc in values:
         exc_value = as_text(exc.get("value"))
         if "Logstream proxy failed to connect" in exc_value:
@@ -180,7 +188,7 @@ def before_send_filter(event: Any, hint: Any) -> Any:
                 f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
             )
             return None
-        if exc.get("type") == "ValueError" and GRPC_CHANNEL_WATCHER_MARKER in exc_value:
+        if only_grpc_watcher_race:
             logger.warning(
                 f"gRPC channel watcher race (filtered from Sentry): "
                 f"{exc_value[:200]}"

@@ -142,6 +142,29 @@ async def test_a_source_that_just_ends_after_close_reports_nothing(log_capture):
 
 
 @pytest.mark.asyncio
+async def test_a_source_failure_is_reported_once_when_closed_after_it(log_capture):
+    """The error path logs the failure, then yields a keep-alive newline. A
+    consumer that closes the stream at that newline must not get the same
+    failure reported again by the close path (review)."""
+
+    async def fails_at_once():
+        raise ValueError("the model backend broke")
+        yield  # pragma: no cover - makes this an async generator
+
+    agen = _interleave_iterator_for_keep_alive(fails_at_once(), timeout=60)
+    with log_capture() as cap:
+        assert await agen.__anext__() == "\n"
+        assert await agen.__anext__() == "\n"
+        # Suspended at the error branch's own keep-alive newline.
+        assert await agen.__anext__() == "\n"
+        await agen.aclose()
+        await asyncio.sleep(0)
+
+    errors = [m for m in cap.messages("ERROR") if "model backend broke" in m]
+    assert len(errors) == 1, errors
+
+
+@pytest.mark.asyncio
 async def test_cancelling_the_consumer_still_cancels_the_in_flight_item():
     """The cancellation path keeps its historical behaviour: a cancelled
     receive() takes the in-flight __anext__ down with it."""

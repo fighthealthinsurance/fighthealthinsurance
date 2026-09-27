@@ -975,19 +975,20 @@ def interleave_iterator_for_keep_alive(
     )
 
 
-def _discard_task_outcome(task: "asyncio.Future") -> None:
-    """Mark a finished task's result/exception as retrieved, and drop it.
+def _discard_task_outcome(task: "asyncio.Future") -> Optional[BaseException]:
+    """Mark a finished task's result/exception as retrieved, and return the
+    exception (None for a result or a cancellation).
 
     asyncio's Task destructor logs "Task exception was never retrieved" for a
     task that finished with an exception nobody ever read. ``task.exception()``
     is what marks it read; it raises for a cancelled task, hence the guard.
     """
     if task.cancelled():
-        return
+        return None
     try:
-        task.exception()
+        return task.exception()
     except Exception:  # pragma: no cover - defensive; see docstring
-        pass
+        return None
 
 
 def _report_abandoned_outcome(task: "asyncio.Future") -> None:
@@ -1002,12 +1003,7 @@ def _report_abandoned_outcome(task: "asyncio.Future") -> None:
     asyncio would have, but with its own traceback and a name for where it
     came from.
     """
-    if task.cancelled():
-        return
-    try:
-        exc = task.exception()
-    except Exception:  # pragma: no cover - defensive; see _discard_task_outcome
-        return
+    exc = _discard_task_outcome(task)
     if exc is None or isinstance(exc, StopAsyncIteration):
         return
     logger.opt(exception=exc).error(
@@ -1116,9 +1112,12 @@ async def _interleave_iterator_for_keep_alive(
                 raise
             except Exception as e:
                 logger.opt(exception=True).error(f"Error in generator: {e}")
-                yield "\n"
+                # Retired BEFORE the yield: a consumer that closes the stream
+                # at that yield would otherwise leave the failed task for the
+                # finally below to report a second time (review).
                 _retire_anext_task(task, cancel=True)
                 task = None
+                yield "\n"
     finally:
         # Every exit, including the one no except clause can see: aclose()
         # throws GeneratorExit here, and without this the in-flight

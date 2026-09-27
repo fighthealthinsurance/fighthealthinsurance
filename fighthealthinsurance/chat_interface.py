@@ -224,8 +224,8 @@ class ChatInterface:
         # a disconnected socket does not come back, and a reconnect gets a
         # new consumer and a new ChatInterface. Recorded HERE, at the one
         # send path, because the ClientGone itself does not always reach
-        # handle_chat_message: the heartbeat task and BaseTool.process both
-        # catch send failures, and a turn that finishes after the user left
+        # handle_chat_message: the heartbeat task and BaseTool.handle both
+        # swallow it, and a turn that finishes after the user left
         # was then counted "ok" and sent its reply into a closed socket
         # (review).
         self._client_gone = False
@@ -2546,6 +2546,15 @@ class ChatInterface:
 
             # Progress callback for countdown display
             async def _progress_callback(remaining: int, total: int) -> None:
+                try:
+                    await _send_progress(remaining, total)
+                except ClientGone:
+                    # Progress frames are advisory. The analysis runs on and
+                    # is persisted below, so a reconnect replays it rather
+                    # than the agents' work being thrown away mid-run.
+                    pass
+
+            async def _send_progress(remaining: int, total: int) -> None:
                 if total == 0:
                     await self.send_status_message("Finalizing analysis...")
                 elif total == 1 and remaining == 1:
@@ -2592,6 +2601,10 @@ class ChatInterface:
                     "Could not analyze the policy document. Please try again or contact support."
                 )
 
+        except ClientGone:
+            # Not an analysis failure, and nobody to apologise to: the
+            # apology below would only raise ClientGone again.
+            logger.info(f"Chat {chat.id}: client left during policy analysis")
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error handling policy analysis for chat {chat.id}: "

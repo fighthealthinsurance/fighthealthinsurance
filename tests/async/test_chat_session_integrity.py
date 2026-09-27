@@ -108,6 +108,53 @@ class PolicyHandoffSessionKeyTest(APITestCase):
         # No error frame went out.
         self.assertFalse([f for f in recorder.frames if "error" in f])
 
+    async def test_a_hangup_mid_analysis_still_persists_the_analysis(self):
+        """Progress frames are advisory: a user who leaves while the agents
+        run does not throw the analysis away, and the handler returns cleanly
+        instead of apologising into the closed socket (review)."""
+        from fighthealthinsurance.client_gone import ClientGone
+
+        session_key = f"django-session-{uuid.uuid4().hex[:12]}"
+        await sync_to_async(PolicyDocument.objects.create)(
+            session_key=session_key,
+            document_type="summary_of_benefits",
+            filename="policy.pdf",
+        )
+        user, chat = await _make_professional_chat("policygone1", "9999930004")
+        frames: list = []
+
+        async def gone_after_the_first_frame(frame):
+            if frames:
+                raise ClientGone()
+            frames.append(frame)
+
+        interface = ChatInterface(
+            send_json_message_func=gone_after_the_first_frame,
+            chat=chat,
+            user=user,
+            server_session_key=session_key,
+        )
+
+        async def analysis_with_progress(doc, question, progress_callback):
+            await progress_callback(3, 3)
+            await progress_callback(0, 0)
+            return {"summary": "Covers MRI with prior auth."}
+
+        with patch(
+            "fighthealthinsurance.chat_interface.MLPolicyDocHelper.get_or_create_analysis",
+            new=analysis_with_progress,
+        ), patch(
+            "fighthealthinsurance.chat_interface.MLPolicyDocHelper.format_analysis_for_chat",
+            return_value="Formatted analysis text",
+        ):
+            await interface._handle_policy_analysis(chat, "Please analyze")
+
+        fresh = await OngoingChat.objects.aget(id=chat.id)
+        self.assertEqual(
+            [m.get("content") for m in fresh.chat_history],
+            ["Please analyze", "Formatted analysis text"],
+        )
+
     async def test_missing_doc_still_reports_cleanly(self):
         user, chat = await _make_professional_chat(
             "policyhandoff2", "9999930002", session_key="no-doc-here"

@@ -509,6 +509,44 @@ class ChatHangupOutcomeTest(APITestCase):
         self.assertEqual(outcomes, ["client_gone"])
         self.assertEqual(len(await self._assistant_replies(chat)), 1)
 
+    async def test_a_hangup_seen_by_a_tool_keeps_the_reply(self):
+        """A tool's status frame is the first write to find the socket
+        closed. The model's reply already exists, so it is persisted for a
+        reconnect to replay, not discarded with the turn (review)."""
+        from fighthealthinsurance.client_gone import ClientGone
+
+        async def gone_for_status_frames(frame):
+            if "status" in frame:
+                raise ClientGone()
+
+        user, chat = await _make_professional_chat("toolgone1", "9999910034")
+        interface = ChatInterface(
+            send_json_message_func=gone_for_status_frames, chat=chat, user=user
+        )
+
+        async def reply_with_a_tool_call(*args, **kwargs):
+            # The tool step of _call_llm_with_actions, which the mock below
+            # replaces: the real AppealTool on the interface's own senders.
+            from fighthealthinsurance.chat.tools import AppealTool
+
+            reply = self.REPLY + '\n**create_or_update_appeal** {"appeal_text": "x"}'
+            tool = AppealTool(
+                interface.send_status_message, interface.send_error_message
+            )
+            response, context, _ = await tool.handle(reply, "", chat=chat)
+            return response, context
+
+        with patch.dict(os.environ, {"FHI_CHAT_HEARTBEAT_SECONDS": "60"}), patch(
+            "fighthealthinsurance.chat_interface.record_chat_turn"
+        ) as mock_record, _llm_call_fails(reply_with_a_tool_call):
+            await interface.handle_chat_message("Why was my MRI claim denied?")
+
+        self.assertEqual(
+            [call.args[0] for call in mock_record.call_args_list], ["client_gone"]
+        )
+        replies = await self._assistant_replies(chat)
+        self.assertEqual([m["content"] for m in replies], [self.REPLY])
+
     async def test_a_budget_run_out_after_the_hangup_is_not_a_timeout(self):
         _, outcomes, errors = await self._run_turn(
             "budgetgone1",

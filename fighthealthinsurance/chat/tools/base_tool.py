@@ -191,11 +191,17 @@ class BaseTool(ABC):
 
         except ClientGone:
             # A status frame found the client gone. That is not this tool
-            # failing: re-raised so the turn ends the way it does for any
-            # other status send (handle_chat_message's hangup path), instead
-            # of logging a tool-error traceback, trying a second status frame
-            # into the same closed socket, and generating on for nobody.
-            raise
+            # failing, so no tool-error traceback and no second status frame
+            # into the same closed socket. Nor is it re-raised: the model's
+            # reply already exists, and the turn persists it so a reconnect
+            # replays it, the same as when the heartbeat is first to notice
+            # (review). Re-raising abandoned the turn and discarded that
+            # reply. The departure is already on the ChatInterface's
+            # _client_gone, so the turn is counted "client_gone" and the reply
+            # is not sent. This tool's own action is abandoned, as it is on
+            # any other tool error.
+            logger.info(f"{self.name}: client left mid-tool; skipping the tool")
+            return self._strip_tool_syntax(response_text), context, True
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error executing {self.name} tool: {type(e).__name__}"
@@ -206,16 +212,24 @@ class BaseTool(ABC):
                 )
             except Exception:
                 logger.debug(f"{self.name}: could not send tool-error status")
-            # Best-effort strip of the raw tool syntax before handing the text
-            # back: the user should never see `**create_or_update_appeal**
-            # {...}` in the chat because a tool blew up mid-execution.
-            cleaned_response = response_text
-            try:
-                stripped = re.sub(
-                    self.pattern, "", response_text, flags=self.detect_all_flags
-                ).strip()
-                if stripped:
-                    cleaned_response = stripped
-            except Exception:
-                logger.debug(f"{self.name}: could not strip tool syntax on error")
-            return cleaned_response, context, True
+            return self._strip_tool_syntax(response_text), context, True
+
+    def _strip_tool_syntax(self, response_text: str) -> str:
+        """Best-effort strip of the raw tool syntax from a reply whose tool
+        did not run: the user should never see `**create_or_update_appeal**
+        {...}` in the chat because a tool blew up mid-execution.
+
+        Both flag sets: the appeal and prior-auth patterns are anchored per
+        line and only match under their ``detect_flags`` (MULTILINE), so
+        ``detect_all_flags`` alone left their syntax in the reply."""
+        try:
+            stripped = re.sub(
+                self.pattern,
+                "",
+                response_text,
+                flags=self.detect_flags | self.detect_all_flags,
+            ).strip()
+        except Exception:
+            logger.debug(f"{self.name}: could not strip tool syntax on error")
+            return response_text
+        return stripped or response_text

@@ -80,6 +80,22 @@ class TestInfrastructureTeardownNoiseIsDropped:
         )
         assert before_send_filter(event, {}) is None
 
+    def test_a_crash_chained_with_the_grpc_watcher_race_is_kept(self):
+        """A real exception raised while handling the watcher race is a root
+        cause, not teardown noise (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    {
+                        "type": "ValueError",
+                        "value": "Cannot monitor channel state: Channel closed!",
+                    },
+                    {"type": "KeyError", "value": "'denial_id'"},
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
     def test_the_loop_message_alone_is_kept(self):
         """Without a SystemExit it means code closed a running loop -- a bug,
         and possibly the tail of a crash whose root cause rides along."""
