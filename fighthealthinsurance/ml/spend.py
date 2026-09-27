@@ -34,7 +34,8 @@ a write stored, so a failed write is retried, never lost) and refreshes the
 copy at most every REFRESH_SECONDS, each step on its own connection closed
 afterwards. Pending totals are one number per counter and day, so a stalled
 database cannot make them pile up. Until the first refresh lands (or while
-the database cannot be read), TypeSafe is refused and outside chat models
+the database cannot be read, so no refresh has landed for STALE_SECONDS),
+TypeSafe is refused and outside chat models
 are allowed: losing a Jev check costs nothing, losing an answer costs the
 person.
 """
@@ -61,6 +62,9 @@ PAUSED = "paused"
 
 MICRO = 1_000_000
 REFRESH_SECONDS = 30.0
+# A copy not refreshed for this long counts as unread: the database cannot
+# be read, so other pods' spending and pauses are unknown.
+STALE_SECONDS = 300.0
 WRITE_EVERY_SECONDS = 1.0
 
 # TypeSafe bills input tokens only: $0.042 per million for jev-1.13.0
@@ -192,13 +196,15 @@ class _Ledger:
         if time.monotonic() - self._refreshed_at >= REFRESH_SECONDS:
             self._refresh_wanted.set()
             self._wake.set()
+        background = getattr(settings, "FHI_SPEND_BACKGROUND", True)
+        stale = background and time.monotonic() - self._refreshed_at > STALE_SECONDS
         with self._lock:
             view = _Month(
                 month=self._view.month,
                 by_day={k: dict(v) for k, v in self._view.by_day.items()},
-                loaded=self._view.loaded,
+                loaded=self._view.loaded and not stale,
             )
-            if not getattr(settings, "FHI_SPEND_BACKGROUND", True) and not view.loaded:
+            if not background and not view.loaded:
                 # No worker (tests): this process's own counts are the whole
                 # ledger, starting from nothing.
                 today = _today()
