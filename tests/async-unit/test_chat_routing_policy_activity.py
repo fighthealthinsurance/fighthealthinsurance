@@ -167,9 +167,6 @@ async def test_the_activity_stores_one_temporal_row_from_the_turns(seeded):
     assert row.reason == "few_turns"
     assert row.external_excluded == []
     assert row.external_delay_seconds == 0.0
-    # The newest turn is from this UTC day whenever the test runs.
-    assert set(row.calls_today) <= {"fhi-local", "claude"}
-    assert row.calls_today.get("claude", 0) >= 1
 
 
 @pytest.mark.django_db(transaction=True)

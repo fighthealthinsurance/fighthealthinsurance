@@ -242,9 +242,9 @@ async def test_against_a_local_server_create_update_pause_and_unpause():
                 "created"
             )
             described = await handle.describe()
-            assert described.schedule.spec.intervals[0].every == timedelta(minutes=10)
+            assert described.schedule.spec.intervals[0].every == timedelta(days=1)
             assert described.schedule.policy.overlap == ScheduleOverlapPolicy.SKIP
-            assert described.schedule.policy.catchup_window == timedelta(minutes=10)
+            assert described.schedule.policy.catchup_window == timedelta(days=1)
             action = described.schedule.action
             assert isinstance(action, ScheduleActionStartWorkflow)
             assert action.workflow == "ChatRoutingPolicyWorkflow"
