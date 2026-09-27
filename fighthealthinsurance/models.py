@@ -3756,10 +3756,25 @@ class ChatTurn(models.Model):
         # not on for.
         NONE = "", "Not checked"
         PASS = "pass", "Passed"
+        BORDERLINE = "borderline", "Borderline"
         FAIL = "fail", "Failed"
         ERROR = "error", "Error"
         TIMEOUT = "timeout", "Timed out"
         SKIPPED = "skipped", "Nothing judged"
+
+    class RankOutcome(models.TextChoices):
+        # The ranking outcomes in ml/chat_gate.py, plus "" for a turn with
+        # no ranking.
+        NONE = "", "Not ranked"
+        PICKED = "picked", "Jev picked"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Not sent"
+
+    class AlternateReason(models.TextChoices):
+        NONE = "", "No side-by-side"
+        TIED = "tied", "Closely tied scores"
+        CRUCIAL = "crucial", "Crucial moment (Jev)"
 
     # Also the turn_id the client echoes back with its side-by-side pick.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -3819,6 +3834,10 @@ class ChatTurn(models.Model):
     alternate_model = models.CharField(max_length=200, blank=True, default="")
     # The offered pair came from two different models.
     alternate_cross_model = models.BooleanField(default=False)
+    # Why it was offered: our tied-scores rule, or a crucial moment by Jev.
+    alternate_reason = models.CharField(
+        max_length=16, blank=True, default="", choices=AlternateReason.choices
+    )
     # The person's side-by-side pick. The first pick wins.
     preferred = models.CharField(
         max_length=16, blank=True, default="", choices=Preferred.choices
@@ -3859,6 +3878,19 @@ class ChatTurn(models.Model):
     # it was still the reply delivered because nothing else usable arrived.
     gate_demoted = models.BooleanField(default=False)
     gate_demoted_delivered = models.BooleanField(default=False)
+    # Jev's probability that the person's message is a crucial moment (a
+    # deadline, a denial, an appeal's next step, coverage); null unless Jev
+    # answered.
+    gate_crucial = models.FloatField(null=True, blank=True)
+    # After a borderline check, Jev scored every deliverable candidate in
+    # one request: how that went, how long it took, how many it scored, and
+    # whether its pick replaced the race's. Each call's score is in calls.
+    rank_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=RankOutcome.choices
+    )
+    rank_ms = models.PositiveIntegerField(null=True, blank=True)
+    rank_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    rank_changed = models.BooleanField(default=False)
 
     class Meta:
         indexes = [

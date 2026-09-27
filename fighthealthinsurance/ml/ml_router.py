@@ -230,6 +230,19 @@ class MLRouter(object):
         ]
         return within_budget[:limit]
 
+    def chat_side_by_side_model(self) -> Optional[RemoteModelLike]:
+        """The model a crucial chat turn compares with its reply
+        (FHI_CHAT_SIDE_BY_SIDE_MODEL, Kimi-K3 by default), or None when it
+        is unset, not registered, down or over its provider's chat budget
+        (the same filters as chat_outside_models)."""
+        from django.conf import settings
+
+        name = str(getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or "").strip()
+        if not name:
+            return None
+        found = self.chat_outside_models([name], limit=1)
+        return found[0] if found else None
+
     @staticmethod
     def _enabled_model_names() -> Optional[set[str]]:
         """Parse the ``ENABLED_REMOTE_MODELS`` allow-list.

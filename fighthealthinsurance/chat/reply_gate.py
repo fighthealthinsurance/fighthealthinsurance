@@ -8,20 +8,32 @@ promise, the rule the retry uses) fails the check without being sent to
 TypeSafe, so our requirements hold whether or not Jev can be reached. An
 empty reply is not judged at all: it is recorded as skipped, and the
 outside calls start at once. Any other reply goes to Jev with four
-questions. The outcome:
+questions about the reply and one about the message (is it a crucial
+moment: a deadline, a denial, an appeal's next step, coverage). The
+outcome:
 
 * pass: the primary pass never sends the outside calls, and picks among
   our models' answers. The retry, which runs only when our own checks
   reject the reply (empty, too short or a false promise), may still ask
   them;
+* borderline: the outside calls start at once, and once the race is over
+  a second request (chat_gate.rank_replies) scores every deliverable
+  candidate, ours included, and the best is delivered (rank());
 * fail (from Jev or from our own checks), error or timeout: the outside
   calls start at once, and the usual scoring picks the winner among
-  everything that answers. After a fail (not an error or a timeout), and
-  while FHI_CHAT_JEV_GATE_DEMOTE_FAILED is on, the judged reply, and any
-  with the same text, ranks just below the best outside answer that could
-  be delivered, so it wins only when no such answer arrives; our other
-  replies keep their scores (utils.best_two_within_timelimit's
-  ``demote_failed``).
+  everything that answers. After a fail from Jev (not an error or a
+  timeout), and while FHI_CHAT_JEV_GATE_DEMOTE_FAILED is on, the judged
+  reply, and any with the same text, ranks just below the best outside
+  answer that could be delivered, so it wins only when no such answer
+  arrives; our other replies keep their scores
+  (utils.best_two_within_timelimit's ``demote_failed``).
+
+Crucial moments. When Jev reads the message as crucial and the chat still
+has a side-by-side left (FHI_CHAT_SIDE_BY_SIDES_PER_CHAT), the turn's
+reserved call starts too: the side-by-side model (FHI_CHAT_SIDE_BY_SIDE_MODEL,
+Kimi-K3), whatever the tier, so the person can compare it with the reply.
+It is asked on no other turn: an error, a timeout or a hold that runs out
+never starts it.
 
 The outside calls are held for at most FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS
 (or the routing policy's delay, when that is longer), whether or not a
@@ -53,7 +65,7 @@ this steps outside the usual database_sync_to_async.
 
 import asyncio
 import time
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, List, Optional, Sequence, Tuple
 
 from loguru import logger
 
@@ -62,6 +74,7 @@ from fighthealthinsurance.chat.redaction import chat_redactions
 from fighthealthinsurance.chat.safety_filters import llm_requested_delete_handoff
 from fighthealthinsurance.chat.tools.patterns import contains_tool_call
 from fighthealthinsurance.ml import chat_gate
+from fighthealthinsurance.utils import CheckVerdict
 
 # The judged model's label is stored in a column this wide.
 _MODEL_LABEL_MAX = 200
@@ -133,12 +146,16 @@ def gate_for_turn(
 
     ``external_allowed`` must be the person's consent to outside models for
     this chat. ``typed_message`` is False for a document upload or a stored
-    long paste. ``ours_selectable`` says whether the router has one of our
-    own models it would pick (asked last, only when everything else holds):
-    with none, holding the outside models back would only delay the answer,
-    the same reason the routing policy is set aside then.
+    long paste. TypeSafe's chat budget must allow a request: when it is
+    spent the turn routes by our own rules, as with the check off.
+    ``ours_selectable`` says whether the router has one of our own models it
+    would pick (asked last, only when everything else holds): with none,
+    holding the outside models back would only delay the answer, the same
+    reason the routing policy is set aside then.
     """
     if not (external_allowed and typed_message and chat_gate.enabled()):
+        return None
+    if not chat_gate.budget_allows():
         return None
     if not ours_selectable():
         return None
@@ -172,34 +189,69 @@ class ReplyGate:
         self.scorer = ""
         self.model = ""
         self.ms: Optional[int] = None
+        # Jev's read of the message, once answered.
+        self.crucial = False
+        # The fan-out's outside calls and its reserved side-by-side calls
+        # (bind()): what a verdict names to start.
+        self._outside: Tuple[Awaitable[Any], ...] = ()
+        self._reserved: Tuple[Awaitable[Any], ...] = ()
+        # The chat's identifier list, kept in memory for the ranking so it
+        # is looked up once per turn. Dropped when the turn is over.
+        self._identifiers: Optional[List[Tuple[str, str]]] = None
+        # The ranking (rank()), when one ran.
+        self.rank_outcome = ""
+        self.rank_ms: Optional[int] = None
+        self.rank_count: Optional[int] = None
         self._started: Optional[float] = None
         # For ExternalServiceHealth once the turn is over: "" for an answer,
         # a failure summary for an error or timeout from TypeSafe, None when
         # nothing reached TypeSafe or nothing came back to judge it by.
         self._health: Optional[str] = None
 
+    def bind(
+        self, outside: Sequence[Awaitable[Any]], reserved: Sequence[Awaitable[Any]]
+    ) -> None:
+        """The fan-out's held-back calls: the outside models' and the
+        reserved side-by-side ones (empty when the chat has none left)."""
+        self._outside = tuple(outside)
+        self._reserved = tuple(reserved)
+
+    def _verdict(self) -> CheckVerdict:
+        """What the race starts, from the outcome: see the module docstring.
+        Anything but an answer from Jev leaves the race's default (every
+        outside call, never a reserved one)."""
+        side = self._reserved if self.crucial else ()
+        if self.outcome == chat_gate.PASS:
+            return CheckVerdict(passed=True, start=side)
+        if self.outcome == chat_gate.BORDERLINE or (
+            self.outcome == chat_gate.FAIL and self.scores is not None
+        ):
+            return CheckVerdict(passed=False, start=self._outside + side)
+        return CheckVerdict(passed=False)
+
     async def judge(
         self, message: Optional[str], reply: Optional[str], model: Optional[str]
-    ) -> bool:
+    ) -> CheckVerdict:
         """The fan-out's check (utils.best_two_within_timelimit ``check``):
-        True when our reply passes, False for anything else. Never raises
-        (except cancellation, when the fan-out stops waiting for it)."""
+        passed only for a clear pass, and naming the calls to start. Never
+        raises (except cancellation, when the fan-out stops waiting for
+        it)."""
         if self._started is not None:
-            return False
+            return CheckVerdict(passed=False)
         self._started = time.monotonic()
         self.model = str(model or "")[:_MODEL_LABEL_MAX]
         try:
-            return await self._judge(message, reply)
+            await self._judge(message, reply)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.warning(f"Chat reply check failed: {type(e).__name__}")
             self.outcome = chat_gate.ERROR
-            return False
         finally:
             self.ms = self._elapsed_ms()
+        return self._verdict()
 
-    async def _judge(self, message: Optional[str], reply: Optional[str]) -> bool:
+    async def _judge(self, message: Optional[str], reply: Optional[str]) -> None:
         # A reply the person would not see as it is: a tool call is followed
         # by another pass, and the data-deletion handoff by a canned reply.
         if (
@@ -211,14 +263,14 @@ class ReplyGate:
             or not chat_gate.judgeable(message)
         ):
             self.outcome = chat_gate.SKIPPED
-            return False
+            return
         # Our own requirements first, and without sending anything: a reply
         # the retry would reject fails here whether or not Jev can be
         # reached. Nothing reached TypeSafe, so there is no health to note.
         if chat_gate.fails_our_checks(reply):
             self.outcome = chat_gate.FAIL
             self.scorer = chat_gate.LOCAL_SCORER
-            return False
+            return
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.timeout_seconds
         try:
@@ -234,11 +286,12 @@ class ReplyGate:
             timed_out = isinstance(e, (TimeoutError, asyncio.TimeoutError))
             logger.warning(f"Chat reply check not sent: {type(e).__name__}")
             self.outcome = chat_gate.TIMEOUT if timed_out else chat_gate.ERROR
-            return False
+            return
+        self._identifiers = identifiers
         remaining = deadline - loop.time()
         if remaining <= 0:
             self.outcome = chat_gate.TIMEOUT
-            return False
+            return
         result = await chat_gate.check_reply(
             message, reply, identifiers=identifiers, timeout=remaining
         )
@@ -246,10 +299,48 @@ class ReplyGate:
         if result.answered:
             self.scores = result.scores
             self.scorer = result.scorer
+            self.crucial = chat_gate.is_crucial(result.scores)
             self._health = ""
         elif result.outcome in (chat_gate.ERROR, chat_gate.TIMEOUT):
             self._health = result.failure
-        return result.outcome == chat_gate.PASS
+
+    def wants_rank(self) -> bool:
+        """Whether the turn's candidates go to a ranking: only after a
+        borderline check."""
+        return self.outcome == chat_gate.BORDERLINE
+
+    async def rank(
+        self, message: Optional[str], replies: Sequence[str]
+    ) -> chat_gate.RankResult:
+        """Jev's scores for each candidate (chat_gate.rank_replies), with
+        the identifier list the check looked up. Once per turn; never
+        raises, except that a cancellation still propagates."""
+        if self.rank_outcome or self._identifiers is None:
+            return chat_gate.RankResult(outcome=chat_gate.SKIPPED)
+        started = time.monotonic()
+        self.rank_count = len(replies)
+        try:
+            if not chat_gate.budget_allows():
+                result = chat_gate.RankResult(outcome=chat_gate.SKIPPED)
+            else:
+                result = await chat_gate.rank_replies(
+                    message,
+                    replies,
+                    identifiers=self._identifiers,
+                    timeout=chat_gate.rank_timeout_seconds(),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Chat reply ranking failed: {type(e).__name__}")
+            result = chat_gate.RankResult(outcome=chat_gate.ERROR)
+        self.rank_outcome = result.outcome
+        self.rank_ms = max(0, int((time.monotonic() - started) * 1000))
+        if result.outcome == chat_gate.RANK_PICKED:
+            self._health = ""
+        elif result.outcome in (chat_gate.ERROR, chat_gate.TIMEOUT) and result.failure:
+            self._health = result.failure
+        return result
 
     def wants_demotion(self) -> bool:
         """The fan-out's demotion rule (utils.best_two_within_timelimit
@@ -271,6 +362,7 @@ class ReplyGate:
         """
         if not self.used:
             return
+        self._outside = self._reserved = ()
         if self._started is None:
             self.outcome = chat_gate.SKIPPED
             return
@@ -287,6 +379,7 @@ class ReplyGate:
         Never raises, except that a cancellation of the caller still
         propagates."""
         health, self._health = self._health, None
+        self._identifiers = None
         if health is None:
             return
         if isolated_db.running(HEALTH_THREAD) >= MAX_RUNNING:

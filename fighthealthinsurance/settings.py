@@ -296,6 +296,11 @@ class Base(Configuration):
     FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = _env_float(
         "FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS", 1.5, minimum=0.2, maximum=10.0
     )
+    # A borderline reply's ranking (every candidate scored in one request)
+    # runs after the race; past this the race's pick stands.
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = _env_float(
+        "FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS", 3.0, minimum=0.2, maximum=10.0
+    )
     # The decision rule: our reply passes when Jev's "responds to the
     # message" answer is at least MIN_ANSWERS and its "states a coverage or
     # eligibility verdict", "asks for what was already given" and "promises
@@ -307,6 +312,26 @@ class Base(Configuration):
     FHI_CHAT_JEV_GATE_MAX_PROBLEM = _env_float(
         "FHI_CHAT_JEV_GATE_MAX_PROBLEM", 0.3, minimum=0.0, maximum=1.0
     )
+    # A reply that meets the line above is a clear pass (no outside model
+    # asked) only when "responds" is at least CLEAR_ANSWERS and every
+    # problem answer is below CLEAR_PROBLEM; between the two lines it is
+    # borderline: the outside models are asked and Jev ranks every reply.
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = _env_float(
+        "FHI_CHAT_JEV_GATE_CLEAR_ANSWERS", 0.85, minimum=0.0, maximum=1.0
+    )
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = _env_float(
+        "FHI_CHAT_JEV_GATE_CLEAR_PROBLEM", 0.15, minimum=0.0, maximum=1.0
+    )
+    # Jev's "is this a crucial moment" answer at or above this makes the
+    # turn a side-by-side with FHI_CHAT_SIDE_BY_SIDE_MODEL, while the chat
+    # has one left (FHI_CHAT_SIDE_BY_SIDES_PER_CHAT).
+    FHI_CHAT_JEV_CRUCIAL_MIN = _env_float(
+        "FHI_CHAT_JEV_CRUCIAL_MIN", 0.5, minimum=0.0, maximum=1.0
+    )
+    # The model a crucial moment is compared with. Asked on no other turn.
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = os.getenv(
+        "FHI_CHAT_SIDE_BY_SIDE_MODEL", "moonshotai/Kimi-K3"
+    ).strip()
     # When the check fails our reply, rank that reply just below the outside
     # models' answers the failure started, so one of them wins instead of our
     # models' higher base score keeping the failed reply in front. It is
@@ -1023,6 +1048,11 @@ class Test(_TestBase):
     FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
     FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = 0.85
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = 0.15
+    FHI_CHAT_JEV_CRUCIAL_MIN = 0.5
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = 3.0
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = ""
 
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
     # timeout would poll until it expires on every generate_appeals test.
@@ -1095,6 +1125,11 @@ class TestSync(_TestBase):
     FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
     FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = 0.85
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = 0.15
+    FHI_CHAT_JEV_CRUCIAL_MIN = 0.5
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = 3.0
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = ""
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
@@ -1150,6 +1185,11 @@ class TestActor(_TestBase):
     FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
     FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = 0.85
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = 0.15
+    FHI_CHAT_JEV_CRUCIAL_MIN = 0.5
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = 3.0
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = ""
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).

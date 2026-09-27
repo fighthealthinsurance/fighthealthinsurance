@@ -263,8 +263,10 @@ rule.
   (off by default, forced off in every test configuration), the TypeSafe
   key is set, the person allowed outside models (Jev reads the text), the
   message was typed (not a document upload or a stored long paste), one of
-  our models is selectable, and the pass has outside calls to hold back
-  and calls of ours to start first. It does not depend on
+  our models is selectable, TypeSafe's chat budget (`ml/spend.py`) allows a
+  request, and the pass has outside calls to hold back and calls of ours to
+  start first. With the budget spent the turn routes by our own rules, as
+  with the check off. It does not depend on
   `FHI_CHAT_POLICY_APPLY`. Tool passes and the retry pass are never
   checked.
 * **The hold.** The outside calls wait until our first usable reply is
@@ -284,15 +286,21 @@ rule.
   first usable reply (as cleaned for delivery), redacted as letter scoring
   redacts with the identifiers `chat/redaction.py` collects for the chat's
   accounts and its linked appeals and prior authorization requests (if
-  that list cannot be read, nothing is sent), with four yes/no questions:
-  does the reply respond to what the message asks or says; does it state
-  a coverage or eligibility outcome as a settled fact; does it ask for
-  something the message already gives; does it promise or guarantee a
-  result (our own false-promise rule, asked of Jev too). It passes when
-  the first answer is at least `FHI_CHAT_JEV_GATE_MIN_ANSWERS` (0.7) and
-  the other three are each below `FHI_CHAT_JEV_GATE_MAX_PROBLEM` (0.3). A
-  reply carrying a tool call or the data-deletion handoff is not sent; the
-  outside calls start instead.
+  that list cannot be read, nothing is sent), with four yes/no questions
+  about the reply: does it respond to what the message asks or says; does
+  it state a coverage or eligibility outcome as a settled fact; does it ask
+  for something the message already gives; does it promise or guarantee a
+  result (our own false-promise rule, asked of Jev too). A fifth asks about
+  the message: is it a crucial moment (a deadline, a denial decision, an
+  appeal's next step, or whether something is covered)? The request is
+  counted against TypeSafe's chat budget. A reply carrying a tool call or
+  the data-deletion handoff is not sent; the outside calls start instead.
+* **Three tiers.** **Fail**: "responds" below
+  `FHI_CHAT_JEV_GATE_MIN_ANSWERS` (0.7), or any problem answer at or above
+  `FHI_CHAT_JEV_GATE_MAX_PROBLEM` (0.3). **Pass**: "responds" at least
+  `FHI_CHAT_JEV_GATE_CLEAR_ANSWERS` (0.85) and every problem answer below
+  `FHI_CHAT_JEV_GATE_CLEAR_PROBLEM` (0.15). **Borderline**: anything
+  between.
 * **Database work.** The identifier lookup and the health note after the
   turn each run on a thread of their own with their own connection, closed
   afterwards, inside a transaction with a statement timeout on PostgreSQL
@@ -312,6 +320,30 @@ rule.
   start at once and the usual scoring picks among everything. The check
   never holds the reply back, and the race's windows still run from its
   start.
+* **Borderline: Jev ranks.** The outside calls start at once (the roster
+  asks up to three, so at least two whenever two are up and in budget).
+  When the race is over, a second request sends every deliverable
+  candidate, ours included, one per reply the person would see and at most
+  four, labelled THE REPLY 1, 2 and so on, with the four reply questions
+  each. Each candidate's quality is "responds" times one minus its largest
+  problem answer, and the best is delivered (ties go to the race's order).
+  The ranking has `FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS` (3s); on an error or a
+  timeout the race's pick stands. Each ranked call keeps its quality as
+  `jev` in `ChatTurn.calls`, and the routing policy orders the outside
+  models by those once two of them have 30 each (`_choose_order`).
+* **Crucial moments: a side-by-side.** When Jev's crucial answer is at
+  least `FHI_CHAT_JEV_CRUCIAL_MIN` (0.5) and the chat still has a
+  side-by-side left (`FHI_CHAT_SIDE_BY_SIDES_PER_CHAT`, 2), the pass's
+  reserved call starts too: one call (truncated history) to
+  `FHI_CHAT_SIDE_BY_SIDE_MODEL` (Kimi-K3), built only for the checked
+  primary pass and never asked by the retry. The race starts a reserved
+  call only when the check names it (`utils.CheckVerdict`), never after the
+  hold runs out, so an error, a timeout or an ordinary turn never sends it.
+  The side-by-side is Jev's top two after a ranking, else the reply beside
+  the side-by-side model's answer, else beside the best answer from another
+  model. While Jev answers the check, side-by-sides are offered for crucial
+  moments only; with no answer from Jev, the closely-tied rule (section 5)
+  still applies.
 * **A failed reply is demoted.** After a fail, from Jev or from our own
   checks (never an error, a timeout or a reply that was not judged), and
   while `FHI_CHAT_JEV_GATE_DEMOTE_FAILED` is on (the default; pinned on in every
@@ -325,8 +357,10 @@ rule.
   demoted reply is never the runner-up or the side-by-side alternate, and
   it is still delivered when nothing else usable arrives.
 * **Recorded** on the ChatTurn row: `gate_used`, `gate_outcome` (pass,
-  fail, error, timeout, or skipped when nothing was judged), Jev's four
-  answers, `gate_scorer` (the model TypeSafe reports plus the rubric
+  borderline, fail, error, timeout, or skipped when nothing was judged),
+  Jev's four reply answers and `gate_crucial`, the ranking's
+  `rank_outcome`, `rank_ms`, `rank_count` and `rank_changed` (its pick
+  replaced the race's), `alternate_reason` (tied or crucial), `gate_scorer` (the model TypeSafe reports plus the rubric
   version, or `fhi/local-checks-1` when our own checks failed the reply
   before Jev was asked), `gate_ms`, `gate_model` (whose reply was judged),
   `gate_demoted` (a fail demoted it) and `gate_demoted_delivered` (the
@@ -371,7 +405,10 @@ is offered ONLY when a candidate:
   primary, not itself a repeat, no safety flags), and
 * tool processing didn't rewrite the primary reply, and no retry replaced
   the primary pass's winner, and
-* it is not a reply the reply check failed and demoted.
+* it is not a reply the reply check failed and demoted, and
+* Jev did not answer the turn's reply check: when it did, a side-by-side is
+  offered only for a crucial moment (section 4, the reply check), and the
+  row's `alternate_reason` says which rule offered it.
 
 Among the candidates that qualify, one from a DIFFERENT model than the
 winner comes first (pick_side_by_side_alternate): the pick is meant to be

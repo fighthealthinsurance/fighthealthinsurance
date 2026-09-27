@@ -46,7 +46,12 @@ SHORT_REPLY = "Ok."
 
 
 def _payload(
-    answers=0.9, verdict=0.05, asks_again=0.05, promises=0.05, model="jev-1.13.0"
+    answers=0.9,
+    verdict=0.05,
+    asks_again=0.05,
+    promises=0.05,
+    model="jev-1.13.0",
+    crucial=0.1,
 ):
     return {
         "model": model,
@@ -55,6 +60,7 @@ def _payload(
             chat_gate.STATES_VERDICT: {"type": "noul", "noul": verdict},
             chat_gate.ASKS_AGAIN: {"type": "noul", "noul": asks_again},
             chat_gate.PROMISES_OUTCOME: {"type": "noul", "noul": promises},
+            chat_gate.CRUCIAL_MOMENT: {"type": "noul", "noul": crucial},
         },
         "usage": {"input_tokens": 321, "output_tokens": 30},
     }
@@ -208,9 +214,15 @@ class TestOurOwnChecks:
 
 
 class TestParseAnswers:
-    def test_reads_the_four_answers(self):
-        scores = chat_gate.parse_answers(_payload(0.8, 0.2, 0.1, 0.15))
-        assert scores == chat_gate.GateScores(0.8, 0.2, 0.1, 0.15)
+    def test_reads_the_five_answers(self):
+        scores = chat_gate.parse_answers(_payload(0.8, 0.2, 0.1, 0.15, crucial=0.6))
+        assert scores == chat_gate.GateScores(0.8, 0.2, 0.1, 0.15, 0.6)
+
+    def test_a_payload_without_the_crucial_answer_raises(self):
+        payload = _payload()
+        del payload["answers"][chat_gate.CRUCIAL_MOMENT]
+        with pytest.raises(chat_gate.ChatGateError):
+            chat_gate.parse_answers(payload)
 
     def test_a_payload_without_the_promise_answer_raises(self):
         payload = _payload()
@@ -261,26 +273,30 @@ class TestState:
         assert len(state) <= chat_gate.STATE_CHAR_CAP
         assert state.endswith("R" * 20_000)
 
-    def test_four_questions_each_pointing_at_the_named_parts(self):
+    def test_five_questions_each_pointing_at_the_named_parts(self):
         assert set(chat_gate.QUESTIONS) == {
             chat_gate.ANSWERS_QUESTION,
             chat_gate.STATES_VERDICT,
             chat_gate.ASKS_AGAIN,
             chat_gate.PROMISES_OUTCOME,
+            chat_gate.CRUCIAL_MOMENT,
         }
         for name, question in chat_gate.QUESTIONS.items():
             assert question["type"] == "noul"
-            assert "THE REPLY" in question["instructions"]
+            # The crucial question is about the message alone.
+            assert ("THE REPLY" in question["instructions"]) is (
+                name != chat_gate.CRUCIAL_MOMENT
+            )
             assert "THE PERSON'S MESSAGE" in question["instructions"] or name in (
                 chat_gate.STATES_VERDICT,
                 chat_gate.PROMISES_OUTCOME,
             )
 
     def test_the_scorer_names_the_answering_model_and_the_rubric(self):
-        assert chat_gate.RUBRIC_VERSION == 2
+        assert chat_gate.RUBRIC_VERSION == 3
         scorer = chat_gate.scorer_for({"model": "jev-1.14.0"})
-        assert scorer == "typesafe/jev-1.14.0/chat-gate-rubric-2"
-        assert not chat_gate.same_rubric("typesafe/jev-1.14.0/chat-gate-rubric-1")
+        assert scorer == "typesafe/jev-1.14.0/chat-gate-rubric-3"
+        assert not chat_gate.same_rubric("typesafe/jev-1.14.0/chat-gate-rubric-2")
         assert chat_gate.same_rubric(scorer)
         assert not chat_gate.same_rubric("typesafe/jev-1.13.0/rubric-1")
         assert chat_gate.scorer_for({}) == chat_gate.SCORER
@@ -319,8 +335,8 @@ class TestCheckReply:
         ):
             result = await chat_gate.check_reply(MESSAGE, REPLY, timeout=1.0)
         assert result.outcome == chat_gate.PASS
-        assert result.scores == chat_gate.GateScores(0.9, 0.05, 0.05, 0.05)
-        assert result.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-2"
+        assert result.scores == chat_gate.GateScores(0.9, 0.05, 0.05, 0.05, 0.1)
+        assert result.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-3"
 
     @pytest.mark.asyncio
     async def test_a_reply_that_states_a_verdict_fails(self):
@@ -350,8 +366,10 @@ class TestCheckReply:
     async def test_the_request_carries_the_redacted_state_and_the_questions(self):
         sent = {}
 
-        async def fake_ask(state, questions, *, timeout_seconds):
-            sent.update(state=state, questions=questions, timeout=timeout_seconds)
+        async def fake_ask(state, questions, *, timeout_seconds, use):
+            sent.update(
+                state=state, questions=questions, timeout=timeout_seconds, use=use
+            )
             return _payload()
 
         with (
@@ -366,6 +384,8 @@ class TestCheckReply:
             )
         assert sent["questions"] is chat_gate.QUESTIONS
         assert sent["timeout"] == 1.0
+        # Counted against TypeSafe's chat budget.
+        assert sent["use"] == chat_gate.spend.CHAT
         assert "pat.doe@example.com" not in sent["state"]
         assert "415-555-0100" not in sent["state"]
         assert "Here is how to appeal an MRI denial" in sent["state"]
@@ -559,11 +579,11 @@ class TestReplyGate:
             _no_identifiers(),
             patch.object(chat_gate, "_post", new=AsyncMock(return_value=_payload())),
         ):
-            assert await gate.judge(MESSAGE, REPLY, "fhi-local") is True
+            assert (await gate.judge(MESSAGE, REPLY, "fhi-local")).passed is True
         gate.finish()
         assert gate.outcome == chat_gate.PASS
-        assert gate.scores == chat_gate.GateScores(0.9, 0.05, 0.05, 0.05)
-        assert gate.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-2"
+        assert gate.scores == chat_gate.GateScores(0.9, 0.05, 0.05, 0.05, 0.1)
+        assert gate.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-3"
         assert gate.model == "fhi-local"
         assert isinstance(gate.ms, int)
 
@@ -577,7 +597,7 @@ class TestReplyGate:
                 chat_gate, "_post", new=AsyncMock(return_value=_payload(answers=0.2))
             ),
         ):
-            assert await gate.judge(MESSAGE, REPLY, "fhi-local") is False
+            assert (await gate.judge(MESSAGE, REPLY, "fhi-local")).passed is False
         assert gate.outcome == chat_gate.FAIL
 
     @pytest.mark.asyncio
@@ -600,7 +620,7 @@ class TestReplyGate:
             _no_identifiers(),
             patch.object(chat_gate, "_post", new=post),
         ):
-            assert await gate.judge(MESSAGE, reply, "fhi-local") is False
+            assert (await gate.judge(MESSAGE, reply, "fhi-local")).passed is False
         post.assert_not_called()
         assert gate.outcome == chat_gate.SKIPPED
 
@@ -636,7 +656,7 @@ class TestReplyGate:
             _no_identifiers(),
             patch.object(chat_gate, "_post", new=post),
         ):
-            assert await gate.judge(message, reply, "fhi-local") is False
+            assert (await gate.judge(message, reply, "fhi-local")).passed is False
         post.assert_not_called()
         assert gate.outcome == chat_gate.SKIPPED
         assert gate.scorer == ""
@@ -655,7 +675,7 @@ class TestReplyGate:
             patch.object(reply_gate, "_aredactions", new=lookup),
             patch.object(chat_gate, "_post", new=post),
         ):
-            assert await gate.judge(MESSAGE, reply, "fhi-local") is False
+            assert (await gate.judge(MESSAGE, reply, "fhi-local")).passed is False
         lookup.assert_not_called()
         post.assert_not_called()
         assert gate.outcome == chat_gate.FAIL
@@ -674,7 +694,7 @@ class TestReplyGate:
             _no_identifiers(),
             patch.object(chat_gate, "_post", new=post),
         ):
-            assert await gate.judge(MESSAGE, PROMISE_REPLY, "fhi-local") is False
+            assert (await gate.judge(MESSAGE, PROMISE_REPLY, "fhi-local")).passed is False
         post.assert_not_called()
         assert gate.outcome == chat_gate.FAIL
         assert gate.wants_demotion() is True
@@ -692,7 +712,7 @@ class TestReplyGate:
             ),
             patch.object(chat_gate, "_post", new=post),
         ):
-            assert await gate.judge(MESSAGE, REPLY, "fhi-local") is False
+            assert (await gate.judge(MESSAGE, REPLY, "fhi-local")).passed is False
         post.assert_not_called()
         assert gate.outcome == chat_gate.ERROR
 
@@ -705,8 +725,8 @@ class TestReplyGate:
             _no_identifiers(),
             patch.object(chat_gate, "_post", new=post),
         ):
-            assert await gate.judge(MESSAGE, REPLY, "fhi-local") is True
-            assert await gate.judge(MESSAGE, REPLY, "fhi-local") is False
+            assert (await gate.judge(MESSAGE, REPLY, "fhi-local")).passed is True
+            assert (await gate.judge(MESSAGE, REPLY, "fhi-local")).passed is False
         assert post.await_count == 1
 
     @pytest.mark.asyncio
@@ -863,7 +883,7 @@ class TestDatabaseStepsStayOffTheChatsExecutor:
                 release.set()
         await _until_finished(reply_gate.LOOKUP_THREAD)
 
-        assert passed is False
+        assert passed.passed is False
         assert gate.outcome == chat_gate.TIMEOUT
         post.assert_not_called()
         assert waited < 1.0
@@ -924,7 +944,7 @@ class TestDatabaseStepsStayOffTheChatsExecutor:
             patch.object(reply_gate, "chat_redactions", new=lookup),
             patch.object(chat_gate, "_post", new=post),
         ):
-            assert await gate.judge(MESSAGE, REPLY, "fhi-local") is False
+            assert (await gate.judge(MESSAGE, REPLY, "fhi-local")).passed is False
         lookup.assert_not_called()
         post.assert_not_called()
         assert gate.outcome == chat_gate.ERROR
@@ -1038,7 +1058,7 @@ def test_the_row_carries_the_check_numbers_only():
     turn.set_gate(
         chat_gate.FAIL,
         (0.4, 0.1, float("nan"), 0.85),
-        "typesafe/jev-1.13.0/chat-gate-rubric-2",
+        "typesafe/jev-1.13.0/chat-gate-rubric-3",
         412,
         "fhi-local",
     )

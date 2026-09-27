@@ -2251,6 +2251,33 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         self.assertEqual(summary["gate_fail_ok"], 0)
         self.assertIsNone(summary["gate_fail_external_win_share"])
 
+    def test_the_tiers_are_counted(self):
+        self._checked("borderline", "after_check", gate_crucial=0.2,
+                      rank_outcome="picked", rank_changed=True)
+        self._checked("borderline", "after_check", rank_outcome="error")
+        self._checked(
+            "pass",
+            "after_check",
+            gate_crucial=0.9,
+            alternate_offered=True,
+            alternate_model="kimi",
+            alternate_cross_model=True,
+            alternate_reason="crucial",
+        )
+        response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(
+            (summary["gate_borderline"], summary["gate_pass"], summary["gate_crucial"]),
+            (2, 1, 1),
+        )
+        self.assertEqual(
+            (summary["rank_turns"], summary["rank_picked"], summary["rank_changed"]),
+            (2, 1, 1),
+        )
+        self.assertEqual(summary["alternates_crucial"], 1)
+        self.assertContains(response, "borderline 2")
+        self.assertContains(response, "its pick replaced the race's on <strong>1</strong>")
+
     def test_a_window_with_no_checks_says_so(self):
         self._turn()
         response, windows = self._windows()

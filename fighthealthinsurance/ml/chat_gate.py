@@ -17,9 +17,10 @@ these requirements hold whether or not Jev can be reached. An empty reply
 never gets this far: the chat side records it as skipped, nothing judged.
 
 The questions. Four yes/no ("noul") questions about the reply, read
-against the person's latest message, written for Jev's literal reading
-(docs.typesafe.ai/model-jaggedness/jev-1.13): the state names its two parts
-in capitals and each question points at them by name.
+against the person's latest message, and one about the message itself,
+written for Jev's literal reading (docs.typesafe.ai/model-jaggedness/
+jev-1.13): the state names its two parts in capitals and each question
+points at them by name.
 
 * ``answers_question``: does the reply respond to what the message asks or
   says? Yes is good.
@@ -30,12 +31,25 @@ in capitals and each question points at them by name.
 * ``promises_outcome``: does the reply promise or guarantee a result, such
   as an approval or a win? Yes is a problem: the same rule as our own
   false-promise check, asked of Jev too.
+* ``crucial_moment``: is the message about a deadline, a denial decision,
+  an appeal's next step or whether something is covered? Yes makes the turn
+  a candidate for a side-by-side comparison (chat/reply_gate.py).
 
-The decision rule. A reply passes when ``answers_question`` is at least
-FHI_CHAT_JEV_GATE_MIN_ANSWERS (default 0.7) and each problem answer is
-below FHI_CHAT_JEV_GATE_MAX_PROBLEM (default 0.3). Anything else is a fail.
-A failed reply is ranked just below the outside models' answers while
-FHI_CHAT_JEV_GATE_DEMOTE_FAILED is on (the default).
+The decision rule, in three tiers:
+
+* fail: ``answers_question`` below FHI_CHAT_JEV_GATE_MIN_ANSWERS (default
+  0.7), or a problem answer at or above FHI_CHAT_JEV_GATE_MAX_PROBLEM
+  (default 0.3). A failed reply is ranked just below the outside models'
+  answers while FHI_CHAT_JEV_GATE_DEMOTE_FAILED is on (the default).
+* pass: ``answers_question`` at least FHI_CHAT_JEV_GATE_CLEAR_ANSWERS
+  (default 0.85) and every problem answer below
+  FHI_CHAT_JEV_GATE_CLEAR_PROBLEM (default 0.15).
+* borderline: anything between. The outside models are asked, and a second
+  request (rank_replies) scores every candidate so Jev picks the reply.
+
+The ranking asks the same four reply questions of each candidate, labelled
+REPLY 1, REPLY 2 and so on, and scores each as ``answers_question`` times
+one minus its largest problem answer (quality()).
 These questions and thresholds have not been validated against people's
 judgement of chat replies; the staff dashboard shows how often a reply Jev
 failed was followed by an outside model's answer being delivered, which is
@@ -50,9 +64,11 @@ address and North American style phone number in the text, each value with
 its own stable token. That is a reduction, not de-identification. A request goes out
 only when the person allowed outside models for the chat, and the module is
 inert until BOTH ``TYPESAFE_API_KEY`` and ``FHI_CHAT_JEV_GATE_ENABLED`` are
-set. Kept: the four numbers, the scorer string and an outcome. The text is
-never stored and never logged, and a failure is kept as an HTTP status,
-"timeout" or an exception class name.
+set, and only while TypeSafe's chat budget (ml/spend.py) allows it: both
+requests are counted against it. Kept: the five numbers, each ranked
+candidate's quality, the scorer string and the outcomes. The text is never
+stored and never logged, and a failure is kept as an HTTP status, "timeout"
+or an exception class name.
 """
 
 import asyncio
@@ -65,7 +81,7 @@ from django.conf import settings
 from loguru import logger
 
 from fighthealthinsurance.chat.retry_handler import should_retry_response
-from fighthealthinsurance.ml import letter_quality, typesafe
+from fighthealthinsurance.ml import letter_quality, spend, typesafe
 
 # Key of the cross-pod health record (models.ExternalServiceHealth). Its own
 # row, so chat checks never mark letter scoring as healthy or failing.
@@ -73,7 +89,7 @@ SERVICE = "typesafe-chat-gate"
 
 # Recorded with every answered check. Bump RUBRIC_VERSION whenever a question
 # changes, so rows under another rubric can be told apart.
-RUBRIC_VERSION = 2
+RUBRIC_VERSION = 3
 _RUBRIC_SUFFIX = f"/chat-gate-rubric-{RUBRIC_VERSION}"
 SCORER = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
 _SCORER_RE = re.compile(r"^typesafe/([A-Za-z0-9._-]{1,48})/chat-gate-rubric-(\d{1,4})$")
@@ -84,22 +100,32 @@ LOCAL_SCORER = "fhi/local-checks-1"
 _LOCAL_SCORER_RE = re.compile(r"^fhi/local-checks-\d{1,4}$")
 
 # Outcomes stored on ChatTurn.gate_outcome. pass: Jev answered and the reply
-# met the thresholds. fail: Jev answered and it did not, or our own checks
-# failed the reply before anything was sent. error: the request
+# clearly met the thresholds. borderline: Jev answered and it met the fail
+# line but not the clear one. fail: Jev answered and it did not, or our own
+# checks failed the reply before anything was sent. error: the request
 # failed, was refused or came back in a shape we could not read. timeout: no
 # answer in time. skipped: the check was on for the turn but nothing was
 # judged (no usable reply of ours in time, or one that could not be judged).
 PASS = "pass"
+BORDERLINE = "borderline"
 FAIL = "fail"
 ERROR = "error"
 TIMEOUT = "timeout"
 SKIPPED = "skipped"
-OUTCOMES = (PASS, FAIL, ERROR, TIMEOUT, SKIPPED)
+OUTCOMES = (PASS, BORDERLINE, FAIL, ERROR, TIMEOUT, SKIPPED)
+
+# Outcomes of the ranking request, stored on ChatTurn.rank_outcome. picked:
+# Jev answered and its best candidate is delivered (it may be the race's own
+# pick). error, timeout: as for the check; the race's pick stands. skipped:
+# fewer than two candidates to rank, or the budget is spent.
+RANK_PICKED = "picked"
+RANK_OUTCOMES = (RANK_PICKED, ERROR, TIMEOUT, SKIPPED)
 
 ANSWERS_QUESTION = "answers_question"
 STATES_VERDICT = "states_verdict"
 ASKS_AGAIN = "asks_again"
 PROMISES_OUTCOME = "promises_outcome"
+CRUCIAL_MOMENT = "crucial_moment"
 
 QUESTIONS: dict[str, dict[str, typing.Any]] = {
     ANSWERS_QUESTION: {
@@ -165,7 +191,30 @@ QUESTIONS: dict[str, dict[str, typing.Any]] = {
             ),
         },
     },
+    CRUCIAL_MOMENT: {
+        "type": "noul",
+        "instructions": (
+            "Is THE PERSON'S MESSAGE about a deadline, a decision to deny "
+            "care or a claim, what to do next with an appeal, or whether "
+            "their insurance covers something?"
+        ),
+        "criteria": {
+            "true": (
+                "It asks about or tells of a deadline, a denial, an "
+                "appeal's next step, or whether something is covered."
+            ),
+            "false": (
+                "It is about something else: a greeting, thanks, a general "
+                "question, or a detail that changes none of these."
+            ),
+        },
+    },
 }
+
+# The reply questions the ranking asks of each candidate.
+_REPLY_QUESTIONS = (ANSWERS_QUESTION, STATES_VERDICT, ASKS_AGAIN, PROMISES_OUTCOME)
+# At most this many candidates in one ranking request.
+MAX_RANKED = 4
 
 MESSAGE_HEADER = "THE PERSON'S MESSAGE:\n"
 REPLY_HEADER = "\n\nTHE REPLY:\n"
@@ -183,7 +232,11 @@ DEFAULT_TIMEOUT_SECONDS = 1.5
 TIMEOUT_BOUNDS = (0.2, 10.0)
 DEFAULT_MIN_ANSWERS = 0.7
 DEFAULT_MAX_PROBLEM = 0.3
+DEFAULT_CLEAR_ANSWERS = 0.85
+DEFAULT_CLEAR_PROBLEM = 0.15
+DEFAULT_CRUCIAL = 0.5
 THRESHOLD_BOUNDS = (0.0, 1.0)
+DEFAULT_RANK_TIMEOUT_SECONDS = 3.0
 
 
 class ChatGateError(Exception):
@@ -196,6 +249,9 @@ class GateScores:
     verdict: float  # 0..1, yes = states a coverage or eligibility verdict
     asks_again: float  # 0..1, yes = asks for what the message already gives
     promises: float  # 0..1, yes = promises or guarantees a result
+    # 0..1, yes = the message is a crucial moment. None in a ranking, which
+    # asks only about the replies.
+    crucial: typing.Optional[float] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -208,8 +264,35 @@ class GateResult:
 
     @property
     def answered(self) -> bool:
-        """Jev answered and the answers were read (pass or fail)."""
-        return self.outcome in (PASS, FAIL)
+        """Jev answered and the answers were read (pass, borderline or
+        fail)."""
+        return self.outcome in (PASS, BORDERLINE, FAIL)
+
+
+@dataclasses.dataclass(frozen=True)
+class RankResult:
+    outcome: str
+    # One GateScores per candidate, in the order given (empty unless picked).
+    scores: typing.Tuple[GateScores, ...] = ()
+    scorer: str = ""
+    failure: str = ""
+
+    @property
+    def best(self) -> typing.Optional[int]:
+        """The index of the best candidate by quality(); the earliest wins a
+        tie, so the race's order breaks it. None unless picked."""
+        if self.outcome != RANK_PICKED or not self.scores:
+            return None
+        qualities = [quality(s) for s in self.scores]
+        return qualities.index(max(qualities))
+
+    def order(self) -> typing.List[int]:
+        """Candidate indexes best first (ties in the order given)."""
+        if self.outcome != RANK_PICKED:
+            return []
+        return sorted(
+            range(len(self.scores)), key=lambda i: (-quality(self.scores[i]), i)
+        )
 
 
 def enabled() -> bool:
@@ -218,6 +301,13 @@ def enabled() -> bool:
     return bool(getattr(settings, "TYPESAFE_API_KEY", None)) and bool(
         getattr(settings, "FHI_CHAT_JEV_GATE_ENABLED", False)
     )
+
+
+def budget_allows() -> bool:
+    """Whether TypeSafe's chat budget (ml/spend.py) allows a request now.
+    When it does not, the turn routes by our own rules, as with the check
+    off."""
+    return spend.allows(spend.TYPESAFE, spend.CHAT)
 
 
 def _setting(name: str, default: float, bounds: typing.Tuple[float, float]) -> float:
@@ -260,6 +350,31 @@ def max_problem() -> float:
     )
 
 
+def clear_answers() -> float:
+    return _setting(
+        "FHI_CHAT_JEV_GATE_CLEAR_ANSWERS", DEFAULT_CLEAR_ANSWERS, THRESHOLD_BOUNDS
+    )
+
+
+def clear_problem() -> float:
+    return _setting(
+        "FHI_CHAT_JEV_GATE_CLEAR_PROBLEM", DEFAULT_CLEAR_PROBLEM, THRESHOLD_BOUNDS
+    )
+
+
+def crucial_threshold() -> float:
+    return _setting("FHI_CHAT_JEV_CRUCIAL_MIN", DEFAULT_CRUCIAL, THRESHOLD_BOUNDS)
+
+
+def rank_timeout_seconds() -> float:
+    """How long the ranking request may take once the race is over."""
+    return _setting(
+        "FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS",
+        DEFAULT_RANK_TIMEOUT_SECONDS,
+        TIMEOUT_BOUNDS,
+    )
+
+
 def demote_failed() -> bool:
     """Whether a reply of ours that fails the check is ranked just below the
     outside models' answers (FHI_CHAT_JEV_GATE_DEMOTE_FAILED, on by
@@ -268,16 +383,39 @@ def demote_failed() -> bool:
     return value if isinstance(value, bool) else True
 
 
+def _worst_problem(scores: GateScores) -> float:
+    return max(scores.verdict, scores.asks_again, scores.promises)
+
+
 def passes(scores: GateScores) -> bool:
-    """The decision rule: the reply responds to the message (at least
+    """The fail line: the reply responds to the message (at least
     min_answers) and no problem is likely (each below max_problem)."""
-    limit = max_problem()
+    return scores.answers >= min_answers() and _worst_problem(scores) < max_problem()
+
+
+def tier(scores: GateScores) -> str:
+    """PASS, BORDERLINE or FAIL (see the module docstring). A clear line
+    set looser than the fail line never makes a failing reply pass."""
+    if not passes(scores):
+        return FAIL
+    if scores.answers >= clear_answers() and _worst_problem(scores) < clear_problem():
+        return PASS
+    return BORDERLINE
+
+
+def is_crucial(scores: typing.Optional[GateScores]) -> bool:
+    """Whether Jev read the person's message as a crucial moment."""
     return (
-        scores.answers >= min_answers()
-        and scores.verdict < limit
-        and scores.asks_again < limit
-        and scores.promises < limit
+        scores is not None
+        and scores.crucial is not None
+        and scores.crucial >= crucial_threshold()
     )
+
+
+def quality(scores: GateScores) -> float:
+    """One number per reply for the ranking, 0 to 1: how well it responds,
+    discounted by its likeliest problem."""
+    return scores.answers * (1.0 - _worst_problem(scores))
 
 
 def fails_our_checks(reply: typing.Optional[str]) -> bool:
@@ -346,6 +484,7 @@ def parse_answers(payload: typing.Any) -> GateScores:
             verdict=_probability(answers[STATES_VERDICT]["noul"]),
             asks_again=_probability(answers[ASKS_AGAIN]["noul"]),
             promises=_probability(answers[PROMISES_OUTCOME]["noul"]),
+            crucial=_probability(answers[CRUCIAL_MOMENT]["noul"]),
         )
     except ChatGateError:
         raise
@@ -353,9 +492,78 @@ def parse_answers(payload: typing.Any) -> GateScores:
         raise ChatGateError(f"unexpected response shape: {type(e).__name__}") from e
 
 
-async def _post(state: str, timeout: float) -> typing.Any:
+def _reply_label(k: int) -> str:
+    return f"THE REPLY {k}"
+
+
+def rank_questions(n: int) -> dict[str, dict[str, typing.Any]]:
+    """The four reply questions once per candidate, keyed ``<name>_<k>``
+    and pointed at THE REPLY k."""
+    out: dict[str, dict[str, typing.Any]] = {}
+    for k in range(1, n + 1):
+        for name in _REPLY_QUESTIONS:
+            question = QUESTIONS[name]
+            out[f"{name}_{k}"] = {
+                "type": question["type"],
+                "instructions": question["instructions"].replace(
+                    "THE REPLY", _reply_label(k)
+                ),
+                "criteria": question["criteria"],
+            }
+    return out
+
+
+def build_rank_state(
+    message: str, replies: typing.Sequence[str], redactor: letter_quality.Redactor
+) -> str:
+    """The person's message and each candidate, redacted, under the cap.
+    Each reply gets an equal share of the room and is cut from its end past
+    it; the message gives way first, as in build_state."""
+    headers = [f"\n\n{_reply_label(k)}:\n" for k in range(1, len(replies) + 1)]
+    room = STATE_CHAR_CAP - len(MESSAGE_HEADER) - sum(len(h) for h in headers)
+    share = max(0, room // max(1, len(replies)))
+    redacted = [
+        letter_quality._cut(redactor.redact(reply).strip(), share) for reply in replies
+    ]
+    used = sum(len(r) for r in redacted)
+    redacted_message = letter_quality._cut(redactor.redact(message).strip(), room)
+    redacted_message = letter_quality._cut(redacted_message, max(0, room - used))
+    return (
+        MESSAGE_HEADER
+        + redacted_message
+        + "".join(h + r for h, r in zip(headers, redacted))
+    )
+
+
+def parse_rank(payload: typing.Any, n: int) -> typing.Tuple[GateScores, ...]:
+    """A ranking response as one GateScores per candidate, strictly."""
+    try:
+        answers = payload["answers"]
+        return tuple(
+            GateScores(
+                answers=_probability(answers[f"{ANSWERS_QUESTION}_{k}"]["noul"]),
+                verdict=_probability(answers[f"{STATES_VERDICT}_{k}"]["noul"]),
+                asks_again=_probability(answers[f"{ASKS_AGAIN}_{k}"]["noul"]),
+                promises=_probability(answers[f"{PROMISES_OUTCOME}_{k}"]["noul"]),
+            )
+            for k in range(1, n + 1)
+        )
+    except ChatGateError:
+        raise
+    except (KeyError, TypeError, ValueError) as e:
+        raise ChatGateError(f"unexpected response shape: {type(e).__name__}") from e
+
+
+async def _post(
+    state: str, timeout: float, questions: typing.Optional[dict] = None
+) -> typing.Any:
     # Kept as a seam: tests stub this one function to stay off the network.
-    return await typesafe.ask(state, QUESTIONS, timeout_seconds=timeout)
+    return await typesafe.ask(
+        state,
+        QUESTIONS if questions is None else questions,
+        timeout_seconds=timeout,
+        use=spend.CHAT,
+    )
 
 
 async def check_reply(
@@ -393,6 +601,45 @@ async def check_reply(
             outcome=TIMEOUT if timed_out else ERROR,
             failure=letter_quality.failure_summary(e),
         )
-    return GateResult(
-        outcome=PASS if passes(scores) else FAIL, scores=scores, scorer=scorer
-    )
+    return GateResult(outcome=tier(scores), scores=scores, scorer=scorer)
+
+
+async def rank_replies(
+    message: typing.Optional[str],
+    replies: typing.Sequence[str],
+    *,
+    identifiers: typing.Iterable[letter_quality.Redaction] = (),
+    timeout: float,
+) -> RankResult:
+    """Ask Jev to score each candidate reply to the person's message.
+
+    SKIPPED without sending anything when the gate is off, fewer than two
+    candidates are judgeable, or more than MAX_RANKED are given (the caller
+    cuts the list). Otherwise PICKED, TIMEOUT or ERROR as for check_reply.
+    Never raises (except cancellation) and never logs the text.
+    """
+    if (
+        not enabled()
+        or not judgeable(message)
+        or not 2 <= len(replies) <= MAX_RANKED
+        or not all(judgeable(r) for r in replies)
+    ):
+        return RankResult(outcome=SKIPPED)
+    redactor = letter_quality.Redactor(identifiers)
+    state = build_rank_state(message or "", replies, redactor)
+    try:
+        payload = await asyncio.wait_for(
+            _post(state, timeout, rank_questions(len(replies))), timeout=timeout
+        )
+        scores = parse_rank(payload, len(replies))
+        scorer = scorer_for(payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        timed_out = isinstance(e, (TimeoutError, asyncio.TimeoutError))
+        logger.warning(f"Chat reply ranking unavailable: {type(e).__name__}")
+        return RankResult(
+            outcome=TIMEOUT if timed_out else ERROR,
+            failure=letter_quality.failure_summary(e),
+        )
+    return RankResult(outcome=RANK_PICKED, scores=scores, scorer=scorer)

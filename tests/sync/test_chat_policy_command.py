@@ -108,6 +108,26 @@ class AggregateChatTurnsTest(_Seeded):
         self.assertEqual(aggregates.recent_internal_usable_turns, 1)
         self.assertEqual(aggregates.internal_turns, 2)
 
+    def test_jevs_ranking_scores_are_summed_per_model(self):
+        ranked = dict(_call("claude", external=True), jev=0.9)
+        self._turn(
+            NOW - datetime.timedelta(minutes=5),
+            calls=[
+                dict(_call("fhi-local"), jev=0.5),
+                ranked,
+                # Out of range, not a number, or a bool: not counted.
+                dict(_call("claude", external=True), jev=1.5),
+                dict(_call("claude", external=True), jev="0.9"),
+                dict(_call("claude", external=True), jev=True),
+            ],
+        )
+        self._turn(NOW - datetime.timedelta(minutes=6), calls=[ranked])
+        aggregates = aggregate_chat_turns(window_minutes=60, now=NOW)
+        claude = aggregates.models["claude"]
+        self.assertEqual(claude.jev_scored, 2)
+        self.assertAlmostEqual(claude.jev_total, 1.8)
+        self.assertEqual(aggregates.models["fhi-local"].jev_scored, 1)
+
     def test_calls_held_back_and_never_sent_are_not_counted(self):
         self._turn(
             NOW - datetime.timedelta(minutes=5),

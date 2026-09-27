@@ -1519,6 +1519,10 @@ CHAT_TURN_FIELDS = (
     "gate_outcome",
     "gate_scorer",
     "gate_demoted_delivered",
+    "gate_crucial",
+    "rank_outcome",
+    "rank_changed",
+    "alternate_reason",
 )
 
 
@@ -1566,6 +1570,13 @@ class _ChatTally:
         self.gate_fail_ok = 0
         self.gate_fail_external_wins = 0
         self.gate_fail_demoted_delivered = 0
+        # The tiers: turns Jev read as crucial moments, rankings after a
+        # borderline check (and how many replaced the race's pick), and
+        # side-by-sides offered for a crucial moment.
+        self.gate_crucial = 0
+        self.rank_outcomes: Counter = Counter()
+        self.rank_changed = 0
+        self.alternates_crucial = 0
         self.same_model_pairs = 0
         self.same_model_picks: Counter = Counter()
         self.models: Dict[str, Dict[str, Any]] = {}
@@ -1612,6 +1623,10 @@ class _ChatTally:
             gate_outcome,
             gate_scorer,
             gate_demoted_delivered,
+            gate_crucial,
+            rank_outcome,
+            rank_changed,
+            alternate_reason,
         ) = row
         self.turns += 1
         self.outcomes[outcome] += 1
@@ -1627,6 +1642,15 @@ class _ChatTally:
         if gate_used:
             self.gate_turns += 1
             self.gate_outcomes[gate_outcome] += 1
+            if (
+                isinstance(gate_crucial, float)
+                and gate_crucial >= chat_gate.crucial_threshold()
+            ):
+                self.gate_crucial += 1
+            if rank_outcome:
+                self.rank_outcomes[rank_outcome] += 1
+                if rank_changed:
+                    self.rank_changed += 1
             failed_ours = chat_gate.from_our_checks(gate_scorer)
             if gate_outcome == chat_gate.FAIL and failed_ours:
                 self.gate_fail_local += 1
@@ -1707,6 +1731,8 @@ class _ChatTally:
         if not alternate_offered:
             return
         self.alternates += 1
+        if alternate_reason == ChatTurn.AlternateReason.CRUCIAL:
+            self.alternates_crucial += 1
         if preferred:
             self.picks[preferred] += 1
         if not cross_model or winner_label is None or not alternate:
@@ -1779,6 +1805,12 @@ class _ChatTally:
                 ),
                 "gate_turns": self.gate_turns,
                 "gate_pass": self.gate_outcomes[chat_gate.PASS],
+                "gate_borderline": self.gate_outcomes[chat_gate.BORDERLINE],
+                "gate_crucial": self.gate_crucial,
+                "rank_turns": sum(self.rank_outcomes.values()),
+                "rank_picked": self.rank_outcomes[chat_gate.RANK_PICKED],
+                "rank_changed": self.rank_changed,
+                "alternates_crucial": self.alternates_crucial,
                 "gate_fail": self.gate_outcomes[chat_gate.FAIL],
                 "gate_fail_local": self.gate_fail_local,
                 "gate_error": self.gate_outcomes[chat_gate.ERROR],
@@ -2137,6 +2169,8 @@ class ModelUsageDashboardView(generic.TemplateView):
         """Whether the live Jev check on chat replies is on now, its
         thresholds, and the last outcome it recorded on its
         ExternalServiceHealth row (a status or class name, never text)."""
+        from django.conf import settings
+
         from fighthealthinsurance.models import ExternalServiceHealth
 
         out: Dict[str, Any] = {
@@ -2145,6 +2179,12 @@ class ModelUsageDashboardView(generic.TemplateView):
             "timeout_seconds": chat_gate.timeout_seconds(),
             "min_answers": chat_gate.min_answers(),
             "max_problem": chat_gate.max_problem(),
+            "clear_answers": chat_gate.clear_answers(),
+            "clear_problem": chat_gate.clear_problem(),
+            "crucial_min": chat_gate.crucial_threshold(),
+            "side_by_side_model": str(
+                getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or ""
+            ),
             "demote_failed": chat_gate.demote_failed(),
             # Our own checks, which come before Jev is asked.
             "min_response_length": MIN_RESPONSE_LENGTH,

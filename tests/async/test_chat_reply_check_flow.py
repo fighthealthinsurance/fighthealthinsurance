@@ -108,21 +108,28 @@ class _Jev:
     """Stands in for the TypeSafe request (chat_gate._post): records each
     state it was sent and answers as told."""
 
-    def __init__(self, payload=None, error=None, delay=0.0):
+    def __init__(self, payload=None, error=None, delay=0.0, rank=None, rank_error=None):
         self.payload = payload
         self.error = error
         self.delay = delay
+        # The ranking request's answer (questions given), or its error.
+        self.rank = rank
+        self.rank_error = rank_error
         self.states = []
 
-    async def __call__(self, state, timeout):
+    async def __call__(self, state, timeout, questions=None):
         self.states.append(state)
+        if questions is not None:
+            if self.rank_error is not None:
+                raise self.rank_error
+            return self.rank
         await asyncio.sleep(self.delay)
         if self.error is not None:
             raise self.error
         return self.payload
 
 
-def _answers(answers=0.9, verdict=0.05, asks_again=0.05, promises=0.05):
+def _answers(answers=0.9, verdict=0.05, asks_again=0.05, promises=0.05, crucial=0.1):
     return {
         "model": "jev-1.13.0",
         "answers": {
@@ -130,8 +137,24 @@ def _answers(answers=0.9, verdict=0.05, asks_again=0.05, promises=0.05):
             chat_gate.STATES_VERDICT: {"type": "noul", "noul": verdict},
             chat_gate.ASKS_AGAIN: {"type": "noul", "noul": asks_again},
             chat_gate.PROMISES_OUTCOME: {"type": "noul", "noul": promises},
+            chat_gate.CRUCIAL_MOMENT: {"type": "noul", "noul": crucial},
         },
     }
+
+
+def _ranked(*qualities):
+    """A ranking answer giving REPLY k "responds" = qualities[k-1] and no
+    problems, so its quality is that number."""
+    answers = {}
+    for k, q in enumerate(qualities, start=1):
+        answers[f"{chat_gate.ANSWERS_QUESTION}_{k}"] = {"noul": q}
+        for name in (
+            chat_gate.STATES_VERDICT,
+            chat_gate.ASKS_AGAIN,
+            chat_gate.PROMISES_OUTCOME,
+        ):
+            answers[f"{name}_{k}"] = {"noul": 0.0}
+    return {"model": "jev-1.13.0", "answers": answers}
 
 
 async def _make_chat(username, npi):
@@ -345,10 +368,9 @@ class ChatReplyCheckOffTest(APITestCase):
         self.assertFalse(row.gate_used)
 
 
-class ChatReplyCheckTest(APITransactionTestCase):
-    """Transactional: the check reads the chat's identifiers, and notes its
-    health, on threads of their own (chat/isolated_db.py), which only see
-    committed rows."""
+class _CheckedTurns:
+    """One checked chat turn end to end, for the transactional classes
+    below."""
 
     async def _turn(
         self,
@@ -408,6 +430,12 @@ class ChatReplyCheckTest(APITransactionTestCase):
             for piece in (text, text[:24], text[-24:]):
                 self.assertNotIn(piece, blob)
 
+
+class ChatReplyCheckTest(_CheckedTurns, APITransactionTestCase):
+    """Transactional: the check reads the chat's identifiers, and notes its
+    health, on threads of their own (chat/isolated_db.py), which only see
+    committed rows."""
+
     async def test_a_pass_means_the_outside_models_are_never_sent(self):
         jev = _Jev(payload=_answers())
         row, outside, frames, elapsed, logs = await self._turn(
@@ -429,7 +457,7 @@ class ChatReplyCheckTest(APITransactionTestCase):
             ),
             (0.9, 0.05, 0.05, 0.05),
         )
-        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-2")
+        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-3")
         self.assertEqual(row.gate_model, "fhi-local")
         self.assertIsInstance(row.gate_ms, int)
         self.assertEqual(row.external_start, "skipped")
@@ -620,7 +648,7 @@ class ChatReplyCheckTest(APITransactionTestCase):
         self.assertTrue(outside.calls)
         self.assertEqual(row.gate_outcome, "fail")
         self.assertEqual(row.gate_promises, 0.85)
-        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-2")
+        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-3")
         self.assertEqual(row.external_start, "after_check")
         self.assertEqual(row.winner_model, "claude")
         self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
@@ -803,3 +831,144 @@ class ChatReplyCheckTest(APITransactionTestCase):
         self.assertEqual(row.gate_outcome, "timeout")
         self.assertEqual(row.external_start, "after_check")
         self.assertEqual(frames.last_content(), FRESH_REPLY)
+
+
+KIMI_REPLY = (
+    "For a denied MRI, start by asking the plan for the written reason, then "
+    "file its appeal form with a letter from your doctor. Want the steps?"
+)
+
+
+def _side_by_side_model(model):
+    return patch(
+        "fighthealthinsurance.ml.ml_router.MLRouter.chat_side_by_side_model",
+        return_value=model,
+    )
+
+
+class ChatJevTiersTest(_CheckedTurns, APITransactionTestCase):
+    """The tiers end to end: a borderline reply asks the outside models and
+    Jev ranks every candidate; a crucial moment adds the side-by-side model
+    and offers a side-by-side, and nothing else does while Jev decides."""
+
+    def _kimi(self):
+        return _OutsideModel(always_reply=KIMI_REPLY, model_quality=60, name="kimi")
+
+    async def test_a_borderline_reply_is_ranked_and_jevs_pick_is_delivered(self):
+        jev = _Jev(payload=_answers(answers=0.8), rank=_ranked(0.6, 0.95))
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "tier1", "9999931301", jev
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "borderline")
+        self.assertFalse(row.gate_demoted)
+        self.assertEqual(len(jev.states), 2)
+        self.assertIn("THE REPLY 2:", jev.states[1])
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertEqual(row.winner_model, "claude")
+        self.assertEqual(
+            (row.rank_outcome, row.rank_count, row.rank_changed),
+            ("picked", 2, True),
+        )
+        self.assertIsInstance(row.rank_ms, int)
+        jev_scores = {c["model"]: c.get("jev") for c in row.calls if "jev" in c}
+        self.assertEqual(jev_scores, {"fhi-local": 0.6, "claude": 0.95})
+        # Not crucial: no side-by-side, whatever the scores.
+        self.assertNotIn("alternate_content", frames.last_reply_frame())
+        self.assertFalse(row.alternate_offered)
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_a_ranking_that_agrees_changes_nothing(self):
+        jev = _Jev(payload=_answers(answers=0.8), rank=_ranked(0.9, 0.5))
+        row, _outside, frames, _elapsed, _logs = await self._turn(
+            "tier2", "9999931302", jev
+        )
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertEqual((row.rank_outcome, row.rank_changed), ("picked", False))
+
+    async def test_a_failed_ranking_leaves_the_races_pick(self):
+        jev = _Jev(
+            payload=_answers(answers=0.8),
+            rank_error=typesafe.TypeSafeError("status 500"),
+        )
+        row, _outside, frames, _elapsed, _logs = await self._turn(
+            "tier3", "9999931303", jev
+        )
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertEqual((row.rank_outcome, row.rank_changed), ("error", False))
+        self.assertFalse(any("jev" in c for c in row.calls))
+
+    async def test_a_crucial_pass_asks_only_the_side_by_side_model(self):
+        kimi = self._kimi()
+        jev = _Jev(payload=_answers(crucial=0.9))
+        with _side_by_side_model(kimi):
+            row, outside, frames, _elapsed, _logs = await self._turn(
+                "tier4", "9999931304", jev
+            )
+        self.assertEqual(outside.calls, [])
+        self.assertEqual(len(kimi.calls), 1)
+        self.assertEqual(row.gate_outcome, "pass")
+        self.assertEqual(row.gate_crucial, 0.9)
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertEqual(frames.last_reply_frame().get("alternate_content"), KIMI_REPLY)
+        self.assertTrue(row.alternate_offered)
+        self.assertEqual(
+            (row.alternate_model, row.alternate_reason), ("kimi", "crucial")
+        )
+        self.assertIn(("claude", "skipped"), _statuses(row))
+        self.assertIn(("kimi", "scored"), _statuses(row))
+
+    async def test_an_ordinary_pass_never_sends_the_side_by_side_model(self):
+        kimi = self._kimi()
+        jev = _Jev(payload=_answers(crucial=0.1))
+        with _side_by_side_model(kimi):
+            row, _outside, frames, _elapsed, _logs = await self._turn(
+                "tier5", "9999931305", jev
+            )
+        self.assertEqual(kimi.calls, [])
+        self.assertIn(("kimi", "skipped"), _statuses(row))
+        self.assertNotIn("alternate_content", frames.last_reply_frame())
+
+    async def test_an_error_never_sends_the_side_by_side_model(self):
+        kimi = self._kimi()
+        jev = _Jev(error=typesafe.TypeSafeError("status 500"))
+        with _side_by_side_model(kimi):
+            row, outside, _frames, _elapsed, _logs = await self._turn(
+                "tier6", "9999931306", jev
+            )
+        self.assertTrue(outside.calls)
+        self.assertEqual(kimi.calls, [])
+        self.assertEqual(row.gate_outcome, "error")
+
+    async def test_a_chat_with_no_side_by_side_left_does_not_reserve_one(self):
+        kimi = self._kimi()
+        jev = _Jev(payload=_answers(crucial=0.9))
+        with _side_by_side_model(kimi):
+            row, _outside, frames, _elapsed, _logs = await self._turn(
+                "tier7",
+                "9999931307",
+                jev,
+                settings={"FHI_CHAT_SIDE_BY_SIDES_PER_CHAT": 0},
+            )
+        self.assertEqual(kimi.calls, [])
+        self.assertNotIn("kimi", {c["model"] for c in row.calls})
+        self.assertNotIn("alternate_content", frames.last_reply_frame())
+
+    async def test_a_crucial_borderline_turn_shows_jevs_top_two(self):
+        kimi = self._kimi()
+        # Race order: ours, the outside model, kimi (lower base scores).
+        jev = _Jev(
+            payload=_answers(answers=0.8, crucial=0.9), rank=_ranked(0.5, 0.7, 0.9)
+        )
+        with _side_by_side_model(kimi):
+            row, outside, frames, _elapsed, _logs = await self._turn(
+                "tier8", "9999931308", jev
+            )
+        self.assertTrue(outside.calls)
+        self.assertEqual(len(kimi.calls), 1)
+        self.assertEqual(frames.last_content(), KIMI_REPLY)
+        self.assertEqual(
+            frames.last_reply_frame().get("alternate_content"), SECOND_OPINION_REPLY
+        )
+        self.assertEqual(row.alternate_reason, "crucial")
+        self.assertEqual(row.rank_count, 3)

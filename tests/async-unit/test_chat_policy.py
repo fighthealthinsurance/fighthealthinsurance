@@ -171,6 +171,42 @@ def test_well_sampled_models_reorder_among_their_own_places():
     assert "ordered" in policy.reason
 
 
+def test_jevs_scores_order_the_roster_once_two_models_have_enough():
+    aggregates = _aggregates()
+    # Win rates alone would put opus first (see above).
+    aggregates.models["deepseek"].jev_scored = 30
+    aggregates.models["deepseek"].jev_total = 27.0
+    aggregates.models["claude-sonnet"].jev_scored = 40
+    aggregates.models["claude-sonnet"].jev_total = 20.0
+    aggregates.models["claude-opus"].jev_scored = 29
+    aggregates.models["claude-opus"].jev_total = 29.0
+    policy = compute_policy(aggregates, roster=ROSTER)
+    # Only the two with 30 Jev scores swap places; opus, one short, keeps
+    # its own even with a perfect mean.
+    assert policy.outside_order == (
+        "deepseek",
+        "new-model",
+        "claude-opus",
+        "claude-sonnet",
+    )
+    assert policy.order_scores == {
+        "deepseek": (0.9, 30),
+        "claude-sonnet": (0.5, 40),
+    }
+    assert "ordered_by_jev" in policy.reason
+
+
+def test_one_model_with_jev_scores_is_not_enough_to_order_by_them():
+    aggregates = _aggregates()
+    aggregates.models["deepseek"].jev_scored = 100
+    aggregates.models["deepseek"].jev_total = 100.0
+    policy = compute_policy(aggregates, roster=ROSTER)
+    assert policy.outside_order[0] == "claude-opus"
+    assert policy.order_scores["claude-opus"] == (0.05, 200)
+    assert "ordered_by_jev" not in policy.reason
+    assert "ordered" in policy.reason
+
+
 def test_the_order_is_the_roster_deduplicated_and_nothing_else():
     policy = compute_policy(
         _aggregates(), roster=["claude-opus", "claude-opus", "", "never-asked"]

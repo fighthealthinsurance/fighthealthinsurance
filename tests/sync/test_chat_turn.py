@@ -32,6 +32,8 @@ LABEL_AND_ENUM_FIELDS = {
     # "fhi/local-checks-<n>" when our own checks failed the reply.
     "gate_scorer",
     "gate_model",
+    "rank_outcome",
+    "alternate_reason",
 }
 # JSON fields: lists of model labels, and the per-call metadata dicts
 # (chat/turn_record.py CallLog.finish).
@@ -80,7 +82,14 @@ class ChatTurnHoldsNoTextTest(TestCase):
         )
         self.assertEqual(
             set(ChatTurn.GateOutcome.values),
-            {"", "pass", "fail", "error", "timeout", "skipped"},
+            {"", "pass", "borderline", "fail", "error", "timeout", "skipped"},
+        )
+        self.assertEqual(
+            set(ChatTurn.RankOutcome.values),
+            {"", "picked", "error", "timeout", "skipped"},
+        )
+        self.assertEqual(
+            set(ChatTurn.AlternateReason.values), {"", "tied", "crucial"}
         )
 
     def test_the_chat_link_cannot_be_null_and_cascades(self):

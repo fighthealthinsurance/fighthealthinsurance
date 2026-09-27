@@ -102,6 +102,11 @@ OUTCOME_FAILED = "failed"
 # The labels fhi_chat_answer_feedback_total counts, and ChatTurn.preferred's
 # non-empty values.
 PREFERENCE_LABELS = frozenset({"primary", "alternate"})
+# Why a side-by-side was offered (ChatTurn.alternate_reason). tied: our own
+# rule, the top two scores closely tied. crucial: Jev read the message as a
+# crucial moment (chat/reply_gate.py).
+ALTERNATE_TIED = "tied"
+ALTERNATE_CRUCIAL = "crucial"
 
 # Bounds for the strings a row carries (the CharField sizes on ChatTurn).
 _MODEL_LABEL_MAX = 200
@@ -182,6 +187,9 @@ class CallLog:
         self.depth = depth
         self._records: Dict[Awaitable, _CallRecord] = {}
         self._scores: Dict[Awaitable, float] = {}
+        # finish()'s dicts by call, so a ranking that runs after the race
+        # can add Jev's score to them (note_jev).
+        self._rows: Dict[Awaitable, Dict[str, Any]] = {}
 
     def observe(
         self, call: Awaitable[T], backend: Any, history: str
@@ -234,6 +242,15 @@ class CallLog:
 
         return recording
 
+    def note_jev(self, call: Awaitable, quality: Optional[float]) -> None:
+        """Add Jev's quality score (chat_gate.quality, 0 to 1) for a call's
+        reply to its dict, after finish(). The routing policy learns the
+        outside models' order from these (ml/chat_policy.py)."""
+        row = self._rows.get(call)
+        value = _finite_or_none(quality)
+        if row is not None and value is not None:
+            row["jev"] = round(min(1.0, max(0.0, value)), 4)
+
     def finish(self) -> List[Dict[str, Any]]:
         """Each call of the pass as a plain dict, in fan-out order.
 
@@ -276,25 +293,23 @@ class CallLog:
                 and record.finished is not None
             ):
                 ms = max(0, int((record.finished - record.started) * 1000))
-            out.append(
-                {
-                    "model": record.model,
-                    "backend": record.backend,
-                    "external": record.external,
-                    "pass": self.pass_kind,
-                    "depth": self.depth,
-                    "history": record.history,
-                    "variant": record.variant,
-                    "status": status,
-                    "error": record.error,
-                    "ms": ms,
-                    "score": (
-                        float(score)
-                        if score is not None and math.isfinite(score)
-                        else None
-                    ),
-                }
-            )
+            row: Dict[str, Any] = {
+                "model": record.model,
+                "backend": record.backend,
+                "external": record.external,
+                "pass": self.pass_kind,
+                "depth": self.depth,
+                "history": record.history,
+                "variant": record.variant,
+                "status": status,
+                "error": record.error,
+                "ms": ms,
+                "score": (
+                    float(score) if score is not None and math.isfinite(score) else None
+                ),
+            }
+            self._rows[call] = row
+            out.append(row)
         return out
 
 
@@ -366,9 +381,11 @@ class TurnRecord:
     # decides whether it is actually shown.
     candidate_alternate_model: str = ""
     candidate_cross_model: bool = False
+    candidate_alternate_reason: str = ""
     alternate_offered: bool = False
     alternate_model: str = ""
     alternate_cross_model: bool = False
+    alternate_reason: str = ""
     # Not stored on the row: how the turn stands against
     # fhi_chat_turns_total, which decides whether and how it is written (see
     # the module docstring). The outcome the metric counted, "" until then.
@@ -398,6 +415,15 @@ class TurnRecord:
     # else usable arrived).
     gate_demoted: bool = False
     gate_demoted_delivered: bool = False
+    # Jev's "crucial moment" answer about the person's message.
+    gate_crucial: Optional[float] = None
+    # The ranking after a borderline check: its outcome, how long it took,
+    # how many candidates it scored, and whether its pick replaced the
+    # race's.
+    rank_outcome: str = ""
+    rank_ms: Optional[int] = None
+    rank_count: Optional[int] = None
+    rank_changed: bool = False
 
     @classmethod
     def start(
@@ -432,10 +458,11 @@ class TurnRecord:
         scorer: str,
         ms: Optional[int],
         model: str,
+        crucial: Optional[float] = None,
     ) -> None:
         """Record the check the primary pass held the outside models for.
         ``scores`` is (answers, verdict, asks_again, promises), or None when
-        Jev gave no answer."""
+        Jev gave no answer; ``crucial`` is its answer about the message."""
         self.gate_used = True
         self.gate_outcome = str(outcome or "")[:_ENUM_MAX]
         answers, verdict, asks_again, promises = (
@@ -448,6 +475,18 @@ class TurnRecord:
         self.gate_scorer = str(scorer or "")[:_SCORER_MAX]
         self.gate_ms = max(0, int(ms)) if isinstance(ms, int) else None
         self.gate_model = str(model or "")[:_MODEL_LABEL_MAX]
+        self.gate_crucial = _finite_or_none(crucial)
+
+    def set_rank(
+        self, outcome: str, ms: Optional[int], count: Optional[int], changed: bool
+    ) -> None:
+        """Record the ranking that ran after a borderline check."""
+        self.rank_outcome = str(outcome or "")[:_ENUM_MAX]
+        self.rank_ms = max(0, int(ms)) if isinstance(ms, int) else None
+        self.rank_count = (
+            min(max(0, int(count)), 32767) if isinstance(count, int) else None
+        )
+        self.rank_changed = changed is True
 
     def set_gate_demotion(self, demoted: bool, delivered: bool) -> None:
         """Record whether the failed check demoted the judged reply, and
@@ -488,19 +527,24 @@ class TurnRecord:
         self.winner_pass = credit.pass_kind
         self.retry_used = bool(credit.from_retry)
 
-    def set_alternate_candidate(self, model: Optional[str], cross_model: bool) -> None:
+    def set_alternate_candidate(
+        self, model: Optional[str], cross_model: bool, reason: str = ALTERNATE_TIED
+    ) -> None:
         self.candidate_alternate_model = (model or "")[:_MODEL_LABEL_MAX]
         self.candidate_cross_model = bool(cross_model)
+        self.candidate_alternate_reason = str(reason or "")[:_ENUM_MAX]
 
     def clear_alternate_candidate(self) -> None:
         self.candidate_alternate_model = ""
         self.candidate_cross_model = False
+        self.candidate_alternate_reason = ""
 
     def offer_alternate(self) -> None:
         """The candidate alternate passed the delivery checks and is shown."""
         self.alternate_offered = True
         self.alternate_model = self.candidate_alternate_model
         self.alternate_cross_model = self.candidate_cross_model
+        self.alternate_reason = self.candidate_alternate_reason
 
     def row_fields(self, outcome: str) -> Dict[str, Any]:
         """Keyword arguments for ChatTurn.objects.create (minus the chat)."""
@@ -536,6 +580,9 @@ class TurnRecord:
             "alternate_cross_model": (
                 self.alternate_cross_model if self.alternate_offered else False
             ),
+            "alternate_reason": (
+                self.alternate_reason if self.alternate_offered else ""
+            ),
             "external_start": self.external_start,
             "external_delay_seconds": self.external_delay_seconds,
             "gate_used": self.gate_used,
@@ -549,6 +596,11 @@ class TurnRecord:
             "gate_model": self.gate_model,
             "gate_demoted": self.gate_demoted,
             "gate_demoted_delivered": self.gate_demoted_delivered,
+            "gate_crucial": self.gate_crucial,
+            "rank_outcome": self.rank_outcome,
+            "rank_ms": self.rank_ms,
+            "rank_count": self.rank_count,
+            "rank_changed": self.rank_changed,
         }
 
 

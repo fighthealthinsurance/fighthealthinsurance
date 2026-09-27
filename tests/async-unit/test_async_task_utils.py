@@ -14,6 +14,7 @@ from fighthealthinsurance.utils import (
     STAGE_EARLY,
     STAGE_IMMEDIATE,
     STAGE_SKIPPED,
+    CheckVerdict,
     StagedStart,
     fire_and_forget_in_new_threadpool,
     best_two_within_timelimit,
@@ -1692,3 +1693,156 @@ class TestFailedCheckDemotion:
         assert result.best == "ours-answer"
         assert result.best_score == 8000.0
         assert stage.best_demoted is True
+
+
+# --- Verdicts and reserved tasks: the crucial side-by-side ------------------
+
+
+class TestReservedTasks:
+    """A reserved task starts only when a check's verdict names it."""
+
+    @pytest.mark.asyncio
+    async def test_a_verdict_starts_exactly_the_tasks_it_names(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        a = probe.call("a", "a-answer", 0.01)
+        b = probe.call("b", "b-answer", 0.01)
+        kimi = probe.call("kimi", "kimi-answer", 0.01)
+        stage = StagedStart()
+
+        async def check(result, task):
+            return CheckVerdict(passed=True, start=[kimi])
+
+        result = await best_two_within_timelimit(
+            [ours, a, b, kimi],
+            _scores({"ours-answer": 5.0}),
+            timeout=2.0,
+            extended_timeout=0.0,
+            deferred=[a, b],
+            reserved=[kimi],
+            defer_seconds=1.0,
+            stage=stage,
+            check=check,
+        )
+        assert set(probe.started) == {"ours", "kimi"}
+        assert stage.outcome == STAGE_AFTER_CHECK
+        assert stage.check_passed is True
+        assert stage.skipped == [a, b]
+        assert result.best == "ours-answer"
+        assert result.runner_up == "kimi-answer"
+
+    @pytest.mark.asyncio
+    async def test_a_plain_fail_starts_every_held_task_but_the_reserved(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        a = probe.call("a", "a-answer", 0.01)
+        kimi = probe.call("kimi", "kimi-answer", 0.01)
+        stage = StagedStart()
+        await best_two_within_timelimit(
+            [ours, a, kimi],
+            _scores({}),
+            timeout=2.0,
+            extended_timeout=0.0,
+            deferred=[a],
+            reserved=[kimi],
+            defer_seconds=1.0,
+            stage=stage,
+            check=_Check(answer=False),
+        )
+        assert set(probe.started) == {"ours", "a"}
+        assert stage.outcome == STAGE_AFTER_CHECK
+        assert stage.skipped == [kimi]
+        assert inspect.getcoroutinestate(kimi) == inspect.CORO_CLOSED
+
+    @pytest.mark.asyncio
+    async def test_the_delay_running_out_never_starts_a_reserved_task(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.5)
+        a = probe.call("a", "a-answer", 0.01)
+        kimi = probe.call("kimi", "kimi-answer", 0.01)
+        stage = StagedStart()
+        await best_two_within_timelimit(
+            [ours, a, kimi],
+            _scores({}),
+            timeout=2.0,
+            extended_timeout=0.0,
+            deferred=[a],
+            reserved=[kimi],
+            defer_seconds=0.05,
+            stage=stage,
+            check=_Check(answer=True),
+        )
+        assert "kimi" not in probe.started
+        assert stage.outcome == STAGE_AFTER_DELAY
+        assert stage.skipped == [kimi]
+
+    @pytest.mark.asyncio
+    async def test_nothing_usable_early_never_starts_a_reserved_task(self):
+        probe = _Probe()
+        ours = probe.call("ours", None, 0.01)
+        a = probe.call("a", "a-answer", 0.01)
+        kimi = probe.call("kimi", "kimi-answer", 0.01)
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [ours, a, kimi],
+            _scores({}),
+            timeout=2.0,
+            extended_timeout=0.0,
+            deferred=[a],
+            reserved=[kimi],
+            defer_seconds=1.0,
+            stage=stage,
+            check=_Check(answer=True),
+        )
+        assert result.best == "a-answer"
+        assert stage.outcome == STAGE_EARLY
+        assert "kimi" not in probe.started
+
+    @pytest.mark.asyncio
+    async def test_a_race_with_no_stage_window_never_starts_one(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        kimi = probe.call("kimi", "kimi-answer", 0.01)
+        stage = StagedStart()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = await best_two_within_timelimit(
+                [ours, kimi],
+                _scores({}),
+                timeout=2.0,
+                extended_timeout=0.0,
+                reserved=[kimi],
+                defer_seconds=0.0,
+                stage=stage,
+            )
+            assert inspect.getcoroutinestate(kimi) == inspect.CORO_CLOSED
+            del kimi
+            stage.skipped.clear()
+            gc.collect()
+        assert result.best == "ours-answer"
+        assert set(probe.started) == {"ours"}
+        assert _never_awaited_warnings(caught) == []
+
+    @pytest.mark.asyncio
+    async def test_a_verdict_that_starts_nothing_is_a_skip(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        a = probe.call("a", "a-answer", 0.01)
+        stage = StagedStart()
+
+        async def check(result, task):
+            return CheckVerdict(passed=False, start=())
+
+        await best_two_within_timelimit(
+            [ours, a],
+            _scores({}),
+            timeout=2.0,
+            extended_timeout=0.0,
+            deferred=[a],
+            defer_seconds=1.0,
+            stage=stage,
+            check=check,
+        )
+        assert stage.outcome == STAGE_SKIPPED
+        assert stage.check_passed is False
+        assert "a" not in probe.started
