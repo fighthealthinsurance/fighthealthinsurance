@@ -264,7 +264,7 @@ def _release_refill() -> None:
         _refill_in_progress = False
 
 
-async def check_and_refill_task_pool():
+async def check_and_refill_task_pool() -> bool:
     """Generate a batch of tasks for every type whose pool needs one.
 
     Three triggers, checked in order (see ``_refill_reason``): the READY pool
@@ -276,11 +276,18 @@ async def check_and_refill_task_pool():
 
     Awaits the batch, so a second tick cannot start another batch while one
     is still running; a tick that finds a refill in progress returns at once.
+
+    Returns False when a type needed a batch and none of its tasks came out
+    READY, else True. Generation errors are caught per task and leave the
+    task DISABLED, so a refill whose every model failed still returns
+    normally; the refill actor needs this to tell that from a pool that is
+    being refilled.
     """
     if not _claim_refill():
         logger.debug("A chooser refill is already running in this process; skipping")
-        return
+        return True
     try:
+        refilled = True
         for task_type in ["appeal", "chat"]:
             reason = await _refill_reason(task_type)
             if reason is None:
@@ -289,7 +296,15 @@ async def check_and_refill_task_pool():
                 f"Chooser {task_type} tasks need generating ({reason}). "
                 f"Generating {CHOOSER_GENERATION_BATCH_SIZE} tasks."
             )
-            await _generate_batch_tasks(task_type, CHOOSER_GENERATION_BATCH_SIZE)
+            ready = await _generate_batch_tasks(
+                task_type, CHOOSER_GENERATION_BATCH_SIZE
+            )
+            if not ready:
+                logger.warning(
+                    f"Chooser {task_type} refill ({reason}) produced no usable task"
+                )
+                refilled = False
+        return refilled
     finally:
         _release_refill()
 
@@ -403,20 +418,25 @@ async def _count_unscored_tasks(task_type: str) -> int:
     )
 
 
-async def _generate_batch_tasks(task_type: str, batch_size: int):
-    """Generate a batch of chooser tasks with candidates."""
+async def _generate_batch_tasks(task_type: str, batch_size: int) -> int:
+    """Generate a batch of chooser tasks with candidates; returns how many
+    came out READY."""
+    ready = 0
     for _ in range(batch_size):
         try:
-            await _generate_single_task(task_type)
+            if await _generate_single_task(task_type):
+                ready += 1
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error generating chooser task of type {task_type}: {e}"
             )
+    return ready
 
 
-async def _generate_single_task(task_type: str):
+async def _generate_single_task(task_type: str) -> bool:
     """
-    Generate a single ChooserTask with candidates.
+    Generate a single ChooserTask with candidates; returns whether it came
+    out READY.
 
     For appeals: generates multiple synthetic appeal letters for a sample context
     For chat: generates multiple synthetic chat responses for a sample prompt
@@ -446,6 +466,7 @@ async def _generate_single_task(task_type: str):
             logger.info(
                 f"ChooserTask {task.id} is now READY with {task.num_candidates_generated} candidates"
             )
+            return True
         else:
             task.status = "DISABLED"
             await database_sync_to_async(task.save)()
@@ -459,6 +480,7 @@ async def _generate_single_task(task_type: str):
         )
         task.status = "DISABLED"
         await database_sync_to_async(task.save)()
+    return False
 
 
 async def _generate_appeal_candidates(task: ChooserTask):

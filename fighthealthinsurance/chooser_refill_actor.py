@@ -65,9 +65,20 @@ class ChooserRefillActor:
 
         while self.running:
             try:
-                # Check and refill the task pool
-                await check_and_refill_task_pool()
-                self._consecutive_failures = 0
+                # Check and refill the task pool. A refill that ran to the
+                # end but produced no usable task (every model failed, so each
+                # task came out DISABLED) is a failed tick too: the pool is
+                # not being refilled.
+                if await check_and_refill_task_pool():
+                    self._consecutive_failures = 0
+                else:
+                    self._consecutive_failures = (
+                        getattr(self, "_consecutive_failures", 0) + 1
+                    )
+                    self._logger.warning(
+                        "Chooser task pool refill produced no usable task "
+                        f"(consecutive failures: {self._consecutive_failures})"
+                    )
 
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)

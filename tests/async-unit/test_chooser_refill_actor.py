@@ -90,8 +90,27 @@ async def test_a_successful_tick_resets_the_failure_count():
 
     with patch(
         "fighthealthinsurance.chooser_tasks.check_and_refill_task_pool",
-        new=AsyncMock(return_value=None),
+        new=AsyncMock(return_value=True),
     ), patch("fighthealthinsurance.chooser_refill_actor.asyncio.sleep", fake_sleep):
         await actor.run()
 
     assert actor._consecutive_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_a_refill_that_produces_nothing_is_a_failed_tick():
+    """The refill catches generation errors per task and marks the task
+    DISABLED, so a tick where every model failed returned normally, reset the
+    count, and the actor reported healthy while the pool drained."""
+    actor = _actor(failures=UNHEALTHY_AFTER_FAILURES - 1)
+
+    async def fake_sleep(seconds):
+        actor.running = False
+
+    with patch(
+        "fighthealthinsurance.chooser_tasks.check_and_refill_task_pool",
+        new=AsyncMock(return_value=False),
+    ), patch("fighthealthinsurance.chooser_refill_actor.asyncio.sleep", fake_sleep):
+        await actor.run()
+
+    assert actor._consecutive_failures == UNHEALTHY_AFTER_FAILURES

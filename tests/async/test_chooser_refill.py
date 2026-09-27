@@ -19,6 +19,7 @@ from django.utils import timezone
 from fighthealthinsurance.chooser_tasks import (
     _claim_refill,
     _count_unscored_tasks,
+    _generate_batch_tasks,
     _generate_appeal_candidates,
     _maybe_add_synthesized_candidate,
     _refill_reason,
@@ -332,6 +333,36 @@ class TestRefillGuard:
 
         assert _claim_refill(), "the guard was still held after the refill"
         _release_refill()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestRefillOutcome:
+    """check_and_refill_task_pool says whether a needed refill produced a
+    usable task, which the refill actor's health check counts on: generation
+    errors are caught per task, so a refill whose models all failed still
+    returns normally."""
+
+    async def test_a_needed_refill_that_produced_nothing_reports_failure(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+            new=AsyncMock(return_value=0),
+        ):
+            assert await check_and_refill_task_pool() is False
+
+    async def test_a_needed_refill_that_produced_a_task_reports_success(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+            new=AsyncMock(return_value=2),
+        ):
+            assert await check_and_refill_task_pool() is True
+
+    async def test_a_batch_counts_the_tasks_that_came_out_ready(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task",
+            new=AsyncMock(side_effect=[True, False, True]),
+        ):
+            assert await _generate_batch_tasks("appeal", 3) == 2
 
 
 @pytest.mark.asyncio
