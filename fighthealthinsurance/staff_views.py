@@ -1519,10 +1519,10 @@ class _ChatTally:
         # How the primary pass started the outside models, per
         # ChatTurn.external_start value.
         self.external_starts: Counter = Counter()
-        # Turns whose first pass never sent the outside models but whose
-        # retry asked them (our reply was empty, too short or a false
-        # promise), so they were not "never sent".
-        self.externals_skipped_retried = 0
+        # Turns whose first pass never sent the outside models but a later
+        # pass did: the retry (our reply was empty, too short or a false
+        # promise) or a tool follow-up. They were not "never sent".
+        self.externals_skipped_later = 0
         self.same_model_pairs = 0
         self.same_model_picks: Counter = Counter()
         self.models: Dict[str, Dict[str, Any]] = {}
@@ -1582,7 +1582,7 @@ class _ChatTally:
                 and call.get("status") != STATUS_SKIPPED
                 for call in calls or []
             ):
-                self.externals_skipped_retried += 1
+                self.externals_skipped_later += 1
 
         # A model counts as asked once per turn, however many calls it got:
         # every primary backend, and the fallbacks only when the retry ran.
@@ -1692,8 +1692,8 @@ class _ChatTally:
                 "externals_early": self.external_starts[STAGE_EARLY],
                 # Never sent in any pass.
                 "externals_skipped": self.external_starts[STAGE_SKIPPED]
-                - self.externals_skipped_retried,
-                "externals_skipped_retried": self.externals_skipped_retried,
+                - self.externals_skipped_later,
+                "externals_skipped_later": self.externals_skipped_later,
                 "externals_held_back": sum(
                     self.external_starts[s]
                     for s in (STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)

@@ -61,7 +61,8 @@ POLICY_CACHE_SECONDS = 60.0
 # The statement timeout ends a slow query on the server, not a read waiting
 # on a connection that stopped answering. A read running longer than this
 # is given up on (its result is dropped) so a new one can start, with at
-# most MAX_STUCK_READS given-up reads still waiting per process.
+# most MAX_STUCK_READS given-up reads still waiting per process: at most
+# MAX_STUCK_READS + 1 reads at once, counting the one in flight.
 POLICY_READ_STUCK_SECONDS = 30.0
 MAX_STUCK_READS = 2
 # A row asking for a longer delay than this is not trusted (the default
@@ -534,7 +535,10 @@ class _PolicyCache:
     turn starts a new one, and the old one's result, should it ever come,
     is dropped like one from before a reset. Once MAX_STUCK_READS given-up
     reads are still waiting, no more are started until one ends, and chat
-    keeps the value it has (the default, once that value is too old).
+    keeps the value it has (the default, once that value is too old). The
+    read in flight is then kept, and its result used whenever it comes: it
+    is the newest read started, and the row's age is checked on every call
+    anyway.
     """
 
     def __init__(self) -> None:
