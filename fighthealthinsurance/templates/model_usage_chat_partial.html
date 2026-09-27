@@ -54,7 +54,7 @@ higher is the one the person picked.
 <h3>Live chat shadow scores <span class="source-label">(TypeSafe Jev, scored after delivery)</span></h3>
 {% with sh=chat.shadow %}
 <p class="note">
-  In chats that allowed outside models, Jev scores each delivered reply and the turn's second answer (the alternate when one was shown, otherwise the runner-up) against the person's message. Nothing uses these scores to choose a reply, and they are not validated for chat yet: the agreement table below is that check.
+  In chats that allowed outside models, Jev scores the delivered reply and the turn's second answer (the alternate when one was shown, otherwise the runner-up) against the person's message, in one request: on every turn that showed a side-by-side, and on a sample of the others (TYPESAFE_CHAT_SHADOW_SAMPLE_RATE), while TypeSafe's chat budget allows. Nothing uses these scores to choose a reply, and they are not validated for chat yet: the agreement table below is that check.
   Turns scored: <strong>{{ sh.summary.scored }}</strong>, failed {{ sh.summary.failed }}, timed out {{ sh.summary.timeout }}.
   {% if sh.summary.scorer %}The tables below use one scorer, the newest in this window: <code>{{ sh.summary.scorer }}</code> (the Jev version that answered and the chat rubric).{% else %}No turn in this window was scored under the current chat rubric.{% endif %}
   {% if sh.summary.other_scorer %}Turns scored by another scorer (another Jev version or rubric) and left out: {{ sh.summary.other_scorer }}.{% endif %}

@@ -927,10 +927,19 @@ class _ShadowPost:
         self.states = []
         self.release = asyncio.Event()
 
-    async def __call__(self, state, timeout_seconds):
+    async def __call__(self, state, timeout_seconds, questions=None):
         self.states.append(state)
         await self.release.wait()
-        return _shadow_answer()
+        answer = _shadow_answer()
+        if questions is None:
+            return answer
+        # Both replies in one request: each answer under its reply's suffix.
+        return {
+            "model": answer["model"],
+            "answers": {
+                f"{k}_{n}": v for n in (1, 2) for k, v in answer["answers"].items()
+            },
+        }
 
 
 async def _drain_shadow_tasks():
@@ -987,20 +996,20 @@ class ChatShadowScoringTest(APITransactionTestCase):
 
         (row,) = await _turn_rows(chat)
         assert row.shadow_outcome == "scored"
-        assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-2"
+        assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-3"
         assert row.shadow_winner_answers == 1.5
         assert row.shadow_second_answers == 1.5
         assert row.shadow_winner_promises == 0.05
         assert row.shadow_second_promises == 0.05
-        # The delivered reply, then the alternate that was shown beside it.
-        assert len(post.states) == 2
-        assert post.states[0].endswith(FRESH_REPLY)
-        assert post.states[1].endswith(SECOND_OPINION_REPLY)
+        # One request: the delivered reply, then the alternate shown beside it.
+        (state,) = post.states
+        assert state.index(FRESH_REPLY) < state.index("THE REPLY 2:")
+        assert state.endswith(SECOND_OPINION_REPLY)
         blob = _row_blob(row)
         for text in ("Quillfeather", FRESH_REPLY[:40], SECOND_OPINION_REPLY[:40]):
             assert text not in blob, f"{text!r} stored on the turn row"
 
-    async def test_without_an_alternate_the_runner_up_is_scored(self):
+    async def test_without_an_alternate_a_sampled_turn_scores_the_runner_up(self):
         user, chat = await _make_chat(
             "shadow2", "9999930202", chat_history=_seed_history()
         )
@@ -1020,6 +1029,7 @@ class ChatShadowScoringTest(APITransactionTestCase):
         with (
             override_settings(**_SHADOW_ON),
             patch.object(chat_shadow, "_post", post),
+            patch.object(chat_shadow, "_sample_draw", return_value=0.05),
             _patched_router(models),
             _PATCH_FIRE_AND_FORGET,
         ):
@@ -1029,10 +1039,61 @@ class ChatShadowScoringTest(APITransactionTestCase):
         assert "alternate_content" not in recorder.content_frames()[-1]
         (row,) = await _turn_rows(chat)
         assert (row.alternate_offered, row.runner_up_model) == (False, "weak-model")
-        assert len(post.states) == 2
-        assert post.states[0].endswith(FRESH_REPLY)
-        assert post.states[1].endswith(SECOND_OPINION_REPLY)
+        (state,) = post.states
+        assert state.index(FRESH_REPLY) < state.index("THE REPLY 2:")
+        assert state.endswith(SECOND_OPINION_REPLY)
         assert row.shadow_second_answers is not None
+
+    async def _turn_without_a_side_by_side(self, username, npi, *patches):
+        user, chat = await _make_chat(username, npi, chat_history=_seed_history())
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        post = _ShadowPost()
+        post.release.set()
+        models = [
+            RecordingChatModel(
+                always_reply=FRESH_REPLY, model_quality=200, name="strong-model"
+            ),
+            RecordingChatModel(
+                always_reply=SECOND_OPINION_REPLY, model_quality=100, name="weak-model"
+            ),
+        ]
+        with (
+            override_settings(**_SHADOW_ON),
+            patch.object(chat_shadow, "_post", post),
+            _patched_router(models),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            for extra in patches:
+                extra.start()
+            try:
+                await interface.handle_chat_message("CA")
+                await _drain_shadow_tasks()
+            finally:
+                for extra in patches:
+                    extra.stop()
+        (row,) = await _turn_rows(chat)
+        return row, post
+
+    async def test_a_turn_outside_the_sample_is_not_scored(self):
+        row, post = await self._turn_without_a_side_by_side(
+            "shadow16",
+            "9999930216",
+            patch.object(chat_shadow, "_sample_draw", return_value=0.5),
+        )
+        assert post.states == []
+        assert row.shadow_outcome == ""
+
+    async def test_a_spent_chat_budget_sends_nothing(self):
+        row, post = await self._turn_without_a_side_by_side(
+            "shadow17",
+            "9999930217",
+            patch.object(chat_shadow, "_sample_draw", return_value=0.0),
+            patch.object(chat_shadow, "budget_allows", return_value=False),
+        )
+        assert post.states == []
+        assert row.shadow_outcome == ""
 
     async def test_consent_off_sends_nothing(self):
         user, chat = await _make_chat(
@@ -1172,6 +1233,7 @@ class ChatShadowScoringTest(APITransactionTestCase):
                     override_settings(**_SHADOW_ON),
                     patch.object(chat_shadow, "_post", post),
                     patch.object(shadow_scoring, "chat_redactions", stuck),
+                    patch.object(chat_shadow, "_sample_draw", return_value=0.0),
                     _PATCH_FIRE_AND_FORGET,
                 ):
                     with _patched_router(
@@ -1217,6 +1279,10 @@ class ChatShadowScoringTest(APITransactionTestCase):
             send_json_message_func=_FrameRecorder(), chat=chat, user=user
         )
         models = [RecordingChatModel(name="model-a")]
+        # Every turn below is in the sample, unless a step says otherwise.
+        sampled = patch.object(chat_shadow, "_sample_draw", return_value=0.0)
+        sampled.start()
+        self.addCleanup(sampled.stop)
 
         # An alternate was shown: it is the second answer.
         turn = TurnRecord.start(True, models)
@@ -1248,6 +1314,14 @@ class ChatShadowScoringTest(APITransactionTestCase):
         interface.use_external_models = False
         start = await self._handoff(interface, turn, FRESH_REPLY)
         assert start.call_args.kwargs["external_allowed"] is False
+
+        # Outside the sample, a turn with no side-by-side is not handed over.
+        interface.use_external_models = True
+        with patch.object(chat_shadow, "_sample_draw", return_value=0.9):
+            start = await self._handoff(
+                interface, TurnRecord.start(True, models), FRESH_REPLY, None, THIRD_REPLY
+            )
+        start.assert_not_called()
 
     async def test_a_rewritten_or_canned_reply_is_not_handed_over(self):
         user, chat = await _make_chat("shadow7", "9999930207")

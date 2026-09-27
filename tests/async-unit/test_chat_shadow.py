@@ -25,7 +25,7 @@ from django.test import override_settings
 
 from fighthealthinsurance import settings as fhi_settings
 from fighthealthinsurance.chat import isolated_db, shadow_scoring
-from fighthealthinsurance.ml import chat_shadow, letter_quality, typesafe
+from fighthealthinsurance.ml import chat_shadow, letter_quality, spend, typesafe
 from fighthealthinsurance.models import (
     Appeal,
     ChatTurn,
@@ -73,22 +73,57 @@ def _answers(
 
 class _FakePost:
     """Stands in for chat_shadow._post: records every state sent and
-    answers from a queue (a dict or an exception per call)."""
+    answers from a queue (a dict or an exception per reply). A pair request
+    (questions given) takes one answer per reply and returns them as one
+    response, each under its reply's suffix; the first reply's model names
+    the response."""
 
     def __init__(self, *answers):
         self.answers = list(answers) or [_answers()]
         self.states = []
+        self.questions = []
 
-    async def __call__(self, state, timeout_seconds):
-        self.states.append(state)
+    def _next(self):
         answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         if isinstance(answer, BaseException):
             raise answer
         return answer
 
+    async def __call__(self, state, timeout_seconds, questions=None):
+        self.states.append(state)
+        self.questions.append(questions)
+        if questions is None:
+            return self._next()
+        first, second = self._next(), self._next()
+        merged = {f"{k}_1": v for k, v in first["answers"].items()}
+        merged.update({f"{k}_2": v for k, v in second["answers"].items()})
+        return {"model": first.get("model"), "answers": merged}
+
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+class TestSampling:
+    def test_a_side_by_side_is_always_scored(self):
+        with patch.object(chat_shadow, "_sample_draw", return_value=0.99):
+            assert chat_shadow.wanted(True)
+
+    def test_other_turns_are_scored_on_the_sample_rate(self):
+        assert chat_shadow.sample_rate() == 0.1
+        with patch.object(chat_shadow, "_sample_draw", return_value=0.09):
+            assert chat_shadow.wanted(False)
+        with patch.object(chat_shadow, "_sample_draw", return_value=0.1):
+            assert not chat_shadow.wanted(False)
+        with override_settings(TYPESAFE_CHAT_SHADOW_SAMPLE_RATE=0.0), patch.object(
+            chat_shadow, "_sample_draw", return_value=0.0
+        ):
+            assert not chat_shadow.wanted(False)
+
+    @pytest.mark.parametrize("value", [-0.1, 1.5, float("nan"), "half", True, None])
+    def test_a_bad_rate_means_the_default(self, value):
+        with override_settings(TYPESAFE_CHAT_SHADOW_SAMPLE_RATE=value):
+            assert chat_shadow.sample_rate() == 0.1
 
 
 # -- the rubric module ------------------------------------------------------
@@ -252,42 +287,50 @@ class TestComposite:
 class TestScorer:
     def test_scorer_names_the_answering_model_and_the_chat_rubric(self):
         assert chat_shadow.scorer_for(_answers(model="jev-1.14.0")) == (
-            "typesafe/jev-1.14.0/chat-rubric-2"
+            "typesafe/jev-1.14.0/chat-rubric-3"
         )
-        assert chat_shadow.SCORER == "typesafe/jev-1.13.0/chat-rubric-2"
+        assert chat_shadow.SCORER == "typesafe/jev-1.13.0/chat-rubric-3"
 
     def test_only_the_current_chat_rubric_counts(self):
-        assert chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-2")
-        # Rubric 1 had no promise question: its rows are never averaged in.
+        assert chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-3")
+        # Rubric 1 had no promise question, and rubric 2 asked about each
+        # reply in its own request: their rows are never averaged in.
         assert not chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-1")
-        assert not chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-3")
+        assert not chat_shadow.same_rubric("typesafe/jev-1.13.0/chat-rubric-2")
         # A letter score is a different rubric altogether.
         assert not chat_shadow.same_rubric(letter_quality.SCORER)
         assert not chat_shadow.same_rubric("")
 
 
 class TestScoreTurn:
-    def test_each_reply_is_asked_about_separately_and_redacted(self):
+    def test_both_replies_go_in_one_request_and_are_redacted(self):
         fake = _FakePost(_answers(1.8, 0.1, 0.0, 0.05), _answers(0.9, 0.7, 0.2, 0.6))
         with override_settings(**ENABLED), patch.object(chat_shadow, "_post", fake):
             result = _run(
                 chat_shadow.score_turn(MESSAGE, REPLY, SECOND, identifiers=IDENTIFIERS)
             )
         assert result.outcome == chat_shadow.SCORED
-        assert result.scorer == "typesafe/jev-1.13.0/chat-rubric-2"
+        assert result.scorer == "typesafe/jev-1.13.0/chat-rubric-3"
         assert result.winner == chat_shadow.ReplyScores(1.8, 0.1, 0.0, 0.05)
         assert result.second == chat_shadow.ReplyScores(0.9, 0.7, 0.2, 0.6)
-        assert len(fake.states) == 2
-        assert fake.states[0].endswith(REPLY) and fake.states[1].endswith(SECOND)
-        for state in fake.states:
-            assert "Quillfeather" not in state and "wq@example.org" not in state
+        (state,) = fake.states
+        assert state.index("THE REPLY 1:") < state.index(REPLY)
+        assert state.index("THE REPLY 2:") < state.index(SECOND)
+        assert state.endswith(SECOND)
+        assert "Quillfeather" not in state and "wq@example.org" not in state
+        (questions,) = fake.questions
+        assert set(questions) == {
+            f"{name}_{k}" for name in chat_shadow.QUESTIONS for k in (1, 2)
+        }
+        assert "THE REPLY 2" in questions[f"{chat_shadow.ASKS_AGAIN}_2"]["instructions"]
 
     def test_the_request_goes_through_the_typesafe_client(self):
         seen = {}
 
-        async def fake_ask(state, questions, *, timeout_seconds):
+        async def fake_ask(state, questions, *, timeout_seconds, use):
             seen["questions"] = questions
             seen["timeout"] = timeout_seconds
+            seen["use"] = use
             return _answers()
 
         with override_settings(**ENABLED), patch.object(typesafe, "ask", fake_ask):
@@ -295,6 +338,8 @@ class TestScoreTurn:
         assert result.outcome == chat_shadow.SCORED
         assert seen["questions"] is chat_shadow.QUESTIONS
         assert seen["timeout"] == 20
+        # Counted against TypeSafe's chat budget.
+        assert seen["use"] == spend.CHAT
 
     def test_no_second_answer_means_one_request(self):
         fake = _FakePost()
@@ -340,12 +385,18 @@ class TestScoreTurn:
         assert result.failure == "ShadowScoringError"
         assert result.winner is None
 
-    def test_two_models_on_one_turn_fail_closed(self):
-        fake = _FakePost(_answers(model="jev-1.13.0"), _answers(model="jev-1.14.0"))
-        with override_settings(**ENABLED), patch.object(chat_shadow, "_post", fake):
+    def test_a_pair_missing_one_replys_answer_fails_closed(self):
+        async def half(state, timeout_seconds, questions=None):
+            payload = _answers()
+            return {
+                "model": "jev-1.13.0",
+                "answers": {f"{k}_1": v for k, v in payload["answers"].items()},
+            }
+
+        with override_settings(**ENABLED), patch.object(chat_shadow, "_post", half):
             result = _run(chat_shadow.score_turn(MESSAGE, REPLY, SECOND))
         assert result.outcome == chat_shadow.FAILED
-        assert result.winner is None
+        assert result.winner is None and result.second is None
 
     def test_a_slow_answer_times_out(self):
         async def slow(state, timeout_seconds):
@@ -491,7 +542,7 @@ async def test_scores_land_on_the_row_as_numbers_only():
 
     row = await ChatTurn.objects.aget(pk=turn.pk)
     assert row.shadow_outcome == "scored"
-    assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-2"
+    assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-3"
     assert (
         row.shadow_winner_answers,
         row.shadow_winner_verdict,
@@ -550,11 +601,11 @@ class _HeldPost(_FakePost):
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def __call__(self, state, timeout_seconds):
+    async def __call__(self, state, timeout_seconds, questions=None):
         self.sent += 1
         self.entered.set()
         await self.release.wait()
-        return await super().__call__(state, timeout_seconds)
+        return await super().__call__(state, timeout_seconds, questions)
 
 
 @pytest.mark.django_db(transaction=True)

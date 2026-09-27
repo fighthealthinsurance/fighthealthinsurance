@@ -2,7 +2,10 @@
 
 After a chat reply has been delivered, a background task asks Jev four
 questions about that reply, and the same four about the turn's second
-answer, each read against the person's latest message. Nothing uses the
+answer, each read against the person's latest message, in one request.
+Only some turns are scored: every turn that showed a side-by-side (the
+person's pick is what the scores are checked against), and a sample of the
+others, TYPESAFE_CHAT_SHADOW_SAMPLE_RATE (10% by default). Nothing uses the
 answers to choose, order or change a reply: they are stored on the turn's
 ChatTurn row, so the staff dashboard can show how Jev rates each model's
 replies and how often the answer Jev rates higher is the one the person
@@ -34,7 +37,8 @@ identifiers held for the chat and the records linked to it
 number in the text, each value with its own stable token. That is a reduction, not de-identification. A request goes out
 only when the person allowed outside models for the chat, and the module is
 inert until BOTH ``TYPESAFE_API_KEY`` and ``TYPESAFE_CHAT_SHADOW_ENABLED``
-are set. Stored: the scores, the scorer string and an outcome. The text is
+are set. Each request is counted against TypeSafe's chat budget
+(ml/spend.py), and none starts while that budget is spent. Stored: the scores, the scorer string and an outcome. The text is
 never stored and never logged, and a failure is kept as an HTTP status,
 "timeout" or an exception class name.
 """
@@ -42,13 +46,14 @@ never stored and never logged, and a failure is kept as an HTTP status,
 import asyncio
 import dataclasses
 import math
+import random
 import re
 import typing
 
 from django.conf import settings
 from loguru import logger
 
-from fighthealthinsurance.ml import letter_quality, typesafe
+from fighthealthinsurance.ml import letter_quality, spend, typesafe
 
 # Key of the cross-pod health record (models.ExternalServiceHealth). Its own
 # row, so chat traffic never marks letter scoring as healthy or failing.
@@ -57,8 +62,9 @@ SERVICE = "typesafe-chat"
 # Recorded on every scored row. Bump RUBRIC_VERSION whenever a question or
 # the composite changes. The dashboard averages one exact scorer string at a
 # time; rows under another rubric or model version are counted, never
-# averaged with it. Rubric 2 added PROMISES_OUTCOME.
-RUBRIC_VERSION = 2
+# averaged with it. Rubric 2 added PROMISES_OUTCOME; rubric 3 asks about
+# both replies in one request.
+RUBRIC_VERSION = 3
 _RUBRIC_SUFFIX = f"/chat-rubric-{RUBRIC_VERSION}"
 SCORER = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
 _SCORER_RE = re.compile(r"^typesafe/([A-Za-z0-9._-]{1,48})/chat-rubric-(\d{1,4})$")
@@ -138,6 +144,10 @@ MAX_ANSWERS_SCORE = 2.0
 
 MESSAGE_HEADER = "THE PERSON'S MESSAGE:\n"
 REPLY_HEADER = "\n\nTHE REPLY:\n"
+# With a second answer, the two replies are THE REPLY 1 (the delivered one)
+# and THE REPLY 2, and each question is asked once per reply.
+PAIR_HEADERS = ("\n\nTHE REPLY 1:\n", "\n\nTHE REPLY 2:\n")
+DEFAULT_SAMPLE_RATE = 0.1
 STATE_CHAR_CAP = typesafe.STATE_CHAR_CAP
 # Longer than this and nothing is sent: the same bound the letter scorer
 # uses, because cutting raw text could split an identifier.
@@ -181,6 +191,35 @@ def enabled() -> bool:
     return bool(getattr(settings, "TYPESAFE_API_KEY", None)) and bool(
         getattr(settings, "TYPESAFE_CHAT_SHADOW_ENABLED", False)
     )
+
+
+def budget_allows() -> bool:
+    """Whether TypeSafe's chat budget (ml/spend.py) allows a request now."""
+    return spend.allows(spend.TYPESAFE, spend.CHAT)
+
+
+def sample_rate() -> float:
+    """The share of turns without a side-by-side that are scored anyway
+    (TYPESAFE_CHAT_SHADOW_SAMPLE_RATE, 0 to 1). Anything else means the
+    default."""
+    value = getattr(settings, "TYPESAFE_CHAT_SHADOW_SAMPLE_RATE", DEFAULT_SAMPLE_RATE)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return DEFAULT_SAMPLE_RATE
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        return DEFAULT_SAMPLE_RATE
+    return number
+
+
+def _sample_draw() -> float:
+    # A seam: tests pin the draw.
+    return random.random()
+
+
+def wanted(side_by_side: bool) -> bool:
+    """Whether a delivered turn is scored: always after a side-by-side,
+    otherwise on a sample_rate() share of turns."""
+    return side_by_side or _sample_draw() < sample_rate()
 
 
 def scorer_for(payload: typing.Any) -> str:
@@ -231,6 +270,44 @@ def build_state(message: str, reply: str, redactor: letter_quality.Redactor) -> 
     return MESSAGE_HEADER + redacted_message + REPLY_HEADER + redacted_reply
 
 
+def build_pair_state(
+    message: str, reply: str, second: str, redactor: letter_quality.Redactor
+) -> str:
+    """The person's message and both replies, redacted, under the cap. Each
+    reply gets half the room and is cut from its end past it; the message
+    gives way first, as in build_state."""
+    room = STATE_CHAR_CAP - len(MESSAGE_HEADER) - sum(len(h) for h in PAIR_HEADERS)
+    share = max(0, room // 2)
+    replies = [
+        letter_quality._cut(redactor.redact(text).strip(), share)
+        for text in (reply, second)
+    ]
+    redacted_message = letter_quality._cut(redactor.redact(message).strip(), room)
+    redacted_message = letter_quality._cut(
+        redacted_message, max(0, room - sum(len(r) for r in replies))
+    )
+    return (
+        MESSAGE_HEADER
+        + redacted_message
+        + "".join(h + r for h, r in zip(PAIR_HEADERS, replies))
+    )
+
+
+def pair_questions() -> dict[str, dict[str, typing.Any]]:
+    """The four questions once per reply, keyed ``<name>_1`` and
+    ``<name>_2`` and pointed at THE REPLY 1 or THE REPLY 2."""
+    out: dict[str, dict[str, typing.Any]] = {}
+    for k in (1, 2):
+        for name, question in QUESTIONS.items():
+            out[f"{name}_{k}"] = {
+                **question,
+                "instructions": question["instructions"].replace(
+                    "THE REPLY", f"THE REPLY {k}"
+                ),
+            }
+    return out
+
+
 def _bounded(value: typing.Any, top: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ShadowScoringError(f"expected a number, got {type(value).__name__}")
@@ -240,16 +317,19 @@ def _bounded(value: typing.Any, top: float) -> float:
     return number
 
 
-def parse_answers(payload: typing.Any) -> ReplyScores:
+def parse_answers(payload: typing.Any, suffix: str = "") -> ReplyScores:
     """A System One response as ReplyScores, strictly: a missing answer or a
-    value out of range means the API changed under us, so no score."""
+    value out of range means the API changed under us, so no score.
+    ``suffix`` reads one reply of a pair ("_1" or "_2")."""
     try:
         answers = payload["answers"]
         return ReplyScores(
-            answers=_bounded(answers[ANSWERS_QUESTION]["score"], MAX_ANSWERS_SCORE),
-            verdict=_bounded(answers[ASSERTS_VERDICT]["noul"], 1.0),
-            asks_again=_bounded(answers[ASKS_AGAIN]["noul"], 1.0),
-            promises=_bounded(answers[PROMISES_OUTCOME]["noul"], 1.0),
+            answers=_bounded(
+                answers[ANSWERS_QUESTION + suffix]["score"], MAX_ANSWERS_SCORE
+            ),
+            verdict=_bounded(answers[ASSERTS_VERDICT + suffix]["noul"], 1.0),
+            asks_again=_bounded(answers[ASKS_AGAIN + suffix]["noul"], 1.0),
+            promises=_bounded(answers[PROMISES_OUTCOME + suffix]["noul"], 1.0),
         )
     except ShadowScoringError:
         raise
@@ -259,22 +339,18 @@ def parse_answers(payload: typing.Any) -> ReplyScores:
         ) from e
 
 
-async def _post(state: str, timeout_seconds: float) -> typing.Any:
+async def _post(
+    state: str,
+    timeout_seconds: float,
+    questions: typing.Optional[dict[str, dict[str, typing.Any]]] = None,
+) -> typing.Any:
     # Kept as a seam: tests stub this one function to stay off the network.
-    return await typesafe.ask(state, QUESTIONS, timeout_seconds=timeout_seconds)
-
-
-async def _ask_all(states: list[str], timeout: float) -> list[typing.Any]:
-    """One request per state, at the same time, under one hard bound. The
-    first error wins; a timeout cancels whatever is still running."""
-    results = await asyncio.wait_for(
-        asyncio.gather(*(_post(s, timeout) for s in states), return_exceptions=True),
-        timeout=timeout + GRACE_SECONDS,
+    return await typesafe.ask(
+        state,
+        QUESTIONS if questions is None else questions,
+        timeout_seconds=timeout_seconds,
+        use=spend.CHAT,
     )
-    for result in results:
-        if isinstance(result, BaseException):
-            raise result
-    return list(results)
 
 
 def _usable(text: typing.Optional[str]) -> bool:
@@ -294,8 +370,8 @@ async def score_turn(
     Returns None when nothing was sent (off, nothing to score, or a text
     over the raw bound), and otherwise a ShadowResult whose outcome is
     SCORED, FAILED or TIMEOUT. Never raises (except cancellation) and never
-    logs the text. All or nothing: when either request fails, neither
-    reply's scores are kept.
+    logs the text. One request: with a second answer, both replies are in
+    it and each question is asked of each, so both come from one model.
     """
     if not enabled():
         return None
@@ -307,19 +383,26 @@ async def score_turn(
         getattr(settings, "TYPESAFE_TIMEOUT_SECONDS", 20)
     )
     # One redactor for all three texts, so a value in the message and in a
-    # reply gets the SAME token in both requests.
+    # reply gets the SAME token wherever it appears.
     redactor = letter_quality.Redactor(identifiers)
-    states = [build_state(message or "", reply or "", redactor)]
-    if second is not None:
-        states.append(build_state(message or "", second, redactor))
     try:
-        payloads = await _ask_all(states, timeout)
-        scores = [parse_answers(p) for p in payloads]
-        scorers = {scorer_for(p) for p in payloads}
-        if len(scorers) != 1:
-            # Two models answered one turn (an alias repointed between the
-            # two requests): the pair would compare two scales.
-            raise ShadowScoringError("the two answers came from different models")
+        if second is None:
+            payload = await asyncio.wait_for(
+                _post(build_state(message or "", reply or "", redactor), timeout),
+                timeout=timeout + GRACE_SECONDS,
+            )
+            scores = [parse_answers(payload)]
+        else:
+            payload = await asyncio.wait_for(
+                _post(
+                    build_pair_state(message or "", reply or "", second, redactor),
+                    timeout,
+                    pair_questions(),
+                ),
+                timeout=timeout + GRACE_SECONDS,
+            )
+            scores = [parse_answers(payload, "_1"), parse_answers(payload, "_2")]
+        scorer = scorer_for(payload)
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -331,7 +414,7 @@ async def score_turn(
         )
     return ShadowResult(
         outcome=SCORED,
-        scorer=scorers.pop(),
+        scorer=scorer,
         winner=scores[0],
         second=scores[1] if len(scores) > 1 else None,
     )

@@ -368,8 +368,10 @@ class ChatInterface:
     ) -> None:
         """Hand a delivered turn to background shadow scoring
         (chat/shadow_scoring.py), which starts nothing unless the person
-        allowed outside models and the flag and key are set. Never awaits
-        and never raises.
+        allowed outside models and the flag and key are set. Only a turn
+        that showed a side-by-side, or one in a sample of the others
+        (chat_shadow.wanted), and only while TypeSafe's chat budget allows.
+        Never awaits and never raises.
 
         The second answer is the alternate when one was shown, otherwise
         the runner-up, cleaned the way the alternate is. Nothing starts for
@@ -380,6 +382,10 @@ class ChatInterface:
             if turn is None or not chat_shadow.enabled():
                 return
             if turn.tool_rewrote or reply == DELETE_DATA_RESPONSE:
+                return
+            if not chat_shadow.wanted(turn.alternate_offered):
+                return
+            if not chat_shadow.budget_allows():
                 return
             second: Optional[str]
             if turn.alternate_offered:
