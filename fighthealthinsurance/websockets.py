@@ -614,7 +614,11 @@ async def _parse_json_or_close(
     try:
         data = json.loads(text_data)
     except json.JSONDecodeError as e:
-        logger.warning(f"Invalid JSON received in {consumer_name} websocket: {e}")
+        # Sizes and the error class only: the frame is client input.
+        logger.warning(
+            f"Invalid JSON received in {consumer_name} websocket "
+            f"(frame_chars={len(text_data)}, error_pos={e.pos}): {type(e).__name__}"
+        )
         await _send_err("Invalid JSON format")
         await consumer.close()
         return None
@@ -1255,9 +1259,8 @@ async def resolve_chat_type(
     if professional_user:
         return ChatType.PROFESSIONAL, professional_user
 
-    logger.debug(
-        f"User {user.username} is not a professional user, treating as patient"
-    )
+    # The account id, not the username: usernames are often email addresses.
+    logger.debug(f"User {user.pk} is not a professional user, treating as patient")
     return ChatType.PATIENT, None
 
 
@@ -1774,14 +1777,18 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         """Get an existing chat or create a new one."""
         if chat_id:
             # Chat ids should be secure they're random UUIDs.
+            # Our own fixed description of why the lookup missed, for the log.
+            miss_reason = "no matching chat"
             try:
                 chat = await OngoingChat.objects.select_related(
                     "user", "professional_user"
                 ).aget(id=chat_id)
                 # But let's also check session key and user just to be safe.
                 if chat.session_key and session_key != chat.session_key:
+                    miss_reason = "session key mismatch"
                     raise OngoingChat.DoesNotExist("Session key mismatch")
                 if chat.user_id and (not user or chat.user_id != user.pk):
+                    miss_reason = "user mismatch"
                     raise OngoingChat.DoesNotExist("User mismatch")
 
                 # Reconcile resolved identity with stored values so
@@ -1813,7 +1820,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 # template, so a "{" in the client-controlled chat_id would
                 # raise/inject inside the logging call itself.
                 logger.warning(
-                    f"Chat with id {chat_id!r} not found ({e}). Creating new chat."
+                    f"Chat with id {chat_id!r} not found "
+                    f"({type(e).__name__}: {miss_reason}). Creating new chat."
                 )
                 pass  # Fall through to create a new one
 

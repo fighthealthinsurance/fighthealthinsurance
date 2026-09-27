@@ -844,9 +844,10 @@ class ChatInterface:
         if is_document and user_message:
             doc_name = document_name or "uploaded_document"
             char_count = len(user_message)
+            # str(): document_name is raw client JSON and need not be a string.
             logger.info(
                 f"Document uploaded in chat {chat.id} "
-                f"(name_chars={len(doc_name)}, {char_count} chars)"
+                f"(name_chars={len(str(doc_name))}, {char_count} chars)"
             )
 
             denial_context = await self._denial_context_for_chat(chat)
@@ -1132,9 +1133,10 @@ class ChatInterface:
                 "document_name",
                 f"pasted_message_{int(timezone.now().timestamp())}.txt",
             )
+            # str(): document_name is raw client JSON and need not be a string.
             logger.info(
                 f"Long pasted message in chat {chat.id}: storing {char_count} chars "
-                f"for reference (name_chars={len(doc_name)})"
+                f"for reference (name_chars={len(str(doc_name))})"
             )
             denial_context = await self._denial_context_for_chat(chat)
             await process_uploaded_document(

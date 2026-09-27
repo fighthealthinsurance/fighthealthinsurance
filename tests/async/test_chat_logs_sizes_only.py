@@ -5,7 +5,9 @@ user's message, a model reply, a document name, the chat history, an
 exception raised while handling them) and checks that no log line written
 while that data was in flight contains it. Exceptions may still attach their
 traceback, the way the deployed sinks write it; only the log message itself
-is held to the class name.
+is held to the class name. Lines built from our own fixed text (the chat
+lookup reasons) are pinned word for word, and uploads and long pastes with a
+non-string document name still store.
 """
 
 import contextlib
@@ -18,7 +20,13 @@ from rest_framework.test import APITestCase
 
 from fighthealthinsurance.chat.context_manager import background_generate_summary
 from fighthealthinsurance.chat_interface import ChatInterface
-from fighthealthinsurance.models import OngoingChat, PolicyDocument, ProfessionalUser
+from fighthealthinsurance.models import (
+    ChatDocument,
+    ChatType,
+    OngoingChat,
+    PolicyDocument,
+    ProfessionalUser,
+)
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from tests.chat_fixtures import FRESH_REPLY, RecordingChatModel
 
@@ -100,6 +108,19 @@ def _patch_fire_and_forget():
 
 async def _run_now(coro):
     await coro
+
+
+async def _drop(coro):
+    # Stands in for background work the test doesn't need, without leaving
+    # an un-awaited coroutine behind.
+    coro.close()
+
+
+def _skip_document_summaries():
+    return patch(
+        "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
+        side_effect=_drop,
+    )
 
 
 class ChatTurnLogsTest(APITestCase):
@@ -233,6 +254,60 @@ class ChatTurnLogsTest(APITestCase):
             "expected the long-paste line with the name size",
         )
 
+    async def test_numeric_document_name_upload_still_stores(self):
+        user, chat = await _make_chat("sizelog15", "9999940015")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        text = "Denial letter body " * 5
+        with _captured_logs() as (records, lines):
+            with _patched_router(
+                [RecordingChatModel(always_reply=FRESH_REPLY)]
+            ), _patch_fire_and_forget(), _skip_document_summaries():
+                await interface.handle_chat_message(
+                    text, is_document=True, document_name=12345
+                )
+
+        stored = [
+            d async for d in ChatDocument.objects.filter(chat=chat).values_list(
+                "document_name", flat=True
+            )
+        ]
+        self.assertEqual(stored, ["12345"])
+        self.assertIn(
+            f"Document uploaded in chat {chat.id} "
+            f"(name_chars=5, {len(text)} chars)",
+            _messages(records),
+        )
+
+    async def test_numeric_document_name_long_paste_still_stores(self):
+        user, chat = await _make_chat("sizelog16", "9999940016")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        text = "my records say " * 800
+        with _captured_logs() as (records, lines):
+            with _patched_router(
+                [RecordingChatModel(always_reply=FRESH_REPLY)]
+            ), _patch_fire_and_forget(), _skip_document_summaries():
+                await interface.handle_chat_message(text, document_name=12345)
+
+        stored = [
+            d async for d in ChatDocument.objects.filter(chat=chat).values_list(
+                "document_name", flat=True
+            )
+        ]
+        self.assertEqual(stored, ["12345"])
+        self.assertTrue(
+            [
+                m
+                for m in _messages(records)
+                if m.startswith(f"Long pasted message in chat {chat.id}")
+                and m.endswith("for reference (name_chars=5)")
+            ],
+            "expected the long-paste line with the name size",
+        )
+
     async def test_microsite_lookup_error_logs_class_name(self):
         user, chat = await _make_chat(
             "sizelog6", "9999940006", microsite_slug="sizelog-microsite"
@@ -346,6 +421,44 @@ class ChatTurnLogsTest(APITestCase):
         self.assertEqual(_leaks(lines, "SENTINEL-error-10"), [])
         self.assertIn(
             f"Background summary generation failed for chat {chat.id}: " "RuntimeError",
+            _messages(records),
+        )
+
+
+class ChatLookupLogsTest(APITestCase):
+    async def test_unknown_chat_id_logs_class_and_fixed_reason(self):
+        chat_id = "0b7c3a52-6f1e-4d8a-9c1b-2e5f7a9d4c10"
+        with _captured_logs() as (records, lines):
+            chat = await OngoingChatConsumer()._get_or_create_chat(
+                None,
+                chat_type=ChatType.PATIENT,
+                chat_id=chat_id,
+                session_key="sizelog-session-17",
+                email="sizelog17@example.com",
+            )
+        self.assertNotEqual(str(chat.id), chat_id)
+        self.assertIn(
+            f"Chat with id {chat_id!r} not found (DoesNotExist: no matching "
+            "chat). Creating new chat.",
+            _messages(records),
+        )
+
+    async def test_session_mismatch_logs_class_and_fixed_reason(self):
+        user, existing = await _make_chat(
+            "sizelog18", "9999940018", session_key="sizelog-session-18"
+        )
+        with _captured_logs() as (records, lines):
+            chat = await OngoingChatConsumer()._get_or_create_chat(
+                None,
+                chat_type=ChatType.PATIENT,
+                chat_id=str(existing.id),
+                session_key="sizelog-other-session",
+                email="sizelog18@example.com",
+            )
+        self.assertNotEqual(chat.id, existing.id)
+        self.assertIn(
+            f"Chat with id {str(existing.id)!r} not found (DoesNotExist: "
+            "session key mismatch). Creating new chat.",
             _messages(records),
         )
 

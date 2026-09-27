@@ -187,6 +187,7 @@ class AppealTool(BaseTool):
         # relation ids, methods, or private state on both models.
         appeal_allowed = settable_model_fields(type(appeal))
         denial_allowed = settable_model_fields(type(denial))
+        rejected_keys = 0
         for key, value in appeal_data.items():
             set_field = False
 
@@ -199,10 +200,15 @@ class AppealTool(BaseTool):
                 setattr(denial, key, value)
 
             if not set_field:
-                logger.warning(
-                    f"Key {key} not settable on Appeal or Denial model. Skipping."
-                )
+                rejected_keys += 1
                 await self.send_status_message(
                     f"Key {key} not found in Appeal or Denial model. "
                     f"The value {value} is not synced back yet."
                 )
+
+        if rejected_keys:
+            # A count only: the keys come from the model's reply.
+            logger.warning(
+                "Skipped payload keys not settable on Appeal or Denial model "
+                f"(rejected_keys={rejected_keys})"
+            )

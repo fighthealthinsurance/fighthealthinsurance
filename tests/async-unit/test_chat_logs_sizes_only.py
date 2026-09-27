@@ -1,9 +1,10 @@
 """Chat tool, scoring and summarization logs carry sizes and error classes.
 
 Tool payloads are part of the model's reply, and replies, queries, document
-names and exception text raised while handling them are patient data. Each
-test plants a sentinel in one of them and checks that no log line written
-while it was in flight contains it. Where a line attaches a traceback, the
+names, payload keys, URL paths and queries, socket frames, usernames and
+exception text raised while handling them are patient data. Each test plants
+a sentinel in one of them and checks that no log line written while it was in
+flight contains it. Where a line attaches a traceback, the
 sentinel may appear there (the deployed sinks keep tracebacks but not frame
 variables); the log message itself carries only the exception class.
 """
@@ -30,7 +31,12 @@ from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
 from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
 from fighthealthinsurance.chat.tools.uspstf_tool import USPSTFLookupTool
 from fighthealthinsurance.medicaid_api import MedicaidDataUnavailableError
-from fighthealthinsurance.websockets import OngoingChatConsumer
+from fighthealthinsurance.models import Appeal, Denial, PriorAuthRequest
+from fighthealthinsurance.websockets import (
+    OngoingChatConsumer,
+    _parse_json_or_close,
+    resolve_chat_type,
+)
 
 
 @contextlib.contextmanager
@@ -250,6 +256,39 @@ class TestAppealAndPriorAuthToolLogs:
         _assert_absent_from_messages(records, "SENTINEL-rec-err")
         assert expected in _messages(records)
 
+    @pytest.mark.asyncio
+    async def test_appeal_rejected_keys_logged_as_count(self):
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        payload = {
+            "SENTINEL-apkey-a": "value a",
+            "_SENTINEL-apkey-b": "value b",
+            "SENTINEL-apkey-c_id": "value c",
+            "appeal_text": "Please reconsider.",
+        }
+        with _captured_logs() as (records, lines):
+            await tool._update_appeal_fields(Appeal(), Denial(), payload)
+        _assert_absent_from_lines(lines, "apkey")
+        assert (
+            "Skipped payload keys not settable on Appeal or Denial model "
+            "(rejected_keys=3)"
+        ) in _messages(records)
+
+    @pytest.mark.asyncio
+    async def test_prior_auth_rejected_keys_logged_as_count(self):
+        tool = PriorAuthTool(AsyncMock(), AsyncMock())
+        payload = {
+            "sentinel-pakey-a": "value a",
+            "_sentinel-pakey-b": "value b",
+            "medication": "metformin",
+        }
+        with _captured_logs() as (records, lines):
+            await tool._update_prior_auth_fields(PriorAuthRequest(), payload)
+        _assert_absent_from_lines(lines, "pakey")
+        assert (
+            "Skipped payload keys not settable on Prior Auth model (rejected_keys=2)"
+            in _messages(records)
+        )
+
 
 class TestDocFetcherToolLogs:
     @pytest.mark.asyncio
@@ -266,8 +305,33 @@ class TestDocFetcherToolLogs:
         )
 
     @pytest.mark.asyncio
+    async def test_validation_error_logs_url_sizes_and_class_name(self):
+        text = (
+            '**fetch_doc {"url": "https://sentinel-df-host.local'
+            '/SENTINEL-df-vpath/a.pdf?q=SENTINEL-df-vquery"}**'
+        )
+        status = AsyncMock()
+        tool = DocFetcherTool(status)
+        with _captured_logs() as (records, lines):
+            await tool.execute(tool.detect(text), text, "")
+        for sentinel in ("sentinel-df-host", "SENTINEL-df-vpath", "SENTINEL-df-vquery"):
+            _assert_absent_from_lines(lines, sentinel)
+        assert (
+            "URL validation failed for fetch_doc (scheme=https, host=unlisted, "
+            "path_chars=24, query_chars=20): ValueError"
+        ) in _messages(records)
+        # The user still sees why their link was refused.
+        status.assert_awaited_with(
+            "Cannot fetch document: Cannot fetch from local addresses: "
+            "sentinel-df-host.local"
+        )
+
+    @pytest.mark.asyncio
     async def test_fetch_and_store_errors_log_class_names(self):
-        text = '**fetch_doc {"url": "https://example.org/policy.pdf?id=1"}**'
+        text = (
+            '**fetch_doc {"url": "https://example.org'
+            '/SENTINEL-df-path/policy.pdf?name=SENTINEL-df-query"}**'
+        )
 
         tool = DocFetcherTool(AsyncMock())
         tool.fetcher = MagicMock()
@@ -281,9 +345,11 @@ class TestDocFetcherToolLogs:
             ):
                 await tool.execute(tool.detect(text), text, "")
         _assert_absent_from_lines(lines, "SENTINEL-df-fetch")
+        _assert_absent_from_lines(lines, "SENTINEL-df-path")
+        _assert_absent_from_lines(lines, "SENTINEL-df-query")
         assert (
-            "Failed to fetch document from https://example.org/policy.pdf: "
-            "RuntimeError"
+            "Failed to fetch document (scheme=https, host=unlisted, "
+            "path_chars=28, query_chars=22): RuntimeError"
         ) in _messages(records)
 
         tool = DocFetcherTool(AsyncMock(), chat=MagicMock())
@@ -302,6 +368,8 @@ class TestDocFetcherToolLogs:
                 await tool.execute(tool.detect(text), text, "")
         _assert_absent_from_lines(lines, "SENTINEL-df-text")
         _assert_absent_from_lines(lines, "SENTINEL-df-store")
+        _assert_absent_from_lines(lines, "SENTINEL-df-path")
+        _assert_absent_from_lines(lines, "SENTINEL-df-query")
         assert "Failed to store fetched document: RuntimeError" in _messages(records)
 
 
@@ -365,17 +433,47 @@ class TestMedicaidGovToolLogs:
                 tool,
                 "_resolve_target",
                 return_value=(
-                    "https://www.medicaid.gov/medicaid/eligibility/index.html",
+                    "https://www.medicaid.gov/SENTINEL-mg-path/index.html"
+                    "?q=SENTINEL-mg-query",
                     [],
                     "the URL provided",
                 ),
             ):
                 await tool.execute(match, text, "")
         _assert_absent_from_lines(lines, "SENTINEL-mg-err")
+        _assert_absent_from_lines(lines, "SENTINEL-mg-path")
+        _assert_absent_from_lines(lines, "SENTINEL-mg-query")
         assert (
-            "medicaid_gov_lookup failed to fetch "
-            "https://www.medicaid.gov/medicaid/eligibility/index.html: RuntimeError"
+            "medicaid_gov_lookup failed to fetch (scheme=https, "
+            "host=www.medicaid.gov, path_chars=28, query_chars=19): RuntimeError"
         ) in _messages(records)
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            (
+                "https://sentinel-mg-host.example/SENTINEL-mg-offpath"
+                "?x=SENTINEL-mg-offquery",
+                "scheme=https, host=unlisted, path_chars=20, query_chars=22",
+            ),
+            (
+                "http://www.medicaid.gov/SENTINEL-mg-offpath"
+                "?x=SENTINEL-mg-offquery",
+                "scheme=http, host=www.medicaid.gov, path_chars=20, "
+                "query_chars=22",
+            ),
+        ],
+    )
+    def test_refused_url_logged_without_path_or_query(self, url, expected):
+        with _captured_logs() as (records, lines):
+            target = MedicaidGovLookupTool._resolve_target({"url": url})
+        assert target == (None, [], "")
+        for sentinel in ("sentinel-mg-host", "SENTINEL-mg-offpath", "SENTINEL-mg-offquery"):
+            _assert_absent_from_lines(lines, sentinel)
+        assert (
+            f"medicaid_gov_lookup refused off-allowlist URL ({expected})"
+            in _messages(records)
+        )
 
 
 class TestSearchToolPlaceholderLogs:
@@ -511,3 +609,40 @@ class TestChatConsumerLogs:
             "Failed to enqueue denied-item analysis for chat sizelog-chat: "
             "RuntimeError"
         ) in _messages(records)
+
+    @pytest.mark.asyncio
+    async def test_invalid_frame_logged_as_size_and_class_name(self):
+        consumer = MagicMock()
+        consumer.send = AsyncMock()
+        consumer.close = AsyncMock()
+        frame = '{"message": "My MRI was denied SENTINEL-ws-frame'
+        with _captured_logs() as (records, lines):
+            data = await _parse_json_or_close(
+                consumer, frame, consumer_name="ongoing chat"
+            )
+        assert data is None
+        consumer.close.assert_awaited_once()
+        _assert_absent_from_lines(lines, "SENTINEL-ws-frame")
+        assert (
+            "Invalid JSON received in ongoing chat websocket "
+            f"(frame_chars={len(frame)}, error_pos=12): JSONDecodeError"
+        ) in _messages(records)
+
+    @pytest.mark.asyncio
+    async def test_non_professional_user_logged_by_id_not_username(self):
+        user = MagicMock()
+        user.pk = 4321
+        user.username = "SENTINEL-username@example.com"
+        with _captured_logs() as (records, lines):
+            chat_type, professional = await resolve_chat_type(
+                user=user,
+                is_authenticated=True,
+                session_key=None,
+                get_professional_user_fn=lambda u: None,
+            )
+        assert professional is None
+        _assert_absent_from_lines(lines, "SENTINEL-username")
+        assert (
+            "User 4321 is not a professional user, treating as patient"
+            in _messages(records)
+        )
