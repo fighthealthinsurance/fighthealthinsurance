@@ -37,8 +37,11 @@ the script sleeps 480 seconds before the check.
 
 The migrations Job (`web-migrations`) and this Job are applied together by
 `scripts/build.sh`, and nothing orders them. The check tolerates that: if the
-schema is not migrated yet, the leader claim and the result rows fail soft, so
-the check skips or runs without persisting rather than crashing.
+schema is not migrated yet, the leader claim and the result rows fail soft
+rather than crashing. A claim that cannot be made skips the check and says so
+(it is not reported as another process having run it); in strict mode it exits
+2, so the Job's retry claims the slot and runs the check once the schema is
+there. A failed result write still leaves the checks run, just not persisted.
 
 ## Leader election and duplicate-run prevention
 
@@ -83,8 +86,8 @@ python manage.py check_model_backends --no-persist
 - Exit codes: a manual run exits 1 on any failure (or when the check could not
   run). The deploy hook exits 0, or 2 in strict mode, which
   `start-server.sh` turns into 1. In strict mode the deploy hook also exits 2
-  when the check itself crashed (nothing was verified); a lost leader claim
-  still exits 0.
+  when nothing was verified: the check itself crashed, or the leader claim hit
+  a database error. A lost leader claim still exits 0.
 
 ## Alerting
 
@@ -116,7 +119,9 @@ makes the first attempt of the `web-actor-launch` Job fail. It does not block
 or roll back a deploy today:
 
 - The Job has `restartPolicy: OnFailure`. The retry finds the leader claim
-  already taken, skips the check, and exits 0, so the Job completes.
+  already taken, skips the check, and exits 0, so the Job completes. (When the
+  first attempt failed because the claim itself could not be made, nothing
+  holds the claim, so the retry runs the check.)
 - `scripts/build.sh` does not wait on this Job.
 - The shell test in `start-server.sh` honors only the exact value `1`. The
   Python side also accepts `true` and `yes`, but then the command's exit code

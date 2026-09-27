@@ -90,16 +90,22 @@ class Command(BaseCommand):
 
         if not summary.ran_checks:
             if deploy_hook:
-                if summary.crashed:
-                    # The check itself raised: nothing was verified, no row
-                    # was written, no email sent. A strict deploy must not
-                    # pass on that; it used to, because a crash and a lost
-                    # leader claim looked the same here.
-                    self.stderr.write(
-                        self.style.ERROR(
-                            "Model backend health check could not run (see the "
-                            "traceback above)."
+                if summary.crashed or summary.claim_failed:
+                    # The check itself raised, or the leader claim hit a
+                    # database error: nothing was verified, no row was
+                    # written, no email sent. A strict deploy must not pass
+                    # on that; it used to, because here both looked like a
+                    # lost leader claim.
+                    if summary.crashed:
+                        reason = "could not run (see the traceback above)"
+                    else:
+                        reason = (
+                            "could not claim its once-per-deployment slot "
+                            "(database error, or the schema is not migrated "
+                            "yet; see the warning above)"
                         )
+                    self.stderr.write(
+                        self.style.ERROR(f"Model backend health check {reason}.")
                     )
                     if mhc.strict_mode_enabled():
                         self.stderr.write(

@@ -644,6 +644,18 @@ class TestRunHealthCheckOrchestration:
         assert second.ran_checks is False
         assert second.results == []
 
+    def test_a_claim_that_errors_is_not_reported_as_a_lost_one(self, monkeypatch):
+        """A database error used to read as another process having run the
+        check, so a strict deploy passed with nothing checked."""
+        from fighthealthinsurance.models import ModelHealthAlertState
+
+        monkeypatch.setenv("FHI_DEPLOYMENT_ID", "vtest-leader-db-error")
+        with _patch_results(_fake_results(mhc.CATEGORY_PASS)), patch.object(
+            ModelHealthAlertState, "try_claim", side_effect=RuntimeError("no table")
+        ):
+            summary = mhc.run_health_check(require_leader=True, persist=False)
+        assert (summary.ran_checks, summary.claim_failed) == (False, True)
+
     def test_new_deployment_id_gets_fresh_leader_slot(self, monkeypatch):
         monkeypatch.setenv("FHI_DEPLOYMENT_ID", "vtest-leader-2a")
         with _patch_results(_fake_results(mhc.CATEGORY_PASS)):
@@ -1066,7 +1078,19 @@ class TestOkAcknowledgement:
     The previous rule, the word anywhere in the reply, passed refusals."""
 
     @pytest.mark.parametrize(
-        "reply", ["OK", "OK.", "Sure — OK", "Okay", "Reply: OK", "OK!"]
+        "reply",
+        [
+            "OK",
+            "OK.",
+            "Sure — OK",
+            "Okay",
+            "Reply: OK",
+            "OK!",
+            "'OK'",
+            '"OK"',
+            "OK, no problem",
+            "Okay, no worries!",
+        ],
     )
     def test_short_acknowledgements_pass(self, reply):
         assert mhc._looks_like_ok(reply)
@@ -1075,10 +1099,14 @@ class TestOkAcknowledgement:
         "reply",
         [
             "not ok",
+            "No. OK",
+            "no ok",
+            "can't OK",
             "HTTP 200 OK",
             "<title>200 OK</title>",
             "I am unable to reply with only OK as instructed",
             "a broken token",
+            "''",
             "",
         ],
     )
@@ -1116,12 +1144,13 @@ class TestDeployHookOnACrashedCheck:
     the deploy hook used to exit 0 for either, so strict mode could not fail
     a deploy whose check never ran."""
 
-    def _summary(self, *, crashed):
+    def _summary(self, *, crashed, claim_failed=False):
         summary = mhc.HealthCheckRunSummary(
             run_id="r1", deployment_id="vcmd", environment="Test"
         )
         summary.ran_checks = False
         summary.crashed = crashed
+        summary.claim_failed = claim_failed
         return summary
 
     def _call(self, summary):
@@ -1146,6 +1175,19 @@ class TestDeployHookOnACrashedCheck:
         monkeypatch.setenv("FHI_MODEL_HEALTH_STRICT", "1")
         output = self._call(self._summary(crashed=False))
         assert "skipped" in output.lower()
+
+    def test_a_failed_claim_fails_a_strict_deploy(self, monkeypatch):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_STRICT", "1")
+        with pytest.raises(SystemExit) as excinfo:
+            self._call(self._summary(crashed=False, claim_failed=True))
+        assert excinfo.value.code == 2
+
+    def test_a_failed_claim_is_not_reported_as_another_process_running_it(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("FHI_MODEL_HEALTH_STRICT", raising=False)
+        output = self._call(self._summary(crashed=False, claim_failed=True))
+        assert "could not claim" in output and "already ran" not in output
 
 
 class TestEnvironmentSwitches:
@@ -1185,3 +1227,22 @@ class TestCatalogFailureIsVisible:
         assert rows[0].category == mhc.CATEGORY_CLIENT_INIT
         assert rows[0].provider == "Azure OpenAI"
         assert "bad list" in rows[0].error
+
+    def _catalog_rows(self, monkeypatch, only_models):
+        from fighthealthinsurance.ml.ml_models import RemoteAzureOpenAI
+
+        _clear_provider_env(monkeypatch)
+        with patch.object(
+            RemoteAzureOpenAI, "model_catalog", side_effect=RuntimeError("bad list")
+        ):
+            static, _checkable = mhc.enumerate_backend_checks(only_models)
+        return [r for r in static if r.model_name == "RemoteAzureOpenAI"]
+
+    def test_a_check_of_other_models_leaves_the_row_out(self, monkeypatch):
+        """With the row, checking one healthy model failed on an unrelated
+        provider, and a --model that matched nothing was no longer told so."""
+        assert self._catalog_rows(monkeypatch, ["anthropic/claude-sonnet-4-6"]) == []
+
+    def test_a_check_naming_the_class_keeps_the_row(self, monkeypatch):
+        """The class name is what the row reports, so re-checking it works."""
+        assert len(self._catalog_rows(monkeypatch, ["RemoteAzureOpenAI"])) == 1
