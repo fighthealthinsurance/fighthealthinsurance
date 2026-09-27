@@ -323,9 +323,11 @@ is never on the chat path, so chat behaves the same with all of this off.
   pods host only the policy queue. The fax worker never hosts it. The
   queue-labelled alerts in `worker-alerts.yaml` (schedule-to-start, activity
   failures, the `fhi-.*` backlog) cover it with no change.
-- **The Schedule:** id `chat-routing-policy`; an interval of 10 minutes;
-  overlap SKIP; a catch-up window of 10 minutes, so an outage never ends in
-  a burst of runs; each run has a 5-minute execution timeout. A run makes
+- **The Schedule:** id `chat-routing-policy`; an interval of one day;
+  overlap SKIP; a catch-up window of one day, so an outage makes up at most
+  one run; each run has a 5-minute execution timeout. A row stays fresh for
+  36 hours (`FHI_CHAT_POLICY_MAX_AGE_MINUTES`), so one missed run changes
+  nothing chat does. A run makes
   up to three attempts at its one activity, and after that the next run is
   the retry. The row carries the run's id, unique in the table, so however
   often an attempt is retried, or finishes after Temporal gave up on it, a
