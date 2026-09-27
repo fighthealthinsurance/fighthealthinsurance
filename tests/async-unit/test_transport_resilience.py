@@ -222,3 +222,78 @@ class TestAzureClaudeCooldowns:
 
         monkeypatch.setattr(aiohttp.ClientSession, "post", explode)
         assert await model._infer(system_prompts=["sys"], prompt="hi") is None
+
+
+class TestAzureClaudeUnreachableCallsSayUnavailable:
+    """Entity extraction asks for raise_on_unavailable so it can tell a model
+    that answered and found nothing from one it never reached. The Messages
+    transport's skips and timeouts returned None for both."""
+
+    def _model(self):
+        with patch.dict(os.environ, AZURE_CLAUDE_ENV):
+            return RemoteAzureClaude(model="claude-opus-4-8")
+
+    @staticmethod
+    def _never_called(monkeypatch):
+        def explode(*args, **kwargs):
+            raise AssertionError("the endpoint was called")
+
+        monkeypatch.setattr(aiohttp.ClientSession, "post", explode)
+
+    @pytest.mark.asyncio
+    async def test_a_cooldown_skip_raises_when_asked(self, monkeypatch):
+        model = self._model()
+        model._transport_cooldowns[(model.api_base, "claude-opus-4-8")] = (
+            time.monotonic() + 100
+        )
+        self._never_called(monkeypatch)
+        with pytest.raises(ml_models.ProviderUnavailable, match="cooldown"):
+            await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_on_unavailable=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_missing_model_skip_raises_when_asked(self, monkeypatch):
+        model = self._model()
+        self._never_called(monkeypatch)
+        with patch.object(model, "_model_marked_missing", return_value=True):
+            with pytest.raises(ml_models.ProviderUnavailable, match="not served"):
+                await model._infer(
+                    system_prompts=["sys"], prompt="hi", raise_on_unavailable=True
+                )
+
+    @pytest.mark.asyncio
+    async def test_a_timeout_raises_when_asked(self, monkeypatch):
+        model = self._model()
+
+        class _Hang:
+            async def __aenter__(self):
+                await asyncio.sleep(5)
+
+            async def __aexit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(aiohttp.ClientSession, "post", lambda *a, **k: _Hang())
+        with pytest.raises(ml_models.ProviderUnavailable, match="no answer"):
+            await model._infer(
+                system_prompts=["sys"],
+                prompt="hi",
+                timeout=0.05,
+                raise_on_unavailable=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_skip_is_counted_with_its_reason(self, monkeypatch):
+        """As the shared transport counts one: an outcome=none call whose
+        failure reason is the skip."""
+        model = self._model()
+        model._transport_cooldowns[(model.api_base, "claude-opus-4-8")] = (
+            time.monotonic() + 100
+        )
+        self._never_called(monkeypatch)
+        with patch.object(ml_models, "record_ml_call") as call, patch.object(
+            ml_models, "record_ml_failure"
+        ) as failure:
+            assert await model._infer(system_prompts=["sys"], prompt="hi") is None
+        assert call.call_args.args[1] == "none"
+        assert failure.call_args.args[1] == "skipped_cooling"
