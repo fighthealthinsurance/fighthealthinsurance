@@ -223,6 +223,53 @@ class TestAzureClaudeCooldowns:
         monkeypatch.setattr(aiohttp.ClientSession, "post", explode)
         assert await model._infer(system_prompts=["sys"], prompt="hi") is None
 
+    async def _time_out_twice(self, monkeypatch, error, timeout, **kwargs):
+        """Two calls whose request raises ``error``; the strikes they made."""
+        model = self._model()
+
+        def time_out(*args, **kw):
+            raise error
+
+        monkeypatch.setattr(aiohttp.ClientSession, "post", time_out)
+        with patch.object(model, "_note_transport_failure") as note:
+            for _ in range(2):
+                await model._infer(
+                    system_prompts=["sys"], prompt="hi", timeout=timeout, **kwargs
+                )
+        return note
+
+    @pytest.mark.asyncio
+    async def test_a_generous_budget_timeout_strikes_once_per_window(
+        self, monkeypatch
+    ):
+        """A timeout returned None without a strike, so an endpoint that
+        kept timing out never cooled down. As on the shared transport, the
+        parallel legs of one slow inference strike once between them."""
+        note = await self._time_out_twice(monkeypatch, asyncio.TimeoutError(), 300)
+        note.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_tight_budget_timeout_does_not_strike(self, monkeypatch):
+        note = await self._time_out_twice(monkeypatch, asyncio.TimeoutError(), 30)
+        note.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_connect_timeout_strikes_every_time(self, monkeypatch):
+        note = await self._time_out_twice(
+            monkeypatch, aiohttp.ServerTimeoutError("connect timed out"), 30
+        )
+        assert note.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_probe_timeout_does_not_strike(self, monkeypatch):
+        note = await self._time_out_twice(
+            monkeypatch,
+            aiohttp.ServerTimeoutError("connect timed out"),
+            300,
+            raise_http_errors=True,
+        )
+        note.assert_not_called()
+
 
 class TestAzureClaudeUnreachableCallsSayUnavailable:
     """Entity extraction asks for raise_on_unavailable so it can tell a model

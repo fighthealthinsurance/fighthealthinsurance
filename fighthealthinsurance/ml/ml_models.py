@@ -3584,6 +3584,45 @@ class RemoteOpenLike(RemoteModel):
                 f"({detail}); cooling down for {cooldown:.0f}s"
             )
 
+    def _note_budget_timeout(
+        self, api_base: Optional[str], model: str, timeout: float
+    ) -> None:
+        """Strike a call that got no answer within its whole budget, when the
+        budget says something about the backend.
+
+        Budget timeouts strike ONLY when (a) the backend had a GENEROUS
+        window (>=120s of nothing is a wedged backend, not deadline pressure
+        -- tight windows near a requester deadline must never strike a
+        healthy-but-busy backend) and (b) at most once per endpoint per
+        strike-window: the appeal path fires 4 near-simultaneous legs (2
+        temperatures x dual-mode), so per-leg strikes let ONE slow long-prompt
+        inference trip the whole 120s cooldown at once and zero generation
+        right when the backend was merely busy (a self-amplifying brownout).
+        Deduped, one busy episode is one strike (harmless, decays), while an
+        accept-then-hang backend keeps striking across requests and cools down
+        instead of burning every caller's full budget until the hourly health
+        sweep. Genuinely-unreachable hosts still strike within seconds via the
+        connect-phase handler.
+        """
+        if timeout < 120.0 or not api_base:
+            return
+        now = time.monotonic()
+        pair = (api_base, model)
+        # Locked check-then-set: the parallel legs live on separate executor
+        # threads and expire together, so an unguarded check would let them
+        # all strike at once.
+        with self._strike_lock:
+            last = self._timeout_strike_last.get(pair, float("-inf"))
+            should_strike = now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS
+            if should_strike:
+                self._timeout_strike_last[pair] = now
+        if should_strike:
+            self._note_transport_failure(
+                api_base,
+                model,
+                f"no answer within a generous {timeout:.0f}s window",
+            )
+
     def is_available(self) -> bool:
         """False while EVERY endpoint this instance can serve is inside a
         transport-failure cooldown, so the router stops selecting it for
@@ -3649,42 +3688,13 @@ class RemoteOpenLike(RemoteModel):
                     failures.append(
                         f"{call_model}: no answer within {effective_timeout:.0f}s"
                     )
-                # Budget timeouts strike ONLY when (a) the backend had a
-                # GENEROUS window (>=120s of nothing is a wedged backend, not
-                # deadline pressure -- tight windows near a requester
-                # deadline must never strike a healthy-but-busy backend) and
-                # (b) at most once per endpoint per strike-window: the
-                # appeal path fires 4 near-simultaneous legs (2 temperatures
-                # x dual-mode), so per-leg strikes let ONE slow long-prompt
-                # inference trip the whole 120s cooldown at once and zero
-                # generation right when the backend was merely busy (a
-                # self-amplifying brownout). Deduped, one busy episode is one
-                # strike (harmless, decays), while an accept-then-hang
-                # backend keeps striking across requests and cools down
-                # instead of burning every caller's full budget until the
-                # hourly health sweep. Genuinely-unreachable hosts still
-                # strike within seconds via the connect-phase handler.
-                strike_base = kwargs.get("api_base") or self.api_base
-                if effective_timeout >= 120.0 and strike_base:
-                    now = time.monotonic()
-                    pair = (strike_base, call_model)
-                    # Locked check-then-set: the parallel legs live on
-                    # separate executor threads and expire together, so an
-                    # unguarded check would let them all strike at once.
-                    with self._strike_lock:
-                        last = self._timeout_strike_last.get(pair, float("-inf"))
-                        should_strike = (
-                            now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS
-                        )
-                        if should_strike:
-                            self._timeout_strike_last[pair] = now
-                    if should_strike:
-                        self._note_transport_failure(
-                            strike_base,
-                            call_model,
-                            f"no answer within a generous "
-                            f"{effective_timeout:.0f}s window",
-                        )
+                # Strikes only when the window was generous, once per strike
+                # window (see _note_budget_timeout).
+                self._note_budget_timeout(
+                    kwargs.get("api_base") or self.api_base,
+                    call_model,
+                    effective_timeout,
+                )
                 return None
             except Exception:
                 # __infer re-raises HTTP errors so _infer and the opted-in
@@ -5952,7 +5962,12 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         effective_timeout = timeout if timeout is not None else self._timeout
         try:
             return await self._messages_post(
-                url, headers, body, effective_timeout, transport_failures
+                url,
+                headers,
+                body,
+                effective_timeout,
+                transport_failures,
+                note_failures=note_failures,
             )
         except aiohttp.ClientResponseError as e:
             body_text = _error_body_of(e)
@@ -5977,9 +5992,12 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         body: dict,
         effective_timeout: Optional[float],
         transport_failures: Optional[List[str]] = None,
+        note_failures: bool = True,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """The request itself and its fhi_ml_* call metrics; None on a
-        timeout, which is added to ``transport_failures`` when given."""
+        timeout, which is added to ``transport_failures`` when given and,
+        unless ``note_failures`` is off (probes), strikes the endpoint as the
+        shared transport would."""
 
         async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
             # Same rationale as RemoteOpenLike.__infer: fail fast on
@@ -6022,7 +6040,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 try:
                     async with async_timeout(effective_timeout):
                         result = await _post()
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError as e:
                     logger.warning(
                         f"Timed out querying {self} after {effective_timeout:.0f}s"
                     )
@@ -6035,6 +6053,21 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                     # For a probe: nothing answered the socket, which is not a
                     # malformed response (see _PROBE_OBSERVATIONS).
                     _note_probe_transport_error(no_answer)
+                    # Without a strike, an endpoint that keeps timing out
+                    # never cooled down and every call waited out its budget.
+                    if note_failures:
+                        if isinstance(e, aiohttp.ClientError):
+                            # aiohttp's own timeout, the connect phase (no
+                            # read timeout is set): the host never answered,
+                            # which strikes at once, as on the shared
+                            # transport.
+                            self._note_transport_failure(
+                                self.api_base, self.model, describe_model_error(e)
+                            )
+                        else:
+                            self._note_budget_timeout(
+                                self.api_base, self.model, effective_timeout
+                            )
                     return None
             else:
                 result = await _post()
