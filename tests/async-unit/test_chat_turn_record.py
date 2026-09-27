@@ -758,6 +758,57 @@ async def test_a_stuck_isolated_write_holds_up_neither_its_caller_nor_the_chats_
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_no_more_than_max_isolated_writes_run_at_once(monkeypatch):
+    """Writes stuck on a connection that stopped answering outlive their
+    callers' waits. Past MAX_ISOLATED_TURN_WRITES of them a row is dropped
+    without starting another thread, and once they end, writes go
+    through again."""
+    chat = await _chat()
+    entered = []
+    release = threading.Event()
+    real_write = turn_record._record_chat_turn_isolated_sync
+
+    def stuck(chat_id, fields):
+        entered.append(fields["id"])
+        release.wait(10)
+
+    def writers():
+        return {
+            t for t in threading.enumerate() if t.name == "fhi-chat-turn-record"
+        }
+
+    earlier = writers()
+    monkeypatch.setattr(turn_record, "_record_chat_turn_isolated_sync", stuck)
+    try:
+        for _ in range(turn_record.MAX_ISOLATED_TURN_WRITES):
+            turn = TurnRecord.start(True, [_Named("model-a")])
+            written = await arecord_chat_turn_isolated(
+                chat.id, turn, "ok", timeout=0.05
+            )
+            assert written is False
+        started = writers() - earlier
+        turn = TurnRecord.start(True, [_Named("model-a")])
+        assert (
+            await arecord_chat_turn_isolated(chat.id, turn, "ok", timeout=0.05)
+            is False
+        )
+        started_after = writers() - earlier
+    finally:
+        release.set()
+    for thread in started_after:
+        await asyncio.to_thread(thread.join, 5)
+        assert not thread.is_alive()
+    assert len(started) == turn_record.MAX_ISOLATED_TURN_WRITES
+    assert started_after == started
+    assert len(entered) == turn_record.MAX_ISOLATED_TURN_WRITES
+
+    monkeypatch.setattr(turn_record, "_record_chat_turn_isolated_sync", real_write)
+    turn = TurnRecord.start(True, [_Named("model-a")])
+    assert await arecord_chat_turn_isolated(chat.id, turn, "ok") is True
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_an_isolated_write_for_a_deleted_chat_is_dropped_without_raising():
     chat = await _chat()
     chat_id = chat.id
