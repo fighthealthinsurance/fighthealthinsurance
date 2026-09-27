@@ -190,6 +190,11 @@ class Base(Configuration):
     TYPESAFE_TIMEOUT_SECONDS = _env_int(
         "TYPESAFE_TIMEOUT_SECONDS", 20, minimum=1, maximum=300
     )
+    # At most this many side-by-side comparisons per chat, so the person is
+    # asked to pick now and then, not on every close call.
+    FHI_CHAT_SIDE_BY_SIDES_PER_CHAT = _env_int(
+        "FHI_CHAT_SIDE_BY_SIDES_PER_CHAT", 2, minimum=0, maximum=100
+    )
     # Denial triage (ml/denial_triage.py): same key, its own switch.
     TYPESAFE_DENIAL_TRIAGE_ENABLED = (
         os.getenv("TYPESAFE_DENIAL_TRIAGE_ENABLED", "false").lower() == "true"
