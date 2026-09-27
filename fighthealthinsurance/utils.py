@@ -990,6 +990,31 @@ def _discard_task_outcome(task: "asyncio.Future") -> None:
         pass
 
 
+def _report_abandoned_outcome(task: "asyncio.Future") -> None:
+    """Read an abandoned task's outcome, and report it if it is a failure.
+
+    For the close path only, where nobody else ever sees the outcome.
+    ``StopAsyncIteration`` is the source simply ending -- the noise this
+    exists to silence. Anything else is a real failure that happened after
+    the consumer left (a draft's database write, say), and asyncio's "never
+    retrieved" report used to be its only trace: reading it silently would
+    lose it along with the noise (review). So it is logged at ERROR, as
+    asyncio would have, but with its own traceback and a name for where it
+    came from.
+    """
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except Exception:  # pragma: no cover - defensive; see _discard_task_outcome
+        return
+    if exc is None or isinstance(exc, StopAsyncIteration):
+        return
+    logger.opt(exception=exc).error(
+        f"Stream source failed after its consumer closed the stream: {exc!r}"
+    )
+
+
 def _retire_anext_task(task: "Optional[asyncio.Future]", *, cancel: bool) -> None:
     """Make an abandoned ``__anext__()`` task harmless.
 
@@ -1014,7 +1039,9 @@ def _retire_anext_task(task: "Optional[asyncio.Future]", *, cancel: bool) -> Non
     model thread is still finishing instead of letting ``save_appeal`` run
     and the lease decide whether it persists -- the behaviour the appeal
     consumer has always had (review). All the noise ever needed was for the
-    outcome to be READ, which the done-callback does either way.
+    outcome to be READ, which the done-callback does either way -- and on
+    the close path, a real failure among those outcomes is still reported
+    (see ``_report_abandoned_outcome``).
 
     Never awaits: this runs from teardown paths, GC finalisation included,
     where awaiting is unavailable or unbounded. Nor does it raise: both
@@ -1026,13 +1053,17 @@ def _retire_anext_task(task: "Optional[asyncio.Future]", *, cancel: bool) -> Non
     """
     if task is None:
         return
+    # A cancelled or failed stream's own handler has already dealt with its
+    # outcome (the error path logs it as "Error in generator"), so reading it
+    # is all that is left. Only on close has nobody seen it.
+    outcome = _discard_task_outcome if cancel else _report_abandoned_outcome
     try:
         if task.done():
-            _discard_task_outcome(task)
+            outcome(task)
             return
         if cancel:
             task.cancel()
-        task.add_done_callback(_discard_task_outcome)
+        task.add_done_callback(outcome)
     except RuntimeError:  # pragma: no cover - loop closed; see docstring
         pass
 

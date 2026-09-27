@@ -88,6 +88,60 @@ async def test_closing_mid_stream_reads_the_orphans_outcome_without_stopping_it(
 
 
 @pytest.mark.asyncio
+async def test_a_source_that_fails_after_close_is_still_reported(log_capture):
+    """Reading the orphan's outcome must not throw away a real failure: before
+    the fix, asyncio's "never retrieved" report was the only trace of one,
+    and reading it silently would have lost it with the noise (review)."""
+    source_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fails_after_release():
+        source_started.set()
+        await release.wait()
+        raise RuntimeError("the draft's database write failed")
+        yield  # pragma: no cover - makes this an async generator
+
+    agen = _interleave_iterator_for_keep_alive(fails_after_release(), timeout=60)
+    await _drain_until_task_is_in_flight(agen, source_started)
+    in_flight = {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}
+
+    with log_capture() as cap:
+        await agen.aclose()
+        release.set()
+        await asyncio.wait(in_flight, timeout=5)
+        await asyncio.sleep(0)
+
+    assert any(
+        "database write failed" in message for message in cap.messages("ERROR")
+    ), f"the late failure must be reported, got: {cap.messages('ERROR')}"
+
+
+@pytest.mark.asyncio
+async def test_a_source_that_just_ends_after_close_reports_nothing(log_capture):
+    """StopAsyncIteration is the source ending, which is the noise: silent."""
+    source_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def ends_after_release():
+        source_started.set()
+        await release.wait()
+        return
+        yield  # pragma: no cover - makes this an async generator
+
+    agen = _interleave_iterator_for_keep_alive(ends_after_release(), timeout=60)
+    await _drain_until_task_is_in_flight(agen, source_started)
+    in_flight = {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}
+
+    with log_capture() as cap:
+        await agen.aclose()
+        release.set()
+        await asyncio.wait(in_flight, timeout=5)
+        await asyncio.sleep(0)
+
+    assert cap.messages("ERROR") == []
+
+
+@pytest.mark.asyncio
 async def test_cancelling_the_consumer_still_cancels_the_in_flight_item():
     """The cancellation path keeps its historical behaviour: a cancelled
     receive() takes the in-flight __anext__ down with it."""
