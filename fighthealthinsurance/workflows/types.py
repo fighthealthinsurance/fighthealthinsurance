@@ -71,8 +71,8 @@ class ChatRoutingPolicyInput:
     Attributes:
         window_minutes: How many minutes of chat turns the policy is
             computed from. The default matches
-            ``ml.chat_policy.DEFAULT_WINDOW_MINUTES`` (one day); it is
+            ``ml.chat_policy.DEFAULT_WINDOW_MINUTES`` (one week); it is
             repeated here because this module may not import Django.
     """
 
-    window_minutes: int = 24 * 60
+    window_minutes: int = 7 * 24 * 60

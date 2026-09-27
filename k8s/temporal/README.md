@@ -303,8 +303,8 @@ required.
 
 ## The chat routing policy Schedule
 
-`ChatRoutingPolicyWorkflow` runs every ten minutes. It reads ChatTurn
-metadata over the last day, computes a chat routing policy and appends one
+`ChatRoutingPolicyWorkflow` runs once a day. It reads ChatTurn metadata
+over the last week, computes a chat routing policy and appends one
 `ChatRoutingPolicy` row: the same row `manage.py compute_chat_policy` writes
 by hand (see `docs/chat-pipeline.md` §4). Chat reads the newest row through a
 short cache and follows it only while `FHI_CHAT_POLICY_APPLY` is on. Temporal

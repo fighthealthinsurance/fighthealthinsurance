@@ -448,10 +448,13 @@ def _intake_enabled() -> bool:
 CHAT_POLICY_SCHEDULE_ID = "chat-routing-policy"
 # Scheduled runs get this id with the scheduled time appended by Temporal.
 CHAT_POLICY_WORKFLOW_ID = "chat-routing-policy-run"
-CHAT_POLICY_EVERY = timedelta(minutes=10)
-# After a Temporal outage, only a run missed in the last ten minutes is
-# made up, so an outage never ends in a burst of runs.
-CHAT_POLICY_CATCHUP_WINDOW = timedelta(minutes=10)
+# Daily: the live spend counters (ml/spend.py) switch models off as budgets
+# run out, so this run only refreshes the learned order and the hold, and is
+# the backup that rewrites the row if one run is missed.
+CHAT_POLICY_EVERY = timedelta(days=1)
+# After a Temporal outage, only a run missed in the last day is made up, so
+# an outage ends in one run at most.
+CHAT_POLICY_CATCHUP_WINDOW = timedelta(days=1)
 # A run is one short activity (two minutes, three attempts); anything longer
 # is stuck, and the next run is due anyway.
 CHAT_POLICY_RUN_TIMEOUT = timedelta(minutes=5)
@@ -473,9 +476,9 @@ def chat_policy_schedule_enabled() -> bool:
 
 
 def chat_policy_schedule() -> Any:
-    """The ``chat-routing-policy`` Schedule as it should be: every ten
-    minutes, skip a run while the last one is still going, make up at most
-    ten minutes of missed runs, and start ChatRoutingPolicyWorkflow on the
+    """The ``chat-routing-policy`` Schedule as it should be: once a day,
+    skip a run while the last one is still going, make up at most one day
+    of missed runs, and start ChatRoutingPolicyWorkflow on the
     policy task queue with a five-minute execution timeout."""
     from temporalio.client import (
         Schedule,

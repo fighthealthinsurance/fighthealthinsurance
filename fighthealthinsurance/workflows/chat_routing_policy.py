@@ -27,9 +27,9 @@ with workflow.unsafe.imports_passed_through():
         chat_routing_policy as policy_activities,
     )
 
-# A few quick attempts, then give up: the schedule's next run, ten minutes
-# later, is the real retry, and a stale row only means chat routes by the
-# default until a fresh one lands.
+# A few quick attempts, then give up: the schedule's next run, a day later,
+# is the real retry. The last row stays fresh for 36 hours, so one missed run
+# changes nothing, and a stale row only means chat routes by the default.
 POLICY_RETRY = RetryPolicy(
     maximum_attempts=3,
     initial_interval=timedelta(seconds=10),

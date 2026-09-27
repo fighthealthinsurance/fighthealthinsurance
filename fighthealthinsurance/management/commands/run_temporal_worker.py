@@ -415,7 +415,7 @@ class Command(BaseCommand):
             if hosts_policy and policy_enabled:
                 # Its own Worker, so the policy run never waits for a slot
                 # behind a long appeal generation. One activity at a time is
-                # plenty for one run every ten minutes.
+                # plenty for one run a day.
                 policy_workflows: List[type] = workflow_registry.chat_policy_workflows()
                 policy_worker = Worker(
                     client,

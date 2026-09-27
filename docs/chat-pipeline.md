@@ -242,7 +242,7 @@ refresh runs at a time per process, and turns meanwhile use the cached
 row (the default before any row has been read). A refresh that fails
 keeps the cached row, which is still followed only while it is fresh.
 Rows come from the `chat-routing-policy` Temporal Schedule, which runs
-`ChatRoutingPolicyWorkflow` every ten minutes on its own queue in the
+`ChatRoutingPolicyWorkflow` once a day on its own queue in the
 appeal-worker pods while `TEMPORAL_ENABLED` and
 `TEMPORAL_CHAT_POLICY_ENABLED` are on (off by default; see
 `k8s/temporal/README.md`), or from `manage.py compute_chat_policy` (by hand

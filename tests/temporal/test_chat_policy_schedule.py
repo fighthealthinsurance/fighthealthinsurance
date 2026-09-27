@@ -39,15 +39,15 @@ from fighthealthinsurance.workflows.types import ChatRoutingPolicyInput
 
 
 @override_settings(TEMPORAL_CHAT_POLICY_TASK_QUEUE="q-policy")
-def test_the_schedule_runs_the_policy_workflow_every_ten_minutes():
+def test_the_schedule_runs_the_policy_workflow_once_a_day():
     schedule = chat_policy_schedule()
     (interval,) = schedule.spec.intervals
-    assert interval.every == timedelta(minutes=10)
+    assert interval.every == timedelta(days=1)
     assert not schedule.spec.calendars and not schedule.spec.cron_expressions
     # An outage never ends in a burst: overlapping runs are skipped and at
-    # most ten minutes of missed runs are made up.
+    # most one day of missed runs is made up.
     assert schedule.policy.overlap == ScheduleOverlapPolicy.SKIP
-    assert schedule.policy.catchup_window == timedelta(minutes=10)
+    assert schedule.policy.catchup_window == timedelta(days=1)
     assert schedule.state.paused is False
 
     action = schedule.action
