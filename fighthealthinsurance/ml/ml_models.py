@@ -2052,6 +2052,18 @@ class RemoteModel(RemoteModelLike):
         elif provider == spend.AZURE:
             spend.record(provider, use, 1)
 
+    def _spend_allows(self) -> bool:
+        """Whether this backend's provider may be asked for the current
+        use (ml/spend.py). Never raises."""
+        provider = self.SPEND_PROVIDER
+        if provider is None:
+            return True
+        try:
+            return spend.allows(provider, spend.current_use())
+        except Exception as e:
+            logger.debug(f"Spend check failed: {type(e).__name__}")
+            return True
+
     def _note_spend_refusal(self, status: int, body: str) -> None:
         """Pause this provider for the day when it refuses for credit or
         quota, so it is not asked again on every turn. Never raises."""
@@ -3538,6 +3550,18 @@ class RemoteOpenLike(RemoteModel):
             # as outcome=none; give that "none" its reason.
             record_ml_failure(
                 metric_model, "skipped_missing_model", leg=leg, endpoint=endpoint
+            )
+            return None
+        # A provider whose budget for this use is spent, or that refused for
+        # credit or quota today (ml/spend.py), is not asked: checked here,
+        # at the send, so a model chosen before the budget ran out (a retry
+        # reusing the turn's models, say) is stopped too.
+        if not raise_http_errors and not self._spend_allows():
+            logger.debug(f"{self}: not asking {model} -- budget spent or paused")
+            if transport_failures is not None:
+                transport_failures.append(f"{model} via {api_base}: budget spent")
+            record_ml_failure(
+                metric_model, "skipped_budget", leg=leg, endpoint=endpoint
             )
             return None
         # Same idea for repeated transport failures (refused/DNS/timeout):

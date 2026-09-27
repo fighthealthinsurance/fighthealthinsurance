@@ -90,9 +90,9 @@ class ChatOnlyModelsTest(SimpleTestCase):
             router = MLRouter()
         names = set(router.chat_outside_models_by_name)
         self.assertEqual(names, set(ml_models.DeepInfra.CHAT_MODELS))
-        general = {
-            getattr(m, "model", None) for m in router.all_models_by_cost
-        } | set(router.models_by_name)
+        general = {getattr(m, "model", None) for m in router.all_models_by_cost} | set(
+            router.models_by_name
+        )
         for name in ml_models.DeepInfra.CHAT_MODELS:
             self.assertNotIn(name, general)
 
@@ -157,3 +157,63 @@ class ProviderSpendTest(SimpleTestCase):
             model._note_spend_refusal(402, "")
         self.assertFalse(spend.allows(spend.DEEPINFRA, spend.CHAT))
         self.assertTrue(spend.allows(spend.DEEPINFRA, spend.OTHER))
+
+
+class SendGuardTest(SimpleTestCase):
+    """The budget is checked at the send: a model chosen before its budget
+    ran out (or before a refusal paused its provider) is not asked."""
+
+    def setUp(self):
+        spend._ledger.reset_for_tests()
+
+    def test_a_paused_provider_is_not_sent_anything(self):
+        import asyncio
+
+        from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
+
+        with patch.object(ml_models, "get_env_variable", return_value="test-key"):
+            model = ml_models.DeepInfra(model="zai-org/GLM-5.3-Flash")
+        spend.pause(spend.DEEPINFRA, spend.CHAT)
+        failures = []
+
+        def no_session(*args, **kwargs):
+            raise AssertionError("a request was built")
+
+        async def ask():
+            with ml_call_purpose("chat"):
+                return await model._RemoteOpenLike__infer(
+                    "system",
+                    "hello",
+                    None,
+                    None,
+                    0.7,
+                    "zai-org/GLM-5.3-Flash",
+                    transport_failures=failures,
+                )
+
+        with patch.object(ml_models.aiohttp, "ClientSession", no_session):
+            result = asyncio.run(ask())
+        self.assertIsNone(result)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("budget spent", failures[0])
+
+    def test_the_same_model_outside_chat_is_still_asked(self):
+        with patch.object(ml_models, "get_env_variable", return_value="test-key"):
+            model = ml_models.DeepInfra(model="zai-org/GLM-5.3-Flash")
+        spend.pause(spend.DEEPINFRA, spend.CHAT)
+        self.assertTrue(model._spend_allows())
+
+
+class AllowListTest(SimpleTestCase):
+    def test_chat_models_honour_the_remote_model_allow_list(self):
+        env = {
+            "DEEPINFRA_API": "test-key",
+            "ENABLED_REMOTE_MODELS": "zai-org/GLM-5.3-Flash",
+        }
+        with patch.object(ml_models, "get_env_variable", side_effect=env.get), patch(
+            "fighthealthinsurance.ml.ml_router.get_env_variable", side_effect=env.get
+        ):
+            router = MLRouter()
+        self.assertEqual(
+            set(router.chat_outside_models_by_name), {"zai-org/GLM-5.3-Flash"}
+        )

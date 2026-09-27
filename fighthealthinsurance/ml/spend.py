@@ -27,19 +27,20 @@ quota) is paused for the rest of the UTC day with :func:`pause`, on every
 pod, instead of being asked again on every turn.
 
 How it stays off the request path: :func:`allows` reads a per-process copy
-of this month's counters and never touches the database. A single daemon
-thread per process refreshes that copy (at most every REFRESH_SECONDS) and
-applies the increments :func:`record` queues, each on its own connection
-closed afterwards. The queue is bounded: past MAX_QUEUED increments the
-oldest are dropped with a warning rather than piling up behind a stalled
-database. Until the first refresh lands (or while the database cannot be
-read), TypeSafe is refused and outside chat models are allowed: losing a
-Jev check costs nothing, losing an answer costs the person.
+of this month's counters and never touches the database. :func:`record`
+adds to this process's pending total for that counter and day. A single
+daemon thread per process writes the pending totals (subtracting only what
+a write stored, so a failed write is retried, never lost) and refreshes the
+copy at most every REFRESH_SECONDS, each step on its own connection closed
+afterwards. Pending totals are one number per counter and day, so a stalled
+database cannot make them pile up. Until the first refresh lands (or while
+the database cannot be read), TypeSafe is refused and outside chat models
+are allowed: losing a Jev check costs nothing, losing an answer costs the
+person.
 """
 
 import calendar
 import datetime
-import queue
 import threading
 import time
 from dataclasses import dataclass, field
@@ -60,7 +61,7 @@ PAUSED = "paused"
 
 MICRO = 1_000_000
 REFRESH_SECONDS = 30.0
-MAX_QUEUED = 1000
+WRITE_EVERY_SECONDS = 1.0
 
 # TypeSafe bills input tokens only: $0.042 per million for jev-1.13.0
 # (docs.typesafe.ai/models, checked 2026-09-27). Output tokens are free.
@@ -176,12 +177,11 @@ class _Ledger:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._view = _Month()
+        # Spent here and not yet stored, per (counter, day).
         self._pending: Dict[Tuple[str, datetime.date], int] = {}
-        self._queue: "queue.Queue[Tuple[str, datetime.date, int]]" = queue.Queue(
-            maxsize=MAX_QUEUED
-        )
         self._refreshed_at = float("-inf")
         self._refresh_wanted = threading.Event()
+        self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._local_pauses: Dict[str, datetime.date] = {}
 
@@ -191,6 +191,7 @@ class _Ledger:
         self._ensure_worker()
         if time.monotonic() - self._refreshed_at >= REFRESH_SECONDS:
             self._refresh_wanted.set()
+            self._wake.set()
         with self._lock:
             view = _Month(
                 month=self._view.month,
@@ -215,11 +216,8 @@ class _Ledger:
         with self._lock:
             key = (name, day)
             self._pending[key] = self._pending.get(key, 0) + amount
-        try:
-            self._queue.put_nowait((name, day, amount))
-        except queue.Full:
-            logger.warning(f"Spend counter {name} not recorded: the queue is full")
         self._ensure_worker()
+        self._wake.set()
 
     def paused_locally(self, name: str) -> bool:
         with self._lock:
@@ -245,17 +243,15 @@ class _Ledger:
     def _run(self) -> None:
         self._refresh_wanted.set()
         while True:
+            self._wake.wait(timeout=WRITE_EVERY_SECONDS)
+            self._wake.clear()
             try:
-                item = self._queue.get(timeout=1.0)
-            except queue.Empty:
-                item = None
-            try:
-                if item is not None:
-                    self._write(*item)
+                self._write_pending()
                 if self._refresh_wanted.is_set():
                     self._refresh_wanted.clear()
                     self._refresh()
             except Exception as e:
+                # Pending totals stay pending and are written next time.
                 logger.warning(f"Spend ledger work failed: {type(e).__name__}")
             finally:
                 try:
@@ -264,8 +260,29 @@ class _Ledger:
                     connections.close_all()
                 except Exception:
                     pass
+            if self._refresh_wanted.is_set():
+                # A failed refresh is tried again, but not in a tight loop.
+                time.sleep(WRITE_EVERY_SECONDS)
 
-    def _write(self, name: str, day: datetime.date, amount: int) -> None:
+    def _write_pending(self) -> None:
+        """Store each pending total, subtracting only what was stored."""
+        with self._lock:
+            batch = list(self._pending.items())
+        for (name, day), amount in batch:
+            self._store(name, day, amount)
+            with self._lock:
+                key = (name, day)
+                left = self._pending.get(key, 0) - amount
+                if left > 0:
+                    self._pending[key] = left
+                else:
+                    self._pending.pop(key, None)
+                # Stored now: keep it in the view until the next refresh
+                # reads it back, so this process never under-counts.
+                if (day.year, day.month) == self._view.month:
+                    self._view.add(name, day, amount)
+
+    def _store(self, name: str, day: datetime.date, amount: int) -> None:
         from django.db import IntegrityError, transaction
         from django.db.models import F
 
@@ -283,17 +300,6 @@ class _Ledger:
                 SpendCounter.objects.filter(day=day, name=name).update(
                     amount=F("amount") + amount
                 )
-        with self._lock:
-            key = (name, day)
-            left = self._pending.get(key, 0) - amount
-            if left > 0:
-                self._pending[key] = left
-            else:
-                self._pending.pop(key, None)
-            # Now counted in the database: keep it in the view until the next
-            # refresh reads it back, so this process never under-counts.
-            if (day.year, day.month) == self._view.month:
-                self._view.add(name, day, amount)
 
     def _refresh(self) -> None:
         from fighthealthinsurance.models import SpendCounter
@@ -329,21 +335,11 @@ class _Ledger:
             self._view = _Month()
             self._pending.clear()
             self._local_pauses.clear()
-        while not self._queue.empty():
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                break
         self._refreshed_at = float("-inf")
 
     def flush_sync_for_tests(self) -> None:
-        """Apply queued increments and refresh on the calling thread."""
-        while True:
-            try:
-                item = self._queue.get_nowait()
-            except queue.Empty:
-                break
-            self._write(*item)
+        """Write the pending totals and refresh, on the calling thread."""
+        self._write_pending()
         self._refresh()
 
 

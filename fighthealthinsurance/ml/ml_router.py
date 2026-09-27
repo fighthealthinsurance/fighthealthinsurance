@@ -165,6 +165,9 @@ class MLRouter(object):
         """Instances of the models backends serve to chat only
         (``chat_models``), by name, outside every general pool. A backend
         without its key, or a model that fails to build, is skipped."""
+        # The same allow-list as every other remote model: a provider the
+        # operator left out never gets chat text.
+        enabled_models = self._enabled_model_names()
         for backend in sorted(candidate_model_backends, key=lambda c: c.__name__):
             try:
                 descriptions = backend.chat_models()
@@ -172,6 +175,16 @@ class MLRouter(object):
                 logger.warning(f"Skipping chat models of {backend}: {type(e).__name__}")
                 continue
             for m in descriptions:
+                if (
+                    enabled_models is not None
+                    and m.name not in enabled_models
+                    and m.internal_name not in enabled_models
+                ):
+                    logger.debug(
+                        f"MLRouter: skipping disabled chat model {m.name} "
+                        f"(not in ENABLED_REMOTE_MODELS)"
+                    )
+                    continue
                 try:
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
