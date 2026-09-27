@@ -32,7 +32,8 @@ _running: Dict[str, int] = {}
 
 def running(name: str) -> int:
     """How many threads started under ``name`` have not finished yet,
-    including any whose caller already stopped waiting."""
+    including any whose caller already stopped waiting, plus the places
+    reserved for later ones (reserve)."""
     with _lock:
         return _running.get(name, 0)
 
@@ -51,6 +52,40 @@ def _reserve(name: str, limit: Optional[int]) -> bool:
             return False
         _running[name] = now + 1
         return True
+
+
+class Slot:
+    """One place under a name's limit, reserved ahead of the work that will
+    use it, so work that must run later cannot then be refused.
+    run_isolated(slot=...) starts its thread in the place, and the thread
+    gives it back when it ends; release() gives back a place that was never
+    used. Either way it is given back once."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._spent = False
+        self._spent_lock = threading.Lock()
+
+    def _spend(self) -> bool:
+        with self._spent_lock:
+            if self._spent:
+                return False
+            self._spent = True
+            return True
+
+    def release(self) -> None:
+        """Give the place back, unless a thread was started in it."""
+        if self._spend():
+            _count(self.name, -1)
+
+
+def reserve(name: str, limit: int) -> Optional[Slot]:
+    """A place under ``name`` for a thread to start later, counted against
+    ``limit`` like a running thread, or None when ``limit`` places are
+    already taken."""
+    if not _reserve(name, limit):
+        return None
+    return Slot(name)
 
 
 def _count(name: str, step: int) -> None:
@@ -100,6 +135,7 @@ async def run_isolated(
     timeout: float,
     name: str,
     limit: Optional[int] = None,
+    slot: Optional[Slot] = None,
 ) -> T:
     """Run the sync ``fn(*args)`` on a thread of its own, as described
     above, and return its result.
@@ -109,7 +145,8 @@ async def run_isolated(
     same way; the thread carries on until its statements finish or time out.
     With ``limit``, raises Busy without starting a thread while ``limit``
     threads under ``name`` are still running, those whose callers stopped
-    waiting included.
+    waiting included. With ``slot`` (from reserve, for the same name), the
+    thread starts in that reserved place instead, and is never refused.
     """
     loop = asyncio.get_running_loop()
     done: "asyncio.Future[T]" = loop.create_future()
@@ -139,7 +176,10 @@ async def run_isolated(
             # The event loop closed while the work ran: nobody is waiting.
             pass
 
-    if not _reserve(name, limit):
+    if slot is not None:
+        if slot.name != name or not slot._spend():
+            raise ValueError("slot already used, or reserved for another name")
+    elif not _reserve(name, limit):
         raise Busy()
     try:
         threading.Thread(target=work, name=name, daemon=True).start()
