@@ -53,6 +53,7 @@ from fighthealthinsurance.chat.turn_record import (
     STATUS_UNSCORED,
 )
 from fighthealthinsurance.utils import (
+    STAGE_AFTER_CHECK,
     STAGE_AFTER_DELAY,
     STAGE_EARLY,
     STAGE_SKIPPED,
@@ -76,7 +77,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
-from fighthealthinsurance.ml import letter_quality, model_query
+from fighthealthinsurance.ml import chat_gate, letter_quality, model_query
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_CHOICES,
     CONTEXT_LEVEL_TEMPLATE,
@@ -1501,6 +1502,9 @@ CHAT_TURN_FIELDS = (
     "alternate_cross_model",
     "preferred",
     "external_start",
+    "gate_used",
+    "gate_outcome",
+    "gate_demoted_delivered",
 )
 
 
@@ -1529,6 +1533,17 @@ class _ChatTally:
         # How the primary pass started the outside models, per
         # ChatTurn.external_start value.
         self.external_starts: Counter = Counter()
+        # The live Jev check on our reply: turns it held the outside models
+        # for, by outcome; turns whose outside calls it kept from being sent;
+        # and, of the OK turns where the check failed, how many delivered an
+        # outside model's answer, and how many still delivered our demoted
+        # reply because nothing else usable arrived.
+        self.gate_turns = 0
+        self.gate_outcomes: Counter = Counter()
+        self.gate_saved = 0
+        self.gate_fail_ok = 0
+        self.gate_fail_external_wins = 0
+        self.gate_fail_demoted_delivered = 0
         self.same_model_pairs = 0
         self.same_model_picks: Counter = Counter()
         self.models: Dict[str, Dict[str, Any]] = {}
@@ -1571,9 +1586,23 @@ class _ChatTally:
             cross_model,
             preferred,
             external_start,
+            gate_used,
+            gate_outcome,
+            gate_demoted_delivered,
         ) = row
         self.turns += 1
         self.outcomes[outcome] += 1
+        if gate_used:
+            self.gate_turns += 1
+            self.gate_outcomes[gate_outcome] += 1
+            if gate_outcome == chat_gate.PASS and external_start == STAGE_SKIPPED:
+                self.gate_saved += 1
+            if gate_outcome == chat_gate.FAIL and outcome == ChatTurn.Outcome.OK:
+                self.gate_fail_ok += 1
+                if winner_external is True:
+                    self.gate_fail_external_wins += 1
+                if gate_demoted_delivered:
+                    self.gate_fail_demoted_delivered += 1
         if use_external:
             self.external_allowed += 1
         if retry_ran:
@@ -1689,11 +1718,31 @@ class _ChatTally:
                 "retry_used": self.retry_used,
                 "externals_after_delay": self.external_starts[STAGE_AFTER_DELAY],
                 "externals_early": self.external_starts[STAGE_EARLY],
+                "externals_after_check": self.external_starts[STAGE_AFTER_CHECK],
                 "externals_skipped": self.external_starts[STAGE_SKIPPED],
                 "externals_held_back": sum(
                     self.external_starts[s]
-                    for s in (STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)
+                    for s in (
+                        STAGE_AFTER_DELAY,
+                        STAGE_EARLY,
+                        STAGE_AFTER_CHECK,
+                        STAGE_SKIPPED,
+                    )
                 ),
+                "gate_turns": self.gate_turns,
+                "gate_pass": self.gate_outcomes[chat_gate.PASS],
+                "gate_fail": self.gate_outcomes[chat_gate.FAIL],
+                "gate_error": self.gate_outcomes[chat_gate.ERROR],
+                "gate_timeout": self.gate_outcomes[chat_gate.TIMEOUT],
+                "gate_skipped": self.gate_outcomes[chat_gate.SKIPPED],
+                "gate_saved": self.gate_saved,
+                "gate_saved_share": _percent(self.gate_saved, self.gate_turns),
+                "gate_fail_ok": self.gate_fail_ok,
+                "gate_fail_external_wins": self.gate_fail_external_wins,
+                "gate_fail_external_win_share": _percent(
+                    self.gate_fail_external_wins, self.gate_fail_ok
+                ),
+                "gate_fail_demoted_delivered": self.gate_fail_demoted_delivered,
                 "alternates": self.alternates,
                 "cross_alternates": self.cross_alternates,
                 "picks": sum(self.picks.values()),
@@ -2031,7 +2080,46 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["windows"] = windows_ctx
         ctx["duration_cap"] = CALL_DURATION_SAMPLE_CAP
         ctx["chat_policy"] = self._chat_policy_panel()
+        ctx["reply_check"] = self._reply_check_state()
         return ctx
+
+    @staticmethod
+    def _reply_check_state() -> Dict[str, Any]:
+        """Whether the live Jev check on chat replies is on now, its
+        thresholds, and the last outcome it recorded on its
+        ExternalServiceHealth row (a status or class name, never text)."""
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        out: Dict[str, Any] = {
+            "on": chat_gate.enabled(),
+            "max_wait_seconds": chat_gate.max_wait_seconds(),
+            "timeout_seconds": chat_gate.timeout_seconds(),
+            "min_answers": chat_gate.min_answers(),
+            "max_problem": chat_gate.max_problem(),
+            "demote_failed": chat_gate.demote_failed(),
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_failure": "",
+            "last_failure_hint": "",
+        }
+        try:
+            health = ExternalServiceHealth.objects.filter(
+                service=chat_gate.SERVICE
+            ).first()
+        except Exception as e:
+            logger.warning(f"Chat reply check health read failed: {type(e).__name__}")
+            return out
+        if health is not None:
+            out["last_success_at"] = health.last_success_at
+            out["last_failure_at"] = health.last_failure_at
+            out["last_failure"] = health.last_failure
+            out["last_failure_hint"] = (
+                # The check has its own, much shorter, timeout.
+                "no answer within FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS"
+                if health.last_failure == "timeout"
+                else AdminStatusView._scoring_failure_hint(health.last_failure)
+            )
+        return out
 
     @staticmethod
     def _chat_policy_panel() -> Dict[str, Any]:

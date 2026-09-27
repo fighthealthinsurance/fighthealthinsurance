@@ -52,7 +52,7 @@
     <li><span class="legend-key" style="background:#1f77b4;"></span><strong>ProposedAppeal (denial flow)</strong>: real patients choosing among the drafts written for their own case.</li>
     <li><span class="legend-key" style="background:#ff7f0e;"></span><strong>Chooser - Appeal</strong> and <span class="legend-key" style="background:#2ca02c;"></span><strong>Chooser - Chat</strong>: anonymous votes on synthetic cases.</li>
     <li><strong>Appeal generation calls</strong>: each model call made while writing appeals on live runs, by outcome (ModelCallAttempt). Shown for the last 1, 7 and 30 days, not All Time.</li>
-    <li><strong>Live chat</strong>: every chat reply races several model calls (ChatTurn). A model's win rate there is wins / turns that asked it, and each side-by-side pick counts for the model whose answer was picked. Shown for the last 1, 7 and 30 days, not All Time, and never in the chart. The newest <a href="#chat-routing-policy">chat routing policy</a> is in the All Time section.</li>
+    <li><strong>Live chat</strong>: every chat reply races several model calls (ChatTurn). A model's win rate there is wins / turns that asked it, and each side-by-side pick counts for the model whose answer was picked. Shown for the last 1, 7 and 30 days, not All Time, and never in the chart. The newest <a href="#chat-routing-policy">chat routing policy</a> and the state of the <a href="#chat-reply-check">chat reply check</a> are in the All Time section.</li>
     <li><strong>Win rate</strong> = chosen / presented. For the denial flow, presented counts each draft once per pick it was on screen for: the drafts the browser reported at the pick or, for picks recorded before that report, every draft stored before the pick. Drafts folded behind &ldquo;Show more&rdquo; or made on a later visit were never in the running. For the chooser, it is votes won / votes the model was shown in. A rate with no denominator shows as a dash, never 0%.</li>
     <li><strong>Windows</strong> are rolling: last 24 hours / 7 days / 30 days, anchored on the pick or vote time. All Time additionally includes rows predating timestamp tracking.</li>
     <li><strong>Buckets that are not models</strong>, with no presented counts by design:
@@ -125,6 +125,7 @@
     {% else %}
     <p class="note">Not shown for All Time, for the same reason as the call table: turn records only exist since turn recording began and are deleted with their chat. See the shorter windows below.</p>
     {% include "model_usage_policy_partial.html" with panel=chat_policy %}
+    {% include "model_usage_reply_check_partial.html" with check=reply_check %}
     {% endif %}
   </div>
   {% endfor %}

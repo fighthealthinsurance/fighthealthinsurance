@@ -102,6 +102,26 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return value
 
 
+def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    """A float from the environment within [minimum, maximum], or the default.
+
+    Read at import, like _env_int: a stray unit suffix ("8s"), an empty
+    value, "nan" or a value outside the plausible range falls back to the
+    default rather than crash-looping every process over an optional
+    setting.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return default
+    if not minimum <= value <= maximum:
+        return default
+    return value
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -207,6 +227,38 @@ class Base(Configuration):
     # Optional soft daily call caps for the chat fan-out, as a JSON object of
     # {registry name: calls per UTC day}. Empty means no caps.
     FHI_CHAT_DAILY_CALL_CAPS = os.getenv("FHI_CHAT_DAILY_CALL_CAPS", "")
+    # Live check on our own chat reply before the paid outside models are
+    # asked (chat/reply_gate.py, ml/chat_gate.py). It sends the person's
+    # latest message and our reply to TypeSafe, so it runs only when the
+    # person allowed outside models, the TypeSafe key is set and this switch
+    # is on. Off by default. Separate from FHI_CHAT_POLICY_APPLY.
+    FHI_CHAT_JEV_GATE_ENABLED = _env_flag("FHI_CHAT_JEV_GATE_ENABLED")
+    # How long the outside models are held back for the check: until our
+    # first usable reply is judged or this passes, whichever comes first
+    # (the routing policy's delay, when that is longer). Up to the fan-out's
+    # 30 second window.
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = _env_float(
+        "FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS", 8.0, minimum=0.5, maximum=30.0
+    )
+    # How long one check may take. Past it, the outside models start.
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = _env_float(
+        "FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS", 1.5, minimum=0.2, maximum=10.0
+    )
+    # The decision rule: our reply passes when Jev's "responds to the
+    # message" answer is at least MIN_ANSWERS and its "states a coverage or
+    # eligibility verdict" and "asks for what was already given" answers
+    # are each below MAX_PROBLEM (all probabilities from 0 to 1).
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = _env_float(
+        "FHI_CHAT_JEV_GATE_MIN_ANSWERS", 0.7, minimum=0.0, maximum=1.0
+    )
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = _env_float(
+        "FHI_CHAT_JEV_GATE_MAX_PROBLEM", 0.3, minimum=0.0, maximum=1.0
+    )
+    # When the check fails our reply, rank that reply just below the outside
+    # models' answers the failure started, so one of them wins instead of our
+    # models' higher base score keeping the failed reply in front. It is
+    # still delivered when nothing else usable arrives. On by default.
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = _env_flag("FHI_CHAT_JEV_GATE_DEMOTE_FAILED", "1")
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
@@ -910,6 +962,15 @@ class Test(_TestBase):
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
     FHI_CHAT_DAILY_CALL_CAPS = ""
+    # The live check on chat replies sends chat text to TypeSafe: hard-off
+    # under test, with its knobs pinned to their defaults. Tests opt in with
+    # override_settings and stub the transport.
+    FHI_CHAT_JEV_GATE_ENABLED = False
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = 8.0
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = 1.5
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
 
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
     # timeout would poll until it expires on every generate_appeals test.
@@ -970,6 +1031,15 @@ class TestSync(_TestBase):
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
     FHI_CHAT_DAILY_CALL_CAPS = ""
+    # The live check on chat replies sends chat text to TypeSafe: hard-off
+    # under test, with its knobs pinned to their defaults. Tests opt in with
+    # override_settings and stub the transport.
+    FHI_CHAT_JEV_GATE_ENABLED = False
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = 8.0
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = 1.5
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
@@ -1013,6 +1083,15 @@ class TestActor(_TestBase):
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
     FHI_CHAT_DAILY_CALL_CAPS = ""
+    # The live check on chat replies sends chat text to TypeSafe: hard-off
+    # under test, with its knobs pinned to their defaults. Tests opt in with
+    # override_settings and stub the transport.
+    FHI_CHAT_JEV_GATE_ENABLED = False
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = 8.0
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = 1.5
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).

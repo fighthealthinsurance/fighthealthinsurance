@@ -8,6 +8,8 @@ import warnings
 from typing import Awaitable, TypeVar, Any
 
 from fighthealthinsurance.utils import (
+    DEMOTION_MARGIN,
+    STAGE_AFTER_CHECK,
     STAGE_AFTER_DELAY,
     STAGE_EARLY,
     STAGE_IMMEDIATE,
@@ -1045,3 +1047,545 @@ class TestStagedStart:
         assert "theirs" not in probe.started
         assert stage.outcome == STAGE_SKIPPED
         assert stage.skipped == [theirs]
+
+
+# --- Checked staged start: the chat reply check ("cascade") -----------------
+
+
+class _Check:
+    """A race check that records what it was asked and answers as told."""
+
+    def __init__(self, answer=True, delay=0.0, fail=False):
+        self.answer = answer
+        self.delay = delay
+        self.fail = fail
+        self.asked = []
+        self.cancelled = False
+        self.finished = False
+
+    async def __call__(self, result, task):
+        self.asked.append((result, task))
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        self.finished = True
+        if self.fail:
+            raise RuntimeError("check transport down")
+        return self.answer
+
+
+class TestCheckedStagedStart:
+    @pytest.mark.asyncio
+    async def test_a_passing_check_means_the_held_back_tasks_never_start(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.02)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check(answer=True, delay=0.05)
+        stage = StagedStart()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = await best_two_within_timelimit(
+                [ours, theirs],
+                _scores({}),
+                timeout=2.0,
+                extended_timeout=0.0,
+                deferred=[theirs],
+                defer_seconds=1.0,
+                stage=stage,
+                check=check,
+            )
+            assert inspect.getcoroutinestate(theirs) == inspect.CORO_CLOSED
+            del theirs
+            stage.skipped.clear()
+            gc.collect()
+
+        assert result.best == "ours-answer"
+        assert check.asked == [("ours-answer", ours)]
+        assert "theirs" not in probe.started
+        assert stage.outcome == STAGE_SKIPPED
+        assert stage.check_passed is True
+        assert stage.started_after is None
+        assert loop.time() - started < 0.5
+        assert _never_awaited_warnings(caught) == []
+
+    @pytest.mark.asyncio
+    async def test_a_failing_check_starts_the_held_back_tasks_at_once(self):
+        probe = _Probe()
+        loop = asyncio.get_running_loop()
+        race_start = loop.time()
+        ours = probe.call("ours", "ours-answer", 0.02)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check(answer=False, delay=0.03)
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [ours, theirs],
+            _scores({"ours-answer": 1.0, "their-answer": 5.0}),
+            timeout=5.0,
+            extended_timeout=0.0,
+            deferred=[theirs],
+            defer_seconds=3.0,
+            stage=stage,
+            check=check,
+        )
+        assert stage.outcome == STAGE_AFTER_CHECK
+        assert stage.check_passed is False
+        # Right after the check, not after the delay.
+        assert probe.started["theirs"] - race_start < 0.5
+        assert stage.started_after < 0.5
+        # The usual scoring picks among everything.
+        assert result.best == "their-answer"
+        assert result.runner_up == "ours-answer"
+
+    @pytest.mark.asyncio
+    async def test_a_check_that_raises_counts_as_not_passed(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [ours, theirs],
+            _scores({"ours-answer": 5.0, "their-answer": 1.0}),
+            timeout=5.0,
+            extended_timeout=0.0,
+            deferred=[theirs],
+            defer_seconds=3.0,
+            stage=stage,
+            check=_Check(fail=True),
+        )
+        assert stage.outcome == STAGE_AFTER_CHECK
+        assert stage.check_passed is False
+        assert "theirs" in probe.started
+        assert result.best == "ours-answer"
+        assert result.runner_up == "their-answer"
+
+    @pytest.mark.asyncio
+    async def test_a_check_that_outlasts_the_delay_is_cut_off(self):
+        probe = _Probe()
+        loop = asyncio.get_running_loop()
+        race_start = loop.time()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check(answer=True, delay=10.0)
+        stage = StagedStart()
+        await best_two_within_timelimit(
+            [ours, theirs],
+            _scores({}),
+            timeout=5.0,
+            extended_timeout=0.0,
+            deferred=[theirs],
+            defer_seconds=0.2,
+            stage=stage,
+            check=check,
+        )
+        await asyncio.sleep(0)
+        assert stage.outcome == STAGE_AFTER_DELAY
+        assert stage.check_passed is None
+        assert 0.15 <= probe.started["theirs"] - race_start < 0.5
+        assert check.cancelled
+
+    @pytest.mark.asyncio
+    async def test_a_cut_off_check_stops_when_the_delay_ends_not_with_the_race(
+        self,
+    ):
+        """Once the held-back tasks have started, the check's answer can no
+        longer change anything, so it must not run on (and report) while the
+        rest of the race finishes."""
+        probe = _Probe()
+        quick = probe.call("quick", "ours-answer", 0.01)
+        slow = probe.call("slow", "ours-late", 0.6)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check(answer=True, delay=0.3)
+        stage = StagedStart()
+        await best_two_within_timelimit(
+            [quick, slow, theirs],
+            _scores({}),
+            timeout=5.0,
+            extended_timeout=0.0,
+            deferred=[theirs],
+            defer_seconds=0.1,
+            stage=stage,
+            check=check,
+        )
+        assert stage.outcome == STAGE_AFTER_DELAY
+        assert check.cancelled
+        assert not check.finished
+
+    @pytest.mark.asyncio
+    async def test_the_check_is_never_asked_without_a_usable_result_of_ours(self):
+        probe = _Probe()
+        failing = probe.call("failing", None, 0.01, fail=True)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check()
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [failing, theirs],
+            _scores({}),
+            timeout=5.0,
+            deferred=[theirs],
+            defer_seconds=3.0,
+            stage=stage,
+            check=check,
+        )
+        assert check.asked == []
+        assert stage.outcome == STAGE_EARLY
+        assert stage.check_passed is None
+        assert result.best == "their-answer"
+
+    @pytest.mark.asyncio
+    async def test_only_the_first_usable_result_is_checked(self):
+        probe = _Probe()
+        first = probe.call("first", "answer-a", 0.01)
+        second = probe.call("second", "answer-b", 0.03)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check(answer=True, delay=0.08)
+        stage = StagedStart()
+        await best_two_within_timelimit(
+            [first, second, theirs],
+            _scores({"answer-a": 1.0, "answer-b": 2.0}),
+            timeout=5.0,
+            extended_timeout=0.0,
+            deferred=[theirs],
+            defer_seconds=3.0,
+            stage=stage,
+            check=check,
+        )
+        assert check.asked == [("answer-a", first)]
+        assert stage.outcome == STAGE_SKIPPED
+
+    @pytest.mark.asyncio
+    async def test_without_held_back_tasks_the_check_is_never_asked(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check()
+        stage = StagedStart()
+        await best_two_within_timelimit(
+            [ours, theirs],
+            _scores({}),
+            timeout=2.0,
+            deferred=[theirs],
+            defer_seconds=0.0,
+            stage=stage,
+            check=check,
+        )
+        assert check.asked == []
+        assert stage.outcome == STAGE_IMMEDIATE
+
+    @pytest.mark.asyncio
+    async def test_a_checked_race_fits_inside_the_same_windows(self):
+        """A check that never answers cannot make the race run past its
+        windows."""
+        loop = asyncio.get_running_loop()
+
+        async def quick():
+            await asyncio.sleep(0.01)
+            return "ours-answer"
+
+        async def hangs():
+            await asyncio.sleep(10)
+            return "never"
+
+        calls = [quick(), hangs(), hangs()]
+        check = _Check(answer=True, delay=10.0)
+        stage = StagedStart()
+        started = loop.time()
+        result = await best_two_within_timelimit(
+            calls,
+            _scores({}),
+            timeout=0.3,
+            extended_timeout=0.2,
+            deferred=[calls[2]],
+            defer_seconds=5.0,
+            stage=stage,
+            check=check,
+        )
+        elapsed = loop.time() - started
+        assert result.best == "ours-answer"
+        assert stage.outcome == STAGE_AFTER_DELAY
+        assert elapsed < 0.3 + 0.2 + 0.15
+
+    @pytest.mark.asyncio
+    async def test_cancelling_the_race_during_the_check_cancels_the_check(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        check = _Check(delay=30.0)
+        stage = StagedStart()
+        outer = asyncio.create_task(
+            best_two_within_timelimit(
+                [ours, theirs],
+                _scores({}),
+                timeout=10.0,
+                deferred=[theirs],
+                defer_seconds=5.0,
+                stage=stage,
+                check=check,
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert check.asked
+        outer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+        await asyncio.sleep(0)
+        assert check.cancelled
+        assert "theirs" not in probe.started
+        assert inspect.getcoroutinestate(theirs) == inspect.CORO_CLOSED
+
+
+# --- Demotion after a failed check ------------------------------------------
+
+
+class TestFailedCheckDemotion:
+    """A result whose check did not pass ranks just below the held-back
+    results it started, so one of them can win against a higher base score.
+    It stays usable, so it is still returned when nothing else is."""
+
+    async def _race(self, calls, scores, deferred, check, *, demote=True, **kwargs):
+        stage = StagedStart()
+        asked = []
+
+        def demote_failed():
+            asked.append(True)
+            return demote
+
+        result = await best_two_within_timelimit(
+            calls,
+            _scores(scores),
+            timeout=kwargs.pop("timeout", 5.0),
+            extended_timeout=0.0,
+            deferred=deferred,
+            defer_seconds=kwargs.pop("defer_seconds", 3.0),
+            stage=stage,
+            check=check,
+            demote_failed=demote_failed,
+            **kwargs,
+        )
+        return result, stage, asked
+
+    @pytest.mark.asyncio
+    async def test_a_held_back_result_beats_the_failed_result(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.02)
+        result, stage, asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 8000.0, "their-answer": 1900.0},
+            [theirs],
+            _Check(answer=False),
+            held_base=1900.0,
+        )
+        assert asked == [True]
+        assert stage.demoted is True
+        assert stage.checked is ours
+        assert result.best == "their-answer"
+        assert result.best_score == 1900.0
+        assert stage.best_demoted is False
+        # Never the runner-up either.
+        assert result.runner_up is None
+
+    @pytest.mark.asyncio
+    async def test_the_failed_result_is_still_returned_when_nothing_else_is(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", None, 0.01, fail=True)
+        result, stage, _asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 8000.0},
+            [theirs],
+            _Check(answer=False),
+            held_base=1900.0,
+        )
+        assert result.best == "ours-answer"
+        # Ranked below the held-back base while nothing held back arrived.
+        assert result.best_score == 1900.0 - DEMOTION_MARGIN
+        assert stage.demoted is True
+        assert stage.best_demoted is True
+
+    @pytest.mark.asyncio
+    async def test_the_cap_is_the_best_held_back_result_that_arrived(self):
+        """Once a held-back result has arrived, its own score is the cap,
+        even below the held-back base."""
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        low = probe.call("low", "low-answer", 0.02)
+        high = probe.call("high", "high-answer", 0.03)
+        result, stage, _asked = await self._race(
+            [ours, low, high],
+            {"ours-answer": 8000.0, "low-answer": 1500.0, "high-answer": 1700.0},
+            [low, high],
+            _Check(answer=False),
+            held_base=1900.0,
+        )
+        assert result.best == "high-answer"
+        assert result.runner_up == "low-answer"
+        assert stage.demoted is True
+
+    @pytest.mark.asyncio
+    async def test_a_failed_result_scoring_below_the_cap_keeps_its_score(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", None, 0.01, fail=True)
+        result, _stage, _asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 700.0},
+            [theirs],
+            _Check(answer=False),
+            held_base=1900.0,
+        )
+        assert result.best_score == 700.0
+
+    @pytest.mark.asyncio
+    async def test_other_results_of_ours_keep_their_scores(self):
+        probe = _Probe()
+        first = probe.call("first", "ours-answer", 0.01)
+        other = probe.call("other", "ours-other", 0.1)
+        theirs = probe.call("theirs", "their-answer", 0.02)
+        result, stage, _asked = await self._race(
+            [first, other, theirs],
+            {"ours-answer": 8000.0, "ours-other": 7000.0, "their-answer": 1900.0},
+            [theirs],
+            _Check(answer=False),
+            held_base=1900.0,
+        )
+        assert stage.checked is first
+        assert result.best == "ours-other"
+        assert result.best_score == 7000.0
+        assert result.runner_up == "their-answer"
+
+    @pytest.mark.asyncio
+    async def test_a_demoted_result_is_never_the_runner_up(self):
+        """Listed after a better result of ours, the demoted one still does
+        not take the runner-up slot, so it is never offered beside it."""
+        probe = _Probe()
+        other = probe.call("other", "ours-other", 0.1)
+        first = probe.call("first", "ours-answer", 0.01)
+        theirs = probe.call("theirs", None, 0.01, fail=True)
+        result, stage, _asked = await self._race(
+            [other, first, theirs],
+            {"ours-answer": 8000.0, "ours-other": 7000.0},
+            [theirs],
+            _Check(answer=False),
+            held_base=1900.0,
+        )
+        assert stage.checked is first
+        assert result.best == "ours-other"
+        assert result.runner_up is None
+
+    @pytest.mark.asyncio
+    async def test_a_result_equal_to_the_failed_one_is_demoted_too(self):
+        """The router can list one backend twice: the same reply from its
+        other call is the same failed reply."""
+        probe = _Probe()
+        first = probe.call("first", "ours-answer", 0.01)
+        twin = probe.call("twin", "ours-answer", 0.1)
+        theirs = probe.call("theirs", "their-answer", 0.02)
+        result, _stage, _asked = await self._race(
+            [first, twin, theirs],
+            {"ours-answer": 8000.0, "their-answer": 1900.0},
+            [theirs],
+            _Check(answer=False),
+            held_base=1900.0,
+        )
+        assert result.best == "their-answer"
+        assert result.runner_up is None
+
+    @pytest.mark.asyncio
+    async def test_no_demotion_when_the_rule_says_no(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.02)
+        result, stage, asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 8000.0, "their-answer": 1900.0},
+            [theirs],
+            _Check(answer=False),
+            demote=False,
+            held_base=1900.0,
+        )
+        assert asked == [True]
+        assert stage.demoted is False
+        assert result.best == "ours-answer"
+        assert result.best_score == 8000.0
+        assert result.runner_up == "their-answer"
+
+    @pytest.mark.asyncio
+    async def test_a_rule_that_raises_means_no_demotion(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.02)
+
+        def broken():
+            raise RuntimeError("rule broke")
+
+        stage = StagedStart()
+        result = await best_two_within_timelimit(
+            [ours, theirs],
+            _scores({"ours-answer": 8000.0, "their-answer": 1900.0}),
+            timeout=5.0,
+            extended_timeout=0.0,
+            deferred=[theirs],
+            defer_seconds=3.0,
+            stage=stage,
+            check=_Check(answer=False),
+            demote_failed=broken,
+            held_base=1900.0,
+        )
+        assert stage.demoted is False
+        assert result.best == "ours-answer"
+
+    @pytest.mark.asyncio
+    async def test_a_passing_check_never_asks_the_rule(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.02)
+        result, stage, asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 8000.0},
+            [theirs],
+            _Check(answer=True),
+            held_base=1900.0,
+        )
+        assert asked == []
+        assert stage.demoted is False
+        assert result.best == "ours-answer"
+        assert result.best_score == 8000.0
+
+    @pytest.mark.asyncio
+    async def test_a_check_cut_off_by_the_delay_never_asks_the_rule(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.01)
+        result, stage, asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 8000.0, "their-answer": 1900.0},
+            [theirs],
+            _Check(answer=False, delay=10.0),
+            defer_seconds=0.1,
+            held_base=1900.0,
+        )
+        assert stage.outcome == STAGE_AFTER_DELAY
+        assert asked == []
+        assert stage.demoted is False
+        assert result.best == "ours-answer"
+
+    @pytest.mark.asyncio
+    async def test_without_a_held_base_the_score_stands_until_one_arrives(self):
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", None, 0.01, fail=True)
+        result, stage, _asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 8000.0},
+            [theirs],
+            _Check(answer=False),
+        )
+        assert stage.demoted is True
+        assert result.best == "ours-answer"
+        assert result.best_score == 8000.0
+        assert stage.best_demoted is True

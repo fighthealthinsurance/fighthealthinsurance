@@ -1,0 +1,19 @@
+{% comment %}
+The live Jev check on chat replies, from
+ModelUsageDashboardView._reply_check_state: whether it is on now, its
+thresholds, and the last outcome it recorded. Shown once, in the All Time
+section; each window's Live chat summary has the counts.
+{% endcomment %}
+<h3 id="chat-reply-check">Chat reply check <span class="source-label">(Jev, before the outside models)</span></h3>
+<p class="window-totals">
+  {% if check.on %}<strong>On</strong>: in chats that allow outside models, the outside models wait up to {{ check.max_wait_seconds|floatformat:1 }} s while Jev checks our first usable reply, and are asked only when it does not pass.
+  {% else %}<strong>Off</strong>: FHI_CHAT_JEV_GATE_ENABLED is off or the TypeSafe key is not set, so the outside models are asked as the routing policy says.
+  {% endif %}
+</p>
+<p class="note">
+  A reply passes when Jev's &ldquo;responds to the message&rdquo; answer is at least {{ check.min_answers|floatformat:2 }} and its &ldquo;states a coverage or eligibility verdict&rdquo; and &ldquo;asks for what the message already gives&rdquo; answers are each below {{ check.max_problem|floatformat:2 }}.
+  A check may take up to {{ check.timeout_seconds|floatformat:1 }} s; an error or a timeout starts the outside models.
+  {% if check.demote_failed %}A reply that fails the check ranks just below the outside models' answers, so it is delivered only when nothing else usable arrives (FHI_CHAT_JEV_GATE_DEMOTE_FAILED).{% else %}A reply that fails the check keeps its score, so our models' higher base score usually keeps it in front (FHI_CHAT_JEV_GATE_DEMOTE_FAILED is off).{% endif %}
+  Last answer: {% if check.last_success_at %}{{ check.last_success_at|date:"Y-m-d H:i T" }}{% else %}none recorded{% endif %}.
+  Last failure: {% if check.last_failure_at %}{{ check.last_failure_at|date:"Y-m-d H:i T" }} ({{ check.last_failure }}{% if check.last_failure_hint %}: {{ check.last_failure_hint }}{% endif %}){% else %}none recorded{% endif %}.
+</p>

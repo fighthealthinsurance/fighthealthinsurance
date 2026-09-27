@@ -49,6 +49,7 @@ from fighthealthinsurance.chat.message_preprocessor import (
 )
 from fighthealthinsurance.chat.document_processor import process_uploaded_document
 from fighthealthinsurance.chat.document_search import get_document_context_for_message
+from fighthealthinsurance.chat.reply_gate import ReplyGate, gate_for_turn
 from fighthealthinsurance.chat.retry_handler import (
     retry_llm_with_fallback,
     should_retry_response,
@@ -231,6 +232,10 @@ class ChatInterface:
         # own models answer, from the chat routing policy (0 asks them all
         # together). Set per turn once the backends are known.
         self._external_delay_seconds: float = 0.0
+        # The live Jev check on the turn's first usable reply of ours
+        # (chat/reply_gate.py), or None when it is off for the turn. Set per
+        # turn just before the models are asked.
+        self._reply_gate: Optional[ReplyGate] = None
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -318,9 +323,13 @@ class ChatInterface:
         await self.send_json_message_func(payload)
 
     async def _write_turn_record(self, outcome: str) -> None:
-        """Write the turn's ChatTurn row, once. Never raises."""
+        """Write the turn's ChatTurn row, once, then the reply check's
+        health record when the turn ran a check. Never raises."""
         turn, self._turn = self._turn, None
+        gate, self._reply_gate = self._reply_gate, None
         await arecord_chat_turn(self.chat.id, turn, outcome)
+        if gate is not None:
+            await gate.anote_health()
 
     def _count_turn(self, outcome: str) -> None:
         """Count the turn in fhi_chat_turns_total and note the outcome on its
@@ -543,7 +552,51 @@ class ChatInterface:
         external_delay = self._external_delay_seconds
         stage: Optional[StagedStart] = None
         race_staging: Dict[str, Any] = {}
-        if external_delay > 0 and 0 < len(external_calls) < len(calls):
+        # The live Jev check (chat/reply_gate.py), on the person's own
+        # message only: the outside calls are held back until our first
+        # usable reply is judged or the hold runs out, and never sent when
+        # it passes. The hold is the check's own wait, or the policy's delay
+        # when that is longer, so it does not depend on the policy.
+        gate = (
+            self._reply_gate
+            if depth == 0 and turn is not None and 0 < len(external_calls) < len(calls)
+            else None
+        )
+        if gate is not None:
+            reply_gate: ReplyGate = gate
+            reply_gate.used = True
+            external_delay = max(external_delay, reply_gate.max_wait_seconds)
+
+            async def check_ours(
+                result: Tuple[Optional[str], Optional[str]], call: Awaitable
+            ) -> bool:
+                # What the person would be shown: the reply as cleaned for
+                # delivery.
+                text = result[0] if result else None
+                return await reply_gate.judge(
+                    scoring_message,
+                    _clean_reply(text) if text else None,
+                    call_labels.get(call),
+                )
+
+            stage = StagedStart()
+            race_staging = {
+                "deferred": external_calls,
+                "defer_seconds": external_delay,
+                "stage": stage,
+                "check": check_ours,
+                # A failed reply must not keep winning on our models' higher
+                # base score: the race ranks it just below the outside
+                # answers the failure started (below their base score while
+                # none has arrived), and still delivers it when nothing else
+                # usable arrives. Only after a fail, while the setting is on.
+                "demote_failed": reply_gate.wants_demotion,
+                "held_base": max(
+                    (call_scores[c] for c in external_calls if c in call_scores),
+                    default=None,
+                ),
+            }
+        elif external_delay > 0 and 0 < len(external_calls) < len(calls):
             stage = StagedStart()
             race_staging = {
                 "deferred": external_calls,
@@ -633,6 +686,28 @@ class ChatInterface:
                     )
                 else:
                     turn.set_external_start(STAGE_IMMEDIATE, 0.0)
+            if turn is not None and gate is not None:
+                gate.finish()
+                gate_scores = gate.scores
+                turn.set_gate(
+                    gate.outcome,
+                    (
+                        (
+                            gate_scores.answers,
+                            gate_scores.verdict,
+                            gate_scores.asks_again,
+                        )
+                        if gate_scores is not None
+                        else None
+                    ),
+                    gate.scorer,
+                    gate.ms,
+                    gate.model,
+                )
+                if stage is not None:
+                    # Whether it was still delivered is known after the
+                    # retry decision below.
+                    turn.set_gate_demotion(stage.demoted, False)
 
         response_text = response_text or ""
 
@@ -698,6 +773,13 @@ class ChatInterface:
 
         if depth == 0 and turn is not None:
             turn.mark_fanout_done(llm_pass_started)
+        # The reply a failed check demoted, while this pass still holds it
+        # (never offered as the alternate below).
+        demoted_reply: Optional[Tuple[Optional[str], Optional[str]]] = None
+        if gate is not None and stage is not None and turn is not None:
+            turn.set_gate_demotion(stage.demoted, stage.best_demoted and not retry_used)
+            if stage.demoted and stage.checked is not None:
+                demoted_reply = completed_results.get(stage.checked)
         # Who wrote this pass's reply, until a tool follow-up's reply
         # replaces it (see credit_for_delivered_reply below).
         pass_credit = ReplyCredit(
@@ -733,7 +815,9 @@ class ChatInterface:
         # DIFFERENT model than the winner, and the plain runner-up (usually
         # the winner's own other call) only when no other model's candidate
         # qualifies. A retry winner replaced the primary pass's answer, so
-        # nothing from that pass is comparable with it any more.
+        # nothing from that pass is comparable with it any more. A reply the
+        # check failed and demoted is never offered: the race never makes it
+        # the runner-up, and it is left out of the candidates.
         closely_tied = False
         alternate_model: Optional[str] = None
         if depth == 0:
@@ -749,7 +833,15 @@ class ChatInterface:
                     picked_model,
                     picked_score,
                     candidates_best_first(
-                        completed_results,
+                        (
+                            {
+                                call: result
+                                for call, result in completed_results.items()
+                                if result != demoted_reply
+                            }
+                            if demoted_reply is not None
+                            else completed_results
+                        ),
                         score_log,
                         call_labels,
                         calls,
@@ -1051,6 +1143,7 @@ class ChatInterface:
         # models gets one (created once the backends are known, below).
         self._turn = None
         self._external_delay_seconds = 0.0
+        self._reply_gate = None
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -1395,6 +1488,9 @@ class ChatInterface:
             (v for v in message_variants if v.metadata.get("store_full_text")),
             None,
         )
+        # An upload or a stored long paste leaves only a marker naming the
+        # stored document, which the reply check cannot read a question from.
+        typed_message = not is_document and long_paste_variant is None
         if long_paste_variant is not None and not is_document:
             char_count = long_paste_variant.metadata.get(
                 "char_count", len(user_message)
@@ -1634,6 +1730,15 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
+        # The live Jev check on our first usable reply (chat/reply_gate.py):
+        # only with the person's consent to outside models, for a typed
+        # message, and while one of our own models is selectable.
+        self._reply_gate = gate_for_turn(
+            chat.id,
+            external_allowed=self.use_external_models,
+            typed_message=typed_message,
+            ours_selectable=ml_router.chat_internal_selectable,
+        )
         # The models are asked from here on, so an exception escaping the
         # turn now counts it as failed (see _end_turn_after_exception).
         if self._turn is not None:

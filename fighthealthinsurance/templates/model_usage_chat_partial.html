@@ -10,9 +10,18 @@ models; pairs from one model get a line of their own.
   Outside models allowed on <strong>{{ s.external_allowed }}</strong> of them{% if s.external_share is not None %} ({{ s.external_share|floatformat:1 }}%){% endif %}.
   An outside model's answer was delivered on <strong>{{ s.external_wins }}</strong> of {{ s.ok }} OK turns{% if s.external_win_share is not None %} ({{ s.external_win_share|floatformat:1 }}%){% endif %}.
   Retry pass ran on <strong>{{ s.retry_ran }}</strong>, and delivered the answer on {{ s.retry_used }}.
-  Outside models held back while ours answered: <strong>{{ s.externals_held_back }}</strong> turns (started after the delay on {{ s.externals_after_delay }}, started early because ours all failed on {{ s.externals_early }}, never sent on {{ s.externals_skipped }}).
+  Outside models held back while ours answered: <strong>{{ s.externals_held_back }}</strong> turns (started after the delay on {{ s.externals_after_delay }}, started early because ours all failed on {{ s.externals_early }}, started early because the check on ours did not pass on {{ s.externals_after_check }}, never sent on {{ s.externals_skipped }}).
   Alternates offered: <strong>{{ s.alternates }}</strong> ({{ s.cross_alternates }} from a different model).
   Picks received: <strong>{{ s.picks }}</strong> (primary {{ s.picked_primary }}, alternate {{ s.picked_alternate }}).
+</p>
+<p class="window-totals">
+  {% if s.gate_turns %}
+  <a href="#chat-reply-check">Reply check</a> on our first usable reply: <strong>{{ s.gate_turns }}</strong> turns (passed {{ s.gate_pass }}, failed {{ s.gate_fail }}, error {{ s.gate_error }}, timed out {{ s.gate_timeout }}, nothing judged {{ s.gate_skipped }}).
+  Outside models never sent because the check passed: <strong>{{ s.gate_saved }}</strong> turns{% if s.gate_saved_share is not None %} ({{ s.gate_saved_share|floatformat:1 }}% of checked turns){% endif %}.
+  After a failed check, an outside model's answer was delivered on <strong>{{ s.gate_fail_external_wins }}</strong> of {{ s.gate_fail_ok }} OK turns{% if s.gate_fail_external_win_share is not None %} ({{ s.gate_fail_external_win_share|floatformat:1 }}%){% endif %}, and our demoted reply on {{ s.gate_fail_demoted_delivered }} because nothing else usable arrived.
+  {% else %}
+  <a href="#chat-reply-check">Reply check</a>: no turns checked in this window.
+  {% endif %}
 </p>
 {% include "model_usage_table_partial.html" with rows=chat.rows kind="chat" show_state=True %}
 

@@ -28,6 +28,7 @@ from fighthealthinsurance.models import (
     ChooserTask,
     ChooserVote,
     Denial,
+    ExternalServiceHealth,
     ModelBackendHealthCheckResult,
     ModelCallAttempt,
     OngoingChat,
@@ -2059,6 +2060,155 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         )
         self.assertContains(response, "Outside models held back while ours answered")
         self.assertContains(response, ">Skipped</th>")
+
+
+class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
+    """The live Jev check on chat replies: counts per window, how often it
+    kept the outside models from being sent, how often a failed check was
+    followed by an outside model's answer, and whether it is on."""
+
+    def setUp(self):
+        self._login_staff()
+        self.chat = OngoingChat.objects.create()
+
+    def _turn(self, **fields):
+        defaults = dict(
+            outcome="ok",
+            use_external=True,
+            backends=["fhi-local", "claude"],
+            winner_model="fhi-local",
+            winner_external=False,
+            calls=[_call("fhi-local")],
+        )
+        defaults.update(fields)
+        return ChatTurn.objects.create(chat=self.chat, **defaults)
+
+    def _checked(self, gate_outcome, external_start, **fields):
+        return self._turn(
+            gate_used=True,
+            gate_outcome=gate_outcome,
+            external_start=external_start,
+            external_delay_seconds=8.0,
+            **fields,
+        )
+
+    def test_the_counts_and_the_rates(self):
+        self._checked("pass", "skipped")
+        self._checked("pass", "skipped")
+        self._checked(
+            "fail",
+            "after_check",
+            winner_model="claude",
+            winner_external=True,
+            gate_demoted=True,
+        )
+        self._checked(
+            "fail", "after_check", gate_demoted=True, gate_demoted_delivered=True
+        )
+        self._checked("fail", "after_check", outcome="failed", winner_model="")
+        self._checked("error", "after_check", winner_model="claude", winner_external=True)
+        self._checked("timeout", "after_delay")
+        self._checked("skipped", "early")
+        # Not checked: counted as a turn, not as a check.
+        self._turn(external_start="immediate", winner_model="claude", winner_external=True)
+        response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(
+            (
+                summary["gate_turns"],
+                summary["gate_pass"],
+                summary["gate_fail"],
+                summary["gate_error"],
+                summary["gate_timeout"],
+                summary["gate_skipped"],
+            ),
+            (8, 2, 3, 1, 1, 1),
+        )
+        self.assertEqual(summary["gate_saved"], 2)
+        self.assertAlmostEqual(summary["gate_saved_share"], 25.0)
+        # Of the two OK turns after a failed check, one delivered an outside
+        # model's answer. The error turn's outside win is not counted there.
+        self.assertEqual(
+            (summary["gate_fail_ok"], summary["gate_fail_external_wins"]), (2, 1)
+        )
+        self.assertAlmostEqual(summary["gate_fail_external_win_share"], 50.0)
+        # The other one delivered our demoted reply: nothing else was usable.
+        self.assertEqual(summary["gate_fail_demoted_delivered"], 1)
+        self.assertEqual(summary["externals_after_check"], 4)
+        self.assertEqual(summary["externals_held_back"], 8)
+        self.assertContains(response, "Outside models never sent because the check passed")
+        self.assertContains(response, "After a failed check, an outside model")
+        self.assertContains(
+            response, "our demoted reply on 1 because nothing else usable arrived"
+        )
+        self.assertContains(response, "started early because the check on ours did not pass")
+
+    def test_no_rate_without_a_denominator(self):
+        self._checked("pass", "skipped")
+        _response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(summary["gate_fail_ok"], 0)
+        self.assertIsNone(summary["gate_fail_external_win_share"])
+
+    def test_a_window_with_no_checks_says_so(self):
+        self._turn()
+        response, windows = self._windows()
+        self.assertEqual(windows["1d"]["live_chat"]["summary"]["gate_turns"], 0)
+        self.assertIsNone(windows["1d"]["live_chat"]["summary"]["gate_saved_share"])
+        self.assertContains(response, "no turns checked in this window")
+
+    def test_the_state_panel_is_off_under_test(self):
+        response, _windows = self._windows()
+        state = response.context["reply_check"]
+        self.assertFalse(state["on"])
+        self.assertEqual(
+            (
+                state["max_wait_seconds"],
+                state["timeout_seconds"],
+                state["min_answers"],
+                state["max_problem"],
+            ),
+            (8.0, 1.5, 0.7, 0.3),
+        )
+        self.assertContains(response, 'id="chat-reply-check"')
+        self.assertContains(response, "FHI_CHAT_JEV_GATE_ENABLED is off")
+        self.assertTrue(state["demote_failed"])
+        self.assertContains(
+            response, "A reply that fails the check ranks just below the outside"
+        )
+
+    def test_the_state_panel_says_when_demotion_is_off(self):
+        with override_settings(FHI_CHAT_JEV_GATE_DEMOTE_FAILED=False):
+            response, _windows = self._windows()
+        self.assertFalse(response.context["reply_check"]["demote_failed"])
+        self.assertContains(response, "FHI_CHAT_JEV_GATE_DEMOTE_FAILED is off")
+
+    def test_the_state_panel_shows_on_and_the_last_failure(self):
+        ExternalServiceHealth.objects.create(
+            service="typesafe-chat-gate",
+            last_success_at=timezone.now() - datetime.timedelta(hours=1),
+            last_failure_at=timezone.now(),
+            last_failure="timeout",
+        )
+        with override_settings(
+            TYPESAFE_API_KEY="test-key", FHI_CHAT_JEV_GATE_ENABLED=True
+        ):
+            response, _windows = self._windows()
+        state = response.context["reply_check"]
+        self.assertTrue(state["on"])
+        self.assertEqual(state["last_failure"], "timeout")
+        self.assertIn("FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS", state["last_failure_hint"])
+        self.assertContains(response, "<strong>On</strong>")
+        self.assertContains(response, "FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS")
+
+    def test_the_http_failure_hint_is_the_status_page_one(self):
+        ExternalServiceHealth.objects.create(
+            service="typesafe-chat-gate",
+            last_failure_at=timezone.now(),
+            last_failure="HTTP 429",
+        )
+        response, _windows = self._windows()
+        self.assertIn("rate limited", response.context["reply_check"]["last_failure_hint"])
 
 
 def _policy_row(minutes_ago=0, **fields):

@@ -107,6 +107,8 @@ PREFERENCE_LABELS = frozenset({"primary", "alternate"})
 _MODEL_LABEL_MAX = 200
 _BACKEND_MAX = 300
 _ENUM_MAX = 32
+# The width of ChatTurn.gate_scorer.
+_SCORER_MAX = 80
 _ERROR_NAME_MAX = 64
 
 
@@ -378,6 +380,23 @@ class TurnRecord:
     # hold them back (None when it asked none).
     external_start: str = ""
     external_delay_seconds: Optional[float] = None
+    # The live Jev check on our first usable reply (chat/reply_gate.py):
+    # whether the primary pass held the outside models back for it, its
+    # outcome, Jev's three answers, the scorer string, how long it took and
+    # which model's reply it judged. Numbers and labels only.
+    gate_used: bool = False
+    gate_outcome: str = ""
+    gate_answers: Optional[float] = None
+    gate_verdict: Optional[float] = None
+    gate_asks_again: Optional[float] = None
+    gate_scorer: str = ""
+    gate_ms: Optional[int] = None
+    gate_model: str = ""
+    # Whether a failed check demoted the judged reply below the outside
+    # models' answers, and whether the pass still delivered it (nothing
+    # else usable arrived).
+    gate_demoted: bool = False
+    gate_demoted_delivered: bool = False
 
     @classmethod
     def start(
@@ -404,6 +423,35 @@ class TurnRecord:
         """Record how the primary pass started the outside models."""
         self.external_start = str(start)[:_ENUM_MAX]
         self.external_delay_seconds = _finite_or_none(delay_seconds)
+
+    def set_gate(
+        self,
+        outcome: str,
+        scores: Optional[Sequence[Optional[float]]],
+        scorer: str,
+        ms: Optional[int],
+        model: str,
+    ) -> None:
+        """Record the check the primary pass held the outside models for.
+        ``scores`` is (answers, verdict, asks_again), or None when Jev gave
+        no answer."""
+        self.gate_used = True
+        self.gate_outcome = str(outcome or "")[:_ENUM_MAX]
+        answers, verdict, asks_again = (
+            tuple(scores) if scores is not None else (None, None, None)
+        )
+        self.gate_answers = _finite_or_none(answers)
+        self.gate_verdict = _finite_or_none(verdict)
+        self.gate_asks_again = _finite_or_none(asks_again)
+        self.gate_scorer = str(scorer or "")[:_SCORER_MAX]
+        self.gate_ms = max(0, int(ms)) if isinstance(ms, int) else None
+        self.gate_model = str(model or "")[:_MODEL_LABEL_MAX]
+
+    def set_gate_demotion(self, demoted: bool, delivered: bool) -> None:
+        """Record whether the failed check demoted the judged reply, and
+        whether the primary pass still delivered it."""
+        self.gate_demoted = demoted is True
+        self.gate_demoted_delivered = self.gate_demoted and delivered is True
 
     def set_winner(
         self,
@@ -488,6 +536,16 @@ class TurnRecord:
             ),
             "external_start": self.external_start,
             "external_delay_seconds": self.external_delay_seconds,
+            "gate_used": self.gate_used,
+            "gate_outcome": self.gate_outcome,
+            "gate_answers": self.gate_answers,
+            "gate_verdict": self.gate_verdict,
+            "gate_asks_again": self.gate_asks_again,
+            "gate_scorer": self.gate_scorer,
+            "gate_ms": self.gate_ms,
+            "gate_model": self.gate_model,
+            "gate_demoted": self.gate_demoted,
+            "gate_demoted_delivered": self.gate_demoted_delivered,
         }
 
 

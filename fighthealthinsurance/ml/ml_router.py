@@ -627,6 +627,13 @@ class MLRouter(object):
             return None
         return policy
 
+    def chat_internal_selectable(self) -> bool:
+        """Whether one of our own models can take a chat turn right now
+        (instruction-following and not marked down). The live check on our
+        reply (chat/reply_gate.py) holds the outside models back only then,
+        for the same reason the routing policy is set aside without one."""
+        return bool(self._healthy_general_internal())
+
     def chat_external_delay(self, policy: Optional[ChatPolicy]) -> float:
         """Seconds the chat fan-out holds the outside models back while
         ours answer: the policy's delay, or 0 when it is not in force."""

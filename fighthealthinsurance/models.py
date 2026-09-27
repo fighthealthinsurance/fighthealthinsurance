@@ -3748,7 +3748,18 @@ class ChatTurn(models.Model):
         IMMEDIATE = "immediate", "Asked with ours"
         AFTER_DELAY = "after_delay", "Started after the delay"
         EARLY = "early", "Started early: ours all failed"
+        AFTER_CHECK = "after_check", "Started early: the check on ours did not pass"
         SKIPPED = "skipped", "Skipped: ours answered first"
+
+    class GateOutcome(models.TextChoices):
+        # The outcomes in ml/chat_gate.py, plus "" for a turn the check was
+        # not on for.
+        NONE = "", "Not checked"
+        PASS = "pass", "Passed"
+        FAIL = "fail", "Failed"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Nothing judged"
 
     # Also the turn_id the client echoes back with its side-by-side pick.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -3814,13 +3825,37 @@ class ChatTurn(models.Model):
     )
     preferred_at = models.DateTimeField(null=True, blank=True)
     # How the primary pass started the outside models: with ours, or held
-    # back by the routing policy's delay (ChatRoutingPolicy) and then
-    # started or skipped. The delay is the one that pass used; both are
-    # empty when the pass asked no outside model.
+    # back by the routing policy's delay (ChatRoutingPolicy) or for the
+    # check on our reply (gate_* below), and then started or skipped. The
+    # delay is the hold that pass used; both are empty when the pass asked
+    # no outside model.
     external_start = models.CharField(
         max_length=16, blank=True, default="", choices=ExternalStart.choices
     )
     external_delay_seconds = models.FloatField(null=True, blank=True)
+    # The live Jev check on our first usable reply (chat/reply_gate.py):
+    # whether the primary pass held the outside models back for it, and how
+    # it came out. The three answers are Jev's probabilities (0 to 1) that
+    # the reply responds to the message, states a coverage or eligibility
+    # verdict, and asks for something the message already gives; null
+    # unless Jev answered. The scorer names the model that answered and the
+    # rubric version. gate_model is the label of the model whose reply was
+    # judged. Numbers and labels only, never text.
+    gate_used = models.BooleanField(default=False)
+    gate_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=GateOutcome.choices
+    )
+    gate_answers = models.FloatField(null=True, blank=True)
+    gate_verdict = models.FloatField(null=True, blank=True)
+    gate_asks_again = models.FloatField(null=True, blank=True)
+    gate_scorer = models.CharField(max_length=80, blank=True, default="")
+    gate_ms = models.PositiveIntegerField(null=True, blank=True)
+    gate_model = models.CharField(max_length=200, blank=True, default="")
+    # After a failed check (FHI_CHAT_JEV_GATE_DEMOTE_FAILED on): the judged
+    # reply was ranked just below the outside models' answers, and whether
+    # it was still the reply delivered because nothing else usable arrived.
+    gate_demoted = models.BooleanField(default=False)
+    gate_demoted_delivered = models.BooleanField(default=False)
 
     class Meta:
         indexes = [
@@ -4460,9 +4495,7 @@ class ExternalServiceHealth(models.Model):
         (another pod's first write), the conditional UPDATE runs once more
         against it, so the newer outcome still wins (review).
         """
-        older = models.Q(**{f"{field}__isnull": True}) | models.Q(
-            **{f"{field}__lt": now}
-        )
+        older = cls._older(field, now)
         if await cls.objects.filter(models.Q(service=service) & older).aupdate(
             **values
         ):
@@ -4471,6 +4504,57 @@ class ExternalServiceHealth(models.Model):
         if created:
             return
         await cls.objects.filter(models.Q(service=service) & older).aupdate(**values)
+
+    @staticmethod
+    def _older(field: str, now) -> models.Q:
+        return models.Q(**{f"{field}__isnull": True}) | models.Q(
+            **{f"{field}__lt": now}
+        )
+
+    @classmethod
+    def _advance_sync(cls, service: str, field: str, now, values: dict) -> None:
+        """_advance for sync code: the same three statements, in a savepoint
+        when the caller is inside a transaction, so a failure here leaves
+        that transaction usable."""
+        older = cls._older(field, now)
+        with transaction.atomic():
+            if cls.objects.filter(models.Q(service=service) & older).update(**values):
+                return
+            _, created = cls.objects.get_or_create(service=service, defaults=values)
+            if created:
+                return
+            cls.objects.filter(models.Q(service=service) & older).update(**values)
+
+    @classmethod
+    def note_success(cls, service: str) -> None:
+        """anote_success for sync code, such as a thread with its own
+        connection (chat/isolated_db.py). Best effort, and logs the error
+        class only."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(service, "last_success_at", now, {"last_success_at": now})
+        except Exception as e:
+            logger.warning(
+                f"could not record a success for external service {service}: "
+                f"{type(e).__name__}"
+            )
+
+    @classmethod
+    def note_failure(cls, service: str, summary: str) -> None:
+        """anote_failure for sync code; see note_success."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(
+                service,
+                "last_failure_at",
+                now,
+                {"last_failure_at": now, "last_failure": (summary or "")[:80]},
+            )
+        except Exception as e:
+            logger.warning(
+                f"could not record a failure for external service {service}: "
+                f"{type(e).__name__}"
+            )
 
     @classmethod
     async def anote_success(cls, service: str) -> None:
