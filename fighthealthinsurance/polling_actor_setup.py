@@ -73,7 +73,13 @@ while not success and attempt < 10:
 
         logger.info("Checking that polling tasks are still running")
         time.sleep(10)
-        ready, wait = ray.wait(tasks, timeout=10) if tasks else ([], [])
+        # num_returns=len(tasks): ray.wait returns at the first ready task by
+        # default, and one RUN_ALREADY_STARTED marker would then hide another
+        # task whose loop really finished. Waiting for all of them, within
+        # the same timeout, checks every task that has finished.
+        ready, wait = (
+            ray.wait(tasks, num_returns=len(tasks), timeout=10) if tasks else ([], [])
+        )
         logger.info(f"Finished {ready}")
         result = ray.get(ready)
         logger.info(f"Results: {result}")
