@@ -194,6 +194,13 @@ class Base(Configuration):
     TYPESAFE_DENIAL_TRIAGE_ENABLED = (
         os.getenv("TYPESAFE_DENIAL_TRIAGE_ENABLED", "false").lower() == "true"
     )
+    # Chat shadow scoring (ml/chat_shadow.py): same key, its own switch. When
+    # on, a background task scores each delivered chat reply for the staff
+    # dashboard, only in chats that allowed outside models. Never on the
+    # reply's own path.
+    TYPESAFE_CHAT_SHADOW_ENABLED = (
+        os.getenv("TYPESAFE_CHAT_SHADOW_ENABLED", "false").lower() == "true"
+    )
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
@@ -893,6 +900,7 @@ class Test(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_CHAT_SHADOW_ENABLED = False
 
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
     # timeout would poll until it expires on every generate_appeals test.
@@ -949,6 +957,7 @@ class TestSync(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_CHAT_SHADOW_ENABLED = False
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
@@ -988,6 +997,7 @@ class TestActor(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_CHAT_SHADOW_ENABLED = False
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).

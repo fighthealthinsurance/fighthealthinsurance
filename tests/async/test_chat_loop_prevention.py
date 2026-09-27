@@ -11,18 +11,28 @@ state hint, and the LLM-input debug frame.
 import asyncio
 import json
 import os
+import threading
 import typing
 from unittest.mock import AsyncMock, patch
 
+from asgiref.sync import ThreadSensitiveContext
 from django.contrib.auth import get_user_model
 from django.db import OperationalError
+from django.test import override_settings
 from prometheus_client import REGISTRY
-from rest_framework.test import APITestCase
+from rest_framework.test import APITestCase, APITransactionTestCase
 
 from fighthealthinsurance import chat_interface as chat_interface_module
 from fighthealthinsurance import utils as fhi_utils
+from fighthealthinsurance.chat import shadow_scoring
 from fighthealthinsurance.chat.retry_handler import ANTI_REPEAT_NOTE
+from fighthealthinsurance.chat.safety_filters import (
+    DELETE_DATA_RESPONSE,
+    DELETE_DATA_SENTINEL,
+)
+from fighthealthinsurance.chat.turn_record import TurnRecord
 from fighthealthinsurance.chat_interface import ChatInterface
+from fighthealthinsurance.ml import chat_shadow
 from fighthealthinsurance.models import ChatTurn, OngoingChat, ProfessionalUser
 from tests.chat_fixtures import (
     FRESH_REPLY,
@@ -784,6 +794,363 @@ class ChatTurnRecordTest(APITestCase):
         assert by_model["quick-backend"]["score"] is None
         assert by_model["stalled-backend"]["status"] == "late"
         assert by_model["stalled-backend"]["ms"] is None
+
+
+_SHADOW_ON = dict(TYPESAFE_API_KEY="test-key", TYPESAFE_CHAT_SHADOW_ENABLED=True)
+
+
+def _shadow_answer(answers=1.5, verdict=0.1, asks_again=0.0):
+    return {
+        "model": "jev-1.13.0",
+        "answers": {
+            "answers_question": {"type": "score", "score": answers},
+            "asserts_verdict": {"type": "noul", "noul": verdict},
+            "asks_again": {"type": "noul", "noul": asks_again},
+        },
+    }
+
+
+class _ShadowPost:
+    """Stands in for chat_shadow._post. Holds every request until released,
+    so a test can see what the chat did while the request was open."""
+
+    def __init__(self):
+        self.states = []
+        self.release = asyncio.Event()
+
+    async def __call__(self, state, timeout_seconds):
+        self.states.append(state)
+        await self.release.wait()
+        return _shadow_answer()
+
+
+async def _drain_shadow_tasks():
+    for task in list(shadow_scoring._in_flight):
+        await asyncio.wait_for(task, 10)
+
+
+class ChatShadowScoringTest(APITransactionTestCase):
+    """Shadow scoring starts after the reply is delivered, never delays it,
+    stores numbers only, and sends nothing without the flag, the key and
+    the person's consent to outside models.
+
+    Transactional, because the job's database work runs on threads with
+    connections of their own (chat/isolated_db.py), which only see
+    committed rows."""
+
+    def _tied_models(self):
+        return [
+            RecordingChatModel(
+                always_reply=FRESH_REPLY, model_quality=110, name="winner-model"
+            ),
+            RecordingChatModel(
+                always_reply=SECOND_OPINION_REPLY, model_quality=100, name="second-model"
+            ),
+        ]
+
+    async def test_the_reply_is_not_delayed_and_scores_land_later(self):
+        user, chat = await _make_chat(
+            "shadow1", "9999930201", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        post = _ShadowPost()
+
+        with (
+            override_settings(**_SHADOW_ON),
+            patch.object(chat_shadow, "_post", post),
+            _patched_router(self._tied_models()),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            # The shadow request is held open: if the turn waited on it,
+            # this would time out.
+            await asyncio.wait_for(
+                interface.handle_chat_message("CA, and my name is Quillfeather"), 20
+            )
+            frame = recorder.content_frames()[-1]
+            assert frame["content"] == FRESH_REPLY
+            assert frame["alternate_content"] == SECOND_OPINION_REPLY
+            (row,) = await _turn_rows(chat)
+            assert row.shadow_outcome == ""
+            assert shadow_scoring.in_flight() == 1
+            post.release.set()
+            await _drain_shadow_tasks()
+
+        (row,) = await _turn_rows(chat)
+        assert row.shadow_outcome == "scored"
+        assert row.shadow_scorer == "typesafe/jev-1.13.0/chat-rubric-1"
+        assert row.shadow_winner_answers == 1.5
+        assert row.shadow_second_answers == 1.5
+        # The delivered reply, then the alternate that was shown beside it.
+        assert len(post.states) == 2
+        assert post.states[0].endswith(FRESH_REPLY)
+        assert post.states[1].endswith(SECOND_OPINION_REPLY)
+        blob = _row_blob(row)
+        for text in ("Quillfeather", FRESH_REPLY[:40], SECOND_OPINION_REPLY[:40]):
+            assert text not in blob, f"{text!r} stored on the turn row"
+
+    async def test_without_an_alternate_the_runner_up_is_scored(self):
+        user, chat = await _make_chat(
+            "shadow2", "9999930202", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        post = _ShadowPost()
+        post.release.set()
+        models = [
+            RecordingChatModel(
+                always_reply=FRESH_REPLY, model_quality=200, name="strong-model"
+            ),
+            RecordingChatModel(
+                always_reply=SECOND_OPINION_REPLY, model_quality=100, name="weak-model"
+            ),
+        ]
+
+        with (
+            override_settings(**_SHADOW_ON),
+            patch.object(chat_shadow, "_post", post),
+            _patched_router(models),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message("CA")
+            await _drain_shadow_tasks()
+
+        assert "alternate_content" not in recorder.content_frames()[-1]
+        (row,) = await _turn_rows(chat)
+        assert (row.alternate_offered, row.runner_up_model) == (False, "weak-model")
+        assert len(post.states) == 2
+        assert post.states[0].endswith(FRESH_REPLY)
+        assert post.states[1].endswith(SECOND_OPINION_REPLY)
+        assert row.shadow_second_answers is not None
+
+    async def test_consent_off_sends_nothing(self):
+        user, chat = await _make_chat(
+            "shadow3", "9999930203", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(
+            send_json_message_func=recorder,
+            chat=chat,
+            user=user,
+            use_external_models=False,
+        )
+        post = _ShadowPost()
+        post.release.set()
+
+        with (
+            override_settings(**_SHADOW_ON),
+            patch.object(chat_shadow, "_post", post),
+            _patched_router(self._tied_models()),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message("CA")
+            await _drain_shadow_tasks()
+
+        assert recorder.content_frames()[-1]["content"] == FRESH_REPLY
+        assert post.states == []
+        (row,) = await _turn_rows(chat)
+        assert row.shadow_outcome == ""
+
+    async def test_flag_off_sends_nothing(self):
+        user, chat = await _make_chat(
+            "shadow4", "9999930204", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        post = _ShadowPost()
+        post.release.set()
+
+        with (
+            override_settings(TYPESAFE_API_KEY="test-key"),
+            patch.object(chat_shadow, "_post", post),
+            _patched_router(self._tied_models()),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message("CA")
+            await _drain_shadow_tasks()
+
+        assert post.states == []
+        (row,) = await _turn_rows(chat)
+        assert row.shadow_outcome == ""
+
+    async def test_a_document_upload_is_not_scored(self):
+        user, chat = await _make_chat(
+            "shadow5", "9999930205", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        post = _ShadowPost()
+        post.release.set()
+
+        with (
+            override_settings(**_SHADOW_ON),
+            patch.object(chat_shadow, "_post", post),
+            patch(
+                "fighthealthinsurance.chat_interface.process_uploaded_document",
+                new_callable=AsyncMock,
+            ),
+            _patched_router(self._tied_models()),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message(
+                "Explanation of benefits: claim denied.",
+                is_document=True,
+                document_name="eob-scan.pdf",
+            )
+            await _drain_shadow_tasks()
+
+        assert recorder.content_frames()
+        assert post.states == []
+
+    async def test_the_runner_up_text_is_let_go_when_a_turn_raises(self):
+        user, chat = await _make_chat(
+            "shadow10", "9999930210", chat_history=_seed_history()
+        )
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        models = [
+            RecordingChatModel(
+                always_reply=FRESH_REPLY, model_quality=200, name="strong-model"
+            ),
+            RecordingChatModel(
+                always_reply=SECOND_OPINION_REPLY, model_quality=100, name="weak-model"
+            ),
+        ]
+        held = []
+        real_count = ChatInterface._count_turn
+
+        def count(self, outcome):
+            # The runner-up is held until the turn ends.
+            held.append(self._shadow_runner_up)
+            real_count(self, outcome)
+
+        with (
+            override_settings(**_SHADOW_ON),
+            patch.object(ChatInterface, "_count_turn", count),
+            _patched_router(models),
+            _PATCH_FIRE_AND_FORGET,
+            _patch_reply_save_to_fail(),
+        ):
+            with self.assertRaises(OperationalError):
+                await interface.handle_chat_message("CA")
+
+        assert held == [SECOND_OPINION_REPLY]
+        assert interface._shadow_runner_up is None
+
+    async def test_a_stuck_shadow_lookup_does_not_hold_up_the_next_turn(self):
+        user, chat = await _make_chat(
+            "shadow9", "9999930209", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        post = _ShadowPost()
+        post.release.set()
+        entered, release = threading.Event(), threading.Event()
+
+        def stuck(chat_id):
+            entered.set()
+            release.wait(30)
+            raise RuntimeError("lookup gave up")
+
+        # The socket's own executor, as PerConnectionThreadSensitiveMixin
+        # sets up for a real connection.
+        async with ThreadSensitiveContext():
+            try:
+                with (
+                    override_settings(**_SHADOW_ON),
+                    patch.object(chat_shadow, "_post", post),
+                    patch.object(shadow_scoring, "chat_redactions", stuck),
+                    _PATCH_FIRE_AND_FORGET,
+                ):
+                    with _patched_router(
+                        [RecordingChatModel(always_reply=FRESH_REPLY, name="m1")]
+                    ):
+                        await asyncio.wait_for(interface.handle_chat_message("CA"), 20)
+                    assert await asyncio.to_thread(entered.wait, 5)
+                    # The first turn's lookup is stuck. The next turn's ORM
+                    # calls run on the same executor, so it only finishes in
+                    # time if none of them queues behind that lookup.
+                    with _patched_router(
+                        [RecordingChatModel(always_reply=SECOND_OPINION_REPLY, name="m2")]
+                    ):
+                        await asyncio.wait_for(
+                            interface.handle_chat_message("And for the knee MRI?"), 10
+                        )
+                    still_stuck = not release.is_set()
+            finally:
+                release.set()
+            await _drain_shadow_tasks()
+
+        assert still_stuck
+        contents = [f["content"] for f in recorder.content_frames()]
+        assert contents[-2:] == [FRESH_REPLY, SECOND_OPINION_REPLY]
+        # No identifiers, so nothing was sent for either turn.
+        assert post.states == []
+        rows = await _turn_rows(chat)
+        assert [r.shadow_outcome for r in rows] == ["", ""]
+
+    async def _handoff(self, interface, turn, reply, alternate=None, runner_up=None):
+        with (
+            override_settings(**_SHADOW_ON),
+            patch.object(shadow_scoring, "start") as start,
+        ):
+            interface._start_shadow_scoring(
+                turn, "CA", reply, alternate, runner_up
+            )
+        return start
+
+    async def test_what_is_handed_to_the_background_scorer(self):
+        user, chat = await _make_chat("shadow6", "9999930206")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        models = [RecordingChatModel(name="model-a")]
+
+        # An alternate was shown: it is the second answer.
+        turn = TurnRecord.start(True, models)
+        turn.alternate_offered = True
+        start = await self._handoff(
+            interface, turn, FRESH_REPLY, SECOND_OPINION_REPLY, THIRD_REPLY
+        )
+        assert start.call_args.kwargs["second"] == SECOND_OPINION_REPLY
+        assert start.call_args.kwargs["external_allowed"] is True
+        assert start.call_args.kwargs["turn_id"] == turn.turn_id
+
+        # No alternate: the runner-up is.
+        turn = TurnRecord.start(True, models)
+        start = await self._handoff(interface, turn, FRESH_REPLY, None, THIRD_REPLY)
+        assert start.call_args.kwargs["second"] == THIRD_REPLY
+
+        # A runner-up that asks for the data-deletion handoff is not sent.
+        turn = TurnRecord.start(True, models)
+        start = await self._handoff(
+            interface, turn, FRESH_REPLY, None, f"Sure. {DELETE_DATA_SENTINEL}"
+        )
+        assert start.call_args.kwargs["second"] is None
+
+        # Consent is the turn's AND the chat's current setting.
+        turn = TurnRecord.start(False, models)
+        start = await self._handoff(interface, turn, FRESH_REPLY)
+        assert start.call_args.kwargs["external_allowed"] is False
+        turn = TurnRecord.start(True, models)
+        interface.use_external_models = False
+        start = await self._handoff(interface, turn, FRESH_REPLY)
+        assert start.call_args.kwargs["external_allowed"] is False
+
+    async def test_a_rewritten_or_canned_reply_is_not_handed_over(self):
+        user, chat = await _make_chat("shadow7", "9999930207")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        turn = TurnRecord.start(True, [RecordingChatModel(name="model-a")])
+        turn.tool_rewrote = True
+        start = await self._handoff(interface, turn, FRESH_REPLY)
+        start.assert_not_called()
+
+        turn = TurnRecord.start(True, [RecordingChatModel(name="model-a")])
+        start = await self._handoff(interface, turn, DELETE_DATA_RESPONSE)
+        start.assert_not_called()
 
 
 class ChatRepeatOffenderTest(APITestCase):

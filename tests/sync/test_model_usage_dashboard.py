@@ -1980,3 +1980,263 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         sql = "\n".join(q["sql"] for q in queries.captured_queries)
         self.assertNotIn("chat_history", sql)
         self.assertNotIn("summary_for_next_call", sql)
+
+
+SHADOW_SCORER = "typesafe/jev-1.13.0/chat-rubric-1"
+
+
+def _shadow(winner=None, second=None, outcome="scored", scorer=SHADOW_SCORER):
+    """ChatTurn shadow fields: winner/second are (answers, verdict, asks_again)."""
+    fields = {"shadow_outcome": outcome, "shadow_scorer": scorer}
+    for side, scores in (("winner", winner), ("second", second)):
+        if scores is not None:
+            (
+                fields[f"shadow_{side}_answers"],
+                fields[f"shadow_{side}_verdict"],
+                fields[f"shadow_{side}_asks_again"],
+            ) = scores
+    return fields
+
+
+# Composite 1.0 and 0.0 (ml/chat_shadow.composite_score).
+GOOD = (2.0, 0.0, 0.0)
+POOR = (0.0, 1.0, 1.0)
+
+
+class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
+    """Jev shadow scores in the live chat section: per-model means and the
+    agreement between the higher score and the person's side-by-side pick."""
+
+    def setUp(self):
+        self._login_staff()
+        self.chat = OngoingChat.objects.create()
+
+    def _turn(self, **fields):
+        defaults = dict(
+            outcome="ok",
+            use_external=True,
+            backends=["model-a", "model-b"],
+            winner_model="model-a",
+            runner_up_model="model-b",
+        )
+        defaults.update(fields)
+        return ChatTurn.objects.create(chat=self.chat, **defaults)
+
+    def _pair(self, preferred, winner, second, scorer=SHADOW_SCORER, **fields):
+        return self._turn(
+            alternate_offered=True,
+            alternate_model="model-c",
+            alternate_cross_model=True,
+            preferred=preferred,
+            **_shadow(winner, second, scorer=scorer),
+            **fields,
+        )
+
+    def _shadow_window(self, slug="1d"):
+        _response, windows = self._windows()
+        return windows[slug]["live_chat"]["shadow"]
+
+    def test_means_per_model_and_the_second_answer_goes_to_the_right_model(self):
+        # No alternate: the second answer is the runner-up's (model-b).
+        self._turn(**_shadow((2.0, 0.2, 0.0), (1.0, 0.6, 0.4)))
+        self._turn(**_shadow((1.0, 0.0, 0.2), None))
+        # An alternate was shown: the second answer is the alternate's.
+        self._turn(
+            alternate_offered=True,
+            alternate_model="model-c",
+            **_shadow((1.5, 0.1, 0.1), (0.5, 0.9, 0.0)),
+        )
+        rows = {r["model_name"]: r for r in self._shadow_window()["rows"]}
+        self.assertEqual(
+            {name: r["shadow_scored"] for name, r in rows.items()},
+            {"model-a": 3, "model-b": 1, "model-c": 1},
+        )
+        a = rows["model-a"]
+        self.assertAlmostEqual(a["shadow_answers"], 1.5)
+        self.assertAlmostEqual(a["shadow_verdict"], 0.1)
+        self.assertAlmostEqual(a["shadow_asks_again"], 0.1)
+        self.assertAlmostEqual(
+            a["shadow_composite"],
+            ((1.0 + 0.8 + 1.0) + (0.5 + 1.0 + 0.8) + (0.75 + 0.9 + 0.9)) / 9,
+        )
+        self.assertAlmostEqual(rows["model-b"]["shadow_answers"], 1.0)
+        self.assertAlmostEqual(rows["model-c"]["shadow_verdict"], 0.9)
+
+    def test_outcomes_are_counted_and_other_rubrics_never_averaged(self):
+        self._turn(**_shadow(GOOD, None))
+        self._turn(**_shadow(outcome="failed", scorer=""))
+        self._turn(**_shadow(outcome="timeout", scorer=""))
+        self._turn(
+            **_shadow(POOR, None, scorer="typesafe/jev-1.13.0/chat-rubric-0")
+        )
+        # A letter scorer string is not a chat rubric either.
+        self._turn(**_shadow(POOR, None, scorer="typesafe/jev-1.13.0/rubric-1"))
+        self._turn()
+        shadow = self._shadow_window()
+        self.assertEqual(
+            shadow["summary"],
+            {
+                "scored": 3,
+                "failed": 1,
+                "timeout": 1,
+                "scorer": SHADOW_SCORER,
+                "other_scorer": 2,
+                "picks_unscored": 0,
+            },
+        )
+        (row,) = shadow["rows"]
+        self.assertEqual(row["shadow_scored"], 1)
+        self.assertAlmostEqual(row["shadow_composite"], 1.0)
+
+    def _at(self, turn, minutes_ago):
+        ChatTurn.objects.filter(pk=turn.pk).update(
+            created_at=timezone.now() - datetime.timedelta(minutes=minutes_ago)
+        )
+
+    def test_only_the_newest_scorer_is_averaged_and_the_page_names_it(self):
+        newer = "typesafe/jev-1.14.0/chat-rubric-1"
+        # The newer model version scored the newest turns, so its scores
+        # are the ones averaged.
+        self._at(self._turn(**_shadow(GOOD, GOOD, scorer=newer)), 5)
+        self._at(self._pair("primary", GOOD, POOR, scorer=newer), 6)
+        # The same rubric answered by an older model version, on more turns:
+        # counted, never averaged in.
+        self._at(self._turn(**_shadow(POOR, POOR)), 30)
+        self._at(self._turn(**_shadow(POOR, POOR)), 40)
+        self._at(self._pair("alternate", POOR, GOOD), 50)
+
+        response, windows = self._windows()
+        shadow = windows["1d"]["live_chat"]["shadow"]
+        self.assertEqual(shadow["summary"]["scorer"], newer)
+        self.assertEqual(shadow["summary"]["other_scorer"], 3)
+        rows = {r["model_name"]: r for r in shadow["rows"]}
+        self.assertEqual(rows["model-a"]["shadow_scored"], 2)
+        self.assertAlmostEqual(rows["model-a"]["shadow_composite"], 1.0)
+        self.assertAlmostEqual(rows["model-b"]["shadow_composite"], 1.0)
+        self.assertAlmostEqual(rows["model-c"]["shadow_composite"], 0.0)
+        # Agreement from the newer scorer only; the older scorer's pick is
+        # left out and counted as such.
+        by_pick = {a["picked"]: a for a in shadow["agreement"]}
+        self.assertEqual(by_pick["Primary answer"]["agreed"], 1)
+        self.assertEqual(by_pick["Alternate answer"]["pairs"], 0)
+        self.assertEqual(shadow["summary"]["picks_unscored"], 1)
+        self.assertContains(response, f"<code>{newer}</code>")
+        self.assertContains(
+            response, "Turns scored by another scorer (another Jev version or rubric)"
+        )
+
+    def test_the_scorer_choice_does_not_depend_on_row_order(self):
+        from fighthealthinsurance.staff_views import _ShadowTally
+
+        newer = "typesafe/jev-1.14.0/chat-rubric-1"
+        now = timezone.now()
+        rows = [
+            (now - datetime.timedelta(minutes=1), newer),
+            (now - datetime.timedelta(minutes=9), SHADOW_SCORER),
+            (now - datetime.timedelta(minutes=8), SHADOW_SCORER),
+        ]
+        for ordered in (rows, rows[::-1]):
+            tally = _ShadowTally()
+            for created_at, scorer in ordered:
+                tally.add(
+                    created_at, "model-a", "model-b", False, "", "scored", scorer,
+                    GOOD, GOOD,
+                )
+            summary = tally.result()["summary"]
+            self.assertEqual((summary["scorer"], summary["other_scorer"]), (newer, 2))
+
+    def test_no_current_scorer_says_so(self):
+        self._turn(
+            **_shadow(POOR, None, scorer="typesafe/jev-1.13.0/chat-rubric-0")
+        )
+        response, windows = self._windows()
+        shadow = windows["1d"]["live_chat"]["shadow"]
+        self.assertEqual(shadow["summary"]["scorer"], "")
+        self.assertEqual(shadow["rows"], [])
+        self.assertContains(
+            response, "No turn in this window was scored under the current chat rubric."
+        )
+
+    def test_agreement_counts_by_the_persons_pick(self):
+        self._pair("primary", GOOD, POOR)  # agreed
+        self._pair("primary", POOR, GOOD)  # disagreed
+        self._pair("alternate", POOR, GOOD)  # agreed
+        self._pair("alternate", GOOD, GOOD)  # tied
+        self._pair("", GOOD, POOR)  # no pick: not counted
+        # Picked, but not both scored.
+        self._pair("primary", GOOD, None)
+        self._turn(
+            alternate_offered=True, alternate_model="model-c", preferred="alternate"
+        )
+        shadow = self._shadow_window()
+        by_pick = {a["picked"]: a for a in shadow["agreement"]}
+        self.assertEqual(
+            {k: (a["pairs"], a["agreed"], a["disagreed"], a["tied"]) for k, a in by_pick.items()},
+            {
+                "Primary answer": (2, 1, 1, 0),
+                "Alternate answer": (2, 1, 0, 1),
+                "Either": (4, 2, 1, 1),
+            },
+        )
+        self.assertAlmostEqual(by_pick["Primary answer"]["rate"], 50.0)
+        # Ties stay out of the rate.
+        self.assertAlmostEqual(by_pick["Alternate answer"]["rate"], 100.0)
+        self.assertAlmostEqual(by_pick["Either"]["rate"], 200 / 3)
+        self.assertEqual(shadow["summary"]["picks_unscored"], 2)
+
+    def test_no_scored_picks_show_a_dash_not_zero(self):
+        self._pair("primary", GOOD, GOOD)  # only a tie
+        response, windows = self._windows()
+        agreement = windows["1d"]["live_chat"]["shadow"]["agreement"]
+        self.assertTrue(all(a["rate"] is None for a in agreement))
+        html = response.content.decode()
+        row = re.search(r"<tr>\s*<td>Primary answer</td>.*?</tr>", html, re.S)
+        self.assertIsNotNone(row)
+        self.assertIn('<td class="num">&mdash;</td>', row.group(0))
+        self.assertNotIn("0.0%", row.group(0))
+
+    def test_the_section_renders_with_state_tags_and_stays_out_of_the_chart(self):
+        self._turn(
+            winner_model="shadow-only-model",
+            backends=["shadow-only-model"],
+            **_shadow(GOOD, None),
+        )
+        response, windows = self._windows()
+        self.assertContains(response, "Live chat shadow scores")
+        self.assertContains(response, "Answers the question")
+        for slug in ("1d", "7d", "30d"):
+            for row in windows[slug]["live_chat"]["shadow"]["rows"]:
+                self.assertIn("state", row)
+        for w in windows.values():
+            self.assertNotIn(
+                "shadow-only-model", json.loads(w["chart_data_json"])["labels"]
+            )
+
+    def test_the_page_says_whether_scoring_is_on_and_why_it_last_failed(self):
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        response, _windows = self._windows()
+        self.assertEqual(response.context["chat_shadow"]["on"], False)
+        self.assertContains(response, "TYPESAFE_CHAT_SHADOW_ENABLED, now off")
+        ExternalServiceHealth.objects.create(
+            service="typesafe-chat",
+            last_failure_at=timezone.now(),
+            last_failure="HTTP 429",
+        )
+        with self.settings(TYPESAFE_API_KEY="k", TYPESAFE_CHAT_SHADOW_ENABLED=True):
+            response, _windows = self._windows()
+        state = response.context["chat_shadow"]
+        self.assertTrue(state["on"])
+        self.assertEqual(state["last_failure"], "HTTP 429")
+        self.assertIn("rate limited", state["last_failure_hint"])
+        self.assertContains(response, "TYPESAFE_CHAT_SHADOW_ENABLED, now on")
+        self.assertContains(response, "HTTP 429 (rate limited")
+
+    def test_the_letter_scorer_record_is_not_read_as_chat(self):
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        ExternalServiceHealth.objects.create(
+            service="typesafe", last_failure_at=timezone.now(), last_failure="HTTP 401"
+        )
+        response, _windows = self._windows()
+        self.assertEqual(response.context["chat_shadow"]["last_failure"], "")

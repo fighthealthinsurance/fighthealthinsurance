@@ -1097,6 +1097,7 @@ class ChatTurnAdmin(admin.ModelAdmin):
         "alternate_cross_model",
         "preferred",
         "retry_used",
+        "shadow_outcome",
         "created_at",
     )
     ordering = ("-created_at",)

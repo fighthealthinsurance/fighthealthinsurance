@@ -26,6 +26,19 @@ LABEL_AND_ENUM_FIELDS = {
     "runner_up_model",
     "alternate_model",
     "preferred",
+    # The shadow outcome enum, and the scorer string: the model TypeSafe
+    # says answered plus the chat rubric version.
+    "shadow_outcome",
+    "shadow_scorer",
+}
+# The shadow scores are numbers and nothing else.
+SHADOW_SCORE_FIELDS = {
+    "shadow_winner_answers",
+    "shadow_winner_verdict",
+    "shadow_winner_asks_again",
+    "shadow_second_answers",
+    "shadow_second_verdict",
+    "shadow_second_asks_again",
 }
 # JSON fields: lists of model labels, and the per-call metadata dicts
 # (chat/turn_record.py CallLog.finish).
@@ -68,6 +81,26 @@ class ChatTurnHoldsNoTextTest(TestCase):
     def test_the_enums_are_closed(self):
         self.assertEqual(set(ChatTurn.Outcome.values), {"ok", "failed", "timeout"})
         self.assertEqual(set(ChatTurn.Preferred.values), {"", "primary", "alternate"})
+        self.assertEqual(
+            set(ChatTurn.ShadowOutcome.values), {"", "scored", "failed", "timeout"}
+        )
+
+    def test_the_shadow_scores_are_float_columns(self):
+        shadow = {
+            f.name: f
+            for f in ChatTurn._meta.concrete_fields
+            if f.name.startswith("shadow_")
+        }
+        self.assertEqual(
+            set(shadow), SHADOW_SCORE_FIELDS | {"shadow_outcome", "shadow_scorer"}
+        )
+        for name in SHADOW_SCORE_FIELDS:
+            self.assertIsInstance(shadow[name], models.FloatField, name)
+        # Long enough for any model name the TypeSafe client accepts.
+        self.assertGreaterEqual(
+            shadow["shadow_scorer"].max_length,
+            len("typesafe/" + "m" * 48 + "/chat-rubric-9999"),
+        )
 
     def test_the_chat_link_cannot_be_null_and_cascades(self):
         chat_field = ChatTurn._meta.get_field("chat")
