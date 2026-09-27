@@ -789,7 +789,14 @@ class AdminStatusLetterScoringTest(TestCase):
 
     @classmethod
     def _draft(
-        cls, denial, *, minutes_ago=5, speculative=False, scored=False, now=None
+        cls,
+        denial,
+        *,
+        minutes_ago=5,
+        speculative=False,
+        scored=False,
+        now=None,
+        scorer=letter_quality.SCORER,
     ):
         # Distinct text per row: (denial, text fingerprint) is unique.
         cls._drafts_made += 1
@@ -804,7 +811,7 @@ class AdminStatusLetterScoringTest(TestCase):
             fields.update(
                 quality_score=0.8,
                 grounding_score=2.0,
-                quality_scorer=letter_quality.SCORER,
+                quality_scorer=scorer,
                 quality_scored_at=stamp,
             )
         # auto_now_add wins on create, so the clock is set afterwards.
@@ -839,6 +846,18 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(status["level"], "scoring")
         self.assertEqual(status["scored"], 1)
         self.assertEqual(status["unscored"], 0)
+
+    def test_a_score_from_an_older_rubric_or_another_source_is_not_current(self):
+        """A score from before the rubric bump, one not from TypeSafe, or
+        one with no scorer is due to be redone, so its draft still counts
+        as waiting for a score, not as scored."""
+        for scorer in ("typesafe/speed_latest/rubric-1", "manual/rubric-2", None):
+            self._draft(self._denial(), scored=True, scorer=scorer)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["scored"], 0)
+        self.assertEqual(status["unscored"], 3)
+        self.assertEqual(status["level"], "not_scoring")
 
     def test_a_scored_draft_that_was_never_eligible_does_not_count(self):
         """Speculative or unconsented drafts are outside both counts, so a
