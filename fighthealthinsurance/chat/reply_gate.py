@@ -3,10 +3,12 @@
 
 When the check is on for a turn, the primary pass holds the outside models'
 calls back while ours answer. The first usable reply of ours is checked,
-by our own checks first: a reply they reject (empty, too short or a false
+by our own checks first: a reply they reject (too short or a false
 promise, the rule the retry uses) fails the check without being sent to
-TypeSafe, so our requirements hold whether or not Jev can be reached. Any
-other reply goes to Jev with four questions. The outcome:
+TypeSafe, so our requirements hold whether or not Jev can be reached. An
+empty reply is not judged at all: it is recorded as skipped, and the
+outside calls start at once. Any other reply goes to Jev with four
+questions. The outcome:
 
 * pass: the primary pass never sends the outside calls, and picks among
   our models' answers. The retry, which runs only when our own checks

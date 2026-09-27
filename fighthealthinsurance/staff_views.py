@@ -1542,9 +1542,11 @@ class _ChatTally:
         # The live Jev check on our reply: turns it held the outside models
         # for, by outcome, and of the fails, how many our own checks decided
         # without sending the reply to Jev; turns whose outside calls it kept
-        # from being sent; and, of the OK turns where the check failed, how
-        # many delivered an outside model's answer, and how many still
+        # from being sent; and, of the OK turns where Jev failed the reply,
+        # how many delivered an outside model's answer, and how many still
         # delivered our demoted reply because nothing else usable arrived.
+        # Those last three leave out the fails our own checks decided, so
+        # they stay a check on Jev's questions and thresholds.
         self.gate_turns = 0
         self.gate_outcomes: Counter = Counter()
         self.gate_fail_local = 0
@@ -1613,9 +1615,8 @@ class _ChatTally:
         if gate_used:
             self.gate_turns += 1
             self.gate_outcomes[gate_outcome] += 1
-            if gate_outcome == chat_gate.FAIL and chat_gate.from_our_checks(
-                gate_scorer
-            ):
+            failed_ours = chat_gate.from_our_checks(gate_scorer)
+            if gate_outcome == chat_gate.FAIL and failed_ours:
                 self.gate_fail_local += 1
             if (
                 gate_outcome == chat_gate.PASS
@@ -1623,7 +1624,11 @@ class _ChatTally:
                 and not external_sent
             ):
                 self.gate_saved += 1
-            if gate_outcome == chat_gate.FAIL and outcome == ChatTurn.Outcome.OK:
+            if (
+                gate_outcome == chat_gate.FAIL
+                and not failed_ours
+                and outcome == ChatTurn.Outcome.OK
+            ):
                 self.gate_fail_ok += 1
                 if winner_external is True:
                     self.gate_fail_external_wins += 1

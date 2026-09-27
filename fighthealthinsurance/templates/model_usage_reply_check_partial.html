@@ -11,7 +11,7 @@ section; each window's Live chat summary has the counts.
   {% endif %}
 </p>
 <p class="note">
-  Before Jev is asked, the reply must pass our own checks, the rule the retry uses: not empty, at least {{ check.min_response_length }} characters, and no promised outcome. A reply that fails them fails the check without being sent to Jev.
+  Before Jev is asked, the reply must pass our own checks, the rule the retry uses: at least {{ check.min_response_length }} characters, and no promised outcome. A reply that fails them fails the check without being sent to Jev. An empty reply is not judged, and is counted as &ldquo;nothing judged&rdquo;.
   A reply passes when Jev's &ldquo;responds to the message&rdquo; answer is at least {{ check.min_answers|floatformat:2 }} and its &ldquo;states a coverage or eligibility verdict&rdquo;, &ldquo;asks for what the message already gives&rdquo; and &ldquo;promises a result&rdquo; answers are each below {{ check.max_problem|floatformat:2 }}.
   A check may take up to {{ check.timeout_seconds|floatformat:1 }} s; an error or a timeout starts the outside models.
   {% if check.demote_failed %}A reply that fails the check ranks just below the outside models' answers, so it is delivered only when nothing else usable arrives (FHI_CHAT_JEV_GATE_DEMOTE_FAILED).{% else %}A reply that fails the check keeps its score, so our models' higher base score usually keeps it in front (FHI_CHAT_JEV_GATE_DEMOTE_FAILED is off).{% endif %}

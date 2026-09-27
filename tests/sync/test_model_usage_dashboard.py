@@ -2172,7 +2172,7 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         self.assertContains(
             response, "Outside models never sent, in any pass, because the check passed"
         )
-        self.assertContains(response, "After a failed check, an outside model")
+        self.assertContains(response, "After Jev failed the reply, an outside model")
         self.assertContains(
             response,
             "our demoted reply on 1 because no outside answer that could be "
@@ -2184,7 +2184,8 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
 
     def test_fails_by_our_own_checks_are_counted(self):
         """A reply our own checks rejected failed the check without being
-        sent to Jev: counted with the fails, and on its own."""
+        sent to Jev: counted with the fails, and on its own. What followed
+        it is left out of the figures that check Jev's questions."""
         self._checked(
             "fail",
             "after_check",
@@ -2196,6 +2197,13 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         self._checked(
             "fail",
             "after_check",
+            gate_scorer="fhi/local-checks-1",
+            gate_demoted=True,
+            gate_demoted_delivered=True,
+        )
+        self._checked(
+            "fail",
+            "after_check",
             gate_scorer="typesafe/jev-1.13.0/chat-gate-rubric-2",
             gate_demoted=True,
         )
@@ -2203,9 +2211,24 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         self._checked("error", "after_check", gate_scorer="fhi/local-checks-1")
         response, windows = self._windows()
         summary = windows["1d"]["live_chat"]["summary"]
-        self.assertEqual((summary["gate_fail"], summary["gate_fail_local"]), (2, 1))
+        self.assertEqual((summary["gate_fail"], summary["gate_fail_local"]), (3, 2))
         self.assertContains(
-            response, "(1 failed our own checks and were not sent to Jev)"
+            response, "(2 failed our own checks and were not sent to Jev)"
+        )
+        # Only the fail Jev decided counts here, and its turn delivered
+        # neither an outside answer nor our demoted reply.
+        self.assertEqual(
+            (
+                summary["gate_fail_ok"],
+                summary["gate_fail_external_wins"],
+                summary["gate_fail_demoted_delivered"],
+            ),
+            (1, 0, 0),
+        )
+        self.assertContains(
+            response,
+            "After Jev failed the reply, an outside model's answer was "
+            "delivered on <strong>0</strong> of 1 OK turns",
         )
 
     def test_no_rate_without_a_denominator(self):
@@ -2241,9 +2264,10 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         self.assertContains(
             response,
             "Before Jev is asked, the reply must pass our own checks, the rule "
-            "the retry uses: not empty, at least 5 characters, and no promised "
-            "outcome.",
+            "the retry uses: at least 5 characters, and no promised outcome.",
         )
+        self.assertContains(response, "An empty reply is not judged, and is counted as")
+        self.assertNotContains(response, "not empty")
         self.assertContains(response, "&ldquo;promises a result&rdquo;")
         self.assertTrue(state["demote_failed"])
         self.assertContains(
@@ -2281,7 +2305,9 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
             last_failure="HTTP 429",
         )
         response, _windows = self._windows()
-        self.assertIn("rate limited", response.context["reply_check"]["last_failure_hint"])
+        self.assertIn(
+            "rate limited", response.context["reply_check"]["last_failure_hint"]
+        )
 
 
 def _policy_row(minutes_ago=0, **fields):

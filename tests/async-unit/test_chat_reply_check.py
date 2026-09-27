@@ -25,6 +25,7 @@ from fighthealthinsurance.chat.safety_filters import (
     detect_false_promises,
 )
 from fighthealthinsurance.chat.turn_record import TurnRecord
+from fighthealthinsurance.chat_interface import _deliverable
 from fighthealthinsurance.ml import chat_gate, typesafe
 from fighthealthinsurance.models import ChatTurn, ExternalServiceHealth, OngoingChat
 
@@ -184,6 +185,18 @@ class TestOurOwnChecks:
         assert chat_gate.fails_our_checks(PROMISE_REPLY)
         assert chat_gate.fails_our_checks(SHORT_REPLY)
         assert not chat_gate.fails_our_checks(REPLY)
+
+    def test_no_retry_is_logged_where_none_starts(self, log_capture):
+        """The retry's "triggering retry" line comes only from the retry:
+        not from the check, nor from weighing an outside answer against a
+        demoted reply."""
+        with log_capture() as cap:
+            assert chat_gate.fails_our_checks(PROMISE_REPLY)
+            assert not _deliverable((PROMISE_REPLY, None))
+        assert not [r for r in cap.records if "retry" in r["message"]]
+        with log_capture() as cap:
+            assert should_retry_response(PROMISE_REPLY)
+        assert [r for r in cap.records if "triggering retry" in r["message"]]
 
     def test_the_local_scorer_is_told_apart_from_jevs(self):
         assert chat_gate.from_our_checks(chat_gate.LOCAL_SCORER)
@@ -575,6 +588,7 @@ class TestReplyGate:
             "I can help with that. " + TOOL_REPLY,
             DELETE_DATA_SENTINEL,
             "",
+            "   ",
             None,
         ],
     )
@@ -589,6 +603,44 @@ class TestReplyGate:
             assert await gate.judge(MESSAGE, reply, "fhi-local") is False
         post.assert_not_called()
         assert gate.outcome == chat_gate.SKIPPED
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "message,reply",
+        [
+            (MESSAGE, PROMISE_REPLY + " " + TOOL_REPLY),
+            (MESSAGE, "🐼"),
+            (MESSAGE, PROMISE_REPLY + " " + DELETE_DATA_SENTINEL),
+            (MESSAGE, PROMISE_REPLY + " " + "x" * chat_gate.RAW_CHAR_BOUND),
+            ("", SHORT_REPLY),
+            ("x" * (chat_gate.RAW_CHAR_BOUND + 1), PROMISE_REPLY),
+        ],
+        ids=[
+            "tool-call",
+            "summary-marker",
+            "delete-handoff",
+            "reply-over-bound",
+            "empty-message",
+            "message-over-bound",
+        ],
+    )
+    async def test_the_skips_come_before_our_own_checks(self, message, reply):
+        """Each reply here would fail our own checks, and is still skipped:
+        the person would not see it as it is, or Jev could not be sent the
+        turn. The retry holds a delivered reply to the same rule."""
+        assert chat_gate.fails_our_checks(reply)
+        gate = _gate()
+        post = AsyncMock(return_value=_payload())
+        with (
+            override_settings(**ENABLED),
+            _no_identifiers(),
+            patch.object(chat_gate, "_post", new=post),
+        ):
+            assert await gate.judge(message, reply, "fhi-local") is False
+        post.assert_not_called()
+        assert gate.outcome == chat_gate.SKIPPED
+        assert gate.scorer == ""
+        assert gate.wants_demotion() is False
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("reply", [PROMISE_REPLY, SHORT_REPLY])

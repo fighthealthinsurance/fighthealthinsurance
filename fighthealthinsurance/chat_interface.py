@@ -167,8 +167,9 @@ def _shown_reply(result: Optional[Tuple[Optional[str], Optional[str]]]) -> Any:
 
 def _deliverable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
     """Whether a fan-out result could be delivered as it is, rather than
-    sent on to the retry (empty, too short, or a false promise)."""
-    return not should_retry_response(result[0] if result else None)
+    sent on to the retry (empty, too short, or a false promise). No retry
+    starts from here, so the retry's log line is left to the retry."""
+    return not should_retry_response(result[0] if result else None, log_retry=False)
 
 
 class ChatInterface:

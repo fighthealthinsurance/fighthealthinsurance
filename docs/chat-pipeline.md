@@ -259,12 +259,13 @@ rule.
   They start at once when ours all fail.
 * **Our own checks first.** Before anything is sent, our first usable
   reply (as cleaned for delivery) must pass the rule the retry uses
-  (`chat/retry_handler.should_retry_response`): not empty, at least
+  (`chat/retry_handler.should_retry_response`): at least
   `MIN_RESPONSE_LENGTH` (5) characters, and no promised outcome
   (`safety_filters.detect_false_promises`). A reply that fails them fails
   the check with the scorer `fhi/local-checks-1`, is never sent to
   TypeSafe, and leaves the health row alone. These requirements hold
-  whether or not Jev can be reached.
+  whether or not Jev can be reached. An empty reply is not judged at all:
+  it is recorded as skipped, like a reply carrying a tool call.
 * **The check.** One request per turn: the person's latest message and our
   first usable reply (as cleaned for delivery), redacted as letter scoring
   redacts with the identifiers `chat/redaction.py` collects for the chat's
@@ -319,10 +320,11 @@ rule.
   outcome also goes to the `typesafe-chat-gate` ExternalServiceHealth row
   after the reply is sent. The staff usage dashboard shows the counts
   (and how many fails our own checks decided without asking Jev), how
-  often the outside models were never sent because the check passed, and
-  how often an outside model's answer was delivered after a failed check,
-  and how often our demoted reply was delivered because nothing else
-  usable arrived.
+  often the outside models were never sent because the check passed, and,
+  after Jev failed the reply, how often an outside model's answer was
+  delivered and how often our demoted reply was delivered because nothing
+  else usable arrived. Those last two leave out the fails our own checks
+  decided, so they stay a check on Jev's questions and thresholds.
 
 What we deliberately did NOT build for selection:
 

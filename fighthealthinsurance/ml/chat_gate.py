@@ -9,11 +9,12 @@ chat/reply_gate.py runs it inside the chat fan-out; this module holds our
 own checks, the questions, the decision rule and the request.
 
 Our own checks come first. Before anything is sent, the reply must pass
-the rule the retry uses (chat/retry_handler.should_retry_response): not
-empty, at least MIN_RESPONSE_LENGTH characters, and no promised outcome
+the rule the retry uses (chat/retry_handler.should_retry_response): at
+least MIN_RESPONSE_LENGTH characters, and no promised outcome
 (chat/safety_filters.detect_false_promises). A reply that fails them fails
 the check with the scorer LOCAL_SCORER and is never sent to TypeSafe, so
-these requirements hold whether or not Jev can be reached.
+these requirements hold whether or not Jev can be reached. An empty reply
+never gets this far: the chat side records it as skipped, nothing judged.
 
 The questions. Four yes/no ("noul") questions about the reply, read
 against the person's latest message, written for Jev's literal reading
@@ -36,9 +37,10 @@ below FHI_CHAT_JEV_GATE_MAX_PROBLEM (default 0.3). Anything else is a fail.
 A failed reply is ranked just below the outside models' answers while
 FHI_CHAT_JEV_GATE_DEMOTE_FAILED is on (the default).
 These questions and thresholds have not been validated against people's
-judgement of chat replies; the staff dashboard shows how often a failed
-check was followed by an outside model's answer being delivered, which is
-the first check on them.
+judgement of chat replies; the staff dashboard shows how often a reply Jev
+failed was followed by an outside model's answer being delivered, which is
+the first check on them. Fails decided by our own checks are counted apart,
+so they do not fill that figure.
 
 Data protection. Sent: the person's latest message and our reply, redacted
 exactly as the letter scorer redacts (letter_quality.Redactor): the
@@ -282,8 +284,9 @@ def fails_our_checks(reply: typing.Optional[str]) -> bool:
     """Whether our own requirements reject the reply, by the rule the retry
     uses (chat/retry_handler.should_retry_response): empty, shorter than
     MIN_RESPONSE_LENGTH, or a false promise. No request is involved, so it
-    works whether or not Jev can be reached."""
-    return should_retry_response(reply)
+    works whether or not Jev can be reached. No retry starts from here, so
+    the retry's log line is left to the retry."""
+    return should_retry_response(reply, log_retry=False)
 
 
 def scorer_for(payload: typing.Any) -> str:
