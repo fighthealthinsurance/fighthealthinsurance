@@ -122,6 +122,31 @@ class TestTypeSafeBudget:
             assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
             assert spend.allows(spend.DEEPINFRA, spend.CHAT)
 
+    def test_a_copy_that_stopped_refreshing_still_holds_deepinfra_chat_to_its_share(
+        self,
+    ):
+        """Stale is not unread: the counts it last read (and this process's
+        own) are a floor on the real spend, so a spent share stays spent."""
+        with override_settings(FHI_SPEND_BACKGROUND=True), patch.object(
+            spend._Ledger, "_ensure_worker"
+        ):
+            _load(**{_k("deepinfra", "chat"): {TODAY: 953_000}})
+            spend._ledger._refreshed_at -= spend.STALE_SECONDS + 1
+            assert not spend.allows(spend.DEEPINFRA, spend.CHAT)
+
+    def test_a_stale_copy_from_last_month_does_not_hold_back_deepinfra_chat(self):
+        """At the month's turn a stale copy holds the old month's counts,
+        which say nothing about this month's budget."""
+        with override_settings(FHI_SPEND_BACKGROUND=True), patch.object(
+            spend._Ledger, "_ensure_worker"
+        ):
+            _load(**{_k("deepinfra", "chat"): {TODAY: 25 * M}})
+            spend._ledger._refreshed_at -= spend.STALE_SECONDS + 1
+            with patch.object(
+                spend, "_today", return_value=datetime.date(2026, 10, 1)
+            ):
+                assert spend.allows(spend.DEEPINFRA, spend.CHAT)
+
     def test_what_this_process_records_counts_at_once(self):
         _load(**{_k("typesafe", "chat"): {TODAY: 140_000}})
         assert spend.allows(spend.TYPESAFE, spend.CHAT)
