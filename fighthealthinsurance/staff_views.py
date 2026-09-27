@@ -772,17 +772,27 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _scoring_failure_hint(summary: str) -> str:
-        """What a recorded scoring failure most likely means, for on-call."""
+        """What a recorded scoring failure most likely means, for on-call.
+        The statuses TypeSafe documents (401, 422, 429, 529) each get their
+        own phrase."""
         if summary == "HTTP 402":
             return "payment required: TypeSafe credits or billing"
         if summary in ("HTTP 401", "HTTP 403"):
             return "the API key was rejected"
+        if summary == "HTTP 422":
+            return "the request failed validation: TYPESAFE_MODEL or request shape"
         if summary == "HTTP 429":
-            return "rate limited"
+            return "rate limited: over the TypeSafe request or token limit"
+        if summary == "HTTP 529":
+            return "TypeSafe was overloaded"
         if summary.startswith("HTTP 5"):
             return "TypeSafe server error"
         if summary == "timeout":
             return "no answer within TYPESAFE_TIMEOUT_SECONDS"
+        if summary == "TypeSafeError":
+            # ml/typesafe.py refuses before sending: a non-https URL or a
+            # model setting that is not a model name.
+            return "not sent: check TYPESAFE_API_URL and TYPESAFE_MODEL"
         return ""
 
     @staticmethod

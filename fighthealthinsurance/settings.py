@@ -173,6 +173,12 @@ class Base(Configuration):
     TYPESAFE_API_URL = os.getenv(
         "TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone"
     )
+    # The model every TypeSafe request names. Pinned to a Jev release rather
+    # than the "jev-latest" alias, which TypeSafe can repoint: a new model
+    # moves the scores. Scored rows record the model that answered, so a
+    # change here starts a new series on the dashboard. Empty means the same
+    # pinned release (ml/typesafe.py DEFAULT_MODEL).
+    TYPESAFE_MODEL = os.getenv("TYPESAFE_MODEL", "jev-1.13.0")
     TYPESAFE_LETTER_RANKING_ENABLED = (
         os.getenv("TYPESAFE_LETTER_RANKING_ENABLED", "false").lower() == "true"
     )
@@ -892,9 +898,11 @@ class Test(_TestBase):
     # TypeSafe is hard-off under test: a developer's key and flag in the
     # environment must never let an exercised generation path send test
     # denial text to a real endpoint. Scorer tests opt in with
-    # override_settings and stub the transport.
+    # override_settings and stub the transport. The model is pinned too, so a
+    # developer's TYPESAFE_MODEL cannot change the provenance tests expect.
     TYPESAFE_API_KEY = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
+    TYPESAFE_MODEL = "jev-1.13.0"
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
@@ -950,9 +958,11 @@ class TestSync(_TestBase):
     # TypeSafe is hard-off under test: a developer's key and flag in the
     # environment must never let an exercised generation path send test
     # denial text to a real endpoint. Scorer tests opt in with
-    # override_settings and stub the transport.
+    # override_settings and stub the transport. The model is pinned too, so a
+    # developer's TYPESAFE_MODEL cannot change the provenance tests expect.
     TYPESAFE_API_KEY = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
+    TYPESAFE_MODEL = "jev-1.13.0"
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
@@ -991,9 +1001,11 @@ class TestActor(_TestBase):
     # TypeSafe is hard-off under test: a developer's key and flag in the
     # environment must never let an exercised generation path send test
     # denial text to a real endpoint. Scorer tests opt in with
-    # override_settings and stub the transport.
+    # override_settings and stub the transport. The model is pinned too, so a
+    # developer's TYPESAFE_MODEL cannot change the provenance tests expect.
     TYPESAFE_API_KEY = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
+    TYPESAFE_MODEL = "jev-1.13.0"
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
