@@ -232,9 +232,10 @@ async def test_a_pruning_failure_neither_fails_the_attempt_nor_adds_a_row(seeded
 @pytest.mark.asyncio
 async def test_an_attempt_that_stops_waiting_leaves_one_row_for_its_run(seeded):
     """The first attempt's store is stuck, so the attempt stops waiting and
-    fails with a retryable error. The retry stores the run's row. When the
-    first store gets going again its insert meets that row, and it returns
-    that row instead of adding a second."""
+    fails with a retryable error. Retries while that store still runs fail
+    retryably too, without starting a store of their own, so they cannot
+    pile up threads and connections. Once the first store ends, the next
+    retry returns the row it stored."""
     stuck = _StuckOnce()
     finishes = _Finishes()
     with (
@@ -244,20 +245,36 @@ async def test_an_attempt_that_stops_waiting_leaves_one_row_for_its_run(seeded):
     ):
         async with ThreadSensitiveContext():
             try:
-                with pytest.raises(ApplicationError) as caught:
+                with pytest.raises(ApplicationError) as timed_out:
                     await _run(60)
-                # The first store is stuck before the retry starts.
                 assert await asyncio.to_thread(stuck.entered.wait, 5)
-                retried = await _run(60)
+                still_running = []
+                for _ in range(3):
+                    with pytest.raises(ApplicationError) as caught:
+                        await _run(60)
+                    still_running.append(caught.value)
+                stores = [
+                    t
+                    for t in threading.enumerate()
+                    if t.name == "fhi-chat-policy-store"
+                ]
             finally:
                 stuck.release.set()
-            # The retry's store was awaited; the first ends once released.
-            assert await finishes.wait_for(2)
+            for thread in stores:
+                await asyncio.to_thread(thread.join, 5)
+                assert not thread.is_alive()
+            retried = await _run(60)
             rows = [r async for r in ChatRoutingPolicy.objects.values("pk", "run_id")]
-    assert not caught.value.non_retryable
-    assert "TimeoutError" in str(caught.value)
+    assert not timed_out.value.non_retryable
+    assert "TimeoutError" in str(timed_out.value)
+    for error in still_running:
+        assert not error.non_retryable
+        assert "StoreStillRunning" in str(error)
+    assert len(stores) == 1
     assert rows == [{"pk": retried, "run_id": _RUN}]
+    # The first store wrote the row; the retry found it.
     assert finishes.outcomes == [retried, retried]
+    assert stuck.calls == 1
 
 
 @pytest.mark.django_db(transaction=True)
