@@ -2331,7 +2331,8 @@ def _calendar_windows(
     Boundaries are midnight on the first day of the period in the current
     timezone (settings.TIME_ZONE). They are computed on local wall-clock dates
     and made aware one at a time, so a DST change inside a period cannot move
-    a boundary. The current period is labelled "to date": it runs to now.
+    a boundary. The current period is labelled "to date" and ends at ``now``,
+    not at the boundary still ahead of it.
     """
     tz = timezone.get_current_timezone()
     step = 3 if granularity == "quarterly" else 1
@@ -2364,7 +2365,12 @@ def _calendar_windows(
             label = dateformat.format(start, "F Y") + (" (to date)" if to_date else "")
             slug = f"m-{start:%Y-%m}"
         windows.append(
-            (slug, label, timezone.make_aware(start, tz), timezone.make_aware(end, tz))
+            (
+                slug,
+                label,
+                timezone.make_aware(start, tz),
+                now if to_date else timezone.make_aware(end, tz),
+            )
         )
     return windows
 

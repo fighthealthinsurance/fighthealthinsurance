@@ -930,6 +930,11 @@ class CalendarWindowsTest(SimpleTestCase):
         windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
         self.assertEqual(windows[1][2:], (_utc(2025, 10, 1), _utc(2026, 1, 1)))
 
+    def test_the_current_period_ends_now(self):
+        """A period labelled "to date" ends now, not at the boundary ahead."""
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(windows[0][2:], (_utc(2026, 1, 1), self.NOW))
+
     def test_the_view_is_capped_at_max_periods(self):
         windows = _calendar_windows("monthly", self.NOW, _utc(2020, 1, 1), 12)
         self.assertEqual(len(windows), 12)
@@ -944,16 +949,18 @@ class CalendarWindowsTest(SimpleTestCase):
 
     def test_boundaries_follow_the_current_timezone(self):
         """Late on the last day of February in New York it is already March
-        in UTC; the view must still call it February, starting and ending at
-        New York midnights."""
+        in UTC; the view must still call it February, starting at a New York
+        midnight, with January between two of them."""
+        now = _utc(2026, 3, 1, 3)
         with timezone.override(ZoneInfo("America/New_York")):
-            windows = _calendar_windows(
-                "monthly", _utc(2026, 3, 1, 3), _utc(2026, 2, 5), 12
-            )
+            windows = _calendar_windows("monthly", now, _utc(2026, 1, 5), 12)
         self.assertEqual(
-            windows[0], windows[0][:2] + (_utc(2026, 2, 1, 5), _utc(2026, 3, 1, 5))
+            [(w[0], w[2], w[3]) for w in windows],
+            [
+                ("m-2026-02", _utc(2026, 2, 1, 5), now),
+                ("m-2026-01", _utc(2026, 1, 1, 5), _utc(2026, 2, 1, 5)),
+            ],
         )
-        self.assertEqual(windows[0][0], "m-2026-02")
 
 
 class UsageStatsUpperBoundTest(ChooserStatsHelperMixin, TestCase):
