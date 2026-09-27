@@ -5757,9 +5757,10 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         temperature: float = 0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
-        # Accepted for the shared signature. This provider speaks the
-        # Messages API and raises its HTTP errors; what it swallows into
-        # None it still swallows.
+        # HTTP and transport errors propagate to _infer, which converts
+        # them. The calls this transport never makes or never hears back
+        # from (a missing-model or cooldown skip, a timeout) raise
+        # ProviderUnavailable here when asked, as the shared transport's do.
         raise_on_unavailable: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
@@ -5780,6 +5781,9 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         # and the router trusts its in-memory signal over the sweep, so a
         # dead or misdeployed Foundry endpoint kept its fan-out slot until
         # the process restarted. Probes bypass both so they report reality.
+        # A skipped call is counted the way the shared transport counts one,
+        # and entity extraction, which asks for raise_on_unavailable, must
+        # not read it as a model that answered and found nothing.
         if not raise_http_errors and self._model_marked_missing(
             self.api_base, self.model
         ):
@@ -5787,12 +5791,20 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 f"{self}: skipping {self.model} at {self.api_base} -- flagged as "
                 "not served here"
             )
+            self._count_skipped_call("skipped_missing_model")
+            if raise_on_unavailable:
+                raise ProviderUnavailable(f"{self.model}: not served here")
             return None
         if not raise_http_errors and self._transport_cooling(self.api_base, self.model):
             logger.debug(
                 f"{self}: skipping {self.model} at {self.api_base} -- "
                 "transport-failure cooldown"
             )
+            self._count_skipped_call("skipped_cooling")
+            if raise_on_unavailable:
+                raise ProviderUnavailable(
+                    f"{self.model}: in transport-failure cooldown"
+                )
             return None
         # The native Anthropic Messages API caps temperature at 1.0 (vs the
         # OpenAI surface's 2.0); clamp so a shared router temperature that's
@@ -5806,6 +5818,9 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             prompt=prompt,
         )
         url = f"{self.api_base}/v1/messages"
+        # Filled in by _messages_post for an attempt that got no answer in
+        # time, so a caller that asked for it gets ProviderUnavailable.
+        transport_failures: List[str] = []
         headers = {
             "x-api-key": self.token or "",
             "anthropic-version": self.ANTHROPIC_VERSION,
@@ -5859,6 +5874,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                     body,
                     timeout=attempt_timeout,
                     note_failures=not raise_http_errors,
+                    transport_failures=transport_failures,
                 )
             except aiohttp.ClientResponseError as e:
                 if send_temperature and _http_error_indicates_unsupported_temperature(
@@ -5895,12 +5911,24 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                         body,
                         timeout=retry_timeout,
                         note_failures=not raise_http_errors,
+                        transport_failures=transport_failures,
                     )
                 else:
                     raise
             if result and result[0]:
                 return result
+        if raise_on_unavailable and transport_failures:
+            raise ProviderUnavailable("; ".join(transport_failures))
         return None
+
+    def _count_skipped_call(self, reason: str) -> None:
+        """Count a call a skip kept off the wire as the shared transport does:
+        outcome=none, with the skip as its failure reason. Uncounted, the
+        failure rate would fall during the very outage that started the
+        cooldown."""
+        metric_model, leg, endpoint = self._metric_identity(self.api_base)
+        record_ml_call(metric_model, "none", 0.0, leg=leg, endpoint=endpoint)
+        record_ml_failure(metric_model, reason, leg=leg, endpoint=endpoint)
 
     async def _messages_request(
         self,
@@ -5909,6 +5937,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         body: dict,
         timeout: Optional[float] = None,
         note_failures: bool = True,
+        transport_failures: Optional[List[str]] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """POST a single Messages API request (honoring ``timeout`` /
         ``self._timeout``) and parse the response. ``raise_for_status``
@@ -5922,7 +5951,9 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         """
         effective_timeout = timeout if timeout is not None else self._timeout
         try:
-            return await self._messages_post(url, headers, body, effective_timeout)
+            return await self._messages_post(
+                url, headers, body, effective_timeout, transport_failures
+            )
         except aiohttp.ClientResponseError as e:
             body_text = _error_body_of(e)
             if (
@@ -5945,9 +5976,10 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         headers: dict,
         body: dict,
         effective_timeout: Optional[float],
+        transport_failures: Optional[List[str]] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """The request itself and its fhi_ml_* call metrics; None on a
-        timeout."""
+        timeout, which is added to ``transport_failures`` when given."""
 
         async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
             # Same rationale as RemoteOpenLike.__infer: fail fast on
@@ -5995,11 +6027,14 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                         f"Timed out querying {self} after {effective_timeout:.0f}s"
                     )
                     _count("timeout")
-                    # For a probe: nothing answered the socket, which is not a
-                    # malformed response (see _PROBE_OBSERVATIONS).
-                    _note_probe_transport_error(
+                    no_answer = (
                         f"{self.model}: no answer within {effective_timeout:.0f}s"
                     )
+                    if transport_failures is not None:
+                        transport_failures.append(no_answer)
+                    # For a probe: nothing answered the socket, which is not a
+                    # malformed response (see _PROBE_OBSERVATIONS).
+                    _note_probe_transport_error(no_answer)
                     return None
             else:
                 result = await _post()
