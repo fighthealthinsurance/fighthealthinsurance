@@ -3511,6 +3511,11 @@ class AppealGenerator(object):
         # report whether the primary won or a shed-tier retry rescued it.
         winning_stage: Optional[str] = "primary" if first is not None else None
         shed_tier_used: Optional[int] = None
+        if first is not None and first.context_level == CONTEXT_LEVEL_TIER1_SHED:
+            # A proactive shed sibling, submitted under the primary stage,
+            # won: that is a context-overflow rescue, and the diagnostic that
+            # counts rescues used to miss exactly this case.
+            shed_tier_used = 1
 
         if first is None and backup_calls:
             logger.warning(
