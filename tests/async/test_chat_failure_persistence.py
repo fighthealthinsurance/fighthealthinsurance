@@ -426,46 +426,104 @@ class ChatClientHangupTest(APITestCase):
         )
 
 
-class ChatHangupSeenOnlyByTheHeartbeatTest(APITestCase):
-    """The most common hangup: the user leaves during a long turn, and only
-    the heartbeat's status frame finds out.
+class ChatHangupOutcomeTest(APITestCase):
+    """A turn the user walked away from is counted "client_gone" -- once, not
+    "ok", not "timeout" -- whichever write is first to find the socket closed.
 
-    The heartbeat swallows its own send failures, so this departure never
-    reached handle_chat_message: the turn ran on, was counted "ok", and then
-    sent its reply into the closed socket (review). The send path now
-    remembers the departure however the exception is handled after it.
+    Each of these used to go wrong a different way (review). The heartbeat
+    swallows its own send failures, so a departure it saw never reached
+    handle_chat_message: the turn ran on, was counted "ok", and sent its reply
+    into the closed socket. A departure the reply itself found was counted
+    "ok" because the metric was recorded before the send. And a budget that
+    ran out after the heartbeat saw the user leave logged an ERROR and counted
+    the one turn under both "timeout" and "client_gone".
     """
 
-    async def test_the_turn_is_counted_as_client_gone_not_ok(self):
-        from fighthealthinsurance.client_gone import ClientGone
+    REPLY = "Here is what I found about your MRI denial."
 
-        user, chat = await _make_professional_chat("hbgone1", "9999910031")
+    async def _run_turn(self, username, npi, send, *, reply_delay, env):
+        """One turn with a mocked model; returns (chat, recorded outcomes,
+        ERROR messages logged)."""
+        user, chat = await _make_professional_chat(username, npi)
+        interface = ChatInterface(send_json_message_func=send, chat=chat, user=user)
+
+        async def reply(*args, **kwargs):
+            await asyncio.sleep(reply_delay)
+            return self.REPLY, None
+
+        errors = []
+        sink_id = logger.add(
+            lambda msg: errors.append(msg.record["message"]), level="ERROR"
+        )
+        try:
+            with patch.dict(os.environ, env), patch(
+                "fighthealthinsurance.chat_interface.record_chat_turn"
+            ) as mock_record, _llm_call_fails(reply):
+                # Must not raise: nothing is sent into the closed socket.
+                await interface.handle_chat_message("Why was my MRI claim denied?")
+        finally:
+            logger.remove(sink_id)
+        return chat, [call.args[0] for call in mock_record.call_args_list], errors
+
+    @staticmethod
+    def _gone_on_every_frame():
+        from fighthealthinsurance.client_gone import ClientGone
 
         async def gone(_frame):
             raise ClientGone()
 
-        interface = ChatInterface(send_json_message_func=gone, chat=chat, user=user)
+        return gone
 
-        async def slow_reply(*args, **kwargs):
-            # Long enough for several heartbeats at the interval below.
-            await asyncio.sleep(0.3)
-            return "Here is what I found about your MRI denial.", None
-
-        with patch.dict(os.environ, {"FHI_CHAT_HEARTBEAT_SECONDS": "0.05"}), patch(
-            "fighthealthinsurance.chat_interface.record_chat_turn"
-        ) as mock_record, _llm_call_fails(slow_reply):
-            # Must not raise: the reply is not sent into the closed socket.
-            await interface.handle_chat_message("Why was my MRI claim denied?")
-
-        outcomes = [call.args[0] for call in mock_record.call_args_list]
-        self.assertEqual(outcomes, ["client_gone"])
-
-        # ...and the reply is kept, so a reconnect replays it.
+    async def _assistant_replies(self, chat):
         fresh = await OngoingChat.objects.aget(id=chat.id)
-        assistant = [
-            m for m in (fresh.chat_history or []) if m.get("role") == "assistant"
-        ]
-        self.assertEqual(len(assistant), 1)
+        return [m for m in (fresh.chat_history or []) if m.get("role") == "assistant"]
+
+    async def test_a_hangup_seen_by_the_heartbeat_is_client_gone_not_ok(self):
+        chat, outcomes, _ = await self._run_turn(
+            "hbgone1",
+            "9999910031",
+            self._gone_on_every_frame(),
+            # Long enough for several heartbeats at the interval below.
+            reply_delay=0.3,
+            env={"FHI_CHAT_HEARTBEAT_SECONDS": "0.05"},
+        )
+        self.assertEqual(outcomes, ["client_gone"])
+        # ...and the reply is kept, so a reconnect replays it.
+        self.assertEqual(len(await self._assistant_replies(chat)), 1)
+
+    async def test_a_hangup_seen_only_by_the_reply_is_client_gone_not_ok(self):
+        """A fast turn: no heartbeat fires, so the reply is the first write."""
+        from fighthealthinsurance.client_gone import ClientGone
+
+        async def gone_for_the_reply(frame):
+            if frame.get("role") == "assistant":
+                raise ClientGone()
+
+        chat, outcomes, _ = await self._run_turn(
+            "replygone1",
+            "9999910032",
+            gone_for_the_reply,
+            reply_delay=0,
+            env={"FHI_CHAT_HEARTBEAT_SECONDS": "60"},
+        )
+        self.assertEqual(outcomes, ["client_gone"])
+        self.assertEqual(len(await self._assistant_replies(chat)), 1)
+
+    async def test_a_budget_run_out_after_the_hangup_is_not_a_timeout(self):
+        _, outcomes, errors = await self._run_turn(
+            "budgetgone1",
+            "9999910033",
+            self._gone_on_every_frame(),
+            # The heartbeat sees the departure well before the budget ends,
+            # and the model outlasts the budget.
+            reply_delay=2.0,
+            env={
+                "FHI_CHAT_HEARTBEAT_SECONDS": "0.05",
+                "FHI_CHAT_TURN_BUDGET": "0.3",
+            },
+        )
+        self.assertEqual(outcomes, ["client_gone"])
+        self.assertEqual(errors, [], "a departure must not log an ERROR")
 
 
 class PersistChatTurnHelperTest(APITestCase):

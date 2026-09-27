@@ -2197,14 +2197,26 @@ class ChatInterface:
                         f"recent reply (all anti-repeat rungs exhausted)"
                     )
         except asyncio.TimeoutError:
-            logger.error(
-                f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
-                f"{chat.id}; giving up on this turn"
-            )
-            # Recorded here as "timeout"; the shared failure branch below
-            # checks this flag so the same turn isn't also counted "failed".
-            turn_timed_out = True
-            self._count_turn("timeout")
+            if self._client_gone:
+                # The heartbeat saw the user leave, then the model ran out
+                # the clock. Reporting that as a timeout logged an ERROR (a
+                # Sentry issue) for a hangup and counted the one turn under
+                # both "timeout" and "client_gone" (review). The failure
+                # branch below records it once, as the departure it was.
+                client_hung_up = True
+                logger.warning(
+                    f"Chat {chat.id}: turn budget ran out after the client "
+                    f"left; abandoning the turn"
+                )
+            else:
+                logger.error(
+                    f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
+                    f"{chat.id}; giving up on this turn"
+                )
+                # Recorded here as "timeout"; the shared failure branch below
+                # checks this flag so the same turn isn't also counted "failed".
+                turn_timed_out = True
+                self._count_turn("timeout")
         except Exception as e:
             # The status/heartbeat frames this turn writes go down the same
             # socket as the reply, so a user who closes the tab mid-turn
@@ -2303,8 +2315,8 @@ class ChatInterface:
                     f"client left mid-turn"
                 )
                 self._count_turn("client_gone")
+                await self._write_turn_record("client_gone")
                 return
-            self._count_turn("ok")
             # Side-by-side alternate answer (ChatGPT-style "here's another
             # take"): cleaned like the primary, dropped if cleaning leaves it
             # too similar to what we're already sending. Ephemeral -- only
@@ -2345,13 +2357,31 @@ class ChatInterface:
             turn = self._turn
             turn_id = str(turn.turn_id) if turn is not None else None
             runner_up_for_shadow, self._shadow_runner_up = self._shadow_runner_up, None
-            # A send that raises or is cancelled still leaves the row, "ok"
-            # as counted: handle_chat_message writes it.
-            await self.send_message_to_client(
-                final_response_text,
-                alternate_content=alternate_content,
-                turn_id=turn_id,
-            )
+            try:
+                await self.send_message_to_client(
+                    final_response_text,
+                    alternate_content=alternate_content,
+                    turn_id=turn_id,
+                )
+            except ClientGone:
+                # The reply itself was the first write to find the socket
+                # closed -- a fast turn, or a tab closed after the last
+                # status frame. Counting "ok" before this send filed exactly
+                # those hangups as successes (review). The reply is persisted
+                # above, so a reconnect still replays it.
+                logger.info(
+                    f"Chat {chat.id}: reply persisted but not delivered; the "
+                    f"client left as it was sent"
+                )
+                self._count_turn("client_gone")
+                await self._write_turn_record("client_gone")
+                return
+            except asyncio.CancelledError:
+                # Counted "ok" as it always was for a send cancelled on its
+                # way out, so handle_chat_message still leaves the row.
+                self._count_turn("ok")
+                raise
+            self._count_turn("ok")
             # Awaited, not fire-and-forget: channels handles one frame at a
             # time per connection, so this row exists before the person's
             # side-by-side pick for it can arrive.
@@ -2401,7 +2431,8 @@ class ChatInterface:
                 # alerting on is the RATE of hangups climbing (which would
                 # mean we got slow, or a proxy started reaping sockets), and
                 # that is a metric question, not one issue per user.
-                record_chat_turn("client_gone")
+                self._count_turn("client_gone")
+                await self._write_turn_record("client_gone")
                 return
 
             # Provide more helpful error message based on context

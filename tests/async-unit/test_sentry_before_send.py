@@ -114,6 +114,40 @@ class TestInfrastructureTeardownNoiseIsDropped:
         }
         assert before_send_filter(event, {}) is None
 
+    def test_the_production_shape_with_two_runtime_errors_is_dropped(self):
+        """The event this filter exists for carried two RuntimeErrors beside
+        its SystemExit: the runner raises more than one while unwinding."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "SystemExit", "value": "15"},
+                    {"type": "RuntimeError", "value": "Event loop stopped"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is None
+
+    def test_a_crash_that_rides_into_the_shutdown_is_kept(self):
+        """An application exception beside the shutdown pair is a root cause
+        that must not be dropped with the teardown noise (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "KeyError", "value": "'denial_id'"},
+                    {"type": "SystemExit", "value": "15"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
     def test_a_systemexit_alone_is_kept(self):
         """Only the teardown artifact is noise; an exit on its own is not."""
         event = _exc_event("SystemExit", "15")
