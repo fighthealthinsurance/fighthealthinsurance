@@ -1415,6 +1415,8 @@ class FindNextStepsHelper:
                         f" {work_req['state']}'s own waiver status as of our last "
                         f"review: {html_escape(work_req['work_requirement_waiver'])}."
                     )
+                if work_req["waiver_activity"]:
+                    headline += f"<br><br>{html_escape(work_req['waiver_activity'])}"
                 how_to_parts = []
                 website = sanitize_http_url(work_req["agency_website"])
                 if website:

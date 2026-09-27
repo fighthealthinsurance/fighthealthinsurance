@@ -21,6 +21,7 @@ Invoked by:
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import datetime
 import urllib.robotparser
@@ -88,8 +89,6 @@ class MedicaidWorkRequirementFetcher:
         self._timeout = aiohttp.ClientTimeout(total=timeout_sec)
         self._max_bytes = max_bytes
         self._csv_path = csv_path
-        import asyncio
-
         self._semaphore = asyncio.Semaphore(concurrency)
         self._robots_cache: Dict[str, bool] = {}
 
@@ -113,8 +112,6 @@ class MedicaidWorkRequirementFetcher:
         ``states`` (optional) restricts the run to matching ``state`` column
         values (case-insensitive exact match), for ``--state`` scoping.
         """
-        import asyncio
-
         rows = self._read_rows()
         stats = {"checked": 0, "mentioned": 0, "failed": 0, "skipped": 0}
         wanted = {s.lower() for s in states} if states else None

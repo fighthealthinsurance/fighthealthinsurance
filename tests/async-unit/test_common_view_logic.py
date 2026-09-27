@@ -2473,6 +2473,21 @@ class RegulatorContactInfoTest(TestCase):
         self.assertIn("work/community-engagement requirement", text)
         self.assertIn("Georgia", text)
 
+    def test_outside_help_includes_curated_waiver_activity_narrative(self):
+        # Georgia's medicaid_resources.csv row carries a rich curated
+        # waiver_activity narrative ("Pathways to Coverage...") -- the
+        # next-steps page should show the same narrative the chat surface
+        # (get_medicaid_info) already does, not just the bare status word.
+        medicaid = PlanSource.objects.create(
+            name="Medicaid", regex="medicaid", negative_regex="$^"
+        )
+        denial = self._make_denial()
+        denial.your_state = "GA"
+        denial.save()
+        denial.plan_source.set([medicaid])
+        text = self._outside_help_text(denial)
+        self.assertIn("Pathways to Coverage", text)
+
     def test_outside_help_omits_work_requirement_note_for_non_medicaid_plan(self):
         employer = PlanSource.objects.create(
             name="Employer -- Private", regex="employer", negative_regex="$^"
