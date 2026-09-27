@@ -8,13 +8,20 @@ traceback, the way the deployed sinks write it; only the log message itself
 is held to the class name. Lines built from our own fixed text (the chat
 lookup reasons) are pinned word for word, and uploads and long pastes with a
 non-string document name still store.
+
+Session keys identify anonymous chats and work as their passwords, so the
+chat consumer logs at most the first 8 characters of one, and a chat id the
+client sends as a repr of at most 64 characters.
 """
 
 import contextlib
 import typing
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
 from loguru import logger
 from rest_framework.test import APITestCase
 
@@ -22,6 +29,7 @@ from fighthealthinsurance.chat.context_manager import background_generate_summar
 from fighthealthinsurance.chat_interface import ChatInterface
 from fighthealthinsurance.models import (
     ChatDocument,
+    ChatLeads,
     ChatType,
     OngoingChat,
     PolicyDocument,
@@ -184,6 +192,44 @@ class ChatTurnLogsTest(APITestCase):
         messages = _messages(records)
         self.assertIn("Primary models all failed: RuntimeError", messages)
         self.assertIn("Fallback models also failed: RuntimeError", messages)
+
+    async def test_failure_line_logs_external_models_as_a_flag(self):
+        user, chat = await _make_chat("sizelog21", "9999940021")
+        # The consumer hands the client's use_external_models value through
+        # as sent, so it can be any JSON value, here a string.
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(),
+            chat=chat,
+            user=user,
+            use_external_models=typing.cast(bool, "SENTINEL-external-21"),
+        )
+
+        async def _boom(calls, *args, **kwargs):
+            for call in calls:
+                close = getattr(call, "close", None)
+                if close:
+                    close()
+            raise RuntimeError("boom")
+
+        with _captured_logs() as (records, lines):
+            with _patched_router([RecordingChatModel()]), _patch_fire_and_forget():
+                with patch(
+                    "fighthealthinsurance.chat_interface.best_two_within_timelimit",
+                    side_effect=_boom,
+                ), patch(
+                    "fighthealthinsurance.chat.retry_handler.best_two_within_timelimit",
+                    side_effect=_boom,
+                ):
+                    await interface.handle_chat_message("Please help")
+
+        self.assertEqual(_leaks(lines, "SENTINEL-external-21"), [])
+        failure_lines = [
+            m
+            for m in _messages(records)
+            if m.startswith("Failed to generate a response")
+        ]
+        self.assertEqual(len(failure_lines), 1, failure_lines)
+        self.assertIn("use_external_models=True)", failure_lines[0])
 
     async def test_status_messages_log_only_their_size(self):
         user, chat = await _make_chat("sizelog3", "9999940003")
@@ -460,6 +506,101 @@ class ChatLookupLogsTest(APITestCase):
             f"Chat with id {str(existing.id)!r} not found (DoesNotExist: "
             "session key mismatch). Creating new chat.",
             _messages(records),
+        )
+
+
+class ChatConsumerSessionKeyLogsTest(APITestCase):
+    async def test_anonymous_chat_logs_key_prefix_and_bounded_chat_id(self):
+        # A trial professional's lead row is found by the full key.
+        session_key = "sk8trial-SENTINEL-session-key-20-" + uuid.uuid4().hex
+        await ChatLeads.objects.acreate(
+            session_id=session_key,
+            name="Trial User",
+            email="sizelog20@example.com",
+            phone="555-0100",
+            company="Test Clinic",
+            consent_to_contact=True,
+            agreed_to_terms=True,
+        )
+        # The UUID parser drops hyphens, so this id, padded far past 64
+        # characters, still reaches the chat lookup and misses, which forks.
+        missing = uuid.uuid4().hex
+        chat_id = missing[:8] + "-" * 120 + missing[8:]
+
+        frames: list = []
+        with _captured_logs() as (records, lines):
+            with _patched_router(
+                [RecordingChatModel(always_reply=FRESH_REPLY)]
+            ), _patch_fire_and_forget():
+                communicator = WebsocketCommunicator(
+                    OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                )
+                communicator.scope["user"] = AnonymousUser()
+                connected, _ = await communicator.connect()
+                self.assertTrue(connected)
+                try:
+                    await communicator.send_json_to(
+                        {
+                            "session_key": session_key,
+                            "chat_id": chat_id,
+                            "content": "Hello there",
+                        }
+                    )
+                    for _ in range(10):
+                        frame = await communicator.receive_json_from(timeout=20)
+                        frames.append(frame)
+                        if "error" in frame or (
+                            frame.get("role") == "assistant" and "content" in frame
+                        ):
+                            break
+                finally:
+                    await communicator.disconnect()
+
+        self.assertTrue([f for f in frames if f.get("chat_forked")], frames)
+        self.assertEqual(
+            [f for f in frames if f.get("role") == "assistant"][-1]["content"],
+            FRESH_REPLY,
+        )
+        # No line carries more than the key's first 8 characters, or the
+        # part of the chat id past its first 64.
+        self.assertEqual(_leaks(lines, session_key[:9]), [])
+        self.assertEqual(_leaks(lines, missing[8:]), [])
+        messages = _messages(records)
+        prefix = repr(session_key[:8])
+        bounded_id = repr(chat_id[:64])
+        self.assertIn(f"Trial professional chat for session {prefix}", messages)
+        self.assertIn(
+            f"Chat with id {bounded_id} not found (DoesNotExist: no matching "
+            "chat). Creating new chat.",
+            messages,
+        )
+        self.assertTrue(
+            [
+                m
+                for m in messages
+                if m.startswith("Creating new ")
+                and m.endswith(f" chat for session {prefix}")
+            ],
+            "expected the new-chat line with the key prefix",
+        )
+        self.assertTrue(
+            [
+                m
+                for m in messages
+                if m.startswith(f"chat ws: requested chat {bounded_id} resolved ")
+                and m.endswith(" (forked)")
+            ],
+            "expected the forked-chat line with the bounded id",
+        )
+        self.assertTrue(
+            [
+                m
+                for m in messages
+                if m.startswith("chat ws: msg_len=")
+                and f"chat_id={bounded_id} " in m
+                and f"session_key={prefix} " in m
+            ],
+            "expected the receive line with the key prefix and bounded id",
         )
 
 

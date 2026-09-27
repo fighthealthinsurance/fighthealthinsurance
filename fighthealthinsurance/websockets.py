@@ -1226,6 +1226,22 @@ class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsume
         return prior_auth
 
 
+# A chat session key identifies an anonymous chat and works as its password,
+# so log lines carry at most this many leading characters of one.
+_SESSION_KEY_LOG_CHARS = 8
+
+
+def _session_key_prefix_for_log(session_key: object) -> str:
+    """The first 8 characters of a session key, repr'd, or "none" if absent.
+
+    The key comes from client JSON and can be any type, so it is converted
+    with str() before slicing, and repr() escapes newlines and quotes.
+    """
+    if not session_key:
+        return "none"
+    return repr(str(session_key)[:_SESSION_KEY_LOG_CHARS])
+
+
 async def resolve_chat_type(
     user,
     is_authenticated: bool,
@@ -1249,7 +1265,10 @@ async def resolve_chat_type(
                 .afirst()
             )
             if lead and not lead.drug:
-                logger.debug(f"Trial professional chat for session {session_key}")
+                logger.debug(
+                    "Trial professional chat for session "
+                    f"{_session_key_prefix_for_log(session_key)}"
+                )
                 return ChatType.TRIAL_PROFESSIONAL, None
             # lead with drug or no lead → patient
         return ChatType.PATIENT, None
@@ -1575,12 +1594,19 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                     )
                 microsite_slug = None
 
+        # Every value below except msg_len and the validated microsite_slug
+        # is client JSON: ids are bounded and repr'd like the lines above,
+        # flags are logged as the truth value the code acts on, and the
+        # session key as its 8-character prefix.
         logger.debug(
             f"chat ws: msg_len={len(message) if isinstance(message, str) else 0} "
-            f"replay={replay_requested} chat_id={chat_id} "
-            f"iterate_on_appeal={iterate_on_appeal} iterate_on_prior_auth={iterate_on_prior_auth} "
-            f"is_patient={is_patient} session_key={session_key} microsite_slug={microsite_slug} "
-            f"use_external_models={use_external_models}"
+            f"replay={bool(replay_requested)} chat_id={str(chat_id)[:64]!r} "
+            f"iterate_on_appeal={str(iterate_on_appeal)[:64]!r} "
+            f"iterate_on_prior_auth={str(iterate_on_prior_auth)[:64]!r} "
+            f"is_patient={bool(is_patient)} "
+            f"session_key={_session_key_prefix_for_log(session_key)} "
+            f"microsite_slug={microsite_slug} "
+            f"use_external_models={bool(use_external_models)}"
         )
 
         # Validate we have the required data
@@ -1660,8 +1686,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             # chat whose id they never stored, re-forking on every turn.
             if chat_id and str(chat.id) != str(chat_id):
                 logger.info(
-                    f"chat ws: requested chat {chat_id!r} resolved to new "
-                    f"chat {chat.id} (forked)"
+                    f"chat ws: requested chat {str(chat_id)[:64]!r} resolved "
+                    f"to new chat {chat.id} (forked)"
                 )
                 await self.send_json_message(
                     {"chat_id": str(chat.id), "chat_forked": True}
@@ -1820,7 +1846,7 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 # template, so a "{" in the client-controlled chat_id would
                 # raise/inject inside the logging call itself.
                 logger.warning(
-                    f"Chat with id {chat_id!r} not found "
+                    f"Chat with id {str(chat_id)[:64]!r} not found "
                     f"({type(e).__name__}: {miss_reason}). Creating new chat."
                 )
                 pass  # Fall through to create a new one
@@ -1836,9 +1862,13 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
 
         chat_user = user if (user and user.is_authenticated) else None
 
+        session_note = (
+            f" for session {_session_key_prefix_for_log(session_key)}"
+            if session_key
+            else ""
+        )
         logger.info(
-            f"Creating new {chat_type} chat"
-            f"{' for session ' + session_key[:8] if session_key else ''}"
+            f"Creating new {chat_type} chat{session_note}"
             f"{' for user ' + str(chat_user.id) if chat_user else ''}"
         )
 

@@ -7,12 +7,17 @@ a sentinel in one of them and checks that no log line written while it was in
 flight contains it. Where a line attaches a traceback, the
 sentinel may appear there (the deployed sinks keep tracebacks but not frame
 variables); the log message itself carries only the exception class.
+
+Session keys identify anonymous chats and work as their passwords, so the
+chat consumer logs at most the first 8 characters of one, and ids and flags
+the client sends as a bounded repr or a truth value.
 """
 
 import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from channels.testing import WebsocketCommunicator
 from loguru import logger
 
 from fighthealthinsurance.chat.context_manager import _summarize_history
@@ -646,3 +651,62 @@ class TestChatConsumerLogs:
             "User 4321 is not a professional user, treating as patient"
             in _messages(records)
         )
+
+    # django_db: the consumer's dispatch sweeps DB connections on disconnect
+    # (see test_chat_ws_error_shape.py).
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    async def test_receive_line_logs_key_prefix_and_bounded_client_values(self):
+        # Each value carries a sentinel past the point its log form keeps.
+        session_key = "sk8head-SENTINEL-ws-session-key"
+        pad = "x" * 64
+        chat_id = f"chat\nforged {pad}SENTINEL-ws-chat-id"
+        appeal_id = f"appeal {pad}SENTINEL-ws-appeal-id"
+        prior_auth_id = f"prior auth {pad}SENTINEL-ws-prior-auth-id"
+        frame = {
+            "content": "hello",
+            "session_key": session_key,
+            "chat_id": chat_id,
+            "iterate_on_appeal": appeal_id,
+            "iterate_on_prior_auth": prior_auth_id,
+            "is_patient": "SENTINEL-ws-is-patient",
+            "replay": "SENTINEL-ws-replay",
+            "use_external_models": "SENTINEL-ws-external",
+        }
+        with _captured_logs() as (records, lines):
+            # Stop the turn right after the receive line.
+            with patch(
+                "fighthealthinsurance.websockets.resolve_chat_type",
+                side_effect=RuntimeError("stop"),
+            ):
+                communicator = WebsocketCommunicator(
+                    OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+                )
+                connected, _ = await communicator.connect()
+                assert connected
+                try:
+                    await communicator.send_json_to(frame)
+                    reply = await communicator.receive_json_from(timeout=10)
+                finally:
+                    await communicator.disconnect()
+        assert "error" in reply
+        # No line carries more than the key's first 8 characters.
+        _assert_absent_from_lines(lines, session_key[:9])
+        for sentinel in (
+            "SENTINEL-ws-chat-id",
+            "SENTINEL-ws-appeal-id",
+            "SENTINEL-ws-prior-auth-id",
+            "SENTINEL-ws-is-patient",
+            "SENTINEL-ws-replay",
+            "SENTINEL-ws-external",
+        ):
+            _assert_absent_from_lines(lines, sentinel)
+        _assert_absent_from_messages(records, "\nforged")
+        assert (
+            "chat ws: msg_len=5 replay=True "
+            f"chat_id={chat_id[:64]!r} "
+            f"iterate_on_appeal={appeal_id[:64]!r} "
+            f"iterate_on_prior_auth={prior_auth_id[:64]!r} "
+            "is_patient=True session_key='sk8head-' microsite_slug=None "
+            "use_external_models=True"
+        ) in _messages(records)

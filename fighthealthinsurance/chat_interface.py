@@ -1564,7 +1564,7 @@ class ChatInterface:
                 f"Failed to generate a response in chat {chat.id} after trying "
                 f"all models (message_chars={len(user_message or '')}, "
                 f"error={turn_error or 'none'}, timed_out={turn_timed_out}, "
-                f"use_external_models={self.use_external_models})"
+                f"use_external_models={bool(self.use_external_models)})"
             )
             if not turn_timed_out:
                 record_chat_turn("failed")
