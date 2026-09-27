@@ -67,7 +67,10 @@ from fighthealthinsurance.ml import typesafe
 # the questions below, which are our half of the rubric. Bump RUBRIC_VERSION
 # whenever the questions change; either change starts a fresh series on the
 # dashboard instead of averaging two scales into one line called "drift".
-RUBRIC_VERSION = 1
+# 2: requests moved to the documented System One body and a pinned Jev
+# release, so a score stored before then is rescored, not ranked against
+# fresh ones (same_rubric does not compare the model half).
+RUBRIC_VERSION = 2
 _RUBRIC_SUFFIX = f"/rubric-{RUBRIC_VERSION}"
 # The provenance under the default model. Rows record the model the response
 # names; see scorer_for.

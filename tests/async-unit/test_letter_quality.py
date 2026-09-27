@@ -447,6 +447,9 @@ class TestScorerIdentity:
         assert not lq.same_rubric(f"manual-import/rubric-{lq.RUBRIC_VERSION}")
         assert not lq.same_rubric(f"typesafe/x/y/rubric-{lq.RUBRIC_VERSION}")
         assert not lq.same_rubric(None)
+        # A score stored before the move to the documented body and a pinned
+        # Jev release is rescored, not ranked against fresh ones.
+        assert not lq.same_rubric("typesafe/speed_latest/rubric-1")
 
     def test_an_odd_model_name_in_the_answer_cannot_forge_provenance(self):
         assert lq.scorer_for({"model": "weird value!"}) == lq.SCORER

@@ -67,9 +67,10 @@ def reported_model(payload: typing.Any) -> str:
     features record. TypeSafe reports the versioned id (jev-1.13.0 even when
     the request named the jev-latest alias), so a repointed alias shows up as
     a new name. A response that names none, or names something that is not a
-    plain model name, is recorded under the name the request sent."""
+    plain model name (the API types it as a string), is recorded under the
+    name the request sent."""
     answered = payload.get("model") if isinstance(payload, dict) else None
-    name = str(answered).strip() if answered else ""
+    name = answered.strip() if isinstance(answered, str) else ""
     return name if _MODEL_NAME.fullmatch(name) else model_name()
 
 

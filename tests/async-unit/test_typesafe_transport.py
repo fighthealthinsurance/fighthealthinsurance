@@ -195,7 +195,9 @@ class TestReportedModel:
             assert typesafe.reported_model({"model": ""}) == "jev-latest"
             assert typesafe.reported_model(None) == "jev-latest"
 
-    @pytest.mark.parametrize("odd", ["weird value!", "a/b", "x" * 200, ["jev"]])
+    @pytest.mark.parametrize(
+        "odd", ["weird value!", "a/b", "x" * 200, ["jev"], 123, 1.5, True]
+    )
     def test_an_odd_name_in_the_response_cannot_forge_provenance(self, odd):
         assert typesafe.reported_model({"model": odd}) == typesafe.DEFAULT_MODEL
 

@@ -285,6 +285,8 @@ class TestRowValues:
         assert values["triage_source"] == dt.SOURCE
         assert dt.source_for({"model": "speed_20260901"}) == f"typesafe/speed_20260901/rubric-{dt.RUBRIC_VERSION}"
         assert dt.same_rubric(dt.SOURCE) and not dt.same_rubric("typesafe/x/rubric-0") and not dt.same_rubric("manual/rubric-1")
+        # A triage stored before the move to a pinned Jev release is redone.
+        assert not dt.same_rubric("typesafe/speed_latest/rubric-1")
         assert values["triage_text_hash"] == dt.text_hash(LETTER)
         assert values["triaged_at"] == now
         assert set(values) == set(dt.TRIAGE_COLUMNS)
