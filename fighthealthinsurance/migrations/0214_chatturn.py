@@ -55,6 +55,11 @@ class Migration(migrations.Migration):
                 ),
                 ("winner_external", models.BooleanField(blank=True, null=True)),
                 (
+                    "first_pass_model",
+                    models.CharField(blank=True, default="", max_length=200),
+                ),
+                ("first_pass_score", models.FloatField(blank=True, null=True)),
+                (
                     "runner_up_model",
                     models.CharField(blank=True, default="", max_length=200),
                 ),

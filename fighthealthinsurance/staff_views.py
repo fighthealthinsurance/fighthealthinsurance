@@ -49,6 +49,7 @@ from fighthealthinsurance.chat.turn_record import (
     STATUS_ERROR,
     STATUS_LATE,
     STATUS_REPEAT,
+    STATUS_UNSCORED,
 )
 from fighthealthinsurance.models import (
     ChatTurn,
@@ -1457,7 +1458,13 @@ PLACEHOLDER_MODEL_LABELS = frozenset(
 
 # ChatTurn call statuses the live chat table gives a column each. The rest
 # ("scored") is the calls that returned a usable candidate.
-CHAT_CALL_PROBLEMS = (STATUS_LATE, STATUS_ERROR, STATUS_EMPTY, STATUS_REPEAT)
+CHAT_CALL_PROBLEMS = (
+    STATUS_LATE,
+    STATUS_UNSCORED,
+    STATUS_ERROR,
+    STATUS_EMPTY,
+    STATUS_REPEAT,
+)
 
 # ChatTurn columns the live chat section reads. Every one is metadata: model
 # labels, enums, flags, and the calls list (labels, statuses, times, scores).
@@ -1559,6 +1566,9 @@ class _ChatTally:
             asked |= {_chat_label(n) for n in (fallback_backends or [])}
         for label in asked:
             self._model(label)["asked"] += 1
+        # Wins and outside-model wins go to the model whose reply was
+        # delivered (winner_model): a tool follow-up's pick when one wrote
+        # the reply, not the first pass's.
         winner_label = _chat_label(winner) if winner else None
         if outcome == ChatTurn.Outcome.OK and winner_label is not None:
             self._model(winner_label)["wins"] += 1
@@ -2544,9 +2554,10 @@ class ModelUsageDashboardView(generic.TemplateView):
         One read of the widest window, bucketed in Python. Per window: a
         summary (turns by outcome, how often outside models were allowed and
         how often one's answer was delivered, retries, alternates offered
-        and picks received), a row per model (turns that asked it, wins and
-        win rate = wins / turns asked, runner-up count, calls by status and
-        the median time of calls that returned) and the side-by-side pairs.
+        and picks received), a row per model (turns that asked it, wins =
+        OK turns that delivered its reply, win rate = wins / turns asked,
+        runner-up count, calls by status and the median time of calls that
+        returned, scored or not) and the side-by-side pairs.
 
         Side-by-side per-model numbers and pair rows count only pairs from
         two different models; a pair from one model says nothing about which

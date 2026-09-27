@@ -22,7 +22,7 @@ from typing import (
 from loguru import logger
 
 from fighthealthinsurance.chat.message_preprocessor import MessageVariant
-from fighthealthinsurance.chat.turn_record import CallLog
+from fighthealthinsurance.chat.turn_record import CallLog, ReplyCredit
 from fighthealthinsurance.chat.safety_filters import (
     detect_eligibility_verdict,
     detect_false_promises,
@@ -1095,3 +1095,27 @@ def pick_side_by_side_alternate(
         return None
     cross_model = bool(model and primary_model and model != primary_model)
     return AlternateChoice(text.strip(), model, cross_model)
+
+
+def credit_for_delivered_reply(
+    own: ReplyCredit,
+    follow_ups: Sequence[Tuple[str, ReplyCredit]],
+    delivered_text: str,
+) -> ReplyCredit:
+    """Which model to credit with a pass's delivered reply.
+
+    A tool follow-up's reply is joined onto, or replaces, the reply that
+    asked for the tool. So the latest follow-up whose reply appears in the
+    delivered text wrote what the person reads last, and gets the credit.
+    When no follow-up's reply made it in (none ran, or the tool kept the
+    original), the pass's own pick keeps it.
+
+    ``follow_ups`` pairs each follow-up's reply text with its credit, in the
+    order they ran. The text stays a local of the pass and is never
+    recorded.
+    """
+    for text, credit in reversed(follow_ups):
+        stripped = (text or "").strip()
+        if stripped and stripped in delivered_text:
+            return credit
+    return own

@@ -40,6 +40,7 @@ branch with a literal class so the contrast gate can measure every tag.
       <th class="num" title="Turns where this model's answer came second">Runner-up</th>
       <th class="num">Calls</th>
       <th class="num" title="Still running when the turn stopped waiting">Late</th>
+      <th class="num" title="Answered, but its pass stopped comparing answers before scoring it">Unscored</th>
       <th class="num" title="The call failed">Error</th>
       <th class="num" title="Answered with nothing usable">Empty</th>
       <th class="num" title="Rejected for repeating a recent reply">Repeat</th>
@@ -118,6 +119,7 @@ branch with a literal class so the contrast gate can measure every tag.
       <td class="num">{{ r.runner_up }}</td>
       <td class="num">{{ r.calls }}</td>
       <td class="num">{{ r.late }}</td>
+      <td class="num">{{ r.unscored }}</td>
       <td class="num">{{ r.error }}</td>
       <td class="num">{{ r.empty }}</td>
       <td class="num">{{ r.repeat }}</td>

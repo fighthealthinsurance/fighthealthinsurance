@@ -3760,16 +3760,24 @@ class ChatTurn(models.Model):
     fallback_backends = models.JSONField(default=list, blank=True)
     # One entry per model call: {model, backend, external, pass (primary,
     # retry or tool), depth, history (truncated, full, retry_short or
-    # retry_full), variant, status (scored, repeat, empty, error or late),
-    # error (exception class name or ""), ms, score (null when rejected or
-    # never scored)}.
+    # retry_full), variant, status (scored, repeat, empty, unscored, error or
+    # late), error (exception class name or ""), ms (null only when late),
+    # score (null when rejected or never scored)}.
     calls = models.JSONField(default=list, blank=True)
+    # The model whose reply was delivered. When a tool follow-up wrote the
+    # reply, that follow-up's pick; otherwise the first pass's.
     winner_model = models.CharField(max_length=200, blank=True, default="")
     winner_score = models.FloatField(null=True, blank=True)
-    # "primary" or "retry": which pass produced the delivered answer.
+    # Which pass produced the delivered reply: "primary", "retry" (the first
+    # pass's retry) or "tool" (a tool follow-up, retried or not).
     winner_pass = models.CharField(max_length=16, blank=True, default="")
     # Whether the winning model is an outside (paid) one; null when unknown.
     winner_external = models.BooleanField(null=True, blank=True)
+    # The first pass's pick, before any tool follow-up. Same as the winner
+    # unless a tool follow-up wrote the reply; the runner-up, the tie and
+    # the alternate compare against this one.
+    first_pass_model = models.CharField(max_length=200, blank=True, default="")
+    first_pass_score = models.FloatField(null=True, blank=True)
     runner_up_model = models.CharField(max_length=200, blank=True, default="")
     runner_up_score = models.FloatField(null=True, blank=True)
     # Winner and runner-up within ALTERNATE_CLOSE_TIE_RATIO of each other.
@@ -3779,7 +3787,7 @@ class ChatTurn(models.Model):
     # The delivered reply still repeated a recent reply.
     delivered_repeat = models.BooleanField(default=False)
     # Any pass of the turn ran the retry (so the fallbacks were asked), and
-    # whether the delivered answer came from it.
+    # whether the delivered answer came from a retry.
     retry_ran = models.BooleanField(default=False)
     retry_used = models.BooleanField(default=False)
     tool_passes = models.PositiveSmallIntegerField(default=0)

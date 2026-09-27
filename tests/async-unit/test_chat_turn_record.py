@@ -8,16 +8,21 @@ holds metadata only, so these tests also pin that nothing else gets in.
 
 import asyncio
 import json
+import threading
+import time
 import uuid
 
 import pytest
-from asgiref.sync import sync_to_async
+from asgiref.sync import ThreadSensitiveContext, sync_to_async
+from django.db import connections
 
+from fighthealthinsurance.chat import turn_record
 from fighthealthinsurance.chat.llm_client import (
     build_llm_calls,
     build_llm_calls_for_variants,
     build_retry_calls,
     candidates_best_first,
+    credit_for_delivered_reply,
     pick_side_by_side_alternate,
 )
 from fighthealthinsurance.chat.message_preprocessor import MessageVariant
@@ -25,12 +30,16 @@ from fighthealthinsurance.chat.turn_record import (
     CALL_STATUSES,
     PASS_PRIMARY,
     PASS_RETRY,
+    PASS_TOOL,
     PREFERENCE_LABELS,
     TURN_OUTCOMES,
     CallLog,
+    ReplyCredit,
     TurnRecord,
+    _bound_statements,
     arecord_answer_preference,
     arecord_chat_turn,
+    arecord_chat_turn_isolated,
 )
 from fighthealthinsurance.ml.ml_metrics import _ANSWER_FEEDBACK_ALLOWED
 from fighthealthinsurance.models import ChatTurn, OngoingChat
@@ -125,6 +134,58 @@ async def test_each_way_a_call_can_end_gets_its_status():
     assert isinstance(calls["scored-model"]["ms"], int)
     assert calls["repeat-model"]["history"] == "full"
     json.dumps(list(calls.values()), allow_nan=False)
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_answered_before_the_turn_gave_up_keeps_its_time():
+    """The race scores only once every call is in (or its window closes).
+    When the turn budget ends the race first, the calls that had already
+    answered were never scored, but they did finish: they keep their time,
+    and only the call still running is late."""
+    log = CallLog(PASS_PRIMARY)
+    answered = log.observe(_answer(FRESH_REPLY), _Named("answered-model"), "truncated")
+    answered_empty = log.observe(
+        _answer(None, None), _Named("empty-model"), "truncated"
+    )
+    stalled = log.observe(_stall(), _Named("stalled-model"), "truncated")
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            best_two_within_timelimit(
+                [answered, answered_empty, stalled],
+                log.scoring(lambda result, task: 1.0),
+                timeout=10.0,
+            ),
+            0.3,
+        )
+    calls = {c["model"]: c for c in log.finish()}
+
+    assert {m: c["status"] for m, c in calls.items()} == {
+        "answered-model": "unscored",
+        "empty-model": "empty",
+        "stalled-model": "late",
+    }
+    assert isinstance(calls["answered-model"]["ms"], int)
+    assert isinstance(calls["empty-model"]["ms"], int)
+    assert calls["stalled-model"]["ms"] is None
+    assert calls["answered-model"]["score"] is None
+    json.dumps(list(calls.values()), allow_nan=False)
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_call_stays_late_once_its_cancellation_lands():
+    """A race cancels its leftover calls in the background, so a pass may
+    finish its log before or after a cancellation lands. Either way the
+    call never answered: it stays late, with no time."""
+    log = CallLog(PASS_PRIMARY)
+    stalled = log.observe(_stall(), _Named("stalled-model"), "truncated")
+    task = asyncio.ensure_future(stalled)
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    (entry,) = log.finish()
+    assert (entry["status"], entry["ms"]) == ("late", None)
 
 
 @pytest.mark.asyncio
@@ -240,6 +301,78 @@ def test_turn_record_knows_which_labels_are_outside_models():
     assert fields["winner_score"] is None
 
 
+def test_the_delivered_model_is_the_winner_and_the_first_pass_pick_is_kept():
+    """A tool follow-up from another model wrote the reply: the row credits
+    that model, and keeps the first pass's pick beside it."""
+    turn = TurnRecord.start(
+        use_external=True,
+        primary_models=[_Named("model-a", False), _Named("model-b", True)],
+    )
+    turn.set_winner("model-a", 2630.0, False, "model-b", 2400.0, True)
+    fields = turn.row_fields("ok")
+    assert (fields["winner_model"], fields["first_pass_model"]) == (
+        "model-a",
+        "model-a",
+    )
+    assert fields["winner_external"] is False
+
+    turn.set_delivered(ReplyCredit("model-b", 1900.0, PASS_TOOL, True))
+    fields = turn.row_fields("ok")
+    assert (fields["winner_model"], fields["winner_score"]) == ("model-b", 1900.0)
+    assert fields["winner_pass"] == "tool"
+    assert fields["winner_external"] is True
+    assert fields["retry_used"] is True
+    assert (fields["first_pass_model"], fields["first_pass_score"]) == (
+        "model-a",
+        2630.0,
+    )
+    assert fields["runner_up_model"] == "model-b"
+
+
+FIRST_PASS = ReplyCredit("model-a", 2630.0, PASS_PRIMARY, False)
+FOLLOW_UP_B = ReplyCredit("model-b", 1900.0, PASS_TOOL, False)
+FOLLOW_UP_C = ReplyCredit("model-c", 1800.0, PASS_TOOL, True)
+
+
+def test_a_follow_up_that_replaced_the_reply_gets_the_credit():
+    credit = credit_for_delivered_reply(
+        FIRST_PASS, [(FRESH_REPLY, FOLLOW_UP_B)], FRESH_REPLY
+    )
+    assert credit == FOLLOW_UP_B
+
+
+def test_a_follow_up_joined_onto_the_reply_gets_the_credit():
+    delivered = "Let me look that up for you.\n\n" + FRESH_REPLY
+    credit = credit_for_delivered_reply(
+        FIRST_PASS, [("\n" + FRESH_REPLY + "\n", FOLLOW_UP_B)], delivered
+    )
+    assert credit == FOLLOW_UP_B
+
+
+def test_the_latest_follow_up_in_the_reply_gets_the_credit():
+    delivered = FRESH_REPLY + "\n\n" + THIRD_REPLY
+    credit = credit_for_delivered_reply(
+        FIRST_PASS,
+        [(FRESH_REPLY, FOLLOW_UP_B), (THIRD_REPLY, FOLLOW_UP_C)],
+        delivered,
+    )
+    assert credit == FOLLOW_UP_C
+
+
+def test_a_follow_up_the_tool_did_not_use_leaves_the_pass_its_credit():
+    assert (
+        credit_for_delivered_reply(
+            FIRST_PASS, [(THIRD_REPLY, FOLLOW_UP_B)], FRESH_REPLY
+        )
+        == FIRST_PASS
+    )
+    assert credit_for_delivered_reply(FIRST_PASS, [], FRESH_REPLY) == FIRST_PASS
+    assert (
+        credit_for_delivered_reply(FIRST_PASS, [("  ", FOLLOW_UP_B)], FRESH_REPLY)
+        == FIRST_PASS
+    )
+
+
 def test_an_alternate_candidate_counts_only_once_offered():
     turn = TurnRecord.start(True, [_Named("a")])
     turn.set_alternate_candidate("b", True)
@@ -256,7 +389,7 @@ def test_label_sets_agree_with_the_metrics_and_the_model():
     assert PREFERENCE_LABELS == _ANSWER_FEEDBACK_ALLOWED
     assert PREFERENCE_LABELS == set(ChatTurn.Preferred.values) - {""}
     assert TURN_OUTCOMES == set(ChatTurn.Outcome.values)
-    assert len(CALL_STATUSES) == len(set(CALL_STATUSES)) == 5
+    assert len(CALL_STATUSES) == len(set(CALL_STATUSES)) == 6
 
 
 # --- Choosing the side-by-side alternate -----------------------------------
@@ -512,3 +645,124 @@ async def test_an_unknown_turn_id_changes_nothing():
     assert not await arecord_answer_preference(
         str(chat.id), str(uuid.uuid4()), "primary"
     )
+
+
+# --- Writing the row while a turn is cancelled -----------------------------
+
+
+class _FakeCursor:
+    def __init__(self, log):
+        self._log = log
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def execute(self, sql, params=None):
+        self._log.append((sql, params))
+
+
+class _FakeConnection:
+    def __init__(self, vendor):
+        self.vendor = vendor
+        self.executed = []
+
+    def cursor(self):
+        return _FakeCursor(self.executed)
+
+
+def test_the_statement_timeout_applies_on_postgresql_only():
+    postgres = _FakeConnection("postgresql")
+    _bound_statements(postgres, 2000)
+    assert postgres.executed == [
+        ("SELECT set_config('statement_timeout', %s, true)", ["2000"])
+    ]
+    sqlite = _FakeConnection("sqlite")
+    _bound_statements(sqlite, 2000)
+    assert sqlite.executed == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_the_isolated_write_bounds_its_transaction_and_closes_its_connection(
+    monkeypatch,
+):
+    chat = await _chat()
+    seen = {}
+
+    def bound(connection, ms):
+        seen["in_transaction"] = connection.in_atomic_block
+        seen["ms"] = ms
+
+    closed_on = []
+    monkeypatch.setattr(turn_record, "_bound_statements", bound)
+    monkeypatch.setattr(
+        connections, "close_all", lambda: closed_on.append(threading.get_ident())
+    )
+    turn = TurnRecord.start(True, [_Named("model-a")])
+    turn.set_winner("model-a", 2630.0, False, None, None, False)
+
+    assert await arecord_chat_turn_isolated(chat.id, turn, "ok") is True
+
+    # The timeout is set inside the insert's transaction, and the thread's
+    # own connection is closed afterwards, on that thread.
+    assert seen == {"in_transaction": True, "ms": 2000}
+    assert len(closed_on) == 1
+    assert closed_on[0] != threading.get_ident()
+    row = await ChatTurn.objects.aget(pk=turn.turn_id)
+    assert (row.outcome, row.winner_model) == ("ok", "model-a")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_stuck_isolated_write_holds_up_neither_its_caller_nor_the_chats_executor(
+    monkeypatch,
+):
+    """A cancelled turn's write that hangs (a lock, a dead connection) must
+    not hang the turn's teardown, and must not sit on the chat's
+    thread-sensitive executor where the next ORM call would queue behind
+    it."""
+    chat = await _chat()
+    entered, release = threading.Event(), threading.Event()
+
+    def stuck(chat_id, fields):
+        entered.set()
+        release.wait(10)
+
+    monkeypatch.setattr(turn_record, "_record_chat_turn_isolated_sync", stuck)
+    turn = TurnRecord.start(True, [_Named("model-a")])
+
+    # The socket's own executor, as PerConnectionThreadSensitiveMixin sets up.
+    async with ThreadSensitiveContext():
+        try:
+            started = time.monotonic()
+            written = await asyncio.wait_for(
+                arecord_chat_turn_isolated(chat.id, turn, "ok", timeout=0.2), 5
+            )
+            waited = time.monotonic() - started
+            # The next ORM call on the chat's executor runs straight away.
+            count = await asyncio.wait_for(
+                ChatTurn.objects.filter(chat=chat).acount(), 2
+            )
+            still_stuck = entered.is_set() and not release.is_set()
+        finally:
+            release.set()
+
+    assert written is False
+    assert waited < 2
+    assert count == 0
+    assert still_stuck
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_an_isolated_write_for_a_deleted_chat_is_dropped_without_raising():
+    chat = await _chat()
+    chat_id = chat.id
+    await chat.adelete()
+    turn = TurnRecord.start(True, [_Named("model-a")])
+    assert await arecord_chat_turn_isolated(chat_id, turn, "ok") is False
+    assert await arecord_chat_turn_isolated(chat_id, None, "ok") is False
+    assert await ChatTurn.objects.acount() == 0

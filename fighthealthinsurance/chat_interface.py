@@ -35,6 +35,7 @@ from fighthealthinsurance.chat.llm_client import (
     build_llm_calls_for_variants,
     candidates_best_first,
     create_response_scorer,
+    credit_for_delivered_reply,
     find_repeated_reply,
     pick_side_by_side_alternate,
     results_recorder,
@@ -53,12 +54,15 @@ from fighthealthinsurance.chat.retry_handler import (
     should_retry_response,
 )
 from fighthealthinsurance.chat.turn_record import (
+    OUTCOME_FAILED,
     PASS_PRIMARY,
     PASS_RETRY,
     PASS_TOOL,
     CallLog,
+    ReplyCredit,
     TurnRecord,
     arecord_chat_turn,
+    arecord_chat_turn_isolated,
 )
 from fighthealthinsurance.chat.safety_filters import (
     CRISIS_RESOURCES,
@@ -311,6 +315,39 @@ class ChatInterface:
         turn, self._turn = self._turn, None
         await arecord_chat_turn(self.chat.id, turn, outcome)
 
+    def _count_turn(self, outcome: str) -> None:
+        """Count the turn in fhi_chat_turns_total and note the outcome on its
+        record, so its ChatTurn row says the same however the turn ends."""
+        record_chat_turn(outcome)
+        if self._turn is not None:
+            self._turn.counted_outcome = outcome
+
+    async def _end_turn_after_exception(self) -> None:
+        """An exception is escaping the turn (chat/turn_record.py lists how
+        each ending is recorded). A turn that reached the models keeps its
+        row: with the outcome the metric already counted, or counted
+        "failed" now. Never raises."""
+        turn = self._turn
+        if turn is None:
+            # Written already, or the turn never got a record.
+            return
+        if not turn.counted_outcome:
+            if not turn.reached_models:
+                self._turn = None
+                return
+            self._count_turn(OUTCOME_FAILED)
+        await self._write_turn_record(turn.counted_outcome)
+
+    async def _end_cancelled_turn(self) -> None:
+        """The turn is being cancelled. Only a turn the metric already
+        counted gets its row (chat/turn_record.py says why), written from a
+        thread of its own with a bounded wait so it cannot hold up the
+        socket's teardown. Never raises beyond a further cancellation."""
+        turn, self._turn = self._turn, None
+        if turn is None or not turn.counted_outcome:
+            return
+        await arecord_chat_turn_isolated(self.chat.id, turn, turn.counted_outcome)
+
     async def _get_user_info(self) -> str:
         """Generates a descriptive string for the user (either professional or patient)."""
         try:
@@ -370,6 +407,8 @@ class ChatInterface:
         user_message_for_scoring: Optional[str] = None,
         message_variants: Optional[List[MessageVariant]] = None,
         eligibility_verified: bool = False,
+        *,
+        credit_out: Optional[List[ReplyCredit]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -398,6 +437,10 @@ class ChatInterface:
             eligibility_verified: True when this pass is writing up output the
                 medicaid_eligibility checker just produced. OR'd with the
                 session-level flag; see score_llm_response.
+            credit_out: Optional list; when this pass returns a reply, it
+                appends the ReplyCredit naming the model that wrote it. Tool
+                follow-ups pass one so the turn can credit the model whose
+                reply was delivered.
         """
         if depth > 3:
             return None, None
@@ -614,6 +657,16 @@ class ChatInterface:
 
         if depth == 0 and turn is not None:
             turn.mark_fanout_done(llm_pass_started)
+        # Who wrote this pass's reply, until a tool follow-up's reply
+        # replaces it (see credit_for_delivered_reply below).
+        pass_credit = ReplyCredit(
+            model=picked_model or "",
+            score=picked_score,
+            pass_kind=(
+                PASS_TOOL if depth > 0 else PASS_RETRY if retry_used else PASS_PRIMARY
+            ),
+            from_retry=retry_used,
+        )
 
         logger.debug(f"Using best result {response_text:.20}...")
 
@@ -744,6 +797,23 @@ class ChatInterface:
             )
         response_before_tools = response_text
 
+        # Every recursive tool's LLM pass goes through follow_up, which keeps
+        # the follow-up's reply and the credit for it, so the turn can credit
+        # the model whose reply was delivered. The reply text stays a local
+        # of this pass and is never recorded.
+        follow_ups: List[Tuple[str, ReplyCredit]] = []
+
+        async def follow_up(
+            *args: Any, **kwargs: Any
+        ) -> Tuple[Optional[str], Optional[str]]:
+            credits: List[ReplyCredit] = []
+            text, follow_up_context = await self._call_llm_with_actions(
+                *args, credit_out=credits, **kwargs
+            )
+            if text and credits:
+                follow_ups.append((text, credits[-1]))
+            return text, follow_up_context
+
         # Process tool calls via modular tool handlers
         context = context_part or ""
 
@@ -781,23 +851,21 @@ class ChatInterface:
         # Recursive tools: medicaid eligibility, medicaid info, pubmed, doc fetcher
         medicaid_elig_tool = MedicaidEligibilityTool(
             self.send_status_message,
-            self._call_llm_with_actions,
+            follow_up,
             eligibility_computed=self._eligibility_computed,
         )
         response_text, context, _ = await medicaid_elig_tool.handle(
             response_text, context, **tool_kwargs
         )
 
-        medicaid_info_tool = MedicaidInfoTool(
-            self.send_status_message, self._call_llm_with_actions
-        )
+        medicaid_info_tool = MedicaidInfoTool(self.send_status_message, follow_up)
         response_text, context, _ = await medicaid_info_tool.handle(
             response_text, context, **tool_kwargs
         )
 
         medicaid_gov_tool = MedicaidGovLookupTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
             lookup_count=self._medicaid_gov_lookup_count,
         )
         response_text, context, _ = await medicaid_gov_tool.handle(
@@ -809,7 +877,7 @@ class ChatInterface:
         rxnorm_tool = RxNormLookupTool(
             self.send_status_message,
             rxnorm_tools=self.rxnorm_tools,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await rxnorm_tool.handle(
             response_text, context, **tool_kwargs
@@ -819,15 +887,13 @@ class ChatInterface:
             self.send_status_message,
             pubmed_tools=self.pubmed_tools,
             rxnorm_tools=self.rxnorm_tools,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await pubmed_tool.handle(
             response_text, context, **tool_kwargs
         )
 
-        uspstf_tool = USPSTFLookupTool(
-            self.send_status_message, self._call_llm_with_actions
-        )
+        uspstf_tool = USPSTFLookupTool(self.send_status_message, follow_up)
         response_text, context, _ = await uspstf_tool.handle(
             response_text, context, **tool_kwargs
         )
@@ -835,7 +901,7 @@ class ChatInterface:
         clinical_trials_tool = ClinicalTrialsTool(
             self.send_status_message,
             clinical_trials_tools=self.clinical_trials_tools,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await clinical_trials_tool.handle(
             response_text, context, **tool_kwargs
@@ -843,7 +909,7 @@ class ChatInterface:
 
         doc_fetcher_tool = DocFetcherTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
             fetch_count=self._doc_fetch_count,
             chat=self.chat,
         )
@@ -853,7 +919,7 @@ class ChatInterface:
 
         pa_requirement_tool = PaRequirementLookupTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await pa_requirement_tool.handle(
             response_text, context, **tool_kwargs
@@ -861,7 +927,7 @@ class ChatInterface:
 
         financial_assistance_tool = FinancialAssistanceTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await financial_assistance_tool.handle(
             response_text, context, **tool_kwargs
@@ -874,6 +940,18 @@ class ChatInterface:
             if turn is not None:
                 turn.tool_rewrote = True
                 turn.clear_alternate_candidate()
+
+        # The credit for the reply this pass returns: a tool follow-up's
+        # when its reply is in it, this pass's own pick otherwise.
+        credit = pass_credit
+        if response_text != response_before_tools:
+            credit = credit_for_delivered_reply(
+                pass_credit, follow_ups, response_text or ""
+            )
+        if credit_out is not None:
+            credit_out.append(credit)
+        if depth == 0 and turn is not None:
+            turn.set_delivered(credit)
 
         # One count per turn, covering the primary pass AND every recursive
         # tool pass (each ORs into the accumulator above).
@@ -893,7 +971,37 @@ class ChatInterface:
     ):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
+
+        However the turn ends, one that reached the models and was counted
+        in fhi_chat_turns_total leaves its ChatTurn row with the counted
+        outcome (chat/turn_record.py describes each ending).
         """
+        try:
+            await self._run_chat_turn(
+                user_message,
+                iterate_on_appeal=iterate_on_appeal,
+                iterate_on_prior_auth=iterate_on_prior_auth,
+                user=user,
+                is_document=is_document,
+                document_name=document_name,
+            )
+        except asyncio.CancelledError:
+            await self._end_cancelled_turn()
+            raise
+        except Exception:
+            await self._end_turn_after_exception()
+            raise
+
+    async def _run_chat_turn(
+        self,
+        user_message: str,
+        iterate_on_appeal: Optional[str] = None,
+        iterate_on_prior_auth: Optional[str] = None,
+        user: Optional[User] = None,
+        is_document: bool = False,
+        document_name: Optional[str] = None,
+    ):
+        """The turn itself; see handle_chat_message."""
         chat = self.chat
         # A stale alternate from a previous turn must never attach to this
         # turn's reply (early-return paths below don't go through the LLM).
@@ -1473,6 +1581,10 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
+        # The models are asked from here on, so an exception escaping the
+        # turn now counts it as failed (see _end_turn_after_exception).
+        if self._turn is not None:
+            self._turn.reached_models = True
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -1526,7 +1638,7 @@ class ChatInterface:
             # Recorded here as "timeout"; the shared failure branch below
             # checks this flag so the same turn isn't also counted "failed".
             turn_timed_out = True
-            record_chat_turn("timeout")
+            self._count_turn("timeout")
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Chat generation failed for chat {chat.id}: {e}"
@@ -1598,7 +1710,7 @@ class ChatInterface:
             # Launch background summary after save so the task can read the latest history
             if background_summary_task is not None:
                 await fire_and_forget_in_new_threadpool(background_summary_task)
-            record_chat_turn("ok")
+            self._count_turn("ok")
             # Side-by-side alternate answer (ChatGPT-style "here's another
             # take"): cleaned like the primary, dropped if cleaning leaves it
             # too similar to what we're already sending. Ephemeral -- only
@@ -1632,17 +1744,17 @@ class ChatInterface:
                 else:
                     alternate_content = None
             turn_id = str(self._turn.turn_id) if self._turn is not None else None
-            try:
-                await self.send_message_to_client(
-                    final_response_text,
-                    alternate_content=alternate_content,
-                    turn_id=turn_id,
-                )
-            finally:
-                # Awaited, not fire-and-forget: channels handles one frame at
-                # a time per connection, so this row exists before the
-                # person's side-by-side pick for it can arrive.
-                await self._write_turn_record("ok")
+            # A send that raises or is cancelled still leaves the row, "ok"
+            # as counted: handle_chat_message writes it.
+            await self.send_message_to_client(
+                final_response_text,
+                alternate_content=alternate_content,
+                turn_id=turn_id,
+            )
+            # Awaited, not fire-and-forget: channels handles one frame at a
+            # time per connection, so this row exists before the person's
+            # side-by-side pick for it can arrive.
+            await self._write_turn_record("ok")
         else:
             # The turn failed after the user already committed their message:
             # persist it anyway so a reconnect/replay doesn't erase what they
@@ -1680,17 +1792,17 @@ class ChatInterface:
                 f"after trying all models. use_external_models={self.use_external_models}"
             )
             if not turn_timed_out:
-                record_chat_turn("failed")
+                self._count_turn(OUTCOME_FAILED)
             capture_reliability_event(
                 "chat_turn_total_failure",
                 chat_id=str(chat.id),
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
             )
-            try:
-                await self.send_error_message(err_msg)
-            finally:
-                await self._write_turn_record("timeout" if turn_timed_out else "failed")
+            # As above, a send that raises or is cancelled still leaves the
+            # row: handle_chat_message writes it.
+            await self.send_error_message(err_msg)
+            await self._write_turn_record("timeout" if turn_timed_out else "failed")
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client, minus internal

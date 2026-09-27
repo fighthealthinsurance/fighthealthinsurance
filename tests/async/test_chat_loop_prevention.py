@@ -15,9 +15,11 @@ import typing
 from unittest.mock import AsyncMock, patch
 
 from django.contrib.auth import get_user_model
+from django.db import OperationalError
 from prometheus_client import REGISTRY
 from rest_framework.test import APITestCase
 
+from fighthealthinsurance import chat_interface as chat_interface_module
 from fighthealthinsurance import utils as fhi_utils
 from fighthealthinsurance.chat.retry_handler import ANTI_REPEAT_NOTE
 from fighthealthinsurance.chat_interface import ChatInterface
@@ -342,6 +344,47 @@ class _StalledModel(RecordingChatModel):
         return ("never delivered", "never delivered")
 
 
+# The medicaid_info tool's follow-up prompt starts with this.
+_MEDICAID_FOLLOW_UP = "official Medicaid information"
+
+
+class _ToolAskingModel(RecordingChatModel):
+    """Asks for the medicaid_info tool, and has nothing for its follow-up."""
+
+    external = False
+
+    async def generate_chat_response(self, current_message_for_llm, **kwargs):
+        await super().generate_chat_response(current_message_for_llm, **kwargs)
+        if _MEDICAID_FOLLOW_UP in (current_message_for_llm or ""):
+            return ("", None)
+        return ('**medicaid_info {"state": "California"}**', "mock context summary")
+
+
+class _FollowUpModel(RecordingChatModel):
+    """An outside model with nothing for the first race that writes the
+    tool's follow-up."""
+
+    external = True
+
+    async def generate_chat_response(self, current_message_for_llm, **kwargs):
+        await super().generate_chat_response(current_message_for_llm, **kwargs)
+        if _MEDICAID_FOLLOW_UP in (current_message_for_llm or ""):
+            return (FRESH_REPLY, "mock context summary")
+        return ("", None)
+
+
+def _patch_reply_save_to_fail():
+    """Saving the user's message works; saving the reply raises."""
+    real = chat_interface_module.apersist_chat_turn
+
+    async def persist(chat, new_messages=(), **kwargs):
+        if any(m.get("role") == "assistant" for m in new_messages):
+            raise OperationalError("the database went away")
+        return await real(chat, new_messages=new_messages, **kwargs)
+
+    return patch.object(chat_interface_module, "apersist_chat_turn", persist)
+
+
 async def _turn_rows(chat):
     return [t async for t in ChatTurn.objects.filter(chat=chat).order_by("created_at")]
 
@@ -595,6 +638,152 @@ class ChatTurnRecordTest(APITestCase):
 
         assert await _turn_rows(chat) == []
         assert model.calls == []
+
+    async def test_an_exception_while_saving_the_reply_records_a_failed_turn(self):
+        """The models answered, then saving the reply raised: the turn is
+        counted failed and its row says so."""
+        user, chat = await _make_chat(
+            "turnrow10", "9999930110", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        model = RecordingChatModel(always_reply=FRESH_REPLY, name="answering-backend")
+        failed_before = _metric("fhi_chat_turns_total", {"outcome": "failed"})
+        ok_before = _metric("fhi_chat_turns_total", {"outcome": "ok"})
+
+        with (
+            _patched_router([model]),
+            _PATCH_FIRE_AND_FORGET,
+            _patch_reply_save_to_fail(),
+        ):
+            with self.assertRaises(OperationalError):
+                await interface.handle_chat_message("CA")
+
+        (row,) = await _turn_rows(chat)
+        assert row.outcome == "failed"
+        assert row.winner_model == "answering-backend"
+        assert [c["status"] for c in row.calls] == ["scored"]
+        assert _metric("fhi_chat_turns_total", {"outcome": "failed"}) == (
+            failed_before + 1
+        )
+        assert _metric("fhi_chat_turns_total", {"outcome": "ok"}) == ok_before
+
+    async def test_an_exception_before_the_models_are_asked_leaves_no_row(self):
+        user, chat = await _make_chat(
+            "turnrow11", "9999930111", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        model = RecordingChatModel(always_reply=FRESH_REPLY)
+        failed_before = _metric("fhi_chat_turns_total", {"outcome": "failed"})
+
+        with (
+            _patched_router([model]),
+            _PATCH_FIRE_AND_FORGET,
+            patch(
+                "fighthealthinsurance.chat_interface.prepare_history_for_llm",
+                side_effect=RuntimeError("history broke"),
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                await interface.handle_chat_message("CA")
+
+        assert model.calls == []
+        assert await _turn_rows(chat) == []
+        assert _metric("fhi_chat_turns_total", {"outcome": "failed"}) == failed_before
+
+    async def test_a_reply_frame_that_fails_to_send_keeps_its_ok_row(self):
+        """The metric counts the turn "ok" before the frame goes out, so the
+        row keeps "ok" when the send itself raises."""
+        user, chat = await _make_chat(
+            "turnrow12", "9999930112", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+
+        async def send(frame):
+            await recorder(frame)
+            if "content" in frame:
+                raise ConnectionError("socket closed")
+
+        interface = ChatInterface(send_json_message_func=send, chat=chat, user=user)
+        model = RecordingChatModel(always_reply=FRESH_REPLY, name="answering-backend")
+        failed_before = _metric("fhi_chat_turns_total", {"outcome": "failed"})
+
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET:
+            with self.assertRaises(ConnectionError):
+                await interface.handle_chat_message("CA")
+
+        (row,) = await _turn_rows(chat)
+        assert (row.outcome, row.winner_model) == ("ok", "answering-backend")
+        assert _metric("fhi_chat_turns_total", {"outcome": "failed"}) == failed_before
+
+    async def test_a_tool_follow_up_from_another_model_is_credited_with_the_reply(
+        self,
+    ):
+        """model-a's first-pass reply asks for a tool; the tool's follow-up
+        pass is won by model-b, whose reply replaces it. The row credits
+        model-b, the model the person heard from, and keeps model-a as the
+        first pass's pick."""
+        user, chat = await _make_chat(
+            "turnrow13", "9999930113", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        tool_asker = _ToolAskingModel(model_quality=110, name="model-a")
+        follow_up_writer = _FollowUpModel(model_quality=100, name="model-b")
+
+        with (
+            _patched_router([tool_asker, follow_up_writer]),
+            _PATCH_FIRE_AND_FORGET,
+            patch(
+                "fighthealthinsurance.medicaid_api.get_medicaid_info",
+                return_value="Medi-Cal: apply online or at the county office.",
+            ),
+        ):
+            await interface.handle_chat_message("CA")
+
+        assert recorder.content_frames()[-1]["content"] == FRESH_REPLY
+        (row,) = await _turn_rows(chat)
+        assert row.outcome == "ok"
+        assert (row.winner_model, row.winner_pass) == ("model-b", "tool")
+        assert row.winner_external is True
+        assert row.retry_used is False
+        assert row.first_pass_model == "model-a"
+        assert row.first_pass_score is not None
+        assert row.tool_rewrote is True
+        assert row.tool_passes == 1
+        tool_calls = {c["model"]: c["status"] for c in row.calls if c["pass"] == "tool"}
+        assert tool_calls == {"model-a": "empty", "model-b": "scored"}
+
+    async def test_a_call_that_answered_before_the_budget_ran_out_is_not_late(self):
+        """The race waits for every call before scoring, so when the turn
+        budget runs out first, a call that had answered is unscored and
+        keeps its time; only the call still running is late."""
+        user, chat = await _make_chat(
+            "turnrow14", "9999930114", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        models = [
+            RecordingChatModel(always_reply=FRESH_REPLY, name="quick-backend"),
+            _StalledModel(name="stalled-backend"),
+        ]
+
+        with (
+            patch.dict(os.environ, {"FHI_CHAT_TURN_BUDGET": "0.5"}),
+            _patched_router(models),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message("CA")
+
+        (row,) = await _turn_rows(chat)
+        assert row.outcome == "timeout"
+        by_model = {c["model"]: c for c in row.calls}
+        assert by_model["quick-backend"]["status"] == "unscored"
+        assert isinstance(by_model["quick-backend"]["ms"], int)
+        assert by_model["quick-backend"]["score"] is None
+        assert by_model["stalled-backend"]["status"] == "late"
+        assert by_model["stalled-backend"]["ms"] is None
 
 
 class ChatRepeatOffenderTest(APITestCase):

@@ -1850,6 +1850,38 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         # The error's time is not an answer time.
         self.assertEqual(row["median_ms"], 300)
 
+    def test_an_unscored_call_keeps_its_time_and_is_not_late(self):
+        self._turn(
+            calls=[
+                _call("model-a", "unscored", ms=200),
+                _call("model-a", "scored", ms=400),
+                _call("model-a", "late"),
+            ]
+        )
+        response, windows = self._windows()
+        row = self._rows(windows["1d"])["model-a"]
+        self.assertEqual((row["late"], row["unscored"]), (1, 1))
+        # It answered, so its time counts toward the median.
+        self.assertEqual(row["median_ms"], 300)
+        self.assertContains(response, ">Unscored</th>")
+
+    def test_wins_go_to_the_model_whose_reply_was_delivered(self):
+        # A tool follow-up won by model-b replaced model-a's first-pass reply.
+        self._turn(
+            backends=["model-a", "model-b"],
+            first_pass_model="model-a",
+            winner_model="model-b",
+            winner_pass="tool",
+            winner_external=True,
+            tool_rewrote=True,
+            calls=[_call("model-a"), _call("model-b", pass_kind="tool")],
+        )
+        _response, windows = self._windows()
+        rows = self._rows(windows["1d"])
+        self.assertEqual((rows["model-a"]["wins"], rows["model-b"]["wins"]), (0, 1))
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(summary["external_wins"], 1)
+
     def test_summary_counts_outcomes_outside_models_and_picks(self):
         self._turn(winner_model="claude", winner_external=True)
         self._turn(winner_external=False)

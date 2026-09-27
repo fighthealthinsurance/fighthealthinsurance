@@ -22,6 +22,7 @@ LABEL_AND_ENUM_FIELDS = {
     "outcome",
     "winner_model",
     "winner_pass",
+    "first_pass_model",
     "runner_up_model",
     "alternate_model",
     "preferred",

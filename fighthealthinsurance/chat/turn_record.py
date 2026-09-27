@@ -16,9 +16,30 @@ Only metadata is kept: model labels, backend descriptors, scores, times and
 the enum values in ChatTurn. No message, reply, summary, history, context,
 state hint or document name reaches anything here, and an exception is kept
 as its class name only.
+
+How a turn's row follows fhi_chat_turns_total. The row's outcome is always
+the one the metric counted for the turn, and a turn the metric never counts
+gets no row:
+
+* A turn that ends normally writes its row after its reply or error frame.
+* An exception that escapes a turn after its models were asked (while the
+  reply is being saved, say) counts the turn "failed" in the metric, and the
+  row says "failed", unless the metric had already counted it; then the row
+  keeps that outcome. An exception before the models were asked leaves no
+  row and no count.
+* A turn cancelled before the metric counted it (a disconnect while the
+  models are still answering, for instance) gets no row: the metric does
+  not count cancelled turns either, and a row with no outcome would say
+  nothing true. A turn cancelled after it was counted (while its reply
+  frame was going out) keeps its row with the counted outcome, written by
+  ``arecord_chat_turn_isolated``: on a thread of its own, waiting at most
+  CANCELLED_TURN_WRITE_SECONDS, so the write can neither hold up the
+  connection's teardown nor queue behind anything on the chat's executor.
 """
 
+import asyncio
 import math
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -49,18 +70,31 @@ PASS_TOOL = "tool"
 
 # How a call ended. scored: returned a usable candidate. repeat: returned
 # text the scorer hard-rejected as a repeat of a recent reply. empty:
-# returned nothing usable. error: raised. late: still running (or never
-# started) when the pass stopped waiting.
+# returned nothing usable. unscored: returned text, but its pass stopped
+# comparing answers before scoring it (the turn budget ran out while the
+# race still waited on slower calls, for instance). error: raised. late:
+# still running (or never started) when the pass stopped waiting.
 STATUS_SCORED = "scored"
 STATUS_REPEAT = "repeat"
 STATUS_EMPTY = "empty"
+STATUS_UNSCORED = "unscored"
 STATUS_ERROR = "error"
 STATUS_LATE = "late"
-CALL_STATUSES = (STATUS_SCORED, STATUS_REPEAT, STATUS_EMPTY, STATUS_ERROR, STATUS_LATE)
+CALL_STATUSES = (
+    STATUS_SCORED,
+    STATUS_REPEAT,
+    STATUS_EMPTY,
+    STATUS_UNSCORED,
+    STATUS_ERROR,
+    STATUS_LATE,
+)
 # Calls that returned an answer, usable or not. Their times feed the medians.
-COMPLETED_STATUSES = frozenset({STATUS_SCORED, STATUS_REPEAT, STATUS_EMPTY})
+COMPLETED_STATUSES = frozenset(
+    {STATUS_SCORED, STATUS_REPEAT, STATUS_EMPTY, STATUS_UNSCORED}
+)
 
 TURN_OUTCOMES = frozenset({"ok", "failed", "timeout"})
+OUTCOME_FAILED = "failed"
 # The labels fhi_chat_answer_feedback_total counts, and ChatTurn.preferred's
 # non-empty values.
 PREFERENCE_LABELS = frozenset({"primary", "alternate"})
@@ -112,15 +146,19 @@ class _CallRecord:
 async def _observed(call: Awaitable[T], record: _CallRecord) -> T:
     """Await one backend call, noting when it ran, whether it raised (class
     name only) and whether it returned any reply text. The text itself is
-    never kept."""
+    never kept.
+
+    A call that is cancelled (still running when its race or the turn
+    stopped waiting) gets no finish time: that is what marks it late.
+    """
     record.started = time.monotonic()
     try:
         result = await call
     except Exception as e:
+        record.finished = time.monotonic()
         record.error = type(e).__name__[:_ERROR_NAME_MAX]
         raise
-    finally:
-        record.finished = time.monotonic()
+    record.finished = time.monotonic()
     if isinstance(result, tuple) and result:
         record.has_text = bool(result[0])
     return result
@@ -170,23 +208,32 @@ class CallLog:
     def finish(self) -> List[Dict[str, Any]]:
         """Each call of the pass as a plain dict, in fan-out order.
 
-        A call the scorer never saw is late unless it raised. A rejected
-        score (-inf) becomes null, since Postgres jsonb refuses -Infinity.
-        In the primary and tool passes a rejected call with reply text was a
-        repeat; the retry scorer never hard-rejects repeats, so there a
-        rejected call is always empty.
+        A rejected score (-inf) becomes null, since Postgres jsonb refuses
+        -Infinity. In the primary and tool passes a rejected call with reply
+        text was a repeat; the retry scorer never hard-rejects repeats, so
+        there a rejected call is always empty.
+
+        A call the scorer never saw goes by its own finish time: one that
+        finished is unscored when it returned text and empty when it did
+        not, and keeps its time; only a call that never finished is late,
+        with no time.
         """
         out: List[Dict[str, Any]] = []
         for call, record in self._records.items():
             score = self._scores.get(call)
             if record.error:
                 status = STATUS_ERROR
-            elif score is None:
+            elif score is not None:
+                if math.isfinite(score):
+                    status = STATUS_SCORED
+                elif record.has_text and self.pass_kind != PASS_RETRY:
+                    status = STATUS_REPEAT
+                else:
+                    status = STATUS_EMPTY
+            elif record.finished is None:
                 status = STATUS_LATE
-            elif math.isfinite(score):
-                status = STATUS_SCORED
-            elif record.has_text and self.pass_kind != PASS_RETRY:
-                status = STATUS_REPEAT
+            elif record.has_text:
+                status = STATUS_UNSCORED
             else:
                 status = STATUS_EMPTY
             ms: Optional[int] = None
@@ -234,6 +281,21 @@ def _ms_since(started: Optional[float]) -> Optional[int]:
     return max(0, int((time.monotonic() - started) * 1000))
 
 
+@dataclass(frozen=True)
+class ReplyCredit:
+    """Which model wrote a pass's reply, and from which pass.
+
+    ``pass_kind`` is PASS_PRIMARY for the turn's first race, PASS_RETRY for
+    that race's retry, and PASS_TOOL for any tool follow-up (its race or
+    its retry); ``from_retry`` says whether a retry produced it.
+    """
+
+    model: str
+    score: Optional[float]
+    pass_kind: str
+    from_retry: bool
+
+
 @dataclass
 class TurnRecord:
     """Everything one turn's row will hold, gathered while the turn runs."""
@@ -247,9 +309,16 @@ class TurnRecord:
     turn_id: uuid.UUID = field(default_factory=uuid.uuid4)
     started: float = field(default_factory=time.monotonic)
     calls: List[Dict[str, Any]] = field(default_factory=list)
+    # The model whose reply was delivered: the first pass's pick, or the
+    # tool follow-up's when one wrote the reply (see set_delivered).
     winner_model: str = ""
     winner_score: Optional[float] = None
     winner_pass: str = ""
+    # The first pass's pick (its race, or its retry when that replaced the
+    # answer), before any tool follow-up. The runner-up, the tie and the
+    # side-by-side alternate all compare against this one.
+    first_pass_model: str = ""
+    first_pass_score: Optional[float] = None
     runner_up_model: str = ""
     runner_up_score: Optional[float] = None
     closely_tied: bool = False
@@ -267,6 +336,12 @@ class TurnRecord:
     alternate_offered: bool = False
     alternate_model: str = ""
     alternate_cross_model: bool = False
+    # Not stored on the row: how the turn stands against
+    # fhi_chat_turns_total, which decides whether and how it is written (see
+    # the module docstring). The outcome the metric counted, "" until then.
+    counted_outcome: str = ""
+    # The turn's first race has started, so the models were asked.
+    reached_models: bool = False
 
     @classmethod
     def start(
@@ -298,13 +373,29 @@ class TurnRecord:
         runner_up_score: Optional[float],
         closely_tied: bool,
     ) -> None:
-        self.winner_model = (model or "")[:_MODEL_LABEL_MAX]
-        self.winner_score = _finite_or_none(score)
-        self.winner_pass = PASS_RETRY if from_retry else PASS_PRIMARY
-        self.retry_used = from_retry
+        """The first pass's pick and runner-up. Its pick is also the
+        delivered one until a tool follow-up's reply replaces it."""
+        self.first_pass_model = (model or "")[:_MODEL_LABEL_MAX]
+        self.first_pass_score = _finite_or_none(score)
         self.runner_up_model = (runner_up_model or "")[:_MODEL_LABEL_MAX]
         self.runner_up_score = _finite_or_none(runner_up_score)
         self.closely_tied = bool(closely_tied)
+        self.set_delivered(
+            ReplyCredit(
+                model=model or "",
+                score=score,
+                pass_kind=PASS_RETRY if from_retry else PASS_PRIMARY,
+                from_retry=from_retry,
+            )
+        )
+
+    def set_delivered(self, credit: ReplyCredit) -> None:
+        """The model whose reply the turn delivered. Wins on the dashboard
+        go to this one."""
+        self.winner_model = (credit.model or "")[:_MODEL_LABEL_MAX]
+        self.winner_score = _finite_or_none(credit.score)
+        self.winner_pass = credit.pass_kind
+        self.retry_used = bool(credit.from_retry)
 
     def set_alternate_candidate(self, model: Optional[str], cross_model: bool) -> None:
         self.candidate_alternate_model = (model or "")[:_MODEL_LABEL_MAX]
@@ -336,6 +427,8 @@ class TurnRecord:
             "winner_score": self.winner_score,
             "winner_pass": self.winner_pass,
             "winner_external": winner_external,
+            "first_pass_model": self.first_pass_model,
+            "first_pass_score": self.first_pass_score,
             "runner_up_model": self.runner_up_model,
             "runner_up_score": self.runner_up_score,
             "closely_tied": self.closely_tied,
@@ -379,6 +472,107 @@ async def arecord_chat_turn(
     except Exception as e:
         logger.warning(
             f"Could not record chat turn for chat {chat_id}: {type(e).__name__}"
+        )
+        return False
+
+
+# How long a turn being cancelled waits for its row, and the statement
+# timeout that bounds the write itself on PostgreSQL.
+CANCELLED_TURN_WRITE_SECONDS = 2.0
+
+
+def _bound_statements(connection: Any, ms: int) -> None:
+    """On PostgreSQL, end any statement of the current transaction that runs
+    past ``ms`` (waiting on a lock included). Nothing elsewhere: sqlite in
+    tests and development has no statement timeout."""
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        # set_config(..., true) is SET LOCAL: it ends with the transaction.
+        cursor.execute("SELECT set_config('statement_timeout', %s, true)", [str(ms)])
+
+
+def _record_chat_turn_isolated_sync(chat_id: Any, fields: Dict[str, Any]) -> None:
+    """Insert the row on the calling thread's own connection, inside a
+    transaction bounded by a statement timeout, then close that thread's
+    connections (it is a new thread each time, so nothing else would)."""
+    from django.db import connection, connections, transaction
+
+    from fighthealthinsurance.models import ChatTurn
+
+    try:
+        with transaction.atomic():
+            _bound_statements(connection, int(CANCELLED_TURN_WRITE_SECONDS * 1000))
+            ChatTurn.objects.create(chat_id=chat_id, **fields)
+    finally:
+        connections.close_all()
+
+
+async def arecord_chat_turn_isolated(
+    chat_id: Any,
+    turn: Optional[TurnRecord],
+    outcome: str,
+    timeout: float = CANCELLED_TURN_WRITE_SECONDS,
+) -> bool:
+    """Write one turn's row while the turn is being cancelled. Returns
+    whether it was written in time. Never raises, except that a further
+    cancellation of the caller still propagates.
+
+    Unlike every other ORM call on the chat path, this one does not go
+    through database_sync_to_async or the native async ORM (CLAUDE.md), and
+    on purpose: both run on the connection's single thread-sensitive
+    executor, and cancelling an await there does not stop the query. A
+    write stuck behind a lock would then hold that executor, delaying any
+    later ORM call on it and the executor join the socket's teardown waits
+    for. So the write runs on a daemon thread with its own database
+    connection, closed when it is done, under a statement timeout on
+    PostgreSQL; the caller stops waiting after ``timeout`` seconds and
+    leaves the thread to finish or fail on its own.
+    """
+    if turn is None or outcome not in TURN_OUTCOMES:
+        return False
+    loop = asyncio.get_running_loop()
+    done: "asyncio.Future[bool]" = loop.create_future()
+
+    def settle(written: bool) -> None:
+        if not done.done():
+            done.set_result(written)
+
+    def write(fields: Dict[str, Any]) -> None:
+        written = False
+        try:
+            _record_chat_turn_isolated_sync(chat_id, fields)
+            written = True
+        except Exception as e:
+            logger.warning(
+                f"Could not record chat turn for chat {chat_id}: {type(e).__name__}"
+            )
+        try:
+            loop.call_soon_threadsafe(settle, written)
+        except RuntimeError:
+            # The event loop closed while the write ran: nobody is waiting.
+            pass
+
+    try:
+        threading.Thread(
+            target=write,
+            args=(turn.row_fields(outcome),),
+            name="fhi-chat-turn-record",
+            daemon=True,
+        ).start()
+    except Exception as e:
+        logger.warning(
+            f"Could not record chat turn for chat {chat_id}: {type(e).__name__}"
+        )
+        return False
+    try:
+        # Shielded, so giving up on the wait leaves the result alone; the
+        # thread's write carries on either way.
+        return await asyncio.wait_for(asyncio.shield(done), timeout)
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"Chat turn record for chat {chat_id} still being written after "
+            f"{timeout}s; not waiting for it"
         )
         return False
 

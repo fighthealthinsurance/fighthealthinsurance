@@ -54,8 +54,10 @@ persistence (chat_persistence.py): transactional turn persist with
 ws frames out: status heartbeats, content (+ alternate_content and
   turn_id), metrics
   ▼
-turn record (chat/turn_record.py): one ChatTurn row per turn, written
-  after the reply frame (or the error frame)
+turn record (chat/turn_record.py): one ChatTurn row per turn counted in
+  fhi_chat_turns_total, with the counted outcome, written after the reply
+  frame (or the error frame); a turn cancelled after it was counted gets
+  its row from a thread of its own, with a bounded wait
 ```
 
 Everything in the fan-out is concurrent; the serial spine of a turn is
@@ -276,11 +278,19 @@ Three levels, in increasing detail:
    retry usage, elapsed ms. This is the production triage record.
 2. **Prometheus metrics**: repeats (rejected/delivered), alternates
    offered, answer feedback, turn outcomes.
-3. **ChatTurn rows** (one per turn that reached the models, in the admin
-   and on the staff ML Model Usage Dashboard): the backends asked, each
-   call's model, pass, history kind, status (scored, repeat, empty, error,
-   late), time and score, the winner and runner-up, retry and tool use, the
-   alternate offered and the person's pick. Metadata only (see §9).
+3. **ChatTurn rows** (one per turn that reached the models and was
+   counted in fhi_chat_turns_total, in the admin and on the staff ML Model
+   Usage Dashboard): the backends asked, each call's model, pass, history
+   kind, status, time and score, the model whose reply was delivered (a
+   tool follow-up's pick when one wrote the reply) and the first pass's
+   pick and runner-up, retry and tool use, the alternate offered and the
+   person's pick. Metadata only (see §9). A call that answered was scored
+   (scored, repeat or empty) or, when its pass stopped comparing answers
+   first, is unscored; either way it keeps its time. Only a call still
+   running when its pass stopped waiting is late, with no time. An
+   exception escaping a turn after the models were asked counts it failed,
+   in the row and the metric alike; a turn cancelled before it was counted
+   gets neither.
 4. **Debug frames** (localStorage `fhi_chat_debug = "true"`, honored only
    for DEBUG deployments and staff accounts): per turn the server sends
    - `debug_llm_input` — the EXACT wrapped message, context summary,

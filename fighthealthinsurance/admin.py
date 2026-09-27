@@ -1077,12 +1077,19 @@ class ChatTurnAdmin(admin.ModelAdmin):
         "outcome",
         "winner_model",
         "winner_pass",
+        "first_pass_model",
         "use_external",
         "alternate_offered",
         "alternate_model",
         "preferred",
     )
-    search_fields = ("id", "chat__id", "winner_model", "alternate_model")
+    search_fields = (
+        "id",
+        "chat__id",
+        "winner_model",
+        "first_pass_model",
+        "alternate_model",
+    )
     list_filter = (
         "outcome",
         "use_external",
