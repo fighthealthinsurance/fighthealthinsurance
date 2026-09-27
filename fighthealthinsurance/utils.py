@@ -1444,6 +1444,29 @@ def _wants_demotion(demote_failed: Callable[[], bool]) -> bool:
         return False
 
 
+def _same_result(key: Optional[Callable[[Any], Any]], a: Any, b: Any) -> bool:
+    """Whether two results count as the same for demotion: the same
+    ``key``, or equal without one or when the key raises."""
+    if key is not None:
+        try:
+            return bool(key(a) == key(b))
+        except Exception as e:
+            logger.warning(f"A staged race's demotion key failed: {type(e).__name__}")
+    return bool(a == b)
+
+
+def _replaces(replaces_demoted: Optional[Callable[[Any], bool]], result: Any) -> bool:
+    """Whether a held-back result can take a demoted result's place. A
+    rule that raises is a no, so the demoted result keeps its score."""
+    if replaces_demoted is None:
+        return True
+    try:
+        return replaces_demoted(result) is True
+    except Exception as e:
+        logger.warning(f"A staged race's replacement rule failed: {type(e).__name__}")
+        return False
+
+
 def _check_passed(check_task: "asyncio.Task[bool]") -> bool:
     """Whether a finished check passed. A check that raised or was
     cancelled did not."""
@@ -1468,6 +1491,8 @@ async def best_two_within_timelimit(
     check: Optional[Callable[[T, Awaitable[T]], Awaitable[bool]]] = None,
     demote_failed: Optional[Callable[[], bool]] = None,
     held_base: Optional[float] = None,
+    demote_key: Optional[Callable[[T], Any]] = None,
+    replaces_demoted: Optional[Callable[[T], bool]] = None,
 ) -> "BestTwo[T]":
     """
     Like :func:`best_within_timelimit`, but also returns the runner-up,
@@ -1517,6 +1542,14 @@ async def best_two_within_timelimit(
     own score. A demoted result is never the runner-up. Every other result
     keeps its score, and a demoted result stays usable, so it is still
     returned when nothing else is. ``stage`` records the demotion.
+
+    ``demote_key`` says which results count as equal to the checked one
+    (the same ``demote_key(result)``; without it, ``==``), so a result that
+    differs only in what the caller does not show is demoted with it.
+    ``replaces_demoted`` says which held-back results can take a demoted
+    result's place: only those set the score it ranks below (without it,
+    every usable one does). A held-back result the caller could not deliver
+    then cannot push a demoted result, the only deliverable one, below it.
     """
     # Should not happen :)
     if not tasks:
@@ -1587,14 +1620,17 @@ async def best_two_within_timelimit(
         return (
             demoted_result is not None
             and id(original_task) not in held_ids
-            and result == demoted_result
+            and _same_result(demote_key, result, demoted_result)
         )
 
     def _demotion_ceiling() -> Optional[float]:
-        # The score a demoted result must rank below: the best usable
-        # held-back result's, or the held-back base while none has arrived.
+        # The score a demoted result must rank below: the best held-back
+        # result's that can replace it, or the held-back base while none
+        # has arrived.
         held_scores = [
-            score for _p, _r, score, original in usable if id(original) in held_ids
+            score
+            for _p, result, score, original in usable
+            if id(original) in held_ids and _replaces(replaces_demoted, result)
         ]
         return max(held_scores) if held_scores else held_base
 

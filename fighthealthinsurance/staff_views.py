@@ -1596,10 +1596,23 @@ class _ChatTally:
         ) = row
         self.turns += 1
         self.outcomes[outcome] += 1
+        # Whether any outside call was sent on the turn, in any pass: a
+        # first pass that skipped them can be followed by a retry that asks
+        # them (our reply was empty, too short or a false promise).
+        external_sent = any(
+            isinstance(call, dict)
+            and call.get("external") is True
+            and call.get("status") != STATUS_SKIPPED
+            for call in calls or []
+        )
         if gate_used:
             self.gate_turns += 1
             self.gate_outcomes[gate_outcome] += 1
-            if gate_outcome == chat_gate.PASS and external_start == STAGE_SKIPPED:
+            if (
+                gate_outcome == chat_gate.PASS
+                and external_start == STAGE_SKIPPED
+                and not external_sent
+            ):
                 self.gate_saved += 1
             if gate_outcome == chat_gate.FAIL and outcome == ChatTurn.Outcome.OK:
                 self.gate_fail_ok += 1
@@ -1615,12 +1628,7 @@ class _ChatTally:
             self.retry_used += 1
         if external_start:
             self.external_starts[external_start] += 1
-            if external_start == STAGE_SKIPPED and any(
-                isinstance(call, dict)
-                and call.get("external") is True
-                and call.get("status") != STATUS_SKIPPED
-                for call in calls or []
-            ):
+            if external_start == STAGE_SKIPPED and external_sent:
                 self.externals_skipped_retried += 1
 
         # A model counts as asked once per turn, however many calls it got:

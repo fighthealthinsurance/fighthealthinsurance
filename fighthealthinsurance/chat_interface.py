@@ -157,6 +157,20 @@ def _clean_reply(text: str) -> str:
     return remove_repeated_sentences(cleaned) or cleaned
 
 
+def _shown_reply(result: Optional[Tuple[Optional[str], Optional[str]]]) -> Any:
+    """The reply a fan-out result would show the person, as cleaned for
+    delivery. Its context summary is never shown, so two results that
+    differ only there are the same reply."""
+    text = result[0] if result else None
+    return _clean_reply(text) if text else None
+
+
+def _deliverable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
+    """Whether a fan-out result could be delivered as it is, rather than
+    sent on to the retry (empty, too short, or a false promise)."""
+    return not should_retry_response(result[0] if result else None)
+
+
 class ChatInterface:
     def __init__(
         self,
@@ -554,8 +568,8 @@ class ChatInterface:
         race_staging: Dict[str, Any] = {}
         # The live Jev check (chat/reply_gate.py), on the person's own
         # message only: the outside calls are held back until our first
-        # usable reply is judged or the hold runs out, and never sent when
-        # it passes. The hold is the check's own wait, or the policy's delay
+        # usable reply is judged or the hold runs out, and not sent by this
+        # pass when it passes (the retry may still ask them). The hold is the check's own wait, or the policy's delay
         # when that is longer, so it does not depend on the policy.
         gate = (
             self._reply_gate
@@ -595,6 +609,15 @@ class ChatInterface:
                     (call_scores[c] for c in external_calls if c in call_scores),
                     default=None,
                 ),
+                # The judged reply with another context summary is still
+                # the judged reply, and is demoted with it.
+                "demote_key": _shown_reply,
+                # Only an outside answer the turn could deliver pushes the
+                # failed reply down. One that would go to the retry (empty,
+                # too short, a false promise) must not win over it, or a
+                # retry that finds nothing would leave the turn with no
+                # reply at all.
+                "replaces_demoted": _deliverable,
             }
         elif external_delay > 0 and 0 < len(external_calls) < len(calls):
             stage = StagedStart()

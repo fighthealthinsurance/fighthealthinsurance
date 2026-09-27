@@ -6,7 +6,7 @@ section; each window's Live chat summary has the counts.
 {% endcomment %}
 <h3 id="chat-reply-check">Chat reply check <span class="source-label">(Jev, before the outside models)</span></h3>
 <p class="window-totals">
-  {% if check.on %}<strong>On</strong>: in chats that allow outside models, the outside models wait up to {{ check.max_wait_seconds|floatformat:1 }} s while Jev checks our first usable reply, and are asked only when it does not pass.
+  {% if check.on %}<strong>On</strong>: in chats that allow outside models, the outside models wait up to {{ check.max_wait_seconds|floatformat:1 }} s while Jev checks our first usable reply, and the first pass asks them only when it does not pass. A reply our own checks still reject (empty, too short, or a false promise) goes to the retry, which may ask them.
   {% else %}<strong>Off</strong>: FHI_CHAT_JEV_GATE_ENABLED is off or the TypeSafe key is not set, so the outside models are asked as the routing policy says.
   {% endif %}
 </p>

@@ -59,6 +59,16 @@ class _SlowOursModel(_OursModel):
         return await super().generate_chat_response(*args, **kwargs)
 
 
+class _OtherSummaryOursModel(_OursModel):
+    """Answers after the others, with the same reply text under another
+    context summary."""
+
+    async def generate_chat_response(self, *args, **kwargs):
+        reply, _summary = await super().generate_chat_response(*args, **kwargs)
+        await asyncio.sleep(0.3)
+        return reply, "another context summary"
+
+
 class _BrokenOutsideModel(_OutsideModel):
     async def generate_chat_response(self, *args, **kwargs):
         await super().generate_chat_response(*args, **kwargs)
@@ -334,6 +344,7 @@ class ChatReplyCheckTest(APITransactionTestCase):
         outside=None,
         settings=None,
         policy=None,
+        also_ours=(),
     ):
         user, chat = await _make_chat(username, npi)
         frames = _Frames()
@@ -347,7 +358,7 @@ class ChatReplyCheckTest(APITransactionTestCase):
         with (
             override_settings(**{**ENABLED, **(settings or {})}),
             _ours_selectable(),
-            _router_returning([ours, outside]),
+            _router_returning([ours, *also_ours, outside]),
             _jev(jev),
             _PATCH_FIRE_AND_FORGET,
             _Logs() as logs,
@@ -457,6 +468,45 @@ class ChatReplyCheckTest(APITransactionTestCase):
             c["score"] for c in row.calls if c["model"] == "fhi-local" and c["score"]
         ]
         self.assertLess(row.winner_score, ours_score)
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_a_blank_outside_answer_does_not_push_ours_below_it(self):
+        """An outside answer with no reply text, only a context summary,
+        cannot take the failed reply's place: it would only send the turn
+        to the retry, and a retry that found nothing would leave the person
+        with no reply at all. The first pass delivers ours."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        blank = _OutsideModel(always_reply="", model_quality=60, name="claude")
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate15", "9999931115", jev, outside=blank
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertFalse(row.retry_ran)
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertTrue(row.gate_demoted)
+        self.assertTrue(row.gate_demoted_delivered)
+        self._assert_no_text(row, logs, FRESH_REPLY)
+
+    async def test_the_same_reply_with_another_summary_is_demoted_too(self):
+        """Another of our models returning the judged reply under a
+        different context summary shows the person the same reply, so it
+        ranks below the outside answer as well."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        twin = _OtherSummaryOursModel(
+            always_reply=FRESH_REPLY, model_quality=110, name="fhi-local-twin"
+        )
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate16", "9999931116", jev, also_ours=(twin,)
+        )
+        self.assertTrue(twin.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.gate_model, "fhi-local")
+        self.assertIn(("fhi-local-twin", "scored"), _statuses(row))
+        self.assertEqual(row.winner_model, "claude")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertFalse(row.gate_demoted_delivered)
         self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
 
     async def test_with_demotion_off_a_fail_keeps_the_usual_scoring(self):

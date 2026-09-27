@@ -1390,6 +1390,83 @@ class TestFailedCheckDemotion:
         assert result.runner_up is None
 
     @pytest.mark.asyncio
+    async def test_a_held_back_result_that_cannot_replace_it_does_not_outrank_it(
+        self,
+    ):
+        """A held-back result the caller could not deliver (chat: an empty
+        reply, which would only go to the retry) does not set the cap, so
+        the failed result, the one the caller can deliver, stays in front.
+        Without the rule the blank one would win."""
+        for rule, winner in (
+            (lambda r: r != "their-blank", "ours-answer"),
+            (None, "their-blank"),
+        ):
+            probe = _Probe()
+            ours = probe.call("ours", "ours-answer", 0.01)
+            theirs = probe.call("theirs", "their-blank", 0.02)
+            result, stage, _asked = await self._race(
+                [ours, theirs],
+                {"ours-answer": 8000.0, "their-blank": 110.0},
+                [theirs],
+                _Check(answer=False),
+                held_base=1900.0,
+                replaces_demoted=rule,
+            )
+            assert stage.demoted is True
+            assert result.best == winner
+            assert stage.best_demoted is (winner == "ours-answer")
+            if rule is not None:
+                # The cap stayed the held-back base.
+                assert result.best_score == 1900.0 - DEMOTION_MARGIN
+
+    @pytest.mark.asyncio
+    async def test_results_the_key_calls_the_same_are_demoted_together(self):
+        """Another of our results with the same key (chat: the same reply
+        with a different context summary) is demoted with the checked one.
+        Without the key only an equal result would be."""
+        for key, winner in (
+            (lambda r: r[0], ("B", "summary")),
+            (None, ("A", "summary-2")),
+        ):
+            probe = _Probe()
+            ours = probe.call("ours", ("A", "summary-1"), 0.01)
+            twin = probe.call("twin", ("A", "summary-2"), 0.03)
+            theirs = probe.call("theirs", ("B", "summary"), 0.02)
+            result, stage, _asked = await self._race(
+                [ours, twin, theirs],
+                {
+                    ("A", "summary-1"): 8000.0,
+                    ("A", "summary-2"): 7900.0,
+                    ("B", "summary"): 1900.0,
+                },
+                [theirs],
+                _Check(answer=False),
+                held_base=1900.0,
+                demote_key=key,
+            )
+            assert stage.demoted is True
+            assert result.best == winner, key
+
+    @pytest.mark.asyncio
+    async def test_a_key_that_raises_still_demotes_the_checked_result(self):
+        def broken(result):
+            raise ValueError("no key")
+
+        probe = _Probe()
+        ours = probe.call("ours", "ours-answer", 0.01)
+        theirs = probe.call("theirs", "their-answer", 0.02)
+        result, stage, _asked = await self._race(
+            [ours, theirs],
+            {"ours-answer": 8000.0, "their-answer": 1900.0},
+            [theirs],
+            _Check(answer=False),
+            held_base=1900.0,
+            demote_key=broken,
+        )
+        assert stage.demoted is True
+        assert result.best == "their-answer"
+
+    @pytest.mark.asyncio
     async def test_the_failed_result_is_still_returned_when_nothing_else_is(self):
         probe = _Probe()
         ours = probe.call("ours", "ours-answer", 0.01)

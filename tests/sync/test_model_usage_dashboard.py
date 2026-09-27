@@ -2104,6 +2104,27 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
             **fields,
         )
 
+    def test_a_pass_whose_retry_asked_an_outside_model_is_not_saved(self):
+        """The check passed and the first pass skipped the outside models,
+        but our own checks then rejected the reply and the retry asked one.
+        That turn's outside models were not kept from being sent."""
+        retried = _call("deepseek", pass_kind="retry")
+        retried["external"] = True
+        self._checked("pass", "skipped")
+        self._checked(
+            "pass",
+            "skipped",
+            retry_ran=True,
+            calls=[_call("fhi-local"), _call("claude", "skipped", ms=None), retried],
+        )
+        _response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual((summary["gate_pass"], summary["gate_saved"]), (2, 1))
+        self.assertEqual(
+            (summary["externals_skipped"], summary["externals_skipped_retried"]),
+            (1, 1),
+        )
+
     def test_the_counts_and_the_rates(self):
         self._checked("pass", "skipped")
         self._checked("pass", "skipped")
@@ -2148,10 +2169,14 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         self.assertEqual(summary["gate_fail_demoted_delivered"], 1)
         self.assertEqual(summary["externals_after_check"], 4)
         self.assertEqual(summary["externals_held_back"], 8)
-        self.assertContains(response, "Outside models never sent because the check passed")
+        self.assertContains(
+            response, "Outside models never sent, in any pass, because the check passed"
+        )
         self.assertContains(response, "After a failed check, an outside model")
         self.assertContains(
-            response, "our demoted reply on 1 because nothing else usable arrived"
+            response,
+            "our demoted reply on 1 because no outside answer that could be "
+            "delivered arrived",
         )
         self.assertContains(response, "started early because the check on ours did not pass")
 

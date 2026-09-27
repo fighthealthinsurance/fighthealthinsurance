@@ -275,8 +275,12 @@ outside models are asked only when the check does not pass.
   sent, and the rest of the turn does not wait for it. The turn waits at
   most 1s for the health note. At most 8 of each kind run at once per
   process; past that the check sends nothing, or the note is left out.
-* **Pass:** the outside calls are never sent (their coroutines are closed)
-  and the usual scoring picks among our models' answers. **Anything else**
+* **Pass:** the primary pass never sends the outside calls (their
+  coroutines are closed) and the usual scoring picks among our models'
+  answers. The retry, which runs only when our own checks reject the
+  reply (empty, too short or a false promise), may still ask them; the
+  dashboard does not count such a turn as one the check kept them from.
+  **Anything else**
   (a fail, an error, an HTTP error, an answer we cannot read, or no answer
   within `FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS`, 1.5s): the outside calls
   start at once and the usual scoring picks among everything. The check
@@ -286,8 +290,10 @@ outside models are asked only when the check does not pass.
   or a reply that was not judged), and while
   `FHI_CHAT_JEV_GATE_DEMOTE_FAILED` is on (the default; pinned on in every
   test configuration), the judged reply, and any reply with the same
-  text, ranks one point below the best outside answer that has arrived,
-  or below the outside calls' base score while none has. Our models' base
+  text whatever its context summary, ranks one point below the best
+  outside answer that has arrived and could be delivered (not empty, too
+  short or a false promise), or below the outside calls' base score while
+  none has. Our models' base
   score (about 8000 against about 1900 for outside ones) would otherwise
   keep the failed reply in front. Our other replies keep their scores. The
   demoted reply is never the runner-up or the side-by-side alternate, and

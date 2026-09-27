@@ -4,14 +4,17 @@
 When the check is on for a turn, the primary pass holds the outside models'
 calls back while ours answer. The first usable reply of ours is checked:
 
-* pass: the outside calls are never sent, and the turn finishes with our
-  models' answers;
+* pass: the primary pass never sends the outside calls, and picks among
+  our models' answers. The retry, which runs only when our own checks
+  reject the reply (empty, too short or a false promise), may still ask
+  them;
 * fail, error or timeout: the outside calls start at once, and the usual
   scoring picks the winner among everything that answers. After a fail
   (not an error or a timeout), and while FHI_CHAT_JEV_GATE_DEMOTE_FAILED is
-  on, the judged reply ranks just below the best outside answer, so it
-  wins only when nothing else usable arrives; our other replies keep their
-  scores (utils.best_two_within_timelimit's ``demote_failed``).
+  on, the judged reply, and any with the same text, ranks just below the
+  best outside answer that could be delivered, so it wins only when no
+  such answer arrives; our other replies keep their scores
+  (utils.best_two_within_timelimit's ``demote_failed``).
 
 The outside calls are held for at most FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS
 (or the routing policy's delay, when that is longer), whether or not a
