@@ -501,6 +501,23 @@ class ChatReplyCheckTest(APITransactionTestCase):
         self.assertTrue(row.gate_demoted_delivered)
         self._assert_no_text(row, logs, FRESH_REPLY)
 
+    async def test_a_too_short_outside_answer_does_not_beat_ours(self):
+        """An outside answer too short to deliver ranks below the failed
+        reply of ours even when its own score is higher: the first pass
+        delivers ours, and no retry is needed."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        short = _OutsideModel(always_reply="OK", model_quality=60, name="claude")
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate19", "9999931119", jev, outside=short
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertFalse(row.retry_ran)
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertTrue(row.gate_demoted_delivered)
+        self._assert_no_text(row, logs, FRESH_REPLY)
+
     async def test_the_same_reply_with_another_summary_is_demoted_too(self):
         """Another of our models returning the judged reply under a
         different context summary shows the person the same reply, so it
@@ -519,6 +536,11 @@ class ChatReplyCheckTest(APITransactionTestCase):
         self.assertEqual(row.winner_model, "claude")
         self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
         self.assertFalse(row.gate_demoted_delivered)
+        # Nor is it offered beside the outside answer as the alternate.
+        self.assertNotEqual(
+            frames.last_reply_frame().get("alternate_content"), FRESH_REPLY
+        )
+        self.assertNotEqual(row.alternate_model, "fhi-local-twin")
         self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
 
     async def test_with_demotion_off_a_fail_keeps_the_usual_scoring(self):

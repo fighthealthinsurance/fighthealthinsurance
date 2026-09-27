@@ -1420,6 +1420,32 @@ class TestFailedCheckDemotion:
                 assert result.best_score == 1900.0 - DEMOTION_MARGIN
 
     @pytest.mark.asyncio
+    async def test_a_held_back_result_that_cannot_replace_it_ranks_below_it(self):
+        """Even scoring above the cap on its own (chat: a two-letter outside
+        reply that carries a summary), a held-back result the caller could
+        not deliver ranks below the demoted one, which is returned."""
+        for rule, winner in (
+            (lambda r: r != "their-ok", "ours-answer"),
+            (None, "their-ok"),
+        ):
+            probe = _Probe()
+            ours = probe.call("ours", "ours-answer", 0.01)
+            theirs = probe.call("theirs", "their-ok", 0.02)
+            result, stage, _asked = await self._race(
+                [ours, theirs],
+                {"ours-answer": 8000.0, "their-ok": 5000.0},
+                [theirs],
+                _Check(answer=False),
+                held_base=1900.0,
+                replaces_demoted=rule,
+            )
+            assert stage.demoted is True
+            assert result.best == winner
+            if rule is not None:
+                assert result.best_score == 1900.0 - DEMOTION_MARGIN
+                assert stage.best_demoted is True
+
+    @pytest.mark.asyncio
     async def test_results_the_key_calls_the_same_are_demoted_together(self):
         """Another of our results with the same key (chat: the same reply
         with a different context summary) is demoted with the checked one.

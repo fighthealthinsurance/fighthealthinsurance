@@ -859,10 +859,12 @@ class ChatInterface:
                     picked_score,
                     candidates_best_first(
                         (
+                            # The same reply under another context summary
+                            # is the same reply to the person: left out too.
                             {
                                 call: result
                                 for call, result in completed_results.items()
-                                if result != demoted_reply
+                                if _shown_reply(result) != _shown_reply(demoted_reply)
                             }
                             if demoted_reply is not None
                             else completed_results

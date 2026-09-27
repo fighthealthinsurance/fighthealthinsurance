@@ -1548,8 +1548,9 @@ async def best_two_within_timelimit(
     differs only in what the caller does not show is demoted with it.
     ``replaces_demoted`` says which held-back results can take a demoted
     result's place: only those set the score it ranks below (without it,
-    every usable one does). A held-back result the caller could not deliver
-    then cannot push a demoted result, the only deliverable one, below it.
+    every usable one does), and the others rank below the demoted result.
+    A held-back result the caller could not deliver then cannot push a
+    demoted result, the only deliverable one, below it, nor beat it.
     """
     # Should not happen :)
     if not tasks:
@@ -1645,12 +1646,30 @@ async def best_two_within_timelimit(
         )
         best_is_demoted = False
         ceiling = _demotion_ceiling() if demoted_result is not None else None
+        # While a result is demoted, a held-back result that cannot take its
+        # place ranks below it too: otherwise one the caller could not
+        # deliver would win on its own score over the one it could.
+        floor: Optional[float] = None
+        if demoted_result is not None and replaces_demoted is not None:
+            demoted_scores = [
+                min(score, ceiling - DEMOTION_MARGIN) if ceiling is not None else score
+                for _p, result, score, original in usable
+                if _is_demoted(result, original)
+            ]
+            if demoted_scores:
+                floor = max(demoted_scores)
         for _position, result, score, original_task in sorted(
             usable, key=lambda u: u[0]
         ):
             demoted = _is_demoted(result, original_task)
             if demoted and ceiling is not None:
                 score = min(score, ceiling - DEMOTION_MARGIN)
+            elif (
+                floor is not None
+                and id(original_task) in held_ids
+                and not _replaces(replaces_demoted, result)
+            ):
+                score = min(score, floor - DEMOTION_MARGIN)
             if score > best_score or not best_result_option:
                 # Demote the old best into the runner-up slot -- unless
                 # the new best is equal-valued, in which case keeping the
