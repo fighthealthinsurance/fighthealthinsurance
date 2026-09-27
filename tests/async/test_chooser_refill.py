@@ -365,6 +365,19 @@ class TestRefillOutcome:
             assert await _generate_batch_tasks("appeal", 3) == 2
 
 
+async def _prefilled_types(exhausted=None):
+    """The task types one prefill_if_needed(min_ready=1) pass generates."""
+    with patch(
+        "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
+        new=AsyncMock(),
+    ), patch(
+        "fighthealthinsurance.chooser_tasks._generate_single_task",
+        new=MagicMock(return_value=None),
+    ) as single:
+        await prefill_if_needed(min_ready=1, exhausted=exhausted)
+    return [call.args[0] for call in single.call_args_list]
+
+
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 class TestPrefillSkipsAGenerationUnderway:
@@ -372,21 +385,10 @@ class TestPrefillSkipsAGenerationUnderway:
     generation while the pool was empty. A prefill now skips a type whose
     task is already QUEUED, which every process can see."""
 
-    async def _prefilled_types(self):
-        with patch(
-            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
-            new=AsyncMock(),
-        ), patch(
-            "fighthealthinsurance.chooser_tasks._generate_single_task",
-            new=MagicMock(return_value=None),
-        ) as single:
-            await prefill_if_needed(min_ready=1)
-        return [call.args[0] for call in single.call_args_list]
-
     async def test_a_generation_underway_is_not_started_again(self):
         await _make_task("appeal", status="QUEUED")
 
-        assert await self._prefilled_types() == ["chat"]
+        assert await _prefilled_types() == ["chat"]
 
     async def test_a_queued_task_left_behind_long_ago_holds_nothing_off(self):
         task = await _make_task("appeal", status="QUEUED")
@@ -394,7 +396,35 @@ class TestPrefillSkipsAGenerationUnderway:
             created_at=timezone.now() - datetime.timedelta(hours=1)
         )
 
-        assert await self._prefilled_types() == ["appeal", "chat"]
+        assert await _prefilled_types() == ["appeal", "chat"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestPrefillForATypeASessionUsedUp:
+    """A session that has answered every READY task of a type gets a 404
+    from next-task. The pool is not short, so a prefill that only counted it
+    never made the session another task."""
+
+    async def _stocked_pool(self):
+        await _make_task("appeal")
+        await _make_task("chat")
+
+    async def test_a_used_up_type_is_generated_though_ready_tasks_remain(self):
+        await self._stocked_pool()
+
+        assert await _prefilled_types(exhausted="appeal") == ["appeal"]
+
+    async def test_a_stocked_pool_generates_nothing_otherwise(self):
+        await self._stocked_pool()
+
+        assert await _prefilled_types() == []
+
+    async def test_a_used_up_type_still_waits_for_a_generation_underway(self):
+        await self._stocked_pool()
+        await _make_task("appeal", status="QUEUED")
+
+        assert await _prefilled_types(exhausted="appeal") == []
 
 
 @pytest.mark.asyncio

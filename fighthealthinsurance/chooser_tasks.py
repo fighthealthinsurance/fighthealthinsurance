@@ -1031,30 +1031,38 @@ async def _synthesize_chat_candidate(
     return None
 
 
-async def prefill_if_needed(min_ready: int = 1):
+async def prefill_if_needed(min_ready: int = 1, exhausted: Optional[str] = None):
     """
     Check if there are enough READY tasks and trigger generation if not.
     This is a lightweight check intended to be called on page load.
 
     Args:
         min_ready: Minimum number of ready tasks required for each type.
+        exhausted: A task type some session has already answered every READY
+            task of. The pool is not short, so the count alone would never
+            generate one, and that session would see "No tasks available"
+            until the refill actor next ran.
     """
 
     for task_type in ["appeal", "chat"]:
         ready_count = await _count_ready_tasks(task_type)
         if ready_count < min_ready:
-            if await _generation_underway(task_type):
-                logger.debug(
-                    f"Chooser {task_type} tasks below minimum, but one is already "
-                    "being generated; not starting another"
-                )
-                continue
-            logger.info(
-                f"Chooser {task_type} tasks below minimum ({ready_count} < {min_ready}). "
-                f"Triggering generation of 1 task."
+            reason = f"below minimum ({ready_count} < {min_ready})"
+        elif task_type == exhausted:
+            reason = f"all {ready_count} used up by a session"
+        else:
+            continue
+        if await _generation_underway(task_type):
+            logger.debug(
+                f"Chooser {task_type} tasks {reason}, but one is already "
+                "being generated; not starting another"
             )
-            # Fire and forget - don't wait for completion
-            await fire_and_forget_in_new_threadpool(_generate_single_task(task_type))
+            continue
+        logger.info(
+            f"Chooser {task_type} tasks {reason}. Triggering generation of 1 task."
+        )
+        # Fire and forget - don't wait for completion
+        await fire_and_forget_in_new_threadpool(_generate_single_task(task_type))
 
 
 async def _generation_underway(task_type: str) -> bool:
@@ -1076,23 +1084,26 @@ async def _generation_underway(task_type: str) -> bool:
     ).aexists()
 
 
-def trigger_prefill_async() -> bool:
+def trigger_prefill_async(exhausted: Optional[str] = None) -> bool:
     """
     Trigger async pre-fill of chooser tasks.
     Safe to call from sync context - fires and forgets in a background thread.
 
     Throttled to one prefill per process per CHOOSER_PREFILL_THROTTLE_SECONDS:
     every chooser page load and every empty next-task fetch asks, and each
-    prefill is a full task generation. Across processes, a prefill skips a
-    type that is already being generated (see _generation_underway). Returns
-    whether a prefill was started.
+    prefill is a full task generation. A prefill for a type a session has
+    used up (``exhausted``, see prefill_if_needed) has its own window, so a
+    page load just before cannot hold it off. Across processes, a prefill
+    skips a type that is already being generated (see _generation_underway).
+    Returns whether a prefill was started.
     """
     from django.core.cache import cache
 
+    throttle_key = "chooser_prefill_recently_triggered"
+    if exhausted:
+        throttle_key += f":{exhausted}"
     try:
-        if not cache.add(
-            "chooser_prefill_recently_triggered", 1, CHOOSER_PREFILL_THROTTLE_SECONDS
-        ):
+        if not cache.add(throttle_key, 1, CHOOSER_PREFILL_THROTTLE_SECONDS):
             logger.debug("Chooser prefill requested again within the throttle window")
             return False
     except Exception as e:
@@ -1103,7 +1114,7 @@ def trigger_prefill_async() -> bool:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(prefill_if_needed(min_ready=1))
+            loop.run_until_complete(prefill_if_needed(min_ready=1, exhausted=exhausted))
         except Exception as e:
             logger.opt(exception=True).warning(f"Error in prefill task: {e}")
         finally:
