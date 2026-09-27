@@ -4428,6 +4428,28 @@ class DataRemovalTotals(models.Model):
         return f"DataRemovalTotals<{self.requests} requests>"
 
 
+class SpendCounter(models.Model):
+    """Spend on one paid provider for one use, per UTC day, shared by every
+    pod (ml/spend.py keeps the budgets). ``name`` is "<provider>:<use>", for
+    example "typesafe:chat" or "deepinfra:chat"; ``amount`` is micro-dollars
+    (calls for Azure, which is sponsored). Names and numbers only."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    amount = models.BigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "name"], name="spend_counter_day_name"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.day} {self.name}: {self.amount}"
+
+
 class ExternalServiceHealth(models.Model):
     """Last outcome of calls to one external service, shared across pods.
 

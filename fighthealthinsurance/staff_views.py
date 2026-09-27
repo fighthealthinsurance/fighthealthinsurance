@@ -772,17 +772,31 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _scoring_failure_hint(summary: str) -> str:
-        """What a recorded scoring failure most likely means, for on-call."""
+        """What a recorded scoring failure most likely means, for on-call.
+        The statuses TypeSafe documents (401, 422, 429, 529) each get their
+        own phrase."""
         if summary == "HTTP 402":
             return "payment required: TypeSafe credits or billing"
         if summary in ("HTTP 401", "HTTP 403"):
             return "the API key was rejected"
+        if summary == "HTTP 422":
+            return "the request failed validation: TYPESAFE_MODEL or request shape"
         if summary == "HTTP 429":
-            return "rate limited"
+            return "rate limited: over the TypeSafe request or token limit"
+        if summary == "HTTP 529":
+            return "TypeSafe was overloaded"
         if summary.startswith("HTTP 5"):
             return "TypeSafe server error"
         if summary == "timeout":
             return "no answer within TYPESAFE_TIMEOUT_SECONDS"
+        if summary == "TypeSafeBudgetSpent":
+            return (
+                "not sent: this month's TypeSafe budget is spent (FHI_SPEND_TYPESAFE_*)"
+            )
+        if summary == "TypeSafeError":
+            # ml/typesafe.py refuses before sending: a non-https URL or a
+            # model setting that is not a model name.
+            return "not sent: check TYPESAFE_API_URL and TYPESAFE_MODEL"
         return ""
 
     @staticmethod
@@ -827,26 +841,34 @@ class AdminStatusView(generic.TemplateView):
 
             now = timezone.now()
             since = now - WINDOW
+            # Only a score from the current rubric counts, as wherever scores
+            # are compared: an older one is due to be redone, so its draft
+            # is still waiting for a score.
+            current = Q(
+                quality_score__isnull=False,
+                quality_scorer__startswith="typesafe/",
+                quality_scorer__endswith=letter_quality._RUBRIC_SUFFIX,
+            )
             # The same eligibility as the unscored count below, so the two
             # numbers describe one population and a scored draft that is
             # speculative or unconsented cannot make the level SCORING by
             # itself (review).
             out["scored"] = ProposedAppeal.objects.filter(
+                current,
                 quality_scored_at__gte=since,
                 speculative=False,
                 for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
             # real (not speculative), old enough that a score in flight would
-            # have landed, and still without one.
+            # have landed, and still without a current one.
             settled = now - datetime.timedelta(seconds=letter_quality.DRAIN_SECONDS)
             eligible_unscored = ProposedAppeal.objects.filter(
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
                 for_denial__use_external=True,
-                quality_score__isnull=True,
-            )
+            ).exclude(current)
             out["unscored"] = eligible_unscored.count()
 
             health = ExternalServiceHealth.objects.filter(

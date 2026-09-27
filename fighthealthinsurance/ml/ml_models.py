@@ -31,6 +31,7 @@ def _is_verbose_logging() -> bool:
 
 
 from fighthealthinsurance.env_utils import get_env_variable
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.ml_metrics import (
     labelled_ml_calls,
     record_ml_call,
@@ -2028,6 +2029,38 @@ class RemoteModel(RemoteModelLike):
     # (class name) keeps new backends identifiable without extra wiring.
     PROVIDER_LABEL: ClassVar[str] = ""
 
+    # Which ml/spend.py provider this backend's usage counts toward, if any.
+    SPEND_PROVIDER: ClassVar[Optional[str]] = None
+
+    def _request_extras(self, model: str) -> dict[str, Any]:
+        """Extra request-body fields for ``model`` (none by default)."""
+        return {}
+
+    def _record_spend(self, model: str, result: Any) -> None:
+        """Count one answer toward this provider's spend (ml/spend.py). Never
+        raises."""
+        provider = self.SPEND_PROVIDER
+        if provider is None or not isinstance(result, dict):
+            return
+        if result.get("object") == "error":
+            return
+        use = spend.current_use()
+        if provider == spend.DEEPINFRA:
+            spend.record(
+                provider, use, spend.deepinfra_cost_micro(model, result.get("usage"))
+            )
+        elif provider == spend.AZURE:
+            spend.record(provider, use, 1)
+
+    def _note_spend_refusal(self, status: int, body: str) -> None:
+        """Pause this provider for the day when it refuses for credit or
+        quota, so it is not asked again on every turn. Never raises."""
+        try:
+            if self.SPEND_PROVIDER is not None and spend.quota_refusal(status, body):
+                spend.pause(self.SPEND_PROVIDER, spend.current_use())
+        except Exception as e:
+            logger.debug(f"Spend refusal not noted: {type(e).__name__}")
+
     def __init__(self, model: str):
         pass
 
@@ -2084,6 +2117,12 @@ class RemoteModel(RemoteModelLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         """Return a list of supported models."""
+        return []
+
+    @classmethod
+    def chat_models(cls) -> List[ModelDescription]:
+        """Models this backend serves to chat only, outside the general
+        pools (MLRouter.chat_outside_models). None by default."""
         return []
 
     def bad_result(self, result: Optional[str], infer_type: str) -> bool:
@@ -3609,6 +3648,7 @@ class RemoteOpenLike(RemoteModel):
                 sent_temperature = self._supports_custom_temperature(model)
                 if sent_temperature:
                     request_body["temperature"] = temperature
+                request_body.update(self._request_extras(model))
                 while True:
                     async with s.post(
                         url,
@@ -3720,6 +3760,7 @@ class RemoteOpenLike(RemoteModel):
                                     )
                                 return None
 
+                            self._note_spend_refusal(e.status, response_body)
                             response_body_preview = response_body[:2000]
                             # Expected operational errors (quota/auth/rate-limit)
                             # are summarized concisely by _infer; keep their body
@@ -3739,6 +3780,7 @@ class RemoteOpenLike(RemoteModel):
                                 )
                             raise
                         json_result = await response.json()
+                        self._record_spend(model, json_result)
                         if json_result.get("object") == "error":
                             # Some OpenAI-compatible servers report errors in
                             # a 200 body. Surface the message; a missing-model
@@ -4590,6 +4632,7 @@ class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
     PROVIDER_LABEL: ClassVar[str] = "DeepInfra"
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.DEEPINFRA
 
     # Model context lengths (in tokens) - most modern models support 128k
     MODEL_CONTEXT_LENGTHS: ClassVar[dict[str, int]] = {
@@ -4645,6 +4688,40 @@ class DeepInfra(RemoteFullOpenLike):
         """Routing quality derived from the specific model (see
         ``_MODEL_QUALITY``)."""
         return self._MODEL_QUALITY.get(self.model, 82)
+
+    # Outside models for chat only (MLRouter.chat_outside_models), kept out of
+    # the general pools so appeals and summaries route exactly as before.
+    # Chosen 2026-09-27 from the FHI model eval: no Gemma (we host our own).
+    CHAT_MODELS: ClassVar[List[str]] = [
+        "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+        "zai-org/GLM-5.3-Flash",
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "Qwen/Qwen3.8-2.4T-A95B",
+        "moonshotai/Kimi-K3",
+    ]
+    # Chat replies are short: cap each model's output, tighter for the wordy
+    # and the expensive ones, and turn Qwen's thinking off (it thinks by
+    # default, which made its eval run take minutes).
+    _CHAT_REQUEST_EXTRAS: ClassVar[dict[str, dict[str, Any]]] = {
+        "mistralai/Mistral-Small-3.2-24B-Instruct-2506": {"max_tokens": 1024},
+        "zai-org/GLM-5.3-Flash": {"max_tokens": 1024},
+        "deepseek-ai/DeepSeek-V4.1-Flash": {"max_tokens": 1024},
+        "Qwen/Qwen3.8-2.4T-A95B": {
+            "max_tokens": 800,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+        "moonshotai/Kimi-K3": {"max_tokens": 800},
+    }
+
+    def _request_extras(self, model: str) -> dict[str, Any]:
+        return dict(self._CHAT_REQUEST_EXTRAS.get(model, {}))
+
+    @classmethod
+    def chat_models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(cost=0, name=name, internal_name=name)
+            for name in cls.CHAT_MODELS
+        ]
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
@@ -5250,6 +5327,7 @@ class RemoteAzureOpenAI(RemoteAzureOpenLike):
     ENDPOINT_ENV: ClassVar[str] = "AZURE_OPENAI_ENDPOINT"
     MODELS_ENV: ClassVar[str] = "AZURE_OPENAI_MODELS"
     NAME_PREFIX: ClassVar[str] = "azure-openai"
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.AZURE
     PROVIDER_LABEL: ClassVar[str] = "Azure OpenAI"
     ENDPOINT_EXAMPLE: ClassVar[str] = "https://my-resource.openai.azure.com/openai/v1"
     MAX_LEN: ClassVar[int] = 128000

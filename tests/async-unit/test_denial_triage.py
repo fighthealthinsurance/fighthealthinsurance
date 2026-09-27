@@ -285,8 +285,18 @@ class TestRowValues:
         assert values["triage_source"] == dt.SOURCE
         assert dt.source_for({"model": "speed_20260901"}) == f"typesafe/speed_20260901/rubric-{dt.RUBRIC_VERSION}"
         assert dt.same_rubric(dt.SOURCE) and not dt.same_rubric("typesafe/x/rubric-0") and not dt.same_rubric("manual/rubric-1")
+        # A triage stored before the move to a pinned Jev release is redone.
+        assert not dt.same_rubric("typesafe/speed_latest/rubric-1")
         assert values["triage_text_hash"] == dt.text_hash(LETTER)
         assert values["triaged_at"] == now
         assert set(values) == set(dt.TRIAGE_COLUMNS)
         assert set(dt.cleared_values()) == set(dt.TRIAGE_COLUMNS)
         assert all(v is None for v in dt.cleared_values().values())
+
+    def test_the_source_names_the_answering_model_or_the_configured_one(self):
+        assert dt.SOURCE == f"typesafe/jev-1.13.0/rubric-{dt.RUBRIC_VERSION}"
+        assert dt.source_for({"model": "jev-1.13.0"}) == dt.SOURCE
+        with override_settings(TYPESAFE_MODEL="jev-latest"):
+            assert dt.source_for({}) == f"typesafe/jev-latest/rubric-{dt.RUBRIC_VERSION}"
+            assert dt.source_for({"model": "jev-1.14.0"}) == f"typesafe/jev-1.14.0/rubric-{dt.RUBRIC_VERSION}"
+            assert dt.source_for({"model": "a/b"}) == f"typesafe/jev-latest/rubric-{dt.RUBRIC_VERSION}"
