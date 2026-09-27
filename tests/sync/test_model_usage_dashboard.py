@@ -1982,7 +1982,7 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         self.assertNotIn("summary_for_next_call", sql)
 
 
-SHADOW_SCORER = "typesafe/jev-1.13.0/chat-rubric-2"
+SHADOW_SCORER = "typesafe/jev-1.13.0/chat-rubric-3"
 # The rubric before the promise question: never averaged in.
 RUBRIC_ONE_SCORER = "typesafe/jev-1.13.0/chat-rubric-1"
 
@@ -2137,7 +2137,7 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
         )
 
     def test_only_the_newest_scorer_is_averaged_and_the_page_names_it(self):
-        newer = "typesafe/jev-1.14.0/chat-rubric-2"
+        newer = "typesafe/jev-1.14.0/chat-rubric-3"
         # The newer model version scored the newest turns, so its scores
         # are the ones averaged.
         self._at(self._turn(**_shadow(GOOD, GOOD, scorer=newer)), 5)
@@ -2171,7 +2171,7 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
     def test_the_scorer_choice_does_not_depend_on_row_order(self):
         from fighthealthinsurance.staff_views import _ShadowTally
 
-        newer = "typesafe/jev-1.14.0/chat-rubric-2"
+        newer = "typesafe/jev-1.14.0/chat-rubric-3"
         now = timezone.now()
         rows = [
             (now - datetime.timedelta(minutes=1), newer),
