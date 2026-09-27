@@ -19,7 +19,9 @@ Bounded, and kept off the chat's own work:
   their database threads running, those a timed-out step left behind
   included (a turn over either limit is not scored). The thread limit is
   checked again as each step starts its thread, so tasks admitted together
-  cannot overshoot it.
+  cannot overshoot it, and the score write's place is reserved before
+  anything is sent, so a task that sends always has somewhere to store the
+  answer.
 * Each database step (the identifier lookup, then the health note with
   the score write) runs through chat/isolated_db.py: on a thread with its
   own connection, never on the chat's thread-sensitive executor, waiting
@@ -132,6 +134,15 @@ async def _score_and_store(
     # database_sync_to_async or the async ORM (CLAUDE.md), on purpose: this
     # task inherits the chat's thread-sensitive executor, and a stuck query
     # there would hold up the chat's own ORM calls (isolated_db says more).
+    # The score write's place is reserved before anything is sent, so a job
+    # that sends its texts to TypeSafe can always store what comes back.
+    slot = isolated_db.reserve(DB_THREAD_NAME, MAX_IN_FLIGHT)
+    if slot is None:
+        logger.info(
+            f"Chat shadow scoring skipped for turn {turn_id}: "
+            f"{MAX_IN_FLIGHT} database threads in use"
+        )
+        return
     try:
         try:
             identifiers = await isolated_db.run_isolated(
@@ -166,7 +177,7 @@ async def _score_and_store(
             None if result.outcome == chat_shadow.SCORED else result.failure,
             timeout=DB_STEP_SECONDS,
             name=DB_THREAD_NAME,
-            limit=MAX_IN_FLIGHT,
+            slot=slot,
         )
     except asyncio.CancelledError:
         raise
@@ -174,6 +185,9 @@ async def _score_and_store(
         logger.warning(
             f"Chat shadow scoring failed for turn {turn_id}: {type(e).__name__}"
         )
+    finally:
+        # Given back here only when the write never started in it.
+        slot.release()
 
 
 async def _job(

@@ -540,6 +540,72 @@ async def test_a_job_that_finds_the_database_threads_full_sends_nothing(
     }
 
 
+class _HeldPost(_FakePost):
+    """A _FakePost whose requests wait until released, counting each one
+    as it is sent."""
+
+    def __init__(self, *answers):
+        super().__init__(*answers)
+        self.sent = 0
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, state, timeout_seconds):
+        self.sent += 1
+        self.entered.set()
+        await self.release.wait()
+        return await super().__call__(state, timeout_seconds)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_job_that_sends_keeps_a_place_to_store_the_answer(monkeypatch):
+    """Two places short of the thread limit, a job that has sent its texts
+    keeps the place for its score write while it waits: a job started
+    meanwhile finds no place, sends nothing, and cannot take it."""
+    chat, turn = await _chat_and_turn()
+    other_chat, other_turn = await _chat_and_turn()
+    # Threads timed-out steps left behind.
+    monkeypatch.setitem(
+        isolated_db._running,
+        shadow_scoring.DB_THREAD_NAME,
+        shadow_scoring.MAX_IN_FLIGHT - 2,
+    )
+    held = _HeldPost()
+    with override_settings(**ENABLED), patch.object(chat_shadow, "_post", held):
+        first = shadow_scoring.start(
+            chat_id=chat.id,
+            turn_id=turn.id,
+            external_allowed=True,
+            message=MESSAGE,
+            reply=REPLY,
+            second=SECOND,
+        )
+        assert first is not None
+        await asyncio.wait_for(held.entered.wait(), 5)
+        sent_by_first = held.sent
+        later = shadow_scoring.start(
+            chat_id=other_chat.id,
+            turn_id=other_turn.id,
+            external_allowed=True,
+            message=MESSAGE,
+            reply=REPLY,
+            second=SECOND,
+        )
+        assert later is not None
+        await asyncio.wait_for(later, 10)
+        assert held.sent == sent_by_first
+        held.release.set()
+        await asyncio.wait_for(first, 10)
+
+    assert (await ChatTurn.objects.aget(pk=turn.pk)).shadow_outcome == "scored"
+    assert (await ChatTurn.objects.aget(pk=other_turn.pk)).shadow_outcome == ""
+    assert (
+        isolated_db.running(shadow_scoring.DB_THREAD_NAME)
+        == shadow_scoring.MAX_IN_FLIGHT - 2
+    )
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_a_failure_stores_the_outcome_and_no_scores():

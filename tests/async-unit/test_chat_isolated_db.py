@@ -180,3 +180,43 @@ async def test_a_limit_counts_threads_whose_callers_stopped_waiting():
         )
         == "done"
     )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_reserved_place_counts_and_the_thread_started_in_it_gives_it_back():
+    """A place reserved for later work counts against the limit like a
+    running thread, the work started in it is not refused, and the place is
+    given back once: by the thread when it ends, or by release() when no
+    thread used it."""
+    slot = isolated_db.reserve("t-slot", 2)
+    assert slot is not None
+    other = isolated_db.reserve("t-slot", 2)
+    assert other is not None
+    assert isolated_db.running("t-slot") == 2
+    # Full: no third place, and no thread without one.
+    assert isolated_db.reserve("t-slot", 2) is None
+    with pytest.raises(isolated_db.Busy):
+        await isolated_db.run_isolated(lambda: 1, timeout=2, name="t-slot", limit=2)
+    # The reserved place is not refused, and is spent by its thread.
+    assert (
+        await isolated_db.run_isolated(lambda: "ran", timeout=2, name="t-slot", slot=slot)
+        == "ran"
+    )
+    for _ in range(100):
+        if isolated_db.running("t-slot") == 1:
+            break
+        await asyncio.sleep(0.02)
+    assert isolated_db.running("t-slot") == 1
+    slot.release()
+    assert isolated_db.running("t-slot") == 1
+    with pytest.raises(ValueError):
+        await isolated_db.run_isolated(lambda: 1, timeout=2, name="t-slot", slot=slot)
+    other.release()
+    other.release()
+    assert isolated_db.running("t-slot") == 0
+    unused = isolated_db.reserve("t-slot", 2)
+    with pytest.raises(ValueError):
+        await isolated_db.run_isolated(lambda: 1, timeout=2, name="t-other", slot=unused)
+    unused.release()
+    assert isolated_db.running("t-slot") == 0
