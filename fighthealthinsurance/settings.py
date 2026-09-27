@@ -199,6 +199,44 @@ class Base(Configuration):
     # change here starts a new series on the dashboard. Empty means the same
     # pinned release (ml/typesafe.py DEFAULT_MODEL).
     TYPESAFE_MODEL = os.getenv("TYPESAFE_MODEL", "jev-1.13.0")
+    # Monthly spend budgets for paid providers (ml/spend.py), US dollars.
+    # TypeSafe: letters may use the whole month; chat at most its share, and
+    # never the reserve kept for letters. DeepInfra: chat's share only.
+    FHI_SPEND_TYPESAFE_MONTHLY_USD = _env_float(
+        "FHI_SPEND_TYPESAFE_MONTHLY_USD", 5.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_TYPESAFE_LETTERS_RESERVE_USD = _env_float(
+        "FHI_SPEND_TYPESAFE_LETTERS_RESERVE_USD", 2.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_TYPESAFE_CHAT_MONTHLY_USD = _env_float(
+        "FHI_SPEND_TYPESAFE_CHAT_MONTHLY_USD", 3.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_DEEPINFRA_CHAT_MONTHLY_USD = _env_float(
+        "FHI_SPEND_DEEPINFRA_CHAT_MONTHLY_USD", 20.0, minimum=0.0, maximum=10000.0
+    )
+    # Sponsored Azure GPT-5.5 calls per UTC day for chat; unset means no cap.
+    FHI_SPEND_AZURE_CHAT_DAILY_CALLS = (
+        _env_int("FHI_SPEND_AZURE_CHAT_DAILY_CALLS", 0, minimum=0, maximum=10_000_000)
+        or None
+    )
+    # Chat's outside models, in order (MLRouter.chat_outside_models): at most
+    # three are asked, skipping any that is down or whose budget is spent.
+    # Empty means the best externals, as before. Kimi-K3 is kept out: it is
+    # for crucial side-by-sides only.
+    FHI_CHAT_OUTSIDE_MODELS = [
+        name.strip()
+        for name in os.getenv(
+            "FHI_CHAT_OUTSIDE_MODELS",
+            "azure-openai/gpt-5.5,"
+            "mistralai/Mistral-Small-3.2-24B-Instruct-2506,"
+            "zai-org/GLM-5.3-Flash,"
+            "deepseek-ai/DeepSeek-V4.1-Flash,"
+            "Qwen/Qwen3.8-2.4T-A95B",
+        ).split(",")
+        if name.strip()
+    ]
+    # The spend ledger's background thread (off in tests, like the banner).
+    FHI_SPEND_BACKGROUND = True
     TYPESAFE_LETTER_RANKING_ENABLED = (
         os.getenv("TYPESAFE_LETTER_RANKING_ENABLED", "false").lower() == "true"
     )
@@ -221,12 +259,21 @@ class Base(Configuration):
     # can be reviewed before it changes any routing.
     FHI_CHAT_POLICY_APPLY = _env_flag("FHI_CHAT_POLICY_APPLY")
     # A policy row older than this is ignored and chat routes by the default.
+    # The schedule writes one a day, so a day and a half leaves room for one
+    # missed run.
     FHI_CHAT_POLICY_MAX_AGE_MINUTES = _env_int(
-        "FHI_CHAT_POLICY_MAX_AGE_MINUTES", 60, minimum=1, maximum=7 * 24 * 60
+        "FHI_CHAT_POLICY_MAX_AGE_MINUTES", 36 * 60, minimum=1, maximum=7 * 24 * 60
     )
-    # Optional soft daily call caps for the chat fan-out, as a JSON object of
-    # {registry name: calls per UTC day}. Empty means no caps.
-    FHI_CHAT_DAILY_CALL_CAPS = os.getenv("FHI_CHAT_DAILY_CALL_CAPS", "")
+    # How long, in seconds, the chat fan-out holds the outside models back
+    # while our own models answer, when the policy is followed.
+    FHI_CHAT_EXTERNAL_HOLD_SECONDS = _env_float(
+        "FHI_CHAT_EXTERNAL_HOLD_SECONDS", 8.0, minimum=0.0, maximum=15.0
+    )
+    # Share of chat turns whose second outside model is drawn from further
+    # down the order, so each model keeps being asked and can move up.
+    FHI_CHAT_EXPLORE_RATE = _env_float(
+        "FHI_CHAT_EXPLORE_RATE", 0.2, minimum=0.0, maximum=1.0
+    )
     # Live check on our own chat reply before the paid outside models are
     # asked (chat/reply_gate.py, ml/chat_gate.py). It sends the person's
     # latest message and our reply to TypeSafe, so it runs only when the
@@ -962,7 +1009,6 @@ class Test(_TestBase):
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
-    FHI_CHAT_DAILY_CALL_CAPS = ""
     # The live check on chat replies sends chat text to TypeSafe: hard-off
     # under test, with its knobs pinned to their defaults. Tests opt in with
     # override_settings and stub the transport.
@@ -1008,6 +1054,10 @@ class Test(_TestBase):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    FHI_SPEND_BACKGROUND = False
+    # The chat roster is set per test; the default keeps the best externals.
+    FHI_CHAT_OUTSIDE_MODELS: list = []
+    FHI_CHAT_EXPLORE_RATE = 0.0
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).
@@ -1031,7 +1081,6 @@ class TestSync(_TestBase):
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
-    FHI_CHAT_DAILY_CALL_CAPS = ""
     # The live check on chat replies sends chat text to TypeSafe: hard-off
     # under test, with its knobs pinned to their defaults. Tests opt in with
     # override_settings and stub the transport.
@@ -1060,6 +1109,10 @@ class TestSync(_TestBase):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    FHI_SPEND_BACKGROUND = False
+    # The chat roster is set per test; the default keeps the best externals.
+    FHI_CHAT_OUTSIDE_MODELS: list = []
+    FHI_CHAT_EXPLORE_RATE = 0.0
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).
@@ -1083,7 +1136,6 @@ class TestActor(_TestBase):
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
-    FHI_CHAT_DAILY_CALL_CAPS = ""
     # The live check on chat replies sends chat text to TypeSafe: hard-off
     # under test, with its knobs pinned to their defaults. Tests opt in with
     # override_settings and stub the transport.
@@ -1129,6 +1181,10 @@ class TestActor(_TestBase):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    FHI_SPEND_BACKGROUND = False
+    # The chat roster is set per test; the default keeps the best externals.
+    FHI_CHAT_OUTSIDE_MODELS: list = []
+    FHI_CHAT_EXPLORE_RATE = 0.0
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).

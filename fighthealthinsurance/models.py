@@ -3915,14 +3915,15 @@ class ChatRoutingPolicy(models.Model):
     # Registry names of outside models to leave out of the chat fan-out.
     external_excluded = models.JSONField(default=list, blank=True)
     # How long the fan-out holds the outside models back while our own
-    # models answer; 0 asks them together.
+    # models answer (FHI_CHAT_EXTERNAL_HOLD_SECONDS); 0 asks them together.
     external_delay_seconds = models.FloatField(default=0.0)
-    # {registry name: calls per UTC day}, the calls each model had made
-    # since UTC midnight when the row was written, and the models at or
-    # over their cap then. Soft: they lag by the time between rows.
-    daily_call_caps = models.JSONField(default=dict, blank=True)
-    calls_today = models.JSONField(default=dict, blank=True)
-    exhausted = models.JSONField(default=list, blank=True)
+    # The outside models in the order chat should ask them: the roster
+    # (FHI_CHAT_OUTSIDE_MODELS) with the models that have enough turns
+    # reordered among their own places by how often their answer was
+    # delivered, and {name: [score, turns]} for those. Spending caps are
+    # not here: ml/spend.py enforces them live.
+    outside_order = models.JSONField(default=list, blank=True)
+    order_scores = models.JSONField(default=dict, blank=True)
     # The numbers behind the delay: the share of the last hour's turns
     # where one of our models gave a usable answer, and the 75th percentile
     # of how long that took over the window.
@@ -4464,6 +4465,28 @@ class DataRemovalTotals(models.Model):
 
     def __str__(self) -> str:
         return f"DataRemovalTotals<{self.requests} requests>"
+
+
+class SpendCounter(models.Model):
+    """Spend on one paid provider for one use, per UTC day, shared by every
+    pod (ml/spend.py keeps the budgets). ``name`` is "<provider>:<use>", for
+    example "typesafe:chat" or "deepinfra:chat"; ``amount`` is micro-dollars
+    (calls for Azure, which is sponsored). Names and numbers only."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    amount = models.BigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "name"], name="spend_counter_day_name"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.day} {self.name}: {self.amount}"
 
 
 class ExternalServiceHealth(models.Model):

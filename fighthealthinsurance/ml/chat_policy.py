@@ -17,7 +17,9 @@ Two loops run at different speeds:
 The safety rules:
 
 * :data:`DEFAULT_POLICY` is the behaviour without a policy: no outside
-  model left out, no caps, no delay.
+  model left out, the roster's own order, no delay.
+* Spending caps are not here: ml/spend.py counts spend live and the router
+  skips a provider whose budget is spent, as the calls happen.
 * Chat follows a row only while FHI_CHAT_POLICY_APPLY is on and the row is
   newer than FHI_CHAT_POLICY_MAX_AGE_MINUTES. With the switch off (the
   default) rows are still computed and shown on the staff usage dashboard,
@@ -37,7 +39,6 @@ is read, kept or written.
 """
 
 import datetime
-import json
 import math
 import threading
 import time
@@ -72,8 +73,9 @@ MAX_EXTERNAL_DELAY_SECONDS = 15.0
 _MAX_NAMES = 50
 _NAME_MAX = 200
 
-# The writer's defaults.
-DEFAULT_WINDOW_MINUTES = 24 * 60
+# The writer's defaults. A week, so each outside model can gather enough
+# turns for its place in the order to mean something.
+DEFAULT_WINDOW_MINUTES = 7 * 24 * 60
 RECENT_MINUTES = 60
 # Retention: rows are never edited, and rows older than this are deleted
 # after a new one is written (prune_old_chat_policies).
@@ -85,10 +87,7 @@ REASON_OK = "ok"
 REASON_FEW_TURNS = "few_turns"
 REASON_KEEP_ALL_INTERNALS_FAILING = "keep_all_internals_failing"
 REASON_KEEP_ALL_NO_HEALTHY_EXTERNAL = "keep_all_no_healthy_external"
-REASON_NO_DELAY_QUIET_HOUR = "no_delay_quiet_hour"
-REASON_NO_DELAY_INTERNALS_DOWN = "no_delay_internals_down"
-REASON_NO_DELAY_FEW_SAMPLES = "no_delay_few_samples"
-REASON_CAPPED = "capped"
+REASON_ORDERED = "ordered"
 _REASON_MAX = 64
 
 
@@ -102,12 +101,16 @@ class ChatPolicy:
 
     # Registry names of outside models to leave out of the chat fan-out.
     external_excluded: Tuple[str, ...] = ()
-    # Seconds the fan-out holds the outside models back while ours answer.
+    # Seconds the fan-out holds the outside models back while ours answer
+    # (FHI_CHAT_EXTERNAL_HOLD_SECONDS when the policy was computed).
     external_delay_seconds: float = 0.0
-    # Models at or over their daily call cap when the policy was computed.
-    exhausted: Tuple[str, ...] = ()
-    daily_call_caps: Mapping[str, int] = field(default_factory=dict)
-    calls_today: Mapping[str, int] = field(default_factory=dict)
+    # The outside models in the order chat should ask them: the roster
+    # (FHI_CHAT_OUTSIDE_MODELS), with the models that have enough turns
+    # reordered among their own places by how well they did. Empty means
+    # the roster's own order.
+    outside_order: Tuple[str, ...] = ()
+    # {name: [score 0..1, turns it was asked]} for the reordered models.
+    order_scores: Mapping[str, Tuple[float, int]] = field(default_factory=dict)
     window_minutes: int = 0
     turns_considered: int = 0
     internal_usable_rate: Optional[float] = None
@@ -122,7 +125,7 @@ class ChatPolicy:
         """Whether following this policy routes exactly as the default."""
         return (
             not self.external_excluded
-            and not self.exhausted
+            and not self.outside_order
             and self.external_delay_seconds == 0
         )
 
@@ -135,9 +138,11 @@ class ChatPolicy:
             "turns_considered": int(self.turns_considered),
             "external_excluded": list(self.external_excluded),
             "external_delay_seconds": float(self.external_delay_seconds),
-            "daily_call_caps": dict(self.daily_call_caps),
-            "calls_today": dict(self.calls_today),
-            "exhausted": list(self.exhausted),
+            "outside_order": list(self.outside_order),
+            "order_scores": {
+                name: [float(score), int(turns)]
+                for name, (score, turns) in self.order_scores.items()
+            },
             "internal_usable_rate": self.internal_usable_rate,
             "internal_ttu_p75_ms": self.internal_ttu_p75_ms,
             "reason": self.reason[:_REASON_MAX],
@@ -148,20 +153,18 @@ DEFAULT_POLICY = ChatPolicy()
 
 
 def narrow_externals(externals: Sequence[T], policy: ChatPolicy) -> List[T]:
-    """The outside models, from the router's own best-first list, that the
-    policy keeps. Never adds one: the result is always a subset of
-    ``externals`` in the same order.
+    """The outside models, from the router's own list, that the policy
+    keeps. Never adds one: the result is always a subset of ``externals``
+    in the same order.
 
-    Models at their cap go first. Of the rest, the excluded ones go, except
-    that when that would leave none, the best remaining one stays, so a
-    person who allowed outside models still has one to fall back on.
+    The excluded ones go, except that when that would leave none, the
+    first one stays, so a person who allowed outside models still has one
+    to fall back on.
     """
-    exhausted = set(policy.exhausted)
     excluded = set(policy.external_excluded)
-    within_caps = [m for m in externals if str(m) not in exhausted]
-    kept = [m for m in within_caps if str(m) not in excluded]
-    if not kept and within_caps:
-        kept = within_caps[:1]
+    kept = [m for m in externals if str(m) not in excluded]
+    if not kept and externals:
+        kept = list(externals[:1])
     return kept
 
 
@@ -210,8 +213,6 @@ class ChatAggregates:
     recent_minutes: int = RECENT_MINUTES
     recent_internal_turns: int = 0
     recent_internal_usable_turns: int = 0
-    # Calls sent to each model since UTC midnight.
-    calls_today: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -221,17 +222,11 @@ class PolicyRules:
 
     # Below this many turns in the window, keep the default routing.
     min_turns: int = 50
-    # The delay needs at least this many of the last hour's turns to have
-    # asked our models, with at least this share of them answered usably.
-    min_recent_turns: int = 3
-    min_recent_usable_rate: float = 0.5
-    # ... and this many timed usable answers in the window.
-    min_ttu_samples: int = 20
-    # The delay is this percentile of our time to a usable answer, within
-    # these bounds.
+    # An outside model moves in the order only after this many turns asked
+    # it; until then it keeps its place in the roster.
+    min_asks_to_order: int = 30
+    # The percentile of our time to a usable answer shown on the dashboard.
     delay_percentile: float = 75.0
-    min_delay_seconds: float = 5.0
-    max_delay_seconds: float = MAX_EXTERNAL_DELAY_SECONDS
     # When our models failed to answer usably on at least this share of
     # the window's turns, every outside model is kept.
     keep_all_failure_rate: float = 0.25
@@ -257,22 +252,6 @@ def _percentile(values: Sequence[int], percentile: float) -> Optional[int]:
     ordered = sorted(values)
     rank = max(1, math.ceil(percentile / 100.0 * len(ordered)))
     return int(ordered[min(rank, len(ordered)) - 1])
-
-
-def clean_caps(caps: Optional[Mapping[Any, Any]]) -> Dict[str, int]:
-    """Only well-formed caps: a model name and a whole number of calls."""
-    out: Dict[str, int] = {}
-    for name, cap in (caps or {}).items():
-        if (
-            isinstance(name, str)
-            and name
-            and len(name) <= _NAME_MAX
-            and isinstance(cap, int)
-            and not isinstance(cap, bool)
-            and cap >= 0
-        ):
-            out[name] = cap
-    return out
 
 
 def _choose_exclusions(
@@ -317,49 +296,49 @@ def _choose_exclusions(
     return excluded, None
 
 
-def _choose_delay(
-    aggregates: ChatAggregates,
-    rules: PolicyRules,
-    recent_rate: Optional[float],
-    ttu_p: Optional[int],
-) -> Tuple[float, Optional[str]]:
-    if aggregates.recent_internal_turns < rules.min_recent_turns:
-        return 0.0, REASON_NO_DELAY_QUIET_HOUR
-    if recent_rate is None or recent_rate < rules.min_recent_usable_rate:
-        return 0.0, REASON_NO_DELAY_INTERNALS_DOWN
-    if len(aggregates.internal_ttu_ms) < rules.min_ttu_samples or ttu_p is None:
-        return 0.0, REASON_NO_DELAY_FEW_SAMPLES
-    seconds = ttu_p / 1000.0
-    return (
-        min(max(seconds, rules.min_delay_seconds), rules.max_delay_seconds),
-        None,
+def _choose_order(
+    aggregates: ChatAggregates, roster: Sequence[str], rules: PolicyRules
+) -> Tuple[Tuple[str, ...], Dict[str, Tuple[float, int]]]:
+    """The roster, with the models asked on at least ``min_asks_to_order``
+    turns reordered among the places they already hold, best first. A
+    model's score is the share of the turns that asked it where its answer
+    was delivered. Models without enough turns keep their places, so the
+    roster's order stays the prior until the data says otherwise."""
+    roster = [name for name in dict.fromkeys(roster) if name]
+    scores: Dict[str, Tuple[float, int]] = {}
+    for name in roster:
+        model = aggregates.models.get(name)
+        if model is not None and model.asked >= rules.min_asks_to_order:
+            scores[name] = (model.wins / model.asked, model.asked)
+    places = [i for i, name in enumerate(roster) if name in scores]
+    ranked = sorted(
+        (name for name in roster if name in scores),
+        key=lambda name: (-scores[name][0], roster.index(name)),
     )
+    order = list(roster)
+    for place, name in zip(places, ranked):
+        order[place] = name
+    return tuple(order), scores
 
 
 def compute_policy(
     aggregates: ChatAggregates,
-    caps: Optional[Mapping[str, int]] = None,
+    roster: Sequence[str] = (),
+    hold_seconds: float = 0.0,
     rules: PolicyRules = DEFAULT_RULES,
 ) -> ChatPolicy:
     """Turn a window of ChatTurn aggregates into a routing policy.
 
     * Below ``rules.min_turns`` the routing stays the default (no outside
-      model left out, no delay); caps still apply.
+      model left out, the roster's order, no hold).
     * The top healthy outside model is never left out. Any other is left
       out only once enough turns asked it and it did not win, and never
       while our own models are failing often.
-    * The delay is our models' time to a usable answer at
-      ``rules.delay_percentile``, clamped to the rules' bounds, and 0 when
-      the last hour was quiet or our models were mostly not answering.
-    * A model at or over its cap (calls since UTC midnight) is exhausted.
+    * The hold is ``hold_seconds`` (FHI_CHAT_EXTERNAL_HOLD_SECONDS), within
+      MAX_EXTERNAL_DELAY_SECONDS.
+    * The order is the roster reordered by how often each well-sampled
+      model's answer was delivered (_choose_order).
     """
-    caps = clean_caps(caps)
-    calls_today = {
-        str(name): int(count) for name, count in sorted(aggregates.calls_today.items())
-    }
-    exhausted = tuple(
-        sorted(name for name, cap in caps.items() if calls_today.get(name, 0) >= cap)
-    )
     recent_rate = _ratio(
         aggregates.recent_internal_usable_turns, aggregates.recent_internal_turns
     )
@@ -368,31 +347,32 @@ def compute_policy(
     reasons: List[str] = []
     excluded: Tuple[str, ...] = ()
     delay = 0.0
+    order: Tuple[str, ...] = ()
+    scores: Dict[str, Tuple[float, int]] = {}
     if aggregates.turns < rules.min_turns:
         reasons.append(REASON_FEW_TURNS)
     else:
         reasons.append(REASON_OK)
         excluded, why_keep = _choose_exclusions(aggregates, rules)
-        delay, why_no_delay = _choose_delay(aggregates, rules, recent_rate, ttu_p)
-        reasons.extend(r for r in (why_keep, why_no_delay) if r)
-    if exhausted:
-        reasons.append(REASON_CAPPED)
+        if why_keep:
+            reasons.append(why_keep)
+        hold = float(hold_seconds) if math.isfinite(float(hold_seconds)) else 0.0
+        delay = min(max(hold, 0.0), MAX_EXTERNAL_DELAY_SECONDS)
+        order, scores = _choose_order(aggregates, roster, rules)
+        if scores:
+            reasons.append(REASON_ORDERED)
 
     return ChatPolicy(
         external_excluded=excluded,
         external_delay_seconds=float(delay),
-        exhausted=exhausted,
-        daily_call_caps=caps,
-        calls_today=calls_today,
+        outside_order=order,
+        order_scores=scores,
         window_minutes=int(aggregates.window_minutes),
         turns_considered=int(aggregates.turns),
         internal_usable_rate=recent_rate,
         internal_ttu_p75_ms=ttu_p,
         reason=",".join(reasons)[:_REASON_MAX],
     )
-
-
-# --- Reading the newest row --------------------------------------------------
 
 
 def _names(value: Any) -> Tuple[str, ...]:
@@ -403,13 +383,24 @@ def _names(value: Any) -> Tuple[str, ...]:
     return tuple(value)
 
 
-def _counts(value: Any) -> Dict[str, int]:
-    if not isinstance(value, dict):
+def _scores(value: Any) -> Dict[str, Tuple[float, int]]:
+    if not isinstance(value, dict) or len(value) > _MAX_NAMES:
         raise ValueError("not a mapping")
-    cleaned = clean_caps(value)
-    if len(cleaned) != len(value):
-        raise ValueError("not a mapping of names to counts")
-    return cleaned
+    out: Dict[str, Tuple[float, int]] = {}
+    for name, pair in value.items():
+        if not (isinstance(name, str) and 0 < len(name) <= _NAME_MAX):
+            raise ValueError("not a mapping of names to scores")
+        if not (isinstance(pair, list) and len(pair) == 2):
+            raise ValueError("not a mapping of names to scores")
+        score, turns = pair
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            raise ValueError("not a score")
+        if isinstance(turns, bool) or not isinstance(turns, int) or turns < 0:
+            raise ValueError("not a turn count")
+        if not math.isfinite(float(score)) or not 0 <= float(score) <= 1:
+            raise ValueError("score out of bounds")
+        out[name] = (float(score), turns)
+    return out
 
 
 def policy_from_row(row: Any) -> Optional[ChatPolicy]:
@@ -428,9 +419,8 @@ def policy_from_row(row: Any) -> Optional[ChatPolicy]:
         return ChatPolicy(
             external_excluded=_names(row.external_excluded),
             external_delay_seconds=delay,
-            exhausted=_names(row.exhausted),
-            daily_call_caps=_counts(row.daily_call_caps),
-            calls_today=_counts(row.calls_today),
+            outside_order=_names(row.outside_order),
+            order_scores=_scores(row.order_scores),
             window_minutes=int(row.window_minutes),
             turns_considered=int(row.turns_considered),
             internal_usable_rate=usable_rate,
@@ -682,29 +672,6 @@ async def aget_chat_policy() -> ChatPolicy:
 # --- Writing a row (synchronous; the command and any scheduled job) ----------
 
 
-def configured_daily_call_caps() -> Dict[str, int]:
-    """FHI_CHAT_DAILY_CALL_CAPS: a JSON object of {registry name: calls per
-    UTC day}. Empty (no caps) when unset or malformed."""
-    raw = getattr(settings, "FHI_CHAT_DAILY_CALL_CAPS", "") or ""
-    if not raw.strip():
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except ValueError as e:
-        logger.warning(f"Ignoring FHI_CHAT_DAILY_CALL_CAPS: {type(e).__name__}")
-        return {}
-    if not isinstance(parsed, dict):
-        logger.warning("Ignoring FHI_CHAT_DAILY_CALL_CAPS: not a JSON object")
-        return {}
-    return clean_caps(parsed)
-
-
-def _utc_midnight(now: datetime.datetime) -> datetime.datetime:
-    return now.astimezone(datetime.timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-
-
 def aggregate_chat_turns(
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
     now: Optional[datetime.datetime] = None,
@@ -712,8 +679,8 @@ def aggregate_chat_turns(
 ) -> ChatAggregates:
     """Read ChatTurn metadata into the aggregates compute_policy needs.
 
-    One read from the earliest of the window start, the recent-hour start
-    and UTC midnight, bucketed in Python. Only labels, statuses, flags and
+    One read from the earlier of the window start and the recent-hour
+    start, bucketed in Python. Only labels, statuses, flags and
     times are read.
     """
     from fighthealthinsurance.models import ChatTurn
@@ -721,13 +688,12 @@ def aggregate_chat_turns(
     now = now or timezone.now()
     window_start = now - datetime.timedelta(minutes=window_minutes)
     recent_start = now - datetime.timedelta(minutes=recent_minutes)
-    day_start = _utc_midnight(now)
     aggregates = ChatAggregates(
         window_minutes=int(window_minutes), recent_minutes=int(recent_minutes)
     )
     rows = (
         ChatTurn.objects.filter(
-            created_at__gte=min(window_start, recent_start, day_start),
+            created_at__gte=min(window_start, recent_start),
             created_at__lte=now,
         )
         .order_by()
@@ -748,14 +714,6 @@ def aggregate_chat_turns(
             for c in (calls or [])
             if isinstance(c, dict) and c.get("status") != "skipped"
         ]
-        if created_at >= day_start:
-            for c in sent:
-                name = str(c.get("model") or "")
-                if name:
-                    aggregates.calls_today[name] = (
-                        aggregates.calls_today.get(name, 0) + 1
-                    )
-
         ours = [
             c
             for c in sent
@@ -808,6 +766,19 @@ def aggregate_chat_turns(
     return aggregates
 
 
+def compute_current_policy(
+    window_minutes: int = DEFAULT_WINDOW_MINUTES,
+    now: Optional[datetime.datetime] = None,
+) -> ChatPolicy:
+    """The policy the last ``window_minutes`` of ChatTurn rows give under
+    the current settings (the roster and the hold). Synchronous."""
+    return compute_policy(
+        aggregate_chat_turns(window_minutes, now=now),
+        roster=list(getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or []),
+        hold_seconds=float(getattr(settings, "FHI_CHAT_EXTERNAL_HOLD_SECONDS", 8.0)),
+    )
+
+
 def prune_old_chat_policies(keep_pk: Any = None) -> int:
     """Delete ChatRoutingPolicy rows written more than POLICY_KEEP_DAYS ago,
     never the row ``keep_pk``. Returns how many were deleted. Synchronous.
@@ -842,9 +813,7 @@ def compute_and_store_chat_policy(
     """
     from fighthealthinsurance.models import ChatRoutingPolicy
 
-    policy = compute_policy(
-        aggregate_chat_turns(window_minutes, now=now), configured_daily_call_caps()
-    )
+    policy = compute_current_policy(window_minutes, now=now)
     row = ChatRoutingPolicy.objects.create(source=source, **policy.row_fields())
     try:
         prune_old_chat_policies(keep_pk=row.pk)

@@ -13,7 +13,6 @@ from django.utils import timezone
 from fighthealthinsurance.ml.chat_policy import (
     aggregate_chat_turns,
     compute_and_store_chat_policy,
-    configured_daily_call_caps,
     prune_old_chat_policies,
 )
 from fighthealthinsurance.models import ChatRoutingPolicy, ChatTurn, OngoingChat
@@ -120,18 +119,8 @@ class AggregateChatTurnsTest(_Seeded):
             ],
         )
         aggregates = aggregate_chat_turns(window_minutes=60, now=NOW)
-        self.assertNotIn("claude", aggregates.calls_today)
         self.assertNotIn("claude", aggregates.models)
-        self.assertEqual(aggregates.calls_today, {"fhi-local": 1})
-
-    def test_calls_today_start_at_utc_midnight(self):
-        midnight = NOW.replace(hour=0)
-        self._turn(midnight + datetime.timedelta(minutes=1))
-        self._turn(midnight - datetime.timedelta(minutes=1))
-        # A one-hour window still counts every call since midnight.
-        aggregates = aggregate_chat_turns(window_minutes=60, now=NOW)
-        self.assertEqual(aggregates.calls_today, {"fhi-local": 1, "claude": 1})
-        self.assertEqual(aggregates.turns, 0)
+        self.assertEqual(aggregates.models["fhi-local"].calls, 1)
 
     def test_wins_count_on_ok_turns_only(self):
         self._turn(
@@ -207,19 +196,18 @@ class StoreChatPolicyTest(_Seeded):
             list(ChatRoutingPolicy.objects.values_list("pk", flat=True)), [row.pk]
         )
 
-    @override_settings(FHI_CHAT_DAILY_CALL_CAPS='{"claude": 1, "bad": "x"}')
-    def test_configured_caps_mark_a_model_exhausted(self):
-        # A second ago, so the call is from today (UTC) whenever this runs.
-        self._turn(timezone.now() - datetime.timedelta(seconds=1))
-        self.assertEqual(configured_daily_call_caps(), {"claude": 1})
-        row = compute_and_store_chat_policy(window_minutes=60)
-        self.assertEqual(row.daily_call_caps, {"claude": 1})
-        self.assertEqual(row.exhausted, ["claude"])
-
-    def test_malformed_caps_mean_no_caps(self):
-        for raw in ("not json", "[1, 2]", ""):
-            with override_settings(FHI_CHAT_DAILY_CALL_CAPS=raw):
-                self.assertEqual(configured_daily_call_caps(), {})
+    @override_settings(
+        FHI_CHAT_OUTSIDE_MODELS=["claude", "deepseek"],
+        FHI_CHAT_EXTERNAL_HOLD_SECONDS=6.0,
+    )
+    def test_the_row_carries_the_roster_order_and_the_hold_setting(self):
+        for minutes in range(1, 60):
+            self._turn(timezone.now() - datetime.timedelta(minutes=minutes))
+        row = compute_and_store_chat_policy(window_minutes=120)
+        self.assertEqual(row.outside_order, ["claude", "deepseek"])
+        self.assertEqual(row.external_delay_seconds, 6.0)
+        # claude was asked on 59 turns and never delivered.
+        self.assertEqual(row.order_scores, {"claude": [0.0, 59]})
 
     def test_the_row_holds_names_and_numbers_only(self):
         self._turn(timezone.now() - datetime.timedelta(seconds=1))
@@ -227,9 +215,8 @@ class StoreChatPolicyTest(_Seeded):
         for field in ChatRoutingPolicy._meta.concrete_fields:
             if field.get_internal_type() == "TextField":
                 self.fail(f"{field.name} is a text field")
-        for name in row.external_excluded + row.exhausted:
+        for name in row.external_excluded + row.outside_order:
             self.assertIn(name, {"fhi-local", "claude"})
-        self.assertEqual(set(row.calls_today), {"fhi-local", "claude"})
 
 
 class ComputeChatPolicyCommandTest(_Seeded):

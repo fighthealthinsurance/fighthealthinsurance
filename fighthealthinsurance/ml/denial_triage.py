@@ -45,7 +45,7 @@ import typing
 from django.conf import settings
 from loguru import logger
 
-from fighthealthinsurance.ml import typesafe
+from fighthealthinsurance.ml import spend, typesafe
 
 # Bump when the questions or the candidate rules change: a stored triage
 # from an older rubric is not "current" and gets redone. The model half is
@@ -464,7 +464,9 @@ async def _post(
     # Kept as a seam: tests stub this one function to stay off the network.
     # The letter goes out as the request's state; the model comes from
     # TYPESAFE_MODEL (typesafe.model_name).
-    return await typesafe.ask(document, questions, timeout_seconds=timeout_seconds)
+    return await typesafe.ask(
+        document, questions, timeout_seconds=timeout_seconds, use=spend.TRIAGE
+    )
 
 
 async def triage(
