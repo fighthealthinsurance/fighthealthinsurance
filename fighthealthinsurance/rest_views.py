@@ -2585,7 +2585,6 @@ class ChooserViewSet(viewsets.ViewSet):
             }
             for c in candidates
         ]
-
         # Served in random order, so the voter is blind to model class: the
         # stored order (internal model first, synthesized last) is otherwise
         # perfectly correlated with the position on the page, and a vote for
@@ -2695,6 +2694,20 @@ class ChooserViewSet(viewsets.ViewSet):
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Chosen candidate was not in the presented candidates"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Every presented id must be one of this task's candidates: the usage
+        # dashboard counts each as a presentation of its model, so an id from
+        # another task could deflate that model's win rate at will.
+        task_candidate_ids = set(
+            ChooserCandidate.objects.filter(task=task).values_list("id", flat=True)
+        )
+        if any(cid not in task_candidate_ids for cid in presented_candidate_ids):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "Presented candidates do not all belong to this task"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
