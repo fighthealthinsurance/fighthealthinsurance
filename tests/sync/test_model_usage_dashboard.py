@@ -2040,11 +2040,21 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         self._turn(external_start="after_delay")
         self._turn(external_start="skipped")
         self._turn(external_start="immediate")
+        # The first pass never sent them, but our reply was too short and
+        # the retry asked one: not "never sent".
+        retried = _call("deepseek", pass_kind="retry")
+        retried["external"] = True
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="skipped",
+            calls=[_call("model-a"), _call("claude", "skipped", ms=None), retried],
+            retry_ran=True,
+        )
         response, windows = self._windows()
         rows = self._rows(windows["1d"])
         claude = rows["claude"]
         self.assertEqual((claude["asked"], claude["calls"]), (1, 1))
-        self.assertEqual(claude["skipped"], 2)
+        self.assertEqual(claude["skipped"], 3)
         self.assertAlmostEqual(claude["win_rate"], 100.0)
         self.assertEqual(rows["model-a"]["skipped"], 0)
         summary = windows["1d"]["live_chat"]["summary"]
@@ -2054,10 +2064,12 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
                 summary["externals_after_delay"],
                 summary["externals_early"],
                 summary["externals_skipped"],
+                summary["externals_skipped_retried"],
             ),
-            (4, 1, 1, 2),
+            (5, 1, 1, 2, 1),
         )
         self.assertContains(response, "Outside models held back while ours answered")
+        self.assertContains(response, "asked by the retry on 1")
         self.assertContains(response, ">Skipped</th>")
 
 
