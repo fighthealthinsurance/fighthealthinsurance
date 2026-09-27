@@ -203,8 +203,7 @@ class ChatInterface:
         # offered to the client as a side-by-side alternate when presentable
         # AND closely tied with the winner (see scores_closely_tied).
         self._candidate_alternate: Optional[str] = None
-        # Side-by-sides this chat has been shown (see _side_by_side_allowed);
-        # read from its turn rows on first use.
+        # Side-by-sides this socket has offered (see _side_by_side_allowed).
         self._side_by_sides_shown: Optional[int] = None
         # Whether any pass of the turn in flight (the primary pass or a
         # recursive tool pass) hard-rejected a repeated candidate. Reset by
@@ -333,23 +332,24 @@ class ChatInterface:
 
     async def _side_by_side_allowed(self, chat: OngoingChat) -> bool:
         """Whether this chat may be shown another side-by-side: at most
-        FHI_CHAT_SIDE_BY_SIDES_PER_CHAT, counted from its ChatTurn rows the
-        first time and kept here after. A count that fails means no
+        FHI_CHAT_SIDE_BY_SIDES_PER_CHAT. Counted from its ChatTurn rows each
+        time, so every socket open on the chat sees the others' offers, and
+        never below what this socket has offered itself (a row whose write
+        failed is still counted here). A count that fails means no
         side-by-side. Never raises."""
         limit = int(getattr(django_settings, "FHI_CHAT_SIDE_BY_SIDES_PER_CHAT", 2))
         if limit <= 0:
             return False
-        if self._side_by_sides_shown is None:
-            try:
-                self._side_by_sides_shown = await ChatTurn.objects.filter(
-                    chat_id=chat.id, alternate_offered=True
-                ).acount()
-            except Exception as e:
-                logger.warning(
-                    f"Chat {chat.id}: side-by-side count failed: {type(e).__name__}"
-                )
-                return False
-        return self._side_by_sides_shown < limit
+        try:
+            recorded = await ChatTurn.objects.filter(
+                chat_id=chat.id, alternate_offered=True
+            ).acount()
+        except Exception as e:
+            logger.warning(
+                f"Chat {chat.id}: side-by-side count failed: {type(e).__name__}"
+            )
+            return False
+        return max(recorded, self._side_by_sides_shown or 0) < limit
 
     def _count_turn(self, outcome: str) -> None:
         """Count the turn in fhi_chat_turns_total and note the outcome on its

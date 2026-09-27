@@ -468,6 +468,32 @@ class ChatTurnRecordTest(APITestCase):
         rows = await _turn_rows(chat)
         assert sum(1 for row in rows if row.alternate_offered) == 2
 
+    async def test_two_open_sockets_share_the_limit(self):
+        """Socket A offers one, socket B offers one, then A must not offer a
+        third on a count it had cached."""
+        user, chat = await _make_chat(
+            "sidebyside3", "9999930133", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        best_model = _TurnVaryingModel(
+            _WINNER_REPLIES, model_quality=110, name="winner-model"
+        )
+        second_model = _TurnVaryingModel(
+            _SECOND_REPLIES, model_quality=100, name="second-model"
+        )
+        socket_a = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        socket_b = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        offered = []
+        with _patched_router([best_model, second_model]), _PATCH_FIRE_AND_FORGET:
+            for socket, message in (
+                (socket_a, "CA"),
+                (socket_b, "TX"),
+                (socket_a, "NY"),
+            ):
+                await socket.handle_chat_message(message)
+                offered.append("alternate_content" in recorder.content_frames()[-1])
+        assert offered == [True, True, False]
+
     async def test_the_side_by_side_limit_comes_from_settings(self):
         user, chat = await _make_chat(
             "sidebyside2", "9999930132", chat_history=_seed_history()
