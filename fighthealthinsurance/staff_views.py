@@ -765,6 +765,10 @@ class AdminStatusView(generic.TemplateView):
             return "TypeSafe server error"
         if summary == "timeout":
             return "no answer within TYPESAFE_TIMEOUT_SECONDS"
+        if summary == "TypeSafeBudgetSpent":
+            return (
+                "not sent: this month's TypeSafe budget is spent (FHI_SPEND_TYPESAFE_*)"
+            )
         if summary == "TypeSafeError":
             # ml/typesafe.py refuses before sending: a non-https URL or a
             # model setting that is not a model name.

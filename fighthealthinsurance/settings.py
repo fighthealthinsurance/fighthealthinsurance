@@ -102,6 +102,26 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return value
 
 
+def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    """A float from the environment within [minimum, maximum], or the default.
+
+    Read at import, like _env_int: a stray unit suffix ("8s"), an empty
+    value, "nan" or a value outside the plausible range falls back to the
+    default rather than crash-looping every process over an optional
+    setting.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return default
+    if not minimum <= value <= maximum:
+        return default
+    return value
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -179,6 +199,44 @@ class Base(Configuration):
     # change here starts a new series on the dashboard. Empty means the same
     # pinned release (ml/typesafe.py DEFAULT_MODEL).
     TYPESAFE_MODEL = os.getenv("TYPESAFE_MODEL", "jev-1.13.0")
+    # Monthly spend budgets for paid providers (ml/spend.py), US dollars.
+    # TypeSafe: letters may use the whole month; chat at most its share, and
+    # never the reserve kept for letters. DeepInfra: chat's share only.
+    FHI_SPEND_TYPESAFE_MONTHLY_USD = _env_float(
+        "FHI_SPEND_TYPESAFE_MONTHLY_USD", 5.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_TYPESAFE_LETTERS_RESERVE_USD = _env_float(
+        "FHI_SPEND_TYPESAFE_LETTERS_RESERVE_USD", 2.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_TYPESAFE_CHAT_MONTHLY_USD = _env_float(
+        "FHI_SPEND_TYPESAFE_CHAT_MONTHLY_USD", 3.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_DEEPINFRA_CHAT_MONTHLY_USD = _env_float(
+        "FHI_SPEND_DEEPINFRA_CHAT_MONTHLY_USD", 20.0, minimum=0.0, maximum=10000.0
+    )
+    # Sponsored Azure GPT-5.5 calls per UTC day for chat; unset means no cap.
+    FHI_SPEND_AZURE_CHAT_DAILY_CALLS = (
+        _env_int("FHI_SPEND_AZURE_CHAT_DAILY_CALLS", 0, minimum=0, maximum=10_000_000)
+        or None
+    )
+    # Chat's outside models, in order (MLRouter.chat_outside_models): at most
+    # three are asked, skipping any that is down or whose budget is spent.
+    # Empty means the best externals, as before. Kimi-K3 is kept out: it is
+    # for crucial side-by-sides only.
+    FHI_CHAT_OUTSIDE_MODELS = [
+        name.strip()
+        for name in os.getenv(
+            "FHI_CHAT_OUTSIDE_MODELS",
+            "azure-openai/gpt-5.5,"
+            "mistralai/Mistral-Small-3.2-24B-Instruct-2506,"
+            "zai-org/GLM-5.3-Flash,"
+            "deepseek-ai/DeepSeek-V4.1-Flash,"
+            "Qwen/Qwen3.8-2.4T-A95B",
+        ).split(",")
+        if name.strip()
+    ]
+    # The spend ledger's background thread (off in tests, like the banner).
+    FHI_SPEND_BACKGROUND = True
     TYPESAFE_LETTER_RANKING_ENABLED = (
         os.getenv("TYPESAFE_LETTER_RANKING_ENABLED", "false").lower() == "true"
     )
@@ -929,6 +987,9 @@ class Test(_TestBase):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    FHI_SPEND_BACKGROUND = False
+    # The chat roster is set per test; the default keeps the best externals.
+    FHI_CHAT_OUTSIDE_MODELS: list = []
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).
@@ -968,6 +1029,9 @@ class TestSync(_TestBase):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    FHI_SPEND_BACKGROUND = False
+    # The chat roster is set per test; the default keeps the best externals.
+    FHI_CHAT_OUTSIDE_MODELS: list = []
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).
@@ -1024,6 +1088,9 @@ class TestActor(_TestBase):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    FHI_SPEND_BACKGROUND = False
+    # The chat roster is set per test; the default keeps the best externals.
+    FHI_CHAT_OUTSIDE_MODELS: list = []
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).

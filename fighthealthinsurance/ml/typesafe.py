@@ -21,6 +21,8 @@ from urllib.parse import urlsplit
 import aiohttp
 from django.conf import settings
 
+from fighthealthinsurance.ml import spend
+
 # The pinned Jev release, used when TYPESAFE_MODEL is unset or empty. A pinned
 # id rather than the "jev-latest" alias, because TypeSafe can repoint an alias
 # to a new release and that moves every score we record. Features record the
@@ -52,6 +54,10 @@ class TypeSafeError(Exception):
         self.status = status
 
 
+class TypeSafeBudgetSpent(TypeSafeError):
+    """Not sent: this use's TypeSafe budget is spent (ml/spend.py)."""
+
+
 def configured() -> bool:
     return bool(getattr(settings, "TYPESAFE_API_KEY", None))
 
@@ -79,12 +85,22 @@ async def ask(
     questions: dict[str, dict[str, typing.Any]],
     *,
     timeout_seconds: float,
+    use: str = spend.OTHER,
 ) -> typing.Any:
     """POST one state and a set of typed questions; return the raw JSON.
 
-    Raises TypeSafeError on a non-200, and lets aiohttp/asyncio errors
-    propagate: callers decide what a failure means for their feature.
+    ``use`` names the feature spending (spend.LETTERS, spend.TRIAGE,
+    spend.CHAT): the request is refused before sending when that use's
+    TypeSafe budget is spent (ml/spend.py), and the input tokens the answer
+    reports are counted against it. An HTTP 402 pauses TypeSafe for every
+    use until the next UTC day.
+
+    Raises TypeSafeError on a non-200 or a spent budget, and lets
+    aiohttp/asyncio errors propagate: callers decide what a failure means
+    for their feature.
     """
+    if not spend.allows(spend.TYPESAFE, use):
+        raise TypeSafeBudgetSpent("budget spent")
     url = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
     if urlsplit(url).scheme.lower() != "https":
         # The bearer token and the state must never travel in the clear
@@ -112,5 +128,13 @@ async def ask(
             url, json=body, headers=headers, allow_redirects=False
         ) as response:
             if response.status != 200:
+                if response.status == 402:
+                    spend.pause(spend.TYPESAFE)
                 raise TypeSafeError(f"HTTP {response.status}", status=response.status)
-            return await response.json()
+            payload = await response.json()
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if isinstance(usage, dict):
+        spend.record(
+            spend.TYPESAFE, use, spend.typesafe_cost_micro(usage.get("input_tokens"))
+        )
+    return payload
