@@ -96,16 +96,21 @@ class ChatOnlyModelsTest(SimpleTestCase):
         for name in ml_models.DeepInfra.CHAT_MODELS:
             self.assertNotIn(name, general)
 
-    def test_qwen_thinks_off_and_every_chat_model_is_length_capped(self):
+    def test_every_chat_model_is_length_capped_and_thinking_is_never_disabled(self):
         with patch.object(ml_models, "get_env_variable", return_value="test-key"):
             for name in ml_models.DeepInfra.CHAT_MODELS:
                 extras = ml_models.DeepInfra(model=name)._request_extras(name)
                 self.assertIn("max_tokens", extras, name)
-            qwen = ml_models.DeepInfra(model="Qwen/Qwen3.8-2.4T-A95B")
-            self.assertEqual(
-                qwen._request_extras("Qwen/Qwen3.8-2.4T-A95B")["chat_template_kwargs"],
-                {"enable_thinking": False},
-            )
+                # DeepInfra answers 400 to a request that turns Qwen3.8's
+                # thinking off, so the flag is never sent.
+                self.assertNotIn("chat_template_kwargs", extras, name)
+            # The two that reason first get room to answer after it.
+            for name, floor in (
+                ("Qwen/Qwen3.8-2.4T-A95B", 1600),
+                ("moonshotai/Kimi-K3", 3000),
+            ):
+                extras = ml_models.DeepInfra(model=name)._request_extras(name)
+                self.assertGreaterEqual(extras["max_tokens"], floor, name)
 
 
 class ProviderSpendTest(SimpleTestCase):
