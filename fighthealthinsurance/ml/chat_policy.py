@@ -38,12 +38,23 @@ Everything here is names and numbers. No message, reply or other chat text
 is read, kept or written.
 """
 
+import contextlib
 import datetime
 import math
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
+from typing import (
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
 
 from django.conf import settings
 from django.utils import timezone
@@ -823,27 +834,88 @@ def prune_old_chat_policies(keep_pk: Any = None) -> int:
     return int(deleted)
 
 
+@contextlib.contextmanager
+def _bounded_atomic(statement_timeout_ms: Optional[int]) -> Iterator[None]:
+    """A transaction on the calling thread's connection. With
+    ``statement_timeout_ms``, each of its statements is bounded on
+    PostgreSQL (see _bound_statements)."""
+    from django.db import connection, transaction
+
+    with transaction.atomic():
+        if statement_timeout_ms:
+            _bound_statements(connection, statement_timeout_ms)
+        yield
+
+
+def _row_for_run(run_id: str) -> Any:
+    from fighthealthinsurance.models import ChatRoutingPolicy
+
+    return ChatRoutingPolicy.objects.filter(run_id=run_id).order_by().first()
+
+
 def compute_and_store_chat_policy(
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
     source: str = "manual",
     now: Optional[datetime.datetime] = None,
+    run_id: Optional[str] = None,
+    statement_timeout_ms: Optional[int] = None,
 ) -> Any:
     """Compute a policy from the last ``window_minutes`` of ChatTurn rows and
-    append it as a new ChatRoutingPolicy row. Returns the new row.
-    Synchronous.
+    append it as a new ChatRoutingPolicy row. Returns the new row, or with
+    ``run_id`` the row that run stored. Synchronous.
 
     Rows are never edited: every run appends one. Once the new row is
     stored, rows older than POLICY_KEEP_DAYS are deleted as a separate step
     (prune_old_chat_policies). That step never touches the new row, and if
     it fails the failure is logged (class name only) and the run still
     returns the stored row.
+
+    ``run_id`` (a Temporal workflow run id) makes the write idempotent: a
+    run stores at most one row. If the run already has one, from an earlier
+    attempt whose completion was lost or from an attempt still finishing
+    after its caller gave up, that row is returned and nothing is computed,
+    inserted or pruned. The insert and the database's unique index on
+    ``run_id`` settle two attempts racing. Without ``run_id`` (the
+    command) every call appends a row.
+
+    The lookup, the ChatTurn read, the insert and the pruning each run in a
+    transaction of their own; ``statement_timeout_ms`` bounds each of their
+    statements on PostgreSQL.
     """
+    from django.db import IntegrityError
+
     from fighthealthinsurance.models import ChatRoutingPolicy
 
-    policy = compute_current_policy(window_minutes, now=now)
-    row = ChatRoutingPolicy.objects.create(source=source, **policy.row_fields())
+    if run_id:
+        with _bounded_atomic(statement_timeout_ms):
+            existing = _row_for_run(run_id)
+        if existing is not None:
+            return existing
+    with _bounded_atomic(statement_timeout_ms):
+        aggregates = aggregate_chat_turns(window_minutes, now=now)
+    policy = compute_policy(
+        aggregates,
+        roster=list(getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or []),
+        hold_seconds=float(getattr(settings, "FHI_CHAT_EXTERNAL_HOLD_SECONDS", 8.0)),
+    )
     try:
-        prune_old_chat_policies(keep_pk=row.pk)
+        with _bounded_atomic(statement_timeout_ms):
+            row = ChatRoutingPolicy.objects.create(
+                source=source, run_id=run_id or None, **policy.row_fields()
+            )
+    except IntegrityError:
+        # Another attempt of the same run stored its row first: that row is
+        # the run's row. Anything else is raised as it was.
+        if not run_id:
+            raise
+        with _bounded_atomic(statement_timeout_ms):
+            existing = _row_for_run(run_id)
+        if existing is None:
+            raise
+        return existing
+    try:
+        with _bounded_atomic(statement_timeout_ms):
+            prune_old_chat_policies(keep_pk=row.pk)
     except Exception as e:
         logger.warning(f"Could not prune old chat routing policies: {type(e).__name__}")
     return row

@@ -13,6 +13,9 @@ for the fully-enabled set without touching configuration.
 
 from typing import List
 
+from fighthealthinsurance.workflows.chat_routing_policy import (
+    ChatRoutingPolicyWorkflow,
+)
 from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
 from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
@@ -39,8 +42,23 @@ def appeal_workflows(*, intake_enabled: bool) -> List[type]:
     return workflows
 
 
+def chat_policy_workflows() -> List[type]:
+    """Workflows hosted on the chat policy task queue.
+
+    The appeal-worker process hosts this queue as its own Worker, so the
+    policy run never waits behind an appeal generation for a slot. It is
+    registered only when its flag is on, for the same kill-switch reason
+    as the intake journey.
+    """
+    return [ChatRoutingPolicyWorkflow]
+
+
 def workflows_for_role(
-    role: str, *, journey_enabled: bool, intake_enabled: bool
+    role: str,
+    *,
+    journey_enabled: bool,
+    intake_enabled: bool,
+    policy_enabled: bool = False,
 ) -> List[type]:
     """Every workflow a worker with this role registers under these flags."""
     registered: List[type] = []
@@ -48,6 +66,8 @@ def workflows_for_role(
         registered.extend(fax_workflows())
     if role in ("appeal", "all") and journey_enabled:
         registered.extend(appeal_workflows(intake_enabled=intake_enabled))
+    if role in ("appeal", "all") and policy_enabled:
+        registered.extend(chat_policy_workflows())
     return registered
 
 
@@ -56,4 +76,6 @@ def all_enabled_workflows() -> List[type]:
 
     What the replay gate must have a history for.
     """
-    return workflows_for_role("all", journey_enabled=True, intake_enabled=True)
+    return workflows_for_role(
+        "all", journey_enabled=True, intake_enabled=True, policy_enabled=True
+    )

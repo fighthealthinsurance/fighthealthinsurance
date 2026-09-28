@@ -6,10 +6,11 @@ import io
 from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
-from django.db import OperationalError
+from django.db import IntegrityError, OperationalError, transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
+from fighthealthinsurance.ml import chat_policy
 from fighthealthinsurance.ml.chat_policy import (
     aggregate_chat_turns,
     compute_and_store_chat_policy,
@@ -216,6 +217,88 @@ class StoreChatPolicyTest(_Seeded):
             list(ChatRoutingPolicy.objects.values_list("pk", flat=True)), [row.pk]
         )
 
+    def test_a_run_id_stores_at_most_one_row_for_its_run(self):
+        self._turn(timezone.now() - datetime.timedelta(minutes=5))
+        with (
+            patch.object(
+                chat_policy,
+                "aggregate_chat_turns",
+                side_effect=chat_policy.aggregate_chat_turns,
+            ) as read,
+            patch.object(
+                chat_policy,
+                "prune_old_chat_policies",
+                side_effect=chat_policy.prune_old_chat_policies,
+            ) as prune,
+        ):
+            first = compute_and_store_chat_policy(
+                window_minutes=60, source="temporal", run_id="run-1"
+            )
+            again = compute_and_store_chat_policy(
+                window_minutes=60, source="temporal", run_id="run-1"
+            )
+            other = compute_and_store_chat_policy(
+                window_minutes=60, source="temporal", run_id="run-2"
+            )
+        self.assertEqual(again.pk, first.pk)
+        self.assertNotEqual(other.pk, first.pk)
+        self.assertEqual(
+            sorted(ChatRoutingPolicy.objects.values_list("run_id", flat=True)),
+            ["run-1", "run-2"],
+        )
+        # The second call for run-1 found its row: no read, no prune.
+        self.assertEqual((read.call_count, prune.call_count), (2, 2))
+
+    def test_an_insert_that_meets_the_runs_row_returns_that_row(self):
+        """Two attempts of one run racing: both miss the other's row at the
+        start, and the one whose insert meets the unique run id returns the
+        row the other stored, adding and pruning nothing."""
+        stored = ChatRoutingPolicy.objects.create(
+            source="temporal", window_minutes=60, run_id="run-1"
+        )
+        real_lookup = chat_policy._row_for_run
+        lookups = []
+
+        def lookup(run_id):
+            lookups.append(run_id)
+            # The first lookup ran before the other attempt's insert.
+            return None if len(lookups) == 1 else real_lookup(run_id)
+
+        with (
+            patch.object(chat_policy, "_row_for_run", side_effect=lookup),
+            patch.object(chat_policy, "prune_old_chat_policies") as prune,
+        ):
+            row = compute_and_store_chat_policy(
+                window_minutes=60, source="temporal", run_id="run-1"
+            )
+        self.assertEqual(row.pk, stored.pk)
+        self.assertEqual(lookups, ["run-1", "run-1"])
+        self.assertEqual(
+            list(ChatRoutingPolicy.objects.values_list("pk", flat=True)), [stored.pk]
+        )
+        prune.assert_not_called()
+
+    def test_without_a_run_id_an_integrity_error_is_raised(self):
+        with patch.object(
+            ChatRoutingPolicy.objects, "create", side_effect=IntegrityError("x")
+        ):
+            with self.assertRaises(IntegrityError):
+                compute_and_store_chat_policy(window_minutes=60)
+
+    def test_a_run_id_is_unique_and_an_empty_one_may_repeat(self):
+        for _ in range(2):
+            ChatRoutingPolicy.objects.create(source="manual", window_minutes=60)
+        ChatRoutingPolicy.objects.create(
+            source="temporal", window_minutes=60, run_id="run-1"
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ChatRoutingPolicy.objects.create(
+                source="temporal", window_minutes=60, run_id="run-1"
+            )
+        self.assertEqual(
+            ChatRoutingPolicy.objects.filter(run_id__isnull=True).count(), 2
+        )
+
     @override_settings(
         FHI_CHAT_OUTSIDE_MODELS=["claude", "deepseek"],
         FHI_CHAT_EXTERNAL_HOLD_SECONDS=6.0,
@@ -249,6 +332,19 @@ class ComputeChatPolicyCommandTest(_Seeded):
         self.assertEqual(row.window_minutes, 120)
         self.assertIn(f"Stored chat routing policy {row.pk}.", out.getvalue())
         self.assertIn("external_delay_seconds: 0.0", out.getvalue())
+        self.assertIsNone(row.run_id)
+
+    def test_the_command_writes_a_new_row_every_time(self):
+        """The command has no run id: each call is a run of its own."""
+        self._turn(timezone.now() - datetime.timedelta(minutes=5))
+        for _ in range(2):
+            call_command(
+                "compute_chat_policy", "--window-minutes", "120", stdout=io.StringIO()
+            )
+        self.assertEqual(
+            list(ChatRoutingPolicy.objects.values_list("source", "run_id")),
+            [("manual", None), ("manual", None)],
+        )
 
     def test_a_dry_run_stores_nothing(self):
         out = io.StringIO()

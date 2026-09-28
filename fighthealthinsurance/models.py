@@ -3722,7 +3722,8 @@ class ChatTurn(models.Model):
 
     Metadata only: no message, reply, summary, history, context or document
     text, and exception class names rather than exception text. The only
-    strings are model labels, backend descriptors and the enum values below.
+    strings are model labels, backend descriptors, the enum values below and
+    the shadow scorer string (a model name and a rubric version).
     ``chat`` cascades and is non-nullable, so deleting a chat (including
     ``RemoveDataHelper.remove_data_for_email``) takes its turns with it and
     no row can outlive its chat.
@@ -3740,6 +3741,12 @@ class ChatTurn(models.Model):
         NONE = "", "No pick"
         PRIMARY = "primary", "Primary"
         ALTERNATE = "alternate", "Alternate"
+
+    class ShadowOutcome(models.TextChoices):
+        NONE = "", "Not scored"
+        SCORED = "scored", "Scored"
+        FAILED = "failed", "Failed"
+        TIMEOUT = "timeout", "Timed out"
 
     class ExternalStart(models.TextChoices):
         # The StagedStart outcomes in utils.py, plus "" for a primary pass
@@ -3843,6 +3850,28 @@ class ChatTurn(models.Model):
         max_length=16, blank=True, default="", choices=Preferred.choices
     )
     preferred_at = models.DateTimeField(null=True, blank=True)
+    # Shadow scores from TypeSafe (ml/chat_shadow.py), written in the
+    # background after the reply was delivered, only for chats that allowed
+    # outside models. Numbers, the scorer string and an outcome only.
+    # "winner" is the delivered reply; "second" is the side-by-side
+    # alternate when one was offered, otherwise the runner-up, and its
+    # scores are empty when the turn had neither.
+    shadow_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=ShadowOutcome.choices
+    )
+    # "typesafe/<model that answered>/chat-rubric-<n>", empty unless scored.
+    shadow_scorer = models.CharField(max_length=80, blank=True, default="")
+    # answers the question asked, 0..2; states a coverage or eligibility
+    # verdict, 0..1; asks for information the message already gave, 0..1;
+    # promises or guarantees a result, 0..1.
+    shadow_winner_answers = models.FloatField(null=True, blank=True)
+    shadow_winner_verdict = models.FloatField(null=True, blank=True)
+    shadow_winner_asks_again = models.FloatField(null=True, blank=True)
+    shadow_winner_promises = models.FloatField(null=True, blank=True)
+    shadow_second_answers = models.FloatField(null=True, blank=True)
+    shadow_second_verdict = models.FloatField(null=True, blank=True)
+    shadow_second_asks_again = models.FloatField(null=True, blank=True)
+    shadow_second_promises = models.FloatField(null=True, blank=True)
     # How the primary pass started the outside models: with ours, or held
     # back by the routing policy's delay (ChatRoutingPolicy) or for the
     # check on our reply (gate_* below), and then started or skipped. The
@@ -3912,9 +3941,11 @@ class ChatRoutingPolicy(models.Model):
     force when, for the last 30 days. Rows older than that are deleted
     after a new one is written (``ml/chat_policy.prune_old_chat_policies``).
     Written by ``ml/chat_policy.compute_and_store_chat_policy`` (the
-    ``compute_chat_policy`` command, or a scheduled job) from ChatTurn
-    metadata, and read by ``ml/chat_policy.aget_chat_policy`` on the chat
-    path. Holds model names and numbers only.
+    ``compute_chat_policy`` command, or the ``chat-routing-policy``
+    Temporal Schedule) from ChatTurn metadata, and read by
+    ``ml/chat_policy.aget_chat_policy`` on the chat path. A Temporal run
+    writes at most one row, keyed by its run id. Holds model names, numbers
+    and that id only.
 
     A policy can only narrow the outside models the router already picks:
     it never adds a model and never overrides a person's choice to keep
@@ -3938,6 +3969,19 @@ class ChatRoutingPolicy(models.Model):
         ),
     )
     source = models.CharField(max_length=16, choices=Source.choices)
+    # The Temporal workflow run that wrote the row, so a run writes at most
+    # one row however often its activity is retried. Empty (NULL) for rows
+    # from the compute_chat_policy command, which may repeat.
+    run_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "The Temporal workflow run that wrote this row; each run writes "
+            "at most one. Empty for rows from the compute_chat_policy command."
+        ),
+    )
     # Readers ignore a row whose version they do not know.
     schema_version = models.PositiveSmallIntegerField(default=1)
     # The ChatTurn window the policy was computed from, and how many turns
@@ -3966,6 +4010,13 @@ class ChatRoutingPolicy(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run_id"],
+                condition=models.Q(run_id__isnull=False),
+                name="uniq_chatroutingpolicy_run_id",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"ChatRoutingPolicy<{self.source} {self.created_at}>"

@@ -48,6 +48,7 @@ from fighthealthinsurance.external_review import (
     schedule_external_review_followups,
 )
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -339,7 +340,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             f"perform_create payload: keys={sorted(serializer_data.keys())} "
             f"has_denial_id={bool(serializer_data.get('denial_id'))}"
         )
-        session_key = request.session.session_key or "no_session_key"
+        session_key = request.session.session_key
         if (
             "primary_professional" in serializer_data
             and serializer_data["primary_professional"] is not None
@@ -360,7 +361,8 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             elif denial_id and denial_id != "":
                 logger.warning(
                     "Invalid denial_id format during denial create/update. "
-                    f"user_id={current_user.id} session_key={session_key} "
+                    f"user_id={current_user.id} "
+                    f"session_key={session_key_prefix_for_log(session_key)} "
                     f"remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} "
                     f"denial_id={denial_id}"
                 )
@@ -428,7 +430,8 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         if not is_valid_denial_id(denial_response_info.denial_id):
             logger.error(
                 "Invalid denial_id in denial create response. "
-                f"user_id={current_user.id} session_key={session_key} "
+                f"user_id={current_user.id} "
+                f"session_key={session_key_prefix_for_log(session_key)} "
                 f"denial_uuid={denial_response_info.uuid} "
                 f"denial_id={denial_response_info.denial_id}"
             )
@@ -585,7 +588,7 @@ class ReportClientError(APIView):
         # silently drops the trailing fields (wait times, gen_id), which are
         # the ones triage joins on, so keep real headroom for new counters.
         diagnostics = _sanitize(str(request.data.get("diagnostics", "")), 2400)
-        session_key = request.session.session_key or "no_session_key"
+        session_key = request.session.session_key
         denial_id_valid = is_valid_denial_id(denial_id)
         # Annotate with the (estimated) token sizes of the denial text and the
         # context that feeds appeal generation. A client-reported "0 appeals"
@@ -640,7 +643,8 @@ class ReportClientError(APIView):
             f"diagnostics: {diagnostics} | "
             f"server_side: {persisted_appeals} | "
             f"context_tokens: {context_tokens} | "
-            f"session_key={session_key} | remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} | "
+            f"session_key={session_key_prefix_for_log(session_key)} | "
+            f"remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} | "
             f"denial_id_valid={denial_id_valid} | denial_id_raw={denial_id_raw}"
         )
         return Response(status=status.HTTP_204_NO_CONTENT)

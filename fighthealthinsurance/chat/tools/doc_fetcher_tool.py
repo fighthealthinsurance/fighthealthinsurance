@@ -10,7 +10,7 @@ import ipaddress
 import json
 import re
 import socket
-from typing import Any, Awaitable, Callable, Optional, Tuple
+from typing import AbstractSet, Any, Awaitable, Callable, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 from loguru import logger
@@ -42,6 +42,34 @@ def _sanitize_url_for_display(url: str) -> str:
     else:
         netloc = parsed.netloc.rsplit("@", 1)[-1]
     return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
+
+def _url_summary_for_log(
+    url: str, allowed_hosts: AbstractSet[str] = frozenset()
+) -> str:
+    """Describe a URL for a log line without its path, query or credentials.
+
+    Paths and queries can carry document names, search text or other chat
+    content, so only their sizes are recorded. The host is named only when it
+    is in ``allowed_hosts`` (public reference sites); any other host is
+    recorded as "unlisted".
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return f"unparseable, url_chars={len(url)}"
+    scheme = parsed.scheme if parsed.scheme in ("http", "https") else "other"
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        host = "none"
+    elif hostname in allowed_hosts:
+        host = hostname
+    else:
+        host = "unlisted"
+    return (
+        f"scheme={scheme}, host={host}, "
+        f"path_chars={len(parsed.path)}, query_chars={len(parsed.query)}"
+    )
 
 
 async def validate_url(url: str) -> None:
@@ -146,7 +174,10 @@ class DocFetcherTool(BaseTool):
         try:
             params = json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in fetch_doc: {json_str}: {e}")
+            logger.warning(
+                f"Invalid JSON in fetch_doc (payload_chars={len(json_str)}): "
+                f"{type(e).__name__}"
+            )
             return cleaned_response, context
 
         if not isinstance(params, dict):
@@ -177,7 +208,10 @@ class DocFetcherTool(BaseTool):
         try:
             await validate_url(url)
         except ValueError as e:
-            logger.warning(f"URL validation failed for fetch_doc: {e}")
+            logger.warning(
+                f"URL validation failed for fetch_doc ({_url_summary_for_log(url)}): "
+                f"{type(e).__name__}"
+            )
             await self.send_status_message(f"Cannot fetch document: {e}")
             return cleaned_response, context
 
@@ -191,7 +225,10 @@ class DocFetcherTool(BaseTool):
                 url_validator=validate_url,
             )
         except Exception as e:
-            logger.warning(f"Failed to fetch document from {safe_url}: {e}")
+            logger.warning(
+                f"Failed to fetch document ({_url_summary_for_log(url)}): "
+                f"{type(e).__name__}"
+            )
             await self.send_status_message(f"Failed to fetch document: {e}")
             return cleaned_response, context
 
@@ -217,7 +254,7 @@ class DocFetcherTool(BaseTool):
                     "Document stored for analysis and future reference."
                 )
             except Exception as e:
-                logger.warning(f"Failed to store fetched document: {e}")
+                logger.warning(f"Failed to store fetched document: {type(e).__name__}")
 
         # Truncate for immediate LLM context only. Include the user's actual
         # question in the follow-up prompt -- without it the model was asked

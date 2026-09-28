@@ -2,7 +2,9 @@
 The live chat section of one window, from ModelUsageDashboardView._chat_stats:
 a summary line and the per-model race table, then the side-by-side picks by
 model and by pair. The side-by-side tables count only pairs from two different
-models; pairs from one model get a line of their own.
+models; pairs from one model get a line of their own. Last, the shadow scores
+(ml/chat_shadow.py): per-model means and how often the answer Jev scored
+higher is the one the person picked.
 {% endcomment %}
 {% with s=chat.summary %}
 <p class="window-totals">
@@ -60,3 +62,43 @@ models; pairs from one model get a line of their own.
   </tbody>
 </table>
 {% endif %}
+
+<h3>Live chat shadow scores <span class="source-label">(TypeSafe Jev, scored after delivery)</span></h3>
+{% with sh=chat.shadow %}
+<p class="note">
+  In chats that allowed outside models, Jev scores the delivered reply and the turn's second answer (the alternate when one was shown, otherwise the runner-up) against the person's message, in one request: on every turn that showed a side-by-side, and on a sample of the others (TYPESAFE_CHAT_SHADOW_SAMPLE_RATE), while TypeSafe's chat budget allows. Nothing uses these scores to choose a reply, and they are not validated for chat yet: the agreement table below is that check.
+  Turns scored: <strong>{{ sh.summary.scored }}</strong>, failed {{ sh.summary.failed }}, timed out {{ sh.summary.timeout }}.
+  {% if sh.summary.scorer %}The tables below use one scorer, the newest in this window: <code>{{ sh.summary.scorer }}</code> (the Jev version that answered and the chat rubric).{% else %}No turn in this window was scored under the current chat rubric.{% endif %}
+  {% if sh.summary.other_scorer %}Turns scored by another scorer (another Jev version or rubric) and left out: {{ sh.summary.other_scorer }}.{% endif %}
+</p>
+{% include "model_usage_table_partial.html" with rows=sh.rows kind="shadow" show_state=True %}
+<table class="usage">
+  <thead>
+    <tr>
+      <th>Person picked</th>
+      <th class="num" title="Side-by-side picks where both answers have shadow scores">Pairs scored</th>
+      <th class="num" title="Jev scored the picked answer higher">Jev agreed</th>
+      <th class="num" title="Jev scored the other answer higher">Jev disagreed</th>
+      <th class="num" title="Both answers scored the same">Tied</th>
+      <th class="num" title="Agreed / (agreed + disagreed)">Agreement</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in sh.agreement %}
+    <tr>
+      <td>{{ a.picked }}</td>
+      <td class="num">{{ a.pairs }}</td>
+      <td class="num">{{ a.agreed }}</td>
+      <td class="num">{{ a.disagreed }}</td>
+      <td class="num">{{ a.tied }}</td>
+      {% if a.rate is None %}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ a.rate|floatformat:1 }}%</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="note">Agreement compares the composite score of the two answers. Picks without scores from this scorer on both answers: <strong>{{ sh.summary.picks_unscored }}</strong>.</p>
+{% endwith %}

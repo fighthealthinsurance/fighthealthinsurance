@@ -71,8 +71,16 @@ spec:
             - name: TEMPORAL_ENABLED
               value: "true"
             # TEMPORAL_APPEAL_JOURNEY_ENABLED / TEMPORAL_INTAKE_JOURNEY_ENABLED
-            # intentionally NOT set here: they come from the app secrets and
-            # default OFF, so applying this manifest does not enable anything.
+            # / TEMPORAL_CHAT_POLICY_ENABLED intentionally NOT set here: they
+            # come from the app secrets and default OFF, so applying this
+            # manifest does not enable anything.
+            # The chat routing policy's own queue, hosted as a separate Worker
+            # in this process while TEMPORAL_CHAT_POLICY_ENABLED is on. Keep it
+            # equal to the settings default (anything that starts or updates
+            # the Schedule elsewhere, such as ensure_temporal_schedules run
+            # from a web pod, reads the same setting).
+            - name: TEMPORAL_CHAT_POLICY_TASK_QUEUE
+              value: "fhi-chat-policy"
             - name: TEMPORAL_HOST
               value: "temporal-frontend:7233"
             - name: TEMPORAL_NAMESPACE
