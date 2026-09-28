@@ -124,7 +124,7 @@ class TestRoles(_NoRoutingEnv):
                 "Appeals: primary",
                 "Appeals: backup",
                 "Appeals: best-internal hint",
-                "Chat: lead, 3 calls",
+                "Chat: lead, 2 calls",
                 "Questions: fan-out",
                 "Summaries: 1st",
             ],
@@ -170,9 +170,9 @@ class TestRoles(_NoRoutingEnv):
             ["fhi-legacy", "fhi-local", "azure-openai/gpt-5.5", GEMMA],
         )
         chat = _plan(overview, "Chat")
-        # The lead is listed twice up front and again among the internals.
-        self.assertEqual(chat.internal_only, [ro.PlanEntry("fhi-local", "lead", 3)])
-        self.assertEqual(chat.internal_only[0].detail, "lead, 3 calls")
+        # The lead is listed twice up front and not again among the internals.
+        self.assertEqual(chat.internal_only, [ro.PlanEntry("fhi-local", "lead", 2)])
+        self.assertEqual(chat.internal_only[0].detail, "lead, 2 calls")
         summaries = _plan(overview, "Summaries")
         self.assertEqual(
             [e.name for e in summaries.external_allowed], ["fhi-local", GEMMA]
@@ -211,7 +211,7 @@ class TestRoles(_NoRoutingEnv):
                 "Appeals: primary",
                 "Appeals: backup",
                 "Appeals: best-internal hint",
-                "Chat: lead, 3 calls",
+                "Chat: lead, 2 calls",
                 "Questions: fan-out",
                 "Summaries: 1st",
             ],
@@ -232,8 +232,9 @@ class TestRoles(_NoRoutingEnv):
         )
 
     def test_chat_counts_come_from_the_list(self):
-        """The lead sorts first by name. When six stronger internals fill the
-        internal slots it is only listed twice, and the count says so."""
+        """The strongest fhi model leads even though its name sorts last.
+        It is listed twice, the other six internals once each, and the
+        counts say so."""
         router = _bare_router()
         _register(router, "fhi-a", _backend("fhi-a", 10))
         for letter, quality in zip("bcdefg", range(100, 106)):
@@ -241,9 +242,13 @@ class TestRoles(_NoRoutingEnv):
             _register(router, name, _backend(name, quality))
         overview = ro.build_routing_overview(router)
         chat = _plan(overview, "Chat").internal_only
-        self.assertEqual(chat[0], ro.PlanEntry("fhi-a", "lead", 2))
-        self.assertEqual([e.calls for e in chat[1:]], [1] * 6)
-        self.assertIn("Chat: lead, 2 calls", _labels(overview, router, "fhi-a"))
+        self.assertEqual(chat[0], ro.PlanEntry("fhi-g", "lead", 2))
+        self.assertEqual(
+            [(e.name, e.calls) for e in chat[1:]],
+            [(f"fhi-{letter}", 1) for letter in "fedcba"],
+        )
+        self.assertIn("Chat: lead, 2 calls", _labels(overview, router, "fhi-g"))
+        self.assertIn("Chat: fan-out", _labels(overview, router, "fhi-a"))
 
     def test_retry_only_externals_are_labelled(self):
         router = self._production_like()
@@ -287,7 +292,7 @@ class TestRoles(_NoRoutingEnv):
         self.assertTrue(overview.force_model_external)
         chat = _plan(overview, "Chat")
         # External off: _get_forced_models skips it and chat routes as normal.
-        self.assertEqual(chat.internal_only, [ro.PlanEntry("fhi-local", "lead", 3)])
+        self.assertEqual(chat.internal_only, [ro.PlanEntry("fhi-local", "lead", 2)])
         self.assertEqual(
             [e.name for e in chat.external_allowed], ["azure-openai/gpt-5.5"]
         )

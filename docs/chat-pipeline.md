@@ -79,6 +79,12 @@ base score derived from the model's self-reported quality():
 | paid external, premium tier  | 98      | 1920                   | 2401                   |
 | DeepInfra DeepSeek-V4-Pro    | 92      | 1692                   | 2116                   |
 
+The strongest healthy fhi backend (alpha, at 210) leads the fan-out and
+is listed twice; every other backend is listed once (section 4). The
+lead's two entries start from the same base score, so content signals
+alone decide between them, and alpha's truncated-history calls (8820) sit
+above those of the May fine-tune (NewRemoteInternal, 8000).
+
 Content signals then adjust: +100 primary-variant bonus, +100 substantial
 response, +10 context, +100 tool-call bonus, +150 mentions an uploaded
 document, -75 system-prompt leak, -200 false promise, -200 asks for the
@@ -168,9 +174,21 @@ leaves the loop broken:
 
 get_chat_backends_with_fallback builds the fan-out:
 
-* the primary fhi backend, doubled (redundancy against a slow pod),
-* the strongest 6 *available* internal backends — quality-sorted since
-  this change; the old cost-sort quietly picked the cheapest end,
+* the lead fhi backend, doubled (redundancy against a slow pod). The lead
+  is the strongest fhi backend by quality that follows instructions and
+  looks healthy, with equal quality going to the name that sorts first so
+  every pod picks the same one. The lead is chosen per backend, not per
+  name: when two backends share a name (alpha and the May fine-tune set to
+  the same model path), only the stronger leads and the other takes an
+  ordinary internal slot. Each step fails open like the other
+  filters: with every fhi backend marked down the strongest still leads.
+  With alpha and the May fine-tune both registered, alpha leads with two
+  calls and the May fine-tune gets one. The lead used to be whichever fhi
+  name sorted first, which put the May fine-tune in front of the stronger
+  alpha,
+* the strongest 6 *available* internal backends other than the lead,
+  quality-sorted (an older cost-sort quietly picked the cheapest end). The
+  lead is left out here so it gets exactly two calls,
 * when external models are enabled: the best <= 3 externals
   (quality-sorted, health-gated) now join the PRIMARY
   fan-out. The separate fallback list then carries only externals NOT

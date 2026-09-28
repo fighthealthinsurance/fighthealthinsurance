@@ -10,6 +10,10 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance.chooser_tasks import (
+    CHOOSER_NUM_CANDIDATES,
+    _select_candidate_models,
+)
 from fighthealthinsurance.ml import health_status as health_status_module
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
@@ -328,7 +332,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         for label in (
             "Appeals: primary",
             "Appeals: best-internal hint",
-            "Chat: lead, 3 calls",
+            "Chat: lead, 2 calls",
             "Questions: fan-out",
             "Summaries: 1st",
         ):
@@ -338,13 +342,14 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             plan = self.plan(response, title)
             self.assertEqual(self.names(plan.internal_only)[:1], ["fhi-local"])
             self.assertEqual(self.names(plan.external_allowed)[:1], ["fhi-local"])
-        # The lead is listed twice up front and again among the internals,
-        # and the page says how many calls that makes.
+        # The lead is listed twice up front and not again among the
+        # internals, and the page says how many calls that makes.
         lead = self.plan(response, "Chat").internal_only[0]
-        self.assertEqual((lead.note, lead.calls), ("lead", 3))
-        self.assertContains(response, "lead, 3 calls")
-        self.assertContains(response, "so it usually gets three calls")
-        self.assertNotContains(response, "doubled lead gets two calls")
+        self.assertEqual((lead.note, lead.calls), ("lead", 2))
+        self.assertContains(response, "lead, 2 calls")
+        self.assertContains(response, "The lead is the strongest fhi model")
+        self.assertContains(response, "so it gets two calls")
+        self.assertNotContains(response, "three calls")
         legacy = self.row(response, "fhi-legacy")
         self.assertEqual(
             (legacy["quality"], legacy["kind"]), (101, "appeal-only fine-tune")
@@ -373,7 +378,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertEqual(set(rows), {"FHI Internal", "FHI Internal (alpha)"})
         picked = self.labels(rows["FHI Internal"])
         skipped = self.labels(rows["FHI Internal (alpha)"])
-        for label in ("Chat: lead, 3 calls", "Questions: fan-out", "Summaries: 1st"):
+        for label in ("Chat: lead, 2 calls", "Questions: fan-out", "Summaries: 1st"):
             self.assertIn(label, picked)
         self.assertFalse(
             [
@@ -390,6 +395,53 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             ["fhi-local on FHI Internal"],
         )
         self.assertContains(response, "2 backends, tried in turn")
+
+    def test_backends_sharing_a_name_lead_with_the_stronger_one(self):
+        """ALPHA (210) and NEW (200) both register as fhi-local and both look
+        healthy. Only ALPHA leads chat, with two calls; NEW gets one ordinary
+        call. Denied-item analysis asks the head of the chat list and the
+        chooser keeps the first backend under each name, so both use ALPHA."""
+        self.configure(**ALPHA, **NEW_SAME_PATH)
+        router = ml_router_module._get_ml_router()
+        backends = router.models_by_name["fhi-local"]
+        self.assertEqual(len(backends), 2)
+        alpha = next(m for m in backends if isinstance(m, AlphaRemoteInternal))
+        new = next(m for m in backends if m is not alpha)
+        for m in backends:
+            health_status._health_map[_model_key(m)] = True
+
+        self.assertEqual(
+            router.get_chat_backends(use_external=False), [alpha, alpha, new]
+        )
+        self.assertIs(router.get_chat_backends(use_external=False)[0], alpha)
+        chooser_picks = _select_candidate_models(
+            router.get_chat_backends(use_external=True), CHOOSER_NUM_CANDIDATES
+        )
+        self.assertEqual(chooser_picks, [alpha])
+
+        response = self.get_page()
+        rows = {
+            r["provider"]: r
+            for r in response.context["rows"]
+            if r["model_name"] == "fhi-local"
+        }
+        self.assertIn("Chat: lead, 2 calls", self.labels(rows["FHI Internal (alpha)"]))
+        self.assertEqual(
+            [
+                label
+                for label in self.labels(rows["FHI Internal"])
+                if label.startswith("Chat")
+            ],
+            ["Chat: fan-out"],
+        )
+        chat = self.plan(response, "Chat").internal_only
+        self.assertEqual(
+            [(e.name, e.calls) for e in chat],
+            [
+                ("fhi-local on FHI Internal (alpha)", 2),
+                ("fhi-local on FHI Internal", 1),
+            ],
+        )
 
     def test_unregistered_rows_read_traits_without_being_routed(self):
         response = self.get_page()
@@ -485,7 +537,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         # External off: chat and questions use their normal internal lists.
         chat = self.plan(response, "Chat")
         self.assertEqual(self.names(chat.internal_only), ["fhi-local"])
-        self.assertEqual(chat.internal_only[0].calls, 3)
+        self.assertEqual(chat.internal_only[0].calls, 2)
         questions = self.plan(response, "Appeal questions")
         self.assertEqual(self.names(questions.internal_only), ["fhi-local"])
         # External on: only the forced model.
@@ -555,7 +607,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         # And routing really ran; it wasn't swallowed by the fallback.
         self.assertNotContains(response, "Routing unavailable")
         self.assertIn(
-            "Chat: lead, 3 calls", self.labels(self.row(response, "fhi-local"))
+            "Chat: lead, 2 calls", self.labels(self.row(response, "fhi-local"))
         )
 
     def test_routing_failure_degrades_to_a_note(self):
