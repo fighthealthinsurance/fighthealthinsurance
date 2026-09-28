@@ -19,8 +19,26 @@ class MailingListSubscriptionTest(TestCase):
 
         form = DenialForm()
         self.assertIn("subscribe", form.fields)
-        self.assertTrue(form.fields["subscribe"].initial)
+        self.assertFalse(form.fields["subscribe"].initial)
         self.assertFalse(form.fields["subscribe"].required)
+
+    def test_the_appeal_start_page_leaves_the_newsletter_box_unticked(self):
+        """Nobody joins the list unless they tick the box themselves."""
+        import re
+
+        html = self.client.get(reverse("scan")).content.decode()
+        box = re.search(r'<input[^>]*id="subscribe"[^>]*>', html)
+        self.assertIsNotNone(box, "the scan page has no subscribe box")
+        self.assertNotRegex(box.group(0), r"\bchecked(?!\")")
+
+    def test_the_explain_page_leaves_the_newsletter_box_unticked(self):
+        import re
+
+        html = self.client.get(reverse("explain_denial")).content.decode()
+        boxes = re.findall(r'<input[^>]*name="subscribe"[^>]*>', html)
+        self.assertTrue(boxes, "the explain page has no subscribe box")
+        for box in boxes:
+            self.assertNotRegex(box, r"\bchecked(?!\")")
 
     def test_submission_creates_mailing_list_subscriber(self):
         """Test that submitting with subscribe=True creates a MailingListSubscriber."""
