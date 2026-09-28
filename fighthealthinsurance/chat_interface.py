@@ -498,9 +498,11 @@ class ChatInterface:
 
     def _end_turn_client_gone(self) -> None:
         """The client left mid-turn: counted "client_gone" in the metric, and
-        no ChatTurn row (chat/turn_record.py says why)."""
+        no ChatTurn row (chat/turn_record.py says why), so nothing to shadow
+        score either."""
         self._count_turn("client_gone")
         self._turn = None
+        self._shadow_runner_up = None
 
     async def _end_turn_after_exception(self) -> None:
         """An exception is escaping the turn (chat/turn_record.py lists how
