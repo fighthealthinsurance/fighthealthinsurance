@@ -9,10 +9,12 @@ zero out generation.
 """
 
 import io
+from typing import Optional
 from unittest.mock import patch
 
 from loguru import logger as loguru_logger
 
+from fighthealthinsurance.chooser_tasks import _select_candidate_models
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.ml.ml_router import MLRouter
 
@@ -28,9 +30,12 @@ def _bare_router() -> MLRouter:
     return router
 
 
-def _internal_model(name: str) -> RemoteFullOpenLike:
+def _internal_model(name: str, quality: Optional[int] = None) -> RemoteFullOpenLike:
     m = RemoteFullOpenLike(f"http://{name}.internal/v1", "tok", name)
     m.name = name
+    if quality is not None:
+        # RemoteFullOpenLike reports 100; the chat lead is picked by quality.
+        m.quality = lambda: quality
     return m
 
 
@@ -132,9 +137,12 @@ class TestInternalHealthGating:
 
 
 class TestChatFhiDeterminism:
-    def test_chat_doubles_the_alphabetically_first_fhi_backend(self):
+    def test_equal_quality_fhi_backends_double_the_one_whose_name_sorts_first(
+        self,
+    ):
         """models_by_name insertion order varies with registration order;
-        chat must double the SAME fhi backend on every pod."""
+        chat must double the SAME fhi backend on every pod, so a quality tie
+        goes to the name that sorts first."""
         router = _bare_router()
         z_first = _internal_model("z-instance")
         a_first = _internal_model("a-instance")
@@ -147,7 +155,8 @@ class TestChatFhiDeterminism:
         with _health_map({}):
             models = router.get_chat_backends(use_external=False)
 
-        # fhi-alpha sorts first, so its instance is the doubled one.
+        # Both report quality 100 and fhi-alpha sorts first, so its instance
+        # is the doubled one.
         assert models[:2] == [a_first, a_first]
 
     def test_external_selectable_alias_still_works(self):
@@ -157,3 +166,131 @@ class TestChatFhiDeterminism:
             assert router._external_selectable(m) is False
         with _health_map({"alias-model": True}):
             assert router._external_selectable(m) is True
+
+
+def _two_fhi_router(alpha_quality: int, zeta_quality: int):
+    """fhi-alpha (sorts first) and fhi-zeta, registered in cost order the way
+    MLRouter.__init__ would, so they appear both by name and in the internal
+    pool the chat fan-out draws its other slots from."""
+    router = _bare_router()
+    alpha = _internal_model("alpha-instance", alpha_quality)
+    zeta = _internal_model("zeta-instance", zeta_quality)
+    router.models_by_name = {"fhi-alpha": [alpha], "fhi-zeta": [zeta]}
+    router.internal_models_by_cost = [alpha, zeta]
+    router.all_models_by_cost = [alpha, zeta]
+    return router, alpha, zeta
+
+
+class TestChatLeadByQuality:
+    """The chat lead is the strongest healthy fhi backend, not the first
+    name. With the default model paths that makes alpha (210) lead instead
+    of the May fine-tune (200), whose name sorts first."""
+
+    def test_a_higher_quality_lead_beats_name_order(self):
+        router, alpha, zeta = _two_fhi_router(alpha_quality=200, zeta_quality=210)
+
+        with _health_map({}):
+            models = router.get_chat_backends(use_external=False)
+
+        assert models == [zeta, zeta, alpha]
+
+    def test_the_lead_is_listed_exactly_twice(self):
+        """Twice up front and not again among the internals, and it doesn't
+        take one of the six internal slots from another backend."""
+        router = _bare_router()
+        lead = _internal_model("lead-instance", 210)
+        others = [_internal_model(f"other-{i}", 100 + i) for i in range(7)]
+        router.models_by_name = {"fhi-lead": [lead]}
+        router.internal_models_by_cost = others + [lead]
+        router.all_models_by_cost = others + [lead]
+
+        with _health_map({}):
+            models = router.get_chat_backends(use_external=False)
+
+        assert models.count(lead) == 2
+        assert models[:2] == [lead, lead]
+        # The six strongest of the others follow, strongest first.
+        assert models[2:] == list(reversed(others))[:6]
+
+    def test_a_down_lead_is_passed_over(self):
+        router, alpha, zeta = _two_fhi_router(alpha_quality=200, zeta_quality=210)
+
+        with _health_map({"alpha-instance": True, "zeta-instance": False}):
+            models = router.get_chat_backends(use_external=False)
+
+        # The healthy one leads, and the down one is left out altogether.
+        assert models == [alpha, alpha]
+
+    def test_all_down_fails_open_to_the_strongest(self):
+        router, alpha, zeta = _two_fhi_router(alpha_quality=200, zeta_quality=210)
+
+        sink = io.StringIO()
+        handler = loguru_logger.add(sink, level="ERROR")
+        try:
+            with _health_map({"alpha-instance": False, "zeta-instance": False}):
+                models = router.get_chat_backends(use_external=False)
+        finally:
+            loguru_logger.remove(handler)
+
+        # A stale health cache must not zero out the fhi slots: the strongest
+        # still leads and the rest still fan out, and the fallback is logged.
+        assert models == [zeta, zeta, alpha]
+        assert "failing open" in sink.getvalue()
+
+
+class TestChatLeadSharingAName:
+    """Two backends can register under one name, e.g. alpha and the May
+    fine-tune set to the same model path. The lead is the stronger INSTANCE,
+    not every backend under the winning name."""
+
+    @staticmethod
+    def _shared_name_router():
+        router = _bare_router()
+        # Cost order, the way MLRouter.__init__ keeps each name's backends:
+        # the May fine-tune (cost 2) before alpha (cost 3).
+        may = _internal_model("may-instance", 200)
+        alpha = _internal_model("alpha-instance", 210)
+        for m in (may, alpha):
+            # The friendly name MLRouter stamps on every instance.
+            m.name = "fhi-local"
+        router.models_by_name = {"fhi-local": [may, alpha]}
+        router.internal_models_by_cost = [may, alpha]
+        router.all_models_by_cost = [may, alpha]
+        return router, may, alpha
+
+    def test_only_the_stronger_backend_leads(self):
+        router, may, alpha = self._shared_name_router()
+
+        with _health_map({"may-instance": True, "alpha-instance": True}):
+            models = router.get_chat_backends(use_external=False)
+
+        # alpha twice, and the May fine-tune in an ordinary internal slot.
+        assert models == [alpha, alpha, may]
+
+    def test_list_heads_pick_the_stronger_backend(self):
+        """Denied-item analysis asks models[0], and the chooser keeps the
+        first backend it sees under each name, so both get alpha."""
+        router, may, alpha = self._shared_name_router()
+
+        with _health_map({"may-instance": True, "alpha-instance": True}):
+            models = router.get_chat_backends(use_external=False)
+
+        assert models[0] is alpha
+        assert _select_candidate_models(models, 4) == [alpha]
+
+    def test_equal_quality_backends_under_the_lead_name_both_lead(self):
+        """Two servers of the same model under one name share the doubled
+        slot, cheapest first. A weaker backend under that name still takes
+        an ordinary internal slot."""
+        router = _bare_router()
+        first = _internal_model("first-server", 210)
+        second = _internal_model("second-server", 210)
+        weaker = _internal_model("weaker-server", 200)
+        router.models_by_name = {"fhi-local": [first, weaker, second]}
+        router.internal_models_by_cost = [first, weaker, second]
+        router.all_models_by_cost = [first, weaker, second]
+
+        with _health_map({}):
+            models = router.get_chat_backends(use_external=False)
+
+        assert models == [first, second, first, second, weaker]
