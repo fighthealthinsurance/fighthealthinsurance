@@ -27,6 +27,13 @@ LABEL_AND_ENUM_FIELDS = {
     "alternate_model",
     "preferred",
     "external_start",
+    "gate_outcome",
+    # The scorer string: "typesafe/<model>/chat-gate-rubric-<n>", or
+    # "fhi/local-checks-<n>" when our own checks failed the reply.
+    "gate_scorer",
+    "gate_model",
+    "rank_outcome",
+    "alternate_reason",
     # The shadow outcome enum, and the scorer string: the model TypeSafe
     # says answered plus the chat rubric version.
     "shadow_outcome",
@@ -86,7 +93,18 @@ class ChatTurnHoldsNoTextTest(TestCase):
         self.assertEqual(set(ChatTurn.Preferred.values), {"", "primary", "alternate"})
         self.assertEqual(
             set(ChatTurn.ExternalStart.values),
-            {"", "immediate", "after_delay", "early", "skipped"},
+            {"", "immediate", "after_delay", "early", "after_check", "skipped"},
+        )
+        self.assertEqual(
+            set(ChatTurn.GateOutcome.values),
+            {"", "pass", "borderline", "fail", "error", "timeout", "skipped"},
+        )
+        self.assertEqual(
+            set(ChatTurn.RankOutcome.values),
+            {"", "picked", "error", "timeout", "skipped"},
+        )
+        self.assertEqual(
+            set(ChatTurn.AlternateReason.values), {"", "tied", "crucial"}
         )
         self.assertEqual(
             set(ChatTurn.ShadowOutcome.values), {"", "scored", "failed", "timeout"}
@@ -190,3 +208,48 @@ class ChatTurnAdminTest(TestCase):
             reverse("admin:fighthealthinsurance_chatturn_change", args=[turn.pk])
         )
         self.assertEqual(response.status_code, 200)
+
+
+class ChatTurnReplyCheckTest(TestCase):
+    """The live Jev check's columns: numbers and labels only, readable
+    back, and filterable in the admin."""
+
+    def test_a_checked_turn_round_trips(self):
+        turn = _turn(
+            OngoingChat.objects.create(),
+            gate_used=True,
+            gate_outcome="fail",
+            gate_answers=0.4,
+            gate_verdict=0.1,
+            gate_asks_again=0.05,
+            gate_promises=0.02,
+            gate_scorer="typesafe/jev-1.13.0/chat-gate-rubric-2",
+            gate_ms=380,
+            gate_model="fhi-local",
+            gate_demoted=True,
+            gate_demoted_delivered=True,
+            external_start="after_check",
+        )
+        row = ChatTurn.objects.get(pk=turn.pk)
+        self.assertEqual(
+            (row.gate_outcome, row.gate_answers, row.gate_ms, row.gate_model),
+            ("fail", 0.4, 380, "fhi-local"),
+        )
+        self.assertEqual(row.gate_promises, 0.02)
+        self.assertTrue(row.gate_demoted)
+        self.assertTrue(row.gate_demoted_delivered)
+        self.assertEqual(row.external_start, "after_check")
+
+    def test_an_unchecked_turn_has_empty_check_columns(self):
+        row = _turn(OngoingChat.objects.create())
+        self.assertFalse(row.gate_used)
+        self.assertFalse(row.gate_demoted)
+        self.assertFalse(row.gate_demoted_delivered)
+        self.assertEqual(
+            (row.gate_outcome, row.gate_answers, row.gate_scorer, row.gate_ms),
+            ("", None, "", None),
+        )
+        self.assertIsNone(row.gate_promises)
+
+    def test_the_admin_filters_by_the_check(self):
+        self.assertIn("gate_outcome", admin.site._registry[ChatTurn].list_filter)

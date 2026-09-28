@@ -298,6 +298,64 @@ class Base(Configuration):
     FHI_CHAT_EXPLORE_RATE = _env_float(
         "FHI_CHAT_EXPLORE_RATE", 0.2, minimum=0.0, maximum=1.0
     )
+    # Live check on our own chat reply before the paid outside models are
+    # asked (chat/reply_gate.py, ml/chat_gate.py). It sends the person's
+    # latest message and our reply to TypeSafe, so it runs only when the
+    # person allowed outside models, the TypeSafe key is set and this switch
+    # is on. Off by default. Separate from FHI_CHAT_POLICY_APPLY.
+    FHI_CHAT_JEV_GATE_ENABLED = _env_flag("FHI_CHAT_JEV_GATE_ENABLED")
+    # How long the outside models are held back for the check: until our
+    # first usable reply is judged or this passes, whichever comes first
+    # (the routing policy's delay, when that is longer). Up to the fan-out's
+    # 30 second window.
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = _env_float(
+        "FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS", 8.0, minimum=0.5, maximum=30.0
+    )
+    # How long one check may take. Past it, the outside models start.
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = _env_float(
+        "FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS", 1.5, minimum=0.2, maximum=10.0
+    )
+    # A borderline reply's ranking (every candidate scored in one request)
+    # runs after the race; past this the race's pick stands.
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = _env_float(
+        "FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS", 3.0, minimum=0.2, maximum=10.0
+    )
+    # The decision rule: our reply passes when Jev's "responds to the
+    # message" answer is at least MIN_ANSWERS and its "states a coverage or
+    # eligibility verdict", "asks for what was already given" and "promises
+    # a result" answers are each below MAX_PROBLEM (all probabilities from
+    # 0 to 1). A reply our own checks reject fails before Jev is asked.
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = _env_float(
+        "FHI_CHAT_JEV_GATE_MIN_ANSWERS", 0.7, minimum=0.0, maximum=1.0
+    )
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = _env_float(
+        "FHI_CHAT_JEV_GATE_MAX_PROBLEM", 0.3, minimum=0.0, maximum=1.0
+    )
+    # A reply that meets the line above is a clear pass (no outside model
+    # asked) only when "responds" is at least CLEAR_ANSWERS and every
+    # problem answer is below CLEAR_PROBLEM; between the two lines it is
+    # borderline: the outside models are asked and Jev ranks every reply.
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = _env_float(
+        "FHI_CHAT_JEV_GATE_CLEAR_ANSWERS", 0.85, minimum=0.0, maximum=1.0
+    )
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = _env_float(
+        "FHI_CHAT_JEV_GATE_CLEAR_PROBLEM", 0.15, minimum=0.0, maximum=1.0
+    )
+    # Jev's "is this a crucial moment" answer at or above this makes the
+    # turn a side-by-side with FHI_CHAT_SIDE_BY_SIDE_MODEL, while the chat
+    # has one left (FHI_CHAT_SIDE_BY_SIDES_PER_CHAT).
+    FHI_CHAT_JEV_CRUCIAL_MIN = _env_float(
+        "FHI_CHAT_JEV_CRUCIAL_MIN", 0.5, minimum=0.0, maximum=1.0
+    )
+    # The model a crucial moment is compared with. Asked on no other turn.
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = os.getenv(
+        "FHI_CHAT_SIDE_BY_SIDE_MODEL", "moonshotai/Kimi-K3"
+    ).strip()
+    # When the check fails our reply, rank that reply just below the outside
+    # models' answers the failure started, so one of them wins instead of our
+    # models' higher base score keeping the failed reply in front. It is
+    # still delivered when nothing else usable arrives. On by default.
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = _env_flag("FHI_CHAT_JEV_GATE_DEMOTE_FAILED", "1")
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
@@ -1007,6 +1065,20 @@ class Test(_TestBase):
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
+    # The live check on chat replies sends chat text to TypeSafe: hard-off
+    # under test, with its knobs pinned to their defaults. Tests opt in with
+    # override_settings and stub the transport.
+    FHI_CHAT_JEV_GATE_ENABLED = False
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = 8.0
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = 1.5
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = 0.85
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = 0.15
+    FHI_CHAT_JEV_CRUCIAL_MIN = 0.5
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = 3.0
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = ""
 
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
     # timeout would poll until it expires on every generate_appeals test.
@@ -1071,6 +1143,20 @@ class TestSync(_TestBase):
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
+    # The live check on chat replies sends chat text to TypeSafe: hard-off
+    # under test, with its knobs pinned to their defaults. Tests opt in with
+    # override_settings and stub the transport.
+    FHI_CHAT_JEV_GATE_ENABLED = False
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = 8.0
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = 1.5
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = 0.85
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = 0.15
+    FHI_CHAT_JEV_CRUCIAL_MIN = 0.5
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = 3.0
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = ""
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
@@ -1118,6 +1204,20 @@ class TestActor(_TestBase):
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
+    # The live check on chat replies sends chat text to TypeSafe: hard-off
+    # under test, with its knobs pinned to their defaults. Tests opt in with
+    # override_settings and stub the transport.
+    FHI_CHAT_JEV_GATE_ENABLED = False
+    FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS = 8.0
+    FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS = 1.5
+    FHI_CHAT_JEV_GATE_MIN_ANSWERS = 0.7
+    FHI_CHAT_JEV_GATE_MAX_PROBLEM = 0.3
+    FHI_CHAT_JEV_GATE_DEMOTE_FAILED = True
+    FHI_CHAT_JEV_GATE_CLEAR_ANSWERS = 0.85
+    FHI_CHAT_JEV_GATE_CLEAR_PROBLEM = 0.15
+    FHI_CHAT_JEV_CRUCIAL_MIN = 0.5
+    FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS = 3.0
+    FHI_CHAT_SIDE_BY_SIDE_MODEL = ""
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).

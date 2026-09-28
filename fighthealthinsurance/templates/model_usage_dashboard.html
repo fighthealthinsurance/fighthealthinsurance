@@ -128,6 +128,7 @@
     {% else %}
     <p class="note">Not shown for All Time, for the same reason as the call table: turn records only exist since turn recording began and are deleted with their chat. See the shorter windows below.</p>
     {% include "model_usage_policy_partial.html" with panel=chat_policy %}
+    {% include "model_usage_reply_check_partial.html" with check=reply_check %}
     {% endif %}
   </div>
   {% endfor %}

@@ -287,7 +287,10 @@ async def retry_llm_with_fallback(
 
 
 def should_retry_response(
-    response_text: Optional[str], min_length: int = MIN_RESPONSE_LENGTH
+    response_text: Optional[str],
+    min_length: int = MIN_RESPONSE_LENGTH,
+    *,
+    log_retry: bool = True,
 ) -> bool:
     """
     Determine if an LLM response warrants a retry.
@@ -295,6 +298,10 @@ def should_retry_response(
     Args:
         response_text: The response text to evaluate
         min_length: Minimum acceptable response length
+        log_retry: Log a false promise as triggering a retry. False for
+            callers that only apply the same rule (the reply check, or an
+            outside answer weighed against a demoted reply), where no retry
+            starts from the answer.
 
     Returns:
         True if retry is needed, False if response is acceptable
@@ -307,7 +314,8 @@ def should_retry_response(
 
     # Retry on safety check failures (false promises)
     if detect_false_promises(response_text):
-        logger.warning("Detected false promise in response, triggering retry")
+        if log_retry:
+            logger.warning("Detected false promise in response, triggering retry")
         return True
 
     return False

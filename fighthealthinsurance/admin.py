@@ -1097,6 +1097,8 @@ class ChatTurnAdmin(admin.ModelAdmin):
         "alternate_cross_model",
         "preferred",
         "retry_used",
+        "gate_used",
+        "gate_outcome",
         "shadow_outcome",
         "created_at",
     )

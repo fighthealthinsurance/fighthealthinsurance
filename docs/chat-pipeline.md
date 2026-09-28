@@ -277,8 +277,133 @@ limit above and chat routes by the default. Rows are shown on the staff ML
 Model Usage Dashboard whether or not chat follows them. Rows are never
 edited; rows older than 30 days are deleted after a new one is written. Each
 ChatTurn row records how its primary pass started the outside models
-(`external_start`: immediate, after_delay, early or skipped) and the delay
-it used; held-back calls that were never sent have the status "skipped".
+(`external_start`: immediate, after_delay, early, after_check or skipped)
+and the hold it used; held-back calls that were never sent have the status
+"skipped".
+
+### The reply check (Jev decides whether the outside models are needed)
+
+The cascade TypeSafe documents (docs.typesafe.ai/cookbooks/sde_cascade):
+our models answer first, TypeSafe's Jev checks the answer, and the paid
+outside models are asked only when the check does not pass.
+`chat/reply_gate.py` runs it inside the primary pass's staged fan-out;
+`ml/chat_gate.py` holds our own checks, the questions and the decision
+rule.
+
+* **When.** Only when all of these hold: `FHI_CHAT_JEV_GATE_ENABLED` is on
+  (off by default, forced off in every test configuration), the TypeSafe
+  key is set, the person allowed outside models (Jev reads the text), the
+  message was typed (not a document upload or a stored long paste), one of
+  our models is selectable, TypeSafe's chat budget (`ml/spend.py`) allows a
+  request, and the pass has outside calls to hold back and calls of ours to
+  start first. With the budget spent the turn routes by our own rules, as
+  with the check off. It does not depend on
+  `FHI_CHAT_POLICY_APPLY`. Tool passes and the retry pass are never
+  checked.
+* **The hold.** The outside calls wait until our first usable reply is
+  judged, or `FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS` (8s) passes, whichever
+  comes first; when the routing policy's delay is longer, that is the hold.
+  They start at once when ours all fail.
+* **Our own checks first.** Before anything is sent, our first usable
+  reply (as cleaned for delivery) must pass the rule the retry uses
+  (`chat/retry_handler.should_retry_response`): at least
+  `MIN_RESPONSE_LENGTH` (5) characters, and no promised outcome
+  (`safety_filters.detect_false_promises`). A reply that fails them fails
+  the check with the scorer `fhi/local-checks-1`, is never sent to
+  TypeSafe, and leaves the health row alone. These requirements hold
+  whether or not Jev can be reached. An empty reply is not judged at all:
+  it is recorded as skipped, like a reply carrying a tool call.
+* **The check.** One request per turn: the person's latest message and our
+  first usable reply (as cleaned for delivery), redacted as letter scoring
+  redacts with the identifiers `chat/redaction.py` collects for the chat's
+  accounts and its linked appeals and prior authorization requests (if
+  that list cannot be read, nothing is sent), with four yes/no questions
+  about the reply: does it respond to what the message asks or says; does
+  it state a coverage or eligibility outcome as a settled fact; does it ask
+  for something the message already gives; does it promise or guarantee a
+  result (our own false-promise rule, asked of Jev too). A fifth asks about
+  the message: is it a crucial moment (a deadline, a denial decision, an
+  appeal's next step, or whether something is covered)? The request is
+  counted against TypeSafe's chat budget. A reply carrying a tool call or
+  the data-deletion handoff is not sent; the outside calls start instead.
+* **Three tiers.** **Fail**: "responds" below
+  `FHI_CHAT_JEV_GATE_MIN_ANSWERS` (0.7), or any problem answer at or above
+  `FHI_CHAT_JEV_GATE_MAX_PROBLEM` (0.3). **Pass**: "responds" at least
+  `FHI_CHAT_JEV_GATE_CLEAR_ANSWERS` (0.85) and every problem answer below
+  `FHI_CHAT_JEV_GATE_CLEAR_PROBLEM` (0.15). **Borderline**: anything
+  between.
+* **Database work.** The identifier lookup and the health note after the
+  turn each run on a thread of their own with their own connection, closed
+  afterwards, inside a transaction with a statement timeout on PostgreSQL
+  (`chat/isolated_db.py`), never on the chat's database executor. The
+  lookup shares the check's 1.5s; a stuck one is a timeout, nothing is
+  sent, and the rest of the turn does not wait for it. The turn waits at
+  most 1s for the health note. At most 8 of each kind run at once per
+  process; past that the check sends nothing, or the note is left out.
+* **Pass:** the primary pass never sends the outside calls (their
+  coroutines are closed) and the usual scoring picks among our models'
+  answers. The retry, which runs only when our own checks reject the
+  reply (empty, too short or a false promise), may still ask them; the
+  dashboard does not count such a turn as one the check kept them from.
+  **Anything else**
+  (a fail, an error, an HTTP error, an answer we cannot read, or no answer
+  within `FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS`, 1.5s): the outside calls
+  start at once and the usual scoring picks among everything. The check
+  never holds the reply back, and the race's windows still run from its
+  start.
+* **Borderline: Jev ranks.** The outside calls start at once (the roster
+  asks up to three, so at least two whenever two are up and in budget).
+  When the race is over, a second request sends every deliverable
+  candidate, ours included, one per reply the person would see and at most
+  four, labelled THE REPLY 1, 2 and so on, with the four reply questions
+  each. Each candidate's quality is "responds" times one minus its largest
+  problem answer, and the best is delivered (ties go to the race's order).
+  The ranking has `FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS` (3s); on an error or a
+  timeout the race's pick stands. Each ranked call keeps its quality as
+  `jev` in `ChatTurn.calls`, and the routing policy orders the outside
+  models by those once two of them have 30 each (`_choose_order`).
+* **Crucial moments: a side-by-side.** When Jev's crucial answer is at
+  least `FHI_CHAT_JEV_CRUCIAL_MIN` (0.5) and the chat still has a
+  side-by-side left (`FHI_CHAT_SIDE_BY_SIDES_PER_CHAT`, 2), the pass's
+  reserved call starts too: one call (truncated history) to
+  `FHI_CHAT_SIDE_BY_SIDE_MODEL` (Kimi-K3), built only for the checked
+  primary pass and never asked by the retry. The race starts a reserved
+  call only when the check names it (`utils.CheckVerdict`), never after the
+  hold runs out, so an error, a timeout or an ordinary turn never sends it.
+  The side-by-side is Jev's top two after a ranking, else the reply beside
+  the side-by-side model's answer, else beside the best answer from another
+  model. While Jev answers the check, side-by-sides are offered for crucial
+  moments only; with no answer from Jev, the closely-tied rule (section 5)
+  still applies.
+* **A failed reply is demoted.** After a fail, from Jev or from our own
+  checks (never an error, a timeout or a reply that was not judged), and
+  while `FHI_CHAT_JEV_GATE_DEMOTE_FAILED` is on (the default; pinned on in every
+  test configuration), the judged reply, and any reply with the same
+  text whatever its context summary, ranks one point below the best
+  outside answer that has arrived and could be delivered (not empty, too
+  short or a false promise), or below the outside calls' base score while
+  none has. Our models' base
+  score (about 8000 against about 1900 for outside ones) would otherwise
+  keep the failed reply in front. Our other replies keep their scores. The
+  demoted reply is never the runner-up or the side-by-side alternate, and
+  it is still delivered when nothing else usable arrives.
+* **Recorded** on the ChatTurn row: `gate_used`, `gate_outcome` (pass,
+  borderline, fail, error, timeout, or skipped when nothing was judged),
+  Jev's four reply answers and `gate_crucial`, the ranking's
+  `rank_outcome`, `rank_ms`, `rank_count` and `rank_changed` (its pick
+  replaced the race's), `alternate_reason` (tied or crucial), `gate_scorer` (the model TypeSafe reports plus the rubric
+  version, or `fhi/local-checks-1` when our own checks failed the reply
+  before Jev was asked), `gate_ms`, `gate_model` (whose reply was judged),
+  `gate_demoted` (a fail demoted it) and `gate_demoted_delivered` (the
+  primary pass still delivered it). The
+  outcome also goes to the `typesafe-chat-gate` ExternalServiceHealth row
+  after the reply is sent. The staff usage dashboard shows the counts
+  (and how many fails our own checks decided without asking Jev), how
+  often the outside models were never sent because the check passed, and,
+  after Jev failed the reply, how often an outside model's answer was
+  delivered and how often our demoted reply was delivered because nothing
+  else usable arrived. Those last two leave out the fails our own checks
+  decided, so they stay a check on Jev's questions and thresholds.
 
 What we deliberately did NOT build for selection:
 
@@ -310,7 +435,11 @@ is offered ONLY when a candidate:
 * is presentable (no tool/action tokens, not a near-duplicate of the
   primary, not itself a repeat, no safety flags), and
 * tool processing didn't rewrite the primary reply, and no retry replaced
-  the primary pass's winner.
+  the primary pass's winner, and
+* it is not a reply the reply check failed and demoted, and
+* Jev did not answer the turn's reply check: when it did, a side-by-side is
+  offered only for a crucial moment (section 4, the reply check), and the
+  row's `alternate_reason` says which rule offered it.
 
 Among the candidates that qualify, one from a DIFFERENT model than the
 winner comes first (pick_side_by_side_alternate): the pick is meant to be
@@ -495,6 +624,13 @@ Three levels, in increasing detail:
   of our models is selectable. A turn never waits on its read, which runs
   off the chat's database executor, and a held-back start never makes a
   race run past its windows.
+* The reply check sends text to TypeSafe only with the person's consent to
+  outside models, and only while its own switch and the key are set. It
+  fails open: anything but a pass starts the outside models, and nothing
+  it waits on runs past the race's windows. Our own checks run before it
+  and send nothing, so a reply they reject fails even when Jev is
+  unreachable. Only its numbers, outcome, scorer, time and the judged
+  model's label are kept.
 * `user_requested_repeat` is the master switch that disables the whole
   ladder, so it must match an explicit REQUEST ("repeat that", "say that
   again"), never the topic. "repeat MRI", "repeat colonoscopy", "repeat

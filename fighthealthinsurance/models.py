@@ -3755,7 +3755,33 @@ class ChatTurn(models.Model):
         IMMEDIATE = "immediate", "Asked with ours"
         AFTER_DELAY = "after_delay", "Started after the delay"
         EARLY = "early", "Started early: ours all failed"
+        AFTER_CHECK = "after_check", "Started early: the check on ours did not pass"
         SKIPPED = "skipped", "Skipped: ours answered first"
+
+    class GateOutcome(models.TextChoices):
+        # The outcomes in ml/chat_gate.py, plus "" for a turn the check was
+        # not on for.
+        NONE = "", "Not checked"
+        PASS = "pass", "Passed"
+        BORDERLINE = "borderline", "Borderline"
+        FAIL = "fail", "Failed"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Nothing judged"
+
+    class RankOutcome(models.TextChoices):
+        # The ranking outcomes in ml/chat_gate.py, plus "" for a turn with
+        # no ranking.
+        NONE = "", "Not ranked"
+        PICKED = "picked", "Jev picked"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Not sent"
+
+    class AlternateReason(models.TextChoices):
+        NONE = "", "No side-by-side"
+        TIED = "tied", "Closely tied scores"
+        CRUCIAL = "crucial", "Crucial moment (Jev)"
 
     # Also the turn_id the client echoes back with its side-by-side pick.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -3815,6 +3841,10 @@ class ChatTurn(models.Model):
     alternate_model = models.CharField(max_length=200, blank=True, default="")
     # The offered pair came from two different models.
     alternate_cross_model = models.BooleanField(default=False)
+    # Why it was offered: our tied-scores rule, or a crucial moment by Jev.
+    alternate_reason = models.CharField(
+        max_length=16, blank=True, default="", choices=AlternateReason.choices
+    )
     # The person's side-by-side pick. The first pick wins.
     preferred = models.CharField(
         max_length=16, blank=True, default="", choices=Preferred.choices
@@ -3843,13 +3873,53 @@ class ChatTurn(models.Model):
     shadow_second_asks_again = models.FloatField(null=True, blank=True)
     shadow_second_promises = models.FloatField(null=True, blank=True)
     # How the primary pass started the outside models: with ours, or held
-    # back by the routing policy's delay (ChatRoutingPolicy) and then
-    # started or skipped. The delay is the one that pass used; both are
-    # empty when the pass asked no outside model.
+    # back by the routing policy's delay (ChatRoutingPolicy) or for the
+    # check on our reply (gate_* below), and then started or skipped. The
+    # delay is the hold that pass used; both are empty when the pass asked
+    # no outside model.
     external_start = models.CharField(
         max_length=16, blank=True, default="", choices=ExternalStart.choices
     )
     external_delay_seconds = models.FloatField(null=True, blank=True)
+    # The live Jev check on our first usable reply (chat/reply_gate.py):
+    # whether the primary pass held the outside models back for it, and how
+    # it came out. The four answers are Jev's probabilities (0 to 1) that
+    # the reply responds to the message, states a coverage or eligibility
+    # verdict, asks for something the message already gives, and promises
+    # a result; null unless Jev answered. The scorer names the model that
+    # answered and the rubric version, or is fhi/local-checks-N when our
+    # own checks failed the reply before Jev was asked. gate_model is the
+    # label of the model whose reply was judged. Numbers and labels only,
+    # never text.
+    gate_used = models.BooleanField(default=False)
+    gate_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=GateOutcome.choices
+    )
+    gate_answers = models.FloatField(null=True, blank=True)
+    gate_verdict = models.FloatField(null=True, blank=True)
+    gate_asks_again = models.FloatField(null=True, blank=True)
+    gate_promises = models.FloatField(null=True, blank=True)
+    gate_scorer = models.CharField(max_length=80, blank=True, default="")
+    gate_ms = models.PositiveIntegerField(null=True, blank=True)
+    gate_model = models.CharField(max_length=200, blank=True, default="")
+    # After a failed check (FHI_CHAT_JEV_GATE_DEMOTE_FAILED on): the judged
+    # reply was ranked just below the outside models' answers, and whether
+    # it was still the reply delivered because nothing else usable arrived.
+    gate_demoted = models.BooleanField(default=False)
+    gate_demoted_delivered = models.BooleanField(default=False)
+    # Jev's probability that the person's message is a crucial moment (a
+    # deadline, a denial, an appeal's next step, coverage); null unless Jev
+    # answered.
+    gate_crucial = models.FloatField(null=True, blank=True)
+    # After a borderline check, Jev scored every deliverable candidate in
+    # one request: how that went, how long it took, how many it scored, and
+    # whether its pick replaced the race's. Each call's score is in calls.
+    rank_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=RankOutcome.choices
+    )
+    rank_ms = models.PositiveIntegerField(null=True, blank=True)
+    rank_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    rank_changed = models.BooleanField(default=False)
 
     class Meta:
         indexes = [

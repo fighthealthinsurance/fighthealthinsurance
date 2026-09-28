@@ -3,7 +3,18 @@ import math
 import re
 import time
 from dataclasses import replace
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, cast
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    cast,
+)
 
 from django.conf import settings as django_settings
 from django.utils import timezone
@@ -31,6 +42,7 @@ from fighthealthinsurance.chat.context_manager import (
     should_store_summary,
 )
 from fighthealthinsurance.chat.llm_client import (
+    AlternateChoice,
     alternate_is_presentable,
     build_llm_calls,
     build_llm_calls_for_variants,
@@ -50,12 +62,14 @@ from fighthealthinsurance.chat.message_preprocessor import (
 )
 from fighthealthinsurance.chat.document_processor import process_uploaded_document
 from fighthealthinsurance.chat.document_search import get_document_context_for_message
+from fighthealthinsurance.chat.reply_gate import ReplyGate, gate_for_turn
 from fighthealthinsurance.chat.retry_handler import (
     retry_llm_with_fallback,
     should_retry_response,
 )
 from fighthealthinsurance.chat import shadow_scoring
 from fighthealthinsurance.chat.turn_record import (
+    ALTERNATE_CRUCIAL,
     OUTCOME_FAILED,
     PASS_PRIMARY,
     PASS_RETRY,
@@ -73,6 +87,7 @@ from fighthealthinsurance.chat.safety_filters import (
     detect_delete_data_request,
     llm_requested_delete_handoff,
 )
+from fighthealthinsurance.chat.tools.patterns import contains_tool_call
 from fighthealthinsurance.chat.tools import (
     AppealTool,
     ClinicalTrialsTool,
@@ -89,6 +104,7 @@ from fighthealthinsurance.chat.tools import (
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
+from fighthealthinsurance.ml import chat_gate
 from fighthealthinsurance.ml.chat_policy import aget_chat_policy
 from fighthealthinsurance.ml.ml_metrics import (
     record_chat_alternate_offered,
@@ -123,6 +139,7 @@ from fighthealthinsurance.rxnorm_tools import RxNormTools
 from fighthealthinsurance.utils import (
     STAGE_IMMEDIATE,
     StagedStart,
+    CheckVerdict,
     best_two_within_timelimit,
     fire_and_forget_in_new_threadpool,
 )
@@ -158,6 +175,35 @@ def _clean_reply(text: str) -> str:
     stripped = text.strip()
     cleaned = remove_repeated_blocks(stripped) or stripped
     return remove_repeated_sentences(cleaned) or cleaned
+
+
+def _shown_reply(result: Optional[Tuple[Optional[str], Optional[str]]]) -> Any:
+    """The reply a fan-out result would show the person, as cleaned for
+    delivery. Its context summary is never shown, so two results that
+    differ only there are the same reply."""
+    text = result[0] if result else None
+    return _clean_reply(text) if text else None
+
+
+def _rankable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
+    """Whether a fan-out result could be shown the person exactly as it is,
+    so Jev may rank it or it may be the side-by-side: deliverable, and
+    neither a tool call (another pass follows it) nor the data-deletion
+    handoff (a canned reply replaces it), the same replies the check never
+    sends."""
+    text = result[0] if result else None
+    if not text or not _deliverable(result):
+        return False
+    return not (
+        contains_tool_call(text) or "🐼" in text or llm_requested_delete_handoff(text)
+    )
+
+
+def _deliverable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
+    """Whether a fan-out result could be delivered as it is, rather than
+    sent on to the retry (empty, too short, or a false promise). No retry
+    starts from here, so the retry's log line is left to the retry."""
+    return not should_retry_response(result[0] if result else None, log_retry=False)
 
 
 class ChatInterface:
@@ -241,6 +287,10 @@ class ChatInterface:
         # own models answer, from the chat routing policy (0 asks them all
         # together). Set per turn once the backends are known.
         self._external_delay_seconds: float = 0.0
+        # The live Jev check on the turn's first usable reply of ours
+        # (chat/reply_gate.py), or None when it is off for the turn. Set per
+        # turn just before the models are asked.
+        self._reply_gate: Optional[ReplyGate] = None
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -328,21 +378,26 @@ class ChatInterface:
         await self.send_json_message_func(payload)
 
     async def _write_turn_record(self, outcome: str) -> bool:
-        """Write the turn's ChatTurn row, once. Returns whether it was
+        """Write the turn's ChatTurn row, once, then the reply check's
+        health record when the turn ran a check. Returns whether the row was
         written. Never raises, except that a cancellation still propagates.
         A write cancelled while it waits for the chat's executor never runs,
         so a counted turn's row is then written from a thread of its own
         first, as in _end_cancelled_turn. The row's id is the turn's, so a
         write that did run is not doubled."""
         turn, self._turn = self._turn, None
+        gate, self._reply_gate = self._reply_gate, None
         try:
-            return await arecord_chat_turn(self.chat.id, turn, outcome)
+            written = await arecord_chat_turn(self.chat.id, turn, outcome)
         except asyncio.CancelledError:
             if turn is not None and turn.counted_outcome:
                 await arecord_chat_turn_isolated(
                     self.chat.id, turn, turn.counted_outcome
                 )
             raise
+        if gate is not None:
+            await gate.anote_health()
+        return written
 
     async def _side_by_side_allowed(self, chat: OngoingChat) -> bool:
         """Whether this chat may be shown another side-by-side: at most
@@ -431,6 +486,9 @@ class ChatInterface:
         if not turn.counted_outcome:
             if not turn.reached_models:
                 self._turn = None
+                gate, self._reply_gate = self._reply_gate, None
+                if gate is not None:
+                    gate.forget()
                 return
             self._count_turn(OUTCOME_FAILED)
         await self._write_turn_record(turn.counted_outcome)
@@ -441,6 +499,9 @@ class ChatInterface:
         thread of its own with a bounded wait so it cannot hold up the
         socket's teardown. Never raises beyond a further cancellation."""
         turn, self._turn = self._turn, None
+        gate, self._reply_gate = self._reply_gate, None
+        if gate is not None:
+            gate.forget()
         if turn is None or not turn.counted_outcome:
             return
         await arecord_chat_turn_isolated(self.chat.id, turn, turn.counted_outcome)
@@ -490,6 +551,85 @@ class ChatInterface:
         self._turn_saw_repeats = False
         record_chat_repeat("rejected_candidates")
 
+    @staticmethod
+    def _rank_candidates(
+        completed: Dict[Awaitable, Tuple[Optional[str], Optional[str]]],
+        scores: Dict[Awaitable, float],
+        calls: Sequence[Awaitable],
+        limit: int,
+    ) -> List[Awaitable]:
+        """The pass's deliverable results, one call per reply the person
+        would see, best race score first (exact ties to the earlier-listed
+        call), at most ``limit``: the candidates a ranking scores."""
+        order = {id(call): position for position, call in enumerate(calls)}
+        usable = [
+            call
+            for call, result in completed.items()
+            if _rankable(result) and math.isfinite(scores.get(call, float("-inf")))
+        ]
+        usable.sort(key=lambda c: (-scores[c], order.get(id(c), len(order))))
+        seen: Set[Any] = set()
+        out: List[Awaitable] = []
+        for call in usable:
+            shown = _shown_reply(completed[call])
+            if not shown or shown in seen:
+                continue
+            seen.add(shown)
+            out.append(call)
+            if len(out) >= limit:
+                break
+        return out
+
+    def _crucial_alternate(
+        self,
+        picked: Optional[Tuple[Optional[str], Optional[str]]],
+        picked_model: Optional[str],
+        jev_order: Sequence[Awaitable],
+        reserved: Sequence[Awaitable],
+        completed: Dict[Awaitable, Tuple[Optional[str], Optional[str]]],
+        scores: Dict[Awaitable, float],
+        calls: Sequence[Awaitable],
+        labels: Dict[Awaitable, str],
+        excluded: Any = None,
+    ) -> Optional[AlternateChoice]:
+        """The reply to show beside the delivered one at a crucial moment:
+        Jev's best other reply when it ranked them, else the side-by-side
+        model's, else the best other model's. Never the delivered reply,
+        never ``excluded`` (what the person would see of a reply the check
+        failed and demoted), and never one from the same model unless Jev
+        ranked it."""
+        if picked is None:
+            return None
+        delivered = _shown_reply(picked)
+
+        def choice(call: Awaitable) -> Optional[AlternateChoice]:
+            result = completed.get(call)
+            if not result or not result[0] or not _rankable(result):
+                return None
+            shown = _shown_reply(result)
+            if not shown or shown == delivered:
+                return None
+            if excluded is not None and shown == excluded:
+                return None
+            model = labels.get(call)
+            return AlternateChoice(
+                text=result[0], model=model, cross_model=model != picked_model
+            )
+
+        for call in jev_order:
+            found = choice(call)
+            if found is not None:
+                return found
+        for call in reserved:
+            found = choice(call)
+            if found is not None:
+                return found
+        for call in self._rank_candidates(completed, scores, calls, len(calls)):
+            found = choice(call)
+            if found is not None and found.cross_model:
+                return found
+        return None
+
     async def _call_llm_with_actions(
         self,
         model_backends: List[RemoteModelLike],
@@ -506,6 +646,7 @@ class ChatInterface:
         eligibility_verified: bool = False,
         *,
         credit_out: Optional[List[ReplyCredit]] = None,
+        side_by_side_backend: Optional[RemoteModelLike] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -538,6 +679,11 @@ class ChatInterface:
                 appends the ReplyCredit naming the model that wrote it. Tool
                 follow-ups pass one so the turn can credit the model whose
                 reply was delivered.
+            side_by_side_backend: The model a crucial moment is compared
+                with (chat/reply_gate.py). Only the primary pass of a turn
+                with a reply check uses it: its one call is reserved, started
+                only when Jev reads the message as crucial, and never asked
+                by the retry.
         """
         if depth > 3:
             return None, None
@@ -633,7 +779,86 @@ class ChatInterface:
         external_delay = self._external_delay_seconds
         stage: Optional[StagedStart] = None
         race_staging: Dict[str, Any] = {}
-        if external_delay > 0 and 0 < len(external_calls) < len(calls):
+        # The live Jev check (chat/reply_gate.py), on the person's own
+        # message only: the outside calls are held back until our first
+        # usable reply is judged or the hold runs out, and not sent by this
+        # pass when it passes (the retry may still ask them). The hold is the check's own wait, or the policy's delay
+        # when that is longer, so it does not depend on the policy.
+        gate = (
+            self._reply_gate
+            if depth == 0 and turn is not None and 0 < len(external_calls) < len(calls)
+            else None
+        )
+        # The side-by-side model's one call (truncated history, the primary
+        # message), reserved: the race starts it only when the check names
+        # it, so it is sent on crucial turns and no others.
+        reserved_calls: List[Awaitable] = []
+        if gate is not None and side_by_side_backend is not None:
+            reserved_calls, reserved_scores = build_llm_calls(
+                model_backends=[side_by_side_backend],
+                current_message=current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=history,
+                is_professional=is_professional,
+                is_logged_in=is_logged_in,
+                full_history=None,
+                allow_repeated_reply=allow_repeat,
+                call_labels=call_labels,
+                call_log=call_log,
+                call_backends=call_backends,
+            )
+            calls = list(calls) + list(reserved_calls)
+            call_scores.update(reserved_scores)
+            if turn is not None:
+                turn.add_reserved_backend(side_by_side_backend)
+            if call_log is not None:
+                call_log.mark_reserved(reserved_calls)
+        if gate is not None:
+            reply_gate: ReplyGate = gate
+            reply_gate.used = True
+            reply_gate.bind(external_calls, reserved_calls)
+            external_delay = max(external_delay, reply_gate.max_wait_seconds)
+
+            async def check_ours(
+                result: Tuple[Optional[str], Optional[str]], call: Awaitable
+            ) -> CheckVerdict:
+                # What the person would be shown: the reply as cleaned for
+                # delivery.
+                text = result[0] if result else None
+                return await reply_gate.judge(
+                    scoring_message,
+                    _clean_reply(text) if text else None,
+                    call_labels.get(call),
+                )
+
+            stage = StagedStart()
+            race_staging = {
+                "deferred": external_calls,
+                "defer_seconds": external_delay,
+                "stage": stage,
+                "check": check_ours,
+                # A failed reply must not keep winning on our models' higher
+                # base score: the race ranks it just below the outside
+                # answers the failure started (below their base score while
+                # none has arrived), and still delivers it when nothing else
+                # usable arrives. Only after a fail, while the setting is on.
+                "demote_failed": reply_gate.wants_demotion,
+                "held_base": max(
+                    (call_scores[c] for c in external_calls if c in call_scores),
+                    default=None,
+                ),
+                # The judged reply with another context summary is still
+                # the judged reply, and is demoted with it.
+                "demote_key": _shown_reply,
+                # Only an outside answer the turn could deliver pushes the
+                # failed reply down. One that would go to the retry (empty,
+                # too short, a false promise) must not win over it, or a
+                # retry that finds nothing would leave the turn with no
+                # reply at all.
+                "replaces_demoted": _deliverable,
+                "reserved": reserved_calls,
+            }
+        elif external_delay > 0 and 0 < len(external_calls) < len(calls):
             stage = StagedStart()
             race_staging = {
                 "deferred": external_calls,
@@ -723,6 +948,68 @@ class ChatInterface:
                     )
                 else:
                     turn.set_external_start(STAGE_IMMEDIATE, 0.0)
+            if turn is not None and gate is not None:
+                gate.finish()
+                gate_scores = gate.scores
+                turn.set_gate(
+                    gate.outcome,
+                    (
+                        (
+                            gate_scores.answers,
+                            gate_scores.verdict,
+                            gate_scores.asks_again,
+                            gate_scores.promises,
+                        )
+                        if gate_scores is not None
+                        else None
+                    ),
+                    gate.scorer,
+                    gate.ms,
+                    gate.model,
+                    gate_scores.crucial if gate_scores is not None else None,
+                )
+                if stage is not None:
+                    # Whether it was still delivered is known after the
+                    # retry decision below.
+                    turn.set_gate_demotion(stage.demoted, False)
+
+        # After a borderline check, Jev scores every deliverable candidate
+        # (ours and the outside models') in one request, and its best is
+        # delivered. Each ranked call keeps Jev's score, for the routing
+        # policy. Jev's order is kept for a crucial side-by-side below.
+        jev_order: List[Awaitable] = []
+        if (
+            gate is not None
+            and turn is not None
+            and gate.wants_rank()
+            and picked_result is not None
+        ):
+            ranked_calls = self._rank_candidates(
+                completed_results, score_log, calls, chat_gate.MAX_RANKED
+            )
+            if len(ranked_calls) >= 2:
+                ranking = await gate.rank(
+                    scoring_message,
+                    [_shown_reply(completed_results[c]) for c in ranked_calls],
+                )
+                changed = False
+                for i, call in enumerate(ranked_calls):
+                    if call_log is not None and i < len(ranking.scores):
+                        call_log.note_jev(call, chat_gate.quality(ranking.scores[i]))
+                jev_order = [ranked_calls[i] for i in ranking.order()]
+                if jev_order:
+                    top = jev_order[0]
+                    top_result = completed_results[top]
+                    if _shown_reply(top_result) != _shown_reply(picked_result):
+                        changed = True
+                        picked_result = top_result
+                        response_text, context_part = top_result
+                        picked_model = call_labels.get(top)
+                        picked_score = score_log.get(top, picked_score)
+                turn.set_rank(gate.rank_outcome, gate.rank_ms, gate.rank_count, changed)
+        if gate is not None:
+            # The identifier list is needed no further than the ranking.
+            gate.forget()
 
         response_text = response_text or ""
 
@@ -788,6 +1075,13 @@ class ChatInterface:
 
         if depth == 0 and turn is not None:
             turn.mark_fanout_done(llm_pass_started)
+        # The reply a failed check demoted, while this pass still holds it
+        # (never offered as the alternate below).
+        demoted_reply: Optional[Tuple[Optional[str], Optional[str]]] = None
+        if gate is not None and stage is not None and turn is not None:
+            turn.set_gate_demotion(stage.demoted, stage.best_demoted and not retry_used)
+            if stage.demoted and stage.checked is not None:
+                demoted_reply = completed_results.get(stage.checked)
         # Who wrote this pass's reply, until a tool follow-up's reply
         # replaces it (see credit_for_delivered_reply below).
         pass_credit = ReplyCredit(
@@ -825,9 +1119,14 @@ class ChatInterface:
         # DIFFERENT model than the winner, and the plain runner-up (usually
         # the winner's own other call) only when no other model's candidate
         # qualifies. A retry winner replaced the primary pass's answer, so
-        # nothing from that pass is comparable with it any more.
+        # nothing from that pass is comparable with it any more. A reply the
+        # check failed and demoted is never offered: the race never makes it
+        # the runner-up, and it is left out of the candidates.
         closely_tied = False
         alternate_model: Optional[str] = None
+        # Jev answered the check: side-by-sides are its call, on crucial
+        # moments only. Otherwise (no check, or no answer) our tied rule.
+        jev_decides = gate is not None and gate.scores is not None
         if depth == 0:
             self._candidate_alternate = None
             closely_tied = (
@@ -835,23 +1134,73 @@ class ChatInterface:
                 and runner_up_score is not None
                 and scores_closely_tied(picked_score, runner_up_score)
             )
-            if not retry_used:
+            if not retry_used and jev_decides and gate is not None and gate.crucial:
+                crucial_choice = self._crucial_alternate(
+                    picked_result,
+                    picked_model,
+                    jev_order,
+                    reserved_calls,
+                    completed_results,
+                    score_log,
+                    calls,
+                    call_labels,
+                    excluded=(
+                        _shown_reply(demoted_reply)
+                        if demoted_reply is not None
+                        else None
+                    ),
+                )
+                if crucial_choice is not None:
+                    self._candidate_alternate = crucial_choice.text
+                    alternate_model = crucial_choice.model
+                    if turn is not None:
+                        turn.set_alternate_candidate(
+                            crucial_choice.model,
+                            crucial_choice.cross_model,
+                            ALTERNATE_CRUCIAL,
+                        )
+            elif not retry_used and not jev_decides:
+                # What the person would see of the demoted reply, from any
+                # model: never offered, as a candidate or as the runner-up.
+                demoted_shown = (
+                    _shown_reply(demoted_reply) if demoted_reply is not None else None
+                )
+                runner_up_choice: Optional[Tuple[Optional[str], float, str]] = None
+                if (
+                    runner_up_text
+                    and runner_up_score is not None
+                    and (
+                        demoted_shown is None
+                        or _shown_reply((runner_up_text, None)) != demoted_shown
+                    )
+                ):
+                    runner_up_choice = (
+                        runner_up_model,
+                        runner_up_score,
+                        runner_up_text,
+                    )
                 choice = pick_side_by_side_alternate(
                     response_text,
                     picked_model,
                     picked_score,
                     candidates_best_first(
-                        completed_results,
+                        (
+                            # The same reply under another context summary
+                            # is the same reply to the person: left out too.
+                            {
+                                call: result
+                                for call, result in completed_results.items()
+                                if _shown_reply(result) != demoted_shown
+                            }
+                            if demoted_reply is not None
+                            else completed_results
+                        ),
                         score_log,
                         call_labels,
                         calls,
                         exclude=picked_result,
                     ),
-                    (
-                        (runner_up_model, runner_up_score, runner_up_text)
-                        if runner_up_text and runner_up_score is not None
-                        else None
-                    ),
+                    runner_up_choice,
                     chat_history=chat.chat_history,
                     current_message=scoring_message,
                 )
@@ -1157,6 +1506,7 @@ class ChatInterface:
         self._turn = None
         self._shadow_runner_up = None
         self._external_delay_seconds = 0.0
+        self._reply_gate = None
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -1505,6 +1855,9 @@ class ChatInterface:
             (v for v in message_variants if v.metadata.get("store_full_text")),
             None,
         )
+        # An upload or a stored long paste leaves only a marker naming the
+        # stored document, which the reply check cannot read a question from.
+        typed_message = not is_document and long_paste_variant is None
         # Shadow scoring reads the person's message against the reply. An
         # upload or a stored long paste leaves only a marker naming the
         # stored document, so those turns are never shadow scored.
@@ -1751,6 +2104,20 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
+        # The live Jev check on our first usable reply (chat/reply_gate.py):
+        # only with the person's consent to outside models, for a typed
+        # message, and while one of our own models is selectable.
+        self._reply_gate = gate_for_turn(
+            chat.id,
+            external_allowed=self.use_external_models,
+            typed_message=typed_message,
+            ours_selectable=ml_router.chat_internal_selectable,
+        )
+        # The model a crucial moment is compared with, reserved in the
+        # checked pass: only while the chat has a side-by-side left.
+        side_by_side_backend: Optional[RemoteModelLike] = None
+        if self._reply_gate is not None and await self._side_by_side_allowed(chat):
+            side_by_side_backend = ml_router.chat_side_by_side_model()
         # The models are asked from here on, so an exception escaping the
         # turn now counts it as failed (see _end_turn_after_exception).
         if self._turn is not None:
@@ -1771,6 +2138,7 @@ class ChatInterface:
                     full_history=full_history_for_llm,  # Also try with full history if model supports it
                     user_message_for_scoring=user_message,
                     message_variants=llm_message_variants,
+                    side_by_side_backend=side_by_side_backend,
                 ),
                 timeout=turn_budget,
             )

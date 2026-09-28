@@ -99,6 +99,7 @@ REASON_FEW_TURNS = "few_turns"
 REASON_KEEP_ALL_INTERNALS_FAILING = "keep_all_internals_failing"
 REASON_KEEP_ALL_NO_HEALTHY_EXTERNAL = "keep_all_no_healthy_external"
 REASON_ORDERED = "ordered"
+REASON_ORDERED_BY_JEV = "ordered_by_jev"
 _REASON_MAX = 64
 
 
@@ -196,6 +197,10 @@ class ModelAggregate:
     # and those that returned a usable candidate.
     calls: int = 0
     usable_calls: int = 0
+    # Calls whose reply Jev scored in a ranking (chat/reply_gate.py), and
+    # the sum of those scores (each 0 to 1).
+    jev_scored: int = 0
+    jev_total: float = 0.0
 
     @property
     def usable_rate(self) -> Optional[float]:
@@ -309,18 +314,30 @@ def _choose_exclusions(
 
 def _choose_order(
     aggregates: ChatAggregates, roster: Sequence[str], rules: PolicyRules
-) -> Tuple[Tuple[str, ...], Dict[str, Tuple[float, int]]]:
-    """The roster, with the models asked on at least ``min_asks_to_order``
-    turns reordered among the places they already hold, best first. A
-    model's score is the share of the turns that asked it where its answer
-    was delivered. Models without enough turns keep their places, so the
-    roster's order stays the prior until the data says otherwise."""
+) -> Tuple[Tuple[str, ...], Dict[str, Tuple[float, int]], bool]:
+    """The roster, with the well-sampled models reordered among the places
+    they already hold, best first, and whether Jev's scores ordered them.
+
+    Jev's scores come first: once at least two roster models each have
+    ``min_asks_to_order`` replies Jev scored in a ranking, those models are
+    ordered by their mean score. Until then a model asked on at least
+    ``min_asks_to_order`` turns is scored by the share of those turns where
+    its answer was delivered. Models without enough data keep their places,
+    so the roster's order stays the prior until the data says otherwise."""
     roster = [name for name in dict.fromkeys(roster) if name]
-    scores: Dict[str, Tuple[float, int]] = {}
+    by_jev: Dict[str, Tuple[float, int]] = {}
     for name in roster:
         model = aggregates.models.get(name)
-        if model is not None and model.asked >= rules.min_asks_to_order:
-            scores[name] = (model.wins / model.asked, model.asked)
+        if model is not None and model.jev_scored >= rules.min_asks_to_order:
+            by_jev[name] = (model.jev_total / model.jev_scored, model.jev_scored)
+    scores: Dict[str, Tuple[float, int]] = {}
+    if len(by_jev) >= 2:
+        scores = by_jev
+    else:
+        for name in roster:
+            model = aggregates.models.get(name)
+            if model is not None and model.asked >= rules.min_asks_to_order:
+                scores[name] = (model.wins / model.asked, model.asked)
     places = [i for i, name in enumerate(roster) if name in scores]
     ranked = sorted(
         (name for name in roster if name in scores),
@@ -329,7 +346,7 @@ def _choose_order(
     order = list(roster)
     for place, name in zip(places, ranked):
         order[place] = name
-    return tuple(order), scores
+    return tuple(order), scores, scores is by_jev
 
 
 def compute_policy(
@@ -347,8 +364,9 @@ def compute_policy(
       while our own models are failing often.
     * The hold is ``hold_seconds`` (FHI_CHAT_EXTERNAL_HOLD_SECONDS), within
       MAX_EXTERNAL_DELAY_SECONDS.
-    * The order is the roster reordered by how often each well-sampled
-      model's answer was delivered (_choose_order).
+    * The order is the roster reordered by Jev's scores once two models
+      have enough, else by how often each well-sampled model's answer was
+      delivered (_choose_order).
     """
     recent_rate = _ratio(
         aggregates.recent_internal_usable_turns, aggregates.recent_internal_turns
@@ -369,9 +387,9 @@ def compute_policy(
             reasons.append(why_keep)
         hold = float(hold_seconds) if math.isfinite(float(hold_seconds)) else 0.0
         delay = min(max(hold, 0.0), MAX_EXTERNAL_DELAY_SECONDS)
-        order, scores = _choose_order(aggregates, roster, rules)
+        order, scores, by_jev = _choose_order(aggregates, roster, rules)
         if scores:
-            reasons.append(REASON_ORDERED)
+            reasons.append(REASON_ORDERED_BY_JEV if by_jev else REASON_ORDERED)
 
     return ChatPolicy(
         external_excluded=excluded,
@@ -763,6 +781,15 @@ def aggregate_chat_turns(
             model.calls += 1
             if c.get("status") == "scored":
                 model.usable_calls += 1
+            jev = c.get("jev")
+            if (
+                isinstance(jev, (int, float))
+                and not isinstance(jev, bool)
+                and math.isfinite(jev)
+                and 0.0 <= jev <= 1.0
+            ):
+                model.jev_scored += 1
+                model.jev_total += float(jev)
             asked.add(name)
         for name in asked:
             aggregates.models[name].asked += 1

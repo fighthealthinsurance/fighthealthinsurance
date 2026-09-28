@@ -43,6 +43,7 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.chat.llm_client import MIN_RESPONSE_LENGTH
 from fighthealthinsurance.chat.turn_record import (
     COMPLETED_STATUSES,
     STATUS_EMPTY,
@@ -53,6 +54,7 @@ from fighthealthinsurance.chat.turn_record import (
     STATUS_UNSCORED,
 )
 from fighthealthinsurance.utils import (
+    STAGE_AFTER_CHECK,
     STAGE_AFTER_DELAY,
     STAGE_EARLY,
     STAGE_SKIPPED,
@@ -76,7 +78,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
-from fighthealthinsurance.ml import chat_shadow, letter_quality, model_query
+from fighthealthinsurance.ml import chat_gate, chat_shadow, letter_quality, model_query
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_CHOICES,
     CONTEXT_LEVEL_TEMPLATE,
@@ -1514,6 +1516,14 @@ CHAT_TURN_FIELDS = (
     "alternate_cross_model",
     "preferred",
     "external_start",
+    "gate_used",
+    "gate_outcome",
+    "gate_scorer",
+    "gate_demoted_delivered",
+    "gate_crucial",
+    "rank_outcome",
+    "rank_changed",
+    "alternate_reason",
     "shadow_outcome",
     "shadow_scorer",
     "shadow_winner_answers",
@@ -1745,6 +1755,28 @@ class _ChatTally:
         # pass did: the retry (our reply was empty, too short or a false
         # promise) or a tool follow-up. They were not "never sent".
         self.externals_skipped_later = 0
+        # The live Jev check on our reply: turns it held the outside models
+        # for, by outcome, and of the fails, how many our own checks decided
+        # without sending the reply to Jev; turns whose outside calls it kept
+        # from being sent; and, of the OK turns where Jev failed the reply,
+        # how many delivered an outside model's answer, and how many still
+        # delivered our demoted reply because nothing else usable arrived.
+        # Those last three leave out the fails our own checks decided, so
+        # they stay a check on Jev's questions and thresholds.
+        self.gate_turns = 0
+        self.gate_outcomes: Counter = Counter()
+        self.gate_fail_local = 0
+        self.gate_saved = 0
+        self.gate_fail_ok = 0
+        self.gate_fail_external_wins = 0
+        self.gate_fail_demoted_delivered = 0
+        # The tiers: turns Jev read as crucial moments, rankings after a
+        # borderline check (and how many replaced the race's pick), and
+        # side-by-sides offered for a crucial moment.
+        self.gate_crucial = 0
+        self.rank_outcomes: Counter = Counter()
+        self.rank_changed = 0
+        self.alternates_crucial = 0
         self.same_model_pairs = 0
         self.same_model_picks: Counter = Counter()
         self.models: Dict[str, Dict[str, Any]] = {}
@@ -1788,6 +1820,14 @@ class _ChatTally:
             cross_model,
             preferred,
             external_start,
+            gate_used,
+            gate_outcome,
+            gate_scorer,
+            gate_demoted_delivered,
+            gate_crucial,
+            rank_outcome,
+            rank_changed,
+            alternate_reason,
             shadow_outcome,
             shadow_scorer,
             *shadow_scores,
@@ -1805,6 +1845,49 @@ class _ChatTally:
             (shadow_scores[4], shadow_scores[5], shadow_scores[6], shadow_scores[7]),
         )
         self.outcomes[outcome] += 1
+        # Whether any outside call was sent on the turn, in any pass: a
+        # first pass that skipped them can be followed by a retry that asks
+        # them (our reply was empty, too short or a false promise).
+        # The crucial side-by-side (a reserved call) is not one of the
+        # turn's outside models: a pass that asked only it saved them.
+        external_sent = any(
+            isinstance(call, dict)
+            and call.get("external") is True
+            and call.get("reserved") is not True
+            and call.get("status") != STATUS_SKIPPED
+            for call in calls or []
+        )
+        if gate_used:
+            self.gate_turns += 1
+            self.gate_outcomes[gate_outcome] += 1
+            if (
+                isinstance(gate_crucial, float)
+                and gate_crucial >= chat_gate.crucial_threshold()
+            ):
+                self.gate_crucial += 1
+            if rank_outcome:
+                self.rank_outcomes[rank_outcome] += 1
+                if rank_changed:
+                    self.rank_changed += 1
+            failed_ours = chat_gate.from_our_checks(gate_scorer)
+            if gate_outcome == chat_gate.FAIL and failed_ours:
+                self.gate_fail_local += 1
+            if (
+                gate_outcome == chat_gate.PASS
+                and external_start == STAGE_SKIPPED
+                and not external_sent
+            ):
+                self.gate_saved += 1
+            if (
+                gate_outcome == chat_gate.FAIL
+                and not failed_ours
+                and outcome == ChatTurn.Outcome.OK
+            ):
+                self.gate_fail_ok += 1
+                if winner_external is True:
+                    self.gate_fail_external_wins += 1
+                if gate_demoted_delivered:
+                    self.gate_fail_demoted_delivered += 1
         if use_external:
             self.external_allowed += 1
         if retry_ran:
@@ -1813,12 +1896,7 @@ class _ChatTally:
             self.retry_used += 1
         if external_start:
             self.external_starts[external_start] += 1
-            if external_start == STAGE_SKIPPED and any(
-                isinstance(call, dict)
-                and call.get("external") is True
-                and call.get("status") != STATUS_SKIPPED
-                for call in calls or []
-            ):
+            if external_start == STAGE_SKIPPED and external_sent:
                 self.externals_skipped_later += 1
 
         # A model counts as asked once per turn, however many calls it got:
@@ -1871,6 +1949,8 @@ class _ChatTally:
         if not alternate_offered:
             return
         self.alternates += 1
+        if alternate_reason == ChatTurn.AlternateReason.CRUCIAL:
+            self.alternates_crucial += 1
         if preferred:
             self.picks[preferred] += 1
         if not cross_model or winner_label is None or not alternate:
@@ -1928,14 +2008,41 @@ class _ChatTally:
                 "retry_used": self.retry_used,
                 "externals_after_delay": self.external_starts[STAGE_AFTER_DELAY],
                 "externals_early": self.external_starts[STAGE_EARLY],
+                "externals_after_check": self.external_starts[STAGE_AFTER_CHECK],
                 # Never sent in any pass.
                 "externals_skipped": self.external_starts[STAGE_SKIPPED]
                 - self.externals_skipped_later,
                 "externals_skipped_later": self.externals_skipped_later,
                 "externals_held_back": sum(
                     self.external_starts[s]
-                    for s in (STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)
+                    for s in (
+                        STAGE_AFTER_DELAY,
+                        STAGE_EARLY,
+                        STAGE_AFTER_CHECK,
+                        STAGE_SKIPPED,
+                    )
                 ),
+                "gate_turns": self.gate_turns,
+                "gate_pass": self.gate_outcomes[chat_gate.PASS],
+                "gate_borderline": self.gate_outcomes[chat_gate.BORDERLINE],
+                "gate_crucial": self.gate_crucial,
+                "rank_turns": sum(self.rank_outcomes.values()),
+                "rank_picked": self.rank_outcomes[chat_gate.RANK_PICKED],
+                "rank_changed": self.rank_changed,
+                "alternates_crucial": self.alternates_crucial,
+                "gate_fail": self.gate_outcomes[chat_gate.FAIL],
+                "gate_fail_local": self.gate_fail_local,
+                "gate_error": self.gate_outcomes[chat_gate.ERROR],
+                "gate_timeout": self.gate_outcomes[chat_gate.TIMEOUT],
+                "gate_skipped": self.gate_outcomes[chat_gate.SKIPPED],
+                "gate_saved": self.gate_saved,
+                "gate_saved_share": _percent(self.gate_saved, self.gate_turns),
+                "gate_fail_ok": self.gate_fail_ok,
+                "gate_fail_external_wins": self.gate_fail_external_wins,
+                "gate_fail_external_win_share": _percent(
+                    self.gate_fail_external_wins, self.gate_fail_ok
+                ),
+                "gate_fail_demoted_delivered": self.gate_fail_demoted_delivered,
                 "alternates": self.alternates,
                 "cross_alternates": self.cross_alternates,
                 "picks": sum(self.picks.values()),
@@ -2277,7 +2384,56 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["duration_cap"] = CALL_DURATION_SAMPLE_CAP
         ctx["chat_shadow"] = self._chat_shadow_state()
         ctx["chat_policy"] = self._chat_policy_panel()
+        ctx["reply_check"] = self._reply_check_state()
         return ctx
+
+    @staticmethod
+    def _reply_check_state() -> Dict[str, Any]:
+        """Whether the live Jev check on chat replies is on now, its
+        thresholds, and the last outcome it recorded on its
+        ExternalServiceHealth row (a status or class name, never text)."""
+        from django.conf import settings
+
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        out: Dict[str, Any] = {
+            "on": chat_gate.enabled(),
+            "max_wait_seconds": chat_gate.max_wait_seconds(),
+            "timeout_seconds": chat_gate.timeout_seconds(),
+            "min_answers": chat_gate.min_answers(),
+            "max_problem": chat_gate.max_problem(),
+            "clear_answers": chat_gate.clear_answers(),
+            "clear_problem": chat_gate.clear_problem(),
+            "crucial_min": chat_gate.crucial_threshold(),
+            "side_by_side_model": str(
+                getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or ""
+            ),
+            "demote_failed": chat_gate.demote_failed(),
+            # Our own checks, which come before Jev is asked.
+            "min_response_length": MIN_RESPONSE_LENGTH,
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_failure": "",
+            "last_failure_hint": "",
+        }
+        try:
+            health = ExternalServiceHealth.objects.filter(
+                service=chat_gate.SERVICE
+            ).first()
+        except Exception as e:
+            logger.warning(f"Chat reply check health read failed: {type(e).__name__}")
+            return out
+        if health is not None:
+            out["last_success_at"] = health.last_success_at
+            out["last_failure_at"] = health.last_failure_at
+            out["last_failure"] = health.last_failure
+            out["last_failure_hint"] = (
+                # The check has its own, much shorter, timeout.
+                "no answer within FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS"
+                if health.last_failure == "timeout"
+                else AdminStatusView._scoring_failure_hint(health.last_failure)
+            )
+        return out
 
     @staticmethod
     def _chat_shadow_state() -> Dict[str, Any]:
