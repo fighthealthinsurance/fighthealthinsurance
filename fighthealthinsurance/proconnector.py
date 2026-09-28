@@ -712,6 +712,33 @@ def intro_wording_problem(text: Optional[str]) -> Optional[str]:
     return None
 
 
+def new_signup_body_problem(body: Optional[str]) -> Optional[str]:
+    """Reason an (edited) new-signup body can't go out as is, or ``None``.
+
+    The new-signup send always CCs the configured Cofactor contact, so the body
+    must at least mention them -- by first name, as a whole word -- or the
+    contact receives an email that never introduces them. That catches a body
+    whose introduction was deleted, a stale tab still holding a backlog-style
+    draft, and a contact setting that changed between preview and send.
+
+    Deliberately much looser than the AI-draft guard
+    (:func:`_is_safe_new_signup_intro_draft`): staff may reword the
+    introduction however they like ("I've cc'd Rebeca"). A bare-address
+    contact has no name to look for, so nothing is checked for it.
+    """
+    name = _cofactor_intro_contact_name()
+    if not name:
+        return None
+    first_name = name.split()[0]
+    if re.search(rf"\b{re.escape(first_name)}\b", body or "", re.IGNORECASE):
+        return None
+    return (
+        f"This introduction is CC'd to {name} at Cofactor AI, but the email "
+        f"doesn't mention {first_name}. Keep the introduction (or mention "
+        f"{first_name}) so the email matches who it goes to."
+    )
+
+
 def _is_safe_intro_draft(text: Optional[str]) -> bool:
     """Guard an AI draft against the two hard wording requirements.
 
@@ -732,8 +759,8 @@ def _is_safe_new_signup_intro_draft(text: Optional[str]) -> bool:
     """Guard an AI draft of the *new-signup* email.
 
     On top of :func:`_is_safe_intro_draft`, the draft must keep the email's
-    introduction of the configured Cofactor contact as copied, word for word
-    apart from case and spacing (see :func:`_copied_introduction`): that
+    "introduce you to <contact> (copied on this email)" introduction, word for
+    word apart from case and spacing (see :func:`_copied_introduction`): that
     contact is CC'd on the send regardless of what the body says, so a draft
     that drops them, or stops saying they're on the thread, would go out
     contradicting its own CC line. Matching the whole phrase rather than its
@@ -753,7 +780,8 @@ def _is_safe_new_signup_intro_draft(text: Optional[str]) -> bool:
     has_call_to_action = bool(re.search(r"reply[\s-]*all", body)) or (
         get_professional_cc_email().lower() in body
     )
-    return normalized(_copied_introduction()) in body and has_call_to_action
+    introduction = normalized(f"introduce you to {_copied_introduction()}")
+    return introduction in body and has_call_to_action
 
 
 async def agenerate_intro_email(

@@ -110,6 +110,7 @@ from fighthealthinsurance.proconnector import (
     mark_email_queued,
     mark_email_sent,
     mark_email_skipped,
+    new_signup_body_problem,
     new_signup_intro_cc_recipients,
     release_email_claim,
     non_spam_interested_professionals,
@@ -3806,14 +3807,19 @@ def _intro_send_problem(
     because a misconfigured CC makes the send helpers raise, and checking
     before the record is claimed means staff see the actual reason and the
     record stays in the queue for a retry once the setting is fixed.
-    ``new_signup`` checks the new-signup version's CC (its named Cofactor
-    contact) too.
+    ``new_signup`` also checks that the body mentions the Cofactor contact the
+    new-signup version CCs (:func:`new_signup_body_problem`) and that contact's
+    configuration.
     """
     problem = ProConnectorProcessView._intro_form_problem(body, subject)
     if problem is not None:
         return problem
     if not is_sendable_email(pro.email):
         return f"{pro.email} is not a sendable address; cannot send."
+    if new_signup:
+        problem = new_signup_body_problem(body)
+        if problem is not None:
+            return problem
     return intro_cc_problem(new_signup=new_signup)
 
 
