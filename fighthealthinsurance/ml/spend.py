@@ -98,6 +98,19 @@ def current_use() -> str:
     return CHAT if ML_CALL_PURPOSE.get() == "chat" else OTHER
 
 
+# Phrases in a 429 body that mean the account is out of credit or quota.
+QUOTA_PHRASES = (
+    "insufficient_quota",
+    "exceeded your current quota",
+    "credit balance is too low",
+    "insufficient credit",
+    "insufficient balance",
+    "insufficient funds",
+    "out of credits",
+    "billing hard limit",
+)
+
+
 def quota_refusal(status: int, body: str) -> bool:
     """Whether a provider's error means credit or quota ran out, not a
     passing rate limit: HTTP 402, or a 429 whose body says so."""
@@ -106,10 +119,10 @@ def quota_refusal(status: int, body: str) -> bool:
     if status != 429:
         return False
     text = (body or "").lower()
-    return any(
-        word in text
-        for word in ("insufficient_quota", "quota", "credit", "balance", "billing")
-    )
+    # Whole phrases only. A passing rate limit's body can mention quota too:
+    # Azure OpenAI's links to aka.ms/oai/quotaincrease, and pausing on that
+    # would take the model out of chat for the rest of the day.
+    return any(phrase in text for phrase in QUOTA_PHRASES)
 
 
 def counter(provider: str, use: str) -> str:

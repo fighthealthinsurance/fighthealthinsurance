@@ -217,6 +217,19 @@ class TestPauses:
             (429, '{"error": {"code": "insufficient_quota"}}', True),
             (429, "Your credit balance is too low", True),
             (429, "Too many requests, slow down", False),
+            # Azure OpenAI's ordinary per-minute limit links to a quota page.
+            (
+                429,
+                '{"error": {"code": "429", "message": "Requests to the '
+                "ChatCompletions_Create Operation under Azure OpenAI API have "
+                "exceeded token rate limit of your current OpenAI S0 pricing "
+                "tier. Please retry after 6 seconds. Please go here: "
+                'https://aka.ms/oai/quotaincrease if you would like to further '
+                'increase the default rate limit."}}',
+                False,
+            ),
+            (429, "You exceeded your current quota, please check your plan", True),
+            (429, "Your balance is updated nightly; retry in 5s", False),
             (500, "quota", False),
         ],
     )
