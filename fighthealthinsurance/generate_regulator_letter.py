@@ -243,14 +243,19 @@ async def generate_regulator_letter(
     denial: Any,
     recipient: EscalationRecipient,
     use_external: bool = False,
+    professional: Optional[bool] = None,
 ) -> Optional[str]:
     """
     Generate a single regulator/executive cover letter for the denial.
 
+    ``professional`` picks the letter's voice; when None it follows the
+    denial's ``professional_to_finish`` flag, as in
+    ``make_regulator_letter_prompt``.
+
     Returns the letter text, or None if no model is available or
     generation failed.
     """
-    professional = _letter_is_from_professional(denial, None)
+    professional = _letter_is_from_professional(denial, professional)
     prompt = make_regulator_letter_prompt(denial, recipient, professional=professional)
     models = ml_router.get_chat_backends(use_external=use_external)
     if not models:

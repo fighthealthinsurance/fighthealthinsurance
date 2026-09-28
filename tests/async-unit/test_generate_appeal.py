@@ -754,10 +754,13 @@ class TestDualCallContextBudget:
             pubmed_context=None,
             ml_citations_context=citations,
         )
-        # Only the list contributes; it is stringified before counting.
+        # Only the list contributes, counted the way the wire renders it:
+        # one citation per line, not the list's Python repr.
         from fighthealthinsurance.context_utils import estimate_tokens
 
-        assert _estimate_call_token_footprint(call) == estimate_tokens(citations)
+        assert _estimate_call_token_footprint(call) == estimate_tokens(
+            "\n".join(citations)
+        )
 
     def test_estimate_caps_patient_context_to_wire_size(self):
         # _build_context_extra only sends patient_context[0:max_len/2] chars,
@@ -1125,7 +1128,9 @@ class TestBackendLabel:
     the same string as model_name, so it cannot name an endpoint."""
 
     def test_descriptor_names_class_wire_model_and_host_but_never_the_token(self):
-        m = RemoteFullOpenLike("http://h1.internal:8000/v1", "sekrit-token", "wire-model")
+        m = RemoteFullOpenLike(
+            "http://h1.internal:8000/v1", "sekrit-token", "wire-model"
+        )
         m.name = "fhi-2025"  # what the router stamps
         label = m.backend_descriptor()
         assert label == "RemoteFullOpenLike(wire-model @ h1.internal:8000)"

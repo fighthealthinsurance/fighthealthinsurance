@@ -4446,9 +4446,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 continue
 
             # Remove numbering ("1.", "[1]", "(1)") and bullet points at the
-            # beginning of the line.
+            # beginning of the line. Only the bracketed forms may run straight
+            # into the text ("[2]Jones"); a bare "10." or "-" needs a space
+            # after it, or a DOI-only citation like "10.1000/abc" would lose
+            # its "10." prefix.
             line = re.sub(
-                r"^\s*(?:\[\d+\]|\(\d+\)|\d+[.)\-]|\*|\•|\-)\s*", "", line
+                r"^\s*(?:(?:\[\d+\]|\(\d+\))\s*|(?:\d+[.)\-]|\*|\•|\-)\s+)",
+                "",
+                line,
             ).strip()
 
             normalized_line = re.sub(r"\s+", " ", line.lower()).strip()

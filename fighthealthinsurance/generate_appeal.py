@@ -63,6 +63,7 @@ from .ml.ml_models import (
     RemoteModelLike,
     context_already_in_prompt,
     describe_model_error,
+    render_citations_context,
     repetition_penalty,
 )
 from .ml.ml_router import ml_router
@@ -1045,12 +1046,17 @@ def _estimate_call_token_footprint(
     ):
         patient_context = patient_context[:patient_context_char_cap]
     prompt = call.get("prompt")
+    # A citation list goes on the wire one citation per line (see
+    # render_citations_context), not as its Python repr, so count that.
+    citations = call.get("ml_citations_context")
+    if isinstance(citations, (list, tuple)):
+        citations = render_citations_context(list(citations))
     total = estimate_tokens(prompt)
     for value in (
         patient_context,
         call.get("plan_context"),
         call.get("pubmed_context"),
-        call.get("ml_citations_context"),
+        citations,
     ):
         if not context_already_in_prompt(prompt, value):
             total += estimate_tokens(value)

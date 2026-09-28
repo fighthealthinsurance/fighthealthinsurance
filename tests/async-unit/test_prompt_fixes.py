@@ -128,6 +128,16 @@ class TestTokenEstimateMirrorsTheWire:
 
         assert _estimate_call_token_footprint(call) == estimate_tokens(prompt)
 
+    def test_citation_list_is_counted_as_rendered_lines(self):
+        from fighthealthinsurance.context_utils import estimate_tokens
+
+        citations = ["x" * 20, "y" * 20]
+        call = self._call(prompt=None, ml_citations_context=citations)
+        assert _estimate_call_token_footprint(call) == estimate_tokens(
+            "\n".join(citations)
+        )
+        assert _estimate_call_token_footprint(call) != estimate_tokens(str(citations))
+
     def test_context_missing_from_prompt_is_still_added(self):
         call = self._call(
             prompt="p" * 40, plan_context="b" * 40, pubmed_context="c" * 40
@@ -156,6 +166,24 @@ async def test_get_citations_strips_bracketed_numbering():
         "Smith et al., MRI timing, Spine, 2021, https://doi.org/10.1/a",
         "Jones et al., Conservative care, JAMA, 2020",
         "Lee et al., Imaging guidelines, Radiology, 2019",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_citations_keeps_a_doi_that_starts_with_digits():
+    """A bare "10." is list numbering only when a space follows it; a
+    DOI-only citation must keep its "10." prefix."""
+    m = _model()
+    reply = "10.1000/example-doi\n1. Smith et al., MRI timing, Spine, 2021"
+    with patch.object(m, "get_system_prompts", return_value=["sys"]), patch.object(
+        m, "_infer", new=AsyncMock(return_value=(reply, []))
+    ):
+        citations = await m.get_citations(
+            denial_text="denied", procedure="MRI", diagnosis="back pain"
+        )
+    assert citations == [
+        "10.1000/example-doi",
+        "Smith et al., MRI timing, Spine, 2021",
     ]
 
 
@@ -283,6 +311,24 @@ class TestRegulatorLetterPrompt:
         )[0]
         assert len(excerpt) <= 4000 + 10
         assert excerpt.rstrip().endswith((".", "…"))
+
+    @pytest.mark.asyncio
+    async def test_generation_honours_an_explicit_voice_override(self):
+        model = AsyncMock(spec=RemoteModelLike)
+        model.generate_prior_auth_response.return_value = "Dear Regulator, " * 10
+        with patch(
+            "fighthealthinsurance.generate_regulator_letter.ml_router.get_chat_backends",
+            return_value=[model],
+        ):
+            await generate_regulator_letter(
+                _denial(professional_to_finish=False),
+                _recipient(),
+                professional=True,
+            )
+        kwargs = model.generate_prior_auth_response.call_args.kwargs
+        assert kwargs["prof_pov"] is True
+        prompt = model.generate_prior_auth_response.call_args.args[0]
+        assert "from the treating healthcare professional" in prompt
 
     @pytest.mark.asyncio
     async def test_generation_passes_its_own_system_prompt_and_pov(self):
