@@ -42,6 +42,7 @@ person.
 
 import calendar
 import datetime
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -140,7 +141,9 @@ def deepinfra_cost_micro(model: str, usage: Any) -> int:
         return 0
     estimated = usage.get("estimated_cost")
     if isinstance(estimated, (int, float)) and not isinstance(estimated, bool):
-        if estimated >= 0:
+        # A figure that is not finite, or too large to count in
+        # micro-dollars, is not a cost we can trust: fall back to list price.
+        if 0 <= estimated < 1e9 and math.isfinite(estimated):
             return round(estimated * MICRO)
     price_in, price_out = DEEPINFRA_USD_PER_MTOK.get(model, FALLBACK_USD_PER_MTOK)
     try:

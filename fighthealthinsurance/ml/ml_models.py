@@ -2044,13 +2044,20 @@ class RemoteModel(RemoteModelLike):
             return
         if result.get("object") == "error":
             return
-        use = spend.current_use()
-        if provider == spend.DEEPINFRA:
-            spend.record(
-                provider, use, spend.deepinfra_cost_micro(model, result.get("usage"))
-            )
-        elif provider == spend.AZURE:
-            spend.record(provider, use, 1)
+        # Counting runs inside the request's own try: a failure here must
+        # never turn an answer that arrived into a failed call.
+        try:
+            use = spend.current_use()
+            if provider == spend.DEEPINFRA:
+                spend.record(
+                    provider,
+                    use,
+                    spend.deepinfra_cost_micro(model, result.get("usage")),
+                )
+            elif provider == spend.AZURE:
+                spend.record(provider, use, 1)
+        except Exception as e:
+            logger.warning(f"Spend not counted: {type(e).__name__}")
 
     def _spend_allows(self) -> bool:
         """Whether this backend's provider may be asked for the current

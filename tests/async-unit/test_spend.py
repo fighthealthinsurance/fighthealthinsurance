@@ -57,6 +57,19 @@ class TestCosts:
             "mistralai/Mistral-Small-3.2-24B-Instruct-2506", usage
         ) == 275_000
 
+    @pytest.mark.parametrize(
+        "estimated", [float("inf"), float("nan"), 1e308, -0.5, True, "0.1"]
+    )
+    def test_an_estimate_we_cannot_trust_falls_back_to_list_price(self, estimated):
+        usage = {
+            "prompt_tokens": 1_000_000,
+            "completion_tokens": 1_000_000,
+            "estimated_cost": estimated,
+        }
+        assert spend.deepinfra_cost_micro(
+            "mistralai/Mistral-Small-3.2-24B-Instruct-2506", usage
+        ) == 275_000
+
     def test_an_unpriced_model_is_charged_high(self):
         usage = {"prompt_tokens": 1_000_000, "completion_tokens": 0}
         assert spend.deepinfra_cost_micro("someone/new-model", usage) == 3 * M
