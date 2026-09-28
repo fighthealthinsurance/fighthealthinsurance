@@ -31,6 +31,37 @@ class MailingListSubscriptionTest(TestCase):
         self.assertIsNotNone(box, "the scan page has no subscribe box")
         self.assertNotRegex(box.group(0), r"\bchecked(?!\")")
 
+    def _subscribe_box_on_a_rejected_submission(self, data):
+        import re
+
+        response = self.client.post(reverse("process"), data)
+        self.assertEqual(response.status_code, 200, "expected the form back")
+        html = response.content.decode()
+        return re.search(r'<input[^>]*id="subscribe"[^>]*>', html).group(0)
+
+    def test_a_ticked_box_stays_ticked_when_the_form_comes_back(self):
+        # Missing consents send the page back with the person's answers.
+        box = self._subscribe_box_on_a_rejected_submission(
+            {"denial_text": "My claim was denied.", "subscribe": "checked"}
+        )
+        self.assertRegex(box, r"\bchecked(?!\")")
+
+    def test_an_unticked_box_stays_unticked_when_the_form_comes_back(self):
+        box = self._subscribe_box_on_a_rejected_submission(
+            {"denial_text": "My claim was denied."}
+        )
+        self.assertNotRegex(box, r"\bchecked(?!\")")
+
+    def test_the_chat_and_policy_pages_leave_the_newsletter_box_unticked(self):
+        import re
+
+        for name in ("chat_consent", "understand_policy"):
+            html = self.client.get(reverse(name)).content.decode()
+            boxes = re.findall(r'<input[^>]*name="subscribe"[^>]*>', html)
+            self.assertTrue(boxes, f"{name} has no subscribe box")
+            for box in boxes:
+                self.assertNotRegex(box, r"\bchecked(?!\")", name)
+
     def test_the_explain_page_leaves_the_newsletter_box_unticked(self):
         import re
 
