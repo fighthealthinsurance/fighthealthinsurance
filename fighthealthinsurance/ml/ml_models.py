@@ -127,6 +127,7 @@ from fighthealthinsurance.utils import all_concrete_subclasses
 # followed by whitespace and a capital letter (avoids splitting on "Dr.", "U.S.", etc.)
 _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
+
 # The work-requirements answer the system prompt mandates VERBATIM. Named
 # here, rather than buried in the prompt literal, because two other places
 # have to agree with it: response_similarity.CANNED_REPLY_SIGNATURES (which
@@ -134,6 +135,40 @@ _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 # the required text twice) and the drift test that checks the two still
 # match. Editing the wording is fine; editing it in only one of those places
 # is what broke it before.
+def render_citations_context(
+    ml_citations_context: Optional[Union[str, List[str]]],
+) -> Optional[str]:
+    """One citation per line. ``make_open_prompt`` renders the list the same
+    way, so the prompt and the context-injection surface compare
+    byte-for-byte."""
+    if ml_citations_context is None:
+        return None
+    if isinstance(ml_citations_context, str):
+        return ml_citations_context
+    return "\n".join(str(c) for c in ml_citations_context if c)
+
+
+def context_already_in_prompt(prompt: Optional[str], value: Any) -> bool:
+    """True when ``prompt`` already carries ``value`` verbatim.
+
+    The one rule behind two surfaces: ``_build_context_extra`` skips such a
+    value instead of injecting it a second time, and
+    ``generate_appeal._estimate_call_token_footprint`` leaves it out of the
+    wire-size estimate for the same reason. A citation list is compared in
+    its rendered one-per-line form.
+    """
+    if not prompt or not value:
+        return False
+    rendered = (
+        render_citations_context(list(value))
+        if isinstance(value, (list, tuple))
+        else value
+    )
+    if not isinstance(rendered, str) or not rendered.strip():
+        return False
+    return rendered.strip() in prompt
+
+
 # System prompt for the prior-auth letter path. Callers that reuse that path
 # for a different short letter (see generate_regulator_letter) pass their own.
 PRIOR_AUTH_SYSTEM_PROMPT = (
@@ -4008,18 +4043,6 @@ class RemoteOpenLike(RemoteModel):
 
         return formatted_citations
 
-    @staticmethod
-    def _render_citations_context(
-        ml_citations_context: Optional[Union[str, List[str]]],
-    ) -> Optional[str]:
-        """One citation per line. ``make_open_prompt`` renders the list the
-        same way, so the two surfaces can be compared byte-for-byte."""
-        if ml_citations_context is None:
-            return None
-        if isinstance(ml_citations_context, str):
-            return ml_citations_context
-        return "\n".join(str(c) for c in ml_citations_context if c)
-
     def _build_context_extra(
         self,
         patient_context: Optional[str] = None,
@@ -4042,10 +4065,9 @@ class RemoteOpenLike(RemoteModel):
         them to register their URLs as trusted input) -- they just don't
         reach the wire twice.
         """
-        prompt_text = prompt or ""
 
         def _already_in_prompt(value: str) -> bool:
-            return bool(prompt_text) and value.strip() in prompt_text
+            return context_already_in_prompt(prompt, value)
 
         context_extra = ""
         if (
@@ -4063,7 +4085,7 @@ class RemoteOpenLike(RemoteModel):
             and not _already_in_prompt(plan_context)
         ):
             context_extra += f"For answering the question you can use this context about the plan {plan_context}"
-        citations_text = self._render_citations_context(ml_citations_context)
+        citations_text = render_citations_context(ml_citations_context)
         if citations_text and not _already_in_prompt(citations_text):
             context_extra += (
                 f"You can also use this context from citations: {citations_text}."

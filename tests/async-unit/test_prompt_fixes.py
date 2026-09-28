@@ -23,7 +23,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from fighthealthinsurance.escalation_addresses import EscalationRecipient
-from fighthealthinsurance.generate_appeal import AppealGenerator
+from fighthealthinsurance.generate_appeal import (
+    AppealGenerator,
+    _estimate_call_token_footprint,
+)
 from fighthealthinsurance.generate_prior_auth import PriorAuthGenerator
 from fighthealthinsurance.generate_regulator_letter import (
     REGULATOR_LETTER_SYSTEM_PROMPT,
@@ -90,6 +93,46 @@ class TestContextExtraSkipsWhatThePromptCarries:
     def test_empty_citation_list_adds_nothing(self):
         m = _model()
         assert m._build_context_extra(ml_citations_context=[]) == ""
+
+
+class TestTokenEstimateMirrorsTheWire:
+    """The proactive-shed estimate counts a call-dict context only when the
+    model would actually inject it, i.e. when the prompt lacks it."""
+
+    def _call(self, **overrides):
+        base = {
+            "model_name": "fhi-internal",
+            "prompt": None,
+            "patient_context": None,
+            "plan_context": None,
+            "infer_type": "full",
+            "pubmed_context": None,
+            "ml_citations_context": None,
+            "prof_pov": False,
+        }
+        base.update(overrides)
+        return base
+
+    def test_context_embedded_in_prompt_is_counted_once(self):
+        plan = "b" * 40
+        pubmed = "c" * 40
+        citations = ["d" * 20, "e" * 20]
+        prompt = f"TASK\n\nPLAN DETAILS: {plan}\n\nPubMed: {pubmed}\n\nCites: d{'d' * 19}\ne{'e' * 19}"
+        call = self._call(
+            prompt=prompt,
+            plan_context=plan,
+            pubmed_context=pubmed,
+            ml_citations_context=citations,
+        )
+        from fighthealthinsurance.context_utils import estimate_tokens
+
+        assert _estimate_call_token_footprint(call) == estimate_tokens(prompt)
+
+    def test_context_missing_from_prompt_is_still_added(self):
+        call = self._call(
+            prompt="p" * 40, plan_context="b" * 40, pubmed_context="c" * 40
+        )
+        assert _estimate_call_token_footprint(call) == 30
 
 
 # --- citation parser -------------------------------------------------------

@@ -61,6 +61,7 @@ from .ml.ml_models import (
     ProviderUnavailable,
     RemoteFullOpenLike,
     RemoteModelLike,
+    context_already_in_prompt,
     describe_model_error,
     repetition_penalty,
 )
@@ -1023,10 +1024,11 @@ def _estimate_call_token_footprint(
     """Rough token estimate of what a model call actually sends.
 
     Sums the prompt with the patient/plan/pubmed/citation context that the
-    model re-injects via ``context_extra`` (see
-    ``ml_models.RemoteOpenLike._build_context_extra``). Enrichment baked
-    into the prompt string is already counted via ``prompt``; the call-dict
-    contexts are added on top because that mirrors what is sent on the wire.
+    model injects via ``context_extra`` (see
+    ``ml_models.RemoteOpenLike._build_context_extra``). A call-dict context
+    the prompt already carries verbatim is not injected again, so it is not
+    counted again either (``context_already_in_prompt`` is the shared rule);
+    the rest are added on top because that mirrors what is sent on the wire.
 
     ``patient_context_char_cap`` mirrors the on-the-wire truncation that
     ``_build_context_extra`` applies (``patient_context[0:max_len/2]``): the
@@ -1042,13 +1044,17 @@ def _estimate_call_token_footprint(
         and len(patient_context) > patient_context_char_cap
     ):
         patient_context = patient_context[:patient_context_char_cap]
-    return (
-        estimate_tokens(call.get("prompt"))
-        + estimate_tokens(patient_context)
-        + estimate_tokens(call.get("plan_context"))
-        + estimate_tokens(call.get("pubmed_context"))
-        + estimate_tokens(call.get("ml_citations_context"))
-    )
+    prompt = call.get("prompt")
+    total = estimate_tokens(prompt)
+    for value in (
+        patient_context,
+        call.get("plan_context"),
+        call.get("pubmed_context"),
+        call.get("ml_citations_context"),
+    ):
+        if not context_already_in_prompt(prompt, value):
+            total += estimate_tokens(value)
+    return total
 
 
 def _model_context_limit(model_name: Optional[str]) -> Optional[int]:
