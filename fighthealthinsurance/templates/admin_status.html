@@ -64,7 +64,7 @@
         {% for d in models.details %}
           <tr>
             <td>{{ d.name }}</td>
-            <td><span class="pill">{% if d.external %}external{% else %}internal{% endif %}</span></td>
+            <td><span class="pill">{% if d.context_only %}context-only, not counted{% elif d.external %}external{% else %}internal{% endif %}</span></td>
             <td>{% if d.ok %}<span class="status-badge ok">up</span>{% else %}<span class="status-badge bad">down</span>{% endif %}</td>
             <td class="error-text">{{ d.error|default:"" }}</td>
             <td>

@@ -466,9 +466,9 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     Unlike :meth:`_HealthStatus.get_snapshot`, which returns a cached summary
     (used by the public ``live_models_status`` endpoint and deliberately keeps
     internal failures out of ``details``), this returns a full per-backend
-    breakdown — ``{"name", "ok", "external", "error"}`` — for the staff-only
-    system status dashboard. It does not send alerts or mutate the cached
-    snapshot.
+    breakdown — ``{"name", "ok", "external", "context_only", "error"}`` — for
+    the staff-only system status dashboard. It does not send alerts or mutate
+    the cached snapshot.
 
     Checks run in parallel with a shared deadline; a backend whose check has
     not finished by ``timeout_seconds`` is reported as not-ok with a timeout
@@ -479,9 +479,11 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
         router = ml_router_module.ml_router
         # Context-only backends (citations) included: "every known backend"
         # used to leave them out because they are in no generation pool.
-        candidates = list(router.all_models_by_cost) + list(
-            getattr(router, "context_only_models_by_cost", [])
-        )
+        # Their rows say so, and callers counting what can draft leave them
+        # out, as the public snapshot does.
+        context_only = list(getattr(router, "context_only_models_by_cost", []))
+        context_only_ids = {id(m) for m in context_only}
+        candidates = list(router.all_models_by_cost) + context_only
     except Exception:
         # Propagate rather than returning [] — an empty list is indistinguishable
         # from "no models registered" and would let the caller (_model_status)
@@ -531,6 +533,7 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                     "name": name,
                     "ok": ok,
                     "external": is_external,
+                    "context_only": id(m) in context_only_ids,
                     "error": err,
                     "ref": ref_by_id.get(id(m)),
                 }

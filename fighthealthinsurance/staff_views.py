@@ -285,12 +285,17 @@ class AdminStatusView(generic.TemplateView):
 
             details = compute_model_health_details()
             out["details"] = details
-            out["alive"] = sum(1 for d in details if d["ok"])
-            out["total"] = len(details)
+            # The counts are of backends that can draft. A context-only one
+            # (citations) is listed but never counted: Perplexity's check
+            # always passes, so with every generation backend down the page
+            # read DEGRADED instead of DOWN.
+            drafting = [d for d in details if not d.get("context_only")]
+            out["alive"] = sum(1 for d in drafting if d["ok"])
+            out["total"] = len(drafting)
             out["internal_alive"] = sum(
-                1 for d in details if d["ok"] and not d["external"]
+                1 for d in drafting if d["ok"] and not d["external"]
             )
-            out["internal_total"] = sum(1 for d in details if not d["external"])
+            out["internal_total"] = sum(1 for d in drafting if not d["external"])
             out["working"] = ml_router.working()
         except Exception as e:
             logger.opt(exception=True).error("Error computing model status")
