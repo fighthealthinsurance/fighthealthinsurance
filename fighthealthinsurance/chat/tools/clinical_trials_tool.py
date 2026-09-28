@@ -75,7 +75,9 @@ class ClinicalTrialsTool(BaseTool):
         cleaned_response = self.clean_response(response_text, match)
 
         if "your search terms" in query_terms.lower():
-            logger.debug(f"Got placeholder ClinicalTrials query: {query_terms}")
+            logger.debug(
+                f"Got placeholder ClinicalTrials query (query_chars={len(query_terms)})"
+            )
             return cleaned_response, context
         if not query_terms:
             return cleaned_response, context

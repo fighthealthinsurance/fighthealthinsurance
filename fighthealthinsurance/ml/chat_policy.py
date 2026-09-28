@@ -38,12 +38,23 @@ Everything here is names and numbers. No message, reply or other chat text
 is read, kept or written.
 """
 
+import contextlib
 import datetime
 import math
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
+from typing import (
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
 
 from django.conf import settings
 from django.utils import timezone
@@ -88,6 +99,7 @@ REASON_FEW_TURNS = "few_turns"
 REASON_KEEP_ALL_INTERNALS_FAILING = "keep_all_internals_failing"
 REASON_KEEP_ALL_NO_HEALTHY_EXTERNAL = "keep_all_no_healthy_external"
 REASON_ORDERED = "ordered"
+REASON_ORDERED_BY_JEV = "ordered_by_jev"
 _REASON_MAX = 64
 
 
@@ -185,6 +197,10 @@ class ModelAggregate:
     # and those that returned a usable candidate.
     calls: int = 0
     usable_calls: int = 0
+    # Calls whose reply Jev scored in a ranking (chat/reply_gate.py), and
+    # the sum of those scores (each 0 to 1).
+    jev_scored: int = 0
+    jev_total: float = 0.0
 
     @property
     def usable_rate(self) -> Optional[float]:
@@ -298,18 +314,30 @@ def _choose_exclusions(
 
 def _choose_order(
     aggregates: ChatAggregates, roster: Sequence[str], rules: PolicyRules
-) -> Tuple[Tuple[str, ...], Dict[str, Tuple[float, int]]]:
-    """The roster, with the models asked on at least ``min_asks_to_order``
-    turns reordered among the places they already hold, best first. A
-    model's score is the share of the turns that asked it where its answer
-    was delivered. Models without enough turns keep their places, so the
-    roster's order stays the prior until the data says otherwise."""
+) -> Tuple[Tuple[str, ...], Dict[str, Tuple[float, int]], bool]:
+    """The roster, with the well-sampled models reordered among the places
+    they already hold, best first, and whether Jev's scores ordered them.
+
+    Jev's scores come first: once at least two roster models each have
+    ``min_asks_to_order`` replies Jev scored in a ranking, those models are
+    ordered by their mean score. Until then a model asked on at least
+    ``min_asks_to_order`` turns is scored by the share of those turns where
+    its answer was delivered. Models without enough data keep their places,
+    so the roster's order stays the prior until the data says otherwise."""
     roster = [name for name in dict.fromkeys(roster) if name]
-    scores: Dict[str, Tuple[float, int]] = {}
+    by_jev: Dict[str, Tuple[float, int]] = {}
     for name in roster:
         model = aggregates.models.get(name)
-        if model is not None and model.asked >= rules.min_asks_to_order:
-            scores[name] = (model.wins / model.asked, model.asked)
+        if model is not None and model.jev_scored >= rules.min_asks_to_order:
+            by_jev[name] = (model.jev_total / model.jev_scored, model.jev_scored)
+    scores: Dict[str, Tuple[float, int]] = {}
+    if len(by_jev) >= 2:
+        scores = by_jev
+    else:
+        for name in roster:
+            model = aggregates.models.get(name)
+            if model is not None and model.asked >= rules.min_asks_to_order:
+                scores[name] = (model.wins / model.asked, model.asked)
     places = [i for i, name in enumerate(roster) if name in scores]
     ranked = sorted(
         (name for name in roster if name in scores),
@@ -318,7 +346,7 @@ def _choose_order(
     order = list(roster)
     for place, name in zip(places, ranked):
         order[place] = name
-    return tuple(order), scores
+    return tuple(order), scores, scores is by_jev
 
 
 def compute_policy(
@@ -336,8 +364,9 @@ def compute_policy(
       while our own models are failing often.
     * The hold is ``hold_seconds`` (FHI_CHAT_EXTERNAL_HOLD_SECONDS), within
       MAX_EXTERNAL_DELAY_SECONDS.
-    * The order is the roster reordered by how often each well-sampled
-      model's answer was delivered (_choose_order).
+    * The order is the roster reordered by Jev's scores once two models
+      have enough, else by how often each well-sampled model's answer was
+      delivered (_choose_order).
     """
     recent_rate = _ratio(
         aggregates.recent_internal_usable_turns, aggregates.recent_internal_turns
@@ -358,9 +387,9 @@ def compute_policy(
             reasons.append(why_keep)
         hold = float(hold_seconds) if math.isfinite(float(hold_seconds)) else 0.0
         delay = min(max(hold, 0.0), MAX_EXTERNAL_DELAY_SECONDS)
-        order, scores = _choose_order(aggregates, roster, rules)
+        order, scores, by_jev = _choose_order(aggregates, roster, rules)
         if scores:
-            reasons.append(REASON_ORDERED)
+            reasons.append(REASON_ORDERED_BY_JEV if by_jev else REASON_ORDERED)
 
     return ChatPolicy(
         external_excluded=excluded,
@@ -752,6 +781,15 @@ def aggregate_chat_turns(
             model.calls += 1
             if c.get("status") == "scored":
                 model.usable_calls += 1
+            jev = c.get("jev")
+            if (
+                isinstance(jev, (int, float))
+                and not isinstance(jev, bool)
+                and math.isfinite(jev)
+                and 0.0 <= jev <= 1.0
+            ):
+                model.jev_scored += 1
+                model.jev_total += float(jev)
             asked.add(name)
         for name in asked:
             aggregates.models[name].asked += 1
@@ -796,27 +834,88 @@ def prune_old_chat_policies(keep_pk: Any = None) -> int:
     return int(deleted)
 
 
+@contextlib.contextmanager
+def _bounded_atomic(statement_timeout_ms: Optional[int]) -> Iterator[None]:
+    """A transaction on the calling thread's connection. With
+    ``statement_timeout_ms``, each of its statements is bounded on
+    PostgreSQL (see _bound_statements)."""
+    from django.db import connection, transaction
+
+    with transaction.atomic():
+        if statement_timeout_ms:
+            _bound_statements(connection, statement_timeout_ms)
+        yield
+
+
+def _row_for_run(run_id: str) -> Any:
+    from fighthealthinsurance.models import ChatRoutingPolicy
+
+    return ChatRoutingPolicy.objects.filter(run_id=run_id).order_by().first()
+
+
 def compute_and_store_chat_policy(
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
     source: str = "manual",
     now: Optional[datetime.datetime] = None,
+    run_id: Optional[str] = None,
+    statement_timeout_ms: Optional[int] = None,
 ) -> Any:
     """Compute a policy from the last ``window_minutes`` of ChatTurn rows and
-    append it as a new ChatRoutingPolicy row. Returns the new row.
-    Synchronous.
+    append it as a new ChatRoutingPolicy row. Returns the new row, or with
+    ``run_id`` the row that run stored. Synchronous.
 
     Rows are never edited: every run appends one. Once the new row is
     stored, rows older than POLICY_KEEP_DAYS are deleted as a separate step
     (prune_old_chat_policies). That step never touches the new row, and if
     it fails the failure is logged (class name only) and the run still
     returns the stored row.
+
+    ``run_id`` (a Temporal workflow run id) makes the write idempotent: a
+    run stores at most one row. If the run already has one, from an earlier
+    attempt whose completion was lost or from an attempt still finishing
+    after its caller gave up, that row is returned and nothing is computed,
+    inserted or pruned. The insert and the database's unique index on
+    ``run_id`` settle two attempts racing. Without ``run_id`` (the
+    command) every call appends a row.
+
+    The lookup, the ChatTurn read, the insert and the pruning each run in a
+    transaction of their own; ``statement_timeout_ms`` bounds each of their
+    statements on PostgreSQL.
     """
+    from django.db import IntegrityError
+
     from fighthealthinsurance.models import ChatRoutingPolicy
 
-    policy = compute_current_policy(window_minutes, now=now)
-    row = ChatRoutingPolicy.objects.create(source=source, **policy.row_fields())
+    if run_id:
+        with _bounded_atomic(statement_timeout_ms):
+            existing = _row_for_run(run_id)
+        if existing is not None:
+            return existing
+    with _bounded_atomic(statement_timeout_ms):
+        aggregates = aggregate_chat_turns(window_minutes, now=now)
+    policy = compute_policy(
+        aggregates,
+        roster=list(getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or []),
+        hold_seconds=float(getattr(settings, "FHI_CHAT_EXTERNAL_HOLD_SECONDS", 8.0)),
+    )
     try:
-        prune_old_chat_policies(keep_pk=row.pk)
+        with _bounded_atomic(statement_timeout_ms):
+            row = ChatRoutingPolicy.objects.create(
+                source=source, run_id=run_id or None, **policy.row_fields()
+            )
+    except IntegrityError:
+        # Another attempt of the same run stored its row first: that row is
+        # the run's row. Anything else is raised as it was.
+        if not run_id:
+            raise
+        with _bounded_atomic(statement_timeout_ms):
+            existing = _row_for_run(run_id)
+        if existing is None:
+            raise
+        return existing
+    try:
+        with _bounded_atomic(statement_timeout_ms):
+            prune_old_chat_policies(keep_pk=row.pk)
     except Exception as e:
         logger.warning(f"Could not prune old chat routing policies: {type(e).__name__}")
     return row

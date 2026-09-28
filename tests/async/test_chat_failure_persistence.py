@@ -10,6 +10,7 @@ Also covers the transactional persistence helper directly: two interleaved
 writers over the same chat row must not lose each other's messages.
 """
 
+import asyncio
 import contextlib
 import typing
 from unittest.mock import AsyncMock, patch
@@ -74,6 +75,31 @@ async def _make_professional_chat(username, npi):
         summary_for_next_call=[],
     )
     return user, chat
+
+
+@contextlib.contextmanager
+def _captured_logs():
+    """Capture every record at DEBUG and above, plus each line as a sink that
+    keeps tracebacks but not frame variables (as the deployed sinks do) would
+    write it."""
+    records: list = []
+    lines: list = []
+
+    def _sink(msg):
+        records.append(msg.record)
+        lines.append(str(msg))
+
+    sink_id = logger.add(
+        _sink,
+        level="DEBUG",
+        format="{message}\n{exception}",
+        backtrace=False,
+        diagnose=False,
+    )
+    try:
+        yield records, lines
+    finally:
+        logger.remove(sink_id)
 
 
 class _FrameRecorder:
@@ -149,6 +175,108 @@ class ChatFailurePersistenceTest(APITestCase):
             with_exception,
             "expected an ERROR record carrying the exception traceback",
         )
+
+    async def test_failure_log_records_sizes_not_message_text(self):
+        """The failure branch logs the message size, the error class and the
+        flags; the message itself never reaches any log line."""
+        sentinel_message = "Why was my MRI denied? SENTINEL-failpersist-6"
+        user, chat = await _make_professional_chat("failpersist6", "9999910009")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(),
+            chat=chat,
+            user=user,
+        )
+        with _captured_logs() as (records, lines):
+            with _llm_call_fails(RuntimeError("distinctive-boom-marker")):
+                await interface.handle_chat_message(sentinel_message)
+
+        leaked = [line for line in lines if "SENTINEL-failpersist-6" in line]
+        self.assertEqual(leaked, [], "the user message reached a log line")
+        # Exception text stays in the attached traceback, never in a message.
+        self.assertFalse(
+            [r for r in records if "distinctive-boom-marker" in r["message"]]
+        )
+        failure_lines = [
+            r["message"]
+            for r in records
+            if r["level"].name == "ERROR"
+            and r["message"].startswith("Failed to generate a response")
+        ]
+        self.assertEqual(len(failure_lines), 1, failure_lines)
+        self.assertIn(f"in chat {chat.id}", failure_lines[0])
+        self.assertIn(f"message_chars={len(sentinel_message)}", failure_lines[0])
+        self.assertIn("error=RuntimeError", failure_lines[0])
+        self.assertIn("timed_out=False", failure_lines[0])
+        self.assertIn("use_external_models=True", failure_lines[0])
+        self.assertTrue(
+            [
+                r["message"]
+                for r in records
+                if r["message"]
+                == f"Chat generation failed for chat {chat.id}: RuntimeError"
+            ]
+        )
+
+    async def test_failure_log_when_models_return_nothing(self):
+        sentinel_message = "Please help SENTINEL-failpersist-7"
+        user, chat = await _make_professional_chat("failpersist7", "9999910010")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(),
+            chat=chat,
+            user=user,
+            use_external_models=False,
+        )
+        with _captured_logs() as (records, lines):
+            with _llm_call_fails(lambda *a, **k: (None, None)):
+                await interface.handle_chat_message(sentinel_message)
+
+        self.assertEqual(
+            [line for line in lines if "SENTINEL-failpersist-7" in line], []
+        )
+        failure_lines = [
+            r["message"]
+            for r in records
+            if r["message"].startswith("Failed to generate a response")
+        ]
+        self.assertEqual(len(failure_lines), 1, failure_lines)
+        self.assertIn(f"message_chars={len(sentinel_message)}", failure_lines[0])
+        self.assertIn("error=none", failure_lines[0])
+        self.assertIn("use_external_models=False", failure_lines[0])
+
+    async def test_failure_log_when_the_turn_times_out(self):
+        sentinel_message = "Still waiting SENTINEL-failpersist-8"
+        user, chat = await _make_professional_chat("failpersist8", "9999910011")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(),
+            chat=chat,
+            user=user,
+        )
+
+        async def stalled(*args, **kwargs):
+            await asyncio.sleep(30)
+            return ("should never be seen", None)
+
+        with _captured_logs() as (records, lines):
+            with patch.dict(
+                "os.environ",
+                {"FHI_CHAT_TURN_BUDGET": "1", "FHI_CHAT_HEARTBEAT_SECONDS": "600"},
+            ), _llm_call_fails(stalled):
+                await asyncio.wait_for(
+                    interface.handle_chat_message(sentinel_message), timeout=20
+                )
+
+        self.assertEqual(
+            [line for line in lines if "SENTINEL-failpersist-8" in line], []
+        )
+        failure_lines = [
+            r["message"]
+            for r in records
+            if r["message"].startswith("Failed to generate a response")
+        ]
+        self.assertEqual(len(failure_lines), 1, failure_lines)
+        self.assertIn(f"message_chars={len(sentinel_message)}", failure_lines[0])
+        self.assertIn("error=none", failure_lines[0])
+        self.assertIn("timed_out=True", failure_lines[0])
 
     async def test_retry_after_failure_does_not_duplicate_user_message(self):
         """The client retrying the same text after a failed turn must not

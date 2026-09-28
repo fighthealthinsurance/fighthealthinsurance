@@ -43,6 +43,7 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.chat.llm_client import MIN_RESPONSE_LENGTH
 from fighthealthinsurance.chat.turn_record import (
     COMPLETED_STATUSES,
     STATUS_EMPTY,
@@ -53,6 +54,7 @@ from fighthealthinsurance.chat.turn_record import (
     STATUS_UNSCORED,
 )
 from fighthealthinsurance.utils import (
+    STAGE_AFTER_CHECK,
     STAGE_AFTER_DELAY,
     STAGE_EARLY,
     STAGE_SKIPPED,
@@ -76,7 +78,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
-from fighthealthinsurance.ml import letter_quality, model_query
+from fighthealthinsurance.ml import chat_gate, chat_shadow, letter_quality, model_query
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_CHOICES,
     CONTEXT_LEVEL_TEMPLATE,
@@ -1495,7 +1497,8 @@ CHAT_CALL_PROBLEMS = (
 )
 
 # ChatTurn columns the live chat section reads. Every one is metadata: model
-# labels, enums, flags, and the calls list (labels, statuses, times, scores).
+# labels, enums, flags, the calls list (labels, statuses, times, scores) and
+# the shadow scores (numbers, the scorer string and an outcome).
 CHAT_TURN_FIELDS = (
     "created_at",
     "outcome",
@@ -1513,6 +1516,24 @@ CHAT_TURN_FIELDS = (
     "alternate_cross_model",
     "preferred",
     "external_start",
+    "gate_used",
+    "gate_outcome",
+    "gate_scorer",
+    "gate_demoted_delivered",
+    "gate_crucial",
+    "rank_outcome",
+    "rank_changed",
+    "alternate_reason",
+    "shadow_outcome",
+    "shadow_scorer",
+    "shadow_winner_answers",
+    "shadow_winner_verdict",
+    "shadow_winner_asks_again",
+    "shadow_winner_promises",
+    "shadow_second_answers",
+    "shadow_second_verdict",
+    "shadow_second_asks_again",
+    "shadow_second_promises",
 )
 
 
@@ -1523,6 +1544,195 @@ def _percent(part: int, whole: int) -> Optional[float]:
 
 def _chat_label(name: Any) -> str:
     return normalize_model_label(name) or ATTEMPT_UNKNOWN_MODEL
+
+
+class _ShadowSeries:
+    """The scores from one complete scorer string (the model that answered
+    plus the rubric): per-model sums, the agreement counts and the picks it
+    left unscored."""
+
+    def __init__(self) -> None:
+        self.newest: Optional[datetime.datetime] = None
+        self.turns = 0
+        self.models: Dict[str, Dict[str, Any]] = {}
+        # Keyed by the person's pick: agreed / disagreed / tied.
+        self.agreement: Dict[str, Counter] = {
+            "primary": Counter(),
+            "alternate": Counter(),
+        }
+        self.picks_unscored = 0
+
+    def add_reply(
+        self, model: Any, answers: Any, verdict: Any, asks_again: Any, promises: Any
+    ) -> Optional[float]:
+        score = chat_shadow.composite_score(answers, verdict, asks_again, promises)
+        if score is None:
+            return None
+        label = _chat_label(model)
+        row = self.models.get(label)
+        if row is None:
+            row = {
+                "model_name": label,
+                "shadow_scored": 0,
+                "_answers": 0.0,
+                "_verdict": 0.0,
+                "_asks_again": 0.0,
+                "_promises": 0.0,
+                "_composite": 0.0,
+            }
+            self.models[label] = row
+        row["shadow_scored"] += 1
+        row["_answers"] += float(answers)
+        row["_verdict"] += float(verdict)
+        row["_asks_again"] += float(asks_again)
+        row["_promises"] += float(promises)
+        row["_composite"] += score
+        return score
+
+    def picks(self) -> int:
+        counted = self.agreement["primary"] + self.agreement["alternate"]
+        return sum(counted.values()) + self.picks_unscored
+
+
+class _ShadowTally:
+    """One window's chat shadow scores (ml/chat_shadow.py), fed one turn at
+    a time: per-model means, and how often the answer Jev scored higher is
+    the one the person picked side by side.
+
+    One EXACT scorer, as for draft quality: the scorer string (the model
+    that answered plus the rubric) of the newest turn scored under the
+    current chat rubric in the window. Turns scored by any other scorer
+    (another rubric, or the same rubric answered by another model version)
+    are counted in ``other_scorer`` and never averaged in, so a change on
+    TypeSafe's side cannot pass for a change in a backend.
+
+    A turn's second answer belongs to the alternate's model when an
+    alternate was offered, and to the runner-up's model otherwise.
+    """
+
+    def __init__(self) -> None:
+        self.outcomes: Counter = Counter()
+        self.series: Dict[str, _ShadowSeries] = {}
+        self.other_rubric = 0
+        # Picks on turns with no scores of the current rubric.
+        self.picks_unscored = 0
+
+    def add(
+        self,
+        created_at: Optional[datetime.datetime],
+        winner: Any,
+        second_model: Any,
+        alternate_offered: bool,
+        preferred: str,
+        outcome: str,
+        scorer: str,
+        winner_scores: Tuple[Any, Any, Any, Any],
+        second_scores: Tuple[Any, Any, Any, Any],
+    ) -> None:
+        if outcome:
+            self.outcomes[outcome] += 1
+        picked = alternate_offered and preferred in ("primary", "alternate")
+        series: Optional[_ShadowSeries] = None
+        if outcome == chat_shadow.SCORED:
+            if chat_shadow.same_rubric(scorer):
+                series = self.series.get(scorer)
+                if series is None:
+                    series = self.series[scorer] = _ShadowSeries()
+            else:
+                self.other_rubric += 1
+        if series is None:
+            if picked:
+                self.picks_unscored += 1
+            return
+        series.turns += 1
+        if created_at is not None and (
+            series.newest is None or created_at > series.newest
+        ):
+            series.newest = created_at
+        winner_score = series.add_reply(winner, *winner_scores) if winner else None
+        second_score = series.add_reply(second_model, *second_scores)
+        if not picked:
+            return
+        if winner_score is None or second_score is None:
+            series.picks_unscored += 1
+            return
+        if winner_score == second_score:
+            verdict = "tied"
+        else:
+            jev_pick = "primary" if winner_score > second_score else "alternate"
+            verdict = "agreed" if jev_pick == preferred else "disagreed"
+        series.agreement[preferred][verdict] += 1
+
+    @staticmethod
+    def _agreement_row(label: str, counts: Counter) -> Dict[str, Any]:
+        agreed, disagreed, tied = (
+            counts["agreed"],
+            counts["disagreed"],
+            counts["tied"],
+        )
+        return {
+            "picked": label,
+            "pairs": agreed + disagreed + tied,
+            "agreed": agreed,
+            "disagreed": disagreed,
+            "tied": tied,
+            # Ties say nothing either way, so they stay out of the rate.
+            "rate": _percent(agreed, agreed + disagreed),
+        }
+
+    def _latest(self) -> Optional[str]:
+        """The scorer of the newest scored turn (ties: more turns, then the
+        name, so the pick never depends on row order)."""
+        if not self.series:
+            return None
+        oldest = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+        return max(
+            self.series.items(),
+            key=lambda item: (item[1].newest or oldest, item[1].turns, item[0]),
+        )[0]
+
+    def result(self) -> Dict[str, Any]:
+        latest = self._latest()
+        chosen = self.series[latest] if latest is not None else _ShadowSeries()
+        others = [s for name, s in self.series.items() if name != latest]
+        rows = []
+        for row in chosen.models.values():
+            n = row["shadow_scored"]
+            rows.append(
+                {
+                    "model_name": row["model_name"],
+                    "shadow_scored": n,
+                    "shadow_answers": row["_answers"] / n,
+                    "shadow_verdict": row["_verdict"] / n,
+                    "shadow_asks_again": row["_asks_again"] / n,
+                    "shadow_promises": row["_promises"] / n,
+                    "shadow_composite": row["_composite"] / n,
+                }
+            )
+        rows.sort(key=lambda r: (-r["shadow_scored"], r["model_name"]))
+        total = chosen.agreement["primary"] + chosen.agreement["alternate"]
+        return {
+            "summary": {
+                "scored": self.outcomes[chat_shadow.SCORED],
+                "failed": self.outcomes[chat_shadow.FAILED],
+                "timeout": self.outcomes[chat_shadow.TIMEOUT],
+                "scorer": latest or "",
+                "other_scorer": self.other_rubric + sum(s.turns for s in others),
+                # Picks the agreement table leaves out: no scores from the
+                # scorer above on both answers.
+                "picks_unscored": (
+                    self.picks_unscored
+                    + chosen.picks_unscored
+                    + sum(s.picks() for s in others)
+                ),
+            },
+            "rows": rows,
+            "agreement": [
+                self._agreement_row("Primary answer", chosen.agreement["primary"]),
+                self._agreement_row("Alternate answer", chosen.agreement["alternate"]),
+                self._agreement_row("Either", total),
+            ],
+        }
 
 
 class _ChatTally:
@@ -1545,11 +1755,34 @@ class _ChatTally:
         # pass did: the retry (our reply was empty, too short or a false
         # promise) or a tool follow-up. They were not "never sent".
         self.externals_skipped_later = 0
+        # The live Jev check on our reply: turns it held the outside models
+        # for, by outcome, and of the fails, how many our own checks decided
+        # without sending the reply to Jev; turns whose outside calls it kept
+        # from being sent; and, of the OK turns where Jev failed the reply,
+        # how many delivered an outside model's answer, and how many still
+        # delivered our demoted reply because nothing else usable arrived.
+        # Those last three leave out the fails our own checks decided, so
+        # they stay a check on Jev's questions and thresholds.
+        self.gate_turns = 0
+        self.gate_outcomes: Counter = Counter()
+        self.gate_fail_local = 0
+        self.gate_saved = 0
+        self.gate_fail_ok = 0
+        self.gate_fail_external_wins = 0
+        self.gate_fail_demoted_delivered = 0
+        # The tiers: turns Jev read as crucial moments, rankings after a
+        # borderline check (and how many replaced the race's pick), and
+        # side-by-sides offered for a crucial moment.
+        self.gate_crucial = 0
+        self.rank_outcomes: Counter = Counter()
+        self.rank_changed = 0
+        self.alternates_crucial = 0
         self.same_model_pairs = 0
         self.same_model_picks: Counter = Counter()
         self.models: Dict[str, Dict[str, Any]] = {}
         self.durations: Dict[str, List[int]] = defaultdict(list)
         self.pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self.shadow = _ShadowTally()
 
     def _model(self, label: str) -> Dict[str, Any]:
         row = self.models.get(label)
@@ -1571,7 +1804,7 @@ class _ChatTally:
 
     def add(self, row: Tuple[Any, ...]) -> None:
         (
-            _created_at,
+            created_at,
             outcome,
             use_external,
             backends,
@@ -1587,9 +1820,74 @@ class _ChatTally:
             cross_model,
             preferred,
             external_start,
+            gate_used,
+            gate_outcome,
+            gate_scorer,
+            gate_demoted_delivered,
+            gate_crucial,
+            rank_outcome,
+            rank_changed,
+            alternate_reason,
+            shadow_outcome,
+            shadow_scorer,
+            *shadow_scores,
         ) = row
         self.turns += 1
+        self.shadow.add(
+            created_at,
+            winner,
+            alternate if alternate_offered else runner_up,
+            alternate_offered,
+            preferred,
+            shadow_outcome,
+            shadow_scorer,
+            (shadow_scores[0], shadow_scores[1], shadow_scores[2], shadow_scores[3]),
+            (shadow_scores[4], shadow_scores[5], shadow_scores[6], shadow_scores[7]),
+        )
         self.outcomes[outcome] += 1
+        # Whether any outside call was sent on the turn, in any pass: a
+        # first pass that skipped them can be followed by a retry that asks
+        # them (our reply was empty, too short or a false promise).
+        # The crucial side-by-side (a reserved call) is not one of the
+        # turn's outside models: a pass that asked only it saved them.
+        external_sent = any(
+            isinstance(call, dict)
+            and call.get("external") is True
+            and call.get("reserved") is not True
+            and call.get("status") != STATUS_SKIPPED
+            for call in calls or []
+        )
+        if gate_used:
+            self.gate_turns += 1
+            self.gate_outcomes[gate_outcome] += 1
+            if (
+                isinstance(gate_crucial, float)
+                and gate_crucial >= chat_gate.crucial_threshold()
+            ):
+                self.gate_crucial += 1
+            if rank_outcome:
+                self.rank_outcomes[rank_outcome] += 1
+                if rank_changed:
+                    self.rank_changed += 1
+            failed_ours = chat_gate.from_our_checks(gate_scorer)
+            if gate_outcome == chat_gate.FAIL and failed_ours:
+                self.gate_fail_local += 1
+            if (
+                gate_outcome == chat_gate.PASS
+                and external_start == STAGE_SKIPPED
+                and not external_sent
+            ):
+                self.gate_saved += 1
+            if (
+                gate_outcome == chat_gate.FAIL
+                and not failed_ours
+                and outcome == ChatTurn.Outcome.OK
+            ):
+                self.gate_fail_ok += 1
+                if winner_external is True:
+                    self.gate_fail_external_wins += 1
+                if gate_demoted_delivered:
+                    self.gate_fail_demoted_delivered += 1
         if use_external:
             self.external_allowed += 1
         if retry_ran:
@@ -1598,12 +1896,7 @@ class _ChatTally:
             self.retry_used += 1
         if external_start:
             self.external_starts[external_start] += 1
-            if external_start == STAGE_SKIPPED and any(
-                isinstance(call, dict)
-                and call.get("external") is True
-                and call.get("status") != STATUS_SKIPPED
-                for call in calls or []
-            ):
+            if external_start == STAGE_SKIPPED and external_sent:
                 self.externals_skipped_later += 1
 
         # A model counts as asked once per turn, however many calls it got:
@@ -1656,6 +1949,8 @@ class _ChatTally:
         if not alternate_offered:
             return
         self.alternates += 1
+        if alternate_reason == ChatTurn.AlternateReason.CRUCIAL:
+            self.alternates_crucial += 1
         if preferred:
             self.picks[preferred] += 1
         if not cross_model or winner_label is None or not alternate:
@@ -1698,6 +1993,7 @@ class _ChatTally:
             row["median_ms"] = int(round(statistics.median(found))) if found else None
         rows.sort(key=lambda r: (-r["asked"], -r["calls"], r["model_name"]))
         ok = self.outcomes[ChatTurn.Outcome.OK]
+        shadow = self.shadow.result()
         return {
             "summary": {
                 "turns": self.turns,
@@ -1712,14 +2008,41 @@ class _ChatTally:
                 "retry_used": self.retry_used,
                 "externals_after_delay": self.external_starts[STAGE_AFTER_DELAY],
                 "externals_early": self.external_starts[STAGE_EARLY],
+                "externals_after_check": self.external_starts[STAGE_AFTER_CHECK],
                 # Never sent in any pass.
                 "externals_skipped": self.external_starts[STAGE_SKIPPED]
                 - self.externals_skipped_later,
                 "externals_skipped_later": self.externals_skipped_later,
                 "externals_held_back": sum(
                     self.external_starts[s]
-                    for s in (STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)
+                    for s in (
+                        STAGE_AFTER_DELAY,
+                        STAGE_EARLY,
+                        STAGE_AFTER_CHECK,
+                        STAGE_SKIPPED,
+                    )
                 ),
+                "gate_turns": self.gate_turns,
+                "gate_pass": self.gate_outcomes[chat_gate.PASS],
+                "gate_borderline": self.gate_outcomes[chat_gate.BORDERLINE],
+                "gate_crucial": self.gate_crucial,
+                "rank_turns": sum(self.rank_outcomes.values()),
+                "rank_picked": self.rank_outcomes[chat_gate.RANK_PICKED],
+                "rank_changed": self.rank_changed,
+                "alternates_crucial": self.alternates_crucial,
+                "gate_fail": self.gate_outcomes[chat_gate.FAIL],
+                "gate_fail_local": self.gate_fail_local,
+                "gate_error": self.gate_outcomes[chat_gate.ERROR],
+                "gate_timeout": self.gate_outcomes[chat_gate.TIMEOUT],
+                "gate_skipped": self.gate_outcomes[chat_gate.SKIPPED],
+                "gate_saved": self.gate_saved,
+                "gate_saved_share": _percent(self.gate_saved, self.gate_turns),
+                "gate_fail_ok": self.gate_fail_ok,
+                "gate_fail_external_wins": self.gate_fail_external_wins,
+                "gate_fail_external_win_share": _percent(
+                    self.gate_fail_external_wins, self.gate_fail_ok
+                ),
+                "gate_fail_demoted_delivered": self.gate_fail_demoted_delivered,
                 "alternates": self.alternates,
                 "cross_alternates": self.cross_alternates,
                 "picks": sum(self.picks.values()),
@@ -1738,6 +2061,8 @@ class _ChatTally:
                 self.pairs.values(),
                 key=lambda p: (-p["offered"], p["primary_model"], p["alternate_model"]),
             ),
+            "shadow": shadow,
+            "shadow_rows": shadow["rows"],
         }
 
 
@@ -2047,6 +2372,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                 w["chooser_chat"],
                 (w["call_attempts"] or {}).get("rows", []),
                 (w["live_chat"] or {}).get("rows", []),
+                (w["live_chat"] or {}).get("shadow_rows", []),
             )
         ]
         states = _model_states(r["model_name"] for rows in model_tables for r in rows)
@@ -2056,8 +2382,88 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["title"] = "ML Model Usage Dashboard"
         ctx["windows"] = windows_ctx
         ctx["duration_cap"] = CALL_DURATION_SAMPLE_CAP
+        ctx["chat_shadow"] = self._chat_shadow_state()
         ctx["chat_policy"] = self._chat_policy_panel()
+        ctx["reply_check"] = self._reply_check_state()
         return ctx
+
+    @staticmethod
+    def _reply_check_state() -> Dict[str, Any]:
+        """Whether the live Jev check on chat replies is on now, its
+        thresholds, and the last outcome it recorded on its
+        ExternalServiceHealth row (a status or class name, never text)."""
+        from django.conf import settings
+
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        out: Dict[str, Any] = {
+            "on": chat_gate.enabled(),
+            "max_wait_seconds": chat_gate.max_wait_seconds(),
+            "timeout_seconds": chat_gate.timeout_seconds(),
+            "min_answers": chat_gate.min_answers(),
+            "max_problem": chat_gate.max_problem(),
+            "clear_answers": chat_gate.clear_answers(),
+            "clear_problem": chat_gate.clear_problem(),
+            "crucial_min": chat_gate.crucial_threshold(),
+            "side_by_side_model": str(
+                getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or ""
+            ),
+            "demote_failed": chat_gate.demote_failed(),
+            # Our own checks, which come before Jev is asked.
+            "min_response_length": MIN_RESPONSE_LENGTH,
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_failure": "",
+            "last_failure_hint": "",
+        }
+        try:
+            health = ExternalServiceHealth.objects.filter(
+                service=chat_gate.SERVICE
+            ).first()
+        except Exception as e:
+            logger.warning(f"Chat reply check health read failed: {type(e).__name__}")
+            return out
+        if health is not None:
+            out["last_success_at"] = health.last_success_at
+            out["last_failure_at"] = health.last_failure_at
+            out["last_failure"] = health.last_failure
+            out["last_failure_hint"] = (
+                # The check has its own, much shorter, timeout.
+                "no answer within FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS"
+                if health.last_failure == "timeout"
+                else AdminStatusView._scoring_failure_hint(health.last_failure)
+            )
+        return out
+
+    @staticmethod
+    def _chat_shadow_state() -> Dict[str, Any]:
+        """Whether chat shadow scoring is on now, and the last outcome the
+        scorer recorded on its ExternalServiceHealth row (a status or class
+        name, never text)."""
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        out: Dict[str, Any] = {
+            "on": chat_shadow.enabled(),
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_failure": "",
+            "last_failure_hint": "",
+        }
+        try:
+            health = ExternalServiceHealth.objects.filter(
+                service=chat_shadow.SERVICE
+            ).first()
+        except Exception:
+            logger.opt(exception=True).warning("Chat shadow health read failed")
+            return out
+        if health is not None:
+            out["last_success_at"] = health.last_success_at
+            out["last_failure_at"] = health.last_failure_at
+            out["last_failure"] = health.last_failure
+            out["last_failure_hint"] = AdminStatusView._scoring_failure_hint(
+                health.last_failure
+            )
+        return out
 
     @staticmethod
     def _chat_policy_panel() -> Dict[str, Any]:

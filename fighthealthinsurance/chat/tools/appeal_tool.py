@@ -106,7 +106,8 @@ class AppealTool(BaseTool):
 
         except json.JSONDecodeError as e:
             logger.warning(
-                f"Invalid JSON data {e} in create_or_update_appeal token: {json_data}"
+                "Invalid JSON in create_or_update_appeal token "
+                f"(payload_chars={len(json_data)}): {type(e).__name__}"
             )
             await self.send_error_message(
                 f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
@@ -114,7 +115,9 @@ class AppealTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(f"Error processing appeal data: {e}")
+            logger.opt(exception=True).warning(
+                f"Error processing appeal data: {type(e).__name__}"
+            )
             await self.send_error_message(f"Error processing appeal data: {str(e)}")
             raise
 
@@ -184,6 +187,7 @@ class AppealTool(BaseTool):
         # relation ids, methods, or private state on both models.
         appeal_allowed = settable_model_fields(type(appeal))
         denial_allowed = settable_model_fields(type(denial))
+        rejected_keys = 0
         for key, value in appeal_data.items():
             set_field = False
 
@@ -196,10 +200,15 @@ class AppealTool(BaseTool):
                 setattr(denial, key, value)
 
             if not set_field:
-                logger.warning(
-                    f"Key {key} not settable on Appeal or Denial model. Skipping."
-                )
+                rejected_keys += 1
                 await self.send_status_message(
                     f"Key {key} not found in Appeal or Denial model. "
                     f"The value {value} is not synced back yet."
                 )
+
+        if rejected_keys:
+            # A count only: the keys come from the model's reply.
+            logger.warning(
+                "Skipped payload keys not settable on Appeal or Denial model "
+                f"(rejected_keys={rejected_keys})"
+            )

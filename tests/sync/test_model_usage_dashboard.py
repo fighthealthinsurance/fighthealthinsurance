@@ -28,6 +28,7 @@ from fighthealthinsurance.models import (
     ChooserTask,
     ChooserVote,
     Denial,
+    ExternalServiceHealth,
     ModelBackendHealthCheckResult,
     ModelCallAttempt,
     OngoingChat,
@@ -2086,6 +2087,283 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         self.assertContains(response, ">Skipped</th>")
 
 
+class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
+    """The live Jev check on chat replies: counts per window, how often it
+    kept the outside models from being sent, how often a failed check was
+    followed by an outside model's answer, and whether it is on."""
+
+    def setUp(self):
+        self._login_staff()
+        self.chat = OngoingChat.objects.create()
+
+    def _turn(self, **fields):
+        defaults = dict(
+            outcome="ok",
+            use_external=True,
+            backends=["fhi-local", "claude"],
+            winner_model="fhi-local",
+            winner_external=False,
+            calls=[_call("fhi-local")],
+        )
+        defaults.update(fields)
+        return ChatTurn.objects.create(chat=self.chat, **defaults)
+
+    def _checked(self, gate_outcome, external_start, **fields):
+        return self._turn(
+            gate_used=True,
+            gate_outcome=gate_outcome,
+            external_start=external_start,
+            external_delay_seconds=8.0,
+            **fields,
+        )
+
+    def test_a_pass_whose_retry_asked_an_outside_model_is_not_saved(self):
+        """The check passed and the first pass skipped the outside models,
+        but our own checks then rejected the reply and the retry asked one.
+        That turn's outside models were not kept from being sent."""
+        retried = _call("deepseek", pass_kind="retry")
+        retried["external"] = True
+        self._checked("pass", "skipped")
+        self._checked(
+            "pass",
+            "skipped",
+            retry_ran=True,
+            calls=[_call("fhi-local"), _call("claude", "skipped", ms=None), retried],
+        )
+        _response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual((summary["gate_pass"], summary["gate_saved"]), (2, 1))
+        self.assertEqual(
+            (summary["externals_skipped"], summary["externals_skipped_later"]),
+            (1, 1),
+        )
+
+    def test_the_counts_and_the_rates(self):
+        self._checked("pass", "skipped")
+        self._checked("pass", "skipped")
+        self._checked(
+            "fail",
+            "after_check",
+            winner_model="claude",
+            winner_external=True,
+            gate_demoted=True,
+        )
+        self._checked(
+            "fail", "after_check", gate_demoted=True, gate_demoted_delivered=True
+        )
+        self._checked("fail", "after_check", outcome="failed", winner_model="")
+        self._checked("error", "after_check", winner_model="claude", winner_external=True)
+        self._checked("timeout", "after_delay")
+        self._checked("skipped", "early")
+        # Not checked: counted as a turn, not as a check.
+        self._turn(external_start="immediate", winner_model="claude", winner_external=True)
+        response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(
+            (
+                summary["gate_turns"],
+                summary["gate_pass"],
+                summary["gate_fail"],
+                summary["gate_error"],
+                summary["gate_timeout"],
+                summary["gate_skipped"],
+            ),
+            (8, 2, 3, 1, 1, 1),
+        )
+        self.assertEqual(summary["gate_saved"], 2)
+        self.assertAlmostEqual(summary["gate_saved_share"], 25.0)
+        # Of the two OK turns after a failed check, one delivered an outside
+        # model's answer. The error turn's outside win is not counted there.
+        self.assertEqual(
+            (summary["gate_fail_ok"], summary["gate_fail_external_wins"]), (2, 1)
+        )
+        self.assertAlmostEqual(summary["gate_fail_external_win_share"], 50.0)
+        # The other one delivered our demoted reply: nothing else was usable.
+        self.assertEqual(summary["gate_fail_demoted_delivered"], 1)
+        self.assertEqual(summary["externals_after_check"], 4)
+        self.assertEqual(summary["externals_held_back"], 8)
+        self.assertContains(
+            response, "Outside models never sent, in any pass, because the check passed"
+        )
+        self.assertContains(response, "After Jev failed the reply, an outside model")
+        self.assertContains(
+            response,
+            "our demoted reply on 1 because no outside answer that could be "
+            "delivered arrived",
+        )
+        self.assertContains(response, "started early because the check on ours did not pass")
+        self.assertEqual(summary["gate_fail_local"], 0)
+        self.assertNotContains(response, "failed our own checks")
+
+    def test_fails_by_our_own_checks_are_counted(self):
+        """A reply our own checks rejected failed the check without being
+        sent to Jev: counted with the fails, and on its own. What followed
+        it is left out of the figures that check Jev's questions."""
+        self._checked(
+            "fail",
+            "after_check",
+            gate_scorer="fhi/local-checks-1",
+            winner_model="claude",
+            winner_external=True,
+            gate_demoted=True,
+        )
+        self._checked(
+            "fail",
+            "after_check",
+            gate_scorer="fhi/local-checks-1",
+            gate_demoted=True,
+            gate_demoted_delivered=True,
+        )
+        self._checked(
+            "fail",
+            "after_check",
+            gate_scorer="typesafe/jev-1.13.0/chat-gate-rubric-2",
+            gate_demoted=True,
+        )
+        # Not a fail: never counted as one of ours, whatever the scorer.
+        self._checked("error", "after_check", gate_scorer="fhi/local-checks-1")
+        response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual((summary["gate_fail"], summary["gate_fail_local"]), (3, 2))
+        self.assertContains(
+            response, "(2 failed our own checks and were not sent to Jev)"
+        )
+        # Only the fail Jev decided counts here, and its turn delivered
+        # neither an outside answer nor our demoted reply.
+        self.assertEqual(
+            (
+                summary["gate_fail_ok"],
+                summary["gate_fail_external_wins"],
+                summary["gate_fail_demoted_delivered"],
+            ),
+            (1, 0, 0),
+        )
+        self.assertContains(
+            response,
+            "After Jev failed the reply, an outside model's answer was "
+            "delivered on <strong>0</strong> of 1 OK turns",
+        )
+
+    def test_no_rate_without_a_denominator(self):
+        self._checked("pass", "skipped")
+        _response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(summary["gate_fail_ok"], 0)
+        self.assertIsNone(summary["gate_fail_external_win_share"])
+
+    def test_a_crucial_pass_that_asked_only_the_side_by_side_is_saved(self):
+        kimi = _call("kimi")
+        kimi["external"] = True
+        kimi["reserved"] = True
+        self._checked(
+            "pass",
+            "skipped",
+            gate_crucial=0.9,
+            calls=[_call("fhi-local"), _call("claude", "skipped", ms=None), kimi],
+        )
+        _response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual((summary["gate_pass"], summary["gate_saved"]), (1, 1))
+
+    def test_the_tiers_are_counted(self):
+        self._checked("borderline", "after_check", gate_crucial=0.2,
+                      rank_outcome="picked", rank_changed=True)
+        self._checked("borderline", "after_check", rank_outcome="error")
+        self._checked(
+            "pass",
+            "after_check",
+            gate_crucial=0.9,
+            alternate_offered=True,
+            alternate_model="kimi",
+            alternate_cross_model=True,
+            alternate_reason="crucial",
+        )
+        response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(
+            (summary["gate_borderline"], summary["gate_pass"], summary["gate_crucial"]),
+            (2, 1, 1),
+        )
+        self.assertEqual(
+            (summary["rank_turns"], summary["rank_picked"], summary["rank_changed"]),
+            (2, 1, 1),
+        )
+        self.assertEqual(summary["alternates_crucial"], 1)
+        self.assertContains(response, "borderline 2")
+        self.assertContains(response, "its pick replaced the race's on <strong>1</strong>")
+
+    def test_a_window_with_no_checks_says_so(self):
+        self._turn()
+        response, windows = self._windows()
+        self.assertEqual(windows["1d"]["live_chat"]["summary"]["gate_turns"], 0)
+        self.assertIsNone(windows["1d"]["live_chat"]["summary"]["gate_saved_share"])
+        self.assertContains(response, "no turns checked in this window")
+
+    def test_the_state_panel_is_off_under_test(self):
+        response, _windows = self._windows()
+        state = response.context["reply_check"]
+        self.assertFalse(state["on"])
+        self.assertEqual(
+            (
+                state["max_wait_seconds"],
+                state["timeout_seconds"],
+                state["min_answers"],
+                state["max_problem"],
+            ),
+            (8.0, 1.5, 0.7, 0.3),
+        )
+        self.assertContains(response, 'id="chat-reply-check"')
+        self.assertContains(response, "FHI_CHAT_JEV_GATE_ENABLED is off")
+        self.assertEqual(state["min_response_length"], 5)
+        self.assertContains(
+            response,
+            "Before Jev is asked, the reply must pass our own checks, the rule "
+            "the retry uses: at least 5 characters, and no promised outcome.",
+        )
+        self.assertContains(response, "An empty reply is not judged, and is counted as")
+        self.assertNotContains(response, "not empty")
+        self.assertContains(response, "&ldquo;promises a result&rdquo;")
+        self.assertTrue(state["demote_failed"])
+        self.assertContains(
+            response, "A reply that fails the check ranks just below the outside"
+        )
+
+    def test_the_state_panel_says_when_demotion_is_off(self):
+        with override_settings(FHI_CHAT_JEV_GATE_DEMOTE_FAILED=False):
+            response, _windows = self._windows()
+        self.assertFalse(response.context["reply_check"]["demote_failed"])
+        self.assertContains(response, "FHI_CHAT_JEV_GATE_DEMOTE_FAILED is off")
+
+    def test_the_state_panel_shows_on_and_the_last_failure(self):
+        ExternalServiceHealth.objects.create(
+            service="typesafe-chat-gate",
+            last_success_at=timezone.now() - datetime.timedelta(hours=1),
+            last_failure_at=timezone.now(),
+            last_failure="timeout",
+        )
+        with override_settings(
+            TYPESAFE_API_KEY="test-key", FHI_CHAT_JEV_GATE_ENABLED=True
+        ):
+            response, _windows = self._windows()
+        state = response.context["reply_check"]
+        self.assertTrue(state["on"])
+        self.assertEqual(state["last_failure"], "timeout")
+        self.assertIn("FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS", state["last_failure_hint"])
+        self.assertContains(response, "<strong>On</strong>")
+        self.assertContains(response, "FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS")
+
+    def test_the_http_failure_hint_is_the_status_page_one(self):
+        ExternalServiceHealth.objects.create(
+            service="typesafe-chat-gate",
+            last_failure_at=timezone.now(),
+            last_failure="HTTP 429",
+        )
+        response, _windows = self._windows()
+        self.assertIn(
+            "rate limited", response.context["reply_check"]["last_failure_hint"]
+        )
+
+
 def _policy_row(minutes_ago=0, **fields):
     defaults = dict(
         source="manual",
@@ -2189,6 +2467,14 @@ class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
             ],
         )
         self.assertContains(response, "Answer delivered")
+        self.assertNotContains(response, "Jev quality")
+
+    def test_an_order_from_jev_scores_is_labelled_as_such(self):
+        _policy_row(reason="ok,ordered_by_jev")
+        response = self._page()
+        self.assertContains(response, "Jev quality")
+        self.assertContains(response, "Ranked replies")
+        self.assertNotContains(response, "Answer delivered")
 
     def test_this_months_provider_spend_is_listed(self):
         from fighthealthinsurance.ml import spend
@@ -2213,3 +2499,304 @@ class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
             0
         ]
         self.assertIn('id="chat-routing-policy"', all_time)
+
+SHADOW_SCORER = "typesafe/jev-1.13.0/chat-rubric-3"
+# The rubric before the promise question: never averaged in.
+RUBRIC_ONE_SCORER = "typesafe/jev-1.13.0/chat-rubric-1"
+
+
+def _shadow(winner=None, second=None, outcome="scored", scorer=SHADOW_SCORER):
+    """ChatTurn shadow fields: winner/second are (answers, verdict,
+    asks_again, promises)."""
+    fields = {"shadow_outcome": outcome, "shadow_scorer": scorer}
+    for side, scores in (("winner", winner), ("second", second)):
+        if scores is not None:
+            (
+                fields[f"shadow_{side}_answers"],
+                fields[f"shadow_{side}_verdict"],
+                fields[f"shadow_{side}_asks_again"],
+                fields[f"shadow_{side}_promises"],
+            ) = scores
+    return fields
+
+
+# Composite 1.0 and 0.0 (ml/chat_shadow.composite_score).
+GOOD = (2.0, 0.0, 0.0, 0.0)
+POOR = (0.0, 1.0, 1.0, 1.0)
+
+
+class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
+    """Jev shadow scores in the live chat section: per-model means and the
+    agreement between the higher score and the person's side-by-side pick."""
+
+    def setUp(self):
+        self._login_staff()
+        self.chat = OngoingChat.objects.create()
+
+    def _turn(self, **fields):
+        defaults = dict(
+            outcome="ok",
+            use_external=True,
+            backends=["model-a", "model-b"],
+            winner_model="model-a",
+            runner_up_model="model-b",
+        )
+        defaults.update(fields)
+        return ChatTurn.objects.create(chat=self.chat, **defaults)
+
+    def _pair(self, preferred, winner, second, scorer=SHADOW_SCORER, **fields):
+        return self._turn(
+            alternate_offered=True,
+            alternate_model="model-c",
+            alternate_cross_model=True,
+            preferred=preferred,
+            **_shadow(winner, second, scorer=scorer),
+            **fields,
+        )
+
+    def _shadow_window(self, slug="1d"):
+        _response, windows = self._windows()
+        return windows[slug]["live_chat"]["shadow"]
+
+    def test_means_per_model_and_the_second_answer_goes_to_the_right_model(self):
+        # No alternate: the second answer is the runner-up's (model-b).
+        self._turn(**_shadow((2.0, 0.2, 0.0, 0.1), (1.0, 0.6, 0.4, 0.5)))
+        self._turn(**_shadow((1.0, 0.0, 0.2, 0.3), None))
+        # An alternate was shown: the second answer is the alternate's.
+        self._turn(
+            alternate_offered=True,
+            alternate_model="model-c",
+            **_shadow((1.5, 0.1, 0.1, 0.2), (0.5, 0.9, 0.0, 0.8)),
+        )
+        rows = {r["model_name"]: r for r in self._shadow_window()["rows"]}
+        self.assertEqual(
+            {name: r["shadow_scored"] for name, r in rows.items()},
+            {"model-a": 3, "model-b": 1, "model-c": 1},
+        )
+        a = rows["model-a"]
+        self.assertAlmostEqual(a["shadow_answers"], 1.5)
+        self.assertAlmostEqual(a["shadow_verdict"], 0.1)
+        self.assertAlmostEqual(a["shadow_asks_again"], 0.1)
+        self.assertAlmostEqual(a["shadow_promises"], 0.2)
+        self.assertAlmostEqual(
+            a["shadow_composite"],
+            (
+                (1.0 + 0.8 + 1.0 + 0.9)
+                + (0.5 + 1.0 + 0.8 + 0.7)
+                + (0.75 + 0.9 + 0.9 + 0.8)
+            )
+            / 12,
+        )
+        self.assertAlmostEqual(rows["model-b"]["shadow_answers"], 1.0)
+        self.assertAlmostEqual(rows["model-b"]["shadow_promises"], 0.5)
+        self.assertAlmostEqual(rows["model-c"]["shadow_verdict"], 0.9)
+        self.assertAlmostEqual(rows["model-c"]["shadow_promises"], 0.8)
+
+    def test_the_promises_mean_is_shown_and_rubric_one_rows_are_left_out(self):
+        self._at(self._turn(**_shadow((2.0, 0.0, 0.0, 0.2), None)), 30)
+        self._at(self._turn(**_shadow((2.0, 0.0, 0.0, 0.4), None)), 20)
+        # Newer rows from the same Jev version under rubric 1: one as rubric
+        # 1 wrote it (no promise answer), one with every column filled, so
+        # only the rubric check can keep them out.
+        self._at(
+            self._turn(
+                shadow_outcome="scored",
+                shadow_scorer=RUBRIC_ONE_SCORER,
+                shadow_winner_answers=0.0,
+                shadow_winner_verdict=1.0,
+                shadow_winner_asks_again=1.0,
+            ),
+            10,
+        )
+        self._at(self._turn(**_shadow(POOR, POOR, scorer=RUBRIC_ONE_SCORER)), 5)
+        response, windows = self._windows()
+        shadow = windows["1d"]["live_chat"]["shadow"]
+        self.assertEqual(shadow["summary"]["scorer"], SHADOW_SCORER)
+        self.assertEqual(shadow["summary"]["other_scorer"], 2)
+        (row,) = shadow["rows"]
+        self.assertEqual(row["shadow_scored"], 2)
+        self.assertAlmostEqual(row["shadow_promises"], 0.3)
+        self.assertAlmostEqual(row["shadow_composite"], (3.8 + 3.6) / 8)
+        self.assertContains(
+            response,
+            '<th class="num" title="Mean probability, 0 to 1, that the reply '
+            'promises or guarantees a result">Promises a result</th>',
+            html=True,
+        )
+        self.assertContains(response, '<td class="num">0.30</td>', html=True)
+
+    def test_outcomes_are_counted_and_other_rubrics_never_averaged(self):
+        self._turn(**_shadow(GOOD, None))
+        self._turn(**_shadow(outcome="failed", scorer=""))
+        self._turn(**_shadow(outcome="timeout", scorer=""))
+        self._turn(**_shadow(POOR, None, scorer=RUBRIC_ONE_SCORER))
+        # A letter scorer string is not a chat rubric either.
+        self._turn(**_shadow(POOR, None, scorer="typesafe/jev-1.13.0/rubric-1"))
+        self._turn()
+        shadow = self._shadow_window()
+        self.assertEqual(
+            shadow["summary"],
+            {
+                "scored": 3,
+                "failed": 1,
+                "timeout": 1,
+                "scorer": SHADOW_SCORER,
+                "other_scorer": 2,
+                "picks_unscored": 0,
+            },
+        )
+        (row,) = shadow["rows"]
+        self.assertEqual(row["shadow_scored"], 1)
+        self.assertAlmostEqual(row["shadow_composite"], 1.0)
+
+    def _at(self, turn, minutes_ago):
+        ChatTurn.objects.filter(pk=turn.pk).update(
+            created_at=timezone.now() - datetime.timedelta(minutes=minutes_ago)
+        )
+
+    def test_only_the_newest_scorer_is_averaged_and_the_page_names_it(self):
+        newer = "typesafe/jev-1.14.0/chat-rubric-3"
+        # The newer model version scored the newest turns, so its scores
+        # are the ones averaged.
+        self._at(self._turn(**_shadow(GOOD, GOOD, scorer=newer)), 5)
+        self._at(self._pair("primary", GOOD, POOR, scorer=newer), 6)
+        # The same rubric answered by an older model version, on more turns:
+        # counted, never averaged in.
+        self._at(self._turn(**_shadow(POOR, POOR)), 30)
+        self._at(self._turn(**_shadow(POOR, POOR)), 40)
+        self._at(self._pair("alternate", POOR, GOOD), 50)
+
+        response, windows = self._windows()
+        shadow = windows["1d"]["live_chat"]["shadow"]
+        self.assertEqual(shadow["summary"]["scorer"], newer)
+        self.assertEqual(shadow["summary"]["other_scorer"], 3)
+        rows = {r["model_name"]: r for r in shadow["rows"]}
+        self.assertEqual(rows["model-a"]["shadow_scored"], 2)
+        self.assertAlmostEqual(rows["model-a"]["shadow_composite"], 1.0)
+        self.assertAlmostEqual(rows["model-b"]["shadow_composite"], 1.0)
+        self.assertAlmostEqual(rows["model-c"]["shadow_composite"], 0.0)
+        # Agreement from the newer scorer only; the older scorer's pick is
+        # left out and counted as such.
+        by_pick = {a["picked"]: a for a in shadow["agreement"]}
+        self.assertEqual(by_pick["Primary answer"]["agreed"], 1)
+        self.assertEqual(by_pick["Alternate answer"]["pairs"], 0)
+        self.assertEqual(shadow["summary"]["picks_unscored"], 1)
+        self.assertContains(response, f"<code>{newer}</code>")
+        self.assertContains(
+            response, "Turns scored by another scorer (another Jev version or rubric)"
+        )
+
+    def test_the_scorer_choice_does_not_depend_on_row_order(self):
+        from fighthealthinsurance.staff_views import _ShadowTally
+
+        newer = "typesafe/jev-1.14.0/chat-rubric-3"
+        now = timezone.now()
+        rows = [
+            (now - datetime.timedelta(minutes=1), newer),
+            (now - datetime.timedelta(minutes=9), SHADOW_SCORER),
+            (now - datetime.timedelta(minutes=8), SHADOW_SCORER),
+        ]
+        for ordered in (rows, rows[::-1]):
+            tally = _ShadowTally()
+            for created_at, scorer in ordered:
+                tally.add(
+                    created_at, "model-a", "model-b", False, "", "scored", scorer,
+                    GOOD, GOOD,
+                )
+            summary = tally.result()["summary"]
+            self.assertEqual((summary["scorer"], summary["other_scorer"]), (newer, 2))
+
+    def test_no_current_scorer_says_so(self):
+        self._turn(**_shadow(POOR, None, scorer=RUBRIC_ONE_SCORER))
+        response, windows = self._windows()
+        shadow = windows["1d"]["live_chat"]["shadow"]
+        self.assertEqual(shadow["summary"]["scorer"], "")
+        self.assertEqual(shadow["rows"], [])
+        self.assertContains(
+            response, "No turn in this window was scored under the current chat rubric."
+        )
+
+    def test_agreement_counts_by_the_persons_pick(self):
+        self._pair("primary", GOOD, POOR)  # agreed
+        self._pair("primary", POOR, GOOD)  # disagreed
+        self._pair("alternate", POOR, GOOD)  # agreed
+        self._pair("alternate", GOOD, GOOD)  # tied
+        self._pair("", GOOD, POOR)  # no pick: not counted
+        # Picked, but not both scored.
+        self._pair("primary", GOOD, None)
+        self._turn(
+            alternate_offered=True, alternate_model="model-c", preferred="alternate"
+        )
+        shadow = self._shadow_window()
+        by_pick = {a["picked"]: a for a in shadow["agreement"]}
+        self.assertEqual(
+            {k: (a["pairs"], a["agreed"], a["disagreed"], a["tied"]) for k, a in by_pick.items()},
+            {
+                "Primary answer": (2, 1, 1, 0),
+                "Alternate answer": (2, 1, 0, 1),
+                "Either": (4, 2, 1, 1),
+            },
+        )
+        self.assertAlmostEqual(by_pick["Primary answer"]["rate"], 50.0)
+        # Ties stay out of the rate.
+        self.assertAlmostEqual(by_pick["Alternate answer"]["rate"], 100.0)
+        self.assertAlmostEqual(by_pick["Either"]["rate"], 200 / 3)
+        self.assertEqual(shadow["summary"]["picks_unscored"], 2)
+
+    def test_no_scored_picks_show_a_dash_not_zero(self):
+        self._pair("primary", GOOD, GOOD)  # only a tie
+        response, windows = self._windows()
+        agreement = windows["1d"]["live_chat"]["shadow"]["agreement"]
+        self.assertTrue(all(a["rate"] is None for a in agreement))
+        html = response.content.decode()
+        row = re.search(r"<tr>\s*<td>Primary answer</td>.*?</tr>", html, re.S)
+        self.assertIsNotNone(row)
+        self.assertIn('<td class="num">&mdash;</td>', row.group(0))
+        self.assertNotIn("0.0%", row.group(0))
+
+    def test_the_section_renders_with_state_tags_and_stays_out_of_the_chart(self):
+        self._turn(
+            winner_model="shadow-only-model",
+            backends=["shadow-only-model"],
+            **_shadow(GOOD, None),
+        )
+        response, windows = self._windows()
+        self.assertContains(response, "Live chat shadow scores")
+        self.assertContains(response, "Answers the question")
+        self.assertContains(response, "Promises a result")
+        for slug in ("1d", "7d", "30d"):
+            for row in windows[slug]["live_chat"]["shadow"]["rows"]:
+                self.assertIn("state", row)
+        for w in windows.values():
+            self.assertNotIn(
+                "shadow-only-model", json.loads(w["chart_data_json"])["labels"]
+            )
+
+    def test_the_page_says_whether_scoring_is_on_and_why_it_last_failed(self):
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        response, _windows = self._windows()
+        self.assertEqual(response.context["chat_shadow"]["on"], False)
+        self.assertContains(response, "TYPESAFE_CHAT_SHADOW_ENABLED, now off")
+        ExternalServiceHealth.objects.create(
+            service="typesafe-chat",
+            last_failure_at=timezone.now(),
+            last_failure="HTTP 429",
+        )
+        with self.settings(TYPESAFE_API_KEY="k", TYPESAFE_CHAT_SHADOW_ENABLED=True):
+            response, _windows = self._windows()
+        state = response.context["chat_shadow"]
+        self.assertTrue(state["on"])
+        self.assertEqual(state["last_failure"], "HTTP 429")
+        self.assertIn("rate limited", state["last_failure_hint"])
+        self.assertContains(response, "TYPESAFE_CHAT_SHADOW_ENABLED, now on")
+        self.assertContains(response, "HTTP 429 (rate limited")
+
+    def test_the_letter_scorer_record_is_not_read_as_chat(self):
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        ExternalServiceHealth.objects.create(
+            service="typesafe", last_failure_at=timezone.now(), last_failure="HTTP 401"
+        )
+        response, _windows = self._windows()
+        self.assertEqual(response.context["chat_shadow"]["last_failure"], "")

@@ -3722,7 +3722,8 @@ class ChatTurn(models.Model):
 
     Metadata only: no message, reply, summary, history, context or document
     text, and exception class names rather than exception text. The only
-    strings are model labels, backend descriptors and the enum values below.
+    strings are model labels, backend descriptors, the enum values below and
+    the shadow scorer string (a model name and a rubric version).
     ``chat`` cascades and is non-nullable, so deleting a chat (including
     ``RemoveDataHelper.remove_data_for_email``) takes its turns with it and
     no row can outlive its chat.
@@ -3741,6 +3742,12 @@ class ChatTurn(models.Model):
         PRIMARY = "primary", "Primary"
         ALTERNATE = "alternate", "Alternate"
 
+    class ShadowOutcome(models.TextChoices):
+        NONE = "", "Not scored"
+        SCORED = "scored", "Scored"
+        FAILED = "failed", "Failed"
+        TIMEOUT = "timeout", "Timed out"
+
     class ExternalStart(models.TextChoices):
         # The StagedStart outcomes in utils.py, plus "" for a primary pass
         # that asked no outside model.
@@ -3748,7 +3755,33 @@ class ChatTurn(models.Model):
         IMMEDIATE = "immediate", "Asked with ours"
         AFTER_DELAY = "after_delay", "Started after the delay"
         EARLY = "early", "Started early: ours all failed"
+        AFTER_CHECK = "after_check", "Started early: the check on ours did not pass"
         SKIPPED = "skipped", "Skipped: ours answered first"
+
+    class GateOutcome(models.TextChoices):
+        # The outcomes in ml/chat_gate.py, plus "" for a turn the check was
+        # not on for.
+        NONE = "", "Not checked"
+        PASS = "pass", "Passed"
+        BORDERLINE = "borderline", "Borderline"
+        FAIL = "fail", "Failed"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Nothing judged"
+
+    class RankOutcome(models.TextChoices):
+        # The ranking outcomes in ml/chat_gate.py, plus "" for a turn with
+        # no ranking.
+        NONE = "", "Not ranked"
+        PICKED = "picked", "Jev picked"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Not sent"
+
+    class AlternateReason(models.TextChoices):
+        NONE = "", "No side-by-side"
+        TIED = "tied", "Closely tied scores"
+        CRUCIAL = "crucial", "Crucial moment (Jev)"
 
     # Also the turn_id the client echoes back with its side-by-side pick.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -3808,19 +3841,85 @@ class ChatTurn(models.Model):
     alternate_model = models.CharField(max_length=200, blank=True, default="")
     # The offered pair came from two different models.
     alternate_cross_model = models.BooleanField(default=False)
+    # Why it was offered: our tied-scores rule, or a crucial moment by Jev.
+    alternate_reason = models.CharField(
+        max_length=16, blank=True, default="", choices=AlternateReason.choices
+    )
     # The person's side-by-side pick. The first pick wins.
     preferred = models.CharField(
         max_length=16, blank=True, default="", choices=Preferred.choices
     )
     preferred_at = models.DateTimeField(null=True, blank=True)
+    # Shadow scores from TypeSafe (ml/chat_shadow.py), written in the
+    # background after the reply was delivered, only for chats that allowed
+    # outside models. Numbers, the scorer string and an outcome only.
+    # "winner" is the delivered reply; "second" is the side-by-side
+    # alternate when one was offered, otherwise the runner-up, and its
+    # scores are empty when the turn had neither.
+    shadow_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=ShadowOutcome.choices
+    )
+    # "typesafe/<model that answered>/chat-rubric-<n>", empty unless scored.
+    shadow_scorer = models.CharField(max_length=80, blank=True, default="")
+    # answers the question asked, 0..2; states a coverage or eligibility
+    # verdict, 0..1; asks for information the message already gave, 0..1;
+    # promises or guarantees a result, 0..1.
+    shadow_winner_answers = models.FloatField(null=True, blank=True)
+    shadow_winner_verdict = models.FloatField(null=True, blank=True)
+    shadow_winner_asks_again = models.FloatField(null=True, blank=True)
+    shadow_winner_promises = models.FloatField(null=True, blank=True)
+    shadow_second_answers = models.FloatField(null=True, blank=True)
+    shadow_second_verdict = models.FloatField(null=True, blank=True)
+    shadow_second_asks_again = models.FloatField(null=True, blank=True)
+    shadow_second_promises = models.FloatField(null=True, blank=True)
     # How the primary pass started the outside models: with ours, or held
-    # back by the routing policy's delay (ChatRoutingPolicy) and then
-    # started or skipped. The delay is the one that pass used; both are
-    # empty when the pass asked no outside model.
+    # back by the routing policy's delay (ChatRoutingPolicy) or for the
+    # check on our reply (gate_* below), and then started or skipped. The
+    # delay is the hold that pass used; both are empty when the pass asked
+    # no outside model.
     external_start = models.CharField(
         max_length=16, blank=True, default="", choices=ExternalStart.choices
     )
     external_delay_seconds = models.FloatField(null=True, blank=True)
+    # The live Jev check on our first usable reply (chat/reply_gate.py):
+    # whether the primary pass held the outside models back for it, and how
+    # it came out. The four answers are Jev's probabilities (0 to 1) that
+    # the reply responds to the message, states a coverage or eligibility
+    # verdict, asks for something the message already gives, and promises
+    # a result; null unless Jev answered. The scorer names the model that
+    # answered and the rubric version, or is fhi/local-checks-N when our
+    # own checks failed the reply before Jev was asked. gate_model is the
+    # label of the model whose reply was judged. Numbers and labels only,
+    # never text.
+    gate_used = models.BooleanField(default=False)
+    gate_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=GateOutcome.choices
+    )
+    gate_answers = models.FloatField(null=True, blank=True)
+    gate_verdict = models.FloatField(null=True, blank=True)
+    gate_asks_again = models.FloatField(null=True, blank=True)
+    gate_promises = models.FloatField(null=True, blank=True)
+    gate_scorer = models.CharField(max_length=80, blank=True, default="")
+    gate_ms = models.PositiveIntegerField(null=True, blank=True)
+    gate_model = models.CharField(max_length=200, blank=True, default="")
+    # After a failed check (FHI_CHAT_JEV_GATE_DEMOTE_FAILED on): the judged
+    # reply was ranked just below the outside models' answers, and whether
+    # it was still the reply delivered because nothing else usable arrived.
+    gate_demoted = models.BooleanField(default=False)
+    gate_demoted_delivered = models.BooleanField(default=False)
+    # Jev's probability that the person's message is a crucial moment (a
+    # deadline, a denial, an appeal's next step, coverage); null unless Jev
+    # answered.
+    gate_crucial = models.FloatField(null=True, blank=True)
+    # After a borderline check, Jev scored every deliverable candidate in
+    # one request: how that went, how long it took, how many it scored, and
+    # whether its pick replaced the race's. Each call's score is in calls.
+    rank_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=RankOutcome.choices
+    )
+    rank_ms = models.PositiveIntegerField(null=True, blank=True)
+    rank_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    rank_changed = models.BooleanField(default=False)
 
     class Meta:
         indexes = [
@@ -3842,9 +3941,11 @@ class ChatRoutingPolicy(models.Model):
     force when, for the last 30 days. Rows older than that are deleted
     after a new one is written (``ml/chat_policy.prune_old_chat_policies``).
     Written by ``ml/chat_policy.compute_and_store_chat_policy`` (the
-    ``compute_chat_policy`` command, or a scheduled job) from ChatTurn
-    metadata, and read by ``ml/chat_policy.aget_chat_policy`` on the chat
-    path. Holds model names and numbers only.
+    ``compute_chat_policy`` command, or the ``chat-routing-policy``
+    Temporal Schedule) from ChatTurn metadata, and read by
+    ``ml/chat_policy.aget_chat_policy`` on the chat path. A Temporal run
+    writes at most one row, keyed by its run id. Holds model names, numbers
+    and that id only.
 
     A policy can only narrow the outside models the router already picks:
     it never adds a model and never overrides a person's choice to keep
@@ -3868,6 +3969,19 @@ class ChatRoutingPolicy(models.Model):
         ),
     )
     source = models.CharField(max_length=16, choices=Source.choices)
+    # The Temporal workflow run that wrote the row, so a run writes at most
+    # one row however often its activity is retried. Empty (NULL) for rows
+    # from the compute_chat_policy command, which may repeat.
+    run_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "The Temporal workflow run that wrote this row; each run writes "
+            "at most one. Empty for rows from the compute_chat_policy command."
+        ),
+    )
     # Readers ignore a row whose version they do not know.
     schema_version = models.PositiveSmallIntegerField(default=1)
     # The ChatTurn window the policy was computed from, and how many turns
@@ -3896,6 +4010,13 @@ class ChatRoutingPolicy(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run_id"],
+                condition=models.Q(run_id__isnull=False),
+                name="uniq_chatroutingpolicy_run_id",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"ChatRoutingPolicy<{self.source} {self.created_at}>"
@@ -4483,9 +4604,7 @@ class ExternalServiceHealth(models.Model):
         (another pod's first write), the conditional UPDATE runs once more
         against it, so the newer outcome still wins (review).
         """
-        older = models.Q(**{f"{field}__isnull": True}) | models.Q(
-            **{f"{field}__lt": now}
-        )
+        older = cls._older(field, now)
         if await cls.objects.filter(models.Q(service=service) & older).aupdate(
             **values
         ):
@@ -4494,6 +4613,57 @@ class ExternalServiceHealth(models.Model):
         if created:
             return
         await cls.objects.filter(models.Q(service=service) & older).aupdate(**values)
+
+    @staticmethod
+    def _older(field: str, now) -> models.Q:
+        return models.Q(**{f"{field}__isnull": True}) | models.Q(
+            **{f"{field}__lt": now}
+        )
+
+    @classmethod
+    def _advance_sync(cls, service: str, field: str, now, values: dict) -> None:
+        """_advance for sync code: the same three statements, in a savepoint
+        when the caller is inside a transaction, so a failure here leaves
+        that transaction usable."""
+        older = cls._older(field, now)
+        with transaction.atomic():
+            if cls.objects.filter(models.Q(service=service) & older).update(**values):
+                return
+            _, created = cls.objects.get_or_create(service=service, defaults=values)
+            if created:
+                return
+            cls.objects.filter(models.Q(service=service) & older).update(**values)
+
+    @classmethod
+    def note_success(cls, service: str) -> None:
+        """anote_success for sync code, such as a thread with its own
+        connection (chat/isolated_db.py). Best effort, and logs the error
+        class only."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(service, "last_success_at", now, {"last_success_at": now})
+        except Exception as e:
+            logger.warning(
+                f"could not record a success for external service {service}: "
+                f"{type(e).__name__}"
+            )
+
+    @classmethod
+    def note_failure(cls, service: str, summary: str) -> None:
+        """anote_failure for sync code; see note_success."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(
+                service,
+                "last_failure_at",
+                now,
+                {"last_failure_at": now, "last_failure": (summary or "")[:80]},
+            )
+        except Exception as e:
+            logger.warning(
+                f"could not record a failure for external service {service}: "
+                f"{type(e).__name__}"
+            )
 
     @classmethod
     async def anote_success(cls, service: str) -> None:

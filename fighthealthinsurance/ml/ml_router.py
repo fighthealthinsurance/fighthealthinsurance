@@ -230,6 +230,19 @@ class MLRouter(object):
         ]
         return within_budget[:limit]
 
+    def chat_side_by_side_model(self) -> Optional[RemoteModelLike]:
+        """The model a crucial chat turn compares with its reply
+        (FHI_CHAT_SIDE_BY_SIDE_MODEL, Kimi-K3 by default), or None when it
+        is unset, not registered, down or over its provider's chat budget
+        (the same filters as chat_outside_models)."""
+        from django.conf import settings
+
+        name = str(getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or "").strip()
+        if not name:
+            return None
+        found = self.chat_outside_models([name], limit=1)
+        return found[0] if found else None
+
     @staticmethod
     def _enabled_model_names() -> Optional[set[str]]:
         """Parse the ``ENABLED_REMOTE_MODELS`` allow-list.
@@ -704,6 +717,13 @@ class MLRouter(object):
             )
             return None
         return policy
+
+    def chat_internal_selectable(self) -> bool:
+        """Whether one of our own models can take a chat turn right now
+        (instruction-following and not marked down). The live check on our
+        reply (chat/reply_gate.py) holds the outside models back only then,
+        for the same reason the routing policy is set aside without one."""
+        return bool(self._healthy_general_internal())
 
     def chat_external_delay(self, policy: Optional[ChatPolicy]) -> float:
         """Seconds the chat fan-out holds the outside models back while

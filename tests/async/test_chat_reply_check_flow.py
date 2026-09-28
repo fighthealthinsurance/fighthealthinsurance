@@ -1,0 +1,976 @@
+"""End-to-end chat turns with the live Jev check on our reply ("cascade").
+
+When the check is on for a turn, the outside models' calls wait while ours
+answer and Jev checks our first usable reply: a pass means they are never
+sent, and anything else (a fail, an error, a timeout, an answer we cannot
+read) starts them at once. A reply our own checks reject fails without
+being sent to Jev at all. With the check off, or when the person has not
+allowed outside models, a turn runs exactly as before and nothing reaches
+TypeSafe. Each ChatTurn row records what the check did, with numbers and
+labels only.
+"""
+
+import asyncio
+import threading
+import typing
+from unittest.mock import AsyncMock, patch
+
+from asgiref.sync import ThreadSensitiveContext, sync_to_async
+from django.contrib.auth import get_user_model
+from django.test import override_settings
+from loguru import logger
+from rest_framework.test import APITestCase, APITransactionTestCase
+
+from fighthealthinsurance.chat_interface import ChatInterface
+from fighthealthinsurance.chat.message_preprocessor import DIRECT_CHAT_HARD_LIMIT_CHARS
+from fighthealthinsurance.ml import chat_gate, typesafe
+from fighthealthinsurance.ml.chat_policy import ChatPolicy
+from fighthealthinsurance.models import (
+    ChatTurn,
+    ExternalServiceHealth,
+    OngoingChat,
+    ProfessionalUser,
+)
+from tests.chat_fixtures import FRESH_REPLY, SECOND_OPINION_REPLY, RecordingChatModel
+
+if typing.TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
+
+ENABLED = dict(TYPESAFE_API_KEY="test-key", FHI_CHAT_JEV_GATE_ENABLED=True)
+MESSAGE = "What is an appeal? I am Robin Quill, reach me at robin.q@example.com."
+# A reply our own checks reject: it promises the outcome.
+PROMISE_REPLY = (
+    "Good news: I guarantee your appeal will be approved. Send the plan the "
+    "denial letter and a note from your doctor."
+)
+
+
+class _OutsideModel(RecordingChatModel):
+    external = True
+
+
+class _OursModel(RecordingChatModel):
+    external = False
+
+
+class _SlowOursModel(_OursModel):
+    def __init__(self, *args, delay=1.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.delay = delay
+
+    async def generate_chat_response(self, *args, **kwargs):
+        await asyncio.sleep(self.delay)
+        return await super().generate_chat_response(*args, **kwargs)
+
+
+class _OtherSummaryOursModel(_OursModel):
+    """Answers after the others, with the same reply text under another
+    context summary."""
+
+    async def generate_chat_response(self, *args, **kwargs):
+        reply, _summary = await super().generate_chat_response(*args, **kwargs)
+        await asyncio.sleep(0.3)
+        return reply, "another context summary"
+
+
+class _CopyingOutsideModel(_OutsideModel):
+    """An outside model whose reply text matches ours, under its own
+    context summary."""
+
+    async def generate_chat_response(self, *args, **kwargs):
+        reply, _summary = await super().generate_chat_response(*args, **kwargs)
+        return reply, "an outside model's context summary"
+
+
+class _BrokenOutsideModel(_OutsideModel):
+    async def generate_chat_response(self, *args, **kwargs):
+        await super().generate_chat_response(*args, **kwargs)
+        raise RuntimeError("outside backend down")
+
+
+class _Frames:
+    def __init__(self):
+        self.frames = []
+
+    async def __call__(self, frame):
+        self.frames.append(frame)
+
+    def last_content(self):
+        return [f for f in self.frames if "content" in f][-1]["content"]
+
+    def last_reply_frame(self):
+        return [f for f in self.frames if "content" in f][-1]
+
+
+class _Jev:
+    """Stands in for the TypeSafe request (chat_gate._post): records each
+    state it was sent and answers as told."""
+
+    def __init__(self, payload=None, error=None, delay=0.0, rank=None, rank_error=None):
+        self.payload = payload
+        self.error = error
+        self.delay = delay
+        # The ranking request's answer (questions given), or its error.
+        self.rank = rank
+        self.rank_error = rank_error
+        self.states = []
+
+    async def __call__(self, state, timeout, questions=None):
+        self.states.append(state)
+        if questions is not None:
+            if self.rank_error is not None:
+                raise self.rank_error
+            return self.rank
+        await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self.payload
+
+
+def _answers(answers=0.9, verdict=0.05, asks_again=0.05, promises=0.05, crucial=0.1):
+    return {
+        "model": "jev-1.13.0",
+        "answers": {
+            chat_gate.ANSWERS_QUESTION: {"type": "noul", "noul": answers},
+            chat_gate.STATES_VERDICT: {"type": "noul", "noul": verdict},
+            chat_gate.ASKS_AGAIN: {"type": "noul", "noul": asks_again},
+            chat_gate.PROMISES_OUTCOME: {"type": "noul", "noul": promises},
+            chat_gate.CRUCIAL_MOMENT: {"type": "noul", "noul": crucial},
+        },
+    }
+
+
+def _ranked(*qualities):
+    """A ranking answer giving REPLY k "responds" = qualities[k-1] and no
+    problems, so its quality is that number."""
+    answers = {}
+    for k, q in enumerate(qualities, start=1):
+        answers[f"{chat_gate.ANSWERS_QUESTION}_{k}"] = {"noul": q}
+        for name in (
+            chat_gate.STATES_VERDICT,
+            chat_gate.ASKS_AGAIN,
+            chat_gate.PROMISES_OUTCOME,
+        ):
+            answers[f"{name}_{k}"] = {"noul": 0.0}
+    return {"model": "jev-1.13.0", "answers": answers}
+
+
+async def _make_chat(username, npi):
+    user = await User.objects.acreate_user(
+        username=username,
+        password="testpass",
+        email=f"{username}@example.com",
+        first_name="Robin",
+        last_name="Quill",
+    )
+    professional = await ProfessionalUser.objects.acreate(
+        user=user, active=True, npi_number=npi
+    )
+    chat = await OngoingChat.objects.acreate(
+        professional_user=professional, chat_history=[], summary_for_next_call=[]
+    )
+    return user, chat
+
+
+def _router_returning(models):
+    return patch(
+        "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback",
+        return_value=(models, []),
+    )
+
+
+def _ours_selectable(selectable=True):
+    return patch(
+        "fighthealthinsurance.ml.ml_router.MLRouter._healthy_general_internal",
+        return_value=["fhi-local"] if selectable else [],
+    )
+
+
+def _jev(jev):
+    return patch.object(chat_gate, "_post", new=jev)
+
+
+def _policy(policy):
+    return patch(
+        "fighthealthinsurance.chat_interface.aget_chat_policy",
+        new=AsyncMock(return_value=policy),
+    )
+
+
+_PATCH_FIRE_AND_FORGET = patch(
+    "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
+    new_callable=AsyncMock,
+)
+
+
+def _pair():
+    ours = _OursModel(always_reply=FRESH_REPLY, model_quality=110, name="fhi-local")
+    outside = _OutsideModel(
+        always_reply=SECOND_OPINION_REPLY, model_quality=60, name="claude"
+    )
+    return ours, outside
+
+
+async def _only_row(chat):
+    return await ChatTurn.objects.filter(chat=chat).aget()
+
+
+async def _health():
+    return await ExternalServiceHealth.objects.filter(
+        service=chat_gate.SERVICE
+    ).afirst()
+
+
+def _statuses(row):
+    return sorted({(c["model"], c["status"]) for c in row.calls})
+
+
+def _row_values(row):
+    return [getattr(row, f.attname) for f in ChatTurn._meta.concrete_fields]
+
+
+class _Logs:
+    """Loguru records from the check's own modules during a turn."""
+
+    MODULES = (
+        "fighthealthinsurance.chat.reply_gate",
+        "fighthealthinsurance.ml.chat_gate",
+        "fighthealthinsurance.utils",
+    )
+
+    def __enter__(self):
+        self.messages = []
+        self._sink = logger.add(
+            lambda m: (
+                self.messages.append(m.record["message"])
+                if m.record["name"] in self.MODULES
+                else None
+            ),
+            level="DEBUG",
+        )
+        return self
+
+    def __exit__(self, *exc):
+        logger.remove(self._sink)
+
+
+class ChatReplyCheckOffTest(APITestCase):
+    """Every case where the check must not run: no request to TypeSafe and
+    the turn routes exactly as without the check."""
+
+    async def _turn_without_check(
+        self, username, npi, *, use_external=True, models=None
+    ):
+        user, chat = await _make_chat(username, npi)
+        frames = _Frames()
+        interface = ChatInterface(
+            send_json_message_func=frames,
+            chat=chat,
+            user=user,
+            use_external_models=use_external,
+        )
+        ours, outside = _pair()
+        jev = _Jev(payload=_answers())
+        with (
+            _ours_selectable(),
+            _router_returning(models(ours, outside) if models else [ours, outside]),
+            _jev(jev),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message(MESSAGE)
+        self.assertEqual(jev.states, [])
+        row = await _only_row(chat)
+        self.assertFalse(row.gate_used)
+        self.assertEqual(row.gate_outcome, "")
+        self.assertEqual(
+            (row.gate_answers, row.gate_scorer, row.gate_ms, row.gate_model),
+            (None, "", None, ""),
+        )
+        return row, outside
+
+    async def test_off_by_default(self):
+        row, outside = await self._turn_without_check("gateoff1", "9999931001")
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.external_start, "immediate")
+
+    async def test_off_without_the_key(self):
+        with override_settings(TYPESAFE_API_KEY=None, FHI_CHAT_JEV_GATE_ENABLED=True):
+            row, outside = await self._turn_without_check("gateoff2", "9999931002")
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.external_start, "immediate")
+
+    async def test_off_without_consent_to_outside_models(self):
+        with override_settings(**ENABLED):
+            row, outside = await self._turn_without_check(
+                "gateoff3",
+                "9999931003",
+                use_external=False,
+                models=lambda ours, outside: [ours],
+            )
+        self.assertEqual(outside.calls, [])
+        self.assertEqual(row.external_start, "")
+
+    async def test_off_when_the_turn_has_no_outside_model(self):
+        with override_settings(**ENABLED):
+            row, _outside = await self._turn_without_check(
+                "gateoff4", "9999931004", models=lambda ours, outside: [ours]
+            )
+        self.assertEqual(row.external_start, "")
+
+    async def test_off_when_none_of_ours_is_selectable(self):
+        user, chat = await _make_chat("gateoff5", "9999931005")
+        interface = ChatInterface(
+            send_json_message_func=_Frames(), chat=chat, user=user
+        )
+        ours, outside = _pair()
+        jev = _Jev(payload=_answers())
+        with (
+            override_settings(**ENABLED),
+            _ours_selectable(False),
+            _router_returning([ours, outside]),
+            _jev(jev),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message(MESSAGE)
+        self.assertEqual(jev.states, [])
+        self.assertTrue(outside.calls)
+        row = await _only_row(chat)
+        self.assertFalse(row.gate_used)
+        self.assertEqual(row.external_start, "immediate")
+
+    async def test_off_for_a_stored_long_paste(self):
+        user, chat = await _make_chat("gateoff6", "9999931006")
+        interface = ChatInterface(
+            send_json_message_func=_Frames(), chat=chat, user=user
+        )
+        ours, outside = _pair()
+        jev = _Jev(payload=_answers())
+        big = "My plan denied the claim as not medically necessary. " * (
+            DIRECT_CHAT_HARD_LIMIT_CHARS // 40
+        )
+        with (
+            override_settings(**ENABLED),
+            _ours_selectable(),
+            _router_returning([ours, outside]),
+            _jev(jev),
+            _PATCH_FIRE_AND_FORGET,
+            patch(
+                "fighthealthinsurance.chat_interface.process_uploaded_document",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await interface.handle_chat_message(big)
+        self.assertEqual(jev.states, [])
+        self.assertTrue(outside.calls)
+        row = await _only_row(chat)
+        self.assertFalse(row.gate_used)
+
+
+class _CheckedTurns:
+    """One checked chat turn end to end, for the transactional classes
+    below."""
+
+    async def _turn(
+        self,
+        username,
+        npi,
+        jev,
+        *,
+        ours=None,
+        outside=None,
+        settings=None,
+        policy=None,
+        also_ours=(),
+    ):
+        user, chat = await _make_chat(username, npi)
+        frames = _Frames()
+        interface = ChatInterface(send_json_message_func=frames, chat=chat, user=user)
+        default_ours, default_outside = _pair()
+        ours = ours or default_ours
+        outside = outside or default_outside
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        patches = [_policy(policy)] if policy is not None else []
+        # The check's time also covers the identifier lookup, which reads
+        # the shared test database from a thread of its own and can wait
+        # there on the turn's own writes. The default of 1.5 s then turns
+        # an answer the test set up into a timeout, so these turns allow
+        # 5 s unless a test sets its own.
+        with (
+            override_settings(
+                **{
+                    **ENABLED,
+                    "FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS": 5.0,
+                    **(settings or {}),
+                }
+            ),
+            _ours_selectable(),
+            _router_returning([ours, *also_ours, outside]),
+            _jev(jev),
+            _PATCH_FIRE_AND_FORGET,
+            _Logs() as logs,
+        ):
+            for p in patches:
+                p.start()
+            try:
+                await interface.handle_chat_message(MESSAGE)
+            finally:
+                for p in patches:
+                    p.stop()
+        elapsed = loop.time() - started
+        row = await _only_row(chat)
+        return row, outside, frames, elapsed, logs
+
+    def _assert_no_text(self, row, logs, *replies):
+        values = _row_values(row) + [str(c) for c in row.calls]
+        blob = " ".join(str(v) for v in values) + " ".join(logs.messages)
+        for text in (MESSAGE, *replies):
+            for piece in (text, text[:24], text[-24:]):
+                self.assertNotIn(piece, blob)
+
+
+class ChatReplyCheckTest(_CheckedTurns, APITransactionTestCase):
+    """Transactional: the check reads the chat's identifiers, and notes its
+    health, on threads of their own (chat/isolated_db.py), which only see
+    committed rows."""
+
+    async def test_a_pass_means_the_outside_models_are_never_sent(self):
+        jev = _Jev(payload=_answers())
+        row, outside, frames, elapsed, logs = await self._turn(
+            "gate1", "9999931101", jev
+        )
+        self.assertEqual(outside.calls, [])
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        # It did not sit out the check's 8 second hold.
+        self.assertLess(elapsed, 4.0)
+        self.assertEqual(len(jev.states), 1)
+        self.assertTrue(row.gate_used)
+        self.assertEqual(row.gate_outcome, "pass")
+        self.assertEqual(
+            (
+                row.gate_answers,
+                row.gate_verdict,
+                row.gate_asks_again,
+                row.gate_promises,
+            ),
+            (0.9, 0.05, 0.05, 0.05),
+        )
+        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-3")
+        self.assertEqual(row.gate_model, "fhi-local")
+        self.assertIsInstance(row.gate_ms, int)
+        self.assertEqual(row.external_start, "skipped")
+        self.assertEqual(row.external_delay_seconds, 8.0)
+        self.assertEqual(
+            _statuses(row), [("claude", "skipped"), ("fhi-local", "scored")]
+        )
+        self.assertEqual(row.winner_model, "fhi-local")
+        # A pass demotes nothing.
+        self.assertFalse(row.gate_demoted)
+        self.assertFalse(row.gate_demoted_delivered)
+        health = await _health()
+        self.assertIsNotNone(health.last_success_at)
+        self.assertIsNone(health.last_failure_at)
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_the_state_sent_is_the_message_and_our_reply_redacted(self):
+        jev = _Jev(payload=_answers())
+        await self._turn("gate2", "9999931102", jev)
+        (state,) = jev.states
+        self.assertTrue(state.startswith(chat_gate.MESSAGE_HEADER))
+        self.assertIn("What is an appeal?", state)
+        self.assertIn(FRESH_REPLY, state)
+        self.assertNotIn(SECOND_OPINION_REPLY, state)
+        for identifier in ("Robin", "Quill", "robin.q@example.com"):
+            self.assertNotIn(identifier, state)
+
+    async def test_a_fail_starts_the_outside_models_and_one_of_them_wins(self):
+        jev = _Jev(payload=_answers(answers=0.2))
+        row, outside, frames, elapsed, logs = await self._turn(
+            "gate3", "9999931103", jev
+        )
+        self.assertTrue(outside.calls)
+        self.assertLess(elapsed, 4.0)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.gate_answers, 0.2)
+        self.assertEqual(row.external_start, "after_check")
+        self.assertIn(("claude", "scored"), _statuses(row))
+        # Our failed reply ranks below the outside answer, whatever its
+        # higher base score, and is not offered beside it either.
+        self.assertEqual(row.winner_model, "claude")
+        self.assertTrue(row.winner_external)
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertNotIn("alternate_content", frames.last_reply_frame())
+        self.assertEqual(row.alternate_model, "")
+        self.assertTrue(row.gate_demoted)
+        self.assertFalse(row.gate_demoted_delivered)
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_a_fail_with_no_outside_answer_still_delivers_ours(self):
+        """Never hold the reply hostage: with nothing else usable, the
+        demoted reply is still the one delivered."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        broken = _BrokenOutsideModel(
+            always_reply=SECOND_OPINION_REPLY, model_quality=60, name="claude"
+        )
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate13", "9999931113", jev, outside=broken
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertTrue(row.gate_demoted)
+        self.assertTrue(row.gate_demoted_delivered)
+        # Ranked below the outside calls' base score, though none arrived.
+        (ours_score,) = [
+            c["score"] for c in row.calls if c["model"] == "fhi-local" and c["score"]
+        ]
+        self.assertLess(row.winner_score, ours_score)
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_a_blank_outside_answer_does_not_push_ours_below_it(self):
+        """An outside answer with no reply text, only a context summary,
+        cannot take the failed reply's place: it would only send the turn
+        to the retry, and a retry that found nothing would leave the person
+        with no reply at all. The first pass delivers ours."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        blank = _OutsideModel(always_reply="", model_quality=60, name="claude")
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate15", "9999931115", jev, outside=blank
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertFalse(row.retry_ran)
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertTrue(row.gate_demoted)
+        self.assertTrue(row.gate_demoted_delivered)
+        self._assert_no_text(row, logs, FRESH_REPLY)
+
+    async def test_an_outside_copy_of_the_failed_reply_is_not_the_alternate(self):
+        """An outside model returning the very text Jev failed is not
+        demoted (only our calls are), so it can be the race's runner-up.
+        It is still the reply the check failed, so it is not offered beside
+        the outside answer that won."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        copy = _CopyingOutsideModel(
+            always_reply=FRESH_REPLY, model_quality=59, name="deepseek"
+        )
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate20", "9999931120", jev, also_ours=(copy,)
+        )
+        self.assertTrue(copy.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.winner_model, "claude")
+        # The race made the copy its runner-up.
+        self.assertEqual(row.runner_up_model, "deepseek")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertNotEqual(
+            frames.last_reply_frame().get("alternate_content"), FRESH_REPLY
+        )
+        self.assertNotEqual(row.alternate_model, "deepseek")
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_a_too_short_outside_answer_does_not_beat_ours(self):
+        """An outside answer too short to deliver ranks below the failed
+        reply of ours even when its own score is higher: the first pass
+        delivers ours, and no retry is needed."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        short = _OutsideModel(always_reply="OK", model_quality=60, name="claude")
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate19", "9999931119", jev, outside=short
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertFalse(row.retry_ran)
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertTrue(row.gate_demoted_delivered)
+        self._assert_no_text(row, logs, FRESH_REPLY)
+
+    async def test_the_same_reply_with_another_summary_is_demoted_too(self):
+        """Another of our models returning the judged reply under a
+        different context summary shows the person the same reply, so it
+        ranks below the outside answer as well."""
+        jev = _Jev(payload=_answers(answers=0.2))
+        twin = _OtherSummaryOursModel(
+            always_reply=FRESH_REPLY, model_quality=110, name="fhi-local-twin"
+        )
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "gate16", "9999931116", jev, also_ours=(twin,)
+        )
+        self.assertTrue(twin.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.gate_model, "fhi-local")
+        self.assertIn(("fhi-local-twin", "scored"), _statuses(row))
+        self.assertEqual(row.winner_model, "claude")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertFalse(row.gate_demoted_delivered)
+        # Nor is it offered beside the outside answer as the alternate.
+        self.assertNotEqual(
+            frames.last_reply_frame().get("alternate_content"), FRESH_REPLY
+        )
+        self.assertNotEqual(row.alternate_model, "fhi-local-twin")
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_with_demotion_off_a_fail_keeps_the_usual_scoring(self):
+        jev = _Jev(payload=_answers(answers=0.2))
+        row, outside, frames, _elapsed, _logs = await self._turn(
+            "gate14",
+            "9999931114",
+            jev,
+            settings={"FHI_CHAT_JEV_GATE_DEMOTE_FAILED": False},
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        # Ours outscores the outside model on its base score.
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertFalse(row.gate_demoted)
+        self.assertFalse(row.gate_demoted_delivered)
+
+    async def test_a_verdict_fails_the_check(self):
+        jev = _Jev(payload=_answers(verdict=0.9))
+        row, outside, _frames, _elapsed, _logs = await self._turn(
+            "gate4", "9999931104", jev
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+
+    async def test_a_promise_jev_finds_fails_the_check_and_is_recorded(self):
+        jev = _Jev(payload=_answers(promises=0.85))
+        row, outside, frames, _elapsed, _logs = await self._turn(
+            "gate17", "9999931117", jev
+        )
+        self.assertEqual(len(jev.states), 1)
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.gate_promises, 0.85)
+        self.assertEqual(row.gate_scorer, "typesafe/jev-1.13.0/chat-gate-rubric-3")
+        self.assertEqual(row.external_start, "after_check")
+        self.assertEqual(row.winner_model, "claude")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertTrue(row.gate_demoted)
+
+    async def test_our_own_checks_fail_a_false_promise_without_asking_jev(self):
+        """Our requirements come first and need no request: a reply that
+        promises the outcome fails the check before anything is sent, the
+        outside models start at once, and one of their answers is
+        delivered in its place."""
+        jev = _Jev(payload=_answers())
+        ours = _OursModel(
+            always_reply=PROMISE_REPLY, model_quality=110, name="fhi-local"
+        )
+        row, outside, frames, elapsed, logs = await self._turn(
+            "gate18", "9999931118", jev, ours=ours
+        )
+        self.assertEqual(jev.states, [])
+        self.assertTrue(outside.calls)
+        # It did not sit out the check's 8 second hold.
+        self.assertLess(elapsed, 4.0)
+        self.assertEqual(row.external_start, "after_check")
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertEqual(row.winner_model, "claude")
+        self.assertTrue(row.gate_used)
+        self.assertEqual(row.gate_outcome, "fail")
+        self.assertEqual(row.gate_scorer, "fhi/local-checks-1")
+        self.assertEqual(row.gate_model, "fhi-local")
+        self.assertIsNone(row.gate_answers)
+        self.assertIsNone(row.gate_promises)
+        self.assertTrue(row.gate_demoted)
+        self.assertFalse(row.gate_demoted_delivered)
+        self.assertFalse(row.retry_ran)
+        # Nothing reached TypeSafe, so its health row is left alone.
+        self.assertIsNone(await _health())
+        self._assert_no_text(row, logs, PROMISE_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_a_timeout_starts_the_outside_models(self):
+        jev = _Jev(payload=_answers(), delay=5.0)
+        # An instant lookup, so the second is Jev's alone to run out.
+        with patch(
+            "fighthealthinsurance.chat.reply_gate.chat_redactions",
+            new=lambda chat_id: [],
+        ):
+            row, outside, _frames, elapsed, logs = await self._turn(
+                "gate5",
+                "9999931105",
+                jev,
+                settings={"FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS": 1.0},
+            )
+        self.assertTrue(outside.calls)
+        self.assertLess(elapsed, 4.0)
+        self.assertEqual(row.gate_outcome, "timeout")
+        self.assertIsNone(row.gate_answers)
+        self.assertEqual(row.gate_scorer, "")
+        self.assertEqual(row.external_start, "after_check")
+        # A timeout says nothing about our reply: no demotion.
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertFalse(row.gate_demoted)
+        health = await _health()
+        self.assertEqual(health.last_failure, "timeout")
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_an_http_error_starts_the_outside_models(self):
+        jev = _Jev(error=typesafe.TypeSafeError("HTTP 500", status=500))
+        row, outside, _frames, _elapsed, logs = await self._turn(
+            "gate6", "9999931106", jev
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "error")
+        self.assertEqual(row.external_start, "after_check")
+        # Nor does an error.
+        self.assertEqual(row.winner_model, "fhi-local")
+        self.assertFalse(row.gate_demoted)
+        health = await _health()
+        self.assertEqual(health.last_failure, "HTTP 500")
+
+    async def test_an_answer_we_cannot_read_starts_the_outside_models(self):
+        jev = _Jev(payload={"model": "jev-1.13.0", "answers": {"x": 1}})
+        row, outside, _frames, _elapsed, _logs = await self._turn(
+            "gate7", "9999931107", jev
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "error")
+        self.assertIsNone(row.gate_answers)
+
+    async def test_the_hold_runs_out_when_ours_are_slow(self):
+        jev = _Jev(payload=_answers())
+        ours = _SlowOursModel(
+            always_reply=FRESH_REPLY, model_quality=110, name="fhi-local", delay=1.0
+        )
+        row, outside, frames, _elapsed, _logs = await self._turn(
+            "gate8",
+            "9999931108",
+            jev,
+            ours=ours,
+            settings={"FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS": 0.5},
+        )
+        # Nothing of ours was usable within the hold: the outside models
+        # started when it ran out, and nothing was judged.
+        self.assertTrue(outside.calls)
+        self.assertEqual(jev.states, [])
+        self.assertTrue(row.gate_used)
+        self.assertEqual(row.gate_outcome, "skipped")
+        self.assertEqual(row.external_start, "after_delay")
+        self.assertEqual(row.external_delay_seconds, 0.5)
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+
+    async def test_the_check_holds_without_the_routing_policy(self):
+        """FHI_CHAT_POLICY_APPLY is off under test, so the policy's delay is
+        0; the check still holds the outside models on its own."""
+        jev = _Jev(payload=_answers())
+        row, outside, _frames, _elapsed, _logs = await self._turn(
+            "gate9", "9999931109", jev
+        )
+        self.assertEqual(outside.calls, [])
+        self.assertEqual(row.external_start, "skipped")
+
+    async def test_a_longer_policy_delay_is_the_hold(self):
+        jev = _Jev(payload=_answers())
+        row, outside, _frames, _elapsed, _logs = await self._turn(
+            "gate10",
+            "9999931110",
+            jev,
+            policy=ChatPolicy(external_delay_seconds=12.0, reason="ok"),
+        )
+        self.assertEqual(outside.calls, [])
+        self.assertEqual(row.gate_outcome, "pass")
+        self.assertEqual(row.external_delay_seconds, 12.0)
+
+    async def test_a_reply_carrying_a_tool_call_is_not_sent_to_jev(self):
+        jev = _Jev(payload=_answers())
+        tool_reply = (
+            "Let me look that up for you. "
+            '**medicaid_info {"state": "California", "topic": "", "limit": 5}**'
+        )
+        ours = _OursModel(always_reply=tool_reply, model_quality=110, name="fhi-local")
+        row, outside, _frames, _elapsed, _logs = await self._turn(
+            "gate11", "9999931111", jev, ours=ours
+        )
+        self.assertEqual(jev.states, [])
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "skipped")
+        self.assertEqual(row.external_start, "after_check")
+        self.assertEqual(row.gate_model, "fhi-local")
+
+    async def test_a_stuck_identifier_lookup_does_not_hold_up_the_turn(self):
+        """The lookup runs off the chat's database executor: when it is
+        stuck, the check gives up after its timeout, the outside models
+        start, and the rest of the turn (its row included) runs on the
+        chat's executor without waiting for it."""
+        entered, release = threading.Event(), threading.Event()
+
+        def stuck(chat_id):
+            entered.set()
+            release.wait(10)
+            return []
+
+        jev = _Jev(payload=_answers())
+        try:
+            # The socket's own executor, as PerConnectionThreadSensitiveMixin
+            # sets up for a chat.
+            async with ThreadSensitiveContext():
+                with patch(
+                    "fighthealthinsurance.chat.reply_gate.chat_redactions", new=stuck
+                ):
+                    row, outside, frames, elapsed, _logs = await self._turn(
+                        "gate12",
+                        "9999931112",
+                        jev,
+                        settings={"FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS": 0.3},
+                    )
+                    still_stuck = entered.is_set() and not release.is_set()
+        finally:
+            release.set()
+        self.assertTrue(still_stuck)
+        self.assertLess(elapsed, 5.0)
+        self.assertEqual(jev.states, [])
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "timeout")
+        self.assertEqual(row.external_start, "after_check")
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+
+
+KIMI_REPLY = (
+    "For a denied MRI, start by asking the plan for the written reason, then "
+    "file its appeal form with a letter from your doctor. Want the steps?"
+)
+
+
+def _side_by_side_model(model):
+    return patch(
+        "fighthealthinsurance.ml.ml_router.MLRouter.chat_side_by_side_model",
+        return_value=model,
+    )
+
+
+class ChatJevTiersTest(_CheckedTurns, APITransactionTestCase):
+    """The tiers end to end: a borderline reply asks the outside models and
+    Jev ranks every candidate; a crucial moment adds the side-by-side model
+    and offers a side-by-side, and nothing else does while Jev decides."""
+
+    def _kimi(self):
+        return _OutsideModel(always_reply=KIMI_REPLY, model_quality=60, name="kimi")
+
+    async def test_a_borderline_reply_is_ranked_and_jevs_pick_is_delivered(self):
+        jev = _Jev(payload=_answers(answers=0.8), rank=_ranked(0.6, 0.95))
+        row, outside, frames, _elapsed, logs = await self._turn(
+            "tier1", "9999931301", jev
+        )
+        self.assertTrue(outside.calls)
+        self.assertEqual(row.gate_outcome, "borderline")
+        self.assertFalse(row.gate_demoted)
+        self.assertEqual(len(jev.states), 2)
+        self.assertIn("THE REPLY 2:", jev.states[1])
+        self.assertEqual(frames.last_content(), SECOND_OPINION_REPLY)
+        self.assertEqual(row.winner_model, "claude")
+        self.assertEqual(
+            (row.rank_outcome, row.rank_count, row.rank_changed),
+            ("picked", 2, True),
+        )
+        self.assertIsInstance(row.rank_ms, int)
+        jev_scores = {c["model"]: c.get("jev") for c in row.calls if "jev" in c}
+        self.assertEqual(jev_scores, {"fhi-local": 0.6, "claude": 0.95})
+        # Not crucial: no side-by-side, whatever the scores.
+        self.assertNotIn("alternate_content", frames.last_reply_frame())
+        self.assertFalse(row.alternate_offered)
+        self._assert_no_text(row, logs, FRESH_REPLY, SECOND_OPINION_REPLY)
+
+    async def test_a_ranking_that_agrees_changes_nothing(self):
+        jev = _Jev(payload=_answers(answers=0.8), rank=_ranked(0.9, 0.5))
+        row, _outside, frames, _elapsed, _logs = await self._turn(
+            "tier2", "9999931302", jev
+        )
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertEqual((row.rank_outcome, row.rank_changed), ("picked", False))
+
+    async def test_a_failed_ranking_leaves_the_races_pick(self):
+        jev = _Jev(
+            payload=_answers(answers=0.8),
+            rank_error=typesafe.TypeSafeError("status 500"),
+        )
+        row, _outside, frames, _elapsed, _logs = await self._turn(
+            "tier3", "9999931303", jev
+        )
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertEqual((row.rank_outcome, row.rank_changed), ("error", False))
+        self.assertFalse(any("jev" in c for c in row.calls))
+
+    async def test_a_crucial_pass_asks_only_the_side_by_side_model(self):
+        kimi = self._kimi()
+        jev = _Jev(payload=_answers(crucial=0.9))
+        with _side_by_side_model(kimi):
+            row, outside, frames, _elapsed, _logs = await self._turn(
+                "tier4", "9999931304", jev
+            )
+        self.assertEqual(outside.calls, [])
+        self.assertEqual(len(kimi.calls), 1)
+        self.assertEqual(row.gate_outcome, "pass")
+        self.assertEqual(row.gate_crucial, 0.9)
+        self.assertEqual(frames.last_content(), FRESH_REPLY)
+        self.assertEqual(frames.last_reply_frame().get("alternate_content"), KIMI_REPLY)
+        self.assertTrue(row.alternate_offered)
+        self.assertEqual(
+            (row.alternate_model, row.alternate_reason), ("kimi", "crucial")
+        )
+        self.assertIn(("claude", "skipped"), _statuses(row))
+        self.assertIn(("kimi", "scored"), _statuses(row))
+        # Listed with the turn's backends, as an outside model.
+        self.assertIn("kimi", row.backends)
+
+    async def test_an_ordinary_pass_never_sends_the_side_by_side_model(self):
+        kimi = self._kimi()
+        jev = _Jev(payload=_answers(crucial=0.1))
+        with _side_by_side_model(kimi):
+            row, _outside, frames, _elapsed, _logs = await self._turn(
+                "tier5", "9999931305", jev
+            )
+        self.assertEqual(kimi.calls, [])
+        self.assertIn(("kimi", "skipped"), _statuses(row))
+        self.assertNotIn("alternate_content", frames.last_reply_frame())
+
+    async def test_an_error_never_sends_the_side_by_side_model(self):
+        kimi = self._kimi()
+        jev = _Jev(error=typesafe.TypeSafeError("status 500"))
+        with _side_by_side_model(kimi):
+            row, outside, _frames, _elapsed, _logs = await self._turn(
+                "tier6", "9999931306", jev
+            )
+        self.assertTrue(outside.calls)
+        self.assertEqual(kimi.calls, [])
+        self.assertEqual(row.gate_outcome, "error")
+
+    async def test_a_chat_with_no_side_by_side_left_does_not_reserve_one(self):
+        kimi = self._kimi()
+        jev = _Jev(payload=_answers(crucial=0.9))
+        with _side_by_side_model(kimi):
+            row, _outside, frames, _elapsed, _logs = await self._turn(
+                "tier7",
+                "9999931307",
+                jev,
+                settings={"FHI_CHAT_SIDE_BY_SIDES_PER_CHAT": 0},
+            )
+        self.assertEqual(kimi.calls, [])
+        self.assertNotIn("kimi", {c["model"] for c in row.calls})
+        self.assertNotIn("alternate_content", frames.last_reply_frame())
+
+    async def test_a_crucial_borderline_turn_shows_jevs_top_two(self):
+        kimi = self._kimi()
+        # Race order: ours, the outside model, kimi (lower base scores).
+        jev = _Jev(
+            payload=_answers(answers=0.8, crucial=0.9), rank=_ranked(0.5, 0.7, 0.9)
+        )
+        with _side_by_side_model(kimi):
+            row, outside, frames, _elapsed, _logs = await self._turn(
+                "tier8", "9999931308", jev
+            )
+        self.assertTrue(outside.calls)
+        self.assertEqual(len(kimi.calls), 1)
+        self.assertEqual(frames.last_content(), KIMI_REPLY)
+        self.assertEqual(
+            frames.last_reply_frame().get("alternate_content"), SECOND_OPINION_REPLY
+        )
+        self.assertEqual(row.alternate_reason, "crucial")
+        self.assertEqual(row.rank_count, 3)
