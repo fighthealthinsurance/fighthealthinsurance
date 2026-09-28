@@ -54,19 +54,19 @@ the Debian and Ubuntu steps. They cover only what differs; otherwise follow
 the rest of this page.
 
 ```bash
-sudo dnf install -y python3.12 tesseract tesseract-langpack-eng \
+sudo dnf install -y python3.13 tesseract tesseract-langpack-eng \
   texlive-scheme-basic pandoc git git-lfs nodejs npm mkcert
 ```
 
 - **Name the Python version.** On Fedora 43 and 44, `python3` is 3.14, newer
   than any version CI or tox runs. Create the virtualenv with
-  `python3.12 -m venv .venv` ([Option A](#option-a-virtualenv)); in testing on
+  `python3.13 -m venv .venv` ([Option A](#option-a-virtualenv)); in testing on
   Fedora, a virtualenv worked more reliably than micromamba. `python3.13` is
   packaged too, and it is the version CI tests.
 - On Fedora 43 and 44, `dnf install nodejs` installs Node.js 22, which meets
   the 20+ requirement.
 - If pip fails to build a package, add a compiler and headers:
-  `sudo dnf install -y gcc gcc-c++ python3.12-devel libffi-devel openssl-devel`.
+  `sudo dnf install -y gcc gcc-c++ python3.13-devel libffi-devel openssl-devel`.
   The requirements installed without them on Fedora 44 (x86-64), but a
   platform without prebuilt wheels needs them.
 - `pango-devel` and `gdk-pixbuf2-devel` are not needed, for the same reason
