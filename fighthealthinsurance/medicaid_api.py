@@ -1824,6 +1824,20 @@ def _load_medicaid_resources() -> "Optional[pd.DataFrame]":
     return _medicaid_resources_cache
 
 
+def reset_medicaid_resources_cache() -> None:
+    """Drop the cached Medicaid resources CSV so the next read re-parses it.
+
+    For a caller sharing a process with a fresh CSV write (e.g.
+    ``medicaid_work_requirements_fetcher`` after it rewrites
+    ``medicaid_resources.csv``) -- a one-shot management command run
+    doesn't share a process with the request path anyway, so this only
+    matters for a long-running process that both ingests and serves
+    lookups.
+    """
+    global _medicaid_resources_cache
+    _medicaid_resources_cache = None
+
+
 _BOOL_FIELDS = frozenset(
     {
         "married",
@@ -2098,9 +2112,12 @@ def _format_work_requirement_section(row: "pd.Series", state: str) -> List[str]:
         f"{WORK_REQUIREMENT_UNIVERSAL_YEAR}):",
         (
             f"Federal law requires {state} Medicaid to have a work/community-"
-            f"engagement requirement in place by January 1, "
+            "engagement requirement in place for certain enrollees -- mainly "
+            "working-age Medicaid expansion adults, with exemptions (e.g. "
+            "pregnancy, disability, caregiving) -- by January 1, "
             f"{WORK_REQUIREMENT_UNIVERSAL_YEAR} (some states earlier, from "
-            f"{WORK_REQUIREMENT_FIRST_YEAR})."
+            f"{WORK_REQUIREMENT_FIRST_YEAR}). It is not a blanket requirement "
+            "for every Medicaid enrollee."
         ),
     ]
     if _has_value(row, "work_requirement_waiver"):

@@ -3,6 +3,8 @@
 import asyncio
 import csv
 from pathlib import Path
+from typing import Optional
+from unittest import mock
 
 import pytest
 
@@ -13,10 +15,17 @@ from fighthealthinsurance.medicaid_work_requirements_fetcher import (
 
 
 class _FakeResponse:
-    def __init__(self, status: int = 200, text: str = "", charset: str = "utf-8"):
+    def __init__(
+        self,
+        status: int = 200,
+        text: str = "",
+        charset: str = "utf-8",
+        headers: Optional[dict] = None,
+    ):
         self.status = status
         self._text = text
         self.charset = charset
+        self.headers = headers or {}
 
     def raise_for_status(self):
         if self.status >= 400:
@@ -108,6 +117,58 @@ def test_check_state_robots_disallow_raises():
         asyncio.run(fetcher._check_state(url))
 
 
+def test_check_state_follows_redirect_and_records_final_url():
+    start_url = "https://example-state.gov/"
+    final_url = "https://example-state.gov/medicaid"
+    responses = {
+        start_url: _FakeResponse(status=302, headers={"Location": final_url}),
+        final_url: _FakeResponse(text="Our work requirement policy is here."),
+        **_no_robots(start_url),
+    }
+    fetcher = MedicaidWorkRequirementFetcher(session=_FakeSession(responses))
+
+    mentioned, checked_url = asyncio.run(fetcher._check_state(start_url))
+    assert mentioned is True
+    # source_url must record what was actually fetched, not the starting URL.
+    assert checked_url == final_url
+
+
+def test_check_state_redirect_to_disallowed_path_is_blocked():
+    # Before the fetcher checked robots.txt on every redirect hop, a
+    # homepage could redirect to a robots-disallowed path and that path
+    # would be fetched anyway -- aiohttp's allow_redirects=True would have
+    # followed it before any code got a chance to check.
+    start_url = "https://example-state.gov/"
+    final_url = "https://example-state.gov/private/medicaid"
+    robots_body = "User-agent: *\nDisallow: /private/\n"
+    responses = {
+        start_url: _FakeResponse(status=302, headers={"Location": final_url}),
+        final_url: _FakeResponse(text="should never be read"),
+        "https://example-state.gov/robots.txt": _FakeResponse(text=robots_body),
+    }
+    fetcher = MedicaidWorkRequirementFetcher(session=_FakeSession(responses))
+
+    with pytest.raises(PermissionError):
+        asyncio.run(fetcher._check_state(start_url))
+
+
+def test_robots_allow_evaluates_each_path_against_cached_parser():
+    # The parsed robots.txt is cached per origin, but a path-specific rule
+    # must still be evaluated fresh for each URL -- caching a single
+    # allowed/disallowed boolean for the whole origin would let a permitted
+    # first path wrongly green-light a disallowed second path.
+    allowed_url = "https://example-state.gov/public/medicaid"
+    disallowed_url = "https://example-state.gov/private/medicaid"
+    robots_body = "User-agent: *\nDisallow: /private/\n"
+    responses = {
+        "https://example-state.gov/robots.txt": _FakeResponse(text=robots_body),
+    }
+    fetcher = MedicaidWorkRequirementFetcher(session=_FakeSession(responses))
+
+    assert asyncio.run(fetcher._robots_allow(allowed_url)) is True
+    assert asyncio.run(fetcher._robots_allow(disallowed_url)) is False
+
+
 class TestCheckAllCsvRefresh:
     """``check_all`` refreshes only the provenance columns, in place."""
 
@@ -130,7 +191,12 @@ class TestCheckAllCsvRefresh:
         with open(path, newline="", encoding="utf-8") as f:
             return list(csv.DictReader(f))
 
-    def test_updates_provenance_columns_and_preserves_curated_data(self, tmp_path):
+    def _run_check_all_against_one_state(self, tmp_path):
+        """Shared setup: one curated state row, one fake "mentioned" fetch.
+
+        Returns the post-``check_all`` CSV row so each test asserts its own
+        single thing against it.
+        """
         csv_path = tmp_path / "medicaid_resources.csv"
         self._write_csv(
             csv_path,
@@ -158,12 +224,18 @@ class TestCheckAllCsvRefresh:
 
         rows = self._read_csv(csv_path)
         assert len(rows) == 1
-        row = rows[0]
-        assert row["work_requirement_waiver"] == "pending"
-        assert row["waiver_activity"] == "Curated narrative, must not be touched."
+        return rows[0], url
+
+    def test_updates_provenance_columns(self, tmp_path):
+        row, url = self._run_check_all_against_one_state(tmp_path)
         assert row["work_requirement_mentioned"] == "yes"
         assert row["work_requirement_source_url"] == url
         assert row["work_requirement_last_checked"]
+
+    def test_preserves_curated_waiver_data(self, tmp_path):
+        row, _url = self._run_check_all_against_one_state(tmp_path)
+        assert row["work_requirement_waiver"] == "pending"
+        assert row["waiver_activity"] == "Curated narrative, must not be touched."
 
     def test_skips_state_with_no_agency_website(self, tmp_path):
         csv_path = tmp_path / "medicaid_resources.csv"
@@ -273,3 +345,39 @@ class TestCheckAllCsvRefresh:
         stats = asyncio.run(fetcher.check_all(dry_run=True))
         assert stats["mentioned"] == 1
         assert csv_path.read_text() == before
+
+    def test_write_failure_leaves_original_csv_intact(self, tmp_path):
+        # _write_rows writes to a temp file and os.replace()s it over the
+        # live file only once the write succeeds, so a failure partway
+        # through must never leave medicaid_resources.csv truncated or
+        # half-written.
+        csv_path = tmp_path / "medicaid_resources.csv"
+        rows_in = [
+            {
+                "state": "Brittlestate",
+                "agency": "",
+                "agency_website": "https://brittle-state.gov",
+                "work_requirement_waiver": "",
+                "waiver_activity": "",
+            }
+        ]
+        self._write_csv(csv_path, rows_in)
+        before = csv_path.read_text()
+
+        responses = {
+            "https://brittle-state.gov": _FakeResponse(text="no mention here"),
+            **_no_robots("https://brittle-state.gov"),
+        }
+        fetcher = MedicaidWorkRequirementFetcher(
+            session=_FakeSession(responses), csv_path=csv_path
+        )
+
+        with mock.patch(
+            "os.replace", side_effect=OSError("disk full (simulated)")
+        ):
+            with pytest.raises(OSError):
+                asyncio.run(fetcher.check_all())
+
+        assert csv_path.read_text() == before
+        leftover_temp_files = list(tmp_path.glob(".medicaid_resources.csv.*.tmp"))
+        assert leftover_temp_files == []

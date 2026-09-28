@@ -1441,10 +1441,13 @@ class FindNextStepsHelper:
             if work_req:
                 headline = (
                     f"Federal law requires {work_req['state']} Medicaid to have a "
-                    "work/community-engagement requirement in place by January 1, "
-                    f"{WORK_REQUIREMENT_UNIVERSAL_YEAR} (some states earlier). "
-                    "This is guidance only, not a determination -- confirm your "
-                    "own status with the state."
+                    "work/community-engagement requirement in place for certain "
+                    "enrollees -- mainly working-age Medicaid expansion adults, "
+                    "with exemptions (e.g. pregnancy, disability, caregiving) -- "
+                    f"by January 1, {WORK_REQUIREMENT_UNIVERSAL_YEAR} (some states "
+                    "earlier). It is not a blanket requirement for every Medicaid "
+                    "enrollee. This is guidance only, not a determination -- "
+                    "confirm your own status with the state."
                 )
                 if work_req["work_requirement_waiver"]:
                     headline += (

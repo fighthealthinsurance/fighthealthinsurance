@@ -24,10 +24,12 @@ from __future__ import annotations
 import asyncio
 import csv
 import datetime
+import os
+import tempfile
 import urllib.robotparser
 from pathlib import Path
 from typing import Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 from asgiref.sync import sync_to_async
@@ -41,6 +43,9 @@ FETCH_TIMEOUT_SEC = 15
 ROBOTS_TIMEOUT_SEC = 8
 MAX_BYTES = 3 * 1024 * 1024  # 3 MB -- an agency homepage, not a document
 DEFAULT_CONCURRENCY = 8
+# A homepage redirect chain (e.g. http -> https -> www) is normally one or
+# two hops; this just bounds a pathological loop.
+MAX_REDIRECTS = 5
 
 PROVENANCE_FIELDS = (
     "work_requirement_last_checked",
@@ -90,7 +95,11 @@ class MedicaidWorkRequirementFetcher:
         self._max_bytes = max_bytes
         self._csv_path = csv_path
         self._semaphore = asyncio.Semaphore(concurrency)
-        self._robots_cache: Dict[str, bool] = {}
+        # Per-origin, not per-URL: a robots.txt can have path-specific rules,
+        # so what's cached is the parsed parser (``None`` = no robots.txt /
+        # unreachable, treated as allow-all), and ``can_fetch`` is
+        # evaluated fresh for every URL against it.
+        self._robots_cache: Dict[str, Optional[urllib.robotparser.RobotFileParser]] = {}
 
     async def __aenter__(self) -> "MedicaidWorkRequirementFetcher":
         if self._session is None:
@@ -155,13 +164,17 @@ class MedicaidWorkRequirementFetcher:
 
     async def _check_state(self, url: str) -> "tuple[bool, str]":
         """Fetch ``url``; return ``(keyword_found, url_actually_checked)``."""
-        if not await self._robots_allow(url):
-            raise PermissionError(f"robots.txt disallows fetching {url}")
-        html = await self._get_text(url)
+        html, final_url = await self._get_text(url)
         text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
-        return (_find_snippet(text) is not None, url)
+        return (_find_snippet(text) is not None, final_url)
 
-    async def _get_text(self, url: str) -> str:
+    async def _get_text(self, url: str) -> "tuple[str, str]":
+        """Fetch ``url``, robots-checking and following each redirect hop by
+        hand. ``aiohttp``'s built-in ``allow_redirects`` would fetch a
+        redirect target before this method (or its caller) ever sees it, so
+        a homepage redirecting to a disallowed path would bypass the robots
+        check entirely. Returns ``(html, final_url_actually_fetched)``.
+        """
         if self._session is None:
             raise RuntimeError(
                 "MedicaidWorkRequirementFetcher must be used as "
@@ -173,18 +186,29 @@ class MedicaidWorkRequirementFetcher:
             "+https://www.fighthealthinsurance.com)",
             "Accept": "text/html,application/xhtml+xml,*/*",
         }
-        async with self._session.get(
-            url, headers=headers, allow_redirects=True
-        ) as resp:
-            resp.raise_for_status()
-            data = await resp.content.read(self._max_bytes + 1)
-            if len(data) > self._max_bytes:
-                data = data[: self._max_bytes]
-            encoding = resp.charset or "utf-8"
-            return data.decode(encoding, errors="replace")
+        current = url
+        for _ in range(MAX_REDIRECTS):
+            if not await self._robots_allow(current):
+                raise PermissionError(f"robots.txt disallows fetching {current}")
+            async with self._session.get(
+                current, headers=headers, allow_redirects=False
+            ) as resp:
+                if 300 <= resp.status < 400 and resp.headers.get("Location"):
+                    current = urljoin(current, resp.headers["Location"])
+                    continue
+                resp.raise_for_status()
+                data = await resp.content.read(self._max_bytes + 1)
+                if len(data) > self._max_bytes:
+                    data = data[: self._max_bytes]
+                encoding = resp.charset or "utf-8"
+                return data.decode(encoding, errors="replace"), current
+        raise ValueError(f"Too many redirects fetching {url}")
 
     async def _robots_allow(self, url: str) -> bool:
-        """Best-effort robots.txt check, cached per host for this run.
+        """Best-effort robots.txt check, with the parsed rules cached per
+        origin for this run (not the per-URL decision -- a robots.txt can
+        have path-specific rules, so ``can_fetch`` is evaluated fresh for
+        every URL against the cached parser).
 
         A robots.txt fetch failure (no file, timeout, non-200) is treated as
         "allowed" -- most state agency sites have none, and this is a single
@@ -192,50 +216,91 @@ class MedicaidWorkRequirementFetcher:
         """
         parsed = urlparse(url)
         host = f"{parsed.scheme}://{parsed.netloc}"
-        if host in self._robots_cache:
-            return self._robots_cache[host]
+        if host not in self._robots_cache:
+            self._robots_cache[host] = await self._fetch_robots_parser(host)
 
-        allowed = True
+        parser = self._robots_cache[host]
+        if parser is None:
+            return True
+
+        def _check() -> bool:
+            return parser.can_fetch("fighthealthinsurance-medicaid-work-req-check", url)
+
+        # Plain asgiref sync_to_async ON PURPOSE: pure text parsing, no ORM
+        # access.
+        return await sync_to_async(_check, thread_sensitive=False)()
+
+    async def _fetch_robots_parser(
+        self, host: str
+    ) -> Optional[urllib.robotparser.RobotFileParser]:
+        """Fetch + parse ``host``'s robots.txt; ``None`` on any failure."""
+        if self._session is None:
+            return None
         try:
             robots_url = f"{host}/robots.txt"
-            if self._session is None:
-                raise RuntimeError("no session")
             async with self._session.get(
                 robots_url,
                 timeout=aiohttp.ClientTimeout(total=ROBOTS_TIMEOUT_SEC),
             ) as resp:
-                if resp.status == 200:
-                    body = await resp.text(errors="replace")
+                if resp.status != 200:
+                    return None
+                body = await resp.text(errors="replace")
 
-                    def _parse() -> bool:
-                        parser = urllib.robotparser.RobotFileParser()
-                        parser.parse(body.splitlines())
-                        return parser.can_fetch(
-                            "fighthealthinsurance-medicaid-work-req-check", url
-                        )
+            def _parse() -> urllib.robotparser.RobotFileParser:
+                parser = urllib.robotparser.RobotFileParser()
+                parser.parse(body.splitlines())
+                return parser
 
-                    # Plain asgiref sync_to_async ON PURPOSE: pure text
-                    # parsing, no ORM access.
-                    allowed = await sync_to_async(_parse, thread_sensitive=False)()
+            # Plain asgiref sync_to_async ON PURPOSE: pure text parsing, no
+            # ORM access.
+            return await sync_to_async(_parse, thread_sensitive=False)()
         except Exception:
-            allowed = True
-
-        self._robots_cache[host] = allowed
-        return allowed
+            return None
 
     def _read_rows(self) -> List[Dict[str, str]]:
         with open(self._csv_path, newline="", encoding="utf-8") as f:
             return list(csv.DictReader(f))
 
     def _write_rows(self, rows: List[Dict[str, str]]) -> None:
+        """Rewrite the CSV atomically, then drop the in-process read cache.
+
+        Writes to a temp file in the same directory and ``os.replace``s it
+        over the live file, so a crash or failed write mid-run can never
+        leave ``medicaid_resources.csv`` half-written (a reader always sees
+        either the old file or the complete new one). ``os.replace`` is
+        atomic on POSIX and Windows for paths on the same filesystem, which
+        a same-directory temp file guarantees.
+
+        ``medicaid_api._load_medicaid_resources`` caches the parsed CSV for
+        the life of the process; clearing it here only fixes staleness for a
+        caller sharing this process (e.g. a long-running actor that both
+        ingests and serves lookups) -- a one-shot management command run
+        doesn't share a process with the request path anyway, so this is a
+        no-op there.
+        """
         if not rows:
             return
         fieldnames = list(rows[0].keys())
         for field in PROVENANCE_FIELDS:
             if field not in fieldnames:
                 fieldnames.append(field)
-        with open(self._csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+        fd, temp_name = tempfile.mkstemp(
+            dir=self._csv_path.parent,
+            prefix=f".{self._csv_path.name}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({field: row.get(field, "") for field in fieldnames})
+            os.replace(temp_name, self._csv_path)
+        except BaseException:
+            Path(temp_name).unlink(missing_ok=True)
+            raise
+
+        from fighthealthinsurance.medicaid_api import reset_medicaid_resources_cache
+
+        reset_medicaid_resources_cache()

@@ -861,6 +861,38 @@ class TestGetMedicaidWorkRequirementStatus(SimpleTestCase):
         self.assertTrue(result["agency_website"])
 
 
+class TestResetMedicaidResourcesCache(SimpleTestCase):
+    """The CSV read cache can be dropped so a rewritten file is re-read.
+
+    ``medicaid_work_requirements_fetcher`` rewrites medicaid_resources.csv
+    and calls this after every successful write; a process that shares its
+    lifetime with that ingest (unlike a one-shot management command) needs
+    the next read to see the fresh file, not the process-lifetime cache.
+    """
+
+    def test_reset_clears_the_cached_dataframe(self):
+        from fighthealthinsurance import medicaid_api
+
+        df = medicaid_api._load_medicaid_resources()
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(medicaid_api._medicaid_resources_cache)
+
+        medicaid_api.reset_medicaid_resources_cache()
+
+        self.assertIsNone(medicaid_api._medicaid_resources_cache)
+
+    def test_a_read_after_reset_repopulates_the_cache(self):
+        from fighthealthinsurance import medicaid_api
+
+        medicaid_api._load_medicaid_resources()
+        medicaid_api.reset_medicaid_resources_cache()
+
+        df = medicaid_api._load_medicaid_resources()
+
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(medicaid_api._medicaid_resources_cache)
+
+
 class TestDeclinedAnswersDoNotBecomeVerdicts(SimpleTestCase):
     """A question the user declined leaves the category unscored.
 
