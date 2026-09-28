@@ -2325,11 +2325,17 @@ class RemoteOpenLike(RemoteModel):
     # after a redeploy brings the model back.
     MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 3600.0
     # Time model_is_ok's /models requests get in all, shared between the
-    # endpoints it asks. Under the 10s the health sweep and the 8s the staff
-    # status page wait for a backend, so a primary that hangs rather than
-    # refusing still leaves the backup time to answer; an endpoint that is up
-    # answers in milliseconds.
+    # endpoints it asks, with each endpoint's share split between connecting
+    # and reading: requests times the two separately, so a plain timeout of
+    # the share let a hung primary and backup take twice the budget. Under
+    # the 10s the health sweep and the 8s the staff status page wait for a
+    # backend, so a primary that hangs rather than refusing still leaves the
+    # backup time to answer; an endpoint that is up answers in milliseconds.
     MODEL_PROBE_BUDGET_SECONDS: ClassVar[float] = 7.0
+    # The most of a share that connecting gets. A host that is up connects in
+    # milliseconds; the read is the slow part, a provider's long /models list
+    # (DeepInfra's), so it gets the rest.
+    MODEL_PROBE_CONNECT_SECONDS: ClassVar[float] = 2.0
 
     def __init__(
         self,
@@ -2431,14 +2437,21 @@ class RemoteOpenLike(RemoteModel):
         endpoints = [(base, model) for _leg, base, model in self.serving_legs()]
         if not endpoints:
             raise RuntimeError("No api_base configured for RemoteOpenLike.")
-        timeout = self.MODEL_PROBE_BUDGET_SECONDS / len(endpoints)
+        share = self.MODEL_PROBE_BUDGET_SECONDS / len(endpoints)
+        # (connect, read): see MODEL_PROBE_BUDGET_SECONDS.
+        connect = min(self.MODEL_PROBE_CONNECT_SECONDS, share / 2)
+        timeout = (connect, share - connect)
         return any(
             self._endpoint_serves(base, model, timeout, leg)
             for leg, (base, model) in enumerate(endpoints)
         )
 
     def _endpoint_serves(
-        self, probe_base: str, probe_model: str, timeout: float, leg: int = 0
+        self,
+        probe_base: str,
+        probe_model: str,
+        timeout: tuple[float, float],
+        leg: int = 0,
     ) -> bool:
         """Whether ``probe_base`` lists ``probe_model`` among its /models.
         ``leg`` is the endpoint's place in serving_legs(), whose card it

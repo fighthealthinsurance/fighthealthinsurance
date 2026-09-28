@@ -180,9 +180,21 @@ class TestModelIsOkFallsBackToTheBackup:
     def test_a_hung_primary_leaves_the_backup_time_before_the_sweep_gives_up(self):
         """The sweep waits 10s for a backend and the staff status page 8s. A
         primary given all of that on its own would time out with the backup
-        never asked."""
+        never asked. requests times the connect and the read separately, so
+        both count."""
         _, calls = self._down_primary()
-        assert sum(c.kwargs["timeout"] for c in calls) < 8
+        assert sum(sum(c.kwargs["timeout"]) for c in calls) < 8
+
+    def test_a_lone_endpoint_gives_most_of_its_time_to_the_read(self):
+        """A host that is up connects in milliseconds; a provider's long
+        /models list is the slow part."""
+        with patch(
+            "fighthealthinsurance.ml.ml_models.requests.get",
+            return_value=self._serving("m"),
+        ) as mock_get:
+            RemoteFullOpenLike(self.PRIMARY, "tok", "m").model_is_ok()
+        connect, read = mock_get.call_args.kwargs["timeout"]
+        assert read > connect
 
     def test_a_serving_primary_is_ok_without_probing_the_backup(self):
         _, calls = self._probe({f"{self.PRIMARY}/models": self._serving("m")})
