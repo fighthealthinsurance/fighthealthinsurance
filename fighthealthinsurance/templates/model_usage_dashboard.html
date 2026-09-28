@@ -26,6 +26,9 @@
     .intro-list ul { padding-left: 20px; }
     .jump-links { color: #555; margin: 0 0 14px 0; }
     .jump-links a { color: #0056b3; }
+    .view-picker { margin: 0 0 14px 0; }
+    .view-picker label { font-weight: bold; margin-right: 6px; }
+    .view-picker select { padding: 4px 6px; font-size: 0.95em; }
     .note { color: #555; font-size: 0.9em; margin: 6px 0 12px 0; }
     .window-totals { color: #333; margin: 0 0 12px 0; }
     .state-legend { color: #555; font-size: 0.9em; margin: 0 0 18px 0; padding-left: 20px; }
@@ -51,6 +54,15 @@
   <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
   <h1>{{ title }}</h1>
   <p class="intro-lead">Which ML models get picked, and what state each one is in today.</p>
+  <form method="get" class="view-picker">
+    <label for="view-select">View:</label>
+    <select id="view-select" name="view" onchange="this.form.submit()">
+      {% for value, label in views %}
+      <option value="{{ value }}"{% if value == view %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit">Show</button></noscript>
+  </form>
   <nav class="jump-links" aria-label="Windows on this page">
     Jump to:
     {% for w in windows %}<a href="#window-{{ w.slug }}">{{ w.label }}</a>{% if not forloop.last %} &middot; {% endif %}{% endfor %}
@@ -59,13 +71,17 @@
   <ul class="intro-list">
     <li><span class="legend-key" style="background:#1f77b4;"></span><strong>ProposedAppeal (denial flow)</strong>: real patients choosing among the drafts written for their own case.</li>
     <li><span class="legend-key" style="background:#ff7f0e;"></span><strong>Chooser - Appeal</strong> and <span class="legend-key" style="background:#2ca02c;"></span><strong>Chooser - Chat</strong>: anonymous votes on synthetic cases.</li>
-    <li><strong>Appeal generation calls</strong>: each model call made while writing appeals on live runs, by outcome (ModelCallAttempt). Shown for the last 1, 7 and 30 days, not All Time.</li>
-    <li><strong>Live chat</strong>: every chat reply races several model calls (ChatTurn). A model's win rate there is wins / turns that asked it, and each side-by-side pick counts for the model whose answer was picked. Shown for the last 1, 7 and 30 days, not All Time, and never in the chart. The newest <a href="#chat-routing-policy">chat routing policy</a> is in the All Time section.</li>
+    <li><strong>Appeal generation calls</strong>: each model call made while writing appeals on live runs, by outcome (ModelCallAttempt). {% if view == "rolling" %}Shown for the last 1, 7 and 30 days, not All Time.{% elif first_call %}Shown for each period from the first stored call record, on {{ first_call|date:"F j, Y" }}.{% else %}No call records are stored yet.{% endif %}</li>
+    <li><strong>Live chat</strong>: every chat reply races several model calls (ChatTurn). A model's win rate there is wins / turns that asked it, and each side-by-side pick counts for the model whose answer was picked. {% if view == "rolling" %}Shown for the last 1, 7 and 30 days, not All Time{% elif first_turn %}Shown for each period from the first stored turn record, on {{ first_turn|date:"F j, Y" }}{% else %}No turn records are stored yet{% endif %}, and never in the chart. The newest <a href="#chat-routing-policy">chat routing policy</a> is in the {% if view == "rolling" %}All Time section{% else %}current period&rsquo;s section{% endif %}.</li>
     <li><strong>Live chat shadow scores</strong>: in chats that allow outside models, TypeSafe's Jev scores delivered replies in the background for this page, and nothing else uses the scores (TYPESAFE_CHAT_SHADOW_ENABLED, now {% if chat_shadow.on %}on{% else %}off{% endif %}).
       Last scored: {% if chat_shadow.last_success_at %}{{ chat_shadow.last_success_at|timesince }} ago{% else %}never{% endif %}.
       Last failure: {% if chat_shadow.last_failure_at %}{{ chat_shadow.last_failure }}{% if chat_shadow.last_failure_hint %} ({{ chat_shadow.last_failure_hint }}){% endif %}, {{ chat_shadow.last_failure_at|timesince }} ago{% else %}none recorded{% endif %}.</li>
     <li><strong>Win rate</strong> = chosen / presented. For the denial flow, presented counts each draft once per pick it was on screen for: the drafts the browser reported at the pick or, for picks recorded before that report, every draft stored before the pick. Drafts folded behind &ldquo;Show more&rdquo; or made on a later visit were never in the running. For the chooser, it is votes won / votes the model was shown in. A rate with no denominator shows as a dash, never 0%.</li>
+    {% if view == "rolling" %}
     <li><strong>Windows</strong> are rolling: last 24 hours / 7 days / 30 days, anchored on the pick or vote time. All Time additionally includes rows predating timestamp tracking.</li>
+    {% else %}
+    <li><strong>Periods</strong> are calendar {% if view == "quarterly" %}quarters{% else %}months{% endif %} in {{ time_zone }}, newest first, anchored on the pick or vote time; the current one runs to now. Periods before the first stored draft or vote are not listed, and rows predating timestamp tracking appear only in the rolling view&rsquo;s All Time.</li>
+    {% endif %}
     <li><strong>Buckets that are not models</strong>, with no presented counts by design:
       <ul>
         <li>&ldquo;synthesized&rdquo;: drafts merged from several models.</li>
@@ -132,19 +148,32 @@
 
     <h3>Appeal generation calls <span class="source-label">(ModelCallAttempt, live runs only)</span></h3>
     {% if w.call_attempts %}
+    {% if w.calls_start %}
+    <p class="note">Call records start on {{ w.calls_start|date:"F j, Y" }}, partway through this period, so its calls before then are not counted.</p>
+    {% endif %}
     {% include "model_usage_table_partial.html" with rows=w.call_attempts.rows kind="calls" show_state=True %}
     {% if w.call_attempts.median_capped %}
     <p class="note">Medians here use only the newest {{ duration_cap }} OK calls, so they lean toward recent calls.</p>
     {% endif %}
-    {% else %}
+    {% elif view == "rolling" %}
     <p class="note">Not shown for All Time: call records only exist since call logging began and are deleted with their case, so an all-time total would look complete while missing most of the history. See the shorter windows below.</p>
+    {% else %}
+    <p class="note">Not shown: {% if first_call %}this period ended before the first stored call record, on {{ first_call|date:"F j, Y" }}{% else %}no call records are stored yet{% endif %}. Call records only exist since call logging began.</p>
     {% endif %}
 
     <h3>Live chat <span class="source-label">(ChatTurn, the model race behind each chat reply)</span></h3>
     {% if w.live_chat %}
+    {% if w.chat_start %}
+    <p class="note">Turn records start on {{ w.chat_start|date:"F j, Y" }}, partway through this period, so its chat turns before then are not counted.</p>
+    {% endif %}
     {% include "model_usage_chat_partial.html" with chat=w.live_chat %}
-    {% else %}
+    {% elif view == "rolling" %}
     <p class="note">Not shown for All Time, for the same reason as the call table: turn records only exist since turn recording began and are deleted with their chat. See the shorter windows below.</p>
+    {% else %}
+    <p class="note">Not shown: {% if first_turn %}this period ended before the first stored turn record, on {{ first_turn|date:"F j, Y" }}{% else %}no turn records are stored yet{% endif %}. Turn records only exist since turn recording began.</p>
+    {% endif %}
+    {% if forloop.first %}
+    {# All Time in the rolling view, the current period in the calendar views. #}
     {% include "model_usage_policy_partial.html" with panel=chat_policy %}
     {% include "model_usage_reply_check_partial.html" with check=reply_check %}
     {% endif %}

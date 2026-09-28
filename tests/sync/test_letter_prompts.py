@@ -271,6 +271,30 @@ class DashboardPromptVersionTableTest(TestCase):
         models = {r["model_name"]: r["chosen"] for r in stats["models"]}
         self.assertEqual(models["model-y · v3"], 1)
 
+    def test_a_window_counts_only_the_picks_made_inside_it(self):
+        """A past calendar period ends at its own close; its table used to
+        count every pick from its start to now, this month's included."""
+        denial = _denial()
+        a = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="a",
+            model_name="model-x",
+            prompt_version=apv.PROMPT_V1,
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="a",
+            chosen=True,
+            model_name="model-x",
+            prompt_version=apv.PROMPT_V1,
+            presented_ids=[a.id],
+        )
+        now = timezone.now()
+        stats = ModelUsageDashboardView._prompt_version_stats(
+            now - datetime.timedelta(days=60), now - datetime.timedelta(days=30)
+        )
+        self.assertEqual(stats["versions"], [])
+
 
 class DashboardPromptSwitchTest(TestCase):
     def setUp(self):
