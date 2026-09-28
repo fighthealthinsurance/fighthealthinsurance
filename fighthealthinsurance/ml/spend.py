@@ -408,7 +408,11 @@ def allows(provider: str, use: str) -> bool:
             )
         if provider == DEEPINFRA and use == CHAT:
             if not view.loaded:
-                return True
+                # Unread lets chat through, but a copy that stopped refreshing
+                # still knows at least this month's counts: judge those.
+                today = _today()
+                if not view.by_day or view.month != (today.year, today.month):
+                    return True
             monthly = round(
                 _usd_setting("FHI_SPEND_DEEPINFRA_CHAT_MONTHLY_USD", 20.0) * MICRO
             )
