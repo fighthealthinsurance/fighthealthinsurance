@@ -1307,6 +1307,33 @@ class ModelUsageDashboardCalendarViewTest(ChooserStatsHelperMixin, TestCase):
         response = self._three_months_with_turns_from_last_month()
         self.assertContains(response, 'id="chat-routing-policy"', count=1)
 
+    def _three_months_with_one_month_of_chat_tables(self):
+        with mock.patch.dict(
+            "fighthealthinsurance.staff_views.MODEL_USAGE_CHAT_PERIODS_SHOWN",
+            {"monthly": 1},
+        ):
+            return self._three_months_with_turns_from_last_month()
+
+    def test_live_chat_tables_cover_only_the_newest_periods(self):
+        """Chat turns are read row by row, and every listed period used to
+        be read on each load: up to two years of them."""
+        response = self._three_months_with_one_month_of_chat_tables()
+        self.assertEqual(
+            [
+                (w["live_chat"] is not None, w["chat_cut"])
+                for w in response.context["windows"]
+            ],
+            # This month: a table. Last month: turns stored, but past the
+            # limit. The month before: before the first stored turn.
+            [(True, False), (False, True), (False, False)],
+        )
+
+    def test_a_period_past_the_chat_table_limit_says_so(self):
+        response = self._three_months_with_one_month_of_chat_tables()
+        self.assertContains(
+            response, "Not shown: live chat tables cover only the periods from"
+        )
+
     def test_calendar_totals_count_only_their_period(self):
         last_month = self._this_month() - relativedelta(months=1)
         self._vote_at("a", timezone.now(), "s1")

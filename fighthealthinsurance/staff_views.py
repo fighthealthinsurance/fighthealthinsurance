@@ -4,7 +4,7 @@ import json
 import statistics
 from urllib.parse import urlencode
 from collections import Counter, defaultdict
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -2452,6 +2452,11 @@ MODEL_USAGE_VIEWS: Tuple[Tuple[str, str], ...] = (
 )
 # How far back each calendar view reaches, newest first.
 MODEL_USAGE_PERIODS_SHOWN = {"monthly": 12, "quarterly": 8}
+# How many of those, newest first, get a live chat table. Chat turns are read
+# row by row and bucketed in Python (see _chat_stats), and every listed period
+# used to be read on each load, up to two years of turns; this keeps the read
+# to about three months, near the rolling view's 30 days.
+MODEL_USAGE_CHAT_PERIODS_SHOWN = {"monthly": 3, "quarterly": 1}
 
 # (slug, label, since, until): one section of the dashboard. The bounds apply
 # to the pick or vote time; either may be None (open), and ``until`` is
@@ -2608,8 +2613,9 @@ class ModelUsageDashboardView(generic.TemplateView):
     Beside those, each bounded window shows per-model appeal-generation call
     outcomes from ModelCallAttempt and the live chat model race from
     ChatTurn (see _chat_stats); in the calendar views, only the periods that
-    end after the first stored record of each. Every model row carries the
-    model's state today (see _model_states). None of it calls a model.
+    end after the first stored record of each, and for live chat only the
+    newest of those (MODEL_USAGE_CHAT_PERIODS_SHOWN). Every model row carries
+    the model's state today (see _model_states). None of it calls a model.
 
     All stored model names pass through normalize_model_label so historical
     object-repr values aggregate per class (without memory addresses) even
@@ -2629,6 +2635,10 @@ class ModelUsageDashboardView(generic.TemplateView):
         # only.
         first_call: Optional[datetime.datetime] = None
         first_turn: Optional[datetime.datetime] = None
+        # The calendar views only: where the live chat tables start, and the
+        # periods with turns stored that are past them.
+        chat_since: Optional[datetime.datetime] = None
+        chat_cut: Set[str] = set()
         if view == "rolling":
             windows = [
                 ("global", "All Time", None, None),
@@ -2659,7 +2669,17 @@ class ModelUsageDashboardView(generic.TemplateView):
             first_call = self._first_call_record()
             first_turn = self._first_chat_turn()
             call_windows = _windows_ending_after(windows, first_call)
-            chat_windows = _windows_ending_after(windows, first_turn)
+            # Only the newest periods get a live chat table; see
+            # MODEL_USAGE_CHAT_PERIODS_SHOWN.
+            newest = max(1, MODEL_USAGE_CHAT_PERIODS_SHOWN[view])
+            chat_windows = _windows_ending_after(windows[:newest], first_turn)
+            chat_since = windows[:newest][-1][2]
+            chat_cut = {
+                slug
+                for slug, _since, _until in _windows_ending_after(
+                    windows[newest:], first_turn
+                )
+            }
         call_attempts = self._call_attempt_stats(call_windows)
         live_chat = self._chat_stats(chat_windows)
         participation = self._chooser_participation(windows)
@@ -2695,6 +2715,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "live_chat": live_chat.get(slug),
                     # The same for the first stored chat turn.
                     "chat_start": _partial_start(first_turn, since, slug in live_chat),
+                    "chat_cut": slug in chat_cut,
                     "totals": {
                         # Every chosen row in the window, re-picks included.
                         "picks": sum(r["chosen"] for r in proposed),
@@ -2732,6 +2753,8 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["time_zone"] = timezone.get_current_timezone_name()
         ctx["first_call"] = first_call
         ctx["first_turn"] = first_turn
+        ctx["chat_since"] = chat_since
+        ctx["chat_capped"] = bool(chat_cut)
         ctx["chat_shadow"] = self._chat_shadow_state()
         ctx["chat_policy"] = self._chat_policy_panel()
         ctx["reply_check"] = self._reply_check_state()
