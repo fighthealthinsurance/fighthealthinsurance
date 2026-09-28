@@ -38,7 +38,7 @@ from fighthealthinsurance.models import (
     Regulator,
 )
 import pytest
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 
 @contextmanager
@@ -2488,6 +2488,29 @@ class RegulatorContactInfoTest(TestCase):
         text = self._outside_help_text(denial)
         self.assertIn("Pathways to Coverage", text)
 
+    def test_outside_help_waiver_activity_renders_links_not_raw_markdown(self):
+        # Georgia's waiver_activity has [label](url) markdown links and
+        # literal "<br>" markers. A bare html_escape() would mangle both
+        # (dead bracket/paren text, literal "&lt;br&gt;"); confirm the real
+        # tags render instead.
+        medicaid = PlanSource.objects.create(
+            name="Medicaid", regex="medicaid", negative_regex="$^"
+        )
+        denial = self._make_denial()
+        denial.your_state = "GA"
+        denial.save()
+        denial.plan_source.set([medicaid])
+        text = self._outside_help_text(denial)
+        self.assertIn(
+            "<a href='https://www.medicaid.gov/medicaid/section-1115-demo/"
+            "demonstration-and-waiver-list/81441' target='_blank' "
+            "rel='noopener'>waiver</a>",
+            text,
+        )
+        self.assertIn("<br>", text)
+        self.assertNotIn("&lt;br&gt;", text)
+        self.assertNotIn("[waiver](", text)
+
     def test_outside_help_omits_work_requirement_note_for_non_medicaid_plan(self):
         employer = PlanSource.objects.create(
             name="Employer -- Private", regex="employer", negative_regex="$^"
@@ -2900,3 +2923,48 @@ class ConfirmedStateTest(TestCase):
         denial = self._submit_review_page(denial, date_of_service="")
 
         self.assertEqual(denial.date_of_service, "01/15/2024")
+
+
+class RenderWaiverActivityHtmlTest(SimpleTestCase):
+    """Unit tests for the curated waiver_activity -> safe-HTML renderer."""
+
+    def test_plain_text_is_escaped(self):
+        result = common_view_logic._render_waiver_activity_html(
+            "Legislative activity <script>alert(1)</script> ongoing."
+        )
+        self.assertNotIn("<script>", result)
+        self.assertIn("&lt;script&gt;", result)
+
+    def test_literal_br_marker_becomes_real_line_break(self):
+        result = common_view_logic._render_waiver_activity_html("First.<br>Second.")
+        self.assertIn("First.<br>Second.", result)
+        self.assertNotIn("&lt;br&gt;", result)
+
+    def test_markdown_link_becomes_anchor_tag(self):
+        result = common_view_logic._render_waiver_activity_html(
+            "See the [waiver](https://www.medicaid.gov/waiver) for details."
+        )
+        self.assertIn(
+            "<a href='https://www.medicaid.gov/waiver' target='_blank' "
+            "rel='noopener'>waiver</a>",
+            result,
+        )
+        self.assertNotIn("[waiver](", result)
+
+    def test_non_http_link_target_is_never_turned_into_a_live_link(self):
+        # The link pattern only ever matches an http(s) URL, so a
+        # javascript: target isn't recognized as link markup at all -- it's
+        # escaped as inert plain text instead of becoming a clickable (and
+        # exploitable) <a href>.
+        result = common_view_logic._render_waiver_activity_html(
+            "See the [waiver](javascript:alert(1)) for details."
+        )
+        self.assertNotIn("<a href", result)
+        self.assertIn("waiver", result)
+
+    def test_link_label_is_escaped(self):
+        result = common_view_logic._render_waiver_activity_html(
+            "[<b>waiver</b>](https://www.medicaid.gov/waiver)"
+        )
+        self.assertIn("&lt;b&gt;waiver&lt;/b&gt;", result)
+        self.assertNotIn("<b>waiver</b>", result)

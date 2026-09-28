@@ -1251,6 +1251,42 @@ class FollowUpHelper:
             )
 
 
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
+
+
+def _render_waiver_activity_html(text: str) -> str:
+    """Render the curated ``waiver_activity`` CSV field's tiny ad hoc markup.
+
+    The field mixes plain prose with a couple of hand-authored bits:
+    ``[label](url)`` links and literal ``<br>`` line-break markers. A bare
+    ``html_escape()`` mangles both -- the literal ``<br>`` shows up as
+    ``&lt;br&gt;`` and the link syntax shows as inert bracket/paren text --
+    so this escapes every plain-text segment (the field is CSV-sourced, not
+    hand-vetted per row, so still treated as untrusted) and re-introduces
+    exactly those two constructs: a real ``<br>`` for the literal marker,
+    and an ``<a>`` tag -- built from the already-escaped label plus an href
+    re-validated by ``sanitize_http_url`` -- for each link.
+    """
+    from fighthealthinsurance.escalation_addresses import sanitize_http_url
+
+    parts: List[str] = []
+    last = 0
+    for m in _MD_LINK_RE.finditer(text):
+        parts.append(html_escape(text[last : m.start()]).replace("&lt;br&gt;", "<br>"))
+        label, url = m.group(1), m.group(2)
+        safe_url = sanitize_http_url(url)
+        if safe_url:
+            parts.append(
+                f"<a href='{html_escape(safe_url)}' target='_blank' "
+                f"rel='noopener'>{html_escape(label)}</a>"
+            )
+        else:
+            parts.append(html_escape(label))
+        last = m.end()
+    parts.append(html_escape(text[last:]).replace("&lt;br&gt;", "<br>"))
+    return "".join(parts)
+
+
 class FindNextStepsHelper:
     @classmethod
     def _build_pharmacy_coupon_suggestion(
@@ -1416,7 +1452,10 @@ class FindNextStepsHelper:
                         f"review: {html_escape(work_req['work_requirement_waiver'])}."
                     )
                 if work_req["waiver_activity"]:
-                    headline += f"<br><br>{html_escape(work_req['waiver_activity'])}"
+                    headline += (
+                        f"<br><br>"
+                        f"{_render_waiver_activity_html(work_req['waiver_activity'])}"
+                    )
                 how_to_parts = []
                 website = sanitize_http_url(work_req["agency_website"])
                 if website:
