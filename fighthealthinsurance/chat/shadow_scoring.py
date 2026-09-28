@@ -15,9 +15,9 @@ stores or logs them. Errors are logged by class name only.
 
 Bounded, and kept off the chat's own work:
 
-* At most MAX_IN_FLIGHT tasks per process, and at most MAX_IN_FLIGHT of
-  their database threads running, those a timed-out step left behind
-  included (a turn over either limit is not scored). The thread limit is
+* At most MAX_IN_FLIGHT tasks per process, and at most DB_THREAD_LIMIT
+  (two per task) of their database threads running, those a timed-out
+  step left behind included (a turn over either limit is not scored). The thread limit is
   checked again as each step starts its thread, so tasks admitted together
   cannot overshoot it, and the score write's place is reserved before
   anything is sent, so a task that sends always has somewhere to store the
@@ -48,6 +48,10 @@ from fighthealthinsurance.ml import chat_shadow
 # table means TypeSafe or the database is slow; dropping a shadow score
 # then costs nothing.
 MAX_IN_FLIGHT = 8
+# Database-thread places: a task holds its reserved score-write place and,
+# during the identifier lookup, one more, so two per task lets all
+# MAX_IN_FLIGHT tasks run at once.
+DB_THREAD_LIMIT = 2 * MAX_IN_FLIGHT
 
 # The bound on each database step, both the wait and (on PostgreSQL) each
 # statement. These are small primary-key reads and one update.
@@ -136,11 +140,11 @@ async def _score_and_store(
     # there would hold up the chat's own ORM calls (isolated_db says more).
     # The score write's place is reserved before anything is sent, so a job
     # that sends its texts to TypeSafe can always store what comes back.
-    slot = isolated_db.reserve(DB_THREAD_NAME, MAX_IN_FLIGHT)
+    slot = isolated_db.reserve(DB_THREAD_NAME, DB_THREAD_LIMIT)
     if slot is None:
         logger.info(
             f"Chat shadow scoring skipped for turn {turn_id}: "
-            f"{MAX_IN_FLIGHT} database threads in use"
+            f"{DB_THREAD_LIMIT} database threads in use"
         )
         return
     try:
@@ -150,7 +154,7 @@ async def _score_and_store(
                 chat_id,
                 timeout=DB_STEP_SECONDS,
                 name=DB_THREAD_NAME,
-                limit=MAX_IN_FLIGHT,
+                limit=DB_THREAD_LIMIT,
             )
         except Exception as e:
             # No identifier list means nothing is sent: the generic patterns
@@ -228,7 +232,7 @@ def start(
     ``external_allowed`` must be the person's consent to outside models for
     this chat. Returns the task, or None when nothing was started (consent
     off, the flag or key missing, nothing to score, or MAX_IN_FLIGHT tasks
-    or database threads already running). Never awaits and never raises.
+    or DB_THREAD_LIMIT database threads already running). Never awaits and never raises.
     """
     try:
         if not external_allowed or not chat_shadow.enabled():
@@ -237,7 +241,7 @@ def start(
             return None
         if (
             len(_in_flight) >= MAX_IN_FLIGHT
-            or isolated_db.running(DB_THREAD_NAME) >= MAX_IN_FLIGHT
+            or isolated_db.running(DB_THREAD_NAME) >= DB_THREAD_LIMIT
         ):
             logger.info(
                 f"Chat shadow scoring skipped for turn {turn_id}: "

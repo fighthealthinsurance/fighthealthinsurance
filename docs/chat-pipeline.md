@@ -342,7 +342,8 @@ the four into one composite score for the agreement table.
 
 * It starts after the reply frame has gone out and the ChatTurn row
   exists, and nothing waits for it: the scores land on that row later.
-  At most 8 run per process, each request under TYPESAFE_TIMEOUT_SECONDS,
+  At most 8 run per process (with up to 16 database threads between
+  them, two each), each request under TYPESAFE_TIMEOUT_SECONDS,
   and the whole job has a bound of its own.
 * Its database work (the identifier lookup, the health note and the score
   write) runs through chat/isolated_db.py: on a thread with its own

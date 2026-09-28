@@ -579,7 +579,7 @@ async def test_a_job_that_finds_the_database_threads_full_sends_nothing(
     monkeypatch.setattr(
         isolated_db,
         "_running",
-        {shadow_scoring.DB_THREAD_NAME: shadow_scoring.MAX_IN_FLIGHT},
+        {shadow_scoring.DB_THREAD_NAME: shadow_scoring.DB_THREAD_LIMIT},
     )
     fake = _FakePost()
     await _run_task(chat.id, turn.id, fake)
@@ -587,7 +587,7 @@ async def test_a_job_that_finds_the_database_threads_full_sends_nothing(
     assert fake.states == []
     assert (await ChatTurn.objects.aget(pk=turn.pk)).shadow_outcome == ""
     assert isolated_db._running == {
-        shadow_scoring.DB_THREAD_NAME: shadow_scoring.MAX_IN_FLIGHT
+        shadow_scoring.DB_THREAD_NAME: shadow_scoring.DB_THREAD_LIMIT
     }
 
 
@@ -620,7 +620,7 @@ async def test_a_job_that_sends_keeps_a_place_to_store_the_answer(monkeypatch):
     monkeypatch.setitem(
         isolated_db._running,
         shadow_scoring.DB_THREAD_NAME,
-        shadow_scoring.MAX_IN_FLIGHT - 2,
+        shadow_scoring.DB_THREAD_LIMIT - 2,
     )
     held = _HeldPost()
     with override_settings(**ENABLED), patch.object(chat_shadow, "_post", held):
@@ -653,8 +653,41 @@ async def test_a_job_that_sends_keeps_a_place_to_store_the_answer(monkeypatch):
     assert (await ChatTurn.objects.aget(pk=other_turn.pk)).shadow_outcome == ""
     assert (
         isolated_db.running(shadow_scoring.DB_THREAD_NAME)
-        == shadow_scoring.MAX_IN_FLIGHT - 2
+        == shadow_scoring.DB_THREAD_LIMIT - 2
     )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_full_set_of_jobs_started_together_all_send():
+    """Each job holds two thread places during its lookup, so the thread
+    limit is two per job: MAX_IN_FLIGHT jobs admitted at once all get to
+    send, none is dropped for want of a place."""
+    turns = [await _chat_and_turn() for _ in range(shadow_scoring.MAX_IN_FLIGHT)]
+    held = _HeldPost()
+    with override_settings(**ENABLED), patch.object(chat_shadow, "_post", held):
+        tasks = [
+            shadow_scoring.start(
+                chat_id=chat.id,
+                turn_id=turn.id,
+                external_allowed=True,
+                message=MESSAGE,
+                reply=REPLY,
+                second=SECOND,
+            )
+            for chat, turn in turns
+        ]
+        assert all(task is not None for task in tasks)
+        for _ in range(200):
+            if held.sent == len(tasks):
+                break
+            await asyncio.sleep(0.05)
+        assert held.sent == len(tasks)
+        held.release.set()
+        # Eight score writes at the same instant can hit sqlite's single
+        # writer lock in tests; PostgreSQL takes them. What matters here is
+        # that every job got a place and sent.
+        await asyncio.wait_for(asyncio.gather(*tasks), 20)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -987,7 +1020,7 @@ def test_lingering_database_threads_fill_the_slots_too(monkeypatch):
     monkeypatch.setattr(
         isolated_db,
         "running",
-        lambda name: shadow_scoring.MAX_IN_FLIGHT
+        lambda name: shadow_scoring.DB_THREAD_LIMIT
         if name == shadow_scoring.DB_THREAD_NAME
         else 0,
     )
