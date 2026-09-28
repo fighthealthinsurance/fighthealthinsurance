@@ -17,8 +17,12 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6,
-.btn,
-button {
+button,
+input[type="submit"],
+input[type="button"],
+[class*="btn"],
+[class*="-button"],
+.fhi-nav-cta a {
     font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
 	'Helvetica Neue', Arial, sans-serif;
 }
