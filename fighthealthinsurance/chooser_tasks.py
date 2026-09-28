@@ -345,21 +345,26 @@ async def check_and_refill_task_pool() -> bool:
     Awaits the batch, so a second tick cannot start another batch while one
     is still running; a tick that finds a refill in progress returns at once.
 
-    Returns False when a type needed a batch and none of its tasks came out
-    READY, else True. Generation errors are caught per task and leave the
-    task DISABLED, so a refill whose every model failed still returns
-    normally; the refill actor needs this to tell that from a pool that is
-    being refilled.
+    Returns False when types needed a batch and none of those batches
+    produced a READY task, else True. Generation errors are caught per task
+    and leave the task DISABLED, so a refill whose every model failed still
+    returns normally; the refill actor needs this to tell that from a pool
+    that is being refilled. One type failing while another refills is not a
+    failed refill: it used to count as one, so the actor was reported
+    unhealthy and replaced, which cannot fix a type whose backends are
+    failing, and could kill it mid-batch, leaving a QUEUED task that holds
+    page prefills off (see _generation_underway).
     """
     if not _claim_refill():
         logger.debug("A chooser refill is already running in this process; skipping")
         return True
     try:
-        refilled = True
+        needed = produced = 0
         for task_type in ["appeal", "chat"]:
             reason = await _refill_reason(task_type)
             if reason is None:
                 continue
+            needed += 1
             logger.info(
                 f"Chooser {task_type} tasks need generating ({reason}). "
                 f"Generating {CHOOSER_GENERATION_BATCH_SIZE} tasks."
@@ -367,12 +372,13 @@ async def check_and_refill_task_pool() -> bool:
             ready = await _generate_batch_tasks(
                 task_type, CHOOSER_GENERATION_BATCH_SIZE
             )
-            if not ready:
+            if ready:
+                produced += 1
+            else:
                 logger.warning(
                     f"Chooser {task_type} refill ({reason}) produced no usable task"
                 )
-                refilled = False
-        return refilled
+        return needed == 0 or produced > 0
     finally:
         _release_refill()
 
