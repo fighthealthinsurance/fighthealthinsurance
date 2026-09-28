@@ -240,7 +240,7 @@ async def generate_letter_for_denial(
             except Exception as e:
                 logger.opt(exception=True).warning(
                     f"chat letter: failed to render specialized template "
-                    f"{template.name}: {e}"
+                    f"{template.name}: {type(e).__name__}"
                 )
 
         diagnostics: dict = {}
@@ -354,7 +354,7 @@ async def generate_letter_for_denial(
         logger.opt(exception=True).error(
             f"chat letter: generation failed for denial "
             f"{getattr(denial, 'denial_id', None)} after "
-            f"{time.monotonic() - started:.1f}s: {e}"
+            f"{time.monotonic() - started:.1f}s: {type(e).__name__}"
         )
         return None
 

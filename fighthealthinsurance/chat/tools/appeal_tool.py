@@ -148,8 +148,8 @@ class AppealTool(BaseTool):
             # No payload content in the log or the error frame: the appeal
             # JSON carries medical/claim details (PHI) -- sizes only.
             logger.warning(
-                f"Invalid JSON in create_or_update_appeal token "
-                f"({len(match.group(1))} chars): {e.msg} at pos {e.pos}"
+                "Invalid JSON in create_or_update_appeal token "
+                f"(payload_chars={len(match.group(1))}): {type(e).__name__}"
             )
             await self.send_error_message(
                 "Error processing appeal data: the appeal details were not "

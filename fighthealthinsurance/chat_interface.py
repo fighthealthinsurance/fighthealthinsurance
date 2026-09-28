@@ -2538,25 +2538,56 @@ class ChatInterface:
                         f"Could not persist letter-fallback reply for chat "
                         f"{chat.id}; delivering it unpersisted"
                     )
+            if self._client_gone:
+                # The user left while the fallback ran (one of its status or
+                # heartbeat frames found the socket closed). As in the check
+                # above, that is a departure, not a failure to report; a
+                # letter it drafted is persisted above, so a reconnect
+                # replays it.
+                logger.info(
+                    f"Chat {chat.id}: client left during the letter fallback; "
+                    f"not counted as a generation failure"
+                )
+                await self._end_rescue_client_gone(turn_timed_out)
+                return
+            if fallback_reply:
                 logger.warning(
                     f"Chat {chat.id}: all chat models failed for a letter-draft "
                     f"request but the appeal-generator fallback delivered "
-                    f"(use_external_models={self.use_external_models}, "
+                    f"(use_external_models={bool(self.use_external_models)}, "
                     f"turn_timed_out={turn_timed_out})"
                 )
-                # Keep the turn-outcome labels a partition: a timed-out turn
-                # was already counted as "timeout" above. Rescues (including
-                # timed-out ones) remain visible via the reliability event
-                # below.
+                try:
+                    await self.send_message_to_client(fallback_reply)
+                except ClientGone:
+                    # As for a normal reply: persisted above, so a reconnect
+                    # replays it, and the turn is the departure it became.
+                    logger.info(
+                        f"Chat {chat.id}: letter-fallback reply persisted but "
+                        f"not delivered; the client left as it was sent"
+                    )
+                    await self._end_rescue_client_gone(turn_timed_out)
+                    return
+                except BaseException:
+                    if not turn_timed_out:
+                        self._count_turn(OUTCOME_FAILED)
+                    raise
+                # The chat models failed all the same, so the turn is counted,
+                # and its ChatTurn row written, exactly as an unrescued
+                # failure (a timed-out one was counted "timeout" above): the
+                # routing policy reads those rows for how each model's calls
+                # ended, and a row's outcome is always the one the metric
+                # counted. The rescue is reported by its reliability event.
                 if not turn_timed_out:
-                    record_chat_turn("letter_fallback")
+                    self._count_turn(OUTCOME_FAILED)
                 capture_reliability_event(
                     "chat_turn_letter_fallback_rescue",
                     chat_id=str(chat.id),
                     use_external_models=self.use_external_models,
                     turn_timed_out=turn_timed_out,
                 )
-                await self.send_message_to_client(fallback_reply)
+                self._shadow_runner_up = None
+                await self._write_turn_record("timeout" if turn_timed_out else "failed")
                 return
 
             # Provide more helpful error message based on context
@@ -2582,8 +2613,8 @@ class ChatInterface:
                 f"Failed to generate a response in chat {chat.id} after trying "
                 f"all models (message_chars={len(user_message or '')}, "
                 f"error={turn_error or 'none'}, timed_out={turn_timed_out}, "
-                f"use_external_models={bool(self.use_external_models)}, "
-                f"letter_request={letter_request})"
+                f"letter_request={letter_request}, "
+                f"use_external_models={bool(self.use_external_models)})"
             )
             if not turn_timed_out:
                 self._count_turn(OUTCOME_FAILED)
@@ -2602,6 +2633,20 @@ class ChatInterface:
             # row: handle_chat_message writes it.
             await self.send_error_message(err_msg)
             await self._write_turn_record("timeout" if turn_timed_out else "failed")
+
+    async def _end_rescue_client_gone(self, turn_timed_out: bool) -> None:
+        """End a turn whose client left during the letter fallback.
+
+        A turn that timed out was counted "timeout" before the fallback ran,
+        so it keeps that count and its row: ending it as "client_gone" too
+        would count the one turn twice and drop the row the count promises.
+        Any other turn is the departure it became.
+        """
+        if turn_timed_out:
+            self._shadow_runner_up = None
+            await self._write_turn_record("timeout")
+        else:
+            await self._end_turn_client_gone()
 
     async def _linked_appeal_for_letter_fallback(self):
         """The chat's linked appeal (with denial preloaded) if its denial
@@ -2699,9 +2744,13 @@ class ChatInterface:
                 f"instead. {saved_note} Here's the draft -- please review "
                 f"the details before sending:\n\n---\n\n{drafted.text}"
             )
+        except ClientGone:
+            # The send path has recorded the departure; the caller ends the
+            # turn as one.
+            return None
         except Exception as e:
             logger.opt(exception=True).warning(
-                f"Letter fallback failed for chat {chat.id}: {e}"
+                f"Letter fallback failed for chat {chat.id}: {type(e).__name__}"
             )
             return None
 

@@ -149,8 +149,8 @@ class PriorAuthTool(BaseTool):
             # No payload content in the log: prior-auth JSON carries
             # medical/claim details (PHI) -- sizes only.
             logger.warning(
-                f"Invalid JSON in create_or_update_prior_auth token "
-                f"({len(match.group(1))} chars): {e.msg} at pos {e.pos}"
+                "Invalid JSON in create_or_update_prior_auth token "
+                f"(payload_chars={len(match.group(1))})"
             )
             await self.send_status_message(
                 "Error processing prior auth data: Invalid JSON format."

@@ -162,8 +162,8 @@ class GenerateAppealLetterTool(AppealTool):
             # No payload content in the log or the error frame: the letter
             # JSON carries medical/claim details (PHI) -- sizes only.
             logger.warning(
-                f"Invalid JSON in generate_appeal_letter token "
-                f"({len(match.group(1))} chars): {e.msg} at pos {e.pos}"
+                "Invalid JSON in generate_appeal_letter token "
+                f"(payload_chars={len(match.group(1))}): {type(e).__name__}"
             )
             await self.send_error_message(
                 "Error processing appeal data: the letter request was not "
@@ -272,6 +272,8 @@ class GenerateAppealLetterTool(AppealTool):
             return self._replace_call(response_text, call_span, replacement), context
 
         except Exception as e:
-            logger.opt(exception=True).warning(f"Error drafting appeal letter: {e}")
+            logger.opt(exception=True).warning(
+                f"Error drafting appeal letter: {type(e).__name__}"
+            )
             await self.send_error_message(f"Error drafting appeal letter: {str(e)}")
             raise

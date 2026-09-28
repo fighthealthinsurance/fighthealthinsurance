@@ -8,8 +8,10 @@ the generate_appeal_letter chat tool, which routes letter drafting to the
 same pipeline instead of having the chat model write the letter inline.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
+from loguru import logger
 from rest_framework.test import APITestCase
 
 from fighthealthinsurance import common_view_logic
@@ -22,9 +24,11 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
 )
 from fighthealthinsurance.chat.tools import AppealTool, GenerateAppealLetterTool
 from fighthealthinsurance.chat_interface import ChatInterface
+from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.models import (
     Appeal,
+    ChatTurn,
     Denial,
     OngoingChat,
     ProposedAppeal,
@@ -322,6 +326,102 @@ class ChatLetterFallbackTest(APITestCase):
                 "letterfall11", "9999920011", "Please go ahead and draft a letter."
             )
         self.assertTrue(self._failure_event(capture)["letter_fallback_attempted"])
+
+    async def test_rescued_turn_is_counted_and_recorded_as_failed(self):
+        """The chat models failed all the same: the rescued turn is counted,
+        and its ChatTurn row written, as a failure -- the routing policy
+        reads those rows for how each model's calls ended."""
+        with patch(
+            "fighthealthinsurance.chat_interface.draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ), patch("fighthealthinsurance.chat_interface.record_chat_turn") as counted:
+            chat, _, _, _ = await self._run_failing_turn(
+                "letterfall12", "9999920012", "Please go ahead and draft a letter."
+            )
+        rows = [t.outcome async for t in ChatTurn.objects.filter(chat_id=chat.id)]
+        self.assertEqual(
+            ([call.args[0] for call in counted.call_args_list], rows),
+            (["failed"], ["failed"]),
+        )
+
+    async def _run_turn_the_client_leaves_at_the_fallback(
+        self, username, npi, side_effect=lambda *a, **k: (None, None), env=None
+    ):
+        """A failing letter turn whose client is gone by the time the
+        fallback's first status frame goes out. Returns (chat, counted
+        outcomes, the draft mock)."""
+        user, chat = await _make_professional_chat(username, npi)
+        await _link_letter_appeal(chat, user)
+
+        async def send(frame):
+            if "appeal generator instead" in str(frame.get("status", "")):
+                raise ClientGone()
+
+        interface = ChatInterface(send_json_message_func=send, chat=chat, user=user)
+        with patch.dict("os.environ", env or {}), patch(
+            "fighthealthinsurance.chat_interface.draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft, patch(
+            "fighthealthinsurance.chat_interface.record_chat_turn"
+        ) as counted, _llm_call_fails(
+            side_effect
+        ):
+            await asyncio.wait_for(
+                interface.handle_chat_message("Please go ahead and draft a letter."),
+                timeout=20,
+            )
+        return chat, [call.args[0] for call in counted.call_args_list], mock_draft
+
+    async def test_client_leaving_at_the_fallback_is_client_gone(self):
+        """A departure, as when the client leaves before the fallback: not a
+        failure to count or apologise for."""
+        _, outcomes, _ = await self._run_turn_the_client_leaves_at_the_fallback(
+            "letterfall13", "9999920013"
+        )
+        self.assertEqual(outcomes, ["client_gone"])
+
+    async def test_no_letter_is_drafted_for_a_client_that_left(self):
+        _, _, mock_draft = await self._run_turn_the_client_leaves_at_the_fallback(
+            "letterfall14", "9999920014"
+        )
+        mock_draft.assert_not_awaited()
+
+    async def test_timed_out_turn_left_at_the_fallback_is_counted_once(self):
+        """Counted "timeout" before the fallback ran, it keeps that count and
+        its row rather than being counted "client_gone" as well."""
+
+        async def stalled(*args, **kwargs):
+            await asyncio.sleep(30)
+            return ("never seen", None)
+
+        chat, outcomes, _ = await self._run_turn_the_client_leaves_at_the_fallback(
+            "letterfall16",
+            "9999920016",
+            side_effect=stalled,
+            env={"FHI_CHAT_TURN_BUDGET": "0.3", "FHI_CHAT_HEARTBEAT_SECONDS": "600"},
+        )
+        rows = [t.outcome async for t in ChatTurn.objects.filter(chat_id=chat.id)]
+        self.assertEqual((outcomes, rows), (["timeout"], ["timeout"]))
+
+    async def test_fallback_failure_logs_the_error_class_not_its_text(self):
+        """Chat-path logs name an exception's class only: its text can carry
+        the user's details. (The traceback, which deployed sinks keep without
+        frame variables, still has it.)"""
+        messages = []
+        sink_id = logger.add(
+            lambda msg: messages.append(msg.record["message"]), level="DEBUG"
+        )
+        try:
+            with patch(
+                "fighthealthinsurance.chat_interface.draft_letter_for_chat",
+                new=AsyncMock(side_effect=RuntimeError("SENTINEL-letterfall-15")),
+            ):
+                await self._run_failing_turn(
+                    "letterfall15", "9999920015", "Please go ahead and draft a letter."
+                )
+        finally:
+            logger.remove(sink_id)
+        self.assertEqual([m for m in messages if "SENTINEL-letterfall-15" in m], [])
 
 
 class GenerateAppealLetterToolTest(APITestCase):
