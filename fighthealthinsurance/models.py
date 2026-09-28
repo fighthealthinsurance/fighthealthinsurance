@@ -3722,7 +3722,8 @@ class ChatTurn(models.Model):
 
     Metadata only: no message, reply, summary, history, context or document
     text, and exception class names rather than exception text. The only
-    strings are model labels, backend descriptors and the enum values below.
+    strings are model labels, backend descriptors, the enum values below and
+    the shadow scorer string (a model name and a rubric version).
     ``chat`` cascades and is non-nullable, so deleting a chat (including
     ``RemoveDataHelper.remove_data_for_email``) takes its turns with it and
     no row can outlive its chat.
@@ -3740,6 +3741,12 @@ class ChatTurn(models.Model):
         NONE = "", "No pick"
         PRIMARY = "primary", "Primary"
         ALTERNATE = "alternate", "Alternate"
+
+    class ShadowOutcome(models.TextChoices):
+        NONE = "", "Not scored"
+        SCORED = "scored", "Scored"
+        FAILED = "failed", "Failed"
+        TIMEOUT = "timeout", "Timed out"
 
     class ExternalStart(models.TextChoices):
         # The StagedStart outcomes in utils.py, plus "" for a primary pass
@@ -3813,6 +3820,28 @@ class ChatTurn(models.Model):
         max_length=16, blank=True, default="", choices=Preferred.choices
     )
     preferred_at = models.DateTimeField(null=True, blank=True)
+    # Shadow scores from TypeSafe (ml/chat_shadow.py), written in the
+    # background after the reply was delivered, only for chats that allowed
+    # outside models. Numbers, the scorer string and an outcome only.
+    # "winner" is the delivered reply; "second" is the side-by-side
+    # alternate when one was offered, otherwise the runner-up, and its
+    # scores are empty when the turn had neither.
+    shadow_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=ShadowOutcome.choices
+    )
+    # "typesafe/<model that answered>/chat-rubric-<n>", empty unless scored.
+    shadow_scorer = models.CharField(max_length=80, blank=True, default="")
+    # answers the question asked, 0..2; states a coverage or eligibility
+    # verdict, 0..1; asks for information the message already gave, 0..1;
+    # promises or guarantees a result, 0..1.
+    shadow_winner_answers = models.FloatField(null=True, blank=True)
+    shadow_winner_verdict = models.FloatField(null=True, blank=True)
+    shadow_winner_asks_again = models.FloatField(null=True, blank=True)
+    shadow_winner_promises = models.FloatField(null=True, blank=True)
+    shadow_second_answers = models.FloatField(null=True, blank=True)
+    shadow_second_verdict = models.FloatField(null=True, blank=True)
+    shadow_second_asks_again = models.FloatField(null=True, blank=True)
+    shadow_second_promises = models.FloatField(null=True, blank=True)
     # How the primary pass started the outside models: with ours, or held
     # back by the routing policy's delay (ChatRoutingPolicy) and then
     # started or skipped. The delay is the one that pass used; both are
@@ -4505,9 +4534,7 @@ class ExternalServiceHealth(models.Model):
         (another pod's first write), the conditional UPDATE runs once more
         against it, so the newer outcome still wins (review).
         """
-        older = models.Q(**{f"{field}__isnull": True}) | models.Q(
-            **{f"{field}__lt": now}
-        )
+        older = cls._older(field, now)
         if await cls.objects.filter(models.Q(service=service) & older).aupdate(
             **values
         ):
@@ -4516,6 +4543,57 @@ class ExternalServiceHealth(models.Model):
         if created:
             return
         await cls.objects.filter(models.Q(service=service) & older).aupdate(**values)
+
+    @staticmethod
+    def _older(field: str, now) -> models.Q:
+        return models.Q(**{f"{field}__isnull": True}) | models.Q(
+            **{f"{field}__lt": now}
+        )
+
+    @classmethod
+    def _advance_sync(cls, service: str, field: str, now, values: dict) -> None:
+        """_advance for sync code: the same three statements, in a savepoint
+        when the caller is inside a transaction, so a failure here leaves
+        that transaction usable."""
+        older = cls._older(field, now)
+        with transaction.atomic():
+            if cls.objects.filter(models.Q(service=service) & older).update(**values):
+                return
+            _, created = cls.objects.get_or_create(service=service, defaults=values)
+            if created:
+                return
+            cls.objects.filter(models.Q(service=service) & older).update(**values)
+
+    @classmethod
+    def note_success(cls, service: str) -> None:
+        """anote_success for sync code, such as a thread with its own
+        connection (chat/isolated_db.py). Best effort, and logs the error
+        class only."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(service, "last_success_at", now, {"last_success_at": now})
+        except Exception as e:
+            logger.warning(
+                f"could not record a success for external service {service}: "
+                f"{type(e).__name__}"
+            )
+
+    @classmethod
+    def note_failure(cls, service: str, summary: str) -> None:
+        """anote_failure for sync code; see note_success."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(
+                service,
+                "last_failure_at",
+                now,
+                {"last_failure_at": now, "last_failure": (summary or "")[:80]},
+            )
+        except Exception as e:
+            logger.warning(
+                f"could not record a failure for external service {service}: "
+                f"{type(e).__name__}"
+            )
 
     @classmethod
     async def anote_success(cls, service: str) -> None:

@@ -54,6 +54,7 @@ from fighthealthinsurance.chat.retry_handler import (
     retry_llm_with_fallback,
     should_retry_response,
 )
+from fighthealthinsurance.chat import shadow_scoring
 from fighthealthinsurance.chat.turn_record import (
     OUTCOME_FAILED,
     PASS_PRIMARY,
@@ -101,6 +102,7 @@ from fighthealthinsurance.ml.ml_models import (
     remove_repeated_sentences,
 )
 from fighthealthinsurance.reliability_events import capture_reliability_event
+from fighthealthinsurance.ml import chat_shadow
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
@@ -231,6 +233,10 @@ class ChatInterface:
         # per instance, like _candidate_alternate), written as one ChatTurn
         # row when the turn ends. None outside a model turn.
         self._turn: Optional[TurnRecord] = None
+        # The top-level pass's runner-up answer, kept only while shadow
+        # scoring is on and only until the turn ends, so the background
+        # scorer can read it (chat/shadow_scoring.py). Never persisted.
+        self._shadow_runner_up: Optional[str] = None
         # Seconds the turn's fan-outs hold the outside models back while our
         # own models answer, from the chat routing policy (0 asks them all
         # together). Set per turn once the backends are known.
@@ -321,15 +327,16 @@ class ChatInterface:
                 payload["turn_id"] = turn_id
         await self.send_json_message_func(payload)
 
-    async def _write_turn_record(self, outcome: str) -> None:
-        """Write the turn's ChatTurn row, once. Never raises, except that a
-        cancellation still propagates. A write cancelled while it waits for
-        the chat's executor never runs, so a counted turn's row is then
-        written from a thread of its own first, as in _end_cancelled_turn.
-        The row's id is the turn's, so a write that did run is not doubled."""
+    async def _write_turn_record(self, outcome: str) -> bool:
+        """Write the turn's ChatTurn row, once. Returns whether it was
+        written. Never raises, except that a cancellation still propagates.
+        A write cancelled while it waits for the chat's executor never runs,
+        so a counted turn's row is then written from a thread of its own
+        first, as in _end_cancelled_turn. The row's id is the turn's, so a
+        write that did run is not doubled."""
         turn, self._turn = self._turn, None
         try:
-            await arecord_chat_turn(self.chat.id, turn, outcome)
+            return await arecord_chat_turn(self.chat.id, turn, outcome)
         except asyncio.CancelledError:
             if turn is not None and turn.counted_outcome:
                 await arecord_chat_turn_isolated(
@@ -357,6 +364,53 @@ class ChatInterface:
             )
             return False
         return max(recorded, self._side_by_sides_shown or 0) < limit
+
+    def _start_shadow_scoring(
+        self,
+        turn: Optional[TurnRecord],
+        message: str,
+        reply: str,
+        alternate: Optional[str],
+        runner_up: Optional[str],
+    ) -> None:
+        """Hand a delivered turn to background shadow scoring
+        (chat/shadow_scoring.py), which starts nothing unless the person
+        allowed outside models and the flag and key are set. Only a turn
+        that showed a side-by-side, or one in a sample of the others
+        (chat_shadow.wanted), and only while TypeSafe's chat budget allows.
+        Never awaits and never raises.
+
+        The second answer is the alternate when one was shown, otherwise
+        the runner-up, cleaned the way the alternate is. Nothing starts for
+        a reply a tool rewrote (it is no longer the winning model's answer)
+        or for the canned data-deletion reply.
+        """
+        try:
+            if turn is None or not chat_shadow.enabled():
+                return
+            if turn.tool_rewrote or reply == DELETE_DATA_RESPONSE:
+                return
+            if not chat_shadow.wanted(turn.alternate_offered):
+                return
+            if not chat_shadow.budget_allows():
+                return
+            second: Optional[str]
+            if turn.alternate_offered:
+                second = alternate
+            else:
+                second = _clean_reply(runner_up) if runner_up else None
+                if second and llm_requested_delete_handoff(second):
+                    second = None
+            shadow_scoring.start(
+                chat_id=self.chat.id,
+                turn_id=turn.turn_id,
+                external_allowed=turn.use_external and self.use_external_models,
+                message=message,
+                reply=reply,
+                second=second or None,
+            )
+        except Exception as e:
+            logger.warning(f"Chat shadow scoring not started: {type(e).__name__}")
 
     def _count_turn(self, outcome: str) -> None:
         """Count the turn in fhi_chat_turns_total and note the outcome on its
@@ -820,6 +874,14 @@ class ChatInterface:
                     runner_up_score,
                     closely_tied,
                 )
+            # The runner-up the turn row names, for shadow scoring only (a
+            # retry winner cleared it above: nothing from the primary pass
+            # compares with that answer).
+            self._shadow_runner_up = (
+                runner_up_text
+                if turn is not None and runner_up_text and chat_shadow.enabled()
+                else None
+            )
 
         # One compact selection line per LLM pass at INFO: this is the
         # production-debuggable record of which backend won and why the
@@ -1016,6 +1078,7 @@ class ChatInterface:
         # raw runner-up no longer corresponds to it, so drop the alternate.
         if depth == 0 and response_text != response_before_tools:
             self._candidate_alternate = None
+            self._shadow_runner_up = None
             if turn is not None:
                 turn.tool_rewrote = True
                 turn.clear_alternate_candidate()
@@ -1070,6 +1133,10 @@ class ChatInterface:
         except Exception:
             await self._end_turn_after_exception()
             raise
+        finally:
+            # The runner-up text is kept for this turn's shadow scoring only,
+            # however the turn ends.
+            self._shadow_runner_up = None
 
     async def _run_chat_turn(
         self,
@@ -1088,6 +1155,7 @@ class ChatInterface:
         # Likewise the model-race record: only a turn that reaches the
         # models gets one (created once the backends are known, below).
         self._turn = None
+        self._shadow_runner_up = None
         self._external_delay_seconds = 0.0
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
@@ -1437,6 +1505,10 @@ class ChatInterface:
             (v for v in message_variants if v.metadata.get("store_full_text")),
             None,
         )
+        # Shadow scoring reads the person's message against the reply. An
+        # upload or a stored long paste leaves only a marker naming the
+        # stored document, so those turns are never shadow scored.
+        shadow_message_ok = not is_document and long_paste_variant is None
         if long_paste_variant is not None and not is_document:
             char_count = long_paste_variant.metadata.get(
                 "char_count", len(user_message)
@@ -1849,7 +1921,9 @@ class ChatInterface:
                     logger.info(f"Chat {chat.id}: offering an alternate answer")
                 else:
                     alternate_content = None
-            turn_id = str(self._turn.turn_id) if self._turn is not None else None
+            turn = self._turn
+            turn_id = str(turn.turn_id) if turn is not None else None
+            runner_up_for_shadow, self._shadow_runner_up = self._shadow_runner_up, None
             # A send that raises or is cancelled still leaves the row, "ok"
             # as counted: handle_chat_message writes it.
             await self.send_message_to_client(
@@ -1860,7 +1934,17 @@ class ChatInterface:
             # Awaited, not fire-and-forget: channels handles one frame at a
             # time per connection, so this row exists before the person's
             # side-by-side pick for it can arrive.
-            await self._write_turn_record("ok")
+            recorded = await self._write_turn_record("ok")
+            # Only once the reply is out and its row exists: the scores land
+            # on that row. Starts a background task at most, never waits.
+            if recorded and shadow_message_ok:
+                self._start_shadow_scoring(
+                    turn,
+                    user_message,
+                    final_response_text,
+                    alternate_content,
+                    runner_up_for_shadow,
+                )
         else:
             # The turn failed after the user already committed their message:
             # persist it anyway so a reconnect/replay doesn't erase what they
@@ -1908,6 +1992,7 @@ class ChatInterface:
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
             )
+            self._shadow_runner_up = None
             # As above, a send that raises or is cancelled still leaves the
             # row: handle_chat_message writes it.
             await self.send_error_message(err_msg)

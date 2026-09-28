@@ -58,6 +58,10 @@ turn record (chat/turn_record.py): one ChatTurn row per turn counted in
   fhi_chat_turns_total, with the counted outcome, written after the reply
   frame (or the error frame); a turn cancelled after it was counted gets
   its row from a thread of its own, with a bounded wait
+  ▼
+shadow scoring (chat/shadow_scoring.py, off by default): a background
+  task, started after the row, that scores the delivered reply with
+  TypeSafe's Jev for the staff dashboard (see §5)
 ```
 
 Everything in the fan-out is concurrent; the serial spine of a turn is
@@ -330,6 +334,53 @@ data accumulates evidence about which one users actually prefer. The staff
 ML Model Usage Dashboard shows it per model and per pair of models. When
 that data disagrees with the quality map, adjust the map.
 
+### Shadow scores (TypeSafe Jev)
+
+With `TYPESAFE_CHAT_SHADOW_ENABLED` and `TYPESAFE_API_KEY` set, and only in
+chats where the person allowed outside models, each delivered turn gets a
+background task (chat/shadow_scoring.py) that asks TypeSafe's Jev four
+questions about the delivered reply and about the turn's second answer
+(the alternate when one was shown, otherwise the runner-up), each read
+against the person's message: does it answer what was asked (0 to 2),
+does it state a coverage or eligibility outcome as fact, does it ask for
+something the message already gave, and does it promise or guarantee a
+result (the last three 0 to 1). The last is our own false-promise rule
+(chat/safety_filters.detect_false_promises) put as a question, and the
+rule itself stays in place. ml/chat_shadow.py holds the rubric, and folds
+the four into one composite score for the agreement table.
+
+* It starts after the reply frame has gone out and the ChatTurn row
+  exists, and nothing waits for it: the scores land on that row later.
+  At most 8 run per process (with up to 16 database threads between
+  them, two each), each request under TYPESAFE_TIMEOUT_SECONDS,
+  and the whole job has a bound of its own.
+* Its database work (the identifier lookup, the health note and the score
+  write) runs through chat/isolated_db.py: on a thread with its own
+  connection, never on the chat's thread-sensitive executor, with a bounded
+  wait and, on PostgreSQL, a statement timeout. A stuck query there cannot
+  hold up the chat's next ORM call.
+* The texts are redacted the way the letter scorer redacts
+  (chat/redaction.py): the identifiers held for the chat's accounts and for
+  the appeals and prior authorization requests linked to it, including each
+  appeal's denial exactly as letter scoring collects it (patient, claim,
+  plan and member identifiers among them), plus emails and phone numbers.
+  If that lookup fails, nothing is sent. Only the scores, a scorer string
+  (the model that answered and the rubric version) and an outcome (scored,
+  failed, timeout) are stored; the texts are never stored or logged.
+* Nothing starts for a document upload or a stored long paste, for a reply
+  a tool rewrote, or for the canned data-deletion reply.
+* It fails closed: any error, timeout or unexpected answer stores no
+  scores, and the outcome goes on the `typesafe-chat` ExternalServiceHealth
+  row.
+
+Nothing uses the scores to pick a reply. The dashboard shows per-model
+means and an agreement table: of the side-by-side picks where both answers
+were scored, how often the answer Jev scored higher is the one the person
+picked. That is the check to run before the scores inform routing. Both
+use one exact scorer string, the newest in the window, named on the page;
+turns scored by another Jev version or rubric are counted, never averaged
+in, as for draft quality.
+
 ## 6. Context management ("context shedding")
 
 * Histories <= 20 messages go to the model verbatim (plus the full history
@@ -365,14 +416,15 @@ Three levels, in increasing detail:
    kind, status, time and score, the model whose reply was delivered (a
    tool follow-up's pick when one wrote the reply) and the first pass's
    pick and runner-up, retry and tool use, how the outside models were
-   started (§4), the alternate offered and the person's pick. Metadata only
-   (see §9). A call that answered was scored (scored, repeat or empty) or,
-   when its pass stopped comparing answers first, is unscored; either way it
-   keeps its time. Only a call still running when its pass stopped waiting
-   is late, with no time, and a held-back outside call that was never sent
-   is skipped. An exception escaping a turn after the models were asked
-   counts it failed, in the row and the metric alike; a turn cancelled
-   before it was counted gets neither.
+   started (§4), the alternate offered, the person's pick and any shadow
+   scores (§5). Metadata only (see §9). A call that answered was scored
+   (scored, repeat or empty) or, when its pass stopped comparing answers
+   first, is unscored; either way it keeps its time. Only a call still
+   running when its pass stopped waiting is late, with no time, and a
+   held-back outside call that was never sent is skipped. An exception
+   escaping a turn after the models were asked counts it failed, in the row
+   and the metric alike; a turn cancelled before it was counted gets
+   neither.
 4. **Debug frames** (localStorage `fhi_chat_debug = "true"`, honored only
    for DEBUG deployments and staff accounts): per turn the server sends
    - `debug_llm_input` — the EXACT wrapped message, context summary,
@@ -424,7 +476,8 @@ Three levels, in increasing detail:
   "repeat").
 * The alternate answer is ephemeral: never persisted, never replayed.
 * ChatTurn holds metadata only: model labels, backend descriptors,
-  statuses, times, scores and enum values. Never message, reply, summary,
+  statuses, times, scores (including shadow scores and their scorer
+  string) and enum values. Never message, reply, summary,
   history, context, state hint or document text, and exceptions by class
   name only. Its chat FK cascades and is non-nullable, so it goes with the
   chat (including delete-my-data).
@@ -432,6 +485,9 @@ Three levels, in increasing detail:
   stored on the chat.
 * Summarization and geo lookups soft-fail; nothing on the turn path is
   allowed to hard-block the reply.
+* Shadow scoring stays off the turn path: it starts only after the reply
+  was delivered, never delays it, and sends nothing outside unless the
+  person allowed outside models for the chat.
 * Every wait on the turn path has an explicit bound that fits inside
   FHI_CHAT_TURN_BUDGET.
 * The routing policy only narrows: it never adds a model, never asks an

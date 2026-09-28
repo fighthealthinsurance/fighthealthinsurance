@@ -265,6 +265,17 @@ class Base(Configuration):
     TYPESAFE_DENIAL_TRIAGE_ENABLED = (
         os.getenv("TYPESAFE_DENIAL_TRIAGE_ENABLED", "false").lower() == "true"
     )
+    # Chat shadow scoring (ml/chat_shadow.py): same key, its own switch. When
+    # on, a background task scores delivered chat replies for the staff
+    # dashboard, only in chats that allowed outside models: every turn that
+    # showed a side-by-side, and this share of the others. Never on the
+    # reply's own path; counted against TypeSafe's chat budget.
+    TYPESAFE_CHAT_SHADOW_ENABLED = (
+        os.getenv("TYPESAFE_CHAT_SHADOW_ENABLED", "false").lower() == "true"
+    )
+    TYPESAFE_CHAT_SHADOW_SAMPLE_RATE = _env_float(
+        "TYPESAFE_CHAT_SHADOW_SAMPLE_RATE", 0.1, minimum=0.0, maximum=1.0
+    )
     # Chat routing policy (ml/chat_policy.py). Rows are computed from chat
     # turn metadata by the compute_chat_policy command (or a scheduled job)
     # and shown on the staff usage dashboard either way; chat follows the
@@ -992,6 +1003,7 @@ class Test(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_CHAT_SHADOW_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
@@ -1055,6 +1067,7 @@ class TestSync(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_CHAT_SHADOW_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
@@ -1101,6 +1114,7 @@ class TestActor(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_CHAT_SHADOW_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
