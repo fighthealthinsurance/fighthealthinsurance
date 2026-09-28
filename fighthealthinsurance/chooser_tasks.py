@@ -19,7 +19,7 @@ import datetime
 import random
 import re
 import threading
-from typing import List, Optional, cast
+from typing import List, Optional, Tuple, cast
 
 from django.conf import settings
 from django.db.models import QuerySet
@@ -117,32 +117,69 @@ def _select_candidate_models(models: List, limit: int) -> List:
 
 
 _LABEL_MARKUP_RE = re.compile(r"^[\s\-\*\u2022\d\.\)\(#>]+")
+_OPENING_EMPHASIS_RE = re.compile(r"^[*_`]+")
+_TRAILING_EMPHASIS_RE = re.compile(r"\s*([*_`]+)$")
 
 
-def _clean_label_line(raw: str) -> str:
-    """A line with its list bullet, numbering and markdown emphasis removed,
-    so "**Procedure:** MRI", "1. Procedure: MRI" and "- Procedure: MRI" all
-    read as "Procedure: MRI". Models decorate labels freely; the old parser
-    required the bare form and treated every other spelling as a missing
-    field."""
+def _strip_label_emphasis(value: str) -> str:
+    """``value`` without the markdown emphasis its label left on it.
+
+    That is the closing half of an emphasised label ("**Procedure:** MRI"),
+    the closing half of a line emphasised whole ("**Procedure: MRI**"), and
+    a pair wrapping the whole value ("Procedure: **MRI**"). Emphasis inside
+    the value is the model's text and stays: stripping markers from both
+    ends stored "**MRI** of lumbar spine" as "MRI** of lumbar spine" and
+    "What is *prior auth*" as "What is *prior auth".
+    """
+    value = value.strip()
+    opening = _OPENING_EMPHASIS_RE.match(value)
+    if opening and value[opening.end() :][:1].isspace():
+        value = value[opening.end() :].strip()
+    opening = _OPENING_EMPHASIS_RE.match(value)
+    if opening:
+        marker, closing = opening.group(0), opening.group(0)[::-1]
+        inner = value[len(marker) : len(value) - len(closing)]
+        if (
+            inner.strip()
+            and value.endswith(closing)
+            and marker not in inner
+            and closing not in inner
+        ):
+            return inner.strip()
+    trailing = _TRAILING_EMPHASIS_RE.search(value)
+    if trailing and trailing.group(1) not in value[: trailing.start()]:
+        value = value[: trailing.start()]
+    return value.strip()
+
+
+def _split_label(raw: str) -> Optional[Tuple[str, str]]:
+    """``(label, value)`` for a "Label: value" line, else None.
+
+    List bullets, numbering and markdown emphasis around the label are
+    dropped, so "**Procedure:** MRI", "**Procedure**: MRI", "1. Procedure:
+    MRI" and "- Procedure: MRI" all read as ("Procedure", "MRI"). Models
+    decorate labels freely; the old parser required the bare form and
+    treated every other spelling as a missing field.
+    """
     line = _LABEL_MARKUP_RE.sub("", raw.strip())
-    return line.strip("*_` ").strip()
+    if ":" not in line:
+        return None
+    label, value = line.split(":", 1)
+    return label.strip().strip("*_` ").strip(), _strip_label_emphasis(value)
 
 
 def _labeled_fields(text: str) -> dict:
     """``{label: value}`` for every "Label: value" line of ``text``. Labels
-    are lower-cased with spaces as underscores; markdown is stripped from
-    both sides."""
+    are lower-cased with spaces as underscores; see _split_label for the
+    markdown that is dropped."""
     fields: dict = {}
     for raw in text.split("\n"):
-        line = _clean_label_line(raw)
-        if ":" not in line:
+        split = _split_label(raw)
+        if split is None:
             continue
-        key, value = line.split(":", 1)
-        key = key.strip().strip("*_` ").strip().lower().replace(" ", "_")
-        value = value.strip().strip("*_` ").strip()
-        if key and value:
-            fields[key] = value
+        key = split[0].lower().replace(" ", "_")
+        if key and split[1]:
+            fields[key] = split[1]
     return fields
 
 
@@ -155,7 +192,8 @@ def _parse_conversation(text: str):
     whenever it followed an assistant turn, so in a transcript with two
     answered follow-ups the middle question was dropped and two assistant
     turns sat side by side. Labels may carry list or markdown decoration
-    ("**USER:**"); continuation lines are kept as written.
+    ("**USER:**", "**User**:", see _split_label); continuation lines are kept
+    as written.
     """
     history: list = []
     current_role = None
@@ -167,16 +205,12 @@ def _parse_conversation(text: str):
             history.append({"role": current_role, "content": content})
 
     for raw in text.strip().split("\n"):
-        cleaned = _clean_label_line(raw)
-        upper = cleaned.upper()
-        if upper.startswith("USER:"):
+        split = _split_label(raw)
+        role = split[0].lower() if split else None
+        if split and role in ("user", "assistant"):
             flush()
-            current_role = "user"
-            current_content = [cleaned[5:].strip("*_` ").strip()]
-        elif upper.startswith("ASSISTANT:"):
-            flush()
-            current_role = "assistant"
-            current_content = [cleaned[10:].strip("*_` ").strip()]
+            current_role = role
+            current_content = [split[1]]
         elif current_role and raw.strip():
             current_content.append(raw.strip())
     flush()

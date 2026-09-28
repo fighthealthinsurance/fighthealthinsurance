@@ -152,6 +152,20 @@ class TestLabelParsing:
         assert fields["insurance_company"] == "Acme Health Assurance"
         assert fields["denial_reason"].startswith("The plan determined")
 
+    def test_a_line_emphasised_whole_reads_without_the_markers(self):
+        fields = _labeled_fields("**Procedure: MRI of lumbar spine**")
+        assert fields["procedure"] == "MRI of lumbar spine"
+
+    def test_a_value_emphasised_whole_reads_without_the_markers(self):
+        fields = _labeled_fields("Procedure: **MRI of lumbar spine**")
+        assert fields["procedure"] == "MRI of lumbar spine"
+
+    def test_emphasis_inside_a_value_is_kept_whole(self):
+        """Stripping markers from both ends stored this as "MRI** of lumbar
+        spine" and showed it to candidate models and voters."""
+        fields = _labeled_fields("Procedure: **MRI** of lumbar spine")
+        assert fields["procedure"] == "**MRI** of lumbar spine"
+
     def test_conversation_labels_may_carry_markdown(self):
         history, final = _parse_conversation(
             "**USER:** My MRI claim was denied by my insurer.\n"
@@ -161,6 +175,25 @@ class TestLabelParsing:
         assert final == "What documents do I need to get started?"
         assert [m["role"] for m in history] == ["user", "assistant"]
         assert history[0]["content"] == "My MRI claim was denied by my insurer."
+
+    def test_a_role_label_emphasised_before_its_colon_is_read(self):
+        """With the colon outside the bold the whole transcript used to parse
+        as nothing, and the task fell back to a single question."""
+        history, final = _parse_conversation(
+            "**User**: My MRI claim was denied by my insurer.\n"
+            "**Assistant**: I can help you appeal that denial.\n"
+            "**User**: What documents do I need to get started?"
+        )
+        assert final == "What documents do I need to get started?"
+        assert [m["role"] for m in history] == ["user", "assistant"]
+
+    def test_emphasis_ending_a_turn_is_kept_whole(self):
+        history, final = _parse_conversation(
+            "USER: My claim needs a prior authorization.\n"
+            "ASSISTANT: I can help with that.\n"
+            "USER: What is *prior auth*"
+        )
+        assert final == "What is *prior auth*"
 
     def test_plain_conversation_still_parses(self):
         history, final = _parse_conversation(CONVERSATION_TEXT)
