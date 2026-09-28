@@ -23,7 +23,7 @@ from fighthealthinsurance.chooser_tasks import (
     _generate_chat_candidates,
     _labeled_fields,
     _parse_conversation,
-    _scenario_writer,
+    _scenario_writers,
     _select_candidate_models,
 )
 from fighthealthinsurance.models import ChooserCandidate, ChooserTask
@@ -129,19 +129,24 @@ MARKDOWN_SCENARIO_TEXT = (
 )
 
 
-class TestScenarioWriter:
+class TestScenarioWriters:
     def test_skips_a_backend_that_cannot_follow_instructions(self):
         narrow = NarrowModel()
         general = ScenarioModel(SCENARIO_TEXT)
-        assert _scenario_writer([narrow, general]) is general
+        assert _scenario_writers([narrow, general]) == [general]
 
     def test_falls_back_to_the_first_backend_when_none_is_general(self):
         narrow = NarrowModel()
-        assert _scenario_writer([narrow]) is narrow
+        assert _scenario_writers([narrow]) == [narrow]
 
     def test_a_backend_without_the_flag_counts_as_general(self):
         plain = FakeModel("plain")
-        assert _scenario_writer([plain]) is plain
+        assert _scenario_writers([plain]) == [plain]
+
+    def test_at_most_the_configured_number_of_backends_write(self):
+        models = [FakeModel(f"plain-{i}") for i in range(4)]
+        with patch("fighthealthinsurance.chooser_tasks.CHOOSER_SCENARIO_WRITERS", 2):
+            assert _scenario_writers(models) == models[:2]
 
 
 class TestLabelParsing:
@@ -425,7 +430,7 @@ class TestChatFallbackIsBounded:
         with patch.object(
             chooser_tasks.ml_router,
             "generate_text_backends",
-            MagicMock(return_value=[silent, FakeModel("fhi-2025-nov")]),
+            MagicMock(return_value=[silent]),
         ), patch("fighthealthinsurance.chooser_tasks.CHOOSER_FALLBACK_ATTEMPTS", 2):
             await _generate_chat_candidates(task)
 
@@ -434,6 +439,100 @@ class TestChatFallbackIsBounded:
         # One conversation attempt plus the bounded fallback attempts.
         assert silent.calls == 1 + 2
         assert await ChooserCandidate.objects.filter(task=task).acount() == 0
+
+
+class RaisingModel(ScenarioModel):
+    """A writer whose call raises instead of returning None."""
+
+    def __init__(self):
+        super().__init__(None)
+        self.name = "raising-writer"
+
+    async def _infer_no_context(self, system_prompts, prompt, **kwargs):
+        self.calls += 1
+        raise RuntimeError("backend exploded")
+
+
+def _writer(name, reply):
+    writer = ScenarioModel(reply)
+    writer.name = name
+    return writer
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestAReplyThatCantBeUsedGoesToTheNextWriter:
+    """The first general-purpose backend used to write every scenario, so one
+    answering junk disabled every task while the backends behind it were
+    never asked."""
+
+    async def _appeal_context(self, writers):
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=writers + [FakeModel("fhi-2025-nov")]),
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ):
+            await _generate_appeal_candidates(task)
+        await task.arefresh_from_db()
+        return task.context_json
+
+    async def _chat_context(self, writers):
+        task = await ChooserTask.objects.acreate(
+            task_type="chat", status="QUEUED", source="synthetic"
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=writers),
+        ), patch.object(
+            chooser_tasks.ml_router,
+            "get_chat_backends",
+            MagicMock(return_value=[FakeModel("fhi-2025-nov")]),
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ), patch(
+            "fighthealthinsurance.chooser_tasks.CHOOSER_FALLBACK_ATTEMPTS", 2
+        ):
+            await _generate_chat_candidates(task)
+        await task.arefresh_from_db()
+        return task.context_json
+
+    async def test_an_unreadable_scenario_is_rewritten_by_the_next_writer(self):
+        junk = _writer("junk-writer", "Dear Insurance Company, I am writing.")
+        context = await self._appeal_context(
+            [junk, _writer("good-writer", SCENARIO_TEXT)]
+        )
+        assert context["procedure"] == "MRI of lumbar spine"
+
+    async def test_a_writer_that_raises_hands_the_scenario_on(self):
+        context = await self._appeal_context(
+            [RaisingModel(), _writer("good-writer", SCENARIO_TEXT)]
+        )
+        assert context["procedure"] == "MRI of lumbar spine"
+
+    async def test_the_next_writers_conversation_beats_a_single_question(self):
+        """A reply that is not a transcript would pass as a single question;
+        the next writer's conversation is asked for first."""
+        junk = _writer("junk-writer", APPEAL_TEXT)
+        context = await self._chat_context(
+            [junk, _writer("good-writer", CONVERSATION_TEXT)]
+        )
+        assert context["prompt"] == "What documents do I need to get started?"
+        assert len(context["history"]) == 2
+        assert junk.calls == 1
+
+    async def test_the_single_question_fallback_asks_the_next_writer_too(self):
+        silent = _writer("silent-writer", None)
+        question = "How do I appeal a denied MRI claim?"
+        context = await self._chat_context([silent, _writer("asker", question)])
+        assert context == {"prompt": question, "history": []}
+        # Asked for a conversation, then for a question twice.
+        assert silent.calls == 1 + 2
 
 
 @pytest.mark.asyncio

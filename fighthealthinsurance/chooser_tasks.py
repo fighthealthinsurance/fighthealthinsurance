@@ -60,6 +60,9 @@ CHOOSER_MAX_UNSCORED_TASKS = getattr(
 # How often the chat fallback may re-ask for a single question before the task
 # is given up (see _ask_for_single_question).
 CHOOSER_FALLBACK_ATTEMPTS = getattr(settings, "CHOOSER_FALLBACK_ATTEMPTS", 3)
+# How many backends may write one task's scenario or conversation: a reply
+# that can't be used goes to the next (see _scenario_writers).
+CHOOSER_SCENARIO_WRITERS = getattr(settings, "CHOOSER_SCENARIO_WRITERS", 3)
 # At most one background prefill per process per this many seconds (see
 # trigger_prefill_async): a page load and an empty next-task fetch both ask.
 CHOOSER_PREFILL_THROTTLE_SECONDS = getattr(
@@ -220,27 +223,55 @@ def _parse_conversation(text: str):
     return history, final_user_prompt
 
 
-def _scenario_writer(models: List):
-    """The backend that writes a task's synthetic scenario or conversation.
+def _scenario_writers(models: List) -> List:
+    """The backends that write a task's synthetic scenario or conversation,
+    in the order they are asked.
 
     The router's generation list starts with the cheapest internal backend,
     which in production is the fhi-legacy appeal fine-tune. It does not
     follow instructions (its own docstring: blank lines and stray digits), so
     every scenario request either came back empty, which raised in the parser
     and disabled the task before a single candidate existed, or came back as
-    text no field could be read from. Take the first backend that says it
-    follows general instructions; only when none does, fall back to the first
-    backend rather than produce nothing.
+    text no field could be read from. These are the backends that say they
+    follow general instructions, up to ``CHOOSER_SCENARIO_WRITERS`` of them,
+    and a reply that can't be used goes to the next: with one writer, a
+    backend answering junk disabled every task while the backends behind it
+    were never asked. When none says it follows instructions, the first
+    backend writes, rather than none.
     """
+    general = []
     for model in models:
         supports = getattr(model, "supports_general_instructions", None)
         if supports is None or supports():
-            return model
+            general.append(model)
+    if general:
+        return general[: max(1, CHOOSER_SCENARIO_WRITERS)]
     logger.warning(
         "Chooser: no general-purpose backend is registered; writing the "
         f"scenario with {_model_display_name(models[0])}"
     )
-    return models[0]
+    return models[:1]
+
+
+async def _ask_writer(writer, system_prompt: str, prompt: str) -> Optional[str]:
+    """``writer``'s reply, or None when it gave none. A writer that raised
+    gave none too, so the next writer is asked rather than the task failing."""
+    try:
+        reply = await writer._infer_no_context(
+            system_prompts=[system_prompt], prompt=prompt
+        )
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Chooser: {_model_display_name(writer)} raised instead of "
+            f"answering: {e}"
+        )
+        return None
+    return str(reply) if reply else None
+
+
+def _usable_question(question: Optional[str]) -> bool:
+    """Long enough to be a question, and short enough to be one message."""
+    return question is not None and 10 <= len(question) <= 1000
 
 
 async def _ask_for_single_question(model, prompt: str) -> Optional[str]:
@@ -252,12 +283,11 @@ async def _ask_for_single_question(model, prompt: str) -> Optional[str]:
     backend that was down.
     """
     for attempt in range(1, CHOOSER_FALLBACK_ATTEMPTS + 1):
-        answer = await model._infer_no_context(
-            system_prompts=["Generate a natural user question about health insurance."],
-            prompt=prompt,
+        answer = await _ask_writer(
+            model, "Generate a natural user question about health insurance.", prompt
         )
-        if answer and str(answer).strip():
-            return str(answer)
+        if answer and answer.strip():
+            return answer
         logger.info(
             f"Chooser: {_model_display_name(model)} returned no question "
             f"(attempt {attempt}/{CHOOSER_FALLBACK_ATTEMPTS})"
@@ -530,9 +560,9 @@ async def _generate_appeal_candidates(task: ChooserTask):
         await database_sync_to_async(task.save)()
         return
 
-    # The scenario writer must follow instructions; the cheapest internal
-    # backend (fhi-legacy) does not. See _scenario_writer.
-    scenario_model = _scenario_writer(generation_models)
+    # The scenario writers must follow instructions; the cheapest internal
+    # backend (fhi-legacy) does not. See _scenario_writers.
+    writers = _scenario_writers(generation_models)
     try:
         scenario_prompt = (
             "We are building a system to help patients appeal health insurance denials. "
@@ -545,35 +575,43 @@ async def _generate_appeal_candidates(task: ChooserTask):
             "Denial Reason: [a 1-2 sentence realistic denial reason, such as 'not medically necessary', 'experimental treatment', 'out of network', etc.]\n\n"
             "Be creative and varied. Use real medical terminology for procedures and diagnoses."
         )
-
-        scenario_response = await scenario_model._infer_no_context(
-            system_prompts=[
-                "You are a system that generates realistic but fictional health insurance scenarios. "
-                "These are used to improve model selection for a health insurance appeal assistance service. "
-                "Generate varied, realistic scenarios using real medical terminology."
-            ],
-            prompt=scenario_prompt,
+        scenario_system_prompt = (
+            "You are a system that generates realistic but fictional health insurance scenarios. "
+            "These are used to improve model selection for a health insurance appeal assistance service. "
+            "Generate varied, realistic scenarios using real medical terminology."
         )
 
-        # A backend that did not answer returns None rather than raising; the
-        # parser reads it as "no fields" and the task is disabled below.
-        fields = _labeled_fields(scenario_response or "")
-        context = {
-            "procedure": fields.get("procedure"),
-            "diagnosis": fields.get("diagnosis"),
-            "insurance_company": fields.get("insurance_company"),
-            "denial_text_preview": fields.get("denial_reason"),
-        }
-        missing = [k for k, v in context.items() if not v]
-        if missing:
-            # No placeholders: a task about "Medical procedure" for "Medical
-            # condition" measures nothing, and it used to go READY and reach
-            # voters. Disable it; the next batch tries again.
+        context = None
+        for writer in writers:
+            # A backend that did not answer returns None rather than raising;
+            # the parser reads it as "no fields" and the next writer is asked.
+            scenario_response = await _ask_writer(
+                writer, scenario_system_prompt, scenario_prompt
+            )
+            fields = _labeled_fields(scenario_response or "")
+            written = {
+                "procedure": fields.get("procedure"),
+                "diagnosis": fields.get("diagnosis"),
+                "insurance_company": fields.get("insurance_company"),
+                "denial_text_preview": fields.get("denial_reason"),
+            }
+            missing = [k for k, v in written.items() if not v]
+            if not missing:
+                context = written
+                break
             preview = (scenario_response or "")[:200]
             logger.warning(
                 f"ChooserTask {task.id}: scenario from "
-                f"{_model_display_name(scenario_model)} is missing {missing}; "
-                f"disabling the task. Response started: {preview!r}"
+                f"{_model_display_name(writer)} is missing {missing}. "
+                f"Response started: {preview!r}"
+            )
+        if context is None:
+            # No placeholders: a task about "Medical procedure" for "Medical
+            # condition" measures nothing, and it used to go READY and reach
+            # voters. Disable it; the next batch tries again.
+            logger.warning(
+                f"ChooserTask {task.id}: no complete scenario from "
+                f"{len(writers)} writer(s); disabling the task"
             )
             task.status = "DISABLED"
             await task.asave()
@@ -699,9 +737,9 @@ async def _generate_chat_candidates(task: ChooserTask):
         await database_sync_to_async(task.save)()
         return
 
-    # The conversation writer must follow instructions; the cheapest internal
-    # backend (fhi-legacy) does not. See _scenario_writer.
-    prompt_model = _scenario_writer(generation_models)
+    # The conversation writers must follow instructions; the cheapest
+    # internal backend (fhi-legacy) does not. See _scenario_writers.
+    writers = _scenario_writers(generation_models)
     try:
         # Generate a multi-turn conversation scenario
         conversation_prompt = (
@@ -721,25 +759,36 @@ async def _generate_chat_candidates(task: ChooserTask):
             "Make the conversation natural and include specific details (procedures, conditions, timeframes, etc.)."
         )
 
-        conversation_response = await prompt_model._infer_no_context(
-            system_prompts=[
-                "You are a system that generates realistic chat conversations about health insurance, "
-                "Medicare, Medicaid, and prior authorizations for improving model selection. "
-                "Generate varied, natural-sounding conversations."
-            ],
-            prompt=conversation_prompt,
+        conversation_system_prompt = (
+            "You are a system that generates realistic chat conversations about health insurance, "
+            "Medicare, Medicaid, and prior authorizations for improving model selection. "
+            "Generate varied, natural-sounding conversations."
         )
 
-        # A backend that did not answer returns None rather than raising.
-        history, final_user_prompt = _parse_conversation(conversation_response or "")
-
-        # Validate we have a usable conversation
-        if not final_user_prompt or len(final_user_prompt) < 10:
-            # Fallback: try generating a simple single question
+        # Every writer is asked for a conversation before any is asked for a
+        # single question: a conversation from the next writer beats a
+        # question from one that could not write one.
+        history: list = []
+        final_user_prompt: Optional[str] = None
+        for writer in writers:
+            # A backend that did not answer returns None rather than raising.
+            conversation_response = await _ask_writer(
+                writer, conversation_system_prompt, conversation_prompt
+            )
+            history, final_user_prompt = _parse_conversation(
+                conversation_response or ""
+            )
+            if _usable_question(final_user_prompt):
+                break
             logger.warning(
                 f"ChooserTask {task.id}: could not parse a conversation from "
-                f"{_model_display_name(prompt_model)}; falling back to a single question"
+                f"{_model_display_name(writer)}"
             )
+            final_user_prompt = None
+
+        if final_user_prompt is None:
+            # Fallback: try generating a simple single question
+            history = []
             simple_prompt = (
                 "Generate a realistic 1-2 sentence question someone might ask about one of:\n"
                 "- Appealing a health insurance denial\n"
@@ -747,24 +796,21 @@ async def _generate_chat_candidates(task: ChooserTask):
                 "- Medicare or Medicaid eligibility\n"
                 "Just the question, nothing else."
             )
-            final_user_prompt = await _ask_for_single_question(
-                prompt_model, simple_prompt
-            )
-            if not final_user_prompt:
+            for writer in writers:
+                question = await _ask_for_single_question(writer, simple_prompt)
+                if question:
+                    question = question.strip().strip('"').strip("'").strip()
+                if _usable_question(question):
+                    final_user_prompt = question
+                    break
+            if final_user_prompt is None:
                 logger.warning(
-                    f"ChooserTask {task.id}: no usable question after "
-                    f"{CHOOSER_FALLBACK_ATTEMPTS} attempts; disabling the task"
+                    f"ChooserTask {task.id}: no usable conversation or question "
+                    f"from {len(writers)} writer(s); disabling the task"
                 )
                 task.status = "DISABLED"
                 await task.asave()
                 return
-            final_user_prompt = final_user_prompt.strip().strip('"').strip("'").strip()
-            history = []
-
-        if len(final_user_prompt) < 10 or len(final_user_prompt) > 1000:
-            task.status = "DISABLED"
-            await database_sync_to_async(task.save)()
-            return
 
         task.context_json = {
             "prompt": final_user_prompt,
