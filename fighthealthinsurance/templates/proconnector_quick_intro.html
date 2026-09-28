@@ -177,6 +177,12 @@
         <input type="text" class="readonly" value="{{ cc_emails|join:', ' }}" readonly>
         {% if cofactor_cc_problem %}
           <p class="error">⚠️ {{ cofactor_cc_problem }}</p>
+        {% else %}
+          <p class="hint">
+            This is the new-signup introduction: it introduces the professional
+            to the Cofactor AI contact CC'd above, who picks up the thread from
+            a reply-all.
+          </p>
         {% endif %}
 
         <label>Subject</label>
@@ -197,6 +203,8 @@
           To research the professional first, edit further, send a test copy,
           or skip the record, use the full
           <a href="{% url 'proconnector_process' %}">Pro Connector workflow</a>.
+          Note that it sends the backlog re-engagement version of the email,
+          which doesn't introduce or CC the Cofactor AI contact.
         </p>
       </form>
     </div>

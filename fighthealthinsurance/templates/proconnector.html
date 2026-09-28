@@ -250,15 +250,13 @@
           <p class="error">⚠️ {{ cofactor_cc_problem }}</p>
         {% elif cofactor_cc_email %}
           <p class="hint">
-            The email introduces the recipient to {{ cofactor_cc_email }}
-            (Cofactor AI), who is CC'd alongside the FHI professional address
-            and picks up the thread from a reply-all.
+            This deployment CCs Cofactor AI alongside the FHI professional
+            address (COFACTOR_CC_EMAIL is set).
           </p>
         {% else %}
           <p class="hint">
-            The Cofactor AI CC is turned off (COFACTOR_CC_EMAIL), so the email
-            asks the recipient to reach out to {{ contact_email }} to schedule
-            a demo or learn more.
+            The email asks the recipient to reach out to
+            {{ contact_email }} to schedule a demo or learn more.
           </p>
         {% endif %}
 

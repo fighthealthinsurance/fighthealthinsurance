@@ -429,13 +429,21 @@ class Base(Configuration):
         "PROFESSIONAL_CC_EMAIL", "professional@fighthealthinsurance.com"
     )
 
-    # Cofactor AI's contact, CC'd on pro-connector intro emails alongside
-    # PROFESSIONAL_CC_EMAIL. The intro copy introduces the recipient to this
-    # person by name, so the "Name <address>" form is expected. Set the env var
-    # to "none" (or empty) to turn the Cofactor CC off; the intro then asks the
-    # recipient to reach out to the professional contact address instead.
-    COFACTOR_CC_EMAIL = os.getenv(
-        "COFACTOR_CC_EMAIL", "Rebeca Morales <rmorales@cofactorai.com>"
+    # Cofactor AI's contact address, optionally CC'd on pro-connector intro
+    # emails alongside PROFESSIONAL_CC_EMAIL. OFF by default: the intro copy
+    # asks the recipient to reach out to the professional contact address, so
+    # no CC is needed for the email to make sense. Set the env var to an
+    # address to turn the Cofactor CC on ("none" is also accepted as an
+    # explicit off).
+    COFACTOR_CC_EMAIL = os.getenv("COFACTOR_CC_EMAIL", "")
+
+    # The Cofactor AI person that *new-signup* intros (the one-press button in
+    # the signup notification email) introduce the professional to by name and
+    # CC, in "Name <address>" form. The backlog re-engagement intros from the
+    # processing queue never use it: those don't involve Cofactor unless the
+    # professional replies to us.
+    COFACTOR_INTRO_CONTACT = os.getenv(
+        "COFACTOR_INTRO_CONTACT", "Rebeca Morales <rmorales@cofactorai.com>"
     )
 
     # Demo-request notifications always go to support42@; additional recipients
