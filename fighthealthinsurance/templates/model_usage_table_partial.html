@@ -1,21 +1,90 @@
+{% comment %}
+One usage table. kind picks the counts: "picks" (ProposedAppeal, per draft shown),
+"votes" (chooser), "calls" (ModelCallAttempt), "chat" (ChatTurn model race),
+"sidebyside" (ChatTurn side-by-side picks), or none (context level, per
+draft). show_state adds the model state tag; show_quality adds the scorer
+columns, which only the ProposedAppeal table ever fills. Each state is its own
+branch with a literal class so the contrast gate can measure every tag.
+{% endcomment %}
+{% url 'model_backend_status' as status_url %}
 {% if rows %}
 <table class="usage">
   <thead>
     <tr>
       <th>{{ label_header|default:"Model" }}</th>
+      {% if show_state %}
+      <th title="The model's state today, not during the window">State now</th>
+      {% endif %}
+      {% if kind == "picks" %}
+      <th class="num" title="Picks of this model's draft">Chosen</th>
+      <th class="num" title="Times this model's drafts were on screen at a pick, once per draft per pick">Presented</th>
+      <th class="num" title="Chosen / presented">Win rate</th>
+      {% elif kind == "votes" %}
+      <th class="num" title="Votes cast for this model's candidate">Votes won</th>
+      <th class="num" title="Votes where this model's candidate was on screen">Votes shown in</th>
+      <th class="num" title="Votes won / votes shown in">Win rate</th>
+      {% elif kind == "calls" %}
+      <th class="num">Calls</th>
+      <th class="num" title="Produced a deliverable draft">OK</th>
+      <th class="num" title="Only a draft too short to deliver">Runt only</th>
+      <th class="num" title="First item was undeliverable, so the ladder moved on">Rejected at peek</th>
+      <th class="num" title="The model answered with nothing">No output</th>
+      <th class="num" title="The call itself failed or was abandoned">Error</th>
+      <th class="num" title="not_registered, no_prompt, all_backends_failed and any other outcome">Other</th>
+      <th class="num" title="Share of calls made at the backup or retry stages">Backup or retry</th>
+      <th class="num" title="Median time of OK calls, including time queued">Median OK time</th>
+      {% elif kind == "chat" %}
+      <th class="num" title="Turns that asked this model: in the fan-out, or among the fallbacks when the retry ran">Turns asked</th>
+      <th class="num" title="OK turns that delivered this model's answer">Wins</th>
+      <th class="num" title="Wins / turns asked">Win rate</th>
+      <th class="num" title="Turns where this model's answer came second">Runner-up</th>
+      <th class="num">Calls</th>
+      <th class="num" title="Still running when the turn stopped waiting">Late</th>
+      <th class="num" title="Answered, but its pass stopped comparing answers before scoring it">Unscored</th>
+      <th class="num" title="The call failed">Error</th>
+      <th class="num" title="Answered with nothing usable">Empty</th>
+      <th class="num" title="Rejected for repeating a recent reply">Repeat</th>
+      <th class="num" title="Held back by the routing policy's delay and never sent, because one of our own models answered first. Not counted in Calls.">Skipped</th>
+      <th class="num" title="Median time of calls that answered">Median time</th>
+      {% elif kind == "sidebyside" %}
+      <th class="num" title="Pairs from two different models that showed this model's answer">Pairs shown</th>
+      <th class="num" title="Of those, pairs where the person picked an answer">Pairs picked</th>
+      <th class="num" title="Picks of this model's answer">Picked</th>
+      <th class="num" title="Picked / pairs picked">Pick rate</th>
+      {% else %}
       <th class="num">Chosen</th>
       <th class="num">Presented</th>
       <th class="num">Win rate</th>
+      {% endif %}
+      {% if show_quality %}
       <th class="num" title="Mean draft quality 0..1 from the letter scorer (ml/letter_quality.py); a criteria score, not a success rate">Quality</th>
       <th class="num" title="Drafts scored in the window">Scored</th>
       <th class="num" title="Scored drafts that invented facts (grounding below threshold)">Ungrounded</th>
       <th class="num" title="Scored drafts from a different scorer or rubric than the current one; never averaged in">Other scorer</th>
+      {% endif %}
     </tr>
   </thead>
   <tbody>
     {% for r in rows %}
     <tr>
-      <td>{{ r.model_name }}</td>
+      <td>{{ r.label|default:r.model_name }}</td>
+      {% if show_state %}
+      <td>
+        {% if r.state.key == "internal_ok" %}<a class="state-tag state-ok" href="{{ status_url }}">internal, healthy</a>
+        {% elif r.state.key == "external_ok" %}<a class="state-tag state-ok" href="{{ status_url }}">external, healthy</a>
+        {% elif r.state.key == "internal_unchecked" %}<a class="state-tag state-warn" href="{{ status_url }}">internal, no health check yet</a>
+        {% elif r.state.key == "external_unchecked" %}<a class="state-tag state-warn" href="{{ status_url }}">external, no health check yet</a>
+        {% elif r.state.key == "context_only" %}<a class="state-tag state-context" href="{{ status_url }}">context only</a>
+        {% elif r.state.key == "failing" %}<a class="state-tag state-fail" href="{{ status_url }}">failing: {{ r.state.category }}</a>
+        {% elif r.state.key == "not_configured" %}<a class="state-tag state-off" href="{{ status_url }}">not configured</a>
+        {% elif r.state.key == "disabled" %}<a class="state-tag state-off" href="{{ status_url }}">disabled</a>
+        {% elif r.state.key == "retired" %}<a class="state-tag state-off" href="{{ status_url }}">not in the code any more</a>
+        {% elif r.state.key == "placeholder" %}<span class="state-tag state-placeholder">placeholder bucket</span>
+        {% else %}<a class="state-tag state-off" href="{{ status_url }}">state unavailable</a>
+        {% endif %}
+      </td>
+      {% endif %}
+      {% if kind == "picks" %}
       <td class="num">{{ r.chosen }}</td>
       <td class="num">{{ r.presented }}</td>
       {% if r.win_rate is None %}
@@ -24,6 +93,65 @@
       {% else %}
       <td class="num">{{ r.win_rate|floatformat:1 }}%</td>
       {% endif %}
+      {% elif kind == "calls" %}
+      <td class="num">{{ r.calls }}</td>
+      <td class="num">{{ r.ok }}</td>
+      <td class="num">{{ r.runt_only }}</td>
+      <td class="num">{{ r.rejected_at_peek }}</td>
+      <td class="num">{{ r.no_output }}</td>
+      <td class="num">{{ r.error }}</td>
+      <td class="num">{{ r.other }}</td>
+      <td class="num">{{ r.fallback_share|floatformat:1 }}%</td>
+      {% if r.median_ms is None %}
+      {# No timed OK call for this model in the window. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.median_ms }} ms</td>
+      {% endif %}
+      {% elif kind == "chat" %}
+      <td class="num">{{ r.asked }}</td>
+      <td class="num">{{ r.wins }}</td>
+      {% if r.win_rate is None %}
+      {# Never asked in the window: no denominator, never 0.0%. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.win_rate|floatformat:1 }}%</td>
+      {% endif %}
+      <td class="num">{{ r.runner_up }}</td>
+      <td class="num">{{ r.calls }}</td>
+      <td class="num">{{ r.late }}</td>
+      <td class="num">{{ r.unscored }}</td>
+      <td class="num">{{ r.error }}</td>
+      <td class="num">{{ r.empty }}</td>
+      <td class="num">{{ r.repeat }}</td>
+      <td class="num">{{ r.skipped }}</td>
+      {% if r.median_ms is None %}
+      {# No call from this model answered in the window. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.median_ms }} ms</td>
+      {% endif %}
+      {% elif kind == "sidebyside" %}
+      <td class="num">{{ r.sbs_shown }}</td>
+      <td class="num">{{ r.sbs_answered }}</td>
+      <td class="num">{{ r.sbs_preferred }}</td>
+      {% if r.sbs_rate is None %}
+      {# No pick came in for this model's pairs: no denominator. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.sbs_rate|floatformat:1 }}%</td>
+      {% endif %}
+      {% else %}
+      <td class="num">{{ r.chosen }}</td>
+      <td class="num">{{ r.presented }}</td>
+      {% if r.win_rate is None %}
+      {# No presented count => no denominator; never show this as 0.0%. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.win_rate|floatformat:1 }}%</td>
+      {% endif %}
+      {% endif %}
+      {% if show_quality %}
       {% if r.quality_avg is None %}
       {# Nothing scored for this model in the window; a dash, never 0.00. #}
       <td class="num">&mdash;</td>
@@ -33,6 +161,7 @@
       <td class="num">{{ r.quality_scored|default:0 }}</td>
       <td class="num">{{ r.quality_ungrounded|default:0 }}</td>
       <td class="num">{{ r.quality_other_scorer|default:0 }}</td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>

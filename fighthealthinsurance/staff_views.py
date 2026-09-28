@@ -1,8 +1,9 @@
 import csv
 import datetime
 import json
-from collections import Counter
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+import statistics
+from collections import Counter, defaultdict
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -42,14 +43,31 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.chat.turn_record import (
+    COMPLETED_STATUSES,
+    STATUS_EMPTY,
+    STATUS_ERROR,
+    STATUS_LATE,
+    STATUS_REPEAT,
+    STATUS_SKIPPED,
+    STATUS_UNSCORED,
+)
+from fighthealthinsurance.utils import (
+    STAGE_AFTER_DELAY,
+    STAGE_EARLY,
+    STAGE_SKIPPED,
+)
 from fighthealthinsurance.models import (
+    ChatTurn,
     ChooserCandidate,
+    ChooserSkip,
     ChooserVote,
     Denial,
     FollowUpSched,
     InterestedProfessional,
     MailingListSubscriber,
     ModelBackendHealthCheckResult,
+    ModelCallAttempt,
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
@@ -59,8 +77,14 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
 from fighthealthinsurance.ml import letter_quality, model_query
+from fighthealthinsurance.context_utils import (
+    CONTEXT_LEVEL_CHOICES,
+    CONTEXT_LEVEL_TEMPLATE,
+)
 from fighthealthinsurance.ml.model_identity import (
     LEGACY_UNATTRIBUTED_LABEL,
+    SYNTHESIZED_MODEL_NAME,
+    TEMPLATE_MODEL_NAME,
     normalize_model_label,
 )
 from fighthealthinsurance.proconnector import (
@@ -748,17 +772,31 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _scoring_failure_hint(summary: str) -> str:
-        """What a recorded scoring failure most likely means, for on-call."""
+        """What a recorded scoring failure most likely means, for on-call.
+        The statuses TypeSafe documents (401, 422, 429, 529) each get their
+        own phrase."""
         if summary == "HTTP 402":
             return "payment required: TypeSafe credits or billing"
         if summary in ("HTTP 401", "HTTP 403"):
             return "the API key was rejected"
+        if summary == "HTTP 422":
+            return "the request failed validation: TYPESAFE_MODEL or request shape"
         if summary == "HTTP 429":
-            return "rate limited"
+            return "rate limited: over the TypeSafe request or token limit"
+        if summary == "HTTP 529":
+            return "TypeSafe was overloaded"
         if summary.startswith("HTTP 5"):
             return "TypeSafe server error"
         if summary == "timeout":
             return "no answer within TYPESAFE_TIMEOUT_SECONDS"
+        if summary == "TypeSafeBudgetSpent":
+            return (
+                "not sent: this month's TypeSafe budget is spent (FHI_SPEND_TYPESAFE_*)"
+            )
+        if summary == "TypeSafeError":
+            # ml/typesafe.py refuses before sending: a non-https URL or a
+            # model setting that is not a model name.
+            return "not sent: check TYPESAFE_API_URL and TYPESAFE_MODEL"
         return ""
 
     @staticmethod
@@ -803,26 +841,34 @@ class AdminStatusView(generic.TemplateView):
 
             now = timezone.now()
             since = now - WINDOW
+            # Only a score from the current rubric counts, as wherever scores
+            # are compared: an older one is due to be redone, so its draft
+            # is still waiting for a score.
+            current = Q(
+                quality_score__isnull=False,
+                quality_scorer__startswith="typesafe/",
+                quality_scorer__endswith=letter_quality._RUBRIC_SUFFIX,
+            )
             # The same eligibility as the unscored count below, so the two
             # numbers describe one population and a scored draft that is
             # speculative or unconsented cannot make the level SCORING by
             # itself (review).
             out["scored"] = ProposedAppeal.objects.filter(
+                current,
                 quality_scored_at__gte=since,
                 speculative=False,
                 for_denial__use_external=True,
             ).count()
             # Drafts that should have been scored and were not: consented,
             # real (not speculative), old enough that a score in flight would
-            # have landed, and still without one.
+            # have landed, and still without a current one.
             settled = now - datetime.timedelta(seconds=letter_quality.DRAIN_SECONDS)
             eligible_unscored = ProposedAppeal.objects.filter(
                 created_at__gte=since,
                 created_at__lt=settled,
                 speculative=False,
                 for_denial__use_external=True,
-                quality_score__isnull=True,
-            )
+            ).exclude(current)
             out["unscored"] = eligible_unscored.count()
 
             health = ExternalServiceHealth.objects.filter(
@@ -1388,13 +1434,465 @@ class SendInterestedProfessionalMailView(_SendBulkMailView):
 
 
 # Bucket label for chosen ProposedAppeal rows whose model_name is NULL and
-# whose created_at is set — i.e. a pick recorded after model tracking began
+# whose created_at is set, i.e. a pick recorded after model tracking began
 # that still couldn't be attributed back to a generated draft (heavy edit
-# with multiple models in play, or the share-appeal flow). Surfacing them
-# keeps the dashboard's total-picks number honest. Rows predating tracking
-# (created_at NULL) or explicitly stamped by the backfill are reported under
+# with multiple models in play). Surfacing them keeps the dashboard's
+# total-picks number honest. Rows predating tracking (created_at NULL) or
+# explicitly stamped by the backfill are reported under
 # LEGACY_UNATTRIBUTED_LABEL instead so legacy gaps stay distinguishable.
 UNKNOWN_MODEL_LABEL = "(unattributed)"
+
+# Two kinds of NULL-model pick are not attribution misses at all, so they get
+# buckets of their own instead of UNKNOWN_MODEL_LABEL: the non-AI template
+# letter, which is saved with model_name=None by design, and text a user
+# pasted into the share-appeal form (editted=True), which may never have
+# been a draft. A template pick sent through the share form stays a template
+# pick, because the template level says more about where the text came from.
+TEMPLATE_PICK_LABEL = "(template, non-AI)"
+SHARED_APPEAL_LABEL = "(shared-appeal text)"
+
+# The context-level table's bucket for rows with no level. Its key stays
+# UNKNOWN_MODEL_LABEL; only the label shown differs, because a missing level
+# (rows from before levels were recorded) is not a missing model.
+NO_CONTEXT_LEVEL_LABEL = "(no level recorded)"
+
+# What ModelAttemptRecorder stores when a call record has no model name.
+ATTEMPT_UNKNOWN_MODEL = "unknown"
+
+# Outcomes the call table gives a column each. Everything else
+# (not_registered, no_prompt, all_backends_failed, and any outcome the
+# pipeline adds later) is summed into "other", so a new outcome string can
+# never drop out of the totals.
+CALL_FAILURE_OUTCOMES = ("runt_only", "rejected_at_peek", "no_output", "error")
+
+# The medians read at most this many ok-call durations per page load, newest
+# first, so a busy month cannot turn the page into a table scan. The shorter
+# windows are filled before the longer ones lose anything.
+CALL_DURATION_SAMPLE_CAP = 10_000
+
+# Names on the usage tables that are buckets, not models. They have no
+# backend to be healthy or retired, so their state says so instead.
+PLACEHOLDER_MODEL_LABELS = frozenset(
+    {
+        SYNTHESIZED_MODEL_NAME,
+        TEMPLATE_MODEL_NAME,
+        UNKNOWN_MODEL_LABEL,
+        TEMPLATE_PICK_LABEL,
+        SHARED_APPEAL_LABEL,
+        ATTEMPT_UNKNOWN_MODEL,
+    }
+)
+
+
+# ChatTurn call statuses the live chat table gives a column each. The rest
+# ("scored") is the calls that returned a usable candidate.
+CHAT_CALL_PROBLEMS = (
+    STATUS_LATE,
+    STATUS_UNSCORED,
+    STATUS_ERROR,
+    STATUS_EMPTY,
+    STATUS_REPEAT,
+)
+
+# ChatTurn columns the live chat section reads. Every one is metadata: model
+# labels, enums, flags, and the calls list (labels, statuses, times, scores).
+CHAT_TURN_FIELDS = (
+    "created_at",
+    "outcome",
+    "use_external",
+    "backends",
+    "fallback_backends",
+    "calls",
+    "winner_model",
+    "winner_external",
+    "runner_up_model",
+    "retry_ran",
+    "retry_used",
+    "alternate_offered",
+    "alternate_model",
+    "alternate_cross_model",
+    "preferred",
+    "external_start",
+)
+
+
+def _percent(part: int, whole: int) -> Optional[float]:
+    """part / whole as a percentage, or None when there is no whole."""
+    return part / whole * 100.0 if whole else None
+
+
+def _chat_label(name: Any) -> str:
+    return normalize_model_label(name) or ATTEMPT_UNKNOWN_MODEL
+
+
+class _ChatTally:
+    """One window's live chat numbers, fed one ChatTurn row at a time."""
+
+    def __init__(self) -> None:
+        self.outcomes: Counter = Counter()
+        self.turns = 0
+        self.external_allowed = 0
+        self.external_wins = 0
+        self.retry_ran = 0
+        self.retry_used = 0
+        self.alternates = 0
+        self.cross_alternates = 0
+        self.picks: Counter = Counter()
+        # How the primary pass started the outside models, per
+        # ChatTurn.external_start value.
+        self.external_starts: Counter = Counter()
+        # Turns whose first pass never sent the outside models but a later
+        # pass did: the retry (our reply was empty, too short or a false
+        # promise) or a tool follow-up. They were not "never sent".
+        self.externals_skipped_later = 0
+        self.same_model_pairs = 0
+        self.same_model_picks: Counter = Counter()
+        self.models: Dict[str, Dict[str, Any]] = {}
+        self.durations: Dict[str, List[int]] = defaultdict(list)
+        self.pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def _model(self, label: str) -> Dict[str, Any]:
+        row = self.models.get(label)
+        if row is None:
+            row = {
+                "model_name": label,
+                "asked": 0,
+                "wins": 0,
+                "runner_up": 0,
+                "calls": 0,
+                **{status: 0 for status in CHAT_CALL_PROBLEMS},
+                STATUS_SKIPPED: 0,
+                "sbs_shown": 0,
+                "sbs_answered": 0,
+                "sbs_preferred": 0,
+            }
+            self.models[label] = row
+        return row
+
+    def add(self, row: Tuple[Any, ...]) -> None:
+        (
+            _created_at,
+            outcome,
+            use_external,
+            backends,
+            fallback_backends,
+            calls,
+            winner,
+            winner_external,
+            runner_up,
+            retry_ran,
+            retry_used,
+            alternate_offered,
+            alternate,
+            cross_model,
+            preferred,
+            external_start,
+        ) = row
+        self.turns += 1
+        self.outcomes[outcome] += 1
+        if use_external:
+            self.external_allowed += 1
+        if retry_ran:
+            self.retry_ran += 1
+        if retry_used:
+            self.retry_used += 1
+        if external_start:
+            self.external_starts[external_start] += 1
+            if external_start == STAGE_SKIPPED and any(
+                isinstance(call, dict)
+                and call.get("external") is True
+                and call.get("status") != STATUS_SKIPPED
+                for call in calls or []
+            ):
+                self.externals_skipped_later += 1
+
+        # A model counts as asked once per turn, however many calls it got:
+        # every primary backend, and the fallbacks only when the retry ran.
+        # A model whose every call on the turn was held back and never sent
+        # (the routing policy's delay) was not asked.
+        asked = {_chat_label(n) for n in (backends or [])}
+        if retry_ran:
+            asked |= {_chat_label(n) for n in (fallback_backends or [])}
+        sent: Counter = Counter()
+        held: Counter = Counter()
+        for call in calls or []:
+            if isinstance(call, dict):
+                label = _chat_label(call.get("model"))
+                if call.get("status") == STATUS_SKIPPED:
+                    held[label] += 1
+                else:
+                    sent[label] += 1
+        asked -= {label for label in held if not sent[label]}
+        for label in asked:
+            self._model(label)["asked"] += 1
+        # Wins and outside-model wins go to the model whose reply was
+        # delivered (winner_model): a tool follow-up's pick when one wrote
+        # the reply, not the first pass's.
+        winner_label = _chat_label(winner) if winner else None
+        if outcome == ChatTurn.Outcome.OK and winner_label is not None:
+            self._model(winner_label)["wins"] += 1
+            if winner_external is True:
+                self.external_wins += 1
+        if runner_up:
+            self._model(_chat_label(runner_up))["runner_up"] += 1
+
+        for call in calls or []:
+            if not isinstance(call, dict):
+                continue
+            label = _chat_label(call.get("model"))
+            model_row = self._model(label)
+            status = call.get("status")
+            if status == STATUS_SKIPPED:
+                # Never sent, so not a call.
+                model_row[STATUS_SKIPPED] += 1
+                continue
+            model_row["calls"] += 1
+            if status in CHAT_CALL_PROBLEMS:
+                model_row[status] += 1
+            ms = call.get("ms")
+            if status in COMPLETED_STATUSES and isinstance(ms, int):
+                self.durations[label].append(ms)
+
+        if not alternate_offered:
+            return
+        self.alternates += 1
+        if preferred:
+            self.picks[preferred] += 1
+        if not cross_model or winner_label is None or not alternate:
+            # Two answers from one model say nothing about which model
+            # people prefer, so these only get a count of their own.
+            self.same_model_pairs += 1
+            if preferred:
+                self.same_model_picks[preferred] += 1
+            return
+        self.cross_alternates += 1
+        alternate_label = _chat_label(alternate)
+        pair = self.pairs.setdefault(
+            (winner_label, alternate_label),
+            {
+                "primary_model": winner_label,
+                "alternate_model": alternate_label,
+                "offered": 0,
+                "answered": 0,
+                "primary": 0,
+                "alternate": 0,
+            },
+        )
+        pair["offered"] += 1
+        for label in (winner_label, alternate_label):
+            self._model(label)["sbs_shown"] += 1
+        if preferred in ("primary", "alternate"):
+            pair["answered"] += 1
+            pair[preferred] += 1
+            for label in (winner_label, alternate_label):
+                self._model(label)["sbs_answered"] += 1
+            picked = winner_label if preferred == "primary" else alternate_label
+            self._model(picked)["sbs_preferred"] += 1
+
+    def result(self) -> Dict[str, Any]:
+        rows = list(self.models.values())
+        for row in rows:
+            row["win_rate"] = _percent(row["wins"], row["asked"])
+            row["sbs_rate"] = _percent(row["sbs_preferred"], row["sbs_answered"])
+            found = self.durations.get(row["model_name"])
+            row["median_ms"] = int(round(statistics.median(found))) if found else None
+        rows.sort(key=lambda r: (-r["asked"], -r["calls"], r["model_name"]))
+        ok = self.outcomes[ChatTurn.Outcome.OK]
+        return {
+            "summary": {
+                "turns": self.turns,
+                "ok": ok,
+                "failed": self.outcomes[ChatTurn.Outcome.FAILED],
+                "timeout": self.outcomes[ChatTurn.Outcome.TIMEOUT],
+                "external_allowed": self.external_allowed,
+                "external_share": _percent(self.external_allowed, self.turns),
+                "external_wins": self.external_wins,
+                "external_win_share": _percent(self.external_wins, ok),
+                "retry_ran": self.retry_ran,
+                "retry_used": self.retry_used,
+                "externals_after_delay": self.external_starts[STAGE_AFTER_DELAY],
+                "externals_early": self.external_starts[STAGE_EARLY],
+                # Never sent in any pass.
+                "externals_skipped": self.external_starts[STAGE_SKIPPED]
+                - self.externals_skipped_later,
+                "externals_skipped_later": self.externals_skipped_later,
+                "externals_held_back": sum(
+                    self.external_starts[s]
+                    for s in (STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)
+                ),
+                "alternates": self.alternates,
+                "cross_alternates": self.cross_alternates,
+                "picks": sum(self.picks.values()),
+                "picked_primary": self.picks["primary"],
+                "picked_alternate": self.picks["alternate"],
+                "same_model_pairs": self.same_model_pairs,
+                "same_model_picked_primary": self.same_model_picks["primary"],
+                "same_model_picked_alternate": self.same_model_picks["alternate"],
+            },
+            "rows": rows,
+            "side_by_side_rows": sorted(
+                (r for r in rows if r["sbs_shown"]),
+                key=lambda r: (-r["sbs_shown"], r["model_name"]),
+            ),
+            "pairs": sorted(
+                self.pairs.values(),
+                key=lambda p: (-p["offered"], p["primary_model"], p["alternate_model"]),
+            ),
+        }
+
+
+def _is_placeholder_model(name: str) -> bool:
+    # "legacy-" covers legacy-unattributed and every legacy-unresolved (Class).
+    return name in PLACEHOLDER_MODEL_LABELS or name.startswith("legacy-")
+
+
+def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
+    """Each model's state today, for the tags on the usage tables.
+
+    Reads only what is already in memory or stored: the backend catalog and
+    configuration classification (``enumerate_backend_checks``, which builds
+    clients but never calls one), the router's registered instances for
+    internal/external/context-only, and the newest stored health-check row
+    per model. It never probes a backend, so the page stays cheap and cannot
+    wake a model.
+
+    Returns ``{name: {"key": ..., "category": ...}}``. ``category`` is set
+    only for "failing". A health row whose category is a configuration
+    verdict (not configured, disabled, missing credentials, client init) is
+    ignored for a backend that is configured now: it describes the settings
+    at that run, not how the backend answered.
+    """
+    from fighthealthinsurance.ml import model_health_check as mhc
+    from fighthealthinsurance.ml.ml_router import ml_router
+
+    states: Dict[str, Dict[str, str]] = {}
+    real: List[str] = []
+    for name in sorted(set(names)):
+        if _is_placeholder_model(name):
+            states[name] = {"key": "placeholder"}
+        else:
+            real.append(name)
+    if not real:
+        return states
+
+    try:
+        static_results, checkable = mhc.enumerate_backend_checks()
+        registered = ml_router.models_by_name
+    except Exception:
+        # The usage numbers do not depend on the router; a broken backend
+        # config should cost the tags, not the page.
+        logger.opt(exception=True).warning(
+            "Could not read the model catalog for the usage dashboard"
+        )
+        for name in real:
+            states[name] = {"key": "unavailable"}
+        return states
+
+    static_by_name = {r.model_name: r for r in static_results}
+    probe_by_name = {r.model_name: instance for r, instance in checkable}
+    config_categories = {
+        mhc.CATEGORY_NOT_CONFIGURED,
+        mhc.CATEGORY_DISABLED,
+        mhc.CATEGORY_MISSING_CREDENTIALS,
+        mhc.CATEGORY_CLIENT_INIT,
+    }
+    # The newest row for each model, with no row cap shared across models:
+    # under one cap, enough newer rows for other models pushed a model's last
+    # check off the list and it read as never checked. created_at is
+    # auto_now_add, so the highest id is the newest row. One query, and one
+    # row back per model on the page.
+    newest_ids = (
+        ModelBackendHealthCheckResult.objects.filter(model_name__in=real)
+        .order_by()
+        .values("model_name")
+        .annotate(newest=Max("id"))
+        .values("newest")
+    )
+    latest: Dict[str, Tuple[bool, str]] = {
+        name: (ok, category)
+        for name, ok, category in ModelBackendHealthCheckResult.objects.filter(
+            id__in=newest_ids
+        ).values_list("model_name", "ok", "category")
+    }
+
+    for name in real:
+        instances = registered.get(name) or []
+        instance = instances[0] if instances else probe_by_name.get(name)
+        if instance is None:
+            static = static_by_name.get(name)
+            if static is None:
+                states[name] = {"key": "retired"}
+            elif static.category == mhc.CATEGORY_NOT_CONFIGURED:
+                states[name] = {"key": "not_configured"}
+            elif static.category == mhc.CATEGORY_DISABLED:
+                states[name] = {"key": "disabled"}
+            else:
+                states[name] = {"key": "failing", "category": static.category}
+            continue
+        check = latest.get(name)
+        if check is not None and check[1] in config_categories:
+            check = None
+        external = bool(getattr(instance, "external", True))
+        if check is not None and not check[0]:
+            states[name] = {"key": "failing", "category": check[1]}
+        elif getattr(instance, "context_only", False):
+            states[name] = {"key": "context_only"}
+        elif check is None:
+            states[name] = {
+                "key": "external_unchecked" if external else "internal_unchecked"
+            }
+        else:
+            states[name] = {"key": "external_ok" if external else "internal_ok"}
+    return states
+
+
+def _pick_counts(chosen_qs: QuerySet) -> Counter:
+    """Chosen ProposedAppeal rows per reporting label, in one query.
+
+    Named rows go under their normalized label. Rows with no model_name
+    (NULL, blank or only whitespace, which normalize_model_label treats
+    alike) are split with conditional counts inside the same GROUP BY:
+    pre-tracking rows (created_at NULL) to LEGACY_UNATTRIBUTED_LABEL,
+    template letters to TEMPLATE_PICK_LABEL, share-appeal text to
+    SHARED_APPEAL_LABEL, and the rest, the real attribution misses, to
+    UNKNOWN_MODEL_LABEL.
+    """
+    tracked = Q(created_at__isnull=False)
+    template = Q(context_level=CONTEXT_LEVEL_TEMPLATE)
+    counts: Counter = Counter()
+    for name, total, legacy, templates, edited, edited_templates in (
+        chosen_qs.order_by()
+        .values_list("model_name")
+        .annotate(
+            total=Count("id"),
+            legacy=Count("id", filter=Q(created_at__isnull=True)),
+            templates=Count("id", filter=tracked & template),
+            edited=Count("id", filter=tracked & Q(editted=True)),
+            edited_templates=Count("id", filter=tracked & template & Q(editted=True)),
+        )
+        .values_list(
+            "model_name",
+            "total",
+            "legacy",
+            "templates",
+            "edited",
+            "edited_templates",
+        )
+    ):
+        normalized = normalize_model_label(name)
+        if normalized is not None:
+            counts[normalized] += total
+            continue
+        shared = edited - edited_templates
+        for label, n in (
+            (LEGACY_UNATTRIBUTED_LABEL, legacy),
+            (TEMPLATE_PICK_LABEL, templates),
+            (SHARED_APPEAL_LABEL, shared),
+            (UNKNOWN_MODEL_LABEL, total - legacy - templates - shared),
+        ):
+            if n:
+                counts[label] += n
+    return counts
 
 
 def _merge_stats(
@@ -1475,6 +1973,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         it. Both paths count per pick, so a re-pick cannot push a win rate
         past 100%.
 
+    Beside those, each bounded window shows per-model appeal-generation call
+    outcomes from ModelCallAttempt and the live chat model race from
+    ChatTurn (see _chat_stats), and every model row carries the model's
+    state today (see _model_states). None of it calls a model.
+
     All stored model names pass through normalize_model_label so historical
     object-repr values aggregate per class (without memory addresses) even
     before the backfill_model_usage_attribution command has run.
@@ -1491,7 +1994,19 @@ class ModelUsageDashboardView(generic.TemplateView):
             ("7d", "Last 7 Days", now - datetime.timedelta(days=7)),
             ("30d", "Last 30 Days", now - datetime.timedelta(days=30)),
         ]
-        windows_ctx = []
+        # No All Time call table: call records only exist since call logging
+        # began and are deleted with their denial, so an all-time total would
+        # look complete while missing most of the history. Leaving it out
+        # also keeps the page's largest scan bounded.
+        bounded = [
+            (slug, since) for slug, _label, since in windows if since is not None
+        ]
+        call_attempts = self._call_attempt_stats(bounded)
+        # Bounded windows only, for the same reasons as the call table: turn
+        # records start when turn recording began and go with their chat.
+        live_chat = self._chat_stats(bounded)
+        participation = self._chooser_participation(windows)
+        windows_ctx: List[Dict[str, Any]] = []
         for slug, label, since in windows:
             # What the window's picks reported on screen feeds both the
             # model and the context-level tables: computed once per window.
@@ -1507,14 +2022,130 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "context_level": self._context_level_stats(since, shown_on_picks),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
+                    "call_attempts": call_attempts.get(slug),
+                    "live_chat": live_chat.get(slug),
+                    "totals": {
+                        # Every chosen row in the window, re-picks included.
+                        "picks": sum(r["chosen"] for r in proposed),
+                        "chooser_votes": sum(
+                            r["chosen"] for r in chooser_appeal + chooser_chat
+                        ),
+                        "chooser_skips": participation[slug]["skips"],
+                        "chooser_sessions": participation[slug]["sessions"],
+                    },
                     "chart_data_json": json.dumps(
                         self._chart_data(proposed, chooser_appeal, chooser_chat)
                     ),
                 }
             )
+        model_tables = [
+            rows
+            for w in windows_ctx
+            for rows in (
+                w["proposed_appeal"],
+                w["chooser_appeal"],
+                w["chooser_chat"],
+                (w["call_attempts"] or {}).get("rows", []),
+                (w["live_chat"] or {}).get("rows", []),
+            )
+        ]
+        states = _model_states(r["model_name"] for rows in model_tables for r in rows)
+        for rows in model_tables:
+            for r in rows:
+                r["state"] = states[r["model_name"]]
         ctx["title"] = "ML Model Usage Dashboard"
         ctx["windows"] = windows_ctx
+        ctx["duration_cap"] = CALL_DURATION_SAMPLE_CAP
+        ctx["chat_policy"] = self._chat_policy_panel()
         return ctx
+
+    @staticmethod
+    def _chat_policy_panel() -> Dict[str, Any]:
+        """The newest chat routing policy row (ChatRoutingPolicy), and
+        whether chat follows it now.
+
+        ``state`` is "none" (no row yet), "invalid" (the newest row does not
+        parse), "stale" (older than FHI_CHAT_POLICY_MAX_AGE_MINUTES),
+        "shadow" (fresh, but FHI_CHAT_POLICY_APPLY is off) or "applied".
+        Chat routes by the default policy in every state but "applied".
+        Reads one row of names and numbers; never calls a model.
+        """
+        from django.conf import settings
+
+        from fighthealthinsurance.ml import chat_policy
+
+        panel: Dict[str, Any] = {
+            "state": "none",
+            "apply": bool(settings.FHI_CHAT_POLICY_APPLY),
+            "max_age_minutes": settings.FHI_CHAT_POLICY_MAX_AGE_MINUTES,
+            "row": None,
+            "policy": None,
+            "usable_percent": None,
+            "order_rows": [],
+            "spend_rows": [],
+        }
+        panel["spend_rows"] = ModelUsageDashboardView._spend_rows()
+        row = chat_policy.newest_policy_row()
+        if row is None:
+            return panel
+        panel["row"] = row
+        panel["age_minutes"] = max(
+            0, int((timezone.now() - row.created_at).total_seconds() // 60)
+        )
+        policy = chat_policy.policy_from_row(row)
+        if policy is None:
+            panel["state"] = "invalid"
+            return panel
+        panel["policy"] = policy
+        panel["usable_percent"] = (
+            policy.internal_usable_rate * 100.0
+            if policy.internal_usable_rate is not None
+            else None
+        )
+        if not chat_policy.policy_is_fresh(policy):
+            panel["state"] = "stale"
+        elif not panel["apply"]:
+            panel["state"] = "shadow"
+        else:
+            panel["state"] = "applied"
+        panel["order_rows"] = [
+            {
+                "place": place,
+                "model": name,
+                "score_percent": (
+                    policy.order_scores[name][0] * 100.0
+                    if name in policy.order_scores
+                    else None
+                ),
+                "turns": (
+                    policy.order_scores[name][1]
+                    if name in policy.order_scores
+                    else None
+                ),
+            }
+            for place, name in enumerate(policy.outside_order, start=1)
+        ]
+        return panel
+
+    @staticmethod
+    def _spend_rows() -> List[Dict[str, Any]]:
+        """This month's spend per provider and use (ml/spend.py), from this
+        process's copy of the counters. Names and amounts only."""
+        from fighthealthinsurance.ml import spend
+
+        try:
+            summary = spend.month_summary()
+        except Exception as e:
+            logger.warning(f"Spend summary unavailable: {type(e).__name__}")
+            return []
+        return [
+            {
+                "counter": name,
+                "amount": amount,
+                "calls": name.startswith(spend.AZURE + ":"),
+            }
+            for name, amount in summary.items()
+        ]
 
     @staticmethod
     def _chart_data(
@@ -1522,7 +2153,12 @@ class ModelUsageDashboardView(generic.TemplateView):
         chooser_appeal: List[Dict[str, Any]],
         chooser_chat: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Build a CanvasJS-friendly stacked-column data structure."""
+        """Build a CanvasJS-friendly column data structure.
+
+        Each series plots the number its table leads with: cases picked for
+        ProposedAppeal (a re-submitted case counts once) and votes won for
+        the chooser tables.
+        """
         labels: List[str] = []
         seen = set()
         for source in (proposed, chooser_appeal, chooser_chat):
@@ -1531,8 +2167,8 @@ class ModelUsageDashboardView(generic.TemplateView):
                     seen.add(row["model_name"])
                     labels.append(row["model_name"])
 
-        def series_for(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-            by_name = {r["model_name"]: r["chosen"] for r in rows}
+        def series_for(rows: List[Dict[str, Any]], key: str) -> List[Dict[str, Any]]:
+            by_name = {r["model_name"]: r[key] for r in rows}
             return [{"label": lbl, "y": by_name.get(lbl, 0)} for lbl in labels]
 
         return {
@@ -1541,17 +2177,17 @@ class ModelUsageDashboardView(generic.TemplateView):
                 {
                     "name": "ProposedAppeal (denial flow)",
                     "color": "#1f77b4",
-                    "dataPoints": series_for(proposed),
+                    "dataPoints": series_for(proposed, "chosen"),
                 },
                 {
                     "name": "Chooser - Appeal",
                     "color": "#ff7f0e",
-                    "dataPoints": series_for(chooser_appeal),
+                    "dataPoints": series_for(chooser_appeal, "chosen"),
                 },
                 {
                     "name": "Chooser - Chat",
                     "color": "#2ca02c",
-                    "dataPoints": series_for(chooser_chat),
+                    "dataPoints": series_for(chooser_chat, "chosen"),
                 },
             ],
         }
@@ -1571,6 +2207,9 @@ class ModelUsageDashboardView(generic.TemplateView):
             Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]
         ] = None,
     ) -> List[Dict[str, Any]]:
+        """Per-model picks from the real denial flow, with chosen, presented
+        and win_rate as #1069 defines them. Chosen NULL-model picks are split
+        into buckets by _pick_counts."""
         # Keep chosen rows with model_name=NULL: mark_proposal_chosen falls
         # back to None when a pick can't be matched to a draft, and those are
         # still real picks. NULL rows predating model tracking (created_at
@@ -1603,21 +2242,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             chosen_qs,
         )
 
-        chosen: Counter = Counter()
-        for name, count in (
-            chosen_qs.filter(model_name__isnull=False)
-            .values_list("model_name")
-            .annotate(c=Count("id"))
-        ):
-            label = normalize_model_label(name) or UNKNOWN_MODEL_LABEL
-            chosen[label] += count
-        null_named = chosen_qs.filter(model_name__isnull=True)
-        legacy_count = null_named.filter(created_at__isnull=True).count()
-        unattributed_count = null_named.filter(created_at__isnull=False).count()
-        if legacy_count:
-            chosen[LEGACY_UNATTRIBUTED_LABEL] += legacy_count
-        if unattributed_count:
-            chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
+        chosen = _pick_counts(chosen_qs)
         presented: Counter = Counter()
         # Presented counts each draft shown, once per draft. On one denial
         # every draft competes with every other, so the per-draft pick rate is
@@ -1870,8 +2495,18 @@ class ModelUsageDashboardView(generic.TemplateView):
         # _merge_stats labels the bucket key "model_name"; the value here is the
         # context level. Reusing the shared table partial (which reads
         # model_name) keeps the key -- the template passes a "Context level"
-        # column header instead.
-        return _merge_stats(dict(chosen), dict(presented))
+        # column header instead, and shows "label", the readable name from
+        # CONTEXT_LEVEL_CHOICES, in place of the stored key.
+        rows = _merge_stats(dict(chosen), dict(presented))
+        readable = dict(CONTEXT_LEVEL_CHOICES)
+        for row in rows:
+            level = row["model_name"]
+            row["label"] = (
+                NO_CONTEXT_LEVEL_LABEL
+                if level == UNKNOWN_MODEL_LABEL
+                else readable.get(level, level)
+            )
+        return rows
 
     @staticmethod
     def _chooser_stats(
@@ -1919,6 +2554,192 @@ class ModelUsageDashboardView(generic.TemplateView):
             if presented_label is not None:
                 presented[presented_label] += n
         return _merge_stats(dict(chosen), dict(presented))
+
+    @staticmethod
+    def _chooser_participation(
+        windows: List[Tuple[str, str, Optional[datetime.datetime]]],
+    ) -> Dict[str, Dict[str, int]]:
+        """Chooser skips and distinct chooser sessions per window.
+
+        A session counts if it voted or skipped in the window. Session keys
+        are pseudonymous, so they stay inside the database: only the count
+        comes back. Skips for every window come from one conditional
+        aggregate; the session count needs a UNION per window.
+        """
+        skips = ChooserSkip.objects.order_by().aggregate(
+            **{
+                f"skips_{slug}": (
+                    Count("id", filter=Q(created_at__gte=since))
+                    if since is not None
+                    else Count("id")
+                )
+                for slug, _label, since in windows
+            }
+        )
+        out: Dict[str, Dict[str, int]] = {}
+        for slug, _label, since in windows:
+            votes = ChooserVote.objects.order_by()
+            skipped = ChooserSkip.objects.order_by()
+            if since is not None:
+                votes = votes.filter(created_at__gte=since)
+                skipped = skipped.filter(created_at__gte=since)
+            out[slug] = {
+                "skips": int(skips[f"skips_{slug}"] or 0),
+                # UNION (not UNION ALL) drops a session seen in both tables.
+                "sessions": votes.values("session_key")
+                .union(skipped.values("session_key"))
+                .count(),
+            }
+        return out
+
+    @staticmethod
+    def _call_attempt_stats(
+        windows: List[Tuple[str, datetime.datetime]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Per-model appeal-generation call outcomes for each bounded window.
+
+        Live runs only: the speculative precompute runs in the background and
+        nobody waits on it, so mixing it in would blur what users sat through.
+        Per model: calls, ok, the four failure outcomes worth a column
+        (CALL_FAILURE_OUTCOMES) and the rest as "other", the share of calls
+        made at the backup or retry stages, and the median duration of ok
+        calls. The median is computed in Python over a bounded, newest-first
+        read (CALL_DURATION_SAMPLE_CAP) so it works the same on sqlite and
+        Postgres; "median_capped" says when the cap cut into a window.
+
+        Only metadata columns are read. response_text is PHI and error_detail
+        can carry free exception text, so neither is ever selected.
+        """
+        out: Dict[str, Dict[str, Any]] = {}
+        if not windows:
+            return out
+        # .order_by() clears the model's Meta ordering (-created_at), which
+        # would otherwise leak into the GROUP BY and split every group.
+        live = ModelCallAttempt.objects.filter(run_kind="live").order_by()
+        fallback_stage = Q(stage="backup") | Q(stage__startswith="retry_")
+        for slug, since in windows:
+            by_label: Dict[str, Dict[str, Any]] = {}
+            for name, calls, ok, runt, peek, empty, error, fallback in (
+                live.filter(created_at__gte=since)
+                .values_list("model_name")
+                .annotate(
+                    calls=Count("id"),
+                    ok=Count("id", filter=Q(outcome="ok")),
+                    runt_only=Count("id", filter=Q(outcome="runt_only")),
+                    rejected_at_peek=Count("id", filter=Q(outcome="rejected_at_peek")),
+                    no_output=Count("id", filter=Q(outcome="no_output")),
+                    error=Count("id", filter=Q(outcome="error")),
+                    fallback=Count("id", filter=fallback_stage),
+                )
+                .values_list(
+                    "model_name",
+                    "calls",
+                    "ok",
+                    "runt_only",
+                    "rejected_at_peek",
+                    "no_output",
+                    "error",
+                    "fallback",
+                )
+            ):
+                label = normalize_model_label(name) or ATTEMPT_UNKNOWN_MODEL
+                row = by_label.setdefault(
+                    label,
+                    {
+                        "model_name": label,
+                        "calls": 0,
+                        "ok": 0,
+                        "runt_only": 0,
+                        "rejected_at_peek": 0,
+                        "no_output": 0,
+                        "error": 0,
+                        "fallback": 0,
+                    },
+                )
+                row["calls"] += calls
+                row["ok"] += ok
+                row["runt_only"] += runt
+                row["rejected_at_peek"] += peek
+                row["no_output"] += empty
+                row["error"] += error
+                row["fallback"] += fallback
+            for row in by_label.values():
+                row["other"] = (
+                    row["calls"]
+                    - row["ok"]
+                    - sum(row[outcome] for outcome in CALL_FAILURE_OUTCOMES)
+                )
+                row["fallback_share"] = row["fallback"] / row["calls"] * 100.0
+            out[slug] = {
+                "rows": sorted(
+                    by_label.values(), key=lambda r: (-r["calls"], r["model_name"])
+                ),
+                "median_capped": False,
+            }
+
+        widest = min(since for _slug, since in windows)
+        samples = list(
+            live.filter(outcome="ok", duration_ms__isnull=False, created_at__gte=widest)
+            .order_by("-created_at")
+            .values_list("model_name", "duration_ms", "created_at")[
+                :CALL_DURATION_SAMPLE_CAP
+            ]
+        )
+        capped = len(samples) >= CALL_DURATION_SAMPLE_CAP
+        oldest = samples[-1][2] if samples else None
+        for slug, since in windows:
+            durations: Dict[str, List[int]] = defaultdict(list)
+            for name, duration_ms, created_at in samples:
+                # duration_ms is never None here (filtered above); the check
+                # is for the type checker.
+                if duration_ms is not None and created_at >= since:
+                    label = normalize_model_label(name) or ATTEMPT_UNKNOWN_MODEL
+                    durations[label].append(duration_ms)
+            for row in out[slug]["rows"]:
+                found = durations.get(row["model_name"])
+                row["median_ms"] = (
+                    int(round(statistics.median(found))) if found else None
+                )
+            # Newest first: a window that starts after the oldest row read
+            # was read whole, so only the windows reaching past it lost rows.
+            out[slug]["median_capped"] = bool(
+                capped and oldest is not None and since <= oldest
+            )
+        return out
+
+    @staticmethod
+    def _chat_stats(
+        windows: List[Tuple[str, datetime.datetime]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """The live chat model race for each bounded window, from ChatTurn.
+
+        One read of the widest window, bucketed in Python. Per window: a
+        summary (turns by outcome, how often outside models were allowed and
+        how often one's answer was delivered, retries, alternates offered
+        and picks received), a row per model (turns that asked it, wins =
+        OK turns that delivered its reply, win rate = wins / turns asked,
+        runner-up count, calls by status and the median time of calls that
+        returned, scored or not) and the side-by-side pairs.
+
+        Side-by-side per-model numbers and pair rows count only pairs from
+        two different models; a pair from one model says nothing about which
+        model people prefer, so those get a count in the summary instead.
+        """
+        if not windows:
+            return {}
+        tallies = {slug: _ChatTally() for slug, _since in windows}
+        widest = min(since for _slug, since in windows)
+        rows = (
+            ChatTurn.objects.filter(created_at__gte=widest)
+            .order_by()
+            .values_list(*CHAT_TURN_FIELDS)
+        )
+        for row in rows.iterator(chunk_size=500):
+            created_at = row[0]
+            for slug, since in windows:
+                if created_at >= since:
+                    tallies[slug].add(row)
+        return {slug: tally.result() for slug, tally in tallies.items()}
 
 
 class ModelBackendStatusView(generic.TemplateView):

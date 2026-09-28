@@ -14,6 +14,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance.ml import letter_quality
 from fighthealthinsurance.models import (
     Denial,
     ExternalServiceHealth,
@@ -788,7 +789,14 @@ class AdminStatusLetterScoringTest(TestCase):
 
     @classmethod
     def _draft(
-        cls, denial, *, minutes_ago=5, speculative=False, scored=False, now=None
+        cls,
+        denial,
+        *,
+        minutes_ago=5,
+        speculative=False,
+        scored=False,
+        now=None,
+        scorer=letter_quality.SCORER,
     ):
         # Distinct text per row: (denial, text fingerprint) is unique.
         cls._drafts_made += 1
@@ -803,7 +811,7 @@ class AdminStatusLetterScoringTest(TestCase):
             fields.update(
                 quality_score=0.8,
                 grounding_score=2.0,
-                quality_scorer="typesafe/speed_latest/rubric-1",
+                quality_scorer=scorer,
                 quality_scored_at=stamp,
             )
         # auto_now_add wins on create, so the clock is set afterwards.
@@ -838,6 +846,18 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(status["level"], "scoring")
         self.assertEqual(status["scored"], 1)
         self.assertEqual(status["unscored"], 0)
+
+    def test_a_score_from_an_older_rubric_or_another_source_is_not_current(self):
+        """A score from before the rubric bump, one not from TypeSafe, or
+        one with no scorer is due to be redone, so its draft still counts
+        as waiting for a score, not as scored."""
+        for scorer in ("typesafe/speed_latest/rubric-1", "manual/rubric-2", None):
+            self._draft(self._denial(), scored=True, scorer=scorer)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["scored"], 0)
+        self.assertEqual(status["unscored"], 3)
+        self.assertEqual(status["level"], "not_scoring")
 
     def test_a_scored_draft_that_was_never_eligible_does_not_count(self):
         """Speculative or unconsented drafts are outside both counts, so a
@@ -938,6 +958,44 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertNotEqual(status["level"], "failing")
         self.assertTrue(status["recovered"])
         self.assertIn("server error", status["last_failure_hint"])
+
+    def test_each_documented_typesafe_status_has_its_own_short_phrase(self):
+        """401, 422, 429 and 529 are the errors TypeSafe documents; each reads
+        as what to check, in one short phrase, and no two read the same."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        hint = AdminStatusView._scoring_failure_hint
+        phrases = {
+            status: hint(f"HTTP {status}") for status in (401, 422, 429, 529)
+        }
+        self.assertIn("key", phrases[401])
+        self.assertIn("validation", phrases[422])
+        self.assertIn("TYPESAFE_MODEL", phrases[422])
+        self.assertIn("rate limited", phrases[429])
+        self.assertIn("overloaded", phrases[529])
+        self.assertEqual(len(set(phrases.values())), 4)
+        for phrase in phrases.values():
+            self.assertTrue(0 < len(phrase) <= 70, phrase)
+        # Other 5xx statuses keep the generic phrase; an unknown one gets none.
+        self.assertEqual(hint("HTTP 503"), "TypeSafe server error")
+        self.assertEqual(hint("OSError"), "")
+
+    def test_a_request_refused_before_sending_points_at_the_settings(self):
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        phrase = AdminStatusView._scoring_failure_hint("TypeSafeError")
+        self.assertIn("TYPESAFE_API_URL", phrase)
+        self.assertIn("TYPESAFE_MODEL", phrase)
+
+    def test_the_page_explains_a_422(self):
+        self._health(
+            last_failure_at=timezone.now() - datetime.timedelta(minutes=2),
+            last_failure="HTTP 422",
+        )
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "failing")
+        self.assertIn("validation", status["last_failure_hint"])
 
     def test_an_old_failure_does_not_fail_the_row_forever(self):
         self._health(

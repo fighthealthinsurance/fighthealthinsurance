@@ -275,3 +275,17 @@ def _no_health_news_feeds():
 
     with patch("fighthealthinsurance.health_news.FEEDS", {}):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_spend_ledger():
+    """Each test starts with no recorded provider spend and no pauses
+    (ml/spend.py keeps them in process memory when its worker is off)."""
+    try:
+        from fighthealthinsurance.ml import spend
+    except Exception:
+        yield
+        return
+    spend._ledger.reset_for_tests()
+    yield
+    spend._ledger.reset_for_tests()

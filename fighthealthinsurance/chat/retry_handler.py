@@ -19,6 +19,7 @@ from fighthealthinsurance.chat.llm_client import (
     user_requested_repeat,
 )
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
+from fighthealthinsurance.chat.turn_record import CallLog
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.utils import best_two_within_timelimit
 
@@ -164,6 +165,7 @@ async def retry_llm_with_fallback(
     extended_timeout: float = 40.0,
     allow_repeated_reply: bool = False,
     debug_info: Optional[Dict[str, Any]] = None,
+    call_log: Optional[CallLog] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
@@ -200,6 +202,8 @@ async def retry_llm_with_fallback(
         debug_info: Optional mutable dict; on a successful retry it receives
             "retry_picked_model" (backend label) and "retry_picked_score"
             so the caller's debug output can attribute the delivered answer.
+        call_log: Optional CallLog (chat/turn_record.py) that observes this
+            pass's calls and scores, for the turn's ChatTurn row.
 
     Returns:
         Tuple of (response_text, context_part) or (None, None) on failure
@@ -237,12 +241,15 @@ async def retry_llm_with_fallback(
         temperature=retry_temperature,
         allow_repeated_reply=allow_repeated_reply,
         call_labels=call_labels,
+        call_log=call_log,
     )
 
     # Create simplified scorer for retries
     retry_scorer = create_simple_retry_scorer(
         retry_scores, chat_history=chat_history, current_message=scoring_message
     )
+    if call_log is not None:
+        retry_scorer = call_log.scoring(retry_scorer)
 
     try:
         best_retry = await best_two_within_timelimit(

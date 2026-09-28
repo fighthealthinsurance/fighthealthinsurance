@@ -12,9 +12,11 @@ skew the model-preference signal before any identity/chat validation ran.
 """
 
 import pytest
+from asgiref.sync import sync_to_async
 from channels.testing import WebsocketCommunicator
 from prometheus_client import REGISTRY
 
+from fighthealthinsurance.models import ChatTurn, OngoingChat
 from fighthealthinsurance.websockets import OngoingChatConsumer
 
 OPEN_CHAT_ID = "feedback-chat-1"
@@ -138,3 +140,120 @@ async def test_answer_feedback_for_foreign_chat_is_ignored():
         await communicator.disconnect()
 
     assert _feedback_metric("alternate") == before
+
+
+# --- The pick stored on the turn's ChatTurn row ----------------------------
+#
+# Frames that carry the turn_id from the answer frame store the pick on that
+# turn's row, alongside the metric above (which counts every accepted frame).
+
+
+async def _chat_with_offered_turn():
+    chat = await sync_to_async(OngoingChat.objects.create)(
+        chat_history=[], summary_for_next_call=[]
+    )
+    turn = await sync_to_async(ChatTurn.objects.create)(
+        chat=chat,
+        outcome="ok",
+        use_external=True,
+        winner_model="model-a",
+        alternate_offered=True,
+        alternate_model="model-b",
+        alternate_cross_model=True,
+    )
+    return chat, turn
+
+
+async def _send_feedback(socket_chat_id, frames):
+    """Send each frame on one socket whose open chat is socket_chat_id."""
+    consumer = type(
+        "_ConsumerForThisChat", (OngoingChatConsumer,), {"chat_id": socket_chat_id}
+    )
+    communicator = WebsocketCommunicator(consumer.as_asgi(), "/ws/ongoing-chat/")
+    connected, _ = await communicator.connect()
+    assert connected
+    try:
+        for frame in frames:
+            await communicator.send_json_to(frame)
+        assert await communicator.receive_nothing(timeout=0.5)
+    finally:
+        # Waits for the consumer to finish handling every frame.
+        await communicator.disconnect()
+
+
+def _frame(chat_id, preferred, turn_id):
+    return {
+        "answer_feedback": {"preferred": preferred, "turn_id": turn_id},
+        "chat_id": chat_id,
+        "session_key": "feedback-turn-test",
+    }
+
+
+async def _preferred(turn):
+    return (await sync_to_async(ChatTurn.objects.get)(pk=turn.pk)).preferred
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_pick_with_its_turn_id_lands_on_the_turn():
+    chat, turn = await _chat_with_offered_turn()
+    before = _feedback_metric("alternate")
+    await _send_feedback(
+        str(chat.id), [_frame(str(chat.id), "alternate", str(turn.id))]
+    )
+    assert await _preferred(turn) == "alternate"
+    # The metric is counted exactly as before.
+    assert _feedback_metric("alternate") == before + 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_second_pick_for_the_same_turn_is_ignored():
+    chat, turn = await _chat_with_offered_turn()
+    await _send_feedback(
+        str(chat.id),
+        [
+            _frame(str(chat.id), "primary", str(turn.id)),
+            _frame(str(chat.id), "alternate", str(turn.id)),
+        ],
+    )
+    assert await _preferred(turn) == "primary"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_pick_for_another_chats_turn_is_ignored():
+    """The socket's own chat decides, whatever turn_id the frame names."""
+    mine, _my_turn = await _chat_with_offered_turn()
+    _theirs, their_turn = await _chat_with_offered_turn()
+    await _send_feedback(
+        str(mine.id), [_frame(str(mine.id), "alternate", str(their_turn.id))]
+    )
+    assert await _preferred(their_turn) == ""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_pick_naming_a_foreign_chat_is_ignored():
+    chat, turn = await _chat_with_offered_turn()
+    other, _ = await _chat_with_offered_turn()
+    await _send_feedback(
+        str(other.id), [_frame(str(chat.id), "alternate", str(turn.id))]
+    )
+    assert await _preferred(turn) == ""
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_a_bad_turn_id_is_ignored_but_still_counted():
+    chat, turn = await _chat_with_offered_turn()
+    before = _feedback_metric("primary")
+    await _send_feedback(
+        str(chat.id),
+        [
+            _frame(str(chat.id), "primary", "not-a-uuid"),
+            _frame(str(chat.id), "primary", {"id": str(turn.id)}),
+        ],
+    )
+    assert await _preferred(turn) == ""
+    assert _feedback_metric("primary") == before + 2

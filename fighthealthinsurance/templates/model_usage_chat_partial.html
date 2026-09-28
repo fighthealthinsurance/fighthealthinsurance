@@ -1,0 +1,51 @@
+{% comment %}
+The live chat section of one window, from ModelUsageDashboardView._chat_stats:
+a summary line and the per-model race table, then the side-by-side picks by
+model and by pair. The side-by-side tables count only pairs from two different
+models; pairs from one model get a line of their own.
+{% endcomment %}
+{% with s=chat.summary %}
+<p class="window-totals">
+  Turns: <strong>{{ s.turns }}</strong> (OK {{ s.ok }}, failed {{ s.failed }}, timed out {{ s.timeout }}).
+  Outside models allowed on <strong>{{ s.external_allowed }}</strong> of them{% if s.external_share is not None %} ({{ s.external_share|floatformat:1 }}%){% endif %}.
+  An outside model's answer was delivered on <strong>{{ s.external_wins }}</strong> of {{ s.ok }} OK turns{% if s.external_win_share is not None %} ({{ s.external_win_share|floatformat:1 }}%){% endif %}.
+  Retry pass ran on <strong>{{ s.retry_ran }}</strong>, and delivered the answer on {{ s.retry_used }}.
+  Outside models held back while ours answered: <strong>{{ s.externals_held_back }}</strong> turns (started after the delay on {{ s.externals_after_delay }}, started early because ours all failed on {{ s.externals_early }}, never sent on {{ s.externals_skipped }}{% if s.externals_skipped_later %}, not sent at first but asked later in the turn on {{ s.externals_skipped_later }}{% endif %}).
+  Alternates offered: <strong>{{ s.alternates }}</strong> ({{ s.cross_alternates }} from a different model).
+  Picks received: <strong>{{ s.picks }}</strong> (primary {{ s.picked_primary }}, alternate {{ s.picked_alternate }}).
+</p>
+{% include "model_usage_table_partial.html" with rows=chat.rows kind="chat" show_state=True %}
+
+<h3>Live chat side by side <span class="source-label">(pairs from two different models)</span></h3>
+<p class="note">
+  The primary answer shows first and the alternate sits behind a toggle, so primary picks start ahead.
+  Pairs from one model: <strong>{{ s.same_model_pairs }}</strong> (picks: primary {{ s.same_model_picked_primary }}, alternate {{ s.same_model_picked_alternate }}), left out of the tables below.
+</p>
+{% endwith %}
+{% include "model_usage_table_partial.html" with rows=chat.side_by_side_rows kind="sidebyside" show_state=True %}
+{% if chat.pairs %}
+<table class="usage">
+  <thead>
+    <tr>
+      <th>Primary model</th>
+      <th>Alternate model</th>
+      <th class="num">Offered</th>
+      <th class="num" title="Pairs where the person picked an answer">Picked</th>
+      <th class="num">Primary picked</th>
+      <th class="num">Alternate picked</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in chat.pairs %}
+    <tr>
+      <td>{{ p.primary_model }}</td>
+      <td>{{ p.alternate_model }}</td>
+      <td class="num">{{ p.offered }}</td>
+      <td class="num">{{ p.answered }}</td>
+      <td class="num">{{ p.primary }}</td>
+      <td class="num">{{ p.alternate }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
