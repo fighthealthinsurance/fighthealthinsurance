@@ -2981,16 +2981,35 @@ class NewSignupAIDraftTest(TestCase):
     def test_draft_keeping_the_copied_introduction_is_used(self):
         text = (
             "Dear Dr. Smith, let me introduce you to Rebeca Morales at Cofactor "
-            "AI (copied on this email)." + _SAFE_TAIL
+            "AI (copied on this email). Just reply all to set up a demo."
+            + _SAFE_TAIL
         )
         self.assertEqual(self._draft_with(text), text)
 
     def test_copied_introduction_match_ignores_case_and_line_breaks(self):
         text = (
             "Dear Dr. Smith, let me introduce you to rebeca morales at\ncofactor "
-            "ai (copied on this email)." + _SAFE_TAIL
+            "ai (copied on this email). Just reply all to set up a demo."
+            + _SAFE_TAIL
         )
         self.assertEqual(self._draft_with(text), text)
+
+    def test_draft_giving_the_professional_address_as_call_to_action_is_used(self):
+        text = (
+            "Dear Dr. Smith, let me introduce you to Rebeca Morales at Cofactor "
+            "AI (copied on this email). Write to "
+            "professional@fighthealthinsurance.com to set up a demo." + _SAFE_TAIL
+        )
+        self.assertEqual(self._draft_with(text), text)
+
+    def test_draft_dropping_the_call_to_action_falls_back(self):
+        # Keeps the introduction but never tells the recipient how to take it
+        # up (no "reply all", no contact address).
+        text = (
+            "Dear Dr. Smith, let me introduce you to Rebeca Morales at Cofactor "
+            "AI (copied on this email)." + _SAFE_TAIL
+        )
+        self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
 
     def test_draft_dropping_rebeca_falls_back(self):
         text = "Dear Dr. Smith, let me introduce you to Cofactor AI, copied here." + _SAFE_TAIL

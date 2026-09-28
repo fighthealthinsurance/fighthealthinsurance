@@ -738,7 +738,9 @@ def _is_safe_new_signup_intro_draft(text: Optional[str]) -> bool:
     that drops them, or stops saying they're on the thread, would go out
     contradicting its own CC line. Matching the whole phrase rather than its
     words matters for a bare-address contact, whose "the Cofactor AI team"
-    also appears in an unrelated paragraph. A rejected draft falls back to the
+    also appears in an unrelated paragraph. It must also keep a call to action
+    -- "reply all" or the FHI professional address -- so the recipient is still
+    told how to take up the introduction. A rejected draft falls back to the
     approved new-signup email.
     """
     if not _is_safe_intro_draft(text):
@@ -747,7 +749,11 @@ def _is_safe_new_signup_intro_draft(text: Optional[str]) -> bool:
     def normalized(value: str) -> str:
         return " ".join(value.lower().split())
 
-    return normalized(_copied_introduction()) in normalized(text or "")
+    body = normalized(text or "")
+    has_call_to_action = bool(re.search(r"reply[\s-]*all", body)) or (
+        get_professional_cc_email().lower() in body
+    )
+    return normalized(_copied_introduction()) in body and has_call_to_action
 
 
 async def agenerate_intro_email(
