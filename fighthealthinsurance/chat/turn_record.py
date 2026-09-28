@@ -153,6 +153,9 @@ class _CallRecord:
     error: str = ""
     has_text: bool = False
     skipped: bool = False
+    # A reserved call: the crucial side-by-side, not one of the turn's
+    # outside models (chat/reply_gate.py).
+    reserved: bool = False
     # The backend call itself, kept only so a call that is never sent can
     # be closed (see CallLog.mark_skipped).
     inner: Optional[Awaitable[Any]] = None
@@ -224,6 +227,13 @@ class CallLog:
                 close = getattr(coroutine, "close", None)
                 if callable(close):
                     close()
+
+    def mark_reserved(self, calls: Sequence[Awaitable]) -> None:
+        """Note the pass's reserved calls (the crucial side-by-side)."""
+        for call in calls:
+            record = self._records.get(call)
+            if record is not None:
+                record.reserved = True
 
     def set_variant(self, call: Awaitable, kind: str) -> None:
         record = self._records.get(call)
@@ -308,6 +318,8 @@ class CallLog:
                     float(score) if score is not None and math.isfinite(score) else None
                 ),
             }
+            if record.reserved:
+                row["reserved"] = True
             self._rows[call] = row
             out.append(row)
         return out

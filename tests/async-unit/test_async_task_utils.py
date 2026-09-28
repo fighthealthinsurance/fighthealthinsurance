@@ -1725,7 +1725,8 @@ class TestReservedTasks:
             check=check,
         )
         assert set(probe.started) == {"ours", "kimi"}
-        assert stage.outcome == STAGE_AFTER_CHECK
+        # Only the reserved task started: every held-back one was skipped.
+        assert stage.outcome == STAGE_SKIPPED
         assert stage.check_passed is True
         assert stage.skipped == [a, b]
         assert result.best == "ours-answer"

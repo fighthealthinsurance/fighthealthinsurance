@@ -28,8 +28,13 @@ Shown once, in the All Time section: a policy is not tied to a window.
     <tr>
       <th class="num">Place</th>
       <th>Outside model</th>
+      {% if "ordered_by_jev" in row.reason %}
+      <th class="num" title="The mean of Jev's quality score (0 to 1) over its replies Jev ranked. Only models with enough of them move from their place in the roster.">Jev quality</th>
+      <th class="num" title="Its replies Jev ranked in the window">Ranked replies</th>
+      {% else %}
       <th class="num" title="Of the turns that asked it, the share where its answer was delivered. Only models asked on enough turns move from their place in the roster.">Answer delivered</th>
       <th class="num" title="Turns in the window that asked it">Turns</th>
+      {% endif %}
     </tr>
   </thead>
   <tbody>

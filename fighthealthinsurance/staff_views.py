@@ -1848,9 +1848,12 @@ class _ChatTally:
         # Whether any outside call was sent on the turn, in any pass: a
         # first pass that skipped them can be followed by a retry that asks
         # them (our reply was empty, too short or a false promise).
+        # The crucial side-by-side (a reserved call) is not one of the
+        # turn's outside models: a pass that asked only it saved them.
         external_sent = any(
             isinstance(call, dict)
             and call.get("external") is True
+            and call.get("reserved") is not True
             and call.get("status") != STATUS_SKIPPED
             for call in calls or []
         )

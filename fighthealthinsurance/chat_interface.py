@@ -811,6 +811,8 @@ class ChatInterface:
             call_scores.update(reserved_scores)
             if turn is not None:
                 turn.add_reserved_backend(side_by_side_backend)
+            if call_log is not None:
+                call_log.mark_reserved(reserved_calls)
         if gate is not None:
             reply_gate: ReplyGate = gate
             reply_gate.used = True

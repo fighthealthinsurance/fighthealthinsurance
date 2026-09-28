@@ -2251,6 +2251,20 @@ class ChatReplyCheckNumbersTest(StaffClientMixin, TestCase):
         self.assertEqual(summary["gate_fail_ok"], 0)
         self.assertIsNone(summary["gate_fail_external_win_share"])
 
+    def test_a_crucial_pass_that_asked_only_the_side_by_side_is_saved(self):
+        kimi = _call("kimi")
+        kimi["external"] = True
+        kimi["reserved"] = True
+        self._checked(
+            "pass",
+            "skipped",
+            gate_crucial=0.9,
+            calls=[_call("fhi-local"), _call("claude", "skipped", ms=None), kimi],
+        )
+        _response, windows = self._windows()
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual((summary["gate_pass"], summary["gate_saved"]), (1, 1))
+
     def test_the_tiers_are_counted(self):
         self._checked("borderline", "after_check", gate_crucial=0.2,
                       rank_outcome="picked", rank_changed=True)
@@ -2453,6 +2467,14 @@ class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
             ],
         )
         self.assertContains(response, "Answer delivered")
+        self.assertNotContains(response, "Jev quality")
+
+    def test_an_order_from_jev_scores_is_labelled_as_such(self):
+        _policy_row(reason="ok,ordered_by_jev")
+        response = self._page()
+        self.assertContains(response, "Jev quality")
+        self.assertContains(response, "Ranked replies")
+        self.assertNotContains(response, "Answer delivered")
 
     def test_this_months_provider_spend_is_listed(self):
         from fighthealthinsurance.ml import spend

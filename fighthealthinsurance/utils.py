@@ -1851,7 +1851,13 @@ async def best_two_within_timelimit(
             else:
                 starting = [task for task in to_start if id(task) not in reserved_ids]
             if verdict is not None:
-                outcome = STAGE_AFTER_CHECK if starting else STAGE_SKIPPED
+                # A pass that starts only reserved tasks (the crucial
+                # side-by-side) still skipped every held-back one.
+                ordinary = [t for t in starting if id(t) not in reserved_ids]
+                if verdict.passed and not ordinary:
+                    outcome = STAGE_SKIPPED
+                else:
+                    outcome = STAGE_AFTER_CHECK if starting else STAGE_SKIPPED
             starting_ids = {id(task) for task in starting}
             not_started = [task for task in to_start if id(task) not in starting_ids]
             _close_unstarted(not_started)
