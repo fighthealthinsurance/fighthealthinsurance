@@ -3748,6 +3748,15 @@ class ChatTurn(models.Model):
         FAILED = "failed", "Failed"
         TIMEOUT = "timeout", "Timed out"
 
+    class ExternalStart(models.TextChoices):
+        # The StagedStart outcomes in utils.py, plus "" for a primary pass
+        # that asked no outside model.
+        NONE = "", "No outside model asked"
+        IMMEDIATE = "immediate", "Asked with ours"
+        AFTER_DELAY = "after_delay", "Started after the delay"
+        EARLY = "early", "Started early: ours all failed"
+        SKIPPED = "skipped", "Skipped: ours answered first"
+
     # Also the turn_id the client echoes back with its side-by-side pick.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     chat = models.ForeignKey(
@@ -3833,6 +3842,14 @@ class ChatTurn(models.Model):
     shadow_second_verdict = models.FloatField(null=True, blank=True)
     shadow_second_asks_again = models.FloatField(null=True, blank=True)
     shadow_second_promises = models.FloatField(null=True, blank=True)
+    # How the primary pass started the outside models: with ours, or held
+    # back by the routing policy's delay (ChatRoutingPolicy) and then
+    # started or skipped. The delay is the one that pass used; both are
+    # empty when the pass asked no outside model.
+    external_start = models.CharField(
+        max_length=16, blank=True, default="", choices=ExternalStart.choices
+    )
+    external_delay_seconds = models.FloatField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -3844,6 +3861,73 @@ class ChatTurn(models.Model):
 
     def __str__(self) -> str:
         return f"ChatTurn<{self.outcome} {self.winner_model or 'no winner'}>"
+
+
+class ChatRoutingPolicy(models.Model):
+    """One computed routing policy for the chat fan-out.
+
+    Rows are never edited: each computation appends a new row and the
+    newest one wins, so the table is also a record of which policy was in
+    force when, for the last 30 days. Rows older than that are deleted
+    after a new one is written (``ml/chat_policy.prune_old_chat_policies``).
+    Written by ``ml/chat_policy.compute_and_store_chat_policy`` (the
+    ``compute_chat_policy`` command, or a scheduled job) from ChatTurn
+    metadata, and read by ``ml/chat_policy.aget_chat_policy`` on the chat
+    path. Holds model names and numbers only.
+
+    A policy can only narrow the outside models the router already picks:
+    it never adds a model and never overrides a person's choice to keep
+    chat on our own models. Chat follows it only while
+    FHI_CHAT_POLICY_APPLY is on and the row is newer than
+    FHI_CHAT_POLICY_MAX_AGE_MINUTES; otherwise it is shown on the staff
+    usage dashboard and chat routes as if there were none.
+    """
+
+    class Source(models.TextChoices):
+        TEMPORAL = "temporal", "Temporal schedule"
+        MANUAL = "manual", "compute_chat_policy command"
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text=(
+            "When the policy was computed. Rows are never edited; a new "
+            "policy is a new row, and rows older than 30 days are deleted "
+            "after a new one is written."
+        ),
+    )
+    source = models.CharField(max_length=16, choices=Source.choices)
+    # Readers ignore a row whose version they do not know.
+    schema_version = models.PositiveSmallIntegerField(default=1)
+    # The ChatTurn window the policy was computed from, and how many turns
+    # in it reached the models.
+    window_minutes = models.PositiveIntegerField()
+    turns_considered = models.PositiveIntegerField(default=0)
+    # Registry names of outside models to leave out of the chat fan-out.
+    external_excluded = models.JSONField(default=list, blank=True)
+    # How long the fan-out holds the outside models back while our own
+    # models answer (FHI_CHAT_EXTERNAL_HOLD_SECONDS); 0 asks them together.
+    external_delay_seconds = models.FloatField(default=0.0)
+    # The outside models in the order chat should ask them: the roster
+    # (FHI_CHAT_OUTSIDE_MODELS) with the models that have enough turns
+    # reordered among their own places by how often their answer was
+    # delivered, and {name: [score, turns]} for those. Spending caps are
+    # not here: ml/spend.py enforces them live.
+    outside_order = models.JSONField(default=list, blank=True)
+    order_scores = models.JSONField(default=dict, blank=True)
+    # The numbers behind the delay: the share of the last hour's turns
+    # where one of our models gave a usable answer, and the 75th percentile
+    # of how long that took over the window.
+    internal_usable_rate = models.FloatField(null=True, blank=True)
+    internal_ttu_p75_ms = models.PositiveIntegerField(null=True, blank=True)
+    # Short machine-readable tokens saying why, e.g. "few_turns".
+    reason = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"ChatRoutingPolicy<{self.source} {self.created_at}>"
 
 
 class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type: ignore

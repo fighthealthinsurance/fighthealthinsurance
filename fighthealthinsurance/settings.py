@@ -268,6 +268,28 @@ class Base(Configuration):
     TYPESAFE_CHAT_SHADOW_SAMPLE_RATE = _env_float(
         "TYPESAFE_CHAT_SHADOW_SAMPLE_RATE", 0.1, minimum=0.0, maximum=1.0
     )
+    # Chat routing policy (ml/chat_policy.py). Rows are computed from chat
+    # turn metadata by the compute_chat_policy command (or a scheduled job)
+    # and shown on the staff usage dashboard either way; chat follows the
+    # newest one only while this switch is on. Off by default, so a policy
+    # can be reviewed before it changes any routing.
+    FHI_CHAT_POLICY_APPLY = _env_flag("FHI_CHAT_POLICY_APPLY")
+    # A policy row older than this is ignored and chat routes by the default.
+    # The schedule writes one a day, so a day and a half leaves room for one
+    # missed run.
+    FHI_CHAT_POLICY_MAX_AGE_MINUTES = _env_int(
+        "FHI_CHAT_POLICY_MAX_AGE_MINUTES", 36 * 60, minimum=1, maximum=7 * 24 * 60
+    )
+    # How long, in seconds, the chat fan-out holds the outside models back
+    # while our own models answer, when the policy is followed.
+    FHI_CHAT_EXTERNAL_HOLD_SECONDS = _env_float(
+        "FHI_CHAT_EXTERNAL_HOLD_SECONDS", 8.0, minimum=0.0, maximum=15.0
+    )
+    # Share of chat turns whose second outside model is drawn from further
+    # down the order, so each model keeps being asked and can move up.
+    FHI_CHAT_EXPLORE_RATE = _env_float(
+        "FHI_CHAT_EXPLORE_RATE", 0.2, minimum=0.0, maximum=1.0
+    )
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
@@ -968,6 +990,9 @@ class Test(_TestBase):
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # A developer's routing-policy settings must not change how test chats
+    # route; tests that need a policy opt in with override_settings.
+    FHI_CHAT_POLICY_APPLY = False
 
     # Barrier no-ops in tests: mock denials have no DB row, so any positive
     # timeout would poll until it expires on every generate_appeals test.
@@ -1007,6 +1032,7 @@ class Test(_TestBase):
     FHI_SPEND_BACKGROUND = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
+    FHI_CHAT_EXPLORE_RATE = 0.0
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).
@@ -1028,6 +1054,9 @@ class TestSync(_TestBase):
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # A developer's routing-policy settings must not change how test chats
+    # route; tests that need a policy opt in with override_settings.
+    FHI_CHAT_POLICY_APPLY = False
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
@@ -1050,6 +1079,7 @@ class TestSync(_TestBase):
     FHI_SPEND_BACKGROUND = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
+    FHI_CHAT_EXPLORE_RATE = 0.0
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).
@@ -1071,6 +1101,9 @@ class TestActor(_TestBase):
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # A developer's routing-policy settings must not change how test chats
+    # route; tests that need a policy opt in with override_settings.
+    FHI_CHAT_POLICY_APPLY = False
 
     DEBUG = True
     # Barrier no-ops in tests (see Test class).
@@ -1110,6 +1143,7 @@ class TestActor(_TestBase):
     FHI_SPEND_BACKGROUND = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
+    FHI_CHAT_EXPLORE_RATE = 0.0
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # No recurring background health sweep in tests (see Base).

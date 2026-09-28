@@ -89,6 +89,7 @@ from fighthealthinsurance.chat.tools import (
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
+from fighthealthinsurance.ml.chat_policy import aget_chat_policy
 from fighthealthinsurance.ml.ml_metrics import (
     record_chat_alternate_offered,
     record_chat_repeat,
@@ -120,6 +121,8 @@ from fighthealthinsurance.clinicaltrials_tools import ClinicalTrialsTools
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rxnorm_tools import RxNormTools
 from fighthealthinsurance.utils import (
+    STAGE_IMMEDIATE,
+    StagedStart,
     best_two_within_timelimit,
     fire_and_forget_in_new_threadpool,
 )
@@ -234,6 +237,10 @@ class ChatInterface:
         # scoring is on and only until the turn ends, so the background
         # scorer can read it (chat/shadow_scoring.py). Never persisted.
         self._shadow_runner_up: Optional[str] = None
+        # Seconds the turn's fan-outs hold the outside models back while our
+        # own models answer, from the chat routing policy (0 asks them all
+        # together). Set per turn once the backends are known.
+        self._external_delay_seconds: float = 0.0
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -577,6 +584,7 @@ class ChatInterface:
         # the is-primary scoring bonus. Otherwise (recursive tool calls) fall
         # back to the single wrapped message, preserving existing behavior.
         call_labels: Dict[Awaitable, str] = {}
+        call_backends: Dict[Awaitable, RemoteModelLike] = {}
         call_log = (
             CallLog(PASS_PRIMARY if depth == 0 else PASS_TOOL, depth)
             if turn is not None
@@ -594,6 +602,7 @@ class ChatInterface:
                 allow_repeated_reply=allow_repeat,
                 call_labels=call_labels,
                 call_log=call_log,
+                call_backends=call_backends,
             )
         else:
             calls, call_scores = build_llm_calls(
@@ -607,8 +616,30 @@ class ChatInterface:
                 allow_repeated_reply=allow_repeat,
                 call_labels=call_labels,
                 call_log=call_log,
+                call_backends=call_backends,
             )
             primary_calls = calls
+
+        # Ours first: with a routing-policy delay, the outside models' calls
+        # are held back while ours answer, started only if nothing of ours
+        # is usable in time (or ours have all failed), and never sent when
+        # one of ours answers first. Without a delay, or with nothing of
+        # ours in the fan-out, every call starts at once as before.
+        external_calls = [
+            call
+            for call in calls
+            if getattr(call_backends.get(call), "external", None) is True
+        ]
+        external_delay = self._external_delay_seconds
+        stage: Optional[StagedStart] = None
+        race_staging: Dict[str, Any] = {}
+        if external_delay > 0 and 0 < len(external_calls) < len(calls):
+            stage = StagedStart()
+            race_staging = {
+                "deferred": external_calls,
+                "defer_seconds": external_delay,
+                "stage": stage,
+            }
 
         # Create scoring function using the extracted module. rejection_stats
         # is shared with the scorer so we can tell "no usable response" apart
@@ -659,6 +690,7 @@ class ChatInterface:
                 race_score_fn,
                 timeout=30.0,
                 extended_timeout=30.0,
+                **race_staging,
             )
             response_text, context_part = (
                 best_two.best if best_two.best is not None else (None, None)
@@ -680,8 +712,17 @@ class ChatInterface:
         finally:
             # Also on cancellation (the turn budget firing mid-race), so a
             # timed-out turn still shows which calls were still running.
+            if call_log is not None and stage is not None:
+                call_log.mark_skipped(stage.skipped)
             if call_log is not None and turn is not None:
                 turn.calls.extend(call_log.finish())
+            if depth == 0 and turn is not None and external_calls:
+                if stage is not None:
+                    turn.set_external_start(
+                        stage.outcome or STAGE_IMMEDIATE, external_delay
+                    )
+                else:
+                    turn.set_external_start(STAGE_IMMEDIATE, 0.0)
 
         response_text = response_text or ""
 
@@ -1113,6 +1154,7 @@ class ChatInterface:
         # models gets one (created once the backends are known, below).
         self._turn = None
         self._shadow_runner_up = None
+        self._external_delay_seconds = 0.0
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -1379,10 +1421,21 @@ class ChatInterface:
             await self.send_message_to_client(user_facing_message)
             return
 
-        # Get primary and fallback models based on user preference
-        primary_models, fallback_models = ml_router.get_chat_backends_with_fallback(
-            use_external=self.use_external_models
-        )
+        # Get primary and fallback models based on user preference, and the
+        # chat routing policy (ml/chat_policy.py): the default unless it is
+        # switched on, readable and fresh. It can only narrow the outside
+        # models, and none are asked without the person's consent.
+        policy = await aget_chat_policy()
+        if policy.narrows_nothing:
+            primary_models, fallback_models = ml_router.get_chat_backends_with_fallback(
+                use_external=self.use_external_models
+            )
+        else:
+            primary_models, fallback_models = ml_router.get_chat_backends_with_fallback(
+                use_external=self.use_external_models, policy=policy
+            )
+            if self.use_external_models:
+                self._external_delay_seconds = ml_router.chat_external_delay(policy)
         if not primary_models:
             await self.send_error_message(
                 "Sorry, no language models are currently available."

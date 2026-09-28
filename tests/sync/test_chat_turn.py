@@ -26,6 +26,7 @@ LABEL_AND_ENUM_FIELDS = {
     "runner_up_model",
     "alternate_model",
     "preferred",
+    "external_start",
     # The shadow outcome enum, and the scorer string: the model TypeSafe
     # says answered plus the chat rubric version.
     "shadow_outcome",
@@ -83,6 +84,10 @@ class ChatTurnHoldsNoTextTest(TestCase):
     def test_the_enums_are_closed(self):
         self.assertEqual(set(ChatTurn.Outcome.values), {"ok", "failed", "timeout"})
         self.assertEqual(set(ChatTurn.Preferred.values), {"", "primary", "alternate"})
+        self.assertEqual(
+            set(ChatTurn.ExternalStart.values),
+            {"", "immediate", "after_delay", "early", "skipped"},
+        )
         self.assertEqual(
             set(ChatTurn.ShadowOutcome.values), {"", "scored", "failed", "timeout"}
         )

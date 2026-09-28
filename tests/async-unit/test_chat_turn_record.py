@@ -7,6 +7,7 @@ holds metadata only, so these tests also pin that nothing else gets in.
 """
 
 import asyncio
+import inspect
 import json
 import threading
 import time
@@ -43,7 +44,11 @@ from fighthealthinsurance.chat.turn_record import (
 )
 from fighthealthinsurance.ml.ml_metrics import _ANSWER_FEEDBACK_ALLOWED
 from fighthealthinsurance.models import ChatTurn, OngoingChat
-from fighthealthinsurance.utils import best_two_within_timelimit
+from fighthealthinsurance.utils import (
+    STAGE_OUTCOMES,
+    StagedStart,
+    best_two_within_timelimit,
+)
 from tests.chat_fixtures import FRESH_REPLY, SECOND_OPINION_REPLY, RecordingChatModel
 
 # A third distinct, presentable answer (its own wording, so it is not a
@@ -389,7 +394,56 @@ def test_label_sets_agree_with_the_metrics_and_the_model():
     assert PREFERENCE_LABELS == _ANSWER_FEEDBACK_ALLOWED
     assert PREFERENCE_LABELS == set(ChatTurn.Preferred.values) - {""}
     assert TURN_OUTCOMES == set(ChatTurn.Outcome.values)
-    assert len(CALL_STATUSES) == len(set(CALL_STATUSES)) == 6
+    assert len(CALL_STATUSES) == len(set(CALL_STATUSES)) == 7
+    assert set(ChatTurn.ExternalStart.values) == {""} | set(STAGE_OUTCOMES)
+
+
+@pytest.mark.asyncio
+async def test_a_held_back_call_that_never_starts_is_skipped_and_closed():
+    log = CallLog(PASS_PRIMARY)
+    ours = log.observe(_answer(FRESH_REPLY), _Named("fhi-local", False), "truncated")
+    outside = _answer(SECOND_OPINION_REPLY)
+    theirs = log.observe(outside, _Named("claude", True), "truncated")
+    stage = StagedStart()
+    await best_two_within_timelimit(
+        [ours, theirs],
+        log.scoring(lambda r, t: 8820.0),
+        timeout=1.0,
+        deferred=[theirs],
+        defer_seconds=5.0,
+        stage=stage,
+    )
+    log.mark_skipped(stage.skipped)
+    calls = {c["model"]: c for c in log.finish()}
+    assert calls["fhi-local"]["status"] == "scored"
+    assert calls["claude"]["status"] == "skipped"
+    assert (calls["claude"]["ms"], calls["claude"]["score"]) == (None, None)
+    assert calls["claude"]["external"] is True
+    # The backend call inside the wrapper is closed too: it will never run.
+    assert inspect.getcoroutinestate(outside) == inspect.CORO_CLOSED
+    assert inspect.getcoroutinestate(theirs) == inspect.CORO_CLOSED
+
+
+@pytest.mark.asyncio
+async def test_marking_a_call_that_ran_as_skipped_changes_nothing():
+    log = CallLog(PASS_PRIMARY)
+    call = log.observe(_answer(FRESH_REPLY), _Named("m"), "truncated")
+    await best_two_within_timelimit([call], log.scoring(lambda r, t: 1.0), 1.0)
+    log.mark_skipped([call])
+    (entry,) = log.finish()
+    assert entry["status"] == "scored"
+
+
+def test_the_row_says_how_the_outside_models_were_started():
+    turn = TurnRecord.start(True, [_Named("a")])
+    fields = turn.row_fields("ok")
+    assert (fields["external_start"], fields["external_delay_seconds"]) == ("", None)
+    turn.set_external_start("skipped", 7.5)
+    fields = turn.row_fields("ok")
+    assert (fields["external_start"], fields["external_delay_seconds"]) == (
+        "skipped",
+        7.5,
+    )
 
 
 # --- Choosing the side-by-side alternate -----------------------------------
