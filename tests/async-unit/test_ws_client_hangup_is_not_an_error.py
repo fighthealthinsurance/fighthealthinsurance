@@ -123,8 +123,9 @@ async def test_a_real_server_failure_is_still_reported(log_capture):
         )
 
     assert frame is not None and "ref " in frame["error"]
+    # The chat error log names the exception class, never its text.
     assert any(
-        detail in message for message in cap.messages("ERROR")
+        "RuntimeError" in message for message in cap.messages("ERROR")
     ), f"expected an ERROR for a genuine failure, got: {cap.messages('ERROR')}"
 
 

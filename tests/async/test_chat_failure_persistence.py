@@ -341,7 +341,7 @@ class ChatFailureLoggingTest(APITestCase):
         totals = [
             r["message"]
             for r in records
-            if "Failed to generate response" in r["message"]
+            if "Failed to generate a response" in r["message"]
         ]
         self.assertTrue(totals, f"expected a total-failure ERROR, got: {records}")
         self.assertIn(str(chat.id), totals[0])
