@@ -322,9 +322,9 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
             use_external=flag
         )
         # get_chat_backends lists its lead fhi backend twice up front and
-        # again among the strongest internals, so the lead is the instance
-        # the list repeats. Counted per instance, not per name: two backends
-        # can share a name without either being the lead.
+        # leaves it out of the internals that follow, so the lead is the
+        # instance the list repeats. Counted per instance, not per name: two
+        # backends can share a name without either being the lead.
         repeats: Dict[int, int] = {}
         for m in chat_primary:
             repeats[id(m)] = repeats.get(id(m), 0) + 1
@@ -344,10 +344,11 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
         PathPlan(
             "Chat",
             "Asked at once; the best-scored reply wins and quality weighs "
-            "heavily in the score. The lead is the fhi model whose name sorts "
-            "first, passing over appeal-only fine-tunes when there is another. "
-            "It is listed twice up front and again among the six strongest "
-            "internals, so it usually gets three calls. A model called more "
+            "heavily in the score. The lead is the strongest fhi model that "
+            "looks healthy, passing over appeal-only fine-tunes when there is "
+            "another; equal quality goes to the name that sorts first. It is "
+            "listed twice up front and not again among the six strongest "
+            "internals that follow, so it gets two calls. A model called more "
             "than once shows its count. When a long chat's history was cut "
             "short, each call also goes out once more with the full history "
             "if the model can take it.",

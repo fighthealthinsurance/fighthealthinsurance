@@ -396,6 +396,34 @@ class TestMLRouterChatBackends(unittest.TestCase):
 
         self.assertEqual(models, [strong_pricier, weak_cheap])
 
+    def test_chat_fan_out_shape_with_the_production_backends(self):
+        """The strongest fhi backend leads with two calls, the externals
+        follow, and the other internals get one call each. The May fine-tune
+        sorts first by name, which is how it used to lead with three calls."""
+        may = make_routed_mock(200, name="may")
+        alpha = make_routed_mock(210, name="alpha")
+        legacy = make_routed_mock(101, general=False, name="legacy")
+        strong_ext = make_routed_mock(98, external=True, name="strong-ext")
+        weak_ext = make_routed_mock(92, external=True, name="weak-ext")
+        install_models(
+            self.router,
+            [legacy, may, alpha],
+            {"strong": [strong_ext], "weak": [weak_ext]},
+        )
+        self.router.models_by_name.update(
+            {
+                "fhi-2025-may": [may],
+                "fhi-local": [alpha],
+                "fhi-legacy": [legacy],
+            }
+        )
+
+        with_external = self.router.get_chat_backends(use_external=True)
+        internal_only = self.router.get_chat_backends(use_external=False)
+
+        self.assertEqual(with_external, [alpha, alpha, strong_ext, weak_ext, may])
+        self.assertEqual(internal_only, [alpha, alpha, may])
+
 
 class TestMLRouterAppealOnlyBackends(unittest.TestCase):
     """The appeal-text fine-tune stays out of the instruction-following pools.
@@ -432,9 +460,11 @@ class TestMLRouterAppealOnlyBackends(unittest.TestCase):
         self.assertIn(self.general, models)
 
     def test_chat_doubles_a_general_fhi_backend_not_the_appeal_only_one(self):
-        # The doubled chat slot is picked by sorted name order, so give the
-        # appeal-only backend the name that sorts FIRST -- otherwise the
-        # assertion passes whether or not the capability filter runs.
+        # The doubled chat slot goes to the strongest fhi backend, with ties
+        # broken by name, so give the appeal-only backend the higher quality
+        # AND the name that sorts first -- otherwise the assertion passes
+        # whether or not the capability filter runs.
+        self.appeal_only.quality.return_value = 999
         self.router.models_by_name = {
             "fhi-aaa-appeal": [self.appeal_only],
             "fhi-zzz-chat": [self.general],
@@ -442,7 +472,8 @@ class TestMLRouterAppealOnlyBackends(unittest.TestCase):
 
         models = self.router.get_chat_backends(use_external=False)
 
-        self.assertEqual(models.count(self.general), 3)
+        # Twice as the lead, and not again among the internals.
+        self.assertEqual(models.count(self.general), 2)
         self.assertNotIn(self.appeal_only, models)
 
     def test_chat_keeps_the_doubled_slot_when_every_fhi_backend_is_narrow(self):
