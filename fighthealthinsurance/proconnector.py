@@ -35,6 +35,8 @@ from typing import Any, Iterable, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
 from django.db.models.functions import Lower
 from django.utils import timezone
@@ -171,12 +173,13 @@ Holden Karau, Melanie Warrick, and the Fight Health Insurance team"""
 # The new-signup version of the email: a direct introduction to a named Cofactor
 # AI contact who is CC'd and picks up the thread. Same sourcing-agreement
 # framing and compensation disclosure as the base email. ``{cofactor_contact}``
-# is the contact's name and ``{cofactor_contact_intro}`` that name "at Cofactor
-# AI" (both "the Cofactor AI team" when the configured contact has no display
-# name); ``{contact_email}`` is the FHI professional address.
+# is the contact's name ("the Cofactor AI team" when the configured contact has
+# no display name), ``{copied_introduction}`` the phrase introducing them as
+# copied (see _copied_introduction), and ``{contact_email}`` the FHI
+# professional address.
 NEW_SIGNUP_INTRO_EMAIL = """Dear {greeting_name},
 
-Thank you so much for your interest in the professional version of Fight Health Insurance. Let me introduce you to {cofactor_contact_intro} (copied on this email).
+Thank you so much for your interest in the professional version of Fight Health Insurance. Let me introduce you to {copied_introduction}.
 
 After our initial work launching Fight Paperwork, we've refocused Fight Health Insurance on our consumer mission, and we now have a sourcing agreement with Cofactor AI to introduce interested professionals who may benefit from their AI-powered support for appeals, prior authorization, and related backend workflows.
 
@@ -285,6 +288,13 @@ def get_professional_cc_email() -> str:
     return str(value) if value else DEFAULT_PROFESSIONAL_CC_EMAIL
 
 
+def _setting_str(name: str) -> str:
+    """A string setting with surrounding whitespace removed; ``""`` when the
+    setting is absent or ``None``."""
+    value = getattr(settings, name, None)
+    return str(value).strip() if value is not None else ""
+
+
 def get_cofactor_cc_email() -> Optional[str]:
     """Cofactor AI's CC address for intro emails, or ``None`` when turned off.
 
@@ -294,8 +304,7 @@ def get_cofactor_cc_email() -> Optional[str]:
     to an address; unset/empty and the explicit ``"none"`` sentinel (any case)
     both mean no CC.
     """
-    value = getattr(settings, "COFACTOR_CC_EMAIL", None)
-    cleaned = str(value).strip() if value is not None else ""
+    cleaned = _setting_str("COFACTOR_CC_EMAIL")
     if not cleaned or cleaned.lower() == CC_DISABLED_SENTINEL:
         return None
     return cleaned
@@ -328,13 +337,13 @@ def get_cofactor_intro_contact() -> str:
 
     The ``COFACTOR_INTRO_CONTACT`` setting in ``"Name <address>"`` form (a bare
     address works too; the email then introduces "the Cofactor AI team"),
-    falling back to :data:`DEFAULT_COFACTOR_INTRO_CONTACT` when unset or blank.
-    There is deliberately no off switch: the new-signup email *is* an
-    introduction to this person, so it can't go out without them on it.
+    falling back to :data:`DEFAULT_COFACTOR_INTRO_CONTACT` when unset or blank
+    -- the setting defaults to blank, so this constant is the one place the
+    default contact lives. There is deliberately no off switch: the new-signup
+    email *is* an introduction to this person, so it can't go out without them
+    on it.
     """
-    value = getattr(settings, "COFACTOR_INTRO_CONTACT", None)
-    cleaned = str(value).strip() if value is not None else ""
-    return cleaned or DEFAULT_COFACTOR_INTRO_CONTACT
+    return _setting_str("COFACTOR_INTRO_CONTACT") or DEFAULT_COFACTOR_INTRO_CONTACT
 
 
 def cofactor_intro_contact_problem() -> Optional[str]:
@@ -345,9 +354,20 @@ def cofactor_intro_contact_problem() -> Optional[str]:
     email that tells the professional the contact is copied when they aren't.
     New-signup sends fail closed on this instead (see
     :func:`_intro_cc_recipients`).
+
+    The parsed address must be a real address, not just contain an ``@``:
+    ``parseaddr`` hands back the whole string for values like ``"Name
+    addr@host"`` (missing angle brackets) or a quoted ``"Name <addr>"``, which
+    the blocked-domain check alone would wave through and the mail backend
+    would then mangle or reject at send time.
     """
     contact = get_cofactor_intro_contact()
-    if is_sendable_email(parseaddr(contact)[1]):
+    address = parseaddr(contact)[1]
+    try:
+        validate_email(address)
+    except ValidationError:
+        address = ""
+    if address and is_sendable_email(address):
         return None
     return (
         f"COFACTOR_INTRO_CONTACT is set to '{contact}', which is not a sendable "
@@ -399,17 +419,26 @@ def _cofactor_intro_contact_name() -> Optional[str]:
     return parseaddr(get_cofactor_intro_contact())[0].strip() or None
 
 
+def _copied_introduction() -> str:
+    """The exact introduction-and-copy phrase of the new-signup email, e.g.
+    ``"Rebeca Morales at Cofactor AI (copied on this email)"``.
+
+    Shared by the template rendering and the AI-draft guard, so the guard can
+    require the phrase itself rather than its words scattered through the text.
+    """
+    name = _cofactor_intro_contact_name()
+    who = f"{name} at Cofactor AI" if name else UNNAMED_COFACTOR_CONTACT
+    return f"{who} (copied on this email)"
+
+
 def build_new_signup_intro_email(pro: InterestedProfessional) -> str:
     """Render the approved new-signup email for ``pro``, introducing the
     configured Cofactor AI contact by name (the always-safe fallback for the
     one-press new-signup intro)."""
-    name = _cofactor_intro_contact_name()
     return NEW_SIGNUP_INTRO_EMAIL.format(
         **_intro_format_kwargs(pro),
-        cofactor_contact=name or UNNAMED_COFACTOR_CONTACT,
-        cofactor_contact_intro=(
-            f"{name} at Cofactor AI" if name else UNNAMED_COFACTOR_CONTACT
-        ),
+        cofactor_contact=_cofactor_intro_contact_name() or UNNAMED_COFACTOR_CONTACT,
+        copied_introduction=_copied_introduction(),
     )
 
 
@@ -702,17 +731,23 @@ def _is_safe_intro_draft(text: Optional[str]) -> bool:
 def _is_safe_new_signup_intro_draft(text: Optional[str]) -> bool:
     """Guard an AI draft of the *new-signup* email.
 
-    On top of :func:`_is_safe_intro_draft`, the draft must still name the
-    configured Cofactor contact and say they are copied: that contact is CC'd
-    on the send regardless of what the body says, so a draft that drops them,
-    or stops saying they're on the thread, would go out contradicting its own
-    CC line. A rejected draft falls back to the approved new-signup email.
+    On top of :func:`_is_safe_intro_draft`, the draft must keep the email's
+    introduction of the configured Cofactor contact as copied, word for word
+    apart from case and spacing (see :func:`_copied_introduction`): that
+    contact is CC'd on the send regardless of what the body says, so a draft
+    that drops them, or stops saying they're on the thread, would go out
+    contradicting its own CC line. Matching the whole phrase rather than its
+    words matters for a bare-address contact, whose "the Cofactor AI team"
+    also appears in an unrelated paragraph. A rejected draft falls back to the
+    approved new-signup email.
     """
     if not _is_safe_intro_draft(text):
         return False
-    lowered = (text or "").lower()
-    contact = (_cofactor_intro_contact_name() or UNNAMED_COFACTOR_CONTACT).lower()
-    return contact in lowered and "copied" in lowered
+
+    def normalized(value: str) -> str:
+        return " ".join(value.lower().split())
+
+    return normalized(_copied_introduction()) in normalized(text or "")
 
 
 async def agenerate_intro_email(

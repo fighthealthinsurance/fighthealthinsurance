@@ -2754,60 +2754,92 @@ class QuickIntroSendTest(_QuickIntroTestCase):
 # ---------------------------------------------------------------------------
 REBECA = "Rebeca Morales <rmorales@cofactorai.com>"
 
+# Pins COFACTOR_INTRO_CONTACT to blank (use the built-in default) so these tests
+# never pick up a value exported in the developer's or runner's environment.
+_default_intro_contact = override_settings(COFACTOR_INTRO_CONTACT="")
 
+# Passes every shared wording rule, so only the new-signup checks differ.
+_SAFE_TAIL = (
+    " We have a sourcing agreement with Cofactor AI; FHI may receive "
+    "compensation if you choose to work with them, which supports our "
+    "consumer mission. Thank you for your interest."
+)
+
+
+@_default_intro_contact
 class NewSignupIntroEmailTest(TestCase):
+    def setUp(self):
+        self.pro = _make_pro(name="Dr. Jane")
+
     def test_introduces_rebeca_by_name(self):
-        draft = build_new_signup_intro_email(_make_pro(name="Dr. Jane"))
         self.assertIn(
             "Let me introduce you to Rebeca Morales at Cofactor AI "
             "(copied on this email).",
-            draft,
+            build_new_signup_intro_email(self.pro),
         )
 
     def test_asks_recipient_to_reply_all_to_rebeca(self):
-        draft = build_new_signup_intro_email(_make_pro(name="Dr. Jane"))
         self.assertIn(
             "To schedule a demo or learn more, just reply all and Rebeca "
             "Morales can take it from there.",
-            draft,
+            build_new_signup_intro_email(self.pro),
         )
 
     def test_still_gives_the_professional_contact_email(self):
-        draft = build_new_signup_intro_email(_make_pro(name="Dr. Jane"))
-        self.assertIn("professional@fighthealthinsurance.com", draft)
+        self.assertIn(
+            "professional@fighthealthinsurance.com",
+            build_new_signup_intro_email(self.pro),
+        )
 
     def test_greets_the_professional_by_name(self):
-        draft = build_new_signup_intro_email(_make_pro(name="Dr. Jane"))
-        self.assertTrue(draft.startswith("Dear Dr. Jane,"))
+        self.assertTrue(
+            build_new_signup_intro_email(self.pro).startswith("Dear Dr. Jane,")
+        )
 
     def test_passes_the_wording_rules(self):
-        draft = build_new_signup_intro_email(_make_pro(name="Dr. Jane"))
-        self.assertIsNone(intro_wording_problem(draft))
-        self.assertTrue(_is_safe_intro_draft(draft))
+        self.assertIsNone(intro_wording_problem(build_new_signup_intro_email(self.pro)))
+
+    def test_passes_its_own_ai_draft_guard(self):
+        # The approved fallback must satisfy the guard AI drafts are held to,
+        # or every draft (including the fallback itself) would be rejected.
+        self.assertTrue(
+            proconnector._is_safe_new_signup_intro_draft(
+                build_new_signup_intro_email(self.pro)
+            )
+        )
 
     @override_settings(COFACTOR_INTRO_CONTACT="someone@cofactorai.com")
     def test_bare_contact_address_introduces_the_team(self):
-        draft = build_new_signup_intro_email(_make_pro(name="Dr. Jane"))
         self.assertIn(
             "Let me introduce you to the Cofactor AI team (copied on this email).",
-            draft,
+            build_new_signup_intro_email(self.pro),
         )
 
     def test_backlog_email_does_not_mention_rebeca(self):
         # The re-engagement email doesn't involve Cofactor unless the
         # professional replies to us, so it names no contact and claims no copy.
-        draft = build_base_intro_email(_make_pro(name="Dr. Jane"))
+        draft = build_base_intro_email(self.pro)
         self.assertNotIn("Rebeca", draft)
         self.assertNotIn("copied", draft)
 
 
+@_default_intro_contact
 class CofactorIntroContactTest(TestCase):
     def test_defaults_to_rebeca(self):
         self.assertEqual(get_cofactor_intro_contact(), REBECA)
 
+    def test_built_in_default_is_rebeca(self):
+        self.assertEqual(DEFAULT_COFACTOR_INTRO_CONTACT, REBECA)
+
     @override_settings(COFACTOR_INTRO_CONTACT="  ")
-    def test_blank_setting_falls_back_to_rebeca(self):
-        self.assertEqual(get_cofactor_intro_contact(), DEFAULT_COFACTOR_INTRO_CONTACT)
+    def test_whitespace_setting_falls_back_to_rebeca(self):
+        self.assertEqual(get_cofactor_intro_contact(), REBECA)
+
+    @override_settings(COFACTOR_INTRO_CONTACT="Someone Else <someone@cofactorai.com>")
+    def test_setting_overrides_the_default(self):
+        self.assertEqual(
+            get_cofactor_intro_contact(), "Someone Else <someone@cofactorai.com>"
+        )
 
     def test_default_contact_has_no_problem(self):
         self.assertIsNone(cofactor_intro_contact_problem())
@@ -2817,6 +2849,20 @@ class CofactorIntroContactTest(TestCase):
         problem = cofactor_intro_contact_problem()
         assert problem is not None
         self.assertIn("COFACTOR_INTRO_CONTACT", problem)
+
+    @override_settings(COFACTOR_INTRO_CONTACT="Rebeca Morales rmorales@cofactorai.com")
+    def test_missing_angle_brackets_are_reported(self):
+        # parseaddr returns the whole string as the "address" here, which still
+        # contains an @ -- only a real address check catches it.
+        self.assertIsNotNone(cofactor_intro_contact_problem())
+
+    @override_settings(COFACTOR_INTRO_CONTACT='"Rebeca Morales <rmorales@cofactorai.com>"')
+    def test_quoted_value_is_reported(self):
+        self.assertIsNotNone(cofactor_intro_contact_problem())
+
+    @override_settings(COFACTOR_INTRO_CONTACT="rmorales@cofactorai.com.")
+    def test_trailing_dot_is_reported(self):
+        self.assertIsNotNone(cofactor_intro_contact_problem())
 
     @override_settings(COFACTOR_INTRO_CONTACT="Cofactor <cofactor@example.com>")
     def test_blocked_domain_is_reported(self):
@@ -2834,6 +2880,7 @@ class CofactorIntroContactTest(TestCase):
         )
 
 
+@_default_intro_contact
 class NewSignupSendHelperTest(TestCase):
     def setUp(self):
         self.pro = _make_pro(email="jane@janeclinic.com")
@@ -2883,12 +2930,13 @@ class NewSignupSendHelperTest(TestCase):
     @override_settings(COFACTOR_INTRO_CONTACT="rmorales-at-cofactorai.com")
     def test_malformed_contact_raises_rather_than_dropping_the_cc(self):
         with self.assertRaises(ValueError):
-            proconnector.send_proconnector_intro_email(
-                self.pro,
-                subject="Intro",
-                body="Body with compensation disclosure.",
-                new_signup=True,
-            )
+            self._send(new_signup=True)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(COFACTOR_INTRO_CONTACT="Rebeca Morales rmorales@cofactorai.com")
+    def test_contact_missing_angle_brackets_is_never_sent(self):
+        with self.assertRaises(ValueError):
+            self._send(new_signup=True)
         self.assertEqual(len(mail.outbox), 0)
 
     @override_settings(COFACTOR_INTRO_CONTACT="rmorales-at-cofactorai.com")
@@ -2896,9 +2944,23 @@ class NewSignupSendHelperTest(TestCase):
         self.assertEqual(self._send().cc, ["professional@fighthealthinsurance.com"])
 
 
+@_default_intro_contact
 class NewSignupAIDraftTest(TestCase):
     def setUp(self):
         self.pro = _make_pro(name="Dr. Smith", email="d@dclinic.com")
+
+    def _draft_with(self, text, *, new_signup=True):
+        """Generate a draft where the (single) external model returns ``text``."""
+        fake = _FakeModel(result=text)
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
+            return generate_intro_email(self.pro, new_signup=new_signup)
+
+    def _prompted_model(self, *, new_signup=True):
+        """The fake model after one draft request, to inspect what it was sent."""
+        fake = _FakeModel(result=None)
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
+            generate_intro_email(self.pro, new_signup=new_signup)
+        return fake
 
     def test_fallback_is_the_new_signup_email(self):
         with patch.object(proconnector, "ml_router", _fake_router([])):
@@ -2906,118 +2968,134 @@ class NewSignupAIDraftTest(TestCase):
         self.assertEqual(draft, build_new_signup_intro_email(self.pro))
 
     def test_personalizes_from_the_new_signup_email(self):
-        fake = _FakeModel(result=None)
-        with patch.object(proconnector, "ml_router", _fake_router([fake])):
-            generate_intro_email(self.pro, new_signup=True)
-        self.assertIn(build_new_signup_intro_email(self.pro), fake.last_prompt)
+        self.assertIn(
+            build_new_signup_intro_email(self.pro), self._prompted_model().last_prompt
+        )
 
     def test_uses_the_new_signup_system_prompt(self):
-        fake = _FakeModel(result=None)
-        with patch.object(proconnector, "ml_router", _fake_router([fake])):
-            generate_intro_email(self.pro, new_signup=True)
-        self.assertEqual(fake.last_system_prompts, [NEW_SIGNUP_INTRO_SYSTEM_PROMPT])
+        self.assertEqual(
+            self._prompted_model().last_system_prompts,
+            [NEW_SIGNUP_INTRO_SYSTEM_PROMPT],
+        )
 
-    def _draft_with(self, text):
-        fake = _FakeModel(result=text)
-        with patch.object(proconnector, "ml_router", _fake_router([fake])):
-            return generate_intro_email(self.pro, new_signup=True)
+    def test_draft_keeping_the_copied_introduction_is_used(self):
+        text = (
+            "Dear Dr. Smith, let me introduce you to Rebeca Morales at Cofactor "
+            "AI (copied on this email)." + _SAFE_TAIL
+        )
+        self.assertEqual(self._draft_with(text), text)
 
-    # Passes every shared wording rule, so only the new-signup checks differ.
-    SAFE_TAIL = (
-        " We have a sourcing agreement with Cofactor AI; FHI may receive "
-        "compensation if you choose to work with them, which supports our "
-        "consumer mission. Thank you for your interest."
-    )
-
-    def test_draft_naming_rebeca_as_copied_is_used(self):
-        text = "Dear Dr. Smith, let me introduce you to Rebeca Morales, copied here." + self.SAFE_TAIL
+    def test_copied_introduction_match_ignores_case_and_line_breaks(self):
+        text = (
+            "Dear Dr. Smith, let me introduce you to rebeca morales at\ncofactor "
+            "ai (copied on this email)." + _SAFE_TAIL
+        )
         self.assertEqual(self._draft_with(text), text)
 
     def test_draft_dropping_rebeca_falls_back(self):
-        text = "Dear Dr. Smith, let me introduce you to Cofactor AI, copied here." + self.SAFE_TAIL
+        text = "Dear Dr. Smith, let me introduce you to Cofactor AI, copied here." + _SAFE_TAIL
         self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
 
     def test_draft_not_saying_rebeca_is_copied_falls_back(self):
-        text = "Dear Dr. Smith, please email Rebeca Morales at Cofactor AI." + self.SAFE_TAIL
+        text = "Dear Dr. Smith, please email Rebeca Morales at Cofactor AI." + _SAFE_TAIL
+        self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
+
+    def test_draft_with_name_and_copied_scattered_falls_back(self):
+        # Both words present but not the introduction itself: Rebeca named in
+        # the call to action, "copied" about someone else.
+        text = (
+            "Dear Dr. Smith, I've copied our professional team. Reply all and "
+            "Rebeca Morales can take it from there." + _SAFE_TAIL
+        )
+        self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
+
+    @override_settings(COFACTOR_INTRO_CONTACT="someone@cofactorai.com")
+    def test_bare_contact_draft_dropping_the_introduction_falls_back(self):
+        # "the Cofactor AI team" also appears in an unrelated paragraph, so the
+        # guard must require the introduction phrase, not just those words.
+        text = (
+            "Dear Dr. Smith, we're excited to introduce you to Cofactor AI. "
+            "We've spent a lot of time talking with the Cofactor AI team. I've "
+            "copied our professional team." + _SAFE_TAIL
+        )
         self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
 
     def test_backlog_draft_is_not_held_to_the_named_introduction(self):
-        text = "Dear Dr. Smith, let me introduce you to Cofactor AI." + self.SAFE_TAIL
-        fake = _FakeModel(result=text)
-        with patch.object(proconnector, "ml_router", _fake_router([fake])):
-            self.assertEqual(generate_intro_email(self.pro), text)
+        text = "Dear Dr. Smith, let me introduce you to Cofactor AI." + _SAFE_TAIL
+        self.assertEqual(self._draft_with(text, new_signup=False), text)
 
     def test_backlog_draft_keeps_the_no_cc_system_prompt(self):
-        fake = _FakeModel(result=None)
-        with patch.object(proconnector, "ml_router", _fake_router([fake])):
-            generate_intro_email(self.pro)
-        self.assertEqual(fake.last_system_prompts, [INTRO_SYSTEM_PROMPT])
-        self.assertIn("Do NOT say Cofactor AI is CC'd", INTRO_SYSTEM_PROMPT)
+        self.assertEqual(
+            self._prompted_model(new_signup=False).last_system_prompts,
+            [INTRO_SYSTEM_PROMPT],
+        )
 
 
+@_default_intro_contact
 class QuickIntroNewSignupTest(_QuickIntroTestCase):
     BODY = "Let me introduce you to Rebeca, with the compensation disclosure."
 
-    @patch(
-        "fighthealthinsurance.staff_views.generate_intro_email",
-        return_value="A draft body with compensation disclosure.",
-    )
-    def test_page_drafts_the_new_signup_version(self, mock_gen):
-        pro = _make_pro(email="jane@janeclinic.com")
-        self.client.get(self._url(pro.id))
-        self.assertTrue(mock_gen.call_args.kwargs["new_signup"])
+    def setUp(self):
+        super().setUp()
+        self.pro = _make_pro(email="jane@janeclinic.com")
+        patcher = patch(
+            "fighthealthinsurance.staff_views.generate_intro_email",
+            return_value="A draft body with compensation disclosure.",
+        )
+        self.mock_gen = patcher.start()
+        self.addCleanup(patcher.stop)
 
-    @patch(
-        "fighthealthinsurance.staff_views.generate_intro_email",
-        return_value="A draft body with compensation disclosure.",
-    )
-    def test_page_shows_rebeca_on_the_cc_line(self, _mock_gen):
-        pro = _make_pro(email="jane@janeclinic.com")
-        response = self.client.get(self._url(pro.id))
+    def test_page_drafts_the_new_signup_version(self):
+        self.client.get(self._url(self.pro.id))
+        self.assertTrue(self.mock_gen.call_args.kwargs["new_signup"])
+
+    def test_page_shows_rebeca_on_the_cc_line(self):
+        response = self.client.get(self._url(self.pro.id))
         self.assertContains(response, "Rebeca Morales &lt;rmorales@cofactorai.com&gt;")
 
+    def test_send_goes_to_the_professional(self):
+        self._post(self.pro.id, "send", email_body=self.BODY)
+        self.assertEqual(mail.outbox[0].to, ["jane@janeclinic.com"])
+
     def test_send_ccs_professional_and_rebeca(self):
-        pro = _make_pro(email="jane@janeclinic.com")
-        self._post(pro.id, "send", email_body=self.BODY)
-        msg = mail.outbox[0]
-        self.assertEqual(msg.to, ["jane@janeclinic.com"])
-        self.assertEqual(msg.cc, ["professional@fighthealthinsurance.com", REBECA])
+        self._post(self.pro.id, "send", email_body=self.BODY)
+        self.assertEqual(
+            mail.outbox[0].cc, ["professional@fighthealthinsurance.com", REBECA]
+        )
 
     def test_queue_ccs_professional_and_rebeca(self):
-        pro = _make_pro(email="jane@janeclinic.com")
-        self._post(pro.id, "queue", email_body=self.BODY)
-        se = ScheduledEmail.objects.get()
-        self.assertEqual(se.cc, ["professional@fighthealthinsurance.com", REBECA])
+        self._post(self.pro.id, "queue", email_body=self.BODY)
+        self.assertEqual(
+            ScheduledEmail.objects.get().cc,
+            ["professional@fighthealthinsurance.com", REBECA],
+        )
 
-    @patch(
-        "fighthealthinsurance.staff_views.generate_intro_email",
-        return_value="A draft body with compensation disclosure.",
-    )
     @override_settings(COFACTOR_INTRO_CONTACT="rmorales-at-cofactorai.com")
-    def test_malformed_contact_blocks_the_send_and_keeps_the_record(self, _mock_gen):
-        pro = _make_pro(email="jane@janeclinic.com")
-        response = self._post(pro.id, "send", email_body=self.BODY)
+    def test_malformed_contact_blocks_the_send_and_keeps_the_record(self):
+        response = self._post(self.pro.id, "send", email_body=self.BODY)
         self.assertContains(response, "COFACTOR_INTRO_CONTACT", status_code=400)
-        pro.refresh_from_db()
-        self.assertFalse(pro.proconnector_attempted)
+        self.pro.refresh_from_db()
+        self.assertFalse(self.pro.proconnector_attempted)
         self.assertEqual(len(mail.outbox), 0)
 
 
 class ProcessQueueStaysBacklogVersionTest(_ProcessViewTestCase):
+    def setUp(self):
+        super().setUp()
+        self.pro = _make_pro(email="jane@janeclinic.com")
+
     @patch(
         "fighthealthinsurance.staff_views.generate_intro_email",
         return_value="A draft body with compensation disclosure.",
     )
     def test_queue_drafts_the_backlog_version(self, mock_gen):
-        _make_pro(email="jane@janeclinic.com")
         self.client.get(self.url)
         self.assertFalse(mock_gen.call_args.kwargs.get("new_signup", False))
 
     def test_queue_send_does_not_cc_rebeca(self):
-        pro = _make_pro(email="jane@janeclinic.com")
         self._post(
             "send",
-            interested_professional_id=pro.id,
+            interested_professional_id=self.pro.id,
             subject="Intro to Cofactor AI",
             email_body="Re-engagement body with the compensation disclosure.",
         )
