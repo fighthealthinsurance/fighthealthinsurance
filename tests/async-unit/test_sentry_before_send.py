@@ -196,6 +196,37 @@ class TestInfrastructureTeardownNoiseIsDropped:
         }
         assert before_send_filter(event, {}) is event
 
+    def test_an_unreadable_entry_in_the_shutdown_is_kept(self):
+        """An entry scrubbed to a non-dict could be the real crash, so a
+        chain that is not wholly readable is never dropped whole (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    "[Filtered]",
+                    {"type": "SystemExit", "value": "15"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_an_unreadable_entry_beside_the_grpc_watcher_race_is_kept(self):
+        event = {
+            "exception": {
+                "values": [
+                    {
+                        "type": "ValueError",
+                        "value": "Cannot monitor channel state: Channel closed!",
+                    },
+                    "[Filtered]",
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
     def test_a_systemexit_alone_is_kept(self):
         """Only the teardown artifact is noise; an exit on its own is not."""
         event = _exc_event("SystemExit", "15")

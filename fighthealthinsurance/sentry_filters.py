@@ -27,7 +27,7 @@ noise those probes *do* generate is one transaction per novel path, handled
 by :func:`before_send_transaction_filter`.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 # Ray client connection failures are transient infrastructure noise: Ray
 # reconnects on its own, so there is nothing to action in Sentry. They are
@@ -127,6 +127,20 @@ def as_text(value: Any) -> str:
     return ""
 
 
+def raw_exception_entries(event: Any) -> Sequence[Any]:
+    """The event's ``exception.values`` as sent, unfiltered, or empty when
+    any level above the entries is malformed (see ``exception_values``)."""
+    if not isinstance(event, dict):
+        return []
+    exception = event.get("exception")
+    if not isinstance(exception, dict):
+        return []
+    values = exception.get("values")
+    if not isinstance(values, (list, tuple)):
+        return []
+    return values
+
+
 def exception_values(event: Any) -> List[Dict[str, Any]]:
     """The event's exception entries, defensively.
 
@@ -139,15 +153,7 @@ def exception_values(event: Any) -> List[Dict[str, Any]]:
     rather than surface, so every level is type-checked and a malformed
     payload yields "no exceptions found", which keeps the event.
     """
-    if not isinstance(event, dict):
-        return []
-    exception = event.get("exception")
-    if not isinstance(exception, dict):
-        return []
-    values = exception.get("values")
-    if not isinstance(values, (list, tuple)):
-        return []
-    return [value for value in values if isinstance(value, dict)]
+    return [value for value in raw_exception_entries(event) if isinstance(value, dict)]
 
 
 def is_sigterm_teardown(exc: dict) -> bool:
@@ -182,16 +188,26 @@ def before_send_filter(event: Any, hint: Any) -> Any:
             return None
 
     values = exception_values(event)
-    shutting_down = any(exc.get("type") == "SystemExit" for exc in values) and all(
-        is_sigterm_teardown(exc) for exc in values
+    # The whole-event drops below judge every entry, so they need every
+    # entry readable: one scrubbed to a non-dict could be the real crash in
+    # the chain (review).
+    whole_chain = len(values) == len(raw_exception_entries(event))
+    shutting_down = (
+        whole_chain
+        and any(exc.get("type") == "SystemExit" for exc in values)
+        and all(is_sigterm_teardown(exc) for exc in values)
     )
     # Same guard as shutting_down: a real crash chained with the watcher
     # race must still reach Sentry, so the event is dropped only when the
     # race is all it holds (review).
-    only_grpc_watcher_race = bool(values) and all(
-        exc.get("type") == "ValueError"
-        and GRPC_CHANNEL_WATCHER_MARKER in as_text(exc.get("value"))
-        for exc in values
+    only_grpc_watcher_race = (
+        whole_chain
+        and bool(values)
+        and all(
+            exc.get("type") == "ValueError"
+            and GRPC_CHANNEL_WATCHER_MARKER in as_text(exc.get("value"))
+            for exc in values
+        )
     )
     for exc in values:
         exc_value = as_text(exc.get("value"))
