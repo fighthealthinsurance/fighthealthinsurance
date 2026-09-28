@@ -99,15 +99,16 @@
     <div class="form-check mb-3">
         {{ form.use_external_models }}
         <label for="use_external_models" class="form-check-label">
-            Allow external AI models (e.g., OpenAI, Google)
+            Allow external AI models. <b>This is not required and involves sharing your conversation with third parties</b>, including Anthropic, Microsoft Azure, DeepInfra, TypeSafe, etc., subject to their own terms of service.
         </label>
         <small class="form-text text-muted d-block mt-1">
             We prefer our own FHI models and use their answers whenever they respond well.
             When this is enabled, external AI providers are asked alongside them on each
             message, so a good answer is ready if our models are slow, unavailable, or stuck
-            repeating themselves. Your conversation is sent to those third-party services
-            (with names and contact details removed in your browser first). Uncheck this to
-            keep your chat on our own models only.
+            repeating themselves. The name, email, street address, city and ZIP code you
+            entered above are removed in your browser first; please leave out other
+            identifying details, such as your phone number. Uncheck this to keep your chat
+            on our own models only.
         </small>
     </div>
 </div>

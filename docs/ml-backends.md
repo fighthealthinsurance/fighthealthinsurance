@@ -210,10 +210,10 @@ export AZURE_OPENAI_MODELS=full_local_model_name
   so include `/v1`.
 - The model registers as `azure-openai/<name>` in the `custom` tier, and it
   counts as an external model. Chat and appeals call external models only
-  while the external-models consent is on: "Allow external AI models (e.g.,
-  OpenAI, Google)" on the chat consent page, or "Increase the number of
-  possible appeals and use external models" on the first appeal page. Both
-  start checked. With it off, they call only the internal backends
+  while the external-models consent is on: "Allow external AI models" on the
+  chat consent page, or "Increase the number of possible appeals and use
+  external models" on the first appeal page. Both start checked. With it
+  off, they call only the internal backends
   (`HEALTH_BACKEND_*` and the others in option 2).
 - In chat, external models are asked alongside the internal ones. For
   appeals they are only the backup tier, so leave the internal backends
