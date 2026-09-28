@@ -2461,15 +2461,19 @@ class RegulatorContactInfoTest(TestCase):
         denial.save()
         self.assertIn("HTTPS://example.gov/complaint", self._outside_help_text(denial))
 
-    def test_outside_help_includes_medicaid_work_requirement_note(self):
-        medicaid = PlanSource.objects.create(
-            name="Medicaid", regex="medicaid", negative_regex="$^"
+    def _outside_help_text_for_plan(self, plan_source_name, state):
+        """Outside-help text for a denial with one plan source and a state."""
+        plan_source = PlanSource.objects.create(
+            name=plan_source_name, regex="zzz-never-matches", negative_regex="$^"
         )
         denial = self._make_denial()
-        denial.your_state = "GA"
+        denial.your_state = state
         denial.save()
-        denial.plan_source.set([medicaid])
-        text = self._outside_help_text(denial)
+        denial.plan_source.set([plan_source])
+        return self._outside_help_text(denial)
+
+    def test_outside_help_includes_medicaid_work_requirement_note(self):
+        text = self._outside_help_text_for_plan("Medicaid", "GA")
         self.assertIn("work/community-engagement requirement", text)
         self.assertIn("Georgia", text)
 
@@ -2478,14 +2482,7 @@ class RegulatorContactInfoTest(TestCase):
         # waiver_activity narrative ("Pathways to Coverage...") -- the
         # next-steps page should show the same narrative the chat surface
         # (get_medicaid_info) already does, not just the bare status word.
-        medicaid = PlanSource.objects.create(
-            name="Medicaid", regex="medicaid", negative_regex="$^"
-        )
-        denial = self._make_denial()
-        denial.your_state = "GA"
-        denial.save()
-        denial.plan_source.set([medicaid])
-        text = self._outside_help_text(denial)
+        text = self._outside_help_text_for_plan("Medicaid", "GA")
         self.assertIn("Pathways to Coverage", text)
 
     def test_outside_help_waiver_activity_renders_links_not_raw_markdown(self):
@@ -2493,14 +2490,7 @@ class RegulatorContactInfoTest(TestCase):
         # literal "<br>" markers. A bare html_escape() would mangle both
         # (dead bracket/paren text, literal "&lt;br&gt;"); confirm the real
         # tags render instead.
-        medicaid = PlanSource.objects.create(
-            name="Medicaid", regex="medicaid", negative_regex="$^"
-        )
-        denial = self._make_denial()
-        denial.your_state = "GA"
-        denial.save()
-        denial.plan_source.set([medicaid])
-        text = self._outside_help_text(denial)
+        text = self._outside_help_text_for_plan("Medicaid", "GA")
         self.assertIn(
             "<a href='https://www.medicaid.gov/medicaid/section-1115-demo/"
             "demonstration-and-waiver-list/81441' target='_blank' "
@@ -2512,25 +2502,11 @@ class RegulatorContactInfoTest(TestCase):
         self.assertNotIn("[waiver](", text)
 
     def test_outside_help_omits_work_requirement_note_for_non_medicaid_plan(self):
-        employer = PlanSource.objects.create(
-            name="Employer -- Private", regex="employer", negative_regex="$^"
-        )
-        denial = self._make_denial()
-        denial.your_state = "GA"
-        denial.save()
-        denial.plan_source.set([employer])
-        text = self._outside_help_text(denial)
+        text = self._outside_help_text_for_plan("Employer -- Private", "GA")
         self.assertNotIn("work/community-engagement requirement", text)
 
     def test_outside_help_omits_work_requirement_note_without_state(self):
-        medicaid = PlanSource.objects.create(
-            name="Medicaid", regex="medicaid", negative_regex="$^"
-        )
-        denial = self._make_denial()
-        denial.your_state = None
-        denial.save()
-        denial.plan_source.set([medicaid])
-        text = self._outside_help_text(denial)
+        text = self._outside_help_text_for_plan("Medicaid", None)
         self.assertNotIn("work/community-engagement requirement", text)
 
     def test_migration_backfill_fills_blank_regulator_phones(self):
