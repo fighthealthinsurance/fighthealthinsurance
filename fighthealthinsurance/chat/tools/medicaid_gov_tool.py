@@ -20,7 +20,11 @@ from loguru import logger
 from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
 
 from .base_tool import BaseTool
-from .doc_fetcher_tool import _sanitize_url_for_display, validate_url
+from .doc_fetcher_tool import (
+    _sanitize_url_for_display,
+    _url_summary_for_log,
+    validate_url,
+)
 from .patterns import MEDICAID_GOV_LOOKUP_REGEX
 
 # Characters of page text handed to the LLM. Medicaid.gov pages are wordy and
@@ -75,6 +79,7 @@ class MedicaidGovLookupTool(BaseTool):
         don't call it inline from async code.
         """
         from fighthealthinsurance.medicaid_gov_api import (
+            ALLOWED_HOSTS,
             is_allowed_url,
             resolve_curated_source,
             search_medicaid_gov,
@@ -92,7 +97,10 @@ class MedicaidGovLookupTool(BaseTool):
             candidate = url_value.strip()
             if is_allowed_url(candidate):
                 return candidate, [], "the URL provided"
-            logger.warning(f"medicaid_gov_lookup refused off-allowlist URL {candidate}")
+            logger.warning(
+                "medicaid_gov_lookup refused off-allowlist URL "
+                f"({_url_summary_for_log(candidate, ALLOWED_HOSTS)})"
+            )
 
         query = params.get("query") or params.get("topic")
         if isinstance(query, str) and query.strip():
@@ -125,14 +133,17 @@ class MedicaidGovLookupTool(BaseTool):
         is_professional: bool = False,
         **kwargs,
     ) -> Tuple[str, str]:
-        from fighthealthinsurance.medicaid_gov_api import curated_source_menu
+        from fighthealthinsurance.medicaid_gov_api import (
+            ALLOWED_HOSTS,
+            curated_source_menu,
+        )
 
         cleaned_response = self.clean_response(response_text, match)
 
         try:
             params = json.loads(match.group(1).strip())
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in medicaid_gov_lookup: {e}")
+            logger.warning(f"Invalid JSON in medicaid_gov_lookup: {type(e).__name__}")
             return cleaned_response, context
         if not isinstance(params, dict):
             logger.warning("medicaid_gov_lookup called with non-object JSON")
@@ -181,7 +192,10 @@ class MedicaidGovLookupTool(BaseTool):
                 url, url_validator=validate_url
             )
         except Exception as e:
-            logger.warning(f"medicaid_gov_lookup failed to fetch {safe_url}: {e}")
+            logger.warning(
+                "medicaid_gov_lookup failed to fetch "
+                f"({_url_summary_for_log(url, ALLOWED_HOSTS)}): {type(e).__name__}"
+            )
             await self.send_status_message(f"Couldn't reach {safe_url}.")
             return cleaned_response, context
 

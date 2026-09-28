@@ -63,6 +63,7 @@ from fighthealthinsurance.denial_context import (
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
+from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.media_references import (
     MEDIA_REFERENCES,
     SOCIAL_MEDIA_REFERENCES,
@@ -2051,7 +2052,7 @@ class InitialProcessView(generic.FormView):
         if not is_valid_denial_id(denial_response.denial_id):
             logger.error(
                 "Invalid denial_id generated in form workflow. "
-                f"session_key={self.request.session.session_key or 'no_session_key'} "
+                f"session_key={session_key_prefix_for_log(self.request.session.session_key)} "
                 f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
                 f"denial_uuid={denial_response.uuid} denial_id={denial_response.denial_id}"
             )
@@ -2458,7 +2459,7 @@ class SessionRequiredMixin(View):
             if not is_valid_denial_id(denial_id):
                 logger.warning(
                     "Invalid denial_id format in request context resolution. "
-                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"session_key={session_key_prefix_for_log(self.request.session.session_key)} "
                     f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
                     f"denial_id={denial_id}"
                 )
@@ -2488,7 +2489,7 @@ class SessionRequiredMixin(View):
             except models.Denial.DoesNotExist:
                 logger.warning(
                     "Invalid denial lookup for provided denial reference. "
-                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"session_key={session_key_prefix_for_log(self.request.session.session_key)} "
                     f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
                     f"denial_id={denial_id}"
                 )

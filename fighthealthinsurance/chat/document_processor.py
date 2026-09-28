@@ -250,13 +250,14 @@ async def summarize_chunks(
 
     except Exception as e:
         logger.opt(exception=True).warning(
-            f"Failed to summarize ChatDocument {chat_document_id}: {e}"
+            f"Failed to summarize ChatDocument {chat_document_id}: "
+            f"{type(e).__name__}"
         )
         try:
             doc.processing_status = ChatDocument.Status.FAILED
             await doc.asave(update_fields=["processing_status"])
         except Exception as save_err:
-            logger.debug(f"Could not persist failed status: {save_err}")
+            logger.debug(f"Could not persist failed status: {type(save_err).__name__}")
 
 
 async def process_uploaded_document(

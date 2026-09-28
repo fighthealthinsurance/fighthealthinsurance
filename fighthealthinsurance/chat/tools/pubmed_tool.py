@@ -92,7 +92,9 @@ class PubMedTool(BaseTool):
 
         # Validate query terms
         if "your search terms" in pubmed_query_terms:
-            logger.debug(f"Got bad PubMed Query {pubmed_query_terms}")
+            logger.debug(
+                f"Got placeholder PubMed query (query_chars={len(pubmed_query_terms)})"
+            )
             return cleaned_response, context
 
         if len(pubmed_query_terms.strip()) == 0:
@@ -180,7 +182,9 @@ class PubMedTool(BaseTool):
         try:
             normalized = await self.rxnorm_tools.normalize(query)
         except Exception as e:
-            logger.opt(exception=True).debug(f"RxNorm normalization failed: {e}")
+            logger.opt(exception=True).debug(
+                f"RxNorm normalization failed: {type(e).__name__}"
+            )
             return query
         if not normalized.matched:
             return query
