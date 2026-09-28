@@ -59,17 +59,22 @@ import typing
 from django.conf import settings
 from loguru import logger
 
-from fighthealthinsurance.ml import typesafe
+from fighthealthinsurance.ml import spend, typesafe
 
 # Recorded on every scored row, and every aggregate filters on it. Two things
-# move the scale: TypeSafe's "speed_latest" is an alias they can repoint, and
-# the questions below are our half of the rubric. Bump RUBRIC_VERSION whenever
-# the questions change; either change starts a fresh series on the dashboard
-# instead of averaging two scales into one line called "drift".
-MODEL = typesafe.DEFAULT_MODEL
-RUBRIC_VERSION = 1
+# move the scale: the model that answers (TYPESAFE_MODEL, a pinned Jev release
+# by default; an alias such as "jev-latest" can be repointed by TypeSafe), and
+# the questions below, which are our half of the rubric. Bump RUBRIC_VERSION
+# whenever the questions change; either change starts a fresh series on the
+# dashboard instead of averaging two scales into one line called "drift".
+# 2: requests moved to the documented System One body and a pinned Jev
+# release, so a score stored before then is rescored, not ranked against
+# fresh ones (same_rubric does not compare the model half).
+RUBRIC_VERSION = 2
 _RUBRIC_SUFFIX = f"/rubric-{RUBRIC_VERSION}"
-SCORER = f"typesafe/{MODEL}{_RUBRIC_SUFFIX}"
+# The provenance under the default model. Rows record the model the response
+# names; see scorer_for.
+SCORER = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
 
 # Key of the cross-pod health record (models.ExternalServiceHealth) that the
 # staff status page reads.
@@ -80,18 +85,12 @@ def scorer_for(payload: typing.Any) -> str:
     """The provenance string for a row: the model TypeSafe says answered
     plus our rubric version.
 
-    Known limit, accepted: System One only exposes the moving alias
-    ("speed_latest") and, in some responses, the resolved model it used. When
-    the response names none, the alias is recorded, and a repoint that hides
-    behind the alias is invisible to us. The rubric half is ours and exact;
-    the model half is as good as the provider makes it."""
-    answered = None
-    if isinstance(payload, dict):
-        answered = payload.get("model")
-    model = str(answered).strip() if answered else MODEL
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,48}", model):
-        model = MODEL  # never let an odd answer forge the provenance format
-    return f"typesafe/{model}{_RUBRIC_SUFFIX}"
+    The response names the versioned model that answered, so a model change,
+    including an alias TypeSafe repoints, starts a new scorer string and a
+    new series. A response that names no model, or an odd one, is recorded
+    under the model the request named (typesafe.reported_model). The rubric
+    half is ours and exact."""
+    return f"typesafe/{typesafe.reported_model(payload)}{_RUBRIC_SUFFIX}"
 
 
 _SCORER_RE = re.compile(r"^typesafe/([A-Za-z0-9._-]{1,48})/rubric-(\d{1,4})$")
@@ -105,7 +104,7 @@ def same_rubric(scorer: typing.Optional[str]) -> bool:
     return match is not None and int(match.group(2)) == RUBRIC_VERSION
 
 
-DOCUMENT_CHAR_CAP = typesafe.DOCUMENT_CHAR_CAP
+DOCUMENT_CHAR_CAP = typesafe.STATE_CHAR_CAP
 # Longer than this and we do not score at all: cutting raw text could split
 # an identifier, and every scan is bounded by this. It is eight times what
 # can be sent, so a real letter never comes near it.
@@ -490,8 +489,10 @@ def parse_answers(payload: typing.Any) -> LetterScore:
 
 async def _post(document: str, timeout_seconds: float) -> typing.Any:
     # Kept as a seam: tests stub this one function to stay off the network.
+    # The document goes out as the request's state; the model comes from
+    # TYPESAFE_MODEL (typesafe.model_name).
     return await typesafe.ask(
-        document, QUESTIONS, timeout_seconds=timeout_seconds, model=MODEL
+        document, QUESTIONS, timeout_seconds=timeout_seconds, use=spend.LETTERS
     )
 
 

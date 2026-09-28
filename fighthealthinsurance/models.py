@@ -2773,6 +2773,19 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     grounding_score = models.FloatField(null=True, blank=True)
     quality_scorer = models.CharField(max_length=80, null=True, blank=True)
     quality_scored_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Chosen rows only: the ids of the drafts that were on screen when the
+    # user picked (the browser reports them). The appeals page folds every
+    # draft past its visible limit behind a button, so "generated for the
+    # denial" is not "shown": counting the folded ones as presented deflated
+    # the win rate of whatever landed fourth. Null for picks recorded before
+    # this existed and for flows that cannot say (share, professional).
+    presented_ids = models.JSONField(null=True, blank=True)
+    # Chosen rows written by the professional flow (assemble_appeal). That flow
+    # keeps one pick per denial -- a re-assembly replaces the earlier pick --
+    # and this marker is what limits the replacement to its own rows: nothing
+    # else about a row says which flow wrote it, and a consumer, share-flow or
+    # pre-existing pick on the same denial must never be deleted.
+    professional_pick = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
@@ -2782,6 +2795,18 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
                 name="uniq_proposedappeal_fingerprint_per_denial",
             ),
         ]
+
+    @classmethod
+    def text_match_q(cls, text: typing.Optional[str]) -> Q:
+        """Rows whose text is ``text``: by fingerprint when one can be computed
+        (so CRLF, whitespace and case differences still match) or by the exact
+        text. Shared by the pick recorder and the attribution backfill so the
+        two cannot drift."""
+        match = Q(appeal_text=text)
+        fingerprint = cls.fingerprint(text)
+        if fingerprint is not None:
+            match |= Q(text_fingerprint=fingerprint)
+        return match
 
     @staticmethod
     def fingerprint(text: typing.Optional[str]) -> typing.Optional[str]:
@@ -2878,6 +2903,7 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     @staticmethod
     def sole_draft_attribution(
         denial_id,
+        before_id: typing.Optional[int] = None,
     ) -> typing.Optional[typing.Tuple[str, bool, typing.Optional[str]]]:
         """Return ``(model_name, synthesized, context_level)`` when every
         generated draft for the denial is attributed to exactly one model, else
@@ -2890,7 +2916,10 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         attribution is returned in that case. A blank/whitespace model_name
         (the field is ``blank=True``) is treated as missing for the same
         reason. Used by mark_proposal_chosen as a fallback and by the
-        attribution backfill; must never guess.
+        attribution backfill; must never guess. ``before_id`` bounds the
+        evidence to drafts stored before that row id (the backfill passes the
+        pick's own id): a draft generated after the pick was not on the
+        screen when the user chose, so it says nothing about the pick.
 
         ``context_level`` is inferred SEPARATELY and only when all drafts share
         exactly one level -- the model inference deliberately tolerates drafts
@@ -2901,6 +2930,8 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         base_qs = ProposedAppeal.objects.filter(
             for_denial_id=denial_id, chosen=False, speculative=False
         )
+        if before_id is not None:
+            base_qs = base_qs.filter(id__lt=before_id)
         pairs = list(base_qs.values_list("model_name", "synthesized").distinct()[:2])
         if len(pairs) != 1:
             return None
@@ -3685,6 +3716,312 @@ class ChatDocument(models.Model):
         return f"ChatDocument {self.id}: {self.document_name} ({self.char_count} chars)"
 
 
+class ChatTurn(models.Model):
+    """Which models raced for one chat turn, how each call ended, which one
+    won, and which side-by-side answer the person picked.
+
+    Metadata only: no message, reply, summary, history, context or document
+    text, and exception class names rather than exception text. The only
+    strings are model labels, backend descriptors, the enum values below and
+    the shadow scorer string (a model name and a rubric version).
+    ``chat`` cascades and is non-nullable, so deleting a chat (including
+    ``RemoveDataHelper.remove_data_for_email``) takes its turns with it and
+    no row can outlive its chat.
+
+    One row per turn counted in ``fhi_chat_turns_total``; ``outcome`` uses
+    the same values. Written by ``chat/turn_record.py``.
+    """
+
+    class Outcome(models.TextChoices):
+        OK = "ok", "OK"
+        FAILED = "failed", "Failed"
+        TIMEOUT = "timeout", "Timed out"
+
+    class Preferred(models.TextChoices):
+        NONE = "", "No pick"
+        PRIMARY = "primary", "Primary"
+        ALTERNATE = "alternate", "Alternate"
+
+    class ShadowOutcome(models.TextChoices):
+        NONE = "", "Not scored"
+        SCORED = "scored", "Scored"
+        FAILED = "failed", "Failed"
+        TIMEOUT = "timeout", "Timed out"
+
+    class ExternalStart(models.TextChoices):
+        # The StagedStart outcomes in utils.py, plus "" for a primary pass
+        # that asked no outside model.
+        NONE = "", "No outside model asked"
+        IMMEDIATE = "immediate", "Asked with ours"
+        AFTER_DELAY = "after_delay", "Started after the delay"
+        EARLY = "early", "Started early: ours all failed"
+        AFTER_CHECK = "after_check", "Started early: the check on ours did not pass"
+        SKIPPED = "skipped", "Skipped: ours answered first"
+
+    class GateOutcome(models.TextChoices):
+        # The outcomes in ml/chat_gate.py, plus "" for a turn the check was
+        # not on for.
+        NONE = "", "Not checked"
+        PASS = "pass", "Passed"
+        BORDERLINE = "borderline", "Borderline"
+        FAIL = "fail", "Failed"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Nothing judged"
+
+    class RankOutcome(models.TextChoices):
+        # The ranking outcomes in ml/chat_gate.py, plus "" for a turn with
+        # no ranking.
+        NONE = "", "Not ranked"
+        PICKED = "picked", "Jev picked"
+        ERROR = "error", "Error"
+        TIMEOUT = "timeout", "Timed out"
+        SKIPPED = "skipped", "Not sent"
+
+    class AlternateReason(models.TextChoices):
+        NONE = "", "No side-by-side"
+        TIED = "tied", "Closely tied scores"
+        CRUCIAL = "crucial", "Crucial moment (Jev)"
+
+    # Also the turn_id the client echoes back with its side-by-side pick.
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    chat = models.ForeignKey(
+        OngoingChat,
+        on_delete=models.CASCADE,
+        related_name="model_turns",
+        # Non-nullable so a turn can never outlive the chat it describes.
+        null=False,
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    outcome = models.CharField(max_length=16, choices=Outcome.choices)
+    # Whether the person allowed outside models for this turn.
+    use_external = models.BooleanField()
+    # Registry labels of the primary fan-out, in order (a backend listed
+    # twice by the router appears twice), and of the retry fallbacks.
+    backends = models.JSONField(default=list, blank=True)
+    fallback_backends = models.JSONField(default=list, blank=True)
+    # One entry per model call: {model, backend, external, pass (primary,
+    # retry or tool), depth, history (truncated, full, retry_short or
+    # retry_full), variant, status (scored, repeat, empty, unscored, error or
+    # late), error (exception class name or ""), ms (null only when late),
+    # score (null when rejected or never scored)}.
+    calls = models.JSONField(default=list, blank=True)
+    # The model whose reply was delivered. When a tool follow-up wrote the
+    # reply, that follow-up's pick; otherwise the first pass's.
+    winner_model = models.CharField(max_length=200, blank=True, default="")
+    winner_score = models.FloatField(null=True, blank=True)
+    # Which pass produced the delivered reply: "primary", "retry" (the first
+    # pass's retry) or "tool" (a tool follow-up, retried or not).
+    winner_pass = models.CharField(max_length=16, blank=True, default="")
+    # Whether the winning model is an outside (paid) one; null when unknown.
+    winner_external = models.BooleanField(null=True, blank=True)
+    # The first pass's pick, before any tool follow-up. Same as the winner
+    # unless a tool follow-up wrote the reply; the runner-up, the tie and
+    # the alternate compare against this one.
+    first_pass_model = models.CharField(max_length=200, blank=True, default="")
+    first_pass_score = models.FloatField(null=True, blank=True)
+    runner_up_model = models.CharField(max_length=200, blank=True, default="")
+    runner_up_score = models.FloatField(null=True, blank=True)
+    # Winner and runner-up within ALTERNATE_CLOSE_TIE_RATIO of each other.
+    closely_tied = models.BooleanField(default=False)
+    # Candidates hard-rejected as repeats, across every pass of the turn.
+    rejected_repeats = models.PositiveIntegerField(default=0)
+    # The delivered reply still repeated a recent reply.
+    delivered_repeat = models.BooleanField(default=False)
+    # Any pass of the turn ran the retry (so the fallbacks were asked), and
+    # whether the delivered answer came from a retry.
+    retry_ran = models.BooleanField(default=False)
+    retry_used = models.BooleanField(default=False)
+    tool_passes = models.PositiveSmallIntegerField(default=0)
+    tool_rewrote = models.BooleanField(default=False)
+    # The primary pass plus its retry, and the whole turn, in milliseconds.
+    fanout_ms = models.PositiveIntegerField(null=True, blank=True)
+    turn_ms = models.PositiveIntegerField(null=True, blank=True)
+    alternate_offered = models.BooleanField(default=False)
+    alternate_model = models.CharField(max_length=200, blank=True, default="")
+    # The offered pair came from two different models.
+    alternate_cross_model = models.BooleanField(default=False)
+    # Why it was offered: our tied-scores rule, or a crucial moment by Jev.
+    alternate_reason = models.CharField(
+        max_length=16, blank=True, default="", choices=AlternateReason.choices
+    )
+    # The person's side-by-side pick. The first pick wins.
+    preferred = models.CharField(
+        max_length=16, blank=True, default="", choices=Preferred.choices
+    )
+    preferred_at = models.DateTimeField(null=True, blank=True)
+    # Shadow scores from TypeSafe (ml/chat_shadow.py), written in the
+    # background after the reply was delivered, only for chats that allowed
+    # outside models. Numbers, the scorer string and an outcome only.
+    # "winner" is the delivered reply; "second" is the side-by-side
+    # alternate when one was offered, otherwise the runner-up, and its
+    # scores are empty when the turn had neither.
+    shadow_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=ShadowOutcome.choices
+    )
+    # "typesafe/<model that answered>/chat-rubric-<n>", empty unless scored.
+    shadow_scorer = models.CharField(max_length=80, blank=True, default="")
+    # answers the question asked, 0..2; states a coverage or eligibility
+    # verdict, 0..1; asks for information the message already gave, 0..1;
+    # promises or guarantees a result, 0..1.
+    shadow_winner_answers = models.FloatField(null=True, blank=True)
+    shadow_winner_verdict = models.FloatField(null=True, blank=True)
+    shadow_winner_asks_again = models.FloatField(null=True, blank=True)
+    shadow_winner_promises = models.FloatField(null=True, blank=True)
+    shadow_second_answers = models.FloatField(null=True, blank=True)
+    shadow_second_verdict = models.FloatField(null=True, blank=True)
+    shadow_second_asks_again = models.FloatField(null=True, blank=True)
+    shadow_second_promises = models.FloatField(null=True, blank=True)
+    # How the primary pass started the outside models: with ours, or held
+    # back by the routing policy's delay (ChatRoutingPolicy) or for the
+    # check on our reply (gate_* below), and then started or skipped. The
+    # delay is the hold that pass used; both are empty when the pass asked
+    # no outside model.
+    external_start = models.CharField(
+        max_length=16, blank=True, default="", choices=ExternalStart.choices
+    )
+    external_delay_seconds = models.FloatField(null=True, blank=True)
+    # The live Jev check on our first usable reply (chat/reply_gate.py):
+    # whether the primary pass held the outside models back for it, and how
+    # it came out. The four answers are Jev's probabilities (0 to 1) that
+    # the reply responds to the message, states a coverage or eligibility
+    # verdict, asks for something the message already gives, and promises
+    # a result; null unless Jev answered. The scorer names the model that
+    # answered and the rubric version, or is fhi/local-checks-N when our
+    # own checks failed the reply before Jev was asked. gate_model is the
+    # label of the model whose reply was judged. Numbers and labels only,
+    # never text.
+    gate_used = models.BooleanField(default=False)
+    gate_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=GateOutcome.choices
+    )
+    gate_answers = models.FloatField(null=True, blank=True)
+    gate_verdict = models.FloatField(null=True, blank=True)
+    gate_asks_again = models.FloatField(null=True, blank=True)
+    gate_promises = models.FloatField(null=True, blank=True)
+    gate_scorer = models.CharField(max_length=80, blank=True, default="")
+    gate_ms = models.PositiveIntegerField(null=True, blank=True)
+    gate_model = models.CharField(max_length=200, blank=True, default="")
+    # After a failed check (FHI_CHAT_JEV_GATE_DEMOTE_FAILED on): the judged
+    # reply was ranked just below the outside models' answers, and whether
+    # it was still the reply delivered because nothing else usable arrived.
+    gate_demoted = models.BooleanField(default=False)
+    gate_demoted_delivered = models.BooleanField(default=False)
+    # Jev's probability that the person's message is a crucial moment (a
+    # deadline, a denial, an appeal's next step, coverage); null unless Jev
+    # answered.
+    gate_crucial = models.FloatField(null=True, blank=True)
+    # After a borderline check, Jev scored every deliverable candidate in
+    # one request: how that went, how long it took, how many it scored, and
+    # whether its pick replaced the race's. Each call's score is in calls.
+    rank_outcome = models.CharField(
+        max_length=16, blank=True, default="", choices=RankOutcome.choices
+    )
+    rank_ms = models.PositiveIntegerField(null=True, blank=True)
+    rank_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    rank_changed = models.BooleanField(default=False)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["chat", "-created_at"], name="chatturn_chat_created_idx"
+            ),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"ChatTurn<{self.outcome} {self.winner_model or 'no winner'}>"
+
+
+class ChatRoutingPolicy(models.Model):
+    """One computed routing policy for the chat fan-out.
+
+    Rows are never edited: each computation appends a new row and the
+    newest one wins, so the table is also a record of which policy was in
+    force when, for the last 30 days. Rows older than that are deleted
+    after a new one is written (``ml/chat_policy.prune_old_chat_policies``).
+    Written by ``ml/chat_policy.compute_and_store_chat_policy`` (the
+    ``compute_chat_policy`` command, or the ``chat-routing-policy``
+    Temporal Schedule) from ChatTurn metadata, and read by
+    ``ml/chat_policy.aget_chat_policy`` on the chat path. A Temporal run
+    writes at most one row, keyed by its run id. Holds model names, numbers
+    and that id only.
+
+    A policy can only narrow the outside models the router already picks:
+    it never adds a model and never overrides a person's choice to keep
+    chat on our own models. Chat follows it only while
+    FHI_CHAT_POLICY_APPLY is on and the row is newer than
+    FHI_CHAT_POLICY_MAX_AGE_MINUTES; otherwise it is shown on the staff
+    usage dashboard and chat routes as if there were none.
+    """
+
+    class Source(models.TextChoices):
+        TEMPORAL = "temporal", "Temporal schedule"
+        MANUAL = "manual", "compute_chat_policy command"
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text=(
+            "When the policy was computed. Rows are never edited; a new "
+            "policy is a new row, and rows older than 30 days are deleted "
+            "after a new one is written."
+        ),
+    )
+    source = models.CharField(max_length=16, choices=Source.choices)
+    # The Temporal workflow run that wrote the row, so a run writes at most
+    # one row however often its activity is retried. Empty (NULL) for rows
+    # from the compute_chat_policy command, which may repeat.
+    run_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "The Temporal workflow run that wrote this row; each run writes "
+            "at most one. Empty for rows from the compute_chat_policy command."
+        ),
+    )
+    # Readers ignore a row whose version they do not know.
+    schema_version = models.PositiveSmallIntegerField(default=1)
+    # The ChatTurn window the policy was computed from, and how many turns
+    # in it reached the models.
+    window_minutes = models.PositiveIntegerField()
+    turns_considered = models.PositiveIntegerField(default=0)
+    # Registry names of outside models to leave out of the chat fan-out.
+    external_excluded = models.JSONField(default=list, blank=True)
+    # How long the fan-out holds the outside models back while our own
+    # models answer (FHI_CHAT_EXTERNAL_HOLD_SECONDS); 0 asks them together.
+    external_delay_seconds = models.FloatField(default=0.0)
+    # The outside models in the order chat should ask them: the roster
+    # (FHI_CHAT_OUTSIDE_MODELS) with the models that have enough turns
+    # reordered among their own places by how often their answer was
+    # delivered, and {name: [score, turns]} for those. Spending caps are
+    # not here: ml/spend.py enforces them live.
+    outside_order = models.JSONField(default=list, blank=True)
+    order_scores = models.JSONField(default=dict, blank=True)
+    # The numbers behind the delay: the share of the last hour's turns
+    # where one of our models gave a usable answer, and the 75th percentile
+    # of how long that took over the window.
+    internal_usable_rate = models.FloatField(null=True, blank=True)
+    internal_ttu_p75_ms = models.PositiveIntegerField(null=True, blank=True)
+    # Short machine-readable tokens saying why, e.g. "few_turns".
+    reason = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run_id"],
+                condition=models.Q(run_id__isnull=False),
+                name="uniq_chatroutingpolicy_run_id",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"ChatRoutingPolicy<{self.source} {self.created_at}>"
+
+
 class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type: ignore
     """
     Stores lead data from trial chat users who have not created a full account.
@@ -4213,6 +4550,28 @@ class DataRemovalTotals(models.Model):
         return f"DataRemovalTotals<{self.requests} requests>"
 
 
+class SpendCounter(models.Model):
+    """Spend on one paid provider for one use, per UTC day, shared by every
+    pod (ml/spend.py keeps the budgets). ``name`` is "<provider>:<use>", for
+    example "typesafe:chat" or "deepinfra:chat"; ``amount`` is micro-dollars
+    (calls for Azure, which is sponsored). Names and numbers only."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    amount = models.BigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "name"], name="spend_counter_day_name"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.day} {self.name}: {self.amount}"
+
+
 class ExternalServiceHealth(models.Model):
     """Last outcome of calls to one external service, shared across pods.
 
@@ -4245,9 +4604,7 @@ class ExternalServiceHealth(models.Model):
         (another pod's first write), the conditional UPDATE runs once more
         against it, so the newer outcome still wins (review).
         """
-        older = models.Q(**{f"{field}__isnull": True}) | models.Q(
-            **{f"{field}__lt": now}
-        )
+        older = cls._older(field, now)
         if await cls.objects.filter(models.Q(service=service) & older).aupdate(
             **values
         ):
@@ -4256,6 +4613,57 @@ class ExternalServiceHealth(models.Model):
         if created:
             return
         await cls.objects.filter(models.Q(service=service) & older).aupdate(**values)
+
+    @staticmethod
+    def _older(field: str, now) -> models.Q:
+        return models.Q(**{f"{field}__isnull": True}) | models.Q(
+            **{f"{field}__lt": now}
+        )
+
+    @classmethod
+    def _advance_sync(cls, service: str, field: str, now, values: dict) -> None:
+        """_advance for sync code: the same three statements, in a savepoint
+        when the caller is inside a transaction, so a failure here leaves
+        that transaction usable."""
+        older = cls._older(field, now)
+        with transaction.atomic():
+            if cls.objects.filter(models.Q(service=service) & older).update(**values):
+                return
+            _, created = cls.objects.get_or_create(service=service, defaults=values)
+            if created:
+                return
+            cls.objects.filter(models.Q(service=service) & older).update(**values)
+
+    @classmethod
+    def note_success(cls, service: str) -> None:
+        """anote_success for sync code, such as a thread with its own
+        connection (chat/isolated_db.py). Best effort, and logs the error
+        class only."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(service, "last_success_at", now, {"last_success_at": now})
+        except Exception as e:
+            logger.warning(
+                f"could not record a success for external service {service}: "
+                f"{type(e).__name__}"
+            )
+
+    @classmethod
+    def note_failure(cls, service: str, summary: str) -> None:
+        """anote_failure for sync code; see note_success."""
+        try:
+            now = timezone.now()
+            cls._advance_sync(
+                service,
+                "last_failure_at",
+                now,
+                {"last_failure_at": now, "last_failure": (summary or "")[:80]},
+            )
+        except Exception as e:
+            logger.warning(
+                f"could not record a failure for external service {service}: "
+                f"{type(e).__name__}"
+            )
 
     @classmethod
     async def anote_success(cls, service: str) -> None:
@@ -4395,9 +4803,13 @@ class ModelCallAttempt(models.Model):
     # Friendly registry name (matches ProposedAppeal.model_name /
     # ModelBackendHealthCheckResult.model_name), or "unknown".
     model_name = models.CharField(max_length=200, blank=True, default="", db_index=True)
-    # repr of the specific backend the call went to, when one was reached.
+    # Which backend INSTANCE the call went to, when one was reached: class,
+    # wire model id and endpoint host(s) (RemoteModelLike.backend_descriptor).
+    # Several instances can share one registry name, which is why this is
+    # not just model_name again.
     backend = models.CharField(max_length=300, blank=True, default="")
-    # Ladder stage: primary / backup / retry_tier_1 / retry_tier_2.
+    # Ladder stage: primary / backup / retry_tier_1 / retry_tier_2, or
+    # synthesis (the backend whose synthesis of the drafts won).
     stage = models.CharField(max_length=32, blank=True, default="")
     # context_utils.CONTEXT_LEVEL_* for the context this call was given.
     context_level = models.CharField(max_length=32, blank=True, default="")
@@ -4409,6 +4821,7 @@ class ModelCallAttempt(models.Model):
     # ok, runt_only, rejected_at_peek (the undeliverable first item that made
     # the ladder fall through to the next stage), no_output (the model answered
     # with nothing), error (the call itself failed -- see error_detail),
+    # abandoned (the requester's deadline passed before the call answered),
     # not_registered, no_prompt, all_backends_failed.
     outcome = models.CharField(max_length=64, db_index=True)
     # Classified failure reason (describe_model_error) or exception text.

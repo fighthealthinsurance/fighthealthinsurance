@@ -1,4 +1,5 @@
-"""Temporal client connection + fax-dispatch helpers.
+"""Temporal client connection, fax-dispatch helpers and the chat policy
+Schedule.
 
 All ``temporalio`` imports are done lazily inside the functions so that simply
 importing this module (e.g. from ``fax_helpers``) does not require ``temporalio``
@@ -8,6 +9,7 @@ leaving the existing Ray path entirely untouched.
 """
 
 import asyncio
+from datetime import timedelta
 from typing import Any, Optional
 
 from asgiref.sync import async_to_sync
@@ -435,6 +437,134 @@ def _intake_enabled() -> bool:
         and getattr(settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False)
         and getattr(settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False)
     )
+
+
+# --- The chat routing policy Schedule ---------------------------------------
+
+# One Schedule, kept by the appeal-worker process at start-up (see
+# run_temporal_worker) and by `manage.py ensure_temporal_schedules`. Each run
+# writes one ChatRoutingPolicy row; history holds the window, the run id and
+# the row id.
+CHAT_POLICY_SCHEDULE_ID = "chat-routing-policy"
+# Scheduled runs get this id with the scheduled time appended by Temporal.
+CHAT_POLICY_WORKFLOW_ID = "chat-routing-policy-run"
+# Daily: the live spend counters (ml/spend.py) switch models off as budgets
+# run out, so this run only refreshes the learned order and the hold, and is
+# the backup that rewrites the row if one run is missed.
+CHAT_POLICY_EVERY = timedelta(days=1)
+# After a Temporal outage, only a run missed in the last day is made up, so
+# an outage ends in one run at most.
+CHAT_POLICY_CATCHUP_WINDOW = timedelta(days=1)
+# A run is one short activity (two minutes, three attempts); anything longer
+# is stuck, and the next run is due anyway.
+CHAT_POLICY_RUN_TIMEOUT = timedelta(minutes=5)
+SCHEDULE_RPC_TIMEOUT_SECONDS = 10.0
+
+SCHEDULE_CREATED = "created"
+SCHEDULE_UPDATED = "updated"
+SCHEDULE_PAUSED = "paused"
+SCHEDULE_ABSENT = "absent"
+
+
+def chat_policy_schedule_enabled() -> bool:
+    """Whether the chat policy Schedule should run: TEMPORAL_ENABLED and
+    TEMPORAL_CHAT_POLICY_ENABLED, independent of the journey flags."""
+    return bool(
+        getattr(settings, "TEMPORAL_ENABLED", False)
+        and getattr(settings, "TEMPORAL_CHAT_POLICY_ENABLED", False)
+    )
+
+
+def chat_policy_schedule() -> Any:
+    """The ``chat-routing-policy`` Schedule as it should be: once a day,
+    skip a run while the last one is still going, make up at most one day
+    of missed runs, and start ChatRoutingPolicyWorkflow on the
+    policy task queue with a five-minute execution timeout."""
+    from temporalio.client import (
+        Schedule,
+        ScheduleActionStartWorkflow,
+        ScheduleIntervalSpec,
+        ScheduleOverlapPolicy,
+        SchedulePolicy,
+        ScheduleSpec,
+        ScheduleState,
+    )
+
+    from fighthealthinsurance.ml.chat_policy import DEFAULT_WINDOW_MINUTES
+    from fighthealthinsurance.workflows.types import ChatRoutingPolicyInput
+
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            "ChatRoutingPolicyWorkflow",
+            ChatRoutingPolicyInput(window_minutes=DEFAULT_WINDOW_MINUTES),
+            id=CHAT_POLICY_WORKFLOW_ID,
+            task_queue=settings.TEMPORAL_CHAT_POLICY_TASK_QUEUE,
+            execution_timeout=CHAT_POLICY_RUN_TIMEOUT,
+        ),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=CHAT_POLICY_EVERY)]),
+        policy=SchedulePolicy(
+            overlap=ScheduleOverlapPolicy.SKIP,
+            catchup_window=CHAT_POLICY_CATCHUP_WINDOW,
+        ),
+        state=ScheduleState(note="Kept in step with TEMPORAL_CHAT_POLICY_ENABLED"),
+    )
+
+
+async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
+    """Make the ``chat-routing-policy`` Schedule match the flag. Idempotent,
+    and safe for several workers to run at once.
+
+    * Enabled: create it; if it already exists, replace its spec, action and
+      policy with :func:`chat_policy_schedule` and unpause it. Returns
+      ``"created"`` or ``"updated"``.
+    * Disabled: pause it (``"paused"``), or do nothing when there is none
+      (``"absent"``). A paused Schedule starts no runs, so a flag flip plus
+      a worker restart is the operator control; the staff Temporal UI is
+      read-only.
+
+    Raises on other RPC failures; the worker logs the class name and goes on
+    hosting.
+    """
+    from temporalio.client import ScheduleAlreadyRunningError, ScheduleUpdate
+    from temporalio.service import RPCError, RPCStatusCode
+
+    rpc_timeout = timedelta(seconds=SCHEDULE_RPC_TIMEOUT_SECONDS)
+    handle = client.get_schedule_handle(CHAT_POLICY_SCHEDULE_ID)
+    if not enabled:
+        try:
+            await handle.pause(
+                note="TEMPORAL_CHAT_POLICY_ENABLED is off", rpc_timeout=rpc_timeout
+            )
+        except RPCError as e:
+            if e.status == RPCStatusCode.NOT_FOUND:
+                return SCHEDULE_ABSENT
+            raise
+        logger.info(f"Paused the {CHAT_POLICY_SCHEDULE_ID} schedule")
+        return SCHEDULE_PAUSED
+
+    try:
+        await client.create_schedule(
+            CHAT_POLICY_SCHEDULE_ID, chat_policy_schedule(), rpc_timeout=rpc_timeout
+        )
+        logger.info(f"Created the {CHAT_POLICY_SCHEDULE_ID} schedule")
+        return SCHEDULE_CREATED
+    except ScheduleAlreadyRunningError:
+        pass
+
+    was_paused = False
+
+    def _replace(update_input: Any) -> Any:
+        nonlocal was_paused
+        was_paused = bool(update_input.description.schedule.state.paused)
+        return ScheduleUpdate(schedule=chat_policy_schedule())
+
+    await handle.update(_replace, rpc_timeout=rpc_timeout)
+    if was_paused:
+        await handle.unpause(
+            note="TEMPORAL_CHAT_POLICY_ENABLED is on", rpc_timeout=rpc_timeout
+        )
+    logger.info(f"Updated the {CHAT_POLICY_SCHEDULE_ID} schedule")
+    return SCHEDULE_UPDATED
 
 
 # The fire-and-forget dispatch/signal helpers that used to live here were

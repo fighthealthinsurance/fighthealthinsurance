@@ -3,8 +3,20 @@ import math
 import re
 import time
 from dataclasses import replace
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, cast
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    cast,
+)
 
+from django.conf import settings as django_settings
 from django.utils import timezone
 
 # channels' database_sync_to_async (NOT asgiref's sync_to_async): chat runs
@@ -30,11 +42,16 @@ from fighthealthinsurance.chat.context_manager import (
     should_store_summary,
 )
 from fighthealthinsurance.chat.llm_client import (
+    AlternateChoice,
     alternate_is_presentable,
     build_llm_calls,
     build_llm_calls_for_variants,
+    candidates_best_first,
     create_response_scorer,
+    credit_for_delivered_reply,
     find_repeated_reply,
+    pick_side_by_side_alternate,
+    results_recorder,
     scores_closely_tied,
     user_requested_repeat,
     user_requested_transformation,
@@ -45,9 +62,23 @@ from fighthealthinsurance.chat.message_preprocessor import (
 )
 from fighthealthinsurance.chat.document_processor import process_uploaded_document
 from fighthealthinsurance.chat.document_search import get_document_context_for_message
+from fighthealthinsurance.chat.reply_gate import ReplyGate, gate_for_turn
 from fighthealthinsurance.chat.retry_handler import (
     retry_llm_with_fallback,
     should_retry_response,
+)
+from fighthealthinsurance.chat import shadow_scoring
+from fighthealthinsurance.chat.turn_record import (
+    ALTERNATE_CRUCIAL,
+    OUTCOME_FAILED,
+    PASS_PRIMARY,
+    PASS_RETRY,
+    PASS_TOOL,
+    CallLog,
+    ReplyCredit,
+    TurnRecord,
+    arecord_chat_turn,
+    arecord_chat_turn_isolated,
 )
 from fighthealthinsurance.chat.safety_filters import (
     CRISIS_RESOURCES,
@@ -56,6 +87,7 @@ from fighthealthinsurance.chat.safety_filters import (
     detect_delete_data_request,
     llm_requested_delete_handoff,
 )
+from fighthealthinsurance.chat.tools.patterns import contains_tool_call
 from fighthealthinsurance.chat.tools import (
     AppealTool,
     ClinicalTrialsTool,
@@ -72,6 +104,8 @@ from fighthealthinsurance.chat.tools import (
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
+from fighthealthinsurance.ml import chat_gate
+from fighthealthinsurance.ml.chat_policy import aget_chat_policy
 from fighthealthinsurance.ml.ml_metrics import (
     record_chat_alternate_offered,
     record_chat_repeat,
@@ -84,9 +118,11 @@ from fighthealthinsurance.ml.ml_models import (
     remove_repeated_sentences,
 )
 from fighthealthinsurance.reliability_events import capture_reliability_event
+from fighthealthinsurance.ml import chat_shadow
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
+    ChatTurn,
     ChatType,
     OngoingChat,
     PolicyDocument,
@@ -101,6 +137,9 @@ from fighthealthinsurance.clinicaltrials_tools import ClinicalTrialsTools
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rxnorm_tools import RxNormTools
 from fighthealthinsurance.utils import (
+    STAGE_IMMEDIATE,
+    StagedStart,
+    CheckVerdict,
     best_two_within_timelimit,
     fire_and_forget_in_new_threadpool,
 )
@@ -136,6 +175,35 @@ def _clean_reply(text: str) -> str:
     stripped = text.strip()
     cleaned = remove_repeated_blocks(stripped) or stripped
     return remove_repeated_sentences(cleaned) or cleaned
+
+
+def _shown_reply(result: Optional[Tuple[Optional[str], Optional[str]]]) -> Any:
+    """The reply a fan-out result would show the person, as cleaned for
+    delivery. Its context summary is never shown, so two results that
+    differ only there are the same reply."""
+    text = result[0] if result else None
+    return _clean_reply(text) if text else None
+
+
+def _rankable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
+    """Whether a fan-out result could be shown the person exactly as it is,
+    so Jev may rank it or it may be the side-by-side: deliverable, and
+    neither a tool call (another pass follows it) nor the data-deletion
+    handoff (a canned reply replaces it), the same replies the check never
+    sends."""
+    text = result[0] if result else None
+    if not text or not _deliverable(result):
+        return False
+    return not (
+        contains_tool_call(text) or "🐼" in text or llm_requested_delete_handoff(text)
+    )
+
+
+def _deliverable(result: Optional[Tuple[Optional[str], Optional[str]]]) -> bool:
+    """Whether a fan-out result could be delivered as it is, rather than
+    sent on to the retry (empty, too short, or a false promise). No retry
+    starts from here, so the retry's log line is left to the retry."""
+    return not should_retry_response(result[0] if result else None, log_retry=False)
 
 
 class ChatInterface:
@@ -186,6 +254,8 @@ class ChatInterface:
         # offered to the client as a side-by-side alternate when presentable
         # AND closely tied with the winner (see scores_closely_tied).
         self._candidate_alternate: Optional[str] = None
+        # Side-by-sides this socket has offered (see _side_by_side_allowed).
+        self._side_by_sides_shown: Optional[int] = None
         # Whether any pass of the turn in flight (the primary pass or a
         # recursive tool pass) hard-rejected a repeated candidate. Reset by
         # _call_llm_with_actions at depth 0, ORed into at every depth, and
@@ -205,6 +275,22 @@ class ChatInterface:
         # Per-session cap for medicaid_gov_lookup, kept out here because the
         # tool is rebuilt every turn (same shape as _doc_fetch_count).
         self._medicaid_gov_lookup_count: list[int] = [0]
+        # The model-race record of the turn in flight (one turn at a time
+        # per instance, like _candidate_alternate), written as one ChatTurn
+        # row when the turn ends. None outside a model turn.
+        self._turn: Optional[TurnRecord] = None
+        # The top-level pass's runner-up answer, kept only while shadow
+        # scoring is on and only until the turn ends, so the background
+        # scorer can read it (chat/shadow_scoring.py). Never persisted.
+        self._shadow_runner_up: Optional[str] = None
+        # Seconds the turn's fan-outs hold the outside models back while our
+        # own models answer, from the chat routing policy (0 asks them all
+        # together). Set per turn once the backends are known.
+        self._external_delay_seconds: float = 0.0
+        # The live Jev check on the turn's first usable reply of ours
+        # (chat/reply_gate.py), or None when it is off for the turn. Set per
+        # turn just before the models are asked.
+        self._reply_gate: Optional[ReplyGate] = None
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -239,7 +325,7 @@ class ChatInterface:
 
     async def send_status_message(self, message: str):
         """Sends a status message to the client."""
-        logger.debug(f"Chat {self.chat.id} status: {message}")
+        logger.debug(f"Chat {self.chat.id} status (status_chars={len(message)})")
         await self.send_json_message_func(
             {"status": message, "chat_id": str(self.chat.id)}
         )
@@ -270,11 +356,16 @@ class ChatInterface:
             pass
 
     async def send_message_to_client(
-        self, message: str, alternate_content: Optional[str] = None
+        self,
+        message: str,
+        alternate_content: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ):
         """Sends a message to the client, optionally with a side-by-side
         alternate answer (rendered behind a toggle client-side; only the
-        primary message is persisted in chat history)."""
+        primary message is persisted in chat history). With an alternate,
+        ``turn_id`` names the turn's ChatTurn row so the client can echo it
+        back with the person's pick."""
         payload: Dict[str, Any] = {
             "content": message,
             "chat_id": str(self.chat.id),
@@ -282,14 +373,145 @@ class ChatInterface:
         }
         if alternate_content:
             payload["alternate_content"] = alternate_content
+            if turn_id:
+                payload["turn_id"] = turn_id
         await self.send_json_message_func(payload)
+
+    async def _write_turn_record(self, outcome: str) -> bool:
+        """Write the turn's ChatTurn row, once, then the reply check's
+        health record when the turn ran a check. Returns whether the row was
+        written. Never raises, except that a cancellation still propagates.
+        A write cancelled while it waits for the chat's executor never runs,
+        so a counted turn's row is then written from a thread of its own
+        first, as in _end_cancelled_turn. The row's id is the turn's, so a
+        write that did run is not doubled."""
+        turn, self._turn = self._turn, None
+        gate, self._reply_gate = self._reply_gate, None
+        try:
+            written = await arecord_chat_turn(self.chat.id, turn, outcome)
+        except asyncio.CancelledError:
+            if turn is not None and turn.counted_outcome:
+                await arecord_chat_turn_isolated(
+                    self.chat.id, turn, turn.counted_outcome
+                )
+            raise
+        if gate is not None:
+            await gate.anote_health()
+        return written
+
+    async def _side_by_side_allowed(self, chat: OngoingChat) -> bool:
+        """Whether this chat may be shown another side-by-side: at most
+        FHI_CHAT_SIDE_BY_SIDES_PER_CHAT. Counted from its ChatTurn rows each
+        time, so every socket open on the chat sees the others' offers, and
+        never below what this socket has offered itself (a row whose write
+        failed is still counted here). A count that fails means no
+        side-by-side. Never raises."""
+        limit = int(getattr(django_settings, "FHI_CHAT_SIDE_BY_SIDES_PER_CHAT", 2))
+        if limit <= 0:
+            return False
+        try:
+            recorded = await ChatTurn.objects.filter(
+                chat_id=chat.id, alternate_offered=True
+            ).acount()
+        except Exception as e:
+            logger.warning(
+                f"Chat {chat.id}: side-by-side count failed: {type(e).__name__}"
+            )
+            return False
+        return max(recorded, self._side_by_sides_shown or 0) < limit
+
+    def _start_shadow_scoring(
+        self,
+        turn: Optional[TurnRecord],
+        message: str,
+        reply: str,
+        alternate: Optional[str],
+        runner_up: Optional[str],
+    ) -> None:
+        """Hand a delivered turn to background shadow scoring
+        (chat/shadow_scoring.py), which starts nothing unless the person
+        allowed outside models and the flag and key are set. Only a turn
+        that showed a side-by-side, or one in a sample of the others
+        (chat_shadow.wanted), and only while TypeSafe's chat budget allows.
+        Never awaits and never raises.
+
+        The second answer is the alternate when one was shown, otherwise
+        the runner-up, cleaned the way the alternate is. Nothing starts for
+        a reply a tool rewrote (it is no longer the winning model's answer)
+        or for the canned data-deletion reply.
+        """
+        try:
+            if turn is None or not chat_shadow.enabled():
+                return
+            if turn.tool_rewrote or reply == DELETE_DATA_RESPONSE:
+                return
+            if not chat_shadow.wanted(turn.alternate_offered):
+                return
+            if not chat_shadow.budget_allows():
+                return
+            second: Optional[str]
+            if turn.alternate_offered:
+                second = alternate
+            else:
+                second = _clean_reply(runner_up) if runner_up else None
+                if second and llm_requested_delete_handoff(second):
+                    second = None
+            shadow_scoring.start(
+                chat_id=self.chat.id,
+                turn_id=turn.turn_id,
+                external_allowed=turn.use_external and self.use_external_models,
+                message=message,
+                reply=reply,
+                second=second or None,
+            )
+        except Exception as e:
+            logger.warning(f"Chat shadow scoring not started: {type(e).__name__}")
+
+    def _count_turn(self, outcome: str) -> None:
+        """Count the turn in fhi_chat_turns_total and note the outcome on its
+        record, so its ChatTurn row says the same however the turn ends."""
+        record_chat_turn(outcome)
+        if self._turn is not None:
+            self._turn.counted_outcome = outcome
+
+    async def _end_turn_after_exception(self) -> None:
+        """An exception is escaping the turn (chat/turn_record.py lists how
+        each ending is recorded). A turn that reached the models keeps its
+        row: with the outcome the metric already counted, or counted
+        "failed" now. Never raises."""
+        turn = self._turn
+        if turn is None:
+            # Written already, or the turn never got a record.
+            return
+        if not turn.counted_outcome:
+            if not turn.reached_models:
+                self._turn = None
+                gate, self._reply_gate = self._reply_gate, None
+                if gate is not None:
+                    gate.forget()
+                return
+            self._count_turn(OUTCOME_FAILED)
+        await self._write_turn_record(turn.counted_outcome)
+
+    async def _end_cancelled_turn(self) -> None:
+        """The turn is being cancelled. Only a turn the metric already
+        counted gets its row (chat/turn_record.py says why), written from a
+        thread of its own with a bounded wait so it cannot hold up the
+        socket's teardown. Never raises beyond a further cancellation."""
+        turn, self._turn = self._turn, None
+        gate, self._reply_gate = self._reply_gate, None
+        if gate is not None:
+            gate.forget()
+        if turn is None or not turn.counted_outcome:
+            return
+        await arecord_chat_turn_isolated(self.chat.id, turn, turn.counted_outcome)
 
     async def _get_user_info(self) -> str:
         """Generates a descriptive string for the user (either professional or patient)."""
         try:
             return cast(str, await database_sync_to_async(self.chat.summarize_user)())
         except Exception as e:
-            logger.warning(f"Could not generate detailed user info: {e}")
+            logger.warning(f"Could not generate detailed user info: {type(e).__name__}")
             return "a user"
 
     async def _denial_context_for_chat(self, chat: OngoingChat) -> Optional[str]:
@@ -329,6 +551,85 @@ class ChatInterface:
         self._turn_saw_repeats = False
         record_chat_repeat("rejected_candidates")
 
+    @staticmethod
+    def _rank_candidates(
+        completed: Dict[Awaitable, Tuple[Optional[str], Optional[str]]],
+        scores: Dict[Awaitable, float],
+        calls: Sequence[Awaitable],
+        limit: int,
+    ) -> List[Awaitable]:
+        """The pass's deliverable results, one call per reply the person
+        would see, best race score first (exact ties to the earlier-listed
+        call), at most ``limit``: the candidates a ranking scores."""
+        order = {id(call): position for position, call in enumerate(calls)}
+        usable = [
+            call
+            for call, result in completed.items()
+            if _rankable(result) and math.isfinite(scores.get(call, float("-inf")))
+        ]
+        usable.sort(key=lambda c: (-scores[c], order.get(id(c), len(order))))
+        seen: Set[Any] = set()
+        out: List[Awaitable] = []
+        for call in usable:
+            shown = _shown_reply(completed[call])
+            if not shown or shown in seen:
+                continue
+            seen.add(shown)
+            out.append(call)
+            if len(out) >= limit:
+                break
+        return out
+
+    def _crucial_alternate(
+        self,
+        picked: Optional[Tuple[Optional[str], Optional[str]]],
+        picked_model: Optional[str],
+        jev_order: Sequence[Awaitable],
+        reserved: Sequence[Awaitable],
+        completed: Dict[Awaitable, Tuple[Optional[str], Optional[str]]],
+        scores: Dict[Awaitable, float],
+        calls: Sequence[Awaitable],
+        labels: Dict[Awaitable, str],
+        excluded: Any = None,
+    ) -> Optional[AlternateChoice]:
+        """The reply to show beside the delivered one at a crucial moment:
+        Jev's best other reply when it ranked them, else the side-by-side
+        model's, else the best other model's. Never the delivered reply,
+        never ``excluded`` (what the person would see of a reply the check
+        failed and demoted), and never one from the same model unless Jev
+        ranked it."""
+        if picked is None:
+            return None
+        delivered = _shown_reply(picked)
+
+        def choice(call: Awaitable) -> Optional[AlternateChoice]:
+            result = completed.get(call)
+            if not result or not result[0] or not _rankable(result):
+                return None
+            shown = _shown_reply(result)
+            if not shown or shown == delivered:
+                return None
+            if excluded is not None and shown == excluded:
+                return None
+            model = labels.get(call)
+            return AlternateChoice(
+                text=result[0], model=model, cross_model=model != picked_model
+            )
+
+        for call in jev_order:
+            found = choice(call)
+            if found is not None:
+                return found
+        for call in reserved:
+            found = choice(call)
+            if found is not None:
+                return found
+        for call in self._rank_candidates(completed, scores, calls, len(calls)):
+            found = choice(call)
+            if found is not None and found.cross_model:
+                return found
+        return None
+
     async def _call_llm_with_actions(
         self,
         model_backends: List[RemoteModelLike],
@@ -343,6 +644,9 @@ class ChatInterface:
         user_message_for_scoring: Optional[str] = None,
         message_variants: Optional[List[MessageVariant]] = None,
         eligibility_verified: bool = False,
+        *,
+        credit_out: Optional[List[ReplyCredit]] = None,
+        side_by_side_backend: Optional[RemoteModelLike] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -371,9 +675,21 @@ class ChatInterface:
             eligibility_verified: True when this pass is writing up output the
                 medicaid_eligibility checker just produced. OR'd with the
                 session-level flag; see score_llm_response.
+            credit_out: Optional list; when this pass returns a reply, it
+                appends the ReplyCredit naming the model that wrote it. Tool
+                follow-ups pass one so the turn can credit the model whose
+                reply was delivered.
+            side_by_side_backend: The model a crucial moment is compared
+                with (chat/reply_gate.py). Only the primary pass of a turn
+                with a reply check uses it: its one call is reserved, started
+                only when Jev reads the message as crucial, and never asked
+                by the retry.
         """
         if depth > 3:
             return None, None
+        # The turn's model-race record, when a turn is in flight. Every pass
+        # (primary, retry, recursive tool passes) adds its calls to it.
+        turn = self._turn
         if depth == 0:
             # Turn-scoped accumulator (same pattern as _candidate_alternate:
             # one turn in flight per instance). Recursive tool passes run
@@ -382,6 +698,8 @@ class ChatInterface:
             # depth==0 alone made it blind to repeats rejected only inside
             # a tool's follow-up pass.
             self._turn_saw_repeats = False
+        elif turn is not None:
+            turn.tool_passes += 1
         chat = self.chat
         history = history_for_llm
 
@@ -412,6 +730,12 @@ class ChatInterface:
         # the is-primary scoring bonus. Otherwise (recursive tool calls) fall
         # back to the single wrapped message, preserving existing behavior.
         call_labels: Dict[Awaitable, str] = {}
+        call_backends: Dict[Awaitable, RemoteModelLike] = {}
+        call_log = (
+            CallLog(PASS_PRIMARY if depth == 0 else PASS_TOOL, depth)
+            if turn is not None
+            else None
+        )
         if message_variants:
             calls, call_scores, primary_calls = build_llm_calls_for_variants(
                 model_backends=model_backends,
@@ -423,6 +747,8 @@ class ChatInterface:
                 full_history=full_history,
                 allow_repeated_reply=allow_repeat,
                 call_labels=call_labels,
+                call_log=call_log,
+                call_backends=call_backends,
             )
         else:
             calls, call_scores = build_llm_calls(
@@ -435,8 +761,110 @@ class ChatInterface:
                 full_history=full_history,
                 allow_repeated_reply=allow_repeat,
                 call_labels=call_labels,
+                call_log=call_log,
+                call_backends=call_backends,
             )
             primary_calls = calls
+
+        # Ours first: with a routing-policy delay, the outside models' calls
+        # are held back while ours answer, started only if nothing of ours
+        # is usable in time (or ours have all failed), and never sent when
+        # one of ours answers first. Without a delay, or with nothing of
+        # ours in the fan-out, every call starts at once as before.
+        external_calls = [
+            call
+            for call in calls
+            if getattr(call_backends.get(call), "external", None) is True
+        ]
+        external_delay = self._external_delay_seconds
+        stage: Optional[StagedStart] = None
+        race_staging: Dict[str, Any] = {}
+        # The live Jev check (chat/reply_gate.py), on the person's own
+        # message only: the outside calls are held back until our first
+        # usable reply is judged or the hold runs out, and not sent by this
+        # pass when it passes (the retry may still ask them). The hold is the check's own wait, or the policy's delay
+        # when that is longer, so it does not depend on the policy.
+        gate = (
+            self._reply_gate
+            if depth == 0 and turn is not None and 0 < len(external_calls) < len(calls)
+            else None
+        )
+        # The side-by-side model's one call (truncated history, the primary
+        # message), reserved: the race starts it only when the check names
+        # it, so it is sent on crucial turns and no others.
+        reserved_calls: List[Awaitable] = []
+        if gate is not None and side_by_side_backend is not None:
+            reserved_calls, reserved_scores = build_llm_calls(
+                model_backends=[side_by_side_backend],
+                current_message=current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=history,
+                is_professional=is_professional,
+                is_logged_in=is_logged_in,
+                full_history=None,
+                allow_repeated_reply=allow_repeat,
+                call_labels=call_labels,
+                call_log=call_log,
+                call_backends=call_backends,
+            )
+            calls = list(calls) + list(reserved_calls)
+            call_scores.update(reserved_scores)
+            if turn is not None:
+                turn.add_reserved_backend(side_by_side_backend)
+            if call_log is not None:
+                call_log.mark_reserved(reserved_calls)
+        if gate is not None:
+            reply_gate: ReplyGate = gate
+            reply_gate.used = True
+            reply_gate.bind(external_calls, reserved_calls)
+            external_delay = max(external_delay, reply_gate.max_wait_seconds)
+
+            async def check_ours(
+                result: Tuple[Optional[str], Optional[str]], call: Awaitable
+            ) -> CheckVerdict:
+                # What the person would be shown: the reply as cleaned for
+                # delivery.
+                text = result[0] if result else None
+                return await reply_gate.judge(
+                    scoring_message,
+                    _clean_reply(text) if text else None,
+                    call_labels.get(call),
+                )
+
+            stage = StagedStart()
+            race_staging = {
+                "deferred": external_calls,
+                "defer_seconds": external_delay,
+                "stage": stage,
+                "check": check_ours,
+                # A failed reply must not keep winning on our models' higher
+                # base score: the race ranks it just below the outside
+                # answers the failure started (below their base score while
+                # none has arrived), and still delivers it when nothing else
+                # usable arrives. Only after a fail, while the setting is on.
+                "demote_failed": reply_gate.wants_demotion,
+                "held_base": max(
+                    (call_scores[c] for c in external_calls if c in call_scores),
+                    default=None,
+                ),
+                # The judged reply with another context summary is still
+                # the judged reply, and is demoted with it.
+                "demote_key": _shown_reply,
+                # Only an outside answer the turn could deliver pushes the
+                # failed reply down. One that would go to the retry (empty,
+                # too short, a false promise) must not win over it, or a
+                # retry that finds nothing would leave the turn with no
+                # reply at all.
+                "replaces_demoted": _deliverable,
+                "reserved": reserved_calls,
+            }
+        elif external_delay > 0 and 0 < len(external_calls) < len(calls):
+            stage = StagedStart()
+            race_staging = {
+                "deferred": external_calls,
+                "defer_seconds": external_delay,
+                "stage": stage,
+            }
 
         # Create scoring function using the extracted module. rejection_stats
         # is shared with the scorer so we can tell "no usable response" apart
@@ -458,10 +886,21 @@ class ChatInterface:
             score_log=score_log,
             eligibility_verified=eligibility_verified or self._eligibility_computed[0],
         )
+        # The race hands back only its top two results. The top-level pass
+        # also keeps every completed result so the side-by-side alternate
+        # can come from a different model than the winner (see
+        # pick_side_by_side_alternate). Local to this pass, never recorded.
+        completed_results: Dict[Awaitable, Tuple[Optional[str], Optional[str]]] = {}
+        race_score_fn = (
+            results_recorder(score_fn, completed_results) if depth == 0 else score_fn
+        )
+        if call_log is not None:
+            race_score_fn = call_log.scoring(race_score_fn)
 
         llm_pass_started = time.monotonic()
         picked_model: Optional[str] = None
         picked_score: Optional[float] = None
+        picked_result: Optional[Tuple[Optional[str], Optional[str]]] = None
         runner_up_model: Optional[str] = None
         runner_up_score: Optional[float] = None
         runner_up_text: Optional[str] = None
@@ -473,14 +912,16 @@ class ChatInterface:
             # keeps the whole ladder inside the budget.
             best_two = await best_two_within_timelimit(
                 calls,
-                score_fn,
+                race_score_fn,
                 timeout=30.0,
                 extended_timeout=30.0,
+                **race_staging,
             )
             response_text, context_part = (
                 best_two.best if best_two.best is not None else (None, None)
             )
             if best_two.best is not None:
+                picked_result = best_two.best
                 picked_score = best_two.best_score
                 if best_two.best_task is not None:
                     picked_model = call_labels.get(best_two.best_task)
@@ -490,9 +931,85 @@ class ChatInterface:
                 if best_two.runner_up_task is not None:
                     runner_up_model = call_labels.get(best_two.runner_up_task)
         except Exception as e:
-            logger.warning(f"Primary models all failed: {e}")
+            logger.warning(f"Primary models all failed: {type(e).__name__}")
             response_text = None
             context_part = None
+        finally:
+            # Also on cancellation (the turn budget firing mid-race), so a
+            # timed-out turn still shows which calls were still running.
+            if call_log is not None and stage is not None:
+                call_log.mark_skipped(stage.skipped)
+            if call_log is not None and turn is not None:
+                turn.calls.extend(call_log.finish())
+            if depth == 0 and turn is not None and external_calls:
+                if stage is not None:
+                    turn.set_external_start(
+                        stage.outcome or STAGE_IMMEDIATE, external_delay
+                    )
+                else:
+                    turn.set_external_start(STAGE_IMMEDIATE, 0.0)
+            if turn is not None and gate is not None:
+                gate.finish()
+                gate_scores = gate.scores
+                turn.set_gate(
+                    gate.outcome,
+                    (
+                        (
+                            gate_scores.answers,
+                            gate_scores.verdict,
+                            gate_scores.asks_again,
+                            gate_scores.promises,
+                        )
+                        if gate_scores is not None
+                        else None
+                    ),
+                    gate.scorer,
+                    gate.ms,
+                    gate.model,
+                    gate_scores.crucial if gate_scores is not None else None,
+                )
+                if stage is not None:
+                    # Whether it was still delivered is known after the
+                    # retry decision below.
+                    turn.set_gate_demotion(stage.demoted, False)
+
+        # After a borderline check, Jev scores every deliverable candidate
+        # (ours and the outside models') in one request, and its best is
+        # delivered. Each ranked call keeps Jev's score, for the routing
+        # policy. Jev's order is kept for a crucial side-by-side below.
+        jev_order: List[Awaitable] = []
+        if (
+            gate is not None
+            and turn is not None
+            and gate.wants_rank()
+            and picked_result is not None
+        ):
+            ranked_calls = self._rank_candidates(
+                completed_results, score_log, calls, chat_gate.MAX_RANKED
+            )
+            if len(ranked_calls) >= 2:
+                ranking = await gate.rank(
+                    scoring_message,
+                    [_shown_reply(completed_results[c]) for c in ranked_calls],
+                )
+                changed = False
+                for i, call in enumerate(ranked_calls):
+                    if call_log is not None and i < len(ranking.scores):
+                        call_log.note_jev(call, chat_gate.quality(ranking.scores[i]))
+                jev_order = [ranked_calls[i] for i in ranking.order()]
+                if jev_order:
+                    top = jev_order[0]
+                    top_result = completed_results[top]
+                    if _shown_reply(top_result) != _shown_reply(picked_result):
+                        changed = True
+                        picked_result = top_result
+                        response_text, context_part = top_result
+                        picked_model = call_labels.get(top)
+                        picked_score = score_log.get(top, picked_score)
+                turn.set_rank(gate.rank_outcome, gate.rank_ms, gate.rank_count, changed)
+        if gate is not None:
+            # The identifier list is needed no further than the ranking.
+            gate.forget()
 
         response_text = response_text or ""
 
@@ -503,6 +1020,8 @@ class ChatInterface:
         # flat while the ladder was working hard. That made the metric read as
         # "loops never happen" exactly when a backend started looping.
         saw_repeats = bool(rejection_stats.get("repeated_rejected"))
+        if turn is not None:
+            turn.rejected_repeats += rejection_stats.get("repeated_rejected", 0)
         if saw_repeats:
             # Counted once per turn (the stat itself is per candidate):
             # accumulate here at every depth, recorded by depth 0 at the
@@ -518,22 +1037,30 @@ class ChatInterface:
         retry_used = False
         retry_debug: Dict[str, Any] = {}
         if should_retry_response(response_text):
-            retry_response, retry_context = await retry_llm_with_fallback(
-                model_backends=model_backends,
-                current_message=current_message_for_llm,
-                previous_context_summary=previous_context_summary,
-                history=history,
-                is_professional=is_professional,
-                is_logged_in=is_logged_in,
-                fallback_backends=fallback_backends,
-                timeout=35.0,
-                status_callback=self.send_status_message,
-                chat_history=chat.chat_history,
-                user_message_for_scoring=scoring_message,
-                anti_repeat=saw_repeats,
-                allow_repeated_reply=allow_repeat,
-                debug_info=retry_debug,
-            )
+            retry_log = CallLog(PASS_RETRY, depth) if turn is not None else None
+            if turn is not None:
+                turn.retry_ran = True
+            try:
+                retry_response, retry_context = await retry_llm_with_fallback(
+                    model_backends=model_backends,
+                    current_message=current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=history,
+                    is_professional=is_professional,
+                    is_logged_in=is_logged_in,
+                    fallback_backends=fallback_backends,
+                    timeout=35.0,
+                    status_callback=self.send_status_message,
+                    chat_history=chat.chat_history,
+                    user_message_for_scoring=scoring_message,
+                    anti_repeat=saw_repeats,
+                    allow_repeated_reply=allow_repeat,
+                    debug_info=retry_debug,
+                    call_log=retry_log,
+                )
+            finally:
+                if retry_log is not None and turn is not None:
+                    turn.calls.extend(retry_log.finish())
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response
                 context_part = retry_context
@@ -546,7 +1073,29 @@ class ChatInterface:
                 runner_up_model = None
                 runner_up_score = None
 
-        logger.debug(f"Using best result {response_text:.20}...")
+        if depth == 0 and turn is not None:
+            turn.mark_fanout_done(llm_pass_started)
+        # The reply a failed check demoted, while this pass still holds it
+        # (never offered as the alternate below).
+        demoted_reply: Optional[Tuple[Optional[str], Optional[str]]] = None
+        if gate is not None and stage is not None and turn is not None:
+            turn.set_gate_demotion(stage.demoted, stage.best_demoted and not retry_used)
+            if stage.demoted and stage.checked is not None:
+                demoted_reply = completed_results.get(stage.checked)
+        # Who wrote this pass's reply, until a tool follow-up's reply
+        # replaces it (see credit_for_delivered_reply below).
+        pass_credit = ReplyCredit(
+            model=picked_model or "",
+            score=picked_score,
+            pass_kind=(
+                PASS_TOOL if depth > 0 else PASS_RETRY if retry_used else PASS_PRIMARY
+            ),
+            from_retry=retry_used,
+        )
+
+        logger.debug(
+            f"Using best result (response_chars={len(response_text) if response_text else 0})"
+        )
 
         if not response_text:
             logger.debug("Got empty response from LLM")
@@ -564,7 +1113,20 @@ class ChatInterface:
         # recursive tool calls must not clobber it. Cleared again below if
         # tool processing changes the primary response (action flows don't
         # get a raw alternate).
+        #
+        # The side-by-side pick is a model-versus-model comparison, so the
+        # alternate is the best closely tied, presentable candidate from a
+        # DIFFERENT model than the winner, and the plain runner-up (usually
+        # the winner's own other call) only when no other model's candidate
+        # qualifies. A retry winner replaced the primary pass's answer, so
+        # nothing from that pass is comparable with it any more. A reply the
+        # check failed and demoted is never offered: the race never makes it
+        # the runner-up, and it is left out of the candidates.
         closely_tied = False
+        alternate_model: Optional[str] = None
+        # Jev answered the check: side-by-sides are its call, on crucial
+        # moments only. Otherwise (no check, or no answer) our tied rule.
+        jev_decides = gate is not None and gate.scores is not None
         if depth == 0:
             self._candidate_alternate = None
             closely_tied = (
@@ -572,19 +1134,103 @@ class ChatInterface:
                 and runner_up_score is not None
                 and scores_closely_tied(picked_score, runner_up_score)
             )
-            if runner_up_text and closely_tied:
-                if alternate_is_presentable(
-                    runner_up_text,
+            if not retry_used and jev_decides and gate is not None and gate.crucial:
+                crucial_choice = self._crucial_alternate(
+                    picked_result,
+                    picked_model,
+                    jev_order,
+                    reserved_calls,
+                    completed_results,
+                    score_log,
+                    calls,
+                    call_labels,
+                    excluded=(
+                        _shown_reply(demoted_reply)
+                        if demoted_reply is not None
+                        else None
+                    ),
+                )
+                if crucial_choice is not None:
+                    self._candidate_alternate = crucial_choice.text
+                    alternate_model = crucial_choice.model
+                    if turn is not None:
+                        turn.set_alternate_candidate(
+                            crucial_choice.model,
+                            crucial_choice.cross_model,
+                            ALTERNATE_CRUCIAL,
+                        )
+            elif not retry_used and not jev_decides:
+                # What the person would see of the demoted reply, from any
+                # model: never offered, as a candidate or as the runner-up.
+                demoted_shown = (
+                    _shown_reply(demoted_reply) if demoted_reply is not None else None
+                )
+                runner_up_choice: Optional[Tuple[Optional[str], float, str]] = None
+                if (
+                    runner_up_text
+                    and runner_up_score is not None
+                    and (
+                        demoted_shown is None
+                        or _shown_reply((runner_up_text, None)) != demoted_shown
+                    )
+                ):
+                    runner_up_choice = (
+                        runner_up_model,
+                        runner_up_score,
+                        runner_up_text,
+                    )
+                choice = pick_side_by_side_alternate(
                     response_text,
+                    picked_model,
+                    picked_score,
+                    candidates_best_first(
+                        (
+                            # The same reply under another context summary
+                            # is the same reply to the person: left out too.
+                            {
+                                call: result
+                                for call, result in completed_results.items()
+                                if _shown_reply(result) != demoted_shown
+                            }
+                            if demoted_reply is not None
+                            else completed_results
+                        ),
+                        score_log,
+                        call_labels,
+                        calls,
+                        exclude=picked_result,
+                    ),
+                    runner_up_choice,
                     chat_history=chat.chat_history,
                     current_message=scoring_message,
-                ):
-                    self._candidate_alternate = runner_up_text.strip()
-            elif runner_up_text:
-                logger.debug(
-                    f"Chat {chat.id}: runner-up not closely tied "
-                    f"({runner_up_score} vs {picked_score}); no alternate"
                 )
+                if choice is not None:
+                    self._candidate_alternate = choice.text
+                    alternate_model = choice.model
+                    if turn is not None:
+                        turn.set_alternate_candidate(choice.model, choice.cross_model)
+                elif runner_up_text and not closely_tied:
+                    logger.debug(
+                        f"Chat {chat.id}: runner-up not closely tied "
+                        f"({runner_up_score} vs {picked_score}); no alternate"
+                    )
+            if turn is not None:
+                turn.set_winner(
+                    picked_model,
+                    picked_score,
+                    retry_used,
+                    runner_up_model,
+                    runner_up_score,
+                    closely_tied,
+                )
+            # The runner-up the turn row names, for shadow scoring only (a
+            # retry winner cleared it above: nothing from the primary pass
+            # compares with that answer).
+            self._shadow_runner_up = (
+                runner_up_text
+                if turn is not None and runner_up_text and chat_shadow.enabled()
+                else None
+            )
 
         # One compact selection line per LLM pass at INFO: this is the
         # production-debuggable record of which backend won and why the
@@ -627,6 +1273,7 @@ class ChatInterface:
                         # debugging down the wrong path when no alternate
                         # reached the client.
                         "alternate_candidate": bool(self._candidate_alternate),
+                        "alternate_candidate_model": alternate_model,
                         "candidate_count": len(calls),
                         "scored_candidates": scored_candidates,
                         "rejected_repeats": rejection_stats.get("repeated_rejected", 0),
@@ -639,6 +1286,23 @@ class ChatInterface:
                 }
             )
         response_before_tools = response_text
+
+        # Every recursive tool's LLM pass goes through follow_up, which keeps
+        # the follow-up's reply and the credit for it, so the turn can credit
+        # the model whose reply was delivered. The reply text stays a local
+        # of this pass and is never recorded.
+        follow_ups: List[Tuple[str, ReplyCredit]] = []
+
+        async def follow_up(
+            *args: Any, **kwargs: Any
+        ) -> Tuple[Optional[str], Optional[str]]:
+            credits: List[ReplyCredit] = []
+            text, follow_up_context = await self._call_llm_with_actions(
+                *args, credit_out=credits, **kwargs
+            )
+            if text and credits:
+                follow_ups.append((text, credits[-1]))
+            return text, follow_up_context
 
         # Process tool calls via modular tool handlers
         context = context_part or ""
@@ -677,23 +1341,21 @@ class ChatInterface:
         # Recursive tools: medicaid eligibility, medicaid info, pubmed, doc fetcher
         medicaid_elig_tool = MedicaidEligibilityTool(
             self.send_status_message,
-            self._call_llm_with_actions,
+            follow_up,
             eligibility_computed=self._eligibility_computed,
         )
         response_text, context, _ = await medicaid_elig_tool.handle(
             response_text, context, **tool_kwargs
         )
 
-        medicaid_info_tool = MedicaidInfoTool(
-            self.send_status_message, self._call_llm_with_actions
-        )
+        medicaid_info_tool = MedicaidInfoTool(self.send_status_message, follow_up)
         response_text, context, _ = await medicaid_info_tool.handle(
             response_text, context, **tool_kwargs
         )
 
         medicaid_gov_tool = MedicaidGovLookupTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
             lookup_count=self._medicaid_gov_lookup_count,
         )
         response_text, context, _ = await medicaid_gov_tool.handle(
@@ -705,7 +1367,7 @@ class ChatInterface:
         rxnorm_tool = RxNormLookupTool(
             self.send_status_message,
             rxnorm_tools=self.rxnorm_tools,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await rxnorm_tool.handle(
             response_text, context, **tool_kwargs
@@ -715,15 +1377,13 @@ class ChatInterface:
             self.send_status_message,
             pubmed_tools=self.pubmed_tools,
             rxnorm_tools=self.rxnorm_tools,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await pubmed_tool.handle(
             response_text, context, **tool_kwargs
         )
 
-        uspstf_tool = USPSTFLookupTool(
-            self.send_status_message, self._call_llm_with_actions
-        )
+        uspstf_tool = USPSTFLookupTool(self.send_status_message, follow_up)
         response_text, context, _ = await uspstf_tool.handle(
             response_text, context, **tool_kwargs
         )
@@ -731,7 +1391,7 @@ class ChatInterface:
         clinical_trials_tool = ClinicalTrialsTool(
             self.send_status_message,
             clinical_trials_tools=self.clinical_trials_tools,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await clinical_trials_tool.handle(
             response_text, context, **tool_kwargs
@@ -739,7 +1399,7 @@ class ChatInterface:
 
         doc_fetcher_tool = DocFetcherTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
             fetch_count=self._doc_fetch_count,
             chat=self.chat,
         )
@@ -749,7 +1409,7 @@ class ChatInterface:
 
         pa_requirement_tool = PaRequirementLookupTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await pa_requirement_tool.handle(
             response_text, context, **tool_kwargs
@@ -757,7 +1417,7 @@ class ChatInterface:
 
         financial_assistance_tool = FinancialAssistanceTool(
             self.send_status_message,
-            call_llm_callback=self._call_llm_with_actions,
+            call_llm_callback=follow_up,
         )
         response_text, context, _ = await financial_assistance_tool.handle(
             response_text, context, **tool_kwargs
@@ -767,6 +1427,22 @@ class ChatInterface:
         # raw runner-up no longer corresponds to it, so drop the alternate.
         if depth == 0 and response_text != response_before_tools:
             self._candidate_alternate = None
+            self._shadow_runner_up = None
+            if turn is not None:
+                turn.tool_rewrote = True
+                turn.clear_alternate_candidate()
+
+        # The credit for the reply this pass returns: a tool follow-up's
+        # when its reply is in it, this pass's own pick otherwise.
+        credit = pass_credit
+        if response_text != response_before_tools:
+            credit = credit_for_delivered_reply(
+                pass_credit, follow_ups, response_text or ""
+            )
+        if credit_out is not None:
+            credit_out.append(credit)
+        if depth == 0 and turn is not None:
+            turn.set_delivered(credit)
 
         # One count per turn, covering the primary pass AND every recursive
         # tool pass (each ORs into the accumulator above).
@@ -786,11 +1462,51 @@ class ChatInterface:
     ):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
+
+        However the turn ends, one that reached the models and was counted
+        in fhi_chat_turns_total leaves its ChatTurn row with the counted
+        outcome (chat/turn_record.py describes each ending).
         """
+        try:
+            await self._run_chat_turn(
+                user_message,
+                iterate_on_appeal=iterate_on_appeal,
+                iterate_on_prior_auth=iterate_on_prior_auth,
+                user=user,
+                is_document=is_document,
+                document_name=document_name,
+            )
+        except asyncio.CancelledError:
+            await self._end_cancelled_turn()
+            raise
+        except Exception:
+            await self._end_turn_after_exception()
+            raise
+        finally:
+            # The runner-up text is kept for this turn's shadow scoring only,
+            # however the turn ends.
+            self._shadow_runner_up = None
+
+    async def _run_chat_turn(
+        self,
+        user_message: str,
+        iterate_on_appeal: Optional[str] = None,
+        iterate_on_prior_auth: Optional[str] = None,
+        user: Optional[User] = None,
+        is_document: bool = False,
+        document_name: Optional[str] = None,
+    ):
+        """The turn itself; see handle_chat_message."""
         chat = self.chat
         # A stale alternate from a previous turn must never attach to this
         # turn's reply (early-return paths below don't go through the LLM).
         self._candidate_alternate = None
+        # Likewise the model-race record: only a turn that reaches the
+        # models gets one (created once the backends are known, below).
+        self._turn = None
+        self._shadow_runner_up = None
+        self._external_delay_seconds = 0.0
+        self._reply_gate = None
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -842,8 +1558,10 @@ class ChatInterface:
         if is_document and user_message:
             doc_name = document_name or "uploaded_document"
             char_count = len(user_message)
+            # str(): document_name is raw client JSON and need not be a string.
             logger.info(
-                f"Document uploaded in chat {chat.id}: {doc_name} ({char_count} chars)"
+                f"Document uploaded in chat {chat.id} "
+                f"(name_chars={len(str(doc_name))}, {char_count} chars)"
             )
 
             denial_context = await self._denial_context_for_chat(chat)
@@ -976,7 +1694,7 @@ class ChatInterface:
                                 )
                         except Exception as e:
                             logger.opt(exception=True).warning(
-                                f"Error loading microsite context: {e}"
+                                f"Error loading microsite context: {type(e).__name__}"
                             )
 
                     await fire_and_forget_in_new_threadpool(fetch_microsite_context())
@@ -985,7 +1703,9 @@ class ChatInterface:
                         f"Could not find microsite for slug {chat.microsite_slug}"
                     )
             except Exception as e:
-                logger.warning(f"Error loading microsite for chat {chat.id}: {e}")
+                logger.warning(
+                    f"Error loading microsite for chat {chat.id}: {type(e).__name__}"
+                )
 
         # Check for policy document analysis request
         if _detect_policy_analysis_request(user_message):
@@ -1057,15 +1777,31 @@ class ChatInterface:
             await self.send_message_to_client(user_facing_message)
             return
 
-        # Get primary and fallback models based on user preference
-        primary_models, fallback_models = ml_router.get_chat_backends_with_fallback(
-            use_external=self.use_external_models
-        )
+        # Get primary and fallback models based on user preference, and the
+        # chat routing policy (ml/chat_policy.py): the default unless it is
+        # switched on, readable and fresh. It can only narrow the outside
+        # models, and none are asked without the person's consent.
+        policy = await aget_chat_policy()
+        if policy.narrows_nothing:
+            primary_models, fallback_models = ml_router.get_chat_backends_with_fallback(
+                use_external=self.use_external_models
+            )
+        else:
+            primary_models, fallback_models = ml_router.get_chat_backends_with_fallback(
+                use_external=self.use_external_models, policy=policy
+            )
+            if self.use_external_models:
+                self._external_delay_seconds = ml_router.chat_external_delay(policy)
         if not primary_models:
             await self.send_error_message(
                 "Sorry, no language models are currently available."
             )
             return
+        self._turn = TurnRecord.start(
+            use_external=self.use_external_models,
+            primary_models=primary_models,
+            fallback_models=fallback_models,
+        )
 
         # Refresh from the DB so background-task updates (summaries, microsite
         # context) are visible for this LLM call. A full refetch is safe here:
@@ -1119,6 +1855,13 @@ class ChatInterface:
             (v for v in message_variants if v.metadata.get("store_full_text")),
             None,
         )
+        # An upload or a stored long paste leaves only a marker naming the
+        # stored document, which the reply check cannot read a question from.
+        typed_message = not is_document and long_paste_variant is None
+        # Shadow scoring reads the person's message against the reply. An
+        # upload or a stored long paste leaves only a marker naming the
+        # stored document, so those turns are never shadow scored.
+        shadow_message_ok = not is_document and long_paste_variant is None
         if long_paste_variant is not None and not is_document:
             char_count = long_paste_variant.metadata.get(
                 "char_count", len(user_message)
@@ -1127,9 +1870,10 @@ class ChatInterface:
                 "document_name",
                 f"pasted_message_{int(timezone.now().timestamp())}.txt",
             )
+            # str(): document_name is raw client JSON and need not be a string.
             logger.info(
                 f"Long pasted message in chat {chat.id}: storing {char_count} chars "
-                f"as {doc_name} for reference"
+                f"for reference (name_chars={len(str(doc_name))})"
             )
             denial_context = await self._denial_context_for_chat(chat)
             await process_uploaded_document(
@@ -1251,7 +1995,9 @@ class ChatInterface:
                 chat.id, user_message
             )
         except Exception as e:
-            logger.warning(f"Skipping document context for chat {chat.id}: {e}")
+            logger.warning(
+                f"Skipping document context for chat {chat.id}: {type(e).__name__}"
+            )
         if doc_context_str:
             summarized_context = (
                 f"{doc_context_str}\n\n{summarized_context}"
@@ -1358,6 +2104,26 @@ class ChatInterface:
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
+        # The live Jev check on our first usable reply (chat/reply_gate.py):
+        # only with the person's consent to outside models, for a typed
+        # message, and while one of our own models is selectable.
+        self._reply_gate = gate_for_turn(
+            chat.id,
+            external_allowed=self.use_external_models,
+            typed_message=typed_message,
+            ours_selectable=ml_router.chat_internal_selectable,
+        )
+        # The model a crucial moment is compared with, reserved in the
+        # checked pass: only while the chat has a side-by-side left.
+        side_by_side_backend: Optional[RemoteModelLike] = None
+        if self._reply_gate is not None and await self._side_by_side_allowed(chat):
+            side_by_side_backend = ml_router.chat_side_by_side_model()
+        # The models are asked from here on, so an exception escaping the
+        # turn now counts it as failed (see _end_turn_after_exception).
+        if self._turn is not None:
+            self._turn.reached_models = True
+        # Exception class name only, for the failure log below.
+        turn_error: Optional[str] = None
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -1372,6 +2138,7 @@ class ChatInterface:
                     full_history=full_history_for_llm,  # Also try with full history if model supports it
                     user_message_for_scoring=user_message,
                     message_variants=llm_message_variants,
+                    side_by_side_backend=side_by_side_backend,
                 ),
                 timeout=turn_budget,
             )
@@ -1397,6 +2164,8 @@ class ChatInterface:
                     )
                 ):
                     record_chat_repeat("delivered_repeat")
+                    if self._turn is not None:
+                        self._turn.delivered_repeat = True
                     logger.warning(
                         f"Chat {chat.id}: delivering a reply that repeats a "
                         f"recent reply (all anti-repeat rungs exhausted)"
@@ -1409,10 +2178,11 @@ class ChatInterface:
             # Recorded here as "timeout"; the shared failure branch below
             # checks this flag so the same turn isn't also counted "failed".
             turn_timed_out = True
-            record_chat_turn("timeout")
+            self._count_turn("timeout")
         except Exception as e:
+            turn_error = type(e).__name__
             logger.opt(exception=True).error(
-                f"Chat generation failed for chat {chat.id}: {e}"
+                f"Chat generation failed for chat {chat.id}: {turn_error}"
             )
             logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
         finally:
@@ -1481,7 +2251,7 @@ class ChatInterface:
             # Launch background summary after save so the task can read the latest history
             if background_summary_task is not None:
                 await fire_and_forget_in_new_threadpool(background_summary_task)
-            record_chat_turn("ok")
+            self._count_turn("ok")
             # Side-by-side alternate answer (ChatGPT-style "here's another
             # take"): cleaned like the primary, dropped if cleaning leaves it
             # too similar to what we're already sending. Ephemeral -- only
@@ -1501,20 +2271,48 @@ class ChatInterface:
                         f"delete-data handoff"
                     )
                     alt_cleaned = ""
-                if alt_cleaned and alternate_is_presentable(
-                    alt_cleaned,
-                    final_response_text,
-                    chat_history=chat.chat_history,
-                    current_message=user_message,
+                if (
+                    alt_cleaned
+                    and alternate_is_presentable(
+                        alt_cleaned,
+                        final_response_text,
+                        chat_history=chat.chat_history,
+                        current_message=user_message,
+                    )
+                    and await self._side_by_side_allowed(chat)
                 ):
                     alternate_content = alt_cleaned
+                    self._side_by_sides_shown = (self._side_by_sides_shown or 0) + 1
                     record_chat_alternate_offered()
+                    if self._turn is not None:
+                        self._turn.offer_alternate()
                     logger.info(f"Chat {chat.id}: offering an alternate answer")
                 else:
                     alternate_content = None
+            turn = self._turn
+            turn_id = str(turn.turn_id) if turn is not None else None
+            runner_up_for_shadow, self._shadow_runner_up = self._shadow_runner_up, None
+            # A send that raises or is cancelled still leaves the row, "ok"
+            # as counted: handle_chat_message writes it.
             await self.send_message_to_client(
-                final_response_text, alternate_content=alternate_content
+                final_response_text,
+                alternate_content=alternate_content,
+                turn_id=turn_id,
             )
+            # Awaited, not fire-and-forget: channels handles one frame at a
+            # time per connection, so this row exists before the person's
+            # side-by-side pick for it can arrive.
+            recorded = await self._write_turn_record("ok")
+            # Only once the reply is out and its row exists: the scores land
+            # on that row. Starts a background task at most, never waits.
+            if recorded and shadow_message_ok:
+                self._start_shadow_scoring(
+                    turn,
+                    user_message,
+                    final_response_text,
+                    alternate_content,
+                    runner_up_for_shadow,
+                )
         else:
             # The turn failed after the user already committed their message:
             # persist it anyway so a reconnect/replay doesn't erase what they
@@ -1547,19 +2345,26 @@ class ChatInterface:
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
+            # Sizes, the error class and flags only: message text is PHI.
             logger.error(
-                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
-                f"after trying all models. use_external_models={self.use_external_models}"
+                f"Failed to generate a response in chat {chat.id} after trying "
+                f"all models (message_chars={len(user_message or '')}, "
+                f"error={turn_error or 'none'}, timed_out={turn_timed_out}, "
+                f"use_external_models={bool(self.use_external_models)})"
             )
             if not turn_timed_out:
-                record_chat_turn("failed")
+                self._count_turn(OUTCOME_FAILED)
             capture_reliability_event(
                 "chat_turn_total_failure",
                 chat_id=str(chat.id),
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
             )
+            self._shadow_runner_up = None
+            # As above, a send that raises or is cancelled still leaves the
+            # row: handle_chat_message writes it.
             await self.send_error_message(err_msg)
+            await self._write_turn_record("timeout" if turn_timed_out else "failed")
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client, minus internal
@@ -1687,7 +2492,8 @@ class ChatInterface:
 
         except Exception as e:
             logger.opt(exception=True).warning(
-                f"Error handling policy analysis for chat {chat.id}: {e}"
+                f"Error handling policy analysis for chat {chat.id}: "
+                f"{type(e).__name__}"
             )
             await self.send_error_message(
                 "There was an error analyzing your policy document. "

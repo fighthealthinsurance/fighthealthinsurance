@@ -55,6 +55,7 @@ from loguru import logger
 
 from fighthealthinsurance.env_utils import local_dotenv_values
 from fighthealthinsurance.ml import ml_router as ml_router_module
+from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
     RateLimitedRemoteOpenLike,
@@ -582,14 +583,18 @@ async def check_backend(
     observations = begin_probe_observations()
     start = time.monotonic()
     try:
-        text = await asyncio.wait_for(
-            instance._infer_no_context(
-                system_prompts=[HEALTH_CHECK_SYSTEM_PROMPT],
-                prompt=HEALTH_CHECK_PROMPT,
-                raise_http_errors=True,
-            ),
-            timeout=timeout,
-        )
+        # A probe, and labelled one, so its "Hello"s and failures stay out of
+        # the series real traffic is judged by (RemoteModelLike.probe, the
+        # startup probe, is labelled the same way).
+        with ml_call_purpose("probe"):
+            text = await asyncio.wait_for(
+                instance._infer_no_context(
+                    system_prompts=[HEALTH_CHECK_SYSTEM_PROMPT],
+                    prompt=HEALTH_CHECK_PROMPT,
+                    raise_http_errors=True,
+                ),
+                timeout=timeout,
+            )
     except asyncio.TimeoutError:
         result.category = CATEGORY_TIMEOUT
         result.error = f"timeout>{timeout:g}s"

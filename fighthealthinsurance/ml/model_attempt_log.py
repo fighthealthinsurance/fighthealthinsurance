@@ -36,6 +36,12 @@ from loguru import logger
 # so a truncated row still says how much was produced.
 MAX_RESPONSE_CHARS = 24_000
 
+# The outcome the ladder's peek files for the undeliverable first item that
+# made a stage fall through. Named once: the streaming flow counts these rows
+# as runts, and a spelling drift between the two would quietly bring back
+# runt_count=0 for a run whose every model answered with a runt.
+OUTCOME_REJECTED_AT_PEEK = "rejected_at_peek"
+
 # Cap on stored error text, for the same reason: some backends echo the whole
 # request back in an error payload.
 MAX_ERROR_CHARS = 4_000

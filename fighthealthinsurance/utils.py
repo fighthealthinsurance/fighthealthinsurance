@@ -9,6 +9,7 @@ import threading
 import time
 import unicodedata
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from functools import reduce
 from inspect import isabstract
 from subprocess import CalledProcessError
@@ -18,6 +19,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Collection,
     Coroutine,
     Dict,
     Generic,
@@ -1353,11 +1355,172 @@ class BestTwo(NamedTuple, Generic[T]):
     runner_up_task: Optional[Awaitable[T]]
 
 
+# How a staged race (best_two_within_timelimit with held-back tasks) started
+# them. immediate: with the others, as an unstaged race does. after_delay:
+# when the delay passed with no usable result (or with the check on one still
+# running). early: before the delay, because every other task had finished
+# with none. after_check: before the delay, because the race's check did not
+# pass the first usable result. skipped: never, because a usable result came
+# first (and passed the check, when there is one). With reserved tasks, a
+# check's verdict can also start some of the held-back tasks and not others:
+# after_check then means it started at least one, skipped that it started
+# none.
+STAGE_IMMEDIATE = "immediate"
+STAGE_AFTER_DELAY = "after_delay"
+STAGE_EARLY = "early"
+STAGE_AFTER_CHECK = "after_check"
+STAGE_SKIPPED = "skipped"
+STAGE_OUTCOMES = (
+    STAGE_IMMEDIATE,
+    STAGE_AFTER_DELAY,
+    STAGE_EARLY,
+    STAGE_AFTER_CHECK,
+    STAGE_SKIPPED,
+)
+
+
+@dataclass
+class StagedStart:
+    """What a staged best_two_within_timelimit race did with its held-back
+    tasks, filled in by the race.
+
+    ``outcome`` is one of STAGE_OUTCOMES. ``started_after`` is how many
+    seconds into the race the held-back tasks started (None when they never
+    did). ``skipped`` lists the held-back awaitables that never started;
+    their coroutines have been closed without being awaited.
+    ``check_passed`` is what the race's check said about the first usable
+    result: True or False, or None when no check finished in the stage
+    window (none was given, nothing usable arrived, or the delay ran out
+    first). ``checked`` is the awaitable whose result was checked (None when
+    no check started). ``demoted`` says a check that did not pass demoted
+    that result (see best_two_within_timelimit's ``demote_failed``), and
+    ``best_demoted`` that the race still returned it, or a result equal to
+    it, as the best.
+    """
+
+    outcome: str = ""
+    started_after: Optional[float] = None
+    skipped: List[Awaitable[Any]] = field(default_factory=list)
+    check_passed: Optional[bool] = None
+    checked: Optional[Awaitable[Any]] = None
+    demoted: bool = False
+    best_demoted: bool = False
+
+
+@dataclass(frozen=True)
+class CheckVerdict:
+    """What a staged race's check says about the first usable result.
+
+    ``passed`` is whether the result is good as it is: it decides the
+    demotion (see best_two_within_timelimit's ``demote_failed``). ``start``
+    names the held-back tasks to start now; the others never start. None
+    means the default: none when it passed, every held-back task but the
+    reserved ones when it did not. A check that returns a plain bool gets
+    that default.
+    """
+
+    passed: bool
+    start: Optional[Collection[Awaitable[Any]]] = None
+
+
+# How far below the best held-back result (or the held-back base score) a
+# demoted result ranks: one point, on scores in the thousands.
+DEMOTION_MARGIN = 1.0
+
+
+def _close_unstarted(awaitables: Sequence[Awaitable[Any]]) -> None:
+    """Close coroutines that will never be awaited, so they are released
+    quietly instead of warning "never awaited" when collected."""
+    for awaitable in awaitables:
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as e:
+                logger.debug(f"Could not close a held-back task: {type(e).__name__}")
+
+
+def _as_verdict(value: Any) -> CheckVerdict:
+    """A check's answer as a CheckVerdict: a verdict as it is, anything
+    else passed only when it is True."""
+    if isinstance(value, CheckVerdict):
+        return value
+    return CheckVerdict(passed=value is True)
+
+
+def _start_check(
+    check: Callable[[T, Awaitable[T]], Awaitable[Any]],
+    result: T,
+    original: Awaitable[T],
+) -> "asyncio.Task[CheckVerdict]":
+    """Run a staged race's check on one result as its own task."""
+
+    async def run() -> CheckVerdict:
+        return _as_verdict(await check(result, original))
+
+    return asyncio.create_task(run())
+
+
+def _wants_demotion(demote_failed: Callable[[], bool]) -> bool:
+    """Whether the caller wants a result whose check did not pass demoted.
+    A callable that raises is a no."""
+    try:
+        return demote_failed() is True
+    except Exception as e:
+        logger.warning(f"A staged race's demotion rule failed: {type(e).__name__}")
+        return False
+
+
+def _same_result(key: Optional[Callable[[Any], Any]], a: Any, b: Any) -> bool:
+    """Whether two results count as the same for demotion: the same
+    ``key``, or equal without one or when the key raises."""
+    if key is not None:
+        try:
+            return bool(key(a) == key(b))
+        except Exception as e:
+            logger.warning(f"A staged race's demotion key failed: {type(e).__name__}")
+    return bool(a == b)
+
+
+def _replaces(replaces_demoted: Optional[Callable[[Any], bool]], result: Any) -> bool:
+    """Whether a held-back result can take a demoted result's place. A
+    rule that raises is a no, so the demoted result keeps its score."""
+    if replaces_demoted is None:
+        return True
+    try:
+        return replaces_demoted(result) is True
+    except Exception as e:
+        logger.warning(f"A staged race's replacement rule failed: {type(e).__name__}")
+        return False
+
+
+def _check_verdict(check_task: "asyncio.Task[CheckVerdict]") -> CheckVerdict:
+    """A finished check's verdict. A check that raised or was cancelled did
+    not pass, and starts the default set."""
+    if check_task.cancelled():
+        return CheckVerdict(passed=False)
+    error = check_task.exception()
+    if error is not None:
+        logger.warning(f"A staged race's check failed: {type(error).__name__}")
+        return CheckVerdict(passed=False)
+    return check_task.result()
+
+
 async def best_two_within_timelimit(
     tasks: Sequence[Awaitable[T]],
     score_fn: Callable[[T, Awaitable[T]], float],
     timeout: float,
     extended_timeout: Optional[float] = None,
+    *,
+    deferred: Optional[Collection[Awaitable[T]]] = None,
+    defer_seconds: float = 0.0,
+    stage: Optional[StagedStart] = None,
+    check: Optional[Callable[[T, Awaitable[T]], Awaitable[Any]]] = None,
+    demote_failed: Optional[Callable[[], bool]] = None,
+    held_base: Optional[float] = None,
+    demote_key: Optional[Callable[[T], Any]] = None,
+    replaces_demoted: Optional[Callable[[T], bool]] = None,
+    reserved: Optional[Collection[Awaitable[T]]] = None,
 ) -> "BestTwo[T]":
     """
     Like :func:`best_within_timelimit`, but also returns the runner-up,
@@ -1376,6 +1539,54 @@ async def best_two_within_timelimit(
     scored ``-inf`` are invalid and never returned; the overtime window
     stops at the first usable result; pending tasks are cancelled on every
     exit path, including caller cancellation.
+
+    Staged start: the tasks listed in ``deferred`` (a subset of ``tasks``)
+    are held back for up to ``defer_seconds`` while the others run, and each
+    result is scored as it arrives. The held-back tasks start as soon as the
+    delay passes with nothing usable, or at once when every other task has
+    finished with nothing usable. When a usable result arrives first they
+    never start, and their coroutines are closed unawaited. Both windows are
+    still measured from the start of the race (the delay is capped at
+    ``timeout``), so a staged race never runs longer than an unstaged one.
+    ``stage``, when given, is filled in with what happened. With no
+    ``deferred`` tasks, a delay of 0, or nothing else to start first, every
+    task starts at once, exactly as an unstaged race.
+
+    Checked staged start: with ``check`` (an async callable given a result
+    and its task), the first usable result of the stage window is checked
+    before the held-back tasks are skipped. They are skipped only when the
+    check returns True. When it returns anything else or raises, they start
+    at once. The check runs inside the stage window: when the delay passes
+    first, it is cancelled and the held-back tasks start. Only one result is
+    checked per race. Without held-back tasks the check is never called.
+    The check may instead return a CheckVerdict, which says whether the
+    result passed and may name the held-back tasks to start.
+
+    Reserved tasks (``reserved``, held back like ``deferred`` ones) start
+    only when a check's verdict names them: never when the delay passes,
+    never when every other task finished with nothing usable, and never in
+    a race with no stage window. Those that never start are closed and
+    listed in ``stage.skipped``.
+
+    Demotion after a failed check: when the check finishes without passing
+    and ``demote_failed()`` (asked once, then) returns True, the checked
+    result is demoted, so the held-back tasks it started can win. From then
+    on, whenever the best two are chosen, the checked result and any result
+    equal to it rank DEMOTION_MARGIN below the best usable held-back result,
+    or below ``held_base`` while none has arrived (with no ``held_base``,
+    their own score stands until one arrives), when that is lower than their
+    own score. A demoted result is never the runner-up. Every other result
+    keeps its score, and a demoted result stays usable, so it is still
+    returned when nothing else is. ``stage`` records the demotion.
+
+    ``demote_key`` says which results count as equal to the checked one
+    (the same ``demote_key(result)``; without it, ``==``), so a result that
+    differs only in what the caller does not show is demoted with it.
+    ``replaces_demoted`` says which held-back results can take a demoted
+    result's place: only those set the score it ranks below (without it,
+    every usable one does), and the others rank below the demoted result.
+    A held-back result the caller could not deliver then cannot push a
+    demoted result, the only deliverable one, below it, nor beat it.
     """
     # Should not happen :)
     if not tasks:
@@ -1385,6 +1596,34 @@ async def best_two_within_timelimit(
         extended_timeout = default_extended_timeout(timeout)
 
     wait_started = time.monotonic()
+    loop = asyncio.get_running_loop()
+    race_started = loop.time()
+
+    reserved_ids = {id(task) for task in reserved} if reserved else set()
+    deferred_ids = {id(task) for task in deferred} if deferred else set()
+    deferred_ids |= reserved_ids
+    held: List[Awaitable[T]] = []
+    if defer_seconds > 0 and deferred_ids:
+        held = [task for task in tasks if id(task) in deferred_ids]
+        if len(held) == len(tasks):
+            # Nothing else to start first: hold nothing back.
+            held = []
+    held_ids = {id(task) for task in held}
+    # Reserved tasks with no stage window to be named in: never started.
+    never = [
+        task for task in tasks if id(task) in reserved_ids and id(task) not in held_ids
+    ]
+    if never:
+        _close_unstarted(never)
+    if stage is not None:
+        stage.outcome = STAGE_IMMEDIATE
+        stage.skipped = list(never)
+    # The check on the stage window's first usable result, when one runs,
+    # and that result.
+    check_task: Optional["asyncio.Task[CheckVerdict]"] = None
+    checked_result: Optional[T] = None
+    # Set once a check that did not pass demoted its result.
+    demoted_result: Optional[T] = None
 
     # Create task objects with Future results and wrap them
     original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
@@ -1398,13 +1637,18 @@ async def best_two_within_timelimit(
     # picked-model debug output irreproducible.
     task_order: Dict[int, int] = {}
 
-    for position, task in enumerate(tasks):
+    def _start(task: Awaitable[T]) -> asyncio.Task[T]:
         # Cast the awaitable to a coroutine to satisfy mypy
         coroutine: Coroutine[Any, Any, T] = cast(Coroutine[Any, Any, T], task)
         wrapped: asyncio.Task[T] = asyncio.create_task(coroutine)
         wrapped_tasks.append(wrapped)
         original_to_task[wrapped] = task
+        return wrapped
+
+    for position, task in enumerate(tasks):
         task_order[id(task)] = position
+        if id(task) not in held_ids and id(task) not in reserved_ids:
+            _start(task)
 
     best_result_option: Optional[T] = None
     best_score = float("-inf")  # Start with negative infinity for comparison
@@ -1412,10 +1656,94 @@ async def best_two_within_timelimit(
     second_result_option: Optional[T] = None
     second_score = float("-inf")
     second_original: Optional[Awaitable[T]] = None
+    # Every usable result so far as (fan-out position, result, score,
+    # original task). Each task is scored exactly once, when it finishes;
+    # the best two are then chosen over all of these in fan-out order, so
+    # exact ties go to the earlier-listed task however the results arrived.
+    usable: List[Tuple[int, T, float, Awaitable[T]]] = []
 
-    def _score_done(done_tasks: Set[asyncio.Task[T]]) -> None:
+    def _is_demoted(result: T, original_task: Awaitable[T]) -> bool:
+        return (
+            demoted_result is not None
+            and id(original_task) not in held_ids
+            and _same_result(demote_key, result, demoted_result)
+        )
+
+    def _demotion_ceiling() -> Optional[float]:
+        # The score a demoted result must rank below: the best held-back
+        # result's that can replace it, or the held-back base while none
+        # has arrived.
+        held_scores = [
+            score
+            for _p, result, score, original in usable
+            if id(original) in held_ids and _replaces(replaces_demoted, result)
+        ]
+        return max(held_scores) if held_scores else held_base
+
+    def _select() -> None:
         nonlocal best_result_option, best_score, best_original
         nonlocal second_result_option, second_score, second_original
+        best_result_option, best_score, best_original = None, float("-inf"), None
+        second_result_option, second_score, second_original = (
+            None,
+            float("-inf"),
+            None,
+        )
+        best_is_demoted = False
+        ceiling = _demotion_ceiling() if demoted_result is not None else None
+        # While a result is demoted, a held-back result that cannot take its
+        # place ranks below it too: otherwise one the caller could not
+        # deliver would win on its own score over the one it could.
+        floor: Optional[float] = None
+        if demoted_result is not None and replaces_demoted is not None:
+            demoted_scores = [
+                min(score, ceiling - DEMOTION_MARGIN) if ceiling is not None else score
+                for _p, result, score, original in usable
+                if _is_demoted(result, original)
+            ]
+            if demoted_scores:
+                floor = max(demoted_scores)
+        for _position, result, score, original_task in sorted(
+            usable, key=lambda u: u[0]
+        ):
+            demoted = _is_demoted(result, original_task)
+            if demoted and ceiling is not None:
+                score = min(score, ceiling - DEMOTION_MARGIN)
+            elif (
+                floor is not None
+                and id(original_task) in held_ids
+                and not _replaces(replaces_demoted, result)
+            ):
+                score = min(score, floor - DEMOTION_MARGIN)
+            if score > best_score or not best_result_option:
+                # Demote the old best into the runner-up slot -- unless
+                # the new best is equal-valued, in which case keeping the
+                # old second avoids a runner-up identical to the best, or
+                # the old best was demoted after a failed check.
+                if (
+                    best_result_option is not None
+                    and best_result_option != result
+                    and not best_is_demoted
+                ):
+                    second_score = best_score
+                    second_result_option = best_result_option
+                    second_original = best_original
+                best_score = score
+                best_result_option = result
+                best_original = original_task
+                best_is_demoted = demoted
+            elif (
+                result != best_result_option
+                and not demoted
+                and (score > second_score or not second_result_option)
+            ):
+                second_score = score
+                second_result_option = result
+                second_original = original_task
+        if stage is not None:
+            stage.best_demoted = best_is_demoted
+
+    def _score_done(done_tasks: Set[asyncio.Task[T]]) -> None:
         # Deterministic order: earlier-listed tasks win exact score ties.
         for task in sorted(
             done_tasks,
@@ -1437,32 +1765,124 @@ async def best_two_within_timelimit(
                 # through no matter how it was scored.
                 if score == float("-inf"):
                     continue
-                if score > best_score or not best_result_option:
-                    # Demote the old best into the runner-up slot -- unless
-                    # the new best is equal-valued, in which case keeping the
-                    # old second avoids a runner-up identical to the best.
-                    if best_result_option is not None and best_result_option != result:
-                        second_score = best_score
-                        second_result_option = best_result_option
-                        second_original = best_original
-                    best_score = score
-                    best_result_option = result
-                    best_original = original_task
-                elif result != best_result_option and (
-                    score > second_score or not second_result_option
-                ):
-                    second_score = score
-                    second_result_option = result
-                    second_original = original_task
+                usable.append(
+                    (task_order.get(id(original_task), 0), result, score, original_task)
+                )
             except Exception as e:
                 _log_fanout_task_error(e, "best_two_within_timelimit")
+        _select()
 
     try:
-        # Main window: wait for everything (or the timeout), take the best.
-        done, pending = await asyncio.wait(
-            wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
-        )
-        _score_done(done)
+        if held:
+            # Stage window: only the tasks started above run. Score each as
+            # it finishes, and decide when (or whether) the held-back ones
+            # start.
+            pending: Set[asyncio.Task[T]] = set(wrapped_tasks)
+            defer_deadline = race_started + min(defer_seconds, timeout)
+            outcome = ""
+            verdict: Optional[CheckVerdict] = None
+            while not outcome:
+                # A verdict counts only inside the stage window: one that
+                # finished after the delay ran out (the loop resumed late)
+                # is ignored, and the held-back tasks start as after a delay.
+                if (
+                    check_task is not None
+                    and check_task.done()
+                    and loop.time() <= defer_deadline
+                ):
+                    verdict = _check_verdict(check_task)
+                    passed = verdict.passed
+                    if stage is not None:
+                        stage.check_passed = passed
+                    if (
+                        not passed
+                        and demote_failed is not None
+                        and _wants_demotion(demote_failed)
+                    ):
+                        demoted_result = checked_result
+                        if stage is not None:
+                            stage.demoted = True
+                        _select()
+                    outcome = STAGE_SKIPPED if passed else STAGE_AFTER_CHECK
+                elif best_result_option and check is None:
+                    outcome = STAGE_SKIPPED
+                elif best_result_option and check is not None and check_task is None:
+                    # best_original is set together with best_result_option.
+                    checked_result = best_result_option
+                    if stage is not None:
+                        stage.checked = best_original
+                    check_task = _start_check(
+                        check,
+                        best_result_option,
+                        cast(Awaitable[T], best_original),
+                    )
+                elif not best_result_option and not pending:
+                    outcome = STAGE_EARLY
+                else:
+                    remaining = defer_deadline - loop.time()
+                    if remaining <= 0:
+                        outcome = STAGE_AFTER_DELAY
+                    else:
+                        waiting: Set[Any] = set(pending)
+                        if check_task is not None:
+                            waiting.add(check_task)
+                        done_any, _ = await asyncio.wait(
+                            waiting,
+                            timeout=remaining,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        finished = {
+                            cast(asyncio.Task[T], t)
+                            for t in done_any
+                            if t is not check_task
+                        }
+                        pending -= finished
+                        _score_done(finished)
+            if check_task is not None and not check_task.done():
+                # The delay ran out while the check was still running: its
+                # answer can no longer change anything.
+                check_task.cancel()
+            to_start, held = held, []
+            if verdict is not None and verdict.start is not None:
+                named = {id(task) for task in verdict.start}
+                starting = [task for task in to_start if id(task) in named]
+            elif outcome == STAGE_SKIPPED:
+                starting = []
+            else:
+                starting = [task for task in to_start if id(task) not in reserved_ids]
+            if verdict is not None:
+                # A pass that starts only reserved tasks (the crucial
+                # side-by-side) still skipped every held-back one.
+                ordinary = [t for t in starting if id(t) not in reserved_ids]
+                if verdict.passed and not ordinary:
+                    outcome = STAGE_SKIPPED
+                else:
+                    outcome = STAGE_AFTER_CHECK if starting else STAGE_SKIPPED
+            starting_ids = {id(task) for task in starting}
+            not_started = [task for task in to_start if id(task) not in starting_ids]
+            _close_unstarted(not_started)
+            for task in starting:
+                pending.add(_start(task))
+            if stage is not None:
+                stage.outcome = outcome
+                stage.skipped = list(never) + not_started
+                if starting:
+                    stage.started_after = loop.time() - race_started
+            # Main window, measured from the start of the race: wait for
+            # everything still running (or the timeout), take the best.
+            if pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=max(0.0, race_started + timeout - loop.time()),
+                    return_when=asyncio.ALL_COMPLETED,
+                )
+                _score_done(done)
+        else:
+            # Main window: wait for everything (or the timeout), take the best.
+            done, pending = await asyncio.wait(
+                wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
+            )
+            _score_done(done)
         if best_result_option:
             _spawn_cancellation(list(pending))
             return BestTwo(
@@ -1478,7 +1898,6 @@ async def best_two_within_timelimit(
         # slow-but-eventually-successful backends useful without the old
         # unbounded ((timeout + 1) * 20) tail, and a falsy first completion no
         # longer aborts the wait while other tasks are still running.
-        loop = asyncio.get_running_loop()
         deadline = loop.time() + extended_timeout
         while pending:
             remaining = deadline - loop.time()
@@ -1497,6 +1916,16 @@ async def best_two_within_timelimit(
         # backend capacity until their own per-call timeouts.
         _spawn_cancellation([t for t in wrapped_tasks if not t.done()])
         raise
+    finally:
+        if check_task is not None and not check_task.done():
+            check_task.cancel()
+        if held:
+            # Left during the stage window (the caller was cancelled, say):
+            # the held-back tasks never started and now never will.
+            _close_unstarted(held)
+            if stage is not None:
+                stage.outcome = STAGE_SKIPPED
+                stage.skipped = list(never) + list(held)
 
     if pending:
         _spawn_cancellation(list(pending))

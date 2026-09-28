@@ -1,0 +1,21 @@
+{% comment %}
+The live Jev check on chat replies, from
+ModelUsageDashboardView._reply_check_state: whether it is on now, its
+thresholds, and the last outcome it recorded. Shown once, in the All Time
+section; each window's Live chat summary has the counts.
+{% endcomment %}
+<h3 id="chat-reply-check">Chat reply check <span class="source-label">(Jev, before the outside models)</span></h3>
+<p class="window-totals">
+  {% if check.on %}<strong>On</strong>: in chats that allow outside models, the outside models wait up to {{ check.max_wait_seconds|floatformat:1 }} s while Jev checks our first usable reply, and the first pass asks them only when it does not pass. A reply our own checks still reject (empty, too short, or a false promise) goes to the retry, which may ask them.
+  {% else %}<strong>Off</strong>: FHI_CHAT_JEV_GATE_ENABLED is off or the TypeSafe key is not set, so the outside models are asked as the routing policy says.
+  {% endif %}
+</p>
+<p class="note">
+  Before Jev is asked, the reply must pass our own checks, the rule the retry uses: at least {{ check.min_response_length }} characters, and no promised outcome. A reply that fails them fails the check without being sent to Jev. An empty reply is not judged, and is counted as &ldquo;nothing judged&rdquo;.
+  A reply fails when Jev's &ldquo;responds to the message&rdquo; answer is below {{ check.min_answers|floatformat:2 }} or any of its &ldquo;states a coverage or eligibility verdict&rdquo;, &ldquo;asks for what the message already gives&rdquo; and &ldquo;promises a result&rdquo; answers is {{ check.max_problem|floatformat:2 }} or more. It passes clearly, and no outside model is asked, when &ldquo;responds&rdquo; is at least {{ check.clear_answers|floatformat:2 }} and every problem answer is below {{ check.clear_problem|floatformat:2 }}. Anything between is borderline: the outside models are asked, and Jev scores every candidate in a second request and picks the reply.
+  When Jev reads the message as a crucial moment (a deadline, a denial, an appeal's next step, coverage; at least {{ check.crucial_min|floatformat:2 }}) and the chat has a side-by-side left, {{ check.side_by_side_model|default:"no model (FHI_CHAT_SIDE_BY_SIDE_MODEL is empty)" }} is asked too and the person is offered a side-by-side. While Jev answers the check, side-by-sides are offered for crucial moments only.
+  A check may take up to {{ check.timeout_seconds|floatformat:1 }} s; an error or a timeout starts the outside models.
+  {% if check.demote_failed %}A reply that fails the check ranks just below the outside models' answers, so it is delivered only when nothing else usable arrives (FHI_CHAT_JEV_GATE_DEMOTE_FAILED).{% else %}A reply that fails the check keeps its score, so our models' higher base score usually keeps it in front (FHI_CHAT_JEV_GATE_DEMOTE_FAILED is off).{% endif %}
+  Last answer: {% if check.last_success_at %}{{ check.last_success_at|date:"Y-m-d H:i T" }}{% else %}none recorded{% endif %}.
+  Last failure: {% if check.last_failure_at %}{{ check.last_failure_at|date:"Y-m-d H:i T" }} ({{ check.last_failure }}{% if check.last_failure_hint %}: {{ check.last_failure_hint }}{% endif %}){% else %}none recorded{% endif %}.
+</p>

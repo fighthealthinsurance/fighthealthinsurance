@@ -57,3 +57,22 @@ class GenerateAppealInput:
 
     hashed_email: str
     denial_uuid: str
+
+
+@dataclass
+class ChatRoutingPolicyInput:
+    """Input for ``ChatRoutingPolicyWorkflow``.
+
+    Unlike the other inputs this names no case at all: the workflow reads
+    ChatTurn metadata over a time window and writes one ChatRoutingPolicy
+    row, so its history holds this number, the run's own id (which the
+    workflow hands its activity), the row id it returns and nothing else.
+
+    Attributes:
+        window_minutes: How many minutes of chat turns the policy is
+            computed from. The default matches
+            ``ml.chat_policy.DEFAULT_WINDOW_MINUTES`` (one week); it is
+            repeated here because this module may not import Django.
+    """
+
+    window_minutes: int = 7 * 24 * 60

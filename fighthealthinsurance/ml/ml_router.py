@@ -1,10 +1,17 @@
 import asyncio
+import random
 import threading
 from typing import List, Optional, Sequence, Tuple
 
 from loguru import logger
 
 from fighthealthinsurance.env_utils import get_env_variable
+from fighthealthinsurance.ml.chat_policy import ChatPolicy, narrow_externals
+
+# How many outside models chat asks at most, and the draw exploration uses
+# (a seam, so tests can decide it).
+CHAT_OUTSIDE_LIMIT = 3
+_explore_draw = random.random
 from fighthealthinsurance.ml.ml_models import *
 
 # The hosted model that backs up our own models for summaries and appeal
@@ -23,6 +30,7 @@ class MLRouter(object):
     all_models_by_cost: List[RemoteModelLike]
     external_models_by_cost: List[RemoteModelLike]
     context_only_models_by_cost: List[RemoteModelLike]
+    chat_outside_models_by_name: dict[str, RemoteModelLike]
 
     def __init__(self):
         # Initialize instance attributes to avoid mutable class-level state
@@ -31,6 +39,7 @@ class MLRouter(object):
         self.all_models_by_cost = []
         self.external_models_by_cost = []
         self.context_only_models_by_cost = []
+        self.chat_outside_models_by_name = {}
         logger.debug("MLRouter: starting model registration")
         enabled_models = self._enabled_model_names()
         if enabled_models is not None:
@@ -141,6 +150,7 @@ class MLRouter(object):
             for x in sorted(building_context_only_models_by_cost)
             if x.model is not None
         ]
+        self._register_chat_outside_models()
         logger.info(
             f"MLRouter initialized with {len(self.all_models_by_cost)} total models, "
             f"{len(self.internal_models_by_cost)} internal, {len(self.external_models_by_cost)} external, "
@@ -150,6 +160,88 @@ class MLRouter(object):
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
+
+    def _register_chat_outside_models(self) -> None:
+        """Instances of the models backends serve to chat only
+        (``chat_models``), by name, outside every general pool. A backend
+        without its key, or a model that fails to build, is skipped."""
+        # The same allow-list as every other remote model: a provider the
+        # operator left out never gets chat text.
+        enabled_models = self._enabled_model_names()
+        for backend in sorted(candidate_model_backends, key=lambda c: c.__name__):
+            try:
+                descriptions = backend.chat_models()
+            except Exception as e:
+                logger.warning(f"Skipping chat models of {backend}: {type(e).__name__}")
+                continue
+            for m in descriptions:
+                if (
+                    enabled_models is not None
+                    and m.name not in enabled_models
+                    and m.internal_name not in enabled_models
+                ):
+                    logger.debug(
+                        f"MLRouter: skipping disabled chat model {m.name} "
+                        f"(not in ENABLED_REMOTE_MODELS)"
+                    )
+                    continue
+                try:
+                    if m.model is None:
+                        m.model = backend(model=m.internal_name)
+                    if getattr(m.model, "name", None) is None:
+                        m.model.name = m.name
+                    self.chat_outside_models_by_name[m.name] = m.model
+                except Exception as e:
+                    logger.warning(
+                        f"Skipping chat model {m.internal_name}: {type(e).__name__}"
+                    )
+
+    def chat_outside_models(
+        self, names: Optional[Sequence[str]] = None, limit: int = 3
+    ) -> list[RemoteModelLike]:
+        """The outside models chat asks, in ``names`` order (default
+        FHI_CHAT_OUTSIDE_MODELS): the chat-only models, or any registered
+        external model by name (Azure's GPT-5.5). Models that are down are
+        left out (failing open like the other filters), and so is any model
+        whose provider's chat budget is spent (never failing open: a spent
+        budget means no call)."""
+        from django.conf import settings
+
+        from fighthealthinsurance.ml import spend
+
+        if names is None:
+            names = getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or []
+        found: list[RemoteModelLike] = []
+        for name in names:
+            model = self.chat_outside_models_by_name.get(name)
+            if model is None:
+                model = next(
+                    (m for m in self.models_by_name.get(name, []) if m.external),
+                    None,
+                )
+            if model is not None and model not in found:
+                found.append(model)
+        available = self._filter_available(found, "chat-outside") if found else []
+        within_budget = [
+            m
+            for m in available
+            if getattr(m, "SPEND_PROVIDER", None) is None
+            or spend.allows(getattr(m, "SPEND_PROVIDER"), spend.CHAT)
+        ]
+        return within_budget[:limit]
+
+    def chat_side_by_side_model(self) -> Optional[RemoteModelLike]:
+        """The model a crucial chat turn compares with its reply
+        (FHI_CHAT_SIDE_BY_SIDE_MODEL, Kimi-K3 by default), or None when it
+        is unset, not registered, down or over its provider's chat budget
+        (the same filters as chat_outside_models)."""
+        from django.conf import settings
+
+        name = str(getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or "").strip()
+        if not name:
+            return None
+        found = self.chat_outside_models([name], limit=1)
+        return found[0] if found else None
 
     @staticmethod
     def _enabled_model_names() -> Optional[set[str]]:
@@ -605,11 +697,130 @@ class MLRouter(object):
         """
         return self._filter_available(self.internal_models_by_cost, "prior-auth")[:3]
 
-    def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
+    def chat_policy_in_force(
+        self, policy: Optional[ChatPolicy]
+    ) -> Optional[ChatPolicy]:
+        """The chat routing policy the fan-out may follow right now, or None
+        to route as if there were none.
+
+        With no internal backend selectable the whole policy is set aside
+        (exclusions, caps and delay): the outside models are then the only
+        way the turn gets an answer, and failing the turn is worse than any
+        of the costs the policy saves.
+        """
+        if policy is None or policy.narrows_nothing:
+            return None
+        if not self._healthy_general_internal():
+            logger.info(
+                "MLRouter: no internal chat backend is selectable; "
+                "setting the chat routing policy aside"
+            )
+            return None
+        return policy
+
+    def chat_internal_selectable(self) -> bool:
+        """Whether one of our own models can take a chat turn right now
+        (instruction-following and not marked down). The live check on our
+        reply (chat/reply_gate.py) holds the outside models back only then,
+        for the same reason the routing policy is set aside without one."""
+        return bool(self._healthy_general_internal())
+
+    def chat_external_delay(self, policy: Optional[ChatPolicy]) -> float:
+        """Seconds the chat fan-out holds the outside models back while
+        ours answer: the policy's delay, or 0 when it is not in force."""
+        in_force = self.chat_policy_in_force(policy)
+        return in_force.external_delay_seconds if in_force is not None else 0.0
+
+    def _chat_externals(self, policy: Optional[ChatPolicy]) -> list[RemoteModelLike]:
+        """The outside models for a chat turn: the FHI_CHAT_OUTSIDE_MODELS
+        roster when it is set (else best_external_models, as before),
+        narrowed by the policy when one is in force. The policy never adds
+        a model: its learned order only reorders the roster as it is now, so
+        a model taken off the roster after the policy was computed is not
+        asked, and one added since keeps its roster place after the rest."""
+        from django.conf import settings
+
+        in_force = self.chat_policy_in_force(policy)
+        roster = list(getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or [])
+        if roster:
+            names: Optional[list[str]] = None
+            if in_force is not None and in_force.outside_order:
+                learned = [n for n in in_force.outside_order if n in roster]
+                names = learned + [n for n in roster if n not in learned]
+            externals = self._explore(self.chat_outside_models(names, limit=50))
+        else:
+            externals = self.best_external_models()
+        if in_force is None:
+            return externals
+        return narrow_externals(externals, in_force)
+
+    def _explore(self, candidates: list[RemoteModelLike]) -> list[RemoteModelLike]:
+        """The first CHAT_OUTSIDE_LIMIT of ``candidates`` (the order chat
+        asks them in), except that on FHI_CHAT_EXPLORE_RATE of turns the
+        second place goes to one of the models further down, so every model
+        in the roster keeps being asked often enough for its place in the
+        order to be learned."""
+        from django.conf import settings
+
+        chosen = candidates[:CHAT_OUTSIDE_LIMIT]
+        further = candidates[CHAT_OUTSIDE_LIMIT:]
+        rate = float(getattr(settings, "FHI_CHAT_EXPLORE_RATE", 0.2) or 0.0)
+        if len(chosen) >= 2 and further and _explore_draw() < rate:
+            chosen[1] = further[int(_explore_draw() * len(further)) % len(further)]
+        return chosen
+
+    def _chat_lead(self) -> list[RemoteModelLike]:
+        """The fhi backend instance(s) that lead the chat fan-out.
+
+        The strongest fhi backend that follows instructions and looks
+        healthy, by quality. Equal quality across names goes to the name
+        that sorts first, so every pod picks the SAME lead whatever order
+        the backends registered in. Each step fails open like
+        ``_filter_available``: with no general-purpose fhi backend the
+        appeal fine-tune can still lead, and with every candidate marked
+        down the strongest one still leads, because a doubled slot on a long
+        shot beats no fhi call at all.
+
+        Chosen per INSTANCE, not per name: two backends can share a registry
+        name (alpha and the May fine-tune set to the same model path both
+        register as one name), and only the strongest of them leads. The
+        others under that name take ordinary internal slots. Instances that
+        tie on that quality under the chosen name all lead, cheapest first
+        (``models_by_name`` keeps each name's backends in cost order). Empty
+        when no fhi backend is registered.
+        """
+        registry_name: dict[int, str] = {}
+        fhi: list[RemoteModelLike] = []
+        for name, backends in self.models_by_name.items():
+            if name.startswith("fhi-"):
+                for m in backends:
+                    registry_name[id(m)] = name
+                    fhi.append(m)
+        candidates = self._filter_available(
+            self._general_purpose_only(fhi, "chat-fhi"), "chat-fhi"
+        )
+        if not candidates:
+            return []
+        strongest = max(m.quality() for m in candidates)
+        lead_name = min(
+            registry_name[id(m)] for m in candidates if m.quality() == strongest
+        )
+        return [
+            m
+            for m in candidates
+            if registry_name[id(m)] == lead_name and m.quality() == strongest
+        ]
+
+    def get_chat_backends(
+        self, use_external=False, policy: Optional[ChatPolicy] = None
+    ) -> list[RemoteModelLike]:
         """
         Return models for handling chat interactions.
         Args:
             use_external: Whether to include external models in the fan-out
+            policy: Optional chat routing policy (ml/chat_policy.py). It can
+                only narrow the external models, and only when use_external
+                is on; see chat_policy_in_force for when it is set aside.
 
         Returns:
             List of RemoteModelLike models suitable for chat tasks
@@ -620,46 +831,29 @@ class MLRouter(object):
             return forced_models
 
         models = []
-        # Try each fhi model twice. Sorted so every pod doubles the SAME
-        # fhi backend (dict insertion order used to vary with registration
-        # order). Narrow fine-tunes are excluded first, so a deployment where
-        # the appeal-only backend sorts first doesn't double IT for chat.
-        fhi_names = sorted(
-            name for name in self.models_by_name if name.startswith("fhi-")
-        )
-        general_fhi_names = [
-            name
-            for name in fhi_names
-            if any(m.supports_general_instructions() for m in self.models_by_name[name])
-        ]
-        # Fail open like the other filters: a deployment whose only fhi
-        # backend is the appeal fine-tune should still get its doubled chat
-        # slot rather than silently losing it.
-        chosen_fhi_names = general_fhi_names or fhi_names
-        if chosen_fhi_names:
-            # Filtered again per INSTANCE, not just per name: a name can hold
-            # a mix of backends, and _general_purpose_only logs (and fails
-            # open) if they are all narrow.
-            models += (
-                self._general_purpose_only(
-                    self._filter_available(
-                        self.models_by_name[chosen_fhi_names[0]], "chat-fhi"
-                    ),
-                    "chat-fhi",
-                )
-                * 2
-            )
+        # The lead fhi backend is asked twice, for redundancy against a slow
+        # pod. It is picked by quality (see _chat_lead), so the doubled slot
+        # goes to our strongest model rather than whichever name sorts first.
+        lead = self._chat_lead()
+        models += lead * 2
         if use_external:
-            models += self.best_external_models()
+            models += self._chat_externals(policy)
         # Strongest available internals, not cheapest: the cost ordering was
         # picking the 6 CHEAPEST internal backends for chat, which is the
         # wrong end of the list when strong and weak internals coexist. The
         # sort is stable over the cost ordering, so equal-quality models
-        # still resolve cheapest-first.
-        internal_available = self._general_purpose_only(
-            self._filter_available(self.internal_models_by_cost, "chat-internal"),
-            "chat-internal",
-        )
+        # still resolve cheapest-first. The lead already has its two calls,
+        # so it is left out here; filtering first and dropping it after keeps
+        # the fail-open behaviour judged over the whole internal pool.
+        lead_ids = {id(m) for m in lead}
+        internal_available = [
+            m
+            for m in self._general_purpose_only(
+                self._filter_available(self.internal_models_by_cost, "chat-internal"),
+                "chat-internal",
+            )
+            if id(m) not in lead_ids
+        ]
         internal_to_add = sorted(internal_available, key=lambda m: -m.quality())[:6]
         models += internal_to_add
         logger.debug(
@@ -669,7 +863,7 @@ class MLRouter(object):
         return models
 
     def get_chat_backends_with_fallback(
-        self, use_external=False
+        self, use_external=False, policy: Optional[ChatPolicy] = None
     ) -> tuple[list[RemoteModelLike], list[RemoteModelLike]]:
         """
         Return primary and fallback (retry-only) models for chat interactions.
@@ -690,6 +884,8 @@ class MLRouter(object):
         Args:
             use_external: Whether external models participate at all. False
                 keeps chat internal-only with no fallback.
+            policy: Optional chat routing policy. It narrows the externals
+                of both lists the same way (see get_chat_backends).
 
         Returns:
             Tuple of (primary_models, fallback_models)
@@ -699,10 +895,21 @@ class MLRouter(object):
             return forced_models, []
 
         # Reuse get_chat_backends for primary models (allows test mocking to work)
-        primary_models = self.get_chat_backends(use_external=use_external)
+        if policy is None:
+            primary_models = self.get_chat_backends(use_external=use_external)
+        else:
+            primary_models = self.get_chat_backends(
+                use_external=use_external, policy=policy
+            )
 
         fallback_models: list[RemoteModelLike] = []
-        if use_external:
+        # When the primary fan-out already has its outside models, the
+        # fallback adds none: a second pick could draw another exploration
+        # and send the retry to a model the turn never chose.
+        primary_has_external = any(
+            getattr(m, "external", False) is True for m in primary_models
+        )
+        if use_external and not primary_has_external:
             # Only externals NOT already in the primary fan-out. build_retry_calls
             # issues two calls per entry of model_backends AND two per entry of
             # fallback_backends, so a backend present in both lists received
@@ -711,7 +918,7 @@ class MLRouter(object):
             # with no added diversity.
             already_primary = {id(m) for m in primary_models}
             fallback_models = [
-                m for m in self.best_external_models() if id(m) not in already_primary
+                m for m in self._chat_externals(policy) if id(m) not in already_primary
             ]
 
         return primary_models, fallback_models

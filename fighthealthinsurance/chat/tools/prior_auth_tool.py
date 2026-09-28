@@ -116,7 +116,8 @@ class PriorAuthTool(BaseTool):
 
         except json.JSONDecodeError:
             logger.warning(
-                f"Invalid JSON data in create_or_update_prior_auth token: {json_data}"
+                "Invalid JSON in create_or_update_prior_auth token "
+                f"(payload_chars={len(json_data)})"
             )
             await self.send_status_message(
                 "Error processing prior auth data: Invalid JSON format."
@@ -124,7 +125,9 @@ class PriorAuthTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(f"Error processing prior auth data: {e}")
+            logger.opt(exception=True).warning(
+                f"Error processing prior auth data: {type(e).__name__}"
+            )
             await self.send_status_message(
                 f"Error processing prior auth data: {str(e)}"
             )
@@ -171,6 +174,7 @@ class PriorAuthTool(BaseTool):
         """
         # Allowlist, not hasattr -- see AppealTool._update_appeal_fields.
         allowed = settable_model_fields(type(prior_auth))
+        rejected_keys = 0
         for key, value in prior_auth_data.items():
             # Normalize the key
             key = key.lower().strip()
@@ -182,4 +186,11 @@ class PriorAuthTool(BaseTool):
             if is_safe_tool_field(key, allowed):
                 setattr(prior_auth, key, value)
             else:
-                logger.warning(f"Key {key} not settable on Prior Auth model. Skipping.")
+                rejected_keys += 1
+
+        if rejected_keys:
+            # A count only: the keys come from the model's reply.
+            logger.warning(
+                "Skipped payload keys not settable on Prior Auth model "
+                f"(rejected_keys={rejected_keys})"
+            )

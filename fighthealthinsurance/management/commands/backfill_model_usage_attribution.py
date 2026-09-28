@@ -5,9 +5,15 @@ Repairs the two data problems behind the ML model usage dashboard's bad rows:
 * Chosen ``ProposedAppeal`` rows with ``model_name`` NULL (picks recorded
   before model tracking existed, or while the frontend id-echo was missing).
   Recovery, strictly evidence-based and in order:
-    1. exact appeal_text match against a generated draft for the same denial;
-    2. sole-draft inference (every draft for the denial came from one model,
-       and the pick was not an arbitrary-text ``editted`` submission).
+    1. text match against a generated draft for the same denial, on the
+       whitespace-normalized fingerprint (a chosen row holds the text as the
+       browser submitted it, CRLF line endings included, while drafts are
+       stored with LF) or exact for legacy drafts whose fingerprint is NULL;
+    2. sole-draft inference (every draft stored for the denial BEFORE the
+       pick came from one model, and the pick is not marked ``editted`` --
+       the share flow's arbitrary text, or a draft the user changed before
+       picking; drafts stored after the pick were not on the
+       screen when the user chose and are not evidence).
   Rows with no recoverable evidence are stamped ``legacy-unattributed`` —
   never guessed onto a current model. (Their generating model is simply not
   in the database: the drafts they were picked from predate the
@@ -105,11 +111,15 @@ class Command(BaseCommand):
         # speculative=False mirrors mark_proposal_chosen's guard: a held-back
         # precompute row the user never saw must not mis-attribute the pick on a
         # coincidental text collision (a promoted row is speculative=False).
+        # id__lt: only drafts stored before the pick were on the screen it
+        # was made from; a later regeneration that happened to write the same
+        # text is not evidence (the same bound sole_draft_attribution uses).
         original = (
             ProposedAppeal.objects.filter(
+                ProposedAppeal.text_match_q(pa.appeal_text),
                 for_denial_id=pa.for_denial_id,
+                id__lt=pa.id,
                 chosen=False,
-                appeal_text=pa.appeal_text,
                 model_name__isnull=False,
                 speculative=False,
             )
@@ -131,7 +141,9 @@ class Command(BaseCommand):
                     "text_match",
                 )
         if not pa.editted:
-            inferred = ProposedAppeal.sole_draft_attribution(pa.for_denial_id)
+            inferred = ProposedAppeal.sole_draft_attribution(
+                pa.for_denial_id, before_id=pa.id
+            )
             if inferred is not None and not is_object_repr(inferred[0]):
                 return (inferred[0], inferred[1], inferred[2], "sole_draft")
         return None

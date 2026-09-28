@@ -40,7 +40,9 @@ _call_llm_with_actions
   │    history, anti-repeat note + temperature 0.85 when repeats were
   │    rejected, fallback backends, 35s + 40s; repeats get a finite
   │    last-resort penalty here instead of -inf
-  │  alternate answer: runner-up kept only when scores are CLOSELY TIED
+  │  alternate answer: the best CLOSELY TIED, presentable candidate from a
+  │    different model than the winner, else the runner-up under the same
+  │    rules
   │  debug_llm_input / debug_llm_result frames when debug is on
   │  tool handlers (appeal, prior auth, medicaid, pubmed, doc fetcher, ...)
   │    -- recursive tools re-enter _call_llm_with_actions at depth+1
@@ -49,7 +51,17 @@ persistence (chat_persistence.py): transactional turn persist with
   tail-dedup, summary list capped at 20; panda-summary placeholder swap
   happens in the background when the model omitted its summary
   ▼
-ws frames out: status heartbeats, content (+ alternate_content), metrics
+ws frames out: status heartbeats, content (+ alternate_content and
+  turn_id), metrics
+  ▼
+turn record (chat/turn_record.py): one ChatTurn row per turn counted in
+  fhi_chat_turns_total, with the counted outcome, written after the reply
+  frame (or the error frame); a turn cancelled after it was counted gets
+  its row from a thread of its own, with a bounded wait
+  ▼
+shadow scoring (chat/shadow_scoring.py, off by default): a background
+  task, started after the row, that scores the delivered reply with
+  TypeSafe's Jev for the staff dashboard (see §5)
 ```
 
 Everything in the fan-out is concurrent; the serial spine of a turn is
@@ -70,6 +82,12 @@ base score derived from the model's self-reported quality():
 | RemoteHealthInsurance legacy | 101     | 2040                   | 2550                   |
 | paid external, premium tier  | 98      | 1920                   | 2401                   |
 | DeepInfra DeepSeek-V4-Pro    | 92      | 1692                   | 2116                   |
+
+The strongest healthy fhi backend (alpha, at 210) leads the fan-out and
+is listed twice; every other backend is listed once (section 4). The
+lead's two entries start from the same base score, so content signals
+alone decide between them, and alpha's truncated-history calls (8820) sit
+above those of the May fine-tune (NewRemoteInternal, 8000).
 
 Content signals then adjust: +100 primary-variant bonus, +100 substantial
 response, +10 context, +100 tool-call bonus, +150 mentions an uploaded
@@ -160,9 +178,21 @@ leaves the loop broken:
 
 get_chat_backends_with_fallback builds the fan-out:
 
-* the primary fhi backend, doubled (redundancy against a slow pod),
-* the strongest 6 *available* internal backends — quality-sorted since
-  this change; the old cost-sort quietly picked the cheapest end,
+* the lead fhi backend, doubled (redundancy against a slow pod). The lead
+  is the strongest fhi backend by quality that follows instructions and
+  looks healthy, with equal quality going to the name that sorts first so
+  every pod picks the same one. The lead is chosen per backend, not per
+  name: when two backends share a name (alpha and the May fine-tune set to
+  the same model path), only the stronger leads and the other takes an
+  ordinary internal slot. Each step fails open like the other
+  filters: with every fhi backend marked down the strongest still leads.
+  With alpha and the May fine-tune both registered, alpha leads with two
+  calls and the May fine-tune gets one. The lead used to be whichever fhi
+  name sorted first, which put the May fine-tune in front of the stronger
+  alpha,
+* the strongest 6 *available* internal backends other than the lead,
+  quality-sorted (an older cost-sort quietly picked the cheapest end). The
+  lead is left out here so it gets exactly two calls,
 * when external models are enabled: the best <= 3 externals
   (quality-sorted, health-gated) now join the PRIMARY
   fan-out. The separate fallback list then carries only externals NOT
@@ -187,12 +217,200 @@ respects it; the server also treats an ABSENT key as on, which is what
 actually changed (the old code treated absent as off, so anyone who never
 went through the consent form silently lost fallback).
 
+### The routing policy ("ours first")
+
+Chat's outside models come from a roster, `FHI_CHAT_OUTSIDE_MODELS`, in
+order (GPT-5.5 on Azure, then DeepInfra's Mistral-Small 3.2, GLM-5.3 Flash,
+DeepSeek V4.1 Flash and Qwen3.8-2.4T). At most three are asked, skipping any
+that is down or whose budget is spent (`ml/spend.py` counts spend as the
+calls happen). On `FHI_CHAT_EXPLORE_RATE` (20%) of turns the second place
+goes to a model further down, so every model keeps being asked often enough
+for its place to be learned.
+
+A policy row (`ChatRoutingPolicy`, written once a day by `ml/chat_policy.py`
+from a week of ChatTurn metadata) can tune that in three ways:
+
+* **Learn the order.** A model asked on at least 30 turns moves among the
+  places such models hold in the roster, by how often its answer was
+  delivered. A model with fewer turns keeps its place, so the roster is
+  the prior until the data says otherwise.
+* **Leave out outside models that do not win.** The top healthy outside
+  model is always kept. Any other is left out once enough turns asked it
+  and it never won, except while our own models fail often.
+* **Give our models a head start.** With a hold above 0
+  (`FHI_CHAT_EXTERNAL_HOLD_SECONDS`, 8s, at most 15s) the primary and tool
+  passes start our own models' calls first and hold the outside ones back.
+  They start when the hold passes with nothing usable, or at once when
+  every call of ours has failed or been rejected. If one of ours answers
+  usably first they are never sent. The race's windows still run from its
+  start, so a turn never takes longer than it would without the hold. The
+  retry pass is never staged.
+
+Spending caps are not in the policy: the router skips a provider whose
+budget is spent, and the transport refuses to send to one, as it happens.
+
+Guard rails: a policy can only reorder and narrow the roster, never add a
+model, and a person's choice to keep chat on our models always wins. When
+none of our models is selectable the router sets the whole policy aside.
+Chat follows the newest row only while `FHI_CHAT_POLICY_APPLY` is on (off by
+default) and the row is newer than `FHI_CHAT_POLICY_MAX_AGE_MINUTES` (36
+hours, so one missed daily run does not drop it);
+an empty table or an unreadable row gives the default, which is the
+behaviour described above. A turn never waits on the database for the
+policy: it uses the row cached in its process, and a turn that finds the
+cache over a minute old starts a refresh on a thread of its own, with its
+own connection and a 0.5s statement timeout on PostgreSQL. Only one
+refresh runs at a time per process, and turns meanwhile use the cached
+row (the default before any row has been read). A refresh that fails
+keeps the cached row, which is still followed only while it is fresh.
+Rows come from the `chat-routing-policy` Temporal Schedule, which runs
+`ChatRoutingPolicyWorkflow` once a day on its own queue in the
+appeal-worker pods while `TEMPORAL_ENABLED` and
+`TEMPORAL_CHAT_POLICY_ENABLED` are on (off by default; see
+`k8s/temporal/README.md`), or from `manage.py compute_chat_policy` (by hand
+or from a CronJob). Both write the same row, and its `source` says which;
+a Schedule run's row also carries its run id, so each run writes one row
+at most, and the command writes a new row every time. The Schedule's
+history holds the window, the run id and the row id only, and Temporal
+is never on the turn path: if runs stop, the newest row passes the age
+limit above and chat routes by the default. Rows are shown on the staff ML
+Model Usage Dashboard whether or not chat follows them. Rows are never
+edited; rows older than 30 days are deleted after a new one is written. Each
+ChatTurn row records how its primary pass started the outside models
+(`external_start`: immediate, after_delay, early, after_check or skipped)
+and the hold it used; held-back calls that were never sent have the status
+"skipped".
+
+### The reply check (Jev decides whether the outside models are needed)
+
+The cascade TypeSafe documents (docs.typesafe.ai/cookbooks/sde_cascade):
+our models answer first, TypeSafe's Jev checks the answer, and the paid
+outside models are asked only when the check does not pass.
+`chat/reply_gate.py` runs it inside the primary pass's staged fan-out;
+`ml/chat_gate.py` holds our own checks, the questions and the decision
+rule.
+
+* **When.** Only when all of these hold: `FHI_CHAT_JEV_GATE_ENABLED` is on
+  (off by default, forced off in every test configuration), the TypeSafe
+  key is set, the person allowed outside models (Jev reads the text), the
+  message was typed (not a document upload or a stored long paste), one of
+  our models is selectable, TypeSafe's chat budget (`ml/spend.py`) allows a
+  request, and the pass has outside calls to hold back and calls of ours to
+  start first. With the budget spent the turn routes by our own rules, as
+  with the check off. It does not depend on
+  `FHI_CHAT_POLICY_APPLY`. Tool passes and the retry pass are never
+  checked.
+* **The hold.** The outside calls wait until our first usable reply is
+  judged, or `FHI_CHAT_JEV_GATE_MAX_WAIT_SECONDS` (8s) passes, whichever
+  comes first; when the routing policy's delay is longer, that is the hold.
+  They start at once when ours all fail.
+* **Our own checks first.** Before anything is sent, our first usable
+  reply (as cleaned for delivery) must pass the rule the retry uses
+  (`chat/retry_handler.should_retry_response`): at least
+  `MIN_RESPONSE_LENGTH` (5) characters, and no promised outcome
+  (`safety_filters.detect_false_promises`). A reply that fails them fails
+  the check with the scorer `fhi/local-checks-1`, is never sent to
+  TypeSafe, and leaves the health row alone. These requirements hold
+  whether or not Jev can be reached. An empty reply is not judged at all:
+  it is recorded as skipped, like a reply carrying a tool call.
+* **The check.** One request per turn: the person's latest message and our
+  first usable reply (as cleaned for delivery), redacted as letter scoring
+  redacts with the identifiers `chat/redaction.py` collects for the chat's
+  accounts and its linked appeals and prior authorization requests (if
+  that list cannot be read, nothing is sent), with four yes/no questions
+  about the reply: does it respond to what the message asks or says; does
+  it state a coverage or eligibility outcome as a settled fact; does it ask
+  for something the message already gives; does it promise or guarantee a
+  result (our own false-promise rule, asked of Jev too). A fifth asks about
+  the message: is it a crucial moment (a deadline, a denial decision, an
+  appeal's next step, or whether something is covered)? The request is
+  counted against TypeSafe's chat budget. A reply carrying a tool call or
+  the data-deletion handoff is not sent; the outside calls start instead.
+* **Three tiers.** **Fail**: "responds" below
+  `FHI_CHAT_JEV_GATE_MIN_ANSWERS` (0.7), or any problem answer at or above
+  `FHI_CHAT_JEV_GATE_MAX_PROBLEM` (0.3). **Pass**: "responds" at least
+  `FHI_CHAT_JEV_GATE_CLEAR_ANSWERS` (0.85) and every problem answer below
+  `FHI_CHAT_JEV_GATE_CLEAR_PROBLEM` (0.15). **Borderline**: anything
+  between.
+* **Database work.** The identifier lookup and the health note after the
+  turn each run on a thread of their own with their own connection, closed
+  afterwards, inside a transaction with a statement timeout on PostgreSQL
+  (`chat/isolated_db.py`), never on the chat's database executor. The
+  lookup shares the check's 1.5s; a stuck one is a timeout, nothing is
+  sent, and the rest of the turn does not wait for it. The turn waits at
+  most 1s for the health note. At most 8 of each kind run at once per
+  process; past that the check sends nothing, or the note is left out.
+* **Pass:** the primary pass never sends the outside calls (their
+  coroutines are closed) and the usual scoring picks among our models'
+  answers. The retry, which runs only when our own checks reject the
+  reply (empty, too short or a false promise), may still ask them; the
+  dashboard does not count such a turn as one the check kept them from.
+  **Anything else**
+  (a fail, an error, an HTTP error, an answer we cannot read, or no answer
+  within `FHI_CHAT_JEV_GATE_TIMEOUT_SECONDS`, 1.5s): the outside calls
+  start at once and the usual scoring picks among everything. The check
+  never holds the reply back, and the race's windows still run from its
+  start.
+* **Borderline: Jev ranks.** The outside calls start at once (the roster
+  asks up to three, so at least two whenever two are up and in budget).
+  When the race is over, a second request sends every deliverable
+  candidate, ours included, one per reply the person would see and at most
+  four, labelled THE REPLY 1, 2 and so on, with the four reply questions
+  each. Each candidate's quality is "responds" times one minus its largest
+  problem answer, and the best is delivered (ties go to the race's order).
+  The ranking has `FHI_CHAT_JEV_RANK_TIMEOUT_SECONDS` (3s); on an error or a
+  timeout the race's pick stands. Each ranked call keeps its quality as
+  `jev` in `ChatTurn.calls`, and the routing policy orders the outside
+  models by those once two of them have 30 each (`_choose_order`).
+* **Crucial moments: a side-by-side.** When Jev's crucial answer is at
+  least `FHI_CHAT_JEV_CRUCIAL_MIN` (0.5) and the chat still has a
+  side-by-side left (`FHI_CHAT_SIDE_BY_SIDES_PER_CHAT`, 2), the pass's
+  reserved call starts too: one call (truncated history) to
+  `FHI_CHAT_SIDE_BY_SIDE_MODEL` (Kimi-K3), built only for the checked
+  primary pass and never asked by the retry. The race starts a reserved
+  call only when the check names it (`utils.CheckVerdict`), never after the
+  hold runs out, so an error, a timeout or an ordinary turn never sends it.
+  The side-by-side is Jev's top two after a ranking, else the reply beside
+  the side-by-side model's answer, else beside the best answer from another
+  model. While Jev answers the check, side-by-sides are offered for crucial
+  moments only; with no answer from Jev, the closely-tied rule (section 5)
+  still applies.
+* **A failed reply is demoted.** After a fail, from Jev or from our own
+  checks (never an error, a timeout or a reply that was not judged), and
+  while `FHI_CHAT_JEV_GATE_DEMOTE_FAILED` is on (the default; pinned on in every
+  test configuration), the judged reply, and any reply with the same
+  text whatever its context summary, ranks one point below the best
+  outside answer that has arrived and could be delivered (not empty, too
+  short or a false promise), or below the outside calls' base score while
+  none has. Our models' base
+  score (about 8000 against about 1900 for outside ones) would otherwise
+  keep the failed reply in front. Our other replies keep their scores. The
+  demoted reply is never the runner-up or the side-by-side alternate, and
+  it is still delivered when nothing else usable arrives.
+* **Recorded** on the ChatTurn row: `gate_used`, `gate_outcome` (pass,
+  borderline, fail, error, timeout, or skipped when nothing was judged),
+  Jev's four reply answers and `gate_crucial`, the ranking's
+  `rank_outcome`, `rank_ms`, `rank_count` and `rank_changed` (its pick
+  replaced the race's), `alternate_reason` (tied or crucial), `gate_scorer` (the model TypeSafe reports plus the rubric
+  version, or `fhi/local-checks-1` when our own checks failed the reply
+  before Jev was asked), `gate_ms`, `gate_model` (whose reply was judged),
+  `gate_demoted` (a fail demoted it) and `gate_demoted_delivered` (the
+  primary pass still delivered it). The
+  outcome also goes to the `typesafe-chat-gate` ExternalServiceHealth row
+  after the reply is sent. The staff usage dashboard shows the counts
+  (and how many fails our own checks decided without asking Jev), how
+  often the outside models were never sent because the check passed, and,
+  after Jev failed the reply, how often an outside model's answer was
+  delivered and how often our demoted reply was delivered because nothing
+  else usable arrived. Those last two leave out the fails our own checks
+  decided, so they stay a check on Jev's questions and thresholds.
+
 What we deliberately did NOT build for selection:
 
-* **Learned/persistent routing weights.** The feedback loop (below) should
-  produce data first; hand-tuning quality() numbers against real win/loss
-  and preference metrics is cheap and auditable. A learned router is
-  premature while the metric volume is small.
+* **A learned router beyond the outside order.** The policy reorders only
+  the outside models, from delivered answers, and only once a model has
+  enough turns; internal quality() numbers stay hand-tuned, which is cheap
+  and auditable while the metric volume is small.
 * **Latency-aware scoring.** best_two_within_timelimit already gives fast
   models an edge (slow ones miss the window); double-counting latency in
   scores would bias toward terse models.
@@ -205,29 +423,92 @@ What we deliberately did NOT build for selection:
 ## 5. Choosing between answers: alternates as a product feature
 
 best_two_within_timelimit returns (best, runner_up, both scores, both
-originating calls). The runner-up becomes a side-by-side alternate answer
-("🔀 See an alternate answer") ONLY when:
+originating calls), and the top-level pass also keeps every result that
+completed. A side-by-side alternate answer ("🔀 See an alternate answer")
+is offered ONLY when a candidate:
 
-* the two scores are closely tied — runner_up >= 0.8 * best with both
+* is closely tied with the winner: candidate >= 0.8 * best with both
   positive (scores_closely_tied). Given the quadratic tiers this means
   "same tier, comparable content" (e.g. the same model's truncated- vs
   full-history calls at 8000 vs 10000 base, or two same-tier backends);
-  a cross-tier runner-up never qualifies, and
-* it's presentable (no tool/action tokens, not a near-duplicate of the
+  a cross-tier candidate never qualifies, and
+* is presentable (no tool/action tokens, not a near-duplicate of the
   primary, not itself a repeat, no safety flags), and
-* tool processing didn't rewrite the primary reply.
+* tool processing didn't rewrite the primary reply, and no retry replaced
+  the primary pass's winner, and
+* it is not a reply the reply check failed and demoted, and
+* Jev did not answer the turn's reply check: when it did, a side-by-side is
+  offered only for a crucial moment (section 4, the reply check), and the
+  row's `alternate_reason` says which rule offered it.
+
+Among the candidates that qualify, one from a DIFFERENT model than the
+winner comes first (pick_side_by_side_alternate): the pick is meant to be
+model versus model. Only when no other model's candidate qualifies is the
+plain runner-up offered, which is usually the winner's own other call.
 
 The tie requirement is what makes the feature honest: when the scorer has
 a clear winner, showing a second answer is noise; when the race was
 genuinely close, the user is the right tiebreaker — and their choice is
 recorded (fhi_chat_answer_feedback_total{preferred=primary|alternate})
-without starting an LLM turn. Only the primary is persisted; replays show
-one answer.
+without starting an LLM turn. The answer frame carries the turn's
+`turn_id` whenever it carries an alternate; the client echoes it in
+`answer_feedback`, and the pick is stored on that turn's ChatTurn row. The
+store only takes a pick for a turn of the socket's own chat that offered an
+alternate and has no pick yet, so the first pick wins. Only the primary is
+persisted; replays show one answer.
 
 **This is also the model-selection feedback loop**: close ties are exactly
 the cases where quality() can't separate two backends, and the preference
-metric accumulates evidence about which one users actually prefer. When
+data accumulates evidence about which one users actually prefer. The staff
+ML Model Usage Dashboard shows it per model and per pair of models. When
 that data disagrees with the quality map, adjust the map.
+
+### Shadow scores (TypeSafe Jev)
+
+With `TYPESAFE_CHAT_SHADOW_ENABLED` and `TYPESAFE_API_KEY` set, and only in
+chats where the person allowed outside models, each delivered turn gets a
+background task (chat/shadow_scoring.py) that asks TypeSafe's Jev four
+questions about the delivered reply and about the turn's second answer
+(the alternate when one was shown, otherwise the runner-up), each read
+against the person's message: does it answer what was asked (0 to 2),
+does it state a coverage or eligibility outcome as fact, does it ask for
+something the message already gave, and does it promise or guarantee a
+result (the last three 0 to 1). The last is our own false-promise rule
+(chat/safety_filters.detect_false_promises) put as a question, and the
+rule itself stays in place. ml/chat_shadow.py holds the rubric, and folds
+the four into one composite score for the agreement table.
+
+* It starts after the reply frame has gone out and the ChatTurn row
+  exists, and nothing waits for it: the scores land on that row later.
+  At most 8 run per process (with up to 16 database threads between
+  them, two each), each request under TYPESAFE_TIMEOUT_SECONDS,
+  and the whole job has a bound of its own.
+* Its database work (the identifier lookup, the health note and the score
+  write) runs through chat/isolated_db.py: on a thread with its own
+  connection, never on the chat's thread-sensitive executor, with a bounded
+  wait and, on PostgreSQL, a statement timeout. A stuck query there cannot
+  hold up the chat's next ORM call.
+* The texts are redacted the way the letter scorer redacts
+  (chat/redaction.py): the identifiers held for the chat's accounts and for
+  the appeals and prior authorization requests linked to it, including each
+  appeal's denial exactly as letter scoring collects it (patient, claim,
+  plan and member identifiers among them), plus emails and phone numbers.
+  If that lookup fails, nothing is sent. Only the scores, a scorer string
+  (the model that answered and the rubric version) and an outcome (scored,
+  failed, timeout) are stored; the texts are never stored or logged.
+* Nothing starts for a document upload or a stored long paste, for a reply
+  a tool rewrote, or for the canned data-deletion reply.
+* It fails closed: any error, timeout or unexpected answer stores no
+  scores, and the outcome goes on the `typesafe-chat` ExternalServiceHealth
+  row.
+
+Nothing uses the scores to pick a reply. The dashboard shows per-model
+means and an agreement table: of the side-by-side picks where both answers
+were scored, how often the answer Jev scored higher is the one the person
+picked. That is the check to run before the scores inform routing. Both
+use one exact scorer string, the newest in the window, named on the page;
+turns scored by another Jev version or rubric are counted, never averaged
+in, as for draft quality.
 
 ## 6. Context management ("context shedding")
 
@@ -258,7 +539,22 @@ Three levels, in increasing detail:
    retry usage, elapsed ms. This is the production triage record.
 2. **Prometheus metrics**: repeats (rejected/delivered), alternates
    offered, answer feedback, turn outcomes.
-3. **Debug frames** (localStorage `fhi_chat_debug = "true"`, honored only
+3. **ChatTurn rows** (one per turn that reached the models and was
+   counted in fhi_chat_turns_total, in the admin and on the staff ML Model
+   Usage Dashboard): the backends asked, each call's model, pass, history
+   kind, status, time and score, the model whose reply was delivered (a
+   tool follow-up's pick when one wrote the reply) and the first pass's
+   pick and runner-up, retry and tool use, how the outside models were
+   started (§4), the alternate offered, the person's pick and any shadow
+   scores (§5). Metadata only (see §9). A call that answered was scored
+   (scored, repeat or empty) or, when its pass stopped comparing answers
+   first, is unscored; either way it keeps its time. Only a call still
+   running when its pass stopped waiting is late, with no time, and a
+   held-back outside call that was never sent is skipped. An exception
+   escaping a turn after the models were asked counts it failed, in the row
+   and the metric alike; a turn cancelled before it was counted gets
+   neither.
+4. **Debug frames** (localStorage `fhi_chat_debug = "true"`, honored only
    for DEBUG deployments and staff accounts): per turn the server sends
    - `debug_llm_input` — the EXACT wrapped message, context summary,
      history counts, variants, state hint;
@@ -285,11 +581,10 @@ Three levels, in increasing detail:
    again; the server merges duplicates at persist time (serial + deduped)
    but the second LLM turn still runs. An in-flight turn-id (client echoes
    it, server drops re-submits of a live turn) would make retry free.
-4. **Per-model win/lose metrics.** The debug frame reports the picked
-   model; promote that to a bounded-cardinality counter
-   (fhi_chat_model_wins_total{model}) so the quality map can be tuned
-   from dashboards, not log greps. (Deliberately deferred: needs a label
-   allowlist to keep cardinality bounded.)
+4. **Per-model win/lose metrics.** Per-model wins, calls and side-by-side
+   picks now live in ChatTurn rows and on the staff usage dashboard. A
+   Prometheus counter (fhi_chat_model_wins_total{model}) is still deferred:
+   it needs a label allowlist to keep cardinality bounded.
 5. **Summarization model diversity.** summarize_chat_history routes to one
    summarizer; a bad summary quietly poisons every later turn's context.
    Cheap guard: score summaries with the repetition detector before
@@ -309,12 +604,33 @@ Three levels, in increasing detail:
   message, never from the wrapped prompt (wrapper text contains the word
   "repeat").
 * The alternate answer is ephemeral: never persisted, never replayed.
+* ChatTurn holds metadata only: model labels, backend descriptors,
+  statuses, times, scores (including shadow scores and their scorer
+  string) and enum values. Never message, reply, summary,
+  history, context, state hint or document text, and exceptions by class
+  name only. Its chat FK cascades and is non-nullable, so it goes with the
+  chat (including delete-my-data).
 * The state hint is transient and UNCONFIRMED: injected per turn, never
   stored on the chat.
 * Summarization and geo lookups soft-fail; nothing on the turn path is
   allowed to hard-block the reply.
+* Shadow scoring stays off the turn path: it starts only after the reply
+  was delivered, never delays it, and sends nothing outside unless the
+  person allowed outside models for the chat.
 * Every wait on the turn path has an explicit bound that fits inside
   FHI_CHAT_TURN_BUDGET.
+* The routing policy only narrows: it never adds a model, never asks an
+  outside model without the person's consent, and is set aside when none
+  of our models is selectable. A turn never waits on its read, which runs
+  off the chat's database executor, and a held-back start never makes a
+  race run past its windows.
+* The reply check sends text to TypeSafe only with the person's consent to
+  outside models, and only while its own switch and the key are set. It
+  fails open: anything but a pass starts the outside models, and nothing
+  it waits on runs past the race's windows. Our own checks run before it
+  and send nothing, so a reply they reject fails even when Jev is
+  unreachable. Only its numbers, outcome, scorer, time and the judged
+  model's label are kept.
 * `user_requested_repeat` is the master switch that disables the whole
   ladder, so it must match an explicit REQUEST ("repeat that", "say that
   again"), never the topic. "repeat MRI", "repeat colonoscopy", "repeat

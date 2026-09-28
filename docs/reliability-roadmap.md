@@ -43,14 +43,15 @@ sent is safe to retry immediately against the same endpoint (no idempotency
 concern). One fast retry would paper over transient pod restarts without
 waiting for the backup-endpoint leg.
 
-## 5. Chat turns in ModelCallAttempt
+## 5. Chat turns in the database
 
-Appeal generation has per-attempt DB rows; chat has only logs + the new
-Prometheus counters. Extending `ModelCallAttempt` to chat needs a schema
-decision first: `for_denial` is deliberately non-nullable as the PHI
-deletion guarantee, so chat rows need a nullable `for_denial` plus a
-`chat` FK (CASCADE) and a CheckConstraint enforcing exactly-one-owner so
-every row still has a deletion path.
+Landed as its own table rather than in `ModelCallAttempt`: each chat turn
+that reaches the models writes one `ChatTurn` row (chat/turn_record.py),
+with every call's model, pass, status, time and score in a `calls` list.
+Unlike `ModelCallAttempt` it keeps no response text at all, and its
+non-nullable `chat` FK (CASCADE) gives it the same deletion path as the
+chat. If aggregating the `calls` JSON on the usage dashboard gets slow,
+the calls can move to a child table.
 
 ## 6. Real Perplexity health check
 
@@ -66,12 +67,17 @@ reconnecting, and a retry clicked while the original request is still in
 flight can double-send. Queue sends while disconnected; disable retry while
 in flight.
 
-## 8. `keep()` dedupe atomicity + per-call backend attribution
+## 8. `keep()` dedupe atomicity
 
-Two small generate_appeal correctness items: the appeal dedupe's
-check-then-add isn't atomic under the executor's concurrency, and
-`winning_backend_by_model` is keyed per model NAME so concurrent calls can
-misattribute which backend produced a result.
+One small generate_appeal correctness item: the appeal dedupe's
+check-then-add isn't atomic under the executor's concurrency.
+
+(The per-call backend attribution half of this item landed: `get_model_result`
+returns the accepting backend's label with its futures instead of writing a
+map keyed by model name, and `ModelCallAttempt.backend` carries
+`RemoteModelLike.backend_descriptor()` -- class, wire model and endpoint host
+-- rather than `str(model)`, which had become the registry name and so a copy
+of `model_name`.)
 
 ## 9. 200-OK error-body detection
 

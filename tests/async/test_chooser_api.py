@@ -223,6 +223,26 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertIn("synthesized", data["candidates"][0])
         self.assertFalse(data["candidates"][0]["synthesized"])
 
+    def test_next_task_serves_candidates_in_random_order(self):
+        """The voter must be blind to model class: the stored order puts the
+        internal model first and the synthesized draft last, so the served
+        order is shuffled (the client persists its render order on the vote)."""
+        url = reverse("chooser-next-appeal")
+        with patch(
+            "fighthealthinsurance.rest_views.random.shuffle",
+            side_effect=lambda seq: seq.reverse(),
+        ):
+            data = self.client.get(url).json()
+        self.assertEqual([c["candidate_index"] for c in data["candidates"]], [1, 0])
+        self.assertEqual(
+            {c["id"] for c in data["candidates"]},
+            set(
+                ChooserCandidate.objects.filter(
+                    task=self.task, is_active=True
+                ).values_list("id", flat=True)
+            ),
+        )
+
     def test_next_task_serializes_synthesized_true(self):
         """A synthesized=True candidate is serialized as true by the API.
 

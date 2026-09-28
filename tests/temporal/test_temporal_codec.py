@@ -60,6 +60,16 @@ async def test_wrong_key_fails_loudly_not_silently():
         await other.decode([encoded])
 
 
+# Every workflow input dataclass the tripwire below checks. Kept by hand;
+# test_the_tripwire_covers_every_workflow_input fails when one is missing.
+_CHECKED_INPUTS = (
+    "SendFaxInput",
+    "GenerateAppealInput",
+    "IntakeJourneyInput",
+    "ChatRoutingPolicyInput",
+)
+
+
 def test_payload_dataclasses_carry_only_opaque_identifiers():
     """Tripwire: workflow inputs must stay claim-check style. Any new field
     that could carry case content (text, letters, names, emails) needs a
@@ -72,17 +82,44 @@ def test_payload_dataclasses_carry_only_opaque_identifiers():
         "denial_uuid",
         "delay_send",
         "contact_opt_in",
+        # ChatRoutingPolicyInput: a number of minutes, no case at all.
+        "window_minutes",
     }
-    for klass in (
-        wf_types.SendFaxInput,
-        wf_types.GenerateAppealInput,
-        wf_types.IntakeJourneyInput,
-    ):
+    for klass in (getattr(wf_types, name) for name in _CHECKED_INPUTS):
         fields = {f.name for f in dataclasses.fields(klass)}
         assert fields <= allowed, (
             f"{klass.__name__} gained fields {fields - allowed}: Temporal "
             "payloads may only carry opaque identifiers (see temporal_codec.py)"
         )
+
+
+def test_the_tripwire_covers_every_workflow_input():
+    """The list above is kept by hand, so a new input dataclass missing from
+    it would pass unchecked. Every dataclass in workflows/types.py must be
+    one the tripwire names."""
+    from fighthealthinsurance.workflows import types as wf_types
+
+    checked = set(_CHECKED_INPUTS)
+    found = {
+        name
+        for name, value in vars(wf_types).items()
+        if isinstance(value, type)
+        and dataclasses.is_dataclass(value)
+        and value.__module__ == wf_types.__name__
+    }
+    assert found == checked, (
+        f"workflow input dataclasses {found - checked} are not checked by "
+        "test_payload_dataclasses_carry_only_opaque_identifiers"
+    )
+
+
+def test_the_policy_input_is_a_plain_number():
+    import typing
+
+    from fighthealthinsurance.workflows.types import ChatRoutingPolicyInput
+
+    hints = typing.get_type_hints(ChatRoutingPolicyInput)
+    assert hints == {"window_minutes": int}
 
 
 @pytest.mark.asyncio

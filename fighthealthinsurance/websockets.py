@@ -31,7 +31,9 @@ from fhi_users.audit import (
     extract_tracking_info_from_scope,
     guess_us_state,
 )
+from fighthealthinsurance.chat.turn_record import arecord_answer_preference
 from fighthealthinsurance.ml.ml_metrics import record_answer_feedback
+from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
@@ -614,7 +616,11 @@ async def _parse_json_or_close(
     try:
         data = json.loads(text_data)
     except json.JSONDecodeError as e:
-        logger.warning(f"Invalid JSON received in {consumer_name} websocket: {e}")
+        # Sizes and the error class only: the frame is client input.
+        logger.warning(
+            f"Invalid JSON received in {consumer_name} websocket "
+            f"(frame_chars={len(text_data)}, error_pos={e.pos}): {type(e).__name__}"
+        )
         await _send_err("Invalid JSON format")
         await consumer.close()
         return None
@@ -1245,7 +1251,10 @@ async def resolve_chat_type(
                 .afirst()
             )
             if lead and not lead.drug:
-                logger.debug(f"Trial professional chat for session {session_key}")
+                logger.debug(
+                    "Trial professional chat for session "
+                    f"{session_key_prefix_for_log(session_key)}"
+                )
                 return ChatType.TRIAL_PROFESSIONAL, None
             # lead with drug or no lead → patient
         return ChatType.PATIENT, None
@@ -1255,9 +1264,8 @@ async def resolve_chat_type(
     if professional_user:
         return ChatType.PROFESSIONAL, professional_user
 
-    logger.debug(
-        f"User {user.username} is not a professional user, treating as patient"
-    )
+    # The account id, not the username: usernames are often email addresses.
+    logger.debug(f"User {user.pk} is not a professional user, treating as patient")
     return ChatType.PATIENT, None
 
 
@@ -1284,7 +1292,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 await enqueue_denied_items_analysis(chat_id=self.chat_id)
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    f"Failed to enqueue denied-item analysis for chat {self.chat_id}: {e}"
+                    "Failed to enqueue denied-item analysis for chat "
+                    f"{self.chat_id}: {type(e).__name__}"
                 )
 
     @classmethod
@@ -1302,7 +1311,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         """
         Analyzes the chat history to identify denied items and reasons.
         This is run when the websocket disconnects to avoid blocking the chat flow.
-        Adds logging for the prompt and guardrails to avoid storing unclear denials.
+        Logs prompt and answer sizes (never their text) and applies guardrails
+        to avoid storing unclear denials.
         """
         try:
             chat: OngoingChat = await OngoingChat.objects.aget(id=chat_id)
@@ -1335,8 +1345,12 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 )
 
                 full_prompt = f"{history_text}\n{analysis_prompt}"
+                # Sizes only: the prompt carries the whole conversation.
                 logger.debug(
-                    f"Prompt for denied item extraction (chat {chat_id}):\n{full_prompt}"
+                    f"Denied item extraction for chat {chat_id} "
+                    f"(prompt_chars={len(full_prompt)}, "
+                    f"history_chars={len(history_text)}, "
+                    f"history_msgs={len(chat.chat_history or [])})"
                 )
 
                 # Get the analysis from the model
@@ -1358,7 +1372,10 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                             denied_reason = analysis_data.get("denied_reason")
 
                             logger.debug(
-                                f"Analysis for chat {chat_id}: denied_item={denied_item!r} denied_reason={denied_reason!r} raw={analysis_data!r}"
+                                f"Analysis for chat {chat_id}: "
+                                f"item_len={len(str(denied_item)) if denied_item else 0} "
+                                f"reason_len={len(str(denied_reason)) if denied_reason else 0} "
+                                f"raw_type={type(analysis_data).__name__}"
                             )
 
                             # Guardrails: Only store if non-empty, not null, and not generic/unclear
@@ -1423,11 +1440,13 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                                 )
                         except json.JSONDecodeError:
                             logger.warning(
-                                f"Could not parse JSON from analysis response: {response_text}"
+                                "Could not parse JSON from analysis response for "
+                                f"chat {chat_id} (response_chars={len(response_text)})"
                             )
                     else:
                         logger.warning(
-                            f"No JSON found in analysis response: {response_text}"
+                            "No JSON found in analysis response for chat "
+                            f"{chat_id} (response_chars={len(response_text)})"
                         )
                 else:
                     logger.warning(f"No response from model for denied item analysis")
@@ -1435,7 +1454,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 logger.info(f"Chat {chat_id} already has denied item information")
         except Exception as e:
             logger.opt(exception=True).error(
-                f"Error analyzing denied items for chat {chat_id}: {e}"
+                f"Error analyzing denied items for chat {chat_id}: "
+                f"{type(e).__name__}"
             )
 
     @staticmethod
@@ -1475,11 +1495,17 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         iterate_on_prior_auth = data.get("iterate_on_prior_auth")
 
         # Lightweight side-by-side answer feedback: which answer the user
-        # preferred. Metrics + log only (bounded label set) -- no LLM turn.
+        # preferred. A metric (bounded label set), a log line, and the pick
+        # stored on the turn's ChatTurn row. It never starts an LLM turn.
         answer_feedback = data.get("answer_feedback")
         if answer_feedback is not None:
             preferred = (
                 answer_feedback.get("preferred")
+                if isinstance(answer_feedback, dict)
+                else None
+            )
+            turn_id = (
+                answer_feedback.get("turn_id")
                 if isinstance(answer_feedback, dict)
                 else None
             )
@@ -1492,12 +1518,20 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             # log-volume lever).
             if chat_id and self.chat_id and str(chat_id) == str(self.chat_id):
                 record_answer_feedback(preferred)
+                # Stored against this socket's own chat, never the frame's
+                # chat_id: the conditional update only touches a turn of that
+                # chat which offered an alternate and has no pick yet, so the
+                # first pick wins and a repeated frame changes nothing. Needs
+                # a UUID turn_id; older clients send none.
+                recorded = await arecord_answer_preference(
+                    self.chat_id, turn_id, preferred
+                )
                 # chat_id is raw client input: bound and repr it so an
                 # attacker-supplied value can't inject newlines (forged log
                 # records) or flood the log pipeline with one huge line.
                 logger.info(
                     f"chat ws: answer feedback preferred={str(preferred)[:16]!r} "
-                    f"chat_id={str(chat_id)[:64]!r}"
+                    f"chat_id={str(chat_id)[:64]!r} recorded={recorded}"
                 )
             else:
                 logger.debug(
@@ -1560,12 +1594,19 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                     )
                 microsite_slug = None
 
+        # Every value below except msg_len and the validated microsite_slug
+        # is client JSON: ids are bounded and repr'd like the lines above,
+        # flags are logged as the truth value the code acts on, and the
+        # session key as its 8-character prefix.
         logger.debug(
             f"chat ws: msg_len={len(message) if isinstance(message, str) else 0} "
-            f"replay={replay_requested} chat_id={chat_id} "
-            f"iterate_on_appeal={iterate_on_appeal} iterate_on_prior_auth={iterate_on_prior_auth} "
-            f"is_patient={is_patient} session_key={session_key} microsite_slug={microsite_slug} "
-            f"use_external_models={use_external_models}"
+            f"replay={bool(replay_requested)} chat_id={str(chat_id)[:64]!r} "
+            f"iterate_on_appeal={str(iterate_on_appeal)[:64]!r} "
+            f"iterate_on_prior_auth={str(iterate_on_prior_auth)[:64]!r} "
+            f"is_patient={bool(is_patient)} "
+            f"session_key={session_key_prefix_for_log(session_key)} "
+            f"microsite_slug={microsite_slug} "
+            f"use_external_models={bool(use_external_models)}"
         )
 
         # Validate we have the required data
@@ -1645,8 +1686,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             # chat whose id they never stored, re-forking on every turn.
             if chat_id and str(chat.id) != str(chat_id):
                 logger.info(
-                    f"chat ws: requested chat {chat_id!r} resolved to new "
-                    f"chat {chat.id} (forked)"
+                    f"chat ws: requested chat {str(chat_id)[:64]!r} resolved "
+                    f"to new chat {chat.id} (forked)"
                 )
                 await self.send_json_message(
                     {"chat_id": str(chat.id), "chat_forked": True}
@@ -1732,7 +1773,7 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             # internals (hostnames, SQL, model names) and is useless to users.
             err_ref = uuid.uuid4().hex[:8]
             logger.opt(exception=True).error(
-                f"[chat-err {err_ref}] Error in ongoing chat: {e}"
+                f"[chat-err {err_ref}] Error in ongoing chat: {type(e).__name__}"
             )
             await self.send_json_message(
                 {
@@ -1762,14 +1803,18 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         """Get an existing chat or create a new one."""
         if chat_id:
             # Chat ids should be secure they're random UUIDs.
+            # Our own fixed description of why the lookup missed, for the log.
+            miss_reason = "no matching chat"
             try:
                 chat = await OngoingChat.objects.select_related(
                     "user", "professional_user"
                 ).aget(id=chat_id)
                 # But let's also check session key and user just to be safe.
                 if chat.session_key and session_key != chat.session_key:
+                    miss_reason = "session key mismatch"
                     raise OngoingChat.DoesNotExist("Session key mismatch")
                 if chat.user_id and (not user or chat.user_id != user.pk):
+                    miss_reason = "user mismatch"
                     raise OngoingChat.DoesNotExist("User mismatch")
 
                 # Reconcile resolved identity with stored values so
@@ -1801,7 +1846,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 # template, so a "{" in the client-controlled chat_id would
                 # raise/inject inside the logging call itself.
                 logger.warning(
-                    f"Chat with id {chat_id!r} not found ({e}). Creating new chat."
+                    f"Chat with id {str(chat_id)[:64]!r} not found "
+                    f"({type(e).__name__}: {miss_reason}). Creating new chat."
                 )
                 pass  # Fall through to create a new one
 
@@ -1816,9 +1862,13 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
 
         chat_user = user if (user and user.is_authenticated) else None
 
+        session_note = (
+            f" for session {session_key_prefix_for_log(session_key)}"
+            if session_key
+            else ""
+        )
         logger.info(
-            f"Creating new {chat_type} chat"
-            f"{' for session ' + session_key[:8] if session_key else ''}"
+            f"Creating new {chat_type} chat{session_note}"
             f"{' for user ' + str(chat_user.id) if chat_user else ''}"
         )
 

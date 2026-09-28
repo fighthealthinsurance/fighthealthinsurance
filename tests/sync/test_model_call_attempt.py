@@ -328,6 +328,27 @@ class MakeAppealsPersistsAttemptsTest(TestCase):
         self.assertTrue(all(r.duration_ms is not None for r in runt_rows))
         self.assertTrue(all(r.started_at is not None for r in runt_rows))
 
+    def test_backend_column_names_the_instance_not_the_registry_name(self):
+        """str(backend) is the router-stamped registry name -- the very string
+        stored as model_name -- and several instances can share it, so the row
+        takes the instance's endpoint descriptor instead."""
+        backend = MagicMock()
+        backend.__str__ = lambda self: "runty"
+        backend.backend_descriptor.return_value = "FakeBackend(wire @ host-a:8000)"
+        backend.infer.return_value = [("full", "no.")]
+
+        self._run(models_by_name={"runty": [backend]}, names=["runty"])
+
+        rows = list(
+            ModelCallAttempt.objects.filter(
+                for_denial=self.denial, model_name="runty"
+            ).exclude(outcome="rejected_at_peek")
+        )
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row.backend, "FakeBackend(wire @ host-a:8000)")
+            self.assertNotEqual(row.backend, row.model_name)
+
     def test_backend_exception_is_persisted_as_error_with_detail(self):
         backend = MagicMock()
         backend.infer.side_effect = TimeoutError()

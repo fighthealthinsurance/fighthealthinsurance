@@ -15,6 +15,10 @@ share no failure domain: appeal-generation memory/CPU pressure or an appeal
 crash-loop must never take fax sending down with it (external review).
 ``all`` (the default) keeps the single-process shape for dev and small
 installs.
+
+The appeal role (and ``all``) also hosts the chat routing policy queue as a
+Worker of its own when TEMPORAL_CHAT_POLICY_ENABLED is on, and keeps the
+``chat-routing-policy`` Schedule in step with that flag at start-up.
 """
 
 import asyncio
@@ -27,6 +31,7 @@ from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from loguru import logger
 
 from fighthealthinsurance.worker_signals import early_stop
 
@@ -58,6 +63,44 @@ def metrics_runtime() -> Any:
             )
         )
     )
+
+
+# Scrape endpoint for the APP's own Prometheus registry: the fhi_ml_* call
+# counters (ml/ml_metrics.py) and the DB pool gauges. Appeal generation that
+# runs on this worker records into prometheus_client's default registry,
+# which only the web pods served, so a backend failing only under the
+# journey's calls showed no failures anywhere. A second port, because the
+# SDK's Rust exporter owns the first. Set by the worker manifests; unset
+# (dev, tests) means no endpoint.
+APP_METRICS_BIND_ENV = "FHI_APP_METRICS_BIND"
+
+# Upper bound on keeping the chat policy Schedule in step at start-up. The
+# Schedule is housekeeping: a slow or failing Temporal call here must not
+# keep this process from hosting its queues.
+SCHEDULE_ENSURE_TIMEOUT_SECONDS = 30.0
+
+
+def app_metrics_server() -> str | None:
+    """Serve prometheus_client's registry on ``FHI_APP_METRICS_BIND``
+    (``host:port``). Returns the bind, or None when unset/blank."""
+    bind = (os.environ.get(APP_METRICS_BIND_ENV) or "").strip()
+    if not bind:
+        return None
+    from prometheus_client import start_http_server
+
+    try:
+        host, _, port = bind.rpartition(":")
+        start_http_server(int(port), addr=host or "0.0.0.0")
+    except Exception:
+        # A metrics problem (a malformed bind, a port a sidecar already
+        # holds) must not keep the worker from hosting: generating appeals
+        # matters more than having their counters scraped.
+        logger.opt(exception=True).warning(
+            f"Not serving app metrics: could not bind {bind!r} "
+            f"({APP_METRICS_BIND_ENV})"
+        )
+        return None
+    return bind
 
 
 def install_shutdown_handlers(workers, stop, log, tasks=None) -> None:
@@ -198,10 +241,15 @@ class Command(BaseCommand):
 
         from fighthealthinsurance.activities import (
             appeal_journey as journey_activities,
+            chat_routing_policy as policy_activities,
             fax as fax_activities,
             intake_journey as intake_activities,
         )
-        from fighthealthinsurance.temporal_client import get_temporal_client
+        from fighthealthinsurance.temporal_client import (
+            chat_policy_schedule_enabled,
+            ensure_chat_policy_schedule,
+            get_temporal_client,
+        )
         from fighthealthinsurance.workflows.generate_appeal import (
             GenerateAppealWorkflow,
         )
@@ -249,11 +297,19 @@ class Command(BaseCommand):
         journey_enabled = getattr(settings, "TEMPORAL_ENABLED", False) and getattr(
             settings, "TEMPORAL_APPEAL_JOURNEY_ENABLED", False
         )
+        # The chat routing policy has its own flag and its own queue, hosted
+        # by the appeal-worker process whatever the journey flags say. It is
+        # registered only while the flag is on, for the same kill-switch
+        # reason. --task-queue never changes this queue.
+        policy_enabled = chat_policy_schedule_enabled()
+        policy_queue = settings.TEMPORAL_CHAT_POLICY_TASK_QUEUE
+        hosts_policy = role in ("appeal", "all")
 
         # The connect is raced against stop: a SIGTERM that lands while the
         # connection is still pending must not be discarded (review), and a
         # terminating pod must not start polling afterwards.
         runtime = metrics_runtime()
+        app_metrics = app_metrics_server()
         connect = asyncio.ensure_future(get_temporal_client(runtime=runtime))
         stopped = asyncio.ensure_future(stop.wait())
         await asyncio.wait({connect, stopped}, return_when=asyncio.FIRST_COMPLETED)
@@ -266,9 +322,28 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
-            f"journey {'ENABLED' if journey_enabled else 'disabled'}; metrics "
-            f"{os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}"
+            f"journey {'ENABLED' if journey_enabled else 'disabled'}; chat "
+            f"policy {'ENABLED' if policy_enabled and hosts_policy else 'disabled'}; "
+            f"metrics {os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}; "
+            f"app metrics {app_metrics or 'off'}"
         )
+        if hosts_policy:
+            # Create or update the Schedule when the flag is on, pause it when
+            # it is off. Only the process that hosts the policy queue does
+            # this, so the Schedule never runs with nobody polling for it;
+            # two replicas doing it at once is harmless.
+            try:
+                outcome = await asyncio.wait_for(
+                    ensure_chat_policy_schedule(client, enabled=policy_enabled),
+                    timeout=SCHEDULE_ENSURE_TIMEOUT_SECONDS,
+                )
+                self.stdout.write(f"Chat routing policy schedule: {outcome}")
+            except Exception as e:
+                # Class name only. Hosting goes on; the next start retries.
+                logger.warning(
+                    "Could not keep the chat routing policy schedule in step: "
+                    f"{type(e).__name__}"
+                )
 
         with ThreadPoolExecutor(max_workers=max_workers) as activity_executor:
             runs = []
@@ -337,16 +412,37 @@ class Command(BaseCommand):
                 runs.append(appeal_worker.run())
                 workers.append(appeal_worker)
                 queues.append(appeal_queue)
+            if hosts_policy and policy_enabled:
+                # Its own Worker, so the policy run never waits for a slot
+                # behind a long appeal generation. One activity at a time is
+                # plenty for one run a day.
+                policy_workflows: List[type] = workflow_registry.chat_policy_workflows()
+                policy_worker = Worker(
+                    client,
+                    task_queue=policy_queue,
+                    workflows=policy_workflows,
+                    activities=[policy_activities.compute_and_store_chat_policy],
+                    max_concurrent_activities=1,
+                    # Covers the activity's two-minute start_to_close, inside
+                    # the appeal worker's 300s drain and the pod's grace.
+                    graceful_shutdown_timeout=timedelta(minutes=2),
+                )
+                runs.append(policy_worker.run())
+                workers.append(policy_worker)
+                queues.append(policy_queue)
             if not runs:
-                # role=appeal with the journey flags dark. Idle instead of
-                # exiting: an exit would crash-loop the Deployment, but this
-                # pod being inert IS the kill switch working -- flipping the
-                # flags and restarting the Deployment brings it live.
+                # role=appeal with the journey and policy flags dark. Idle
+                # instead of exiting: an exit would crash-loop the
+                # Deployment, but this pod being inert IS the kill switch
+                # working -- flipping the flags and restarting the
+                # Deployment brings it live.
                 self.stdout.write(
-                    "Appeal worker role selected but the appeal journey flags "
-                    "are OFF; idling (this process will host nothing until "
-                    "TEMPORAL_ENABLED and TEMPORAL_APPEAL_JOURNEY_ENABLED are "
-                    "set and the process restarts)."
+                    "Appeal worker role selected but the appeal journey and "
+                    "chat policy flags are OFF; idling (this process will host "
+                    "nothing until TEMPORAL_ENABLED and "
+                    "TEMPORAL_APPEAL_JOURNEY_ENABLED or "
+                    "TEMPORAL_CHAT_POLICY_ENABLED are set and the process "
+                    "restarts)."
                 )
                 await stop.wait()
                 return

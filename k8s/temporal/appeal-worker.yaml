@@ -53,9 +53,17 @@ spec:
             - name: metrics
               containerPort: 9464
               protocol: TCP
+            # The app's own Prometheus registry (the fhi_ml_* call counters
+            # for the generation this worker runs); a second port, the SDK
+            # owns 9464. Served by run_temporal_worker.app_metrics_server.
+            - name: app-metrics
+              containerPort: 9465
+              protocol: TCP
           env:
             - name: TEMPORAL_METRICS_BIND
               value: "0.0.0.0:9464"
+            - name: FHI_APP_METRICS_BIND
+              value: "0.0.0.0:9465"
             - name: TEMPORAL_WORKER
               value: "1"
             - name: TEMPORAL_WORKER_QUEUES
@@ -63,8 +71,16 @@ spec:
             - name: TEMPORAL_ENABLED
               value: "true"
             # TEMPORAL_APPEAL_JOURNEY_ENABLED / TEMPORAL_INTAKE_JOURNEY_ENABLED
-            # intentionally NOT set here: they come from the app secrets and
-            # default OFF, so applying this manifest does not enable anything.
+            # / TEMPORAL_CHAT_POLICY_ENABLED intentionally NOT set here: they
+            # come from the app secrets and default OFF, so applying this
+            # manifest does not enable anything.
+            # The chat routing policy's own queue, hosted as a separate Worker
+            # in this process while TEMPORAL_CHAT_POLICY_ENABLED is on. Keep it
+            # equal to the settings default (anything that starts or updates
+            # the Schedule elsewhere, such as ensure_temporal_schedules run
+            # from a web pod, reads the same setting).
+            - name: TEMPORAL_CHAT_POLICY_TASK_QUEUE
+              value: "fhi-chat-policy"
             - name: TEMPORAL_HOST
               value: "temporal-frontend:7233"
             - name: TEMPORAL_NAMESPACE
