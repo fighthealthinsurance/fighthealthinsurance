@@ -2432,7 +2432,6 @@ class ModelUsageDashboardView(generic.TemplateView):
             )
         return out
 
-
     @staticmethod
     def _chat_shadow_state() -> Dict[str, Any]:
         """Whether chat shadow scoring is on now, and the last outcome the
