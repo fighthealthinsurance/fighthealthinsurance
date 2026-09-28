@@ -213,12 +213,66 @@ respects it; the server also treats an ABSENT key as on, which is what
 actually changed (the old code treated absent as off, so anyone who never
 went through the consent form silently lost fallback).
 
+### The routing policy ("ours first")
+
+Chat's outside models come from a roster, `FHI_CHAT_OUTSIDE_MODELS`, in
+order (GPT-5.5 on Azure, then DeepInfra's Mistral-Small 3.2, GLM-5.3 Flash,
+DeepSeek V4.1 Flash and Qwen3.8-2.4T). At most three are asked, skipping any
+that is down or whose budget is spent (`ml/spend.py` counts spend as the
+calls happen). On `FHI_CHAT_EXPLORE_RATE` (20%) of turns the second place
+goes to a model further down, so every model keeps being asked often enough
+for its place to be learned.
+
+A policy row (`ChatRoutingPolicy`, written once a day by `ml/chat_policy.py`
+from a week of ChatTurn metadata) can tune that in three ways:
+
+* **Learn the order.** A model asked on at least 30 turns moves among the
+  places such models hold in the roster, by how often its answer was
+  delivered. A model with fewer turns keeps its place, so the roster is
+  the prior until the data says otherwise.
+* **Leave out outside models that do not win.** The top healthy outside
+  model is always kept. Any other is left out once enough turns asked it
+  and it never won, except while our own models fail often.
+* **Give our models a head start.** With a hold above 0
+  (`FHI_CHAT_EXTERNAL_HOLD_SECONDS`, 8s, at most 15s) the primary and tool
+  passes start our own models' calls first and hold the outside ones back.
+  They start when the hold passes with nothing usable, or at once when
+  every call of ours has failed or been rejected. If one of ours answers
+  usably first they are never sent. The race's windows still run from its
+  start, so a turn never takes longer than it would without the hold. The
+  retry pass is never staged.
+
+Spending caps are not in the policy: the router skips a provider whose
+budget is spent, and the transport refuses to send to one, as it happens.
+
+Guard rails: a policy can only reorder and narrow the roster, never add a
+model, and a person's choice to keep chat on our models always wins. When
+none of our models is selectable the router sets the whole policy aside.
+Chat follows the newest row only while `FHI_CHAT_POLICY_APPLY` is on (off by
+default) and the row is newer than `FHI_CHAT_POLICY_MAX_AGE_MINUTES` (36
+hours, so one missed daily run does not drop it);
+an empty table or an unreadable row gives the default, which is the
+behaviour described above. A turn never waits on the database for the
+policy: it uses the row cached in its process, and a turn that finds the
+cache over a minute old starts a refresh on a thread of its own, with its
+own connection and a 0.5s statement timeout on PostgreSQL. Only one
+refresh runs at a time per process, and turns meanwhile use the cached
+row (the default before any row has been read). A refresh that fails
+keeps the cached row, which is still followed only while it is fresh.
+Rows come from `manage.py compute_chat_policy` (by hand or from a CronJob)
+and are shown on the staff ML Model Usage Dashboard whether or not chat
+follows them. Rows are never edited; rows older than 30 days are deleted
+after a new one is written. Each
+ChatTurn row records how its primary pass started the outside models
+(`external_start`: immediate, after_delay, early or skipped) and the delay
+it used; held-back calls that were never sent have the status "skipped".
+
 What we deliberately did NOT build for selection:
 
-* **Learned/persistent routing weights.** The feedback loop (below) should
-  produce data first; hand-tuning quality() numbers against real win/loss
-  and preference metrics is cheap and auditable. A learned router is
-  premature while the metric volume is small.
+* **A learned router beyond the outside order.** The policy reorders only
+  the outside models, from delivered answers, and only once a model has
+  enough turns; internal quality() numbers stay hand-tuned, which is cheap
+  and auditable while the metric volume is small.
 * **Latency-aware scoring.** best_two_within_timelimit already gives fast
   models an edge (slow ones miss the window); double-counting latency in
   scores would bias toward terse models.
@@ -301,14 +355,15 @@ Three levels, in increasing detail:
    Usage Dashboard): the backends asked, each call's model, pass, history
    kind, status, time and score, the model whose reply was delivered (a
    tool follow-up's pick when one wrote the reply) and the first pass's
-   pick and runner-up, retry and tool use, the alternate offered and the
-   person's pick. Metadata only (see §9). A call that answered was scored
-   (scored, repeat or empty) or, when its pass stopped comparing answers
-   first, is unscored; either way it keeps its time. Only a call still
-   running when its pass stopped waiting is late, with no time. An
-   exception escaping a turn after the models were asked counts it failed,
-   in the row and the metric alike; a turn cancelled before it was counted
-   gets neither.
+   pick and runner-up, retry and tool use, how the outside models were
+   started (§4), the alternate offered and the person's pick. Metadata only
+   (see §9). A call that answered was scored (scored, repeat or empty) or,
+   when its pass stopped comparing answers first, is unscored; either way it
+   keeps its time. Only a call still running when its pass stopped waiting
+   is late, with no time, and a held-back outside call that was never sent
+   is skipped. An exception escaping a turn after the models were asked
+   counts it failed, in the row and the metric alike; a turn cancelled
+   before it was counted gets neither.
 4. **Debug frames** (localStorage `fhi_chat_debug = "true"`, honored only
    for DEBUG deployments and staff accounts): per turn the server sends
    - `debug_llm_input` — the EXACT wrapped message, context summary,
@@ -370,6 +425,11 @@ Three levels, in increasing detail:
   allowed to hard-block the reply.
 * Every wait on the turn path has an explicit bound that fits inside
   FHI_CHAT_TURN_BUDGET.
+* The routing policy only narrows: it never adds a model, never asks an
+  outside model without the person's consent, and is set aside when none
+  of our models is selectable. A turn never waits on its read, which runs
+  off the chat's database executor, and a held-back start never makes a
+  race run past its windows.
 * `user_requested_repeat` is the master switch that disables the whole
   ladder, so it must match an explicit REQUEST ("repeat that", "say that
   again"), never the topic. "repeat MRI", "repeat colonoscopy", "repeat

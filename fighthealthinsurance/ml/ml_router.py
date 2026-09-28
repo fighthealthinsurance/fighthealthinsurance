@@ -1,10 +1,17 @@
 import asyncio
+import random
 import threading
 from typing import List, Optional, Sequence, Tuple
 
 from loguru import logger
 
 from fighthealthinsurance.env_utils import get_env_variable
+from fighthealthinsurance.ml.chat_policy import ChatPolicy, narrow_externals
+
+# How many outside models chat asks at most, and the draw exploration uses
+# (a seam, so tests can decide it).
+CHAT_OUTSIDE_LIMIT = 3
+_explore_draw = random.random
 from fighthealthinsurance.ml.ml_models import *
 
 # The hosted model that backs up our own models for summaries and appeal
@@ -677,6 +684,71 @@ class MLRouter(object):
         """
         return self._filter_available(self.internal_models_by_cost, "prior-auth")[:3]
 
+    def chat_policy_in_force(
+        self, policy: Optional[ChatPolicy]
+    ) -> Optional[ChatPolicy]:
+        """The chat routing policy the fan-out may follow right now, or None
+        to route as if there were none.
+
+        With no internal backend selectable the whole policy is set aside
+        (exclusions, caps and delay): the outside models are then the only
+        way the turn gets an answer, and failing the turn is worse than any
+        of the costs the policy saves.
+        """
+        if policy is None or policy.narrows_nothing:
+            return None
+        if not self._healthy_general_internal():
+            logger.info(
+                "MLRouter: no internal chat backend is selectable; "
+                "setting the chat routing policy aside"
+            )
+            return None
+        return policy
+
+    def chat_external_delay(self, policy: Optional[ChatPolicy]) -> float:
+        """Seconds the chat fan-out holds the outside models back while
+        ours answer: the policy's delay, or 0 when it is not in force."""
+        in_force = self.chat_policy_in_force(policy)
+        return in_force.external_delay_seconds if in_force is not None else 0.0
+
+    def _chat_externals(self, policy: Optional[ChatPolicy]) -> list[RemoteModelLike]:
+        """The outside models for a chat turn: the FHI_CHAT_OUTSIDE_MODELS
+        roster when it is set (else best_external_models, as before),
+        narrowed by the policy when one is in force. The policy never adds
+        a model: its learned order only reorders the roster as it is now, so
+        a model taken off the roster after the policy was computed is not
+        asked, and one added since keeps its roster place after the rest."""
+        from django.conf import settings
+
+        in_force = self.chat_policy_in_force(policy)
+        roster = list(getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None) or [])
+        if roster:
+            names: Optional[list[str]] = None
+            if in_force is not None and in_force.outside_order:
+                learned = [n for n in in_force.outside_order if n in roster]
+                names = learned + [n for n in roster if n not in learned]
+            externals = self._explore(self.chat_outside_models(names, limit=50))
+        else:
+            externals = self.best_external_models()
+        if in_force is None:
+            return externals
+        return narrow_externals(externals, in_force)
+
+    def _explore(self, candidates: list[RemoteModelLike]) -> list[RemoteModelLike]:
+        """The first CHAT_OUTSIDE_LIMIT of ``candidates`` (the order chat
+        asks them in), except that on FHI_CHAT_EXPLORE_RATE of turns the
+        second place goes to one of the models further down, so every model
+        in the roster keeps being asked often enough for its place in the
+        order to be learned."""
+        from django.conf import settings
+
+        chosen = candidates[:CHAT_OUTSIDE_LIMIT]
+        further = candidates[CHAT_OUTSIDE_LIMIT:]
+        rate = float(getattr(settings, "FHI_CHAT_EXPLORE_RATE", 0.2) or 0.0)
+        if len(chosen) >= 2 and further and _explore_draw() < rate:
+            chosen[1] = further[int(_explore_draw() * len(further)) % len(further)]
+        return chosen
+
     def _chat_lead(self) -> list[RemoteModelLike]:
         """The fhi backend instance(s) that lead the chat fan-out.
 
@@ -719,11 +791,16 @@ class MLRouter(object):
             if registry_name[id(m)] == lead_name and m.quality() == strongest
         ]
 
-    def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
+    def get_chat_backends(
+        self, use_external=False, policy: Optional[ChatPolicy] = None
+    ) -> list[RemoteModelLike]:
         """
         Return models for handling chat interactions.
         Args:
             use_external: Whether to include external models in the fan-out
+            policy: Optional chat routing policy (ml/chat_policy.py). It can
+                only narrow the external models, and only when use_external
+                is on; see chat_policy_in_force for when it is set aside.
 
         Returns:
             List of RemoteModelLike models suitable for chat tasks
@@ -740,7 +817,7 @@ class MLRouter(object):
         lead = self._chat_lead()
         models += lead * 2
         if use_external:
-            models += self._chat_externals()
+            models += self._chat_externals(policy)
         # Strongest available internals, not cheapest: the cost ordering was
         # picking the 6 CHEAPEST internal backends for chat, which is the
         # wrong end of the list when strong and weak internals coexist. The
@@ -765,17 +842,8 @@ class MLRouter(object):
         )
         return models
 
-    def _chat_externals(self) -> list[RemoteModelLike]:
-        """Chat's outside models: the FHI_CHAT_OUTSIDE_MODELS roster when it
-        is set, else the best externals as before."""
-        from django.conf import settings
-
-        if getattr(settings, "FHI_CHAT_OUTSIDE_MODELS", None):
-            return self.chat_outside_models()
-        return self.best_external_models()
-
     def get_chat_backends_with_fallback(
-        self, use_external=False
+        self, use_external=False, policy: Optional[ChatPolicy] = None
     ) -> tuple[list[RemoteModelLike], list[RemoteModelLike]]:
         """
         Return primary and fallback (retry-only) models for chat interactions.
@@ -796,6 +864,8 @@ class MLRouter(object):
         Args:
             use_external: Whether external models participate at all. False
                 keeps chat internal-only with no fallback.
+            policy: Optional chat routing policy. It narrows the externals
+                of both lists the same way (see get_chat_backends).
 
         Returns:
             Tuple of (primary_models, fallback_models)
@@ -805,10 +875,21 @@ class MLRouter(object):
             return forced_models, []
 
         # Reuse get_chat_backends for primary models (allows test mocking to work)
-        primary_models = self.get_chat_backends(use_external=use_external)
+        if policy is None:
+            primary_models = self.get_chat_backends(use_external=use_external)
+        else:
+            primary_models = self.get_chat_backends(
+                use_external=use_external, policy=policy
+            )
 
         fallback_models: list[RemoteModelLike] = []
-        if use_external:
+        # When the primary fan-out already has its outside models, the
+        # fallback adds none: a second pick could draw another exploration
+        # and send the retry to a model the turn never chose.
+        primary_has_external = any(
+            getattr(m, "external", False) is True for m in primary_models
+        )
+        if use_external and not primary_has_external:
             # Only externals NOT already in the primary fan-out. build_retry_calls
             # issues two calls per entry of model_backends AND two per entry of
             # fallback_backends, so a backend present in both lists received
@@ -817,7 +898,7 @@ class MLRouter(object):
             # with no added diversity.
             already_primary = {id(m) for m in primary_models}
             fallback_models = [
-                m for m in self._chat_externals() if id(m) not in already_primary
+                m for m in self._chat_externals(policy) if id(m) not in already_primary
             ]
 
         return primary_models, fallback_models

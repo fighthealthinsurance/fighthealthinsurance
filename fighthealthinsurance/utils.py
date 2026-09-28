@@ -9,6 +9,7 @@ import threading
 import time
 import unicodedata
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from functools import reduce
 from inspect import isabstract
 from subprocess import CalledProcessError
@@ -18,6 +19,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Collection,
     Coroutine,
     Dict,
     Generic,
@@ -1353,11 +1355,55 @@ class BestTwo(NamedTuple, Generic[T]):
     runner_up_task: Optional[Awaitable[T]]
 
 
+# How a staged race (best_two_within_timelimit with held-back tasks) started
+# them. immediate: with the others, as an unstaged race does. after_delay:
+# when the delay passed with no usable result. early: before the delay,
+# because every other task had finished with none. skipped: never, because a
+# usable result came first.
+STAGE_IMMEDIATE = "immediate"
+STAGE_AFTER_DELAY = "after_delay"
+STAGE_EARLY = "early"
+STAGE_SKIPPED = "skipped"
+STAGE_OUTCOMES = (STAGE_IMMEDIATE, STAGE_AFTER_DELAY, STAGE_EARLY, STAGE_SKIPPED)
+
+
+@dataclass
+class StagedStart:
+    """What a staged best_two_within_timelimit race did with its held-back
+    tasks, filled in by the race.
+
+    ``outcome`` is one of STAGE_OUTCOMES. ``started_after`` is how many
+    seconds into the race the held-back tasks started (None when they never
+    did). ``skipped`` lists the held-back awaitables that never started;
+    their coroutines have been closed without being awaited.
+    """
+
+    outcome: str = ""
+    started_after: Optional[float] = None
+    skipped: List[Awaitable[Any]] = field(default_factory=list)
+
+
+def _close_unstarted(awaitables: Sequence[Awaitable[Any]]) -> None:
+    """Close coroutines that will never be awaited, so they are released
+    quietly instead of warning "never awaited" when collected."""
+    for awaitable in awaitables:
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as e:
+                logger.debug(f"Could not close a held-back task: {type(e).__name__}")
+
+
 async def best_two_within_timelimit(
     tasks: Sequence[Awaitable[T]],
     score_fn: Callable[[T, Awaitable[T]], float],
     timeout: float,
     extended_timeout: Optional[float] = None,
+    *,
+    deferred: Optional[Collection[Awaitable[T]]] = None,
+    defer_seconds: float = 0.0,
+    stage: Optional[StagedStart] = None,
 ) -> "BestTwo[T]":
     """
     Like :func:`best_within_timelimit`, but also returns the runner-up,
@@ -1376,6 +1422,18 @@ async def best_two_within_timelimit(
     scored ``-inf`` are invalid and never returned; the overtime window
     stops at the first usable result; pending tasks are cancelled on every
     exit path, including caller cancellation.
+
+    Staged start: the tasks listed in ``deferred`` (a subset of ``tasks``)
+    are held back for up to ``defer_seconds`` while the others run, and each
+    result is scored as it arrives. The held-back tasks start as soon as the
+    delay passes with nothing usable, or at once when every other task has
+    finished with nothing usable. When a usable result arrives first they
+    never start, and their coroutines are closed unawaited. Both windows are
+    still measured from the start of the race (the delay is capped at
+    ``timeout``), so a staged race never runs longer than an unstaged one.
+    ``stage``, when given, is filled in with what happened. With no
+    ``deferred`` tasks, a delay of 0, or nothing else to start first, every
+    task starts at once, exactly as an unstaged race.
     """
     # Should not happen :)
     if not tasks:
@@ -1385,6 +1443,19 @@ async def best_two_within_timelimit(
         extended_timeout = default_extended_timeout(timeout)
 
     wait_started = time.monotonic()
+    loop = asyncio.get_running_loop()
+    race_started = loop.time()
+
+    deferred_ids = {id(task) for task in deferred} if deferred else set()
+    held: List[Awaitable[T]] = []
+    if defer_seconds > 0 and deferred_ids:
+        held = [task for task in tasks if id(task) in deferred_ids]
+        if len(held) == len(tasks):
+            # Nothing else to start first: hold nothing back.
+            held = []
+    held_ids = {id(task) for task in held}
+    if stage is not None:
+        stage.outcome = STAGE_IMMEDIATE
 
     # Create task objects with Future results and wrap them
     original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
@@ -1398,13 +1469,18 @@ async def best_two_within_timelimit(
     # picked-model debug output irreproducible.
     task_order: Dict[int, int] = {}
 
-    for position, task in enumerate(tasks):
+    def _start(task: Awaitable[T]) -> asyncio.Task[T]:
         # Cast the awaitable to a coroutine to satisfy mypy
         coroutine: Coroutine[Any, Any, T] = cast(Coroutine[Any, Any, T], task)
         wrapped: asyncio.Task[T] = asyncio.create_task(coroutine)
         wrapped_tasks.append(wrapped)
         original_to_task[wrapped] = task
+        return wrapped
+
+    for position, task in enumerate(tasks):
         task_order[id(task)] = position
+        if id(task) not in held_ids:
+            _start(task)
 
     best_result_option: Optional[T] = None
     best_score = float("-inf")  # Start with negative infinity for comparison
@@ -1412,10 +1488,43 @@ async def best_two_within_timelimit(
     second_result_option: Optional[T] = None
     second_score = float("-inf")
     second_original: Optional[Awaitable[T]] = None
+    # Every usable result so far as (fan-out position, result, score,
+    # original task). Each task is scored exactly once, when it finishes;
+    # the best two are then chosen over all of these in fan-out order, so
+    # exact ties go to the earlier-listed task however the results arrived.
+    usable: List[Tuple[int, T, float, Awaitable[T]]] = []
 
-    def _score_done(done_tasks: Set[asyncio.Task[T]]) -> None:
+    def _select() -> None:
         nonlocal best_result_option, best_score, best_original
         nonlocal second_result_option, second_score, second_original
+        best_result_option, best_score, best_original = None, float("-inf"), None
+        second_result_option, second_score, second_original = (
+            None,
+            float("-inf"),
+            None,
+        )
+        for _position, result, score, original_task in sorted(
+            usable, key=lambda u: u[0]
+        ):
+            if score > best_score or not best_result_option:
+                # Demote the old best into the runner-up slot -- unless
+                # the new best is equal-valued, in which case keeping the
+                # old second avoids a runner-up identical to the best.
+                if best_result_option is not None and best_result_option != result:
+                    second_score = best_score
+                    second_result_option = best_result_option
+                    second_original = best_original
+                best_score = score
+                best_result_option = result
+                best_original = original_task
+            elif result != best_result_option and (
+                score > second_score or not second_result_option
+            ):
+                second_score = score
+                second_result_option = result
+                second_original = original_task
+
+    def _score_done(done_tasks: Set[asyncio.Task[T]]) -> None:
         # Deterministic order: earlier-listed tasks win exact score ties.
         for task in sorted(
             done_tasks,
@@ -1437,32 +1546,64 @@ async def best_two_within_timelimit(
                 # through no matter how it was scored.
                 if score == float("-inf"):
                     continue
-                if score > best_score or not best_result_option:
-                    # Demote the old best into the runner-up slot -- unless
-                    # the new best is equal-valued, in which case keeping the
-                    # old second avoids a runner-up identical to the best.
-                    if best_result_option is not None and best_result_option != result:
-                        second_score = best_score
-                        second_result_option = best_result_option
-                        second_original = best_original
-                    best_score = score
-                    best_result_option = result
-                    best_original = original_task
-                elif result != best_result_option and (
-                    score > second_score or not second_result_option
-                ):
-                    second_score = score
-                    second_result_option = result
-                    second_original = original_task
+                usable.append(
+                    (task_order.get(id(original_task), 0), result, score, original_task)
+                )
             except Exception as e:
                 _log_fanout_task_error(e, "best_two_within_timelimit")
+        _select()
 
     try:
-        # Main window: wait for everything (or the timeout), take the best.
-        done, pending = await asyncio.wait(
-            wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
-        )
-        _score_done(done)
+        if held:
+            # Stage window: only the tasks started above run. Score each as
+            # it finishes, and decide when (or whether) the held-back ones
+            # start.
+            pending: Set[asyncio.Task[T]] = set(wrapped_tasks)
+            defer_deadline = race_started + min(defer_seconds, timeout)
+            outcome = ""
+            while not outcome:
+                if best_result_option:
+                    outcome = STAGE_SKIPPED
+                elif not pending:
+                    outcome = STAGE_EARLY
+                else:
+                    remaining = defer_deadline - loop.time()
+                    if remaining <= 0:
+                        outcome = STAGE_AFTER_DELAY
+                    else:
+                        done, pending = await asyncio.wait(
+                            pending,
+                            timeout=remaining,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        _score_done(done)
+            to_start, held = held, []
+            if outcome == STAGE_SKIPPED:
+                _close_unstarted(to_start)
+            else:
+                for task in to_start:
+                    pending.add(_start(task))
+            if stage is not None:
+                stage.outcome = outcome
+                if outcome == STAGE_SKIPPED:
+                    stage.skipped = list(to_start)
+                else:
+                    stage.started_after = loop.time() - race_started
+            # Main window, measured from the start of the race: wait for
+            # everything still running (or the timeout), take the best.
+            if pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=max(0.0, race_started + timeout - loop.time()),
+                    return_when=asyncio.ALL_COMPLETED,
+                )
+                _score_done(done)
+        else:
+            # Main window: wait for everything (or the timeout), take the best.
+            done, pending = await asyncio.wait(
+                wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
+            )
+            _score_done(done)
         if best_result_option:
             _spawn_cancellation(list(pending))
             return BestTwo(
@@ -1478,7 +1619,6 @@ async def best_two_within_timelimit(
         # slow-but-eventually-successful backends useful without the old
         # unbounded ((timeout + 1) * 20) tail, and a falsy first completion no
         # longer aborts the wait while other tasks are still running.
-        loop = asyncio.get_running_loop()
         deadline = loop.time() + extended_timeout
         while pending:
             remaining = deadline - loop.time()
@@ -1497,6 +1637,14 @@ async def best_two_within_timelimit(
         # backend capacity until their own per-call timeouts.
         _spawn_cancellation([t for t in wrapped_tasks if not t.done()])
         raise
+    finally:
+        if held:
+            # Left during the stage window (the caller was cancelled, say):
+            # the held-back tasks never started and now never will.
+            _close_unstarted(held)
+            if stage is not None:
+                stage.outcome = STAGE_SKIPPED
+                stage.skipped = list(held)
 
     if pending:
         _spawn_cancellation(list(pending))

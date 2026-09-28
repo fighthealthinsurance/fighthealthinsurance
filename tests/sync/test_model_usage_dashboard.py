@@ -8,7 +8,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -21,6 +21,7 @@ from fighthealthinsurance.ml.model_identity import (
     legacy_unresolved_label,
 )
 from fighthealthinsurance.models import (
+    ChatRoutingPolicy,
     ChatTurn,
     ChooserCandidate,
     ChooserSkip,
@@ -631,7 +632,6 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
         self.assertEqual(crow["presented"], 1)
 
 
-
 class ModelUsageDashboardWindowTest(ChooserStatsHelperMixin, TestCase):
     """Rolling-window boundary behavior for 1d / 7d / 30d / All Time."""
 
@@ -752,7 +752,9 @@ class DraftQualityColumnsTest(TestCase):
             insurance_company="TestIns",
         )
 
-    def _scored(self, model_name, quality, grounding, days_ago=0, chosen=False, scorer=None):
+    def _scored(
+        self, model_name, quality, grounding, days_ago=0, chosen=False, scorer=None
+    ):
         from fighthealthinsurance.ml import letter_quality
 
         pa = ProposedAppeal.objects.create(
@@ -817,7 +819,9 @@ class DraftQualityColumnsTest(TestCase):
         from fighthealthinsurance.ml import letter_quality
 
         self._scored("m1", 0.9, 2, days_ago=2)  # current rubric
-        self._scored("m1", 0.1, 0, scorer="typesafe/speed_latest/rubric-0", days_ago=1)  # newer, old rubric
+        self._scored(
+            "m1", 0.1, 0, scorer="typesafe/speed_latest/rubric-0", days_ago=1
+        )  # newer, old rubric
         rows = {
             r["model_name"]: r
             for r in ModelUsageDashboardView._proposed_appeal_stats(None)
@@ -829,7 +833,13 @@ class DraftQualityColumnsTest(TestCase):
         self._scored("m1", 0.9, 2, days_ago=5)  # current rubric, oldest
         for i in range(20):
             # Distinct text per row: drafts are unique per denial by fingerprint.
-            self._scored("m1", 0.1 + i * 0.001, 0, scorer="typesafe/speed_latest/rubric-0", days_ago=1)
+            self._scored(
+                "m1",
+                0.1 + i * 0.001,
+                0,
+                scorer="typesafe/speed_latest/rubric-0",
+                days_ago=1,
+            )
         rows = {
             r["model_name"]: r
             for r in ModelUsageDashboardView._proposed_appeal_stats(None)
@@ -840,7 +850,13 @@ class DraftQualityColumnsTest(TestCase):
     def test_twenty_distinct_newer_old_scorers_do_not_hide_the_current_one(self):
         self._scored("m1", 0.9, 2, days_ago=5)
         for i in range(20):
-            self._scored("m1", 0.1 + i * 0.001, 0, scorer=f"typesafe/old-{i}/rubric-0", days_ago=1)
+            self._scored(
+                "m1",
+                0.1 + i * 0.001,
+                0,
+                scorer=f"typesafe/old-{i}/rubric-0",
+                days_ago=1,
+            )
         rows = {
             r["model_name"]: r
             for r in ModelUsageDashboardView._proposed_appeal_stats(None)
@@ -1129,7 +1145,6 @@ class StaffClientMixin:
         return response, {w["slug"]: w for w in response.context["windows"]}
 
 
-
 class UnattributedSplitTest(StaffClientMixin, TestCase):
     """A pick with no model is a template letter, share-appeal text, a
     pre-tracking row or a real miss, and each gets its own bucket."""
@@ -1162,16 +1177,13 @@ class UnattributedSplitTest(StaffClientMixin, TestCase):
             LEGACY_UNATTRIBUTED_LABEL: 1,
             "m1": 1,
         }
-        self.assertEqual(
-            {name: row["chosen"] for name, row in rows.items()}, expected
-        )
-        self.assertEqual(
-            {name: row["chosen"] for name, row in rows.items()}, expected
-        )
+        self.assertEqual({name: row["chosen"] for name, row in rows.items()}, expected)
+        self.assertEqual({name: row["chosen"] for name, row in rows.items()}, expected)
         # Pre-tracking rows stay out of every bounded window.
         since = timezone.now() - datetime.timedelta(days=1)
         bounded = {
-            r["model_name"] for r in ModelUsageDashboardView._proposed_appeal_stats(since)
+            r["model_name"]
+            for r in ModelUsageDashboardView._proposed_appeal_stats(since)
         }
         self.assertNotIn(LEGACY_UNATTRIBUTED_LABEL, bounded)
         self.assertIn(TEMPLATE_PICK_LABEL, bounded)
@@ -1197,12 +1209,8 @@ class UnattributedSplitTest(StaffClientMixin, TestCase):
             SHARED_APPEAL_LABEL: 1,
             UNKNOWN_MODEL_LABEL: 1,
         }
-        self.assertEqual(
-            {name: row["chosen"] for name, row in rows.items()}, expected
-        )
-        self.assertEqual(
-            {name: row["chosen"] for name, row in rows.items()}, expected
-        )
+        self.assertEqual({name: row["chosen"] for name, row in rows.items()}, expected)
+        self.assertEqual({name: row["chosen"] for name, row in rows.items()}, expected)
 
 
 class ContextLevelLabelTest(StaffClientMixin, TestCase):
@@ -1220,7 +1228,9 @@ class ContextLevelLabelTest(StaffClientMixin, TestCase):
             for r in ModelUsageDashboardView._context_level_stats(None)
         }
         # The key stays the stored level; only the shown label changes.
-        self.assertEqual(rows["tier1_shed"]["label"], "Tier-1 shed (enrichment dropped)")
+        self.assertEqual(
+            rows["tier1_shed"]["label"], "Tier-1 shed (enrichment dropped)"
+        )
         self.assertEqual(rows[UNKNOWN_MODEL_LABEL]["label"], NO_CONTEXT_LEVEL_LABEL)
         response = self.client.get(reverse("model_usage_dashboard"))
         self.assertContains(response, "<td>Tier-1 shed (enrichment dropped)</td>")
@@ -1228,7 +1238,9 @@ class ContextLevelLabelTest(StaffClientMixin, TestCase):
         self.assertNotContains(response, "<td>tier1_shed</td>")
 
 
-class QualityColumnsOnlyWhereScoredTest(ChooserStatsHelperMixin, StaffClientMixin, TestCase):
+class QualityColumnsOnlyWhereScoredTest(
+    ChooserStatsHelperMixin, StaffClientMixin, TestCase
+):
     """Only the ProposedAppeal table can carry scorer data."""
 
     def setUp(self):
@@ -1608,8 +1620,16 @@ class CallAttemptTableTest(StaffClientMixin, TestCase):
         self._login_staff()
         self.denial = self._denial()
 
-    def _attempt(self, model_name, outcome, stage="primary", duration_ms=None,
-                 run_kind="live", hours_ago=0, **kwargs):
+    def _attempt(
+        self,
+        model_name,
+        outcome,
+        stage="primary",
+        duration_ms=None,
+        run_kind="live",
+        hours_ago=0,
+        **kwargs,
+    ):
         row = ModelCallAttempt.objects.create(
             for_denial=self.denial,
             model_name=model_name,
@@ -1653,10 +1673,19 @@ class CallAttemptTableTest(StaffClientMixin, TestCase):
         rows = {r["model_name"]: r for r in windows["1d"]["call_attempts"]["rows"]}
         m1 = rows["m1"]
         self.assertEqual(
-            {k: m1[k] for k in (
-                "calls", "ok", "runt_only", "rejected_at_peek", "no_output",
-                "error", "other", "fallback",
-            )},
+            {
+                k: m1[k]
+                for k in (
+                    "calls",
+                    "ok",
+                    "runt_only",
+                    "rejected_at_peek",
+                    "no_output",
+                    "error",
+                    "other",
+                    "fallback",
+                )
+            },
             {
                 "calls": 10,
                 "ok": 3,
@@ -1691,7 +1720,9 @@ class CallAttemptTableTest(StaffClientMixin, TestCase):
     def test_no_phi_column_is_read_or_shown(self):
         self._seed()
         ProposedAppeal.objects.create(
-            for_denial=self.denial, appeal_text="PHI-SENTINEL-DRAFT", chosen=True,
+            for_denial=self.denial,
+            appeal_text="PHI-SENTINEL-DRAFT",
+            chosen=True,
             model_name="m1",
         )
         with CaptureQueriesContext(connection) as queries:
@@ -1714,7 +1745,6 @@ class CallAttemptTableTest(StaffClientMixin, TestCase):
         self.assertEqual(windows["1d"]["call_attempts"]["rows"][0]["median_ms"], 100)
         self.assertEqual(windows["30d"]["call_attempts"]["rows"][0]["median_ms"], 150)
         self.assertContains(response, "Medians here use only the newest 2 OK calls")
-
 
 
 def _call(model, status="scored", ms=100, pass_kind="primary"):
@@ -1901,7 +1931,9 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
 
     def test_side_by_side_counts_only_pairs_from_two_models(self):
         cross = dict(
-            alternate_offered=True, alternate_model="model-b", alternate_cross_model=True
+            alternate_offered=True,
+            alternate_model="model-b",
+            alternate_cross_model=True,
         )
         self._turn(preferred="alternate", **cross)
         self._turn(preferred="primary", **cross)
@@ -1921,7 +1953,8 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
             (3, 1, 2),
         )
         self.assertEqual(
-            (summary["same_model_pairs"], summary["same_model_picked_alternate"]), (1, 1)
+            (summary["same_model_pairs"], summary["same_model_picked_alternate"]),
+            (1, 1),
         )
         self.assertEqual(
             chat["pairs"],
@@ -1949,7 +1982,9 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
 
     def test_a_pair_with_no_pick_has_no_pick_rate(self):
         self._turn(
-            alternate_offered=True, alternate_model="model-b", alternate_cross_model=True
+            alternate_offered=True,
+            alternate_model="model-b",
+            alternate_cross_model=True,
         )
         _response, windows = self._windows()
         self.assertIsNone(self._rows(windows["1d"])["model-b"]["sbs_rate"])
@@ -1964,7 +1999,9 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
 
     def test_chat_rows_carry_their_state_tag(self):
         self._turn(
-            alternate_offered=True, alternate_model="model-b", alternate_cross_model=True
+            alternate_offered=True,
+            alternate_model="model-b",
+            alternate_cross_model=True,
         )
         response, windows = self._windows()
         for slug in ("1d", "7d", "30d"):
@@ -1980,3 +2017,199 @@ class LiveChatSectionTest(StaffClientMixin, TestCase):
         sql = "\n".join(q["sql"] for q in queries.captured_queries)
         self.assertNotIn("chat_history", sql)
         self.assertNotIn("summary_for_next_call", sql)
+
+    def test_calls_held_back_and_never_sent_are_not_calls_or_asks(self):
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="skipped",
+            external_delay_seconds=8.0,
+            calls=[
+                _call("model-a"),
+                _call("claude", "skipped", ms=None),
+                _call("claude", "skipped", ms=None),
+            ],
+        )
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="early",
+            external_delay_seconds=8.0,
+            calls=[_call("model-a", "error"), _call("claude")],
+            winner_model="claude",
+            winner_external=True,
+        )
+        self._turn(external_start="after_delay")
+        self._turn(external_start="skipped")
+        self._turn(external_start="immediate")
+        # The first pass never sent them, but our reply was too short and
+        # the retry asked one: not "never sent".
+        retried = _call("deepseek", pass_kind="retry")
+        retried["external"] = True
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="skipped",
+            calls=[_call("model-a"), _call("claude", "skipped", ms=None), retried],
+            retry_ran=True,
+        )
+        # Nor when our reply asked for a tool and the follow-up pass sent
+        # one, with no retry.
+        followed_up = _call("deepseek", pass_kind="tool")
+        followed_up["external"] = True
+        self._turn(
+            backends=["model-a", "claude"],
+            external_start="skipped",
+            calls=[
+                _call("model-a"),
+                _call("claude", "skipped", ms=None),
+                followed_up,
+            ],
+        )
+        response, windows = self._windows()
+        rows = self._rows(windows["1d"])
+        claude = rows["claude"]
+        self.assertEqual((claude["asked"], claude["calls"]), (1, 1))
+        self.assertEqual(claude["skipped"], 4)
+        self.assertAlmostEqual(claude["win_rate"], 100.0)
+        self.assertEqual(rows["model-a"]["skipped"], 0)
+        summary = windows["1d"]["live_chat"]["summary"]
+        self.assertEqual(
+            (
+                summary["externals_held_back"],
+                summary["externals_after_delay"],
+                summary["externals_early"],
+                summary["externals_skipped"],
+                summary["externals_skipped_later"],
+            ),
+            (6, 1, 1, 2, 2),
+        )
+        self.assertContains(response, "Outside models held back while ours answered")
+        self.assertContains(response, "asked later in the turn on 2")
+        self.assertContains(response, ">Skipped</th>")
+
+
+def _policy_row(minutes_ago=0, **fields):
+    defaults = dict(
+        source="manual",
+        window_minutes=1440,
+        turns_considered=240,
+        external_excluded=["claude-sonnet"],
+        external_delay_seconds=8.0,
+        outside_order=["claude-opus", "new-model", "deepseek"],
+        order_scores={"claude-opus": [0.05, 200], "deepseek": [0.0, 180]},
+        internal_usable_rate=0.9,
+        internal_ttu_p75_ms=8000,
+        reason="ok,ordered",
+    )
+    defaults.update(fields)
+    row = ChatRoutingPolicy.objects.create(**defaults)
+    if minutes_ago:
+        ChatRoutingPolicy.objects.filter(pk=row.pk).update(
+            created_at=timezone.now() - datetime.timedelta(minutes=minutes_ago)
+        )
+    return row
+
+
+class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
+    """The newest chat routing policy, shown once in the Live chat section,
+    with whether chat follows it now."""
+
+    def setUp(self):
+        self._login_staff()
+
+    def _page(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def test_no_policy_yet(self):
+        response = self._page()
+        self.assertEqual(response.context["chat_policy"]["state"], "none")
+        self.assertContains(response, "No routing policy has been computed yet")
+
+    def test_a_fresh_policy_with_the_switch_off_is_shadow(self):
+        _policy_row()
+        with override_settings(FHI_CHAT_POLICY_APPLY=False):
+            response = self._page()
+        self.assertEqual(response.context["chat_policy"]["state"], "shadow")
+        self.assertContains(response, "Shadow mode")
+        self.assertContains(response, "up to <strong>8.0 s</strong>")
+        self.assertContains(response, "<strong>claude-sonnet</strong>")
+        self.assertContains(response, "a usable answer on 90.0% of turns")
+        self.assertContains(response, "8000 ms")
+        self.assertContains(response, "ok,ordered")
+
+    def test_a_fresh_policy_with_the_switch_on_is_applied(self):
+        _policy_row()
+        with override_settings(FHI_CHAT_POLICY_APPLY=True):
+            response = self._page()
+        self.assertEqual(response.context["chat_policy"]["state"], "applied")
+        self.assertContains(response, "<strong>Applied</strong>")
+
+    def test_the_newest_row_is_the_one_shown(self):
+        _policy_row(minutes_ago=30, external_delay_seconds=6.0)
+        newest = _policy_row(external_delay_seconds=11.0)
+        response = self._page()
+        self.assertEqual(response.context["chat_policy"]["row"].pk, newest.pk)
+        self.assertContains(response, "up to <strong>11.0 s</strong>")
+
+    def test_a_stale_policy_is_not_followed(self):
+        _policy_row(minutes_ago=90)
+        with override_settings(
+            FHI_CHAT_POLICY_APPLY=True, FHI_CHAT_POLICY_MAX_AGE_MINUTES=60
+        ):
+            response = self._page()
+        self.assertEqual(response.context["chat_policy"]["state"], "stale")
+        self.assertContains(response, "Too old to follow")
+
+    def test_an_unreadable_policy_is_not_followed(self):
+        _policy_row(schema_version=2)
+        with override_settings(FHI_CHAT_POLICY_APPLY=True):
+            response = self._page()
+        self.assertEqual(response.context["chat_policy"]["state"], "invalid")
+        self.assertContains(response, "<strong>Unreadable</strong>")
+
+    def test_the_learned_order_is_listed_with_its_scores(self):
+        _policy_row()
+        response = self._page()
+        self.assertEqual(
+            response.context["chat_policy"]["order_rows"],
+            [
+                {
+                    "place": 1,
+                    "model": "claude-opus",
+                    "score_percent": 5.0,
+                    "turns": 200,
+                },
+                {
+                    "place": 2,
+                    "model": "new-model",
+                    "score_percent": None,
+                    "turns": None,
+                },
+                {"place": 3, "model": "deepseek", "score_percent": 0.0, "turns": 180},
+            ],
+        )
+        self.assertContains(response, "Answer delivered")
+
+    def test_this_months_provider_spend_is_listed(self):
+        from fighthealthinsurance.ml import spend
+
+        spend._ledger.reset_for_tests()
+        spend.record(spend.TYPESAFE, spend.CHAT, 12_345)
+        spend.record(spend.AZURE, spend.CHAT, 7)
+        response = self._page()
+        rows = response.context["chat_policy"]["spend_rows"]
+        self.assertIn(
+            {"counter": "typesafe:chat", "amount": 0.012345, "calls": False}, rows
+        )
+        self.assertIn({"counter": "azure:chat", "amount": 7.0, "calls": True}, rows)
+        self.assertContains(response, "Provider spend this month")
+        self.assertContains(response, "7 calls")
+
+    def test_the_panel_appears_once_in_the_all_time_section(self):
+        _policy_row()
+        content = self._page().content.decode()
+        self.assertEqual(content.count('id="chat-routing-policy"'), 1)
+        all_time = content.split('id="window-global"', 1)[1].split('id="window-1d"', 1)[
+            0
+        ]
+        self.assertIn('id="chat-routing-policy"', all_time)

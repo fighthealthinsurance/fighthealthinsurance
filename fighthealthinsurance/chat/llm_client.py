@@ -633,6 +633,7 @@ def build_llm_calls(
     allow_repeated_reply: bool = False,
     call_labels: Optional[Dict[Awaitable, str]] = None,
     call_log: Optional[CallLog] = None,
+    call_backends: Optional[Dict[Awaitable, RemoteModelLike]] = None,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build parallel LLM calls for multiple model backends.
@@ -651,6 +652,9 @@ def build_llm_calls(
         call_log: Optional CallLog (chat/turn_record.py). When given, each
             call is wrapped so the pass can record how it ended; the wrapped
             awaitable is what gets returned and keyed.
+        call_backends: Optional mutable dict filled with call -> the backend
+            it goes to, so the caller can tell our own models' calls from
+            the outside ones (the staged fan-out holds the latter back).
 
     Returns:
         Tuple of (list of call awaitables, dict mapping calls to quality scores)
@@ -661,6 +665,8 @@ def build_llm_calls(
     def _label(call: Awaitable, model_backend: RemoteModelLike) -> None:
         if call_labels is not None:
             call_labels[call] = str(model_backend)
+        if call_backends is not None:
+            call_backends[call] = model_backend
 
     for model_backend in model_backends:
         # Try with truncated history
@@ -718,6 +724,7 @@ def build_llm_calls_for_variants(
     allow_repeated_reply: bool = False,
     call_labels: Optional[Dict[Awaitable, str]] = None,
     call_log: Optional[CallLog] = None,
+    call_backends: Optional[Dict[Awaitable, RemoteModelLike]] = None,
 ) -> Tuple[
     List[Awaitable[Tuple[Optional[str], Optional[str]]]],
     Dict[Awaitable, int],
@@ -744,6 +751,7 @@ def build_llm_calls_for_variants(
         full_history: Full untruncated history (optional).
         call_log: Optional CallLog; see build_llm_calls. Each call is also
             tagged with its variant's kind.
+        call_backends: Optional mutable dict; see build_llm_calls.
 
     Returns:
         Tuple of (all calls, call->score dict, primary-variant calls).
@@ -764,6 +772,7 @@ def build_llm_calls_for_variants(
             allow_repeated_reply=allow_repeated_reply,
             call_labels=call_labels,
             call_log=call_log,
+            call_backends=call_backends,
         )
         # Apply the variant's score delta to every call it produced.
         for call in calls:
