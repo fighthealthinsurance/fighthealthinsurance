@@ -42,6 +42,7 @@ person.
 
 import calendar
 import datetime
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -97,6 +98,19 @@ def current_use() -> str:
     return CHAT if ML_CALL_PURPOSE.get() == "chat" else OTHER
 
 
+# Phrases in a 429 body that mean the account is out of credit or quota.
+QUOTA_PHRASES = (
+    "insufficient_quota",
+    "exceeded your current quota",
+    "credit balance is too low",
+    "insufficient credit",
+    "insufficient balance",
+    "insufficient funds",
+    "out of credits",
+    "billing hard limit",
+)
+
+
 def quota_refusal(status: int, body: str) -> bool:
     """Whether a provider's error means credit or quota ran out, not a
     passing rate limit: HTTP 402, or a 429 whose body says so."""
@@ -105,10 +119,10 @@ def quota_refusal(status: int, body: str) -> bool:
     if status != 429:
         return False
     text = (body or "").lower()
-    return any(
-        word in text
-        for word in ("insufficient_quota", "quota", "credit", "balance", "billing")
-    )
+    # Whole phrases only. A passing rate limit's body can mention quota too:
+    # Azure OpenAI's links to aka.ms/oai/quotaincrease, and pausing on that
+    # would take the model out of chat for the rest of the day.
+    return any(phrase in text for phrase in QUOTA_PHRASES)
 
 
 def counter(provider: str, use: str) -> str:
@@ -140,7 +154,9 @@ def deepinfra_cost_micro(model: str, usage: Any) -> int:
         return 0
     estimated = usage.get("estimated_cost")
     if isinstance(estimated, (int, float)) and not isinstance(estimated, bool):
-        if estimated >= 0:
+        # A figure that is not finite, or too large to count in
+        # micro-dollars, is not a cost we can trust: fall back to list price.
+        if 0 <= estimated < 1e9 and math.isfinite(estimated):
             return round(estimated * MICRO)
     price_in, price_out = DEEPINFRA_USD_PER_MTOK.get(model, FALLBACK_USD_PER_MTOK)
     try:

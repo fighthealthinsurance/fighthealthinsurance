@@ -137,6 +137,19 @@ class ProviderSpendTest(SimpleTestCase):
         self.assertEqual(view.day_total("deepinfra:chat", today), 1000)
         self.assertEqual(view.day_total("deepinfra:other", today), 0)
 
+    def test_a_counting_failure_never_escapes(self):
+        """The count runs inside the request's own try, so it must not
+        raise: an answer that arrived is never dropped over its cost."""
+        model = self._deepinfra()
+        with patch.object(
+            spend, "deepinfra_cost_micro", side_effect=OverflowError("too big")
+        ):
+            model._record_spend("zai-org/GLM-5.3-Flash", {"usage": {}})
+        with patch.object(spend, "record", side_effect=RuntimeError("down")):
+            model._record_spend(
+                "zai-org/GLM-5.3-Flash", {"usage": {"estimated_cost": 0.001}}
+            )
+
     def test_an_appeal_answer_is_not_chat_spend(self):
         from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 
