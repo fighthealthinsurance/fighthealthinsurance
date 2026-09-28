@@ -2,9 +2,9 @@
 policies.
 
 The ``chat-routing-policy`` Temporal Schedule (see
-``temporal_client.ensure_chat_policy_schedule``) starts one run every ten
-minutes. A run calls a single activity that reads ChatTurn metadata over a
-window and appends one ChatRoutingPolicy row, which the chat path reads
+``temporal_client.ensure_chat_policy_schedule``) starts one run a day. A
+run calls a single activity that reads ChatTurn metadata over a window (a
+week by default) and appends one ChatRoutingPolicy row, which the chat path reads
 through a short cache (``ml/chat_policy.py``). The activity is given the
 run's own id and stores it on the row, so retried attempts still leave one
 row per run. Temporal is never on the chat path itself: chat routes the
@@ -44,7 +44,7 @@ class ChatRoutingPolicyWorkflow:
         row_id = await workflow.execute_activity(
             policy_activities.compute_and_store_chat_policy,
             args=[request.window_minutes, workflow.info().run_id],
-            # One read of a day of ChatTurn rows and one insert.
+            # One read of a week of ChatTurn rows and one insert.
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=POLICY_RETRY,
         )
