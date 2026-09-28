@@ -496,6 +496,12 @@ class ChatInterface:
         if self._turn is not None:
             self._turn.counted_outcome = outcome
 
+    def _end_turn_client_gone(self) -> None:
+        """The client left mid-turn: counted "client_gone" in the metric, and
+        no ChatTurn row (chat/turn_record.py says why)."""
+        self._count_turn("client_gone")
+        self._turn = None
+
     async def _end_turn_after_exception(self) -> None:
         """An exception is escaping the turn (chat/turn_record.py lists how
         each ending is recorded). A turn that reached the models keeps its
@@ -2314,8 +2320,7 @@ class ChatInterface:
                     f"Chat {chat.id}: reply persisted but not sent; the "
                     f"client left mid-turn"
                 )
-                self._count_turn("client_gone")
-                await self._write_turn_record("client_gone")
+                self._end_turn_client_gone()
                 return
             # Side-by-side alternate answer (ChatGPT-style "here's another
             # take"): cleaned like the primary, dropped if cleaning leaves it
@@ -2373,12 +2378,12 @@ class ChatInterface:
                     f"Chat {chat.id}: reply persisted but not delivered; the "
                     f"client left as it was sent"
                 )
-                self._count_turn("client_gone")
-                await self._write_turn_record("client_gone")
+                self._end_turn_client_gone()
                 return
-            except asyncio.CancelledError:
-                # Counted "ok" as it always was for a send cancelled on its
-                # way out, so handle_chat_message still leaves the row.
+            except BaseException:
+                # Any other send failure, or a cancellation, is counted "ok"
+                # as it always was: the reply was generated and saved, and
+                # handle_chat_message still leaves the row.
                 self._count_turn("ok")
                 raise
             self._count_turn("ok")
@@ -2431,8 +2436,7 @@ class ChatInterface:
                 # alerting on is the RATE of hangups climbing (which would
                 # mean we got slow, or a proxy started reaping sockets), and
                 # that is a metric question, not one issue per user.
-                self._count_turn("client_gone")
-                await self._write_turn_record("client_gone")
+                self._end_turn_client_gone()
                 return
 
             # Provide more helpful error message based on context

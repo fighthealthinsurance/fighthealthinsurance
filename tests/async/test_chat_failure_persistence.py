@@ -23,7 +23,7 @@ from rest_framework.test import APITestCase
 
 from fighthealthinsurance.chat.chat_persistence import apersist_chat_turn
 from fighthealthinsurance.chat_interface import ChatInterface
-from fighthealthinsurance.models import OngoingChat, ProfessionalUser
+from fighthealthinsurance.models import ChatTurn, OngoingChat, ProfessionalUser
 from tests.sync.mock_chat_model import MockChatModel
 
 if typing.TYPE_CHECKING:
@@ -508,6 +508,34 @@ class ChatHangupOutcomeTest(APITestCase):
         )
         self.assertEqual(outcomes, ["client_gone"])
         self.assertEqual(len(await self._assistant_replies(chat)), 1)
+
+    async def test_a_turn_the_client_left_writes_no_chat_turn_row(self):
+        """ChatTurn rows carry only the outcomes the dashboard reads; a
+        departed client's turn is counted in the metric alone."""
+        chat, outcomes, _ = await self._run_turn(
+            "rowgone1",
+            "9999910035",
+            self._gone_on_every_frame(),
+            reply_delay=0,
+            env={"FHI_CHAT_HEARTBEAT_SECONDS": "60"},
+        )
+        self.assertEqual(outcomes, ["client_gone"])
+        self.assertEqual(await ChatTurn.objects.filter(chat_id=chat.id).acount(), 0)
+
+    async def test_a_delivered_turn_still_writes_its_ok_row(self):
+        """Control for the test above: the harness does write rows."""
+        chat, outcomes, _ = await self._run_turn(
+            "rowok1",
+            "9999910036",
+            _FrameRecorder(),
+            reply_delay=0,
+            env={"FHI_CHAT_HEARTBEAT_SECONDS": "60"},
+        )
+        self.assertEqual(outcomes, ["ok"])
+        self.assertEqual(
+            [t.outcome async for t in ChatTurn.objects.filter(chat_id=chat.id)],
+            ["ok"],
+        )
 
     async def test_a_hangup_seen_by_a_tool_keeps_the_reply(self):
         """A tool's status frame is the first write to find the socket
