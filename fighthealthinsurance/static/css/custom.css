@@ -124,6 +124,10 @@
     --fhi-text-micro: 0.75rem;
     --fhi-text-small: 0.875rem;
     --fhi-text-body: 1rem;
+    /* Running text in the reading column: 17px. GOV.UK sets body text at
+       19px and USWDS asks for at least 16px; one step up from the site's
+       16px floor, on the prose pages only, where people read at length. */
+    --fhi-text-reading: 1.0625rem;
     --fhi-text-lead: 1.125rem;
     --fhi-text-title: clamp(1.4rem, 1.2vw + 1rem, 1.8rem);
     --fhi-text-section: clamp(1.5rem, 1.2vw + 1.1rem, 1.8rem);
@@ -1968,6 +1972,24 @@ section:not(.slider) .share-subcopy {
    naming two. */
 .fhi-page :where(p, li) {
     max-width: var(--fhi-measure);
+    font-size: var(--fhi-text-reading);
+}
+
+/* A link inside running text is underlined, so it reads as a link for
+   anyone who can't tell it apart by colour. Navigation, buttons and cards
+   keep their own look: this reaches a link in a paragraph, list item or
+   table cell inside the page content, but not one styled as a button, a
+   card or navigation. :where() keeps it at zero-class specificity, so any
+   component rule that sets its own decoration still wins. */
+main :where(p, li, dd, td) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+    text-decoration-thickness: from-font;
+}
+
+/* Figures in a table line up in columns. */
+main :where(table) {
+    font-variant-numeric: tabular-nums;
 }
 
 /* Headings inside a page column step down from the page title. main.css
