@@ -111,6 +111,10 @@ _OK_NEGATION_TOKENS = frozenset(
 _OK_NO_ACKNOWLEDGES = frozenset({"problem", "problems", "worries"})
 _MAX_OK_REPLY_WORDS = 4
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
+# A citation marker ("OK[1]", "OK [^2]"), which search-backed models such as
+# Perplexity attach to their answers. Its digits are not a status code; one
+# or two of them, so a bracketed status ("[200] OK") still fails.
+_CITATION_MARKER_RE = re.compile(r"\[\^?\d{1,2}\]")
 
 
 def _negates(words: list[str], i: int) -> bool:
@@ -124,10 +128,12 @@ def _negates(words: list[str], i: int) -> bool:
 def _looks_like_ok(text: str) -> bool:
     """Whether a probe reply plausibly acknowledges the 'Reply with exactly:
     OK' instruction: at most a few words, one of them OK/okay, none a
-    negation, none a bare number (a status line such as "200 OK")."""
+    negation, none a bare number (a status line such as "200 OK"). Citation
+    markers are dropped first."""
+    text = _CITATION_MARKER_RE.sub(" ", text or "")
     # Quotes around a word are not part of it: 'OK' is OK. An apostrophe
     # inside one ("can't") stays.
-    words = [w.strip("'").lower() for w in _WORD_RE.findall(text or "")]
+    words = [w.strip("'").lower() for w in _WORD_RE.findall(text)]
     words = [w for w in words if w]
     if not words or len(words) > _MAX_OK_REPLY_WORDS:
         return False
