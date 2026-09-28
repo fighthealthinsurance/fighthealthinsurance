@@ -40,7 +40,9 @@ _call_llm_with_actions
   │    history, anti-repeat note + temperature 0.85 when repeats were
   │    rejected, fallback backends, 35s + 40s; repeats get a finite
   │    last-resort penalty here instead of -inf
-  │  alternate answer: runner-up kept only when scores are CLOSELY TIED
+  │  alternate answer: the best CLOSELY TIED, presentable candidate from a
+  │    different model than the winner, else the runner-up under the same
+  │    rules
   │  debug_llm_input / debug_llm_result frames when debug is on
   │  tool handlers (appeal, prior auth, medicaid, pubmed, doc fetcher, ...)
   │    -- recursive tools re-enter _call_llm_with_actions at depth+1
@@ -49,7 +51,13 @@ persistence (chat_persistence.py): transactional turn persist with
   tail-dedup, summary list capped at 20; panda-summary placeholder swap
   happens in the background when the model omitted its summary
   ▼
-ws frames out: status heartbeats, content (+ alternate_content), metrics
+ws frames out: status heartbeats, content (+ alternate_content and
+  turn_id), metrics
+  ▼
+turn record (chat/turn_record.py): one ChatTurn row per turn counted in
+  fhi_chat_turns_total, with the counted outcome, written after the reply
+  frame (or the error frame); a turn cancelled after it was counted gets
+  its row from a thread of its own, with a bounded wait
 ```
 
 Everything in the fan-out is concurrent; the serial spine of a turn is
@@ -223,28 +231,40 @@ What we deliberately did NOT build for selection:
 ## 5. Choosing between answers: alternates as a product feature
 
 best_two_within_timelimit returns (best, runner_up, both scores, both
-originating calls). The runner-up becomes a side-by-side alternate answer
-("🔀 See an alternate answer") ONLY when:
+originating calls), and the top-level pass also keeps every result that
+completed. A side-by-side alternate answer ("🔀 See an alternate answer")
+is offered ONLY when a candidate:
 
-* the two scores are closely tied — runner_up >= 0.8 * best with both
+* is closely tied with the winner: candidate >= 0.8 * best with both
   positive (scores_closely_tied). Given the quadratic tiers this means
   "same tier, comparable content" (e.g. the same model's truncated- vs
   full-history calls at 8000 vs 10000 base, or two same-tier backends);
-  a cross-tier runner-up never qualifies, and
-* it's presentable (no tool/action tokens, not a near-duplicate of the
+  a cross-tier candidate never qualifies, and
+* is presentable (no tool/action tokens, not a near-duplicate of the
   primary, not itself a repeat, no safety flags), and
-* tool processing didn't rewrite the primary reply.
+* tool processing didn't rewrite the primary reply, and no retry replaced
+  the primary pass's winner.
+
+Among the candidates that qualify, one from a DIFFERENT model than the
+winner comes first (pick_side_by_side_alternate): the pick is meant to be
+model versus model. Only when no other model's candidate qualifies is the
+plain runner-up offered, which is usually the winner's own other call.
 
 The tie requirement is what makes the feature honest: when the scorer has
 a clear winner, showing a second answer is noise; when the race was
 genuinely close, the user is the right tiebreaker — and their choice is
 recorded (fhi_chat_answer_feedback_total{preferred=primary|alternate})
-without starting an LLM turn. Only the primary is persisted; replays show
-one answer.
+without starting an LLM turn. The answer frame carries the turn's
+`turn_id` whenever it carries an alternate; the client echoes it in
+`answer_feedback`, and the pick is stored on that turn's ChatTurn row. The
+store only takes a pick for a turn of the socket's own chat that offered an
+alternate and has no pick yet, so the first pick wins. Only the primary is
+persisted; replays show one answer.
 
 **This is also the model-selection feedback loop**: close ties are exactly
 the cases where quality() can't separate two backends, and the preference
-metric accumulates evidence about which one users actually prefer. When
+data accumulates evidence about which one users actually prefer. The staff
+ML Model Usage Dashboard shows it per model and per pair of models. When
 that data disagrees with the quality map, adjust the map.
 
 ## 6. Context management ("context shedding")
@@ -276,7 +296,20 @@ Three levels, in increasing detail:
    retry usage, elapsed ms. This is the production triage record.
 2. **Prometheus metrics**: repeats (rejected/delivered), alternates
    offered, answer feedback, turn outcomes.
-3. **Debug frames** (localStorage `fhi_chat_debug = "true"`, honored only
+3. **ChatTurn rows** (one per turn that reached the models and was
+   counted in fhi_chat_turns_total, in the admin and on the staff ML Model
+   Usage Dashboard): the backends asked, each call's model, pass, history
+   kind, status, time and score, the model whose reply was delivered (a
+   tool follow-up's pick when one wrote the reply) and the first pass's
+   pick and runner-up, retry and tool use, the alternate offered and the
+   person's pick. Metadata only (see §9). A call that answered was scored
+   (scored, repeat or empty) or, when its pass stopped comparing answers
+   first, is unscored; either way it keeps its time. Only a call still
+   running when its pass stopped waiting is late, with no time. An
+   exception escaping a turn after the models were asked counts it failed,
+   in the row and the metric alike; a turn cancelled before it was counted
+   gets neither.
+4. **Debug frames** (localStorage `fhi_chat_debug = "true"`, honored only
    for DEBUG deployments and staff accounts): per turn the server sends
    - `debug_llm_input` — the EXACT wrapped message, context summary,
      history counts, variants, state hint;
@@ -303,11 +336,10 @@ Three levels, in increasing detail:
    again; the server merges duplicates at persist time (serial + deduped)
    but the second LLM turn still runs. An in-flight turn-id (client echoes
    it, server drops re-submits of a live turn) would make retry free.
-4. **Per-model win/lose metrics.** The debug frame reports the picked
-   model; promote that to a bounded-cardinality counter
-   (fhi_chat_model_wins_total{model}) so the quality map can be tuned
-   from dashboards, not log greps. (Deliberately deferred: needs a label
-   allowlist to keep cardinality bounded.)
+4. **Per-model win/lose metrics.** Per-model wins, calls and side-by-side
+   picks now live in ChatTurn rows and on the staff usage dashboard. A
+   Prometheus counter (fhi_chat_model_wins_total{model}) is still deferred:
+   it needs a label allowlist to keep cardinality bounded.
 5. **Summarization model diversity.** summarize_chat_history routes to one
    summarizer; a bad summary quietly poisons every later turn's context.
    Cheap guard: score summaries with the repetition detector before
@@ -327,6 +359,11 @@ Three levels, in increasing detail:
   message, never from the wrapped prompt (wrapper text contains the word
   "repeat").
 * The alternate answer is ephemeral: never persisted, never replayed.
+* ChatTurn holds metadata only: model labels, backend descriptors,
+  statuses, times, scores and enum values. Never message, reply, summary,
+  history, context, state hint or document text, and exceptions by class
+  name only. Its chat FK cascades and is non-nullable, so it goes with the
+  chat (including delete-my-data).
 * The state hint is transient and UNCONFIRMED: injected per turn, never
   stored on the chat.
 * Summarization and geo lookups soft-fail; nothing on the turn path is

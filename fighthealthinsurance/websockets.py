@@ -31,6 +31,7 @@ from fhi_users.audit import (
     extract_tracking_info_from_scope,
     guess_us_state,
 )
+from fighthealthinsurance.chat.turn_record import arecord_answer_preference
 from fighthealthinsurance.ml.ml_metrics import record_answer_feedback
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance import common_view_logic
@@ -1475,11 +1476,17 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         iterate_on_prior_auth = data.get("iterate_on_prior_auth")
 
         # Lightweight side-by-side answer feedback: which answer the user
-        # preferred. Metrics + log only (bounded label set) -- no LLM turn.
+        # preferred. A metric (bounded label set), a log line, and the pick
+        # stored on the turn's ChatTurn row. It never starts an LLM turn.
         answer_feedback = data.get("answer_feedback")
         if answer_feedback is not None:
             preferred = (
                 answer_feedback.get("preferred")
+                if isinstance(answer_feedback, dict)
+                else None
+            )
+            turn_id = (
+                answer_feedback.get("turn_id")
                 if isinstance(answer_feedback, dict)
                 else None
             )
@@ -1492,12 +1499,20 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             # log-volume lever).
             if chat_id and self.chat_id and str(chat_id) == str(self.chat_id):
                 record_answer_feedback(preferred)
+                # Stored against this socket's own chat, never the frame's
+                # chat_id: the conditional update only touches a turn of that
+                # chat which offered an alternate and has no pick yet, so the
+                # first pick wins and a repeated frame changes nothing. Needs
+                # a UUID turn_id; older clients send none.
+                recorded = await arecord_answer_preference(
+                    self.chat_id, turn_id, preferred
+                )
                 # chat_id is raw client input: bound and repr it so an
                 # attacker-supplied value can't inject newlines (forged log
                 # records) or flood the log pipeline with one huge line.
                 logger.info(
                     f"chat ws: answer feedback preferred={str(preferred)[:16]!r} "
-                    f"chat_id={str(chat_id)[:64]!r}"
+                    f"chat_id={str(chat_id)[:64]!r} recorded={recorded}"
                 )
             else:
                 logger.debug(

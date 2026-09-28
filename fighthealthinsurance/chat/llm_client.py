@@ -6,11 +6,23 @@ Extracts core LLM calling logic from ChatInterface for reusability and testing.
 
 import math
 import re
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from loguru import logger
 
 from fighthealthinsurance.chat.message_preprocessor import MessageVariant
+from fighthealthinsurance.chat.turn_record import CallLog, ReplyCredit
 from fighthealthinsurance.chat.safety_filters import (
     detect_eligibility_verdict,
     detect_false_promises,
@@ -620,6 +632,7 @@ def build_llm_calls(
     full_history: Optional[List[Dict[str, str]]] = None,
     allow_repeated_reply: bool = False,
     call_labels: Optional[Dict[Awaitable, str]] = None,
+    call_log: Optional[CallLog] = None,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build parallel LLM calls for multiple model backends.
@@ -635,6 +648,9 @@ def build_llm_calls(
         call_labels: Optional mutable dict filled with call -> backend label
             (str(backend)); lets the scorer attribute candidates to models
             for repeat-offender demotion and debug reporting.
+        call_log: Optional CallLog (chat/turn_record.py). When given, each
+            call is wrapped so the pass can record how it ended; the wrapped
+            awaitable is what gets returned and keyed.
 
     Returns:
         Tuple of (list of call awaitables, dict mapping calls to quality scores)
@@ -656,6 +672,8 @@ def build_llm_calls(
             is_logged_in=is_logged_in,
             allow_repeated_reply=allow_repeated_reply,
         )
+        if call_log is not None:
+            call = call_log.observe(call, model_backend, "truncated")
         _label(call, model_backend)
         calls.append(call)
         # Quadratic scaling to more aggressively prefer higher-quality models
@@ -677,6 +695,10 @@ def build_llm_calls(
                     is_logged_in=is_logged_in,
                     allow_repeated_reply=allow_repeated_reply,
                 )
+                if call_log is not None:
+                    full_history_call = call_log.observe(
+                        full_history_call, model_backend, "full"
+                    )
                 _label(full_history_call, model_backend)
                 calls.append(full_history_call)
                 # Slightly prefer full history for better context
@@ -695,6 +717,7 @@ def build_llm_calls_for_variants(
     full_history: Optional[List[Dict[str, str]]] = None,
     allow_repeated_reply: bool = False,
     call_labels: Optional[Dict[Awaitable, str]] = None,
+    call_log: Optional[CallLog] = None,
 ) -> Tuple[
     List[Awaitable[Tuple[Optional[str], Optional[str]]]],
     Dict[Awaitable, int],
@@ -719,6 +742,8 @@ def build_llm_calls_for_variants(
         is_professional: Whether the user is a professional.
         is_logged_in: Whether the user is logged in.
         full_history: Full untruncated history (optional).
+        call_log: Optional CallLog; see build_llm_calls. Each call is also
+            tagged with its variant's kind.
 
     Returns:
         Tuple of (all calls, call->score dict, primary-variant calls).
@@ -738,10 +763,13 @@ def build_llm_calls_for_variants(
             full_history=full_history,
             allow_repeated_reply=allow_repeated_reply,
             call_labels=call_labels,
+            call_log=call_log,
         )
         # Apply the variant's score delta to every call it produced.
         for call in calls:
             call_scores[call] = call_scores.get(call, 0) + variant.score_delta
+            if call_log is not None:
+                call_log.set_variant(call, variant.kind)
 
         all_calls.extend(calls)
         all_scores.update(call_scores)
@@ -768,6 +796,7 @@ def build_retry_calls(
     temperature: float = 0.7,
     allow_repeated_reply: bool = False,
     call_labels: Optional[Dict[Awaitable, str]] = None,
+    call_log: Optional[CallLog] = None,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build retry LLM calls with shortened context and fallback backends.
@@ -784,6 +813,7 @@ def build_retry_calls(
             retries pass a higher value to break deterministic loops.
         call_labels: Optional mutable dict filled with call -> backend label
             (see build_llm_calls).
+        call_log: Optional CallLog; see build_llm_calls.
 
     Returns:
         Tuple of (list of call awaitables, dict mapping calls to quality scores)
@@ -794,6 +824,15 @@ def build_retry_calls(
     def _label(call: Awaitable, model_backend: RemoteModelLike) -> None:
         if call_labels is not None:
             call_labels[call] = str(model_backend)
+
+    def _observe(
+        call: Coroutine[Any, Any, Tuple[Optional[str], Optional[str]]],
+        model_backend: RemoteModelLike,
+        history_kind: str,
+    ) -> Coroutine[Any, Any, Tuple[Optional[str], Optional[str]]]:
+        if call_log is None:
+            return call
+        return call_log.observe(call, model_backend, history_kind)
 
     # Use shorter history for retry (Python gracefully handles if len < 5)
     start_idx = max(0, len(history) - 5)
@@ -810,6 +849,7 @@ def build_retry_calls(
             temperature=temperature,
             allow_repeated_reply=allow_repeated_reply,
         )
+        call = _observe(call, model_backend, "retry_short")
         _label(call, model_backend)
         calls.append(call)
         # Quadratic scaling, reduced for retry (lower priority than primary)
@@ -826,6 +866,7 @@ def build_retry_calls(
             temperature=temperature,
             allow_repeated_reply=allow_repeated_reply,
         )
+        call = _observe(call, model_backend, "retry_full")
         _label(call, model_backend)
         calls.append(call)
         call_scores[call] = (model_backend.quality() ** 2) // 2
@@ -843,6 +884,7 @@ def build_retry_calls(
                 temperature=temperature,
                 allow_repeated_reply=allow_repeated_reply,
             )
+            call = _observe(call, model_backend, "retry_short")
             _label(call, model_backend)
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 7
@@ -857,6 +899,7 @@ def build_retry_calls(
                 temperature=temperature,
                 allow_repeated_reply=allow_repeated_reply,
             )
+            call = _observe(call, model_backend, "retry_full")
             _label(call, model_backend)
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 5
@@ -939,3 +982,140 @@ def scores_closely_tied(
     if best_score <= 0 or runner_up_score <= 0:
         return False
     return runner_up_score >= best_score * ratio
+
+
+def results_recorder(
+    score_fn: Callable[[Any, Awaitable], float],
+    sink: Dict[Awaitable, Any],
+) -> Callable[[Any, Awaitable], float]:
+    """Wrap a scorer so every result it scores is also kept in ``sink``,
+    keyed by its call.
+
+    best_two_within_timelimit hands back only the top two results; the chat
+    pass uses this to choose its side-by-side alternate from every
+    candidate that completed. ``sink`` holds reply text, so it stays a
+    local of the pass and is never recorded anywhere.
+    """
+
+    def recording(result: Any, task: Awaitable) -> float:
+        sink[task] = result
+        return score_fn(result, task)
+
+    return recording
+
+
+def candidates_best_first(
+    completed: Dict[Awaitable, Tuple[Optional[str], Optional[str]]],
+    scores: Dict[Awaitable, float],
+    labels: Dict[Awaitable, str],
+    calls: Sequence[Awaitable],
+    exclude: Optional[Tuple[Optional[str], Optional[str]]],
+) -> List[Tuple[Optional[str], float, str]]:
+    """Every usable completed result except ``exclude`` (the winner), as
+    (model label, score, reply text), best first.
+
+    Usable means what best_two_within_timelimit would accept, plus some
+    reply text: a truthy result with a finite score. Exact score ties go to
+    the earlier-listed call, as they do in best_two_within_timelimit.
+    """
+    order = {id(call): position for position, call in enumerate(calls)}
+    ranked: List[Tuple[float, int, Optional[str], str]] = []
+    for task, result in completed.items():
+        if not result or result == exclude:
+            continue
+        score = scores.get(task)
+        if score is None or not math.isfinite(score):
+            continue
+        text = result[0]
+        if not text:
+            continue
+        ranked.append((score, order.get(id(task), len(order)), labels.get(task), text))
+    ranked.sort(key=lambda r: (-r[0], r[1]))
+    return [(label, score, text) for score, _position, label, text in ranked]
+
+
+class AlternateChoice(NamedTuple):
+    """The side-by-side alternate chosen for a turn."""
+
+    text: str
+    model: Optional[str]
+    # The alternate came from a different model than the primary answer.
+    cross_model: bool
+
+
+def pick_side_by_side_alternate(
+    primary_text: str,
+    primary_model: Optional[str],
+    primary_score: Optional[float],
+    candidates: Sequence[Tuple[Optional[str], float, str]],
+    runner_up: Optional[Tuple[Optional[str], float, str]],
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    current_message: Optional[str] = None,
+) -> Optional[AlternateChoice]:
+    """Choose the answer to show beside the primary one, if any.
+
+    The side-by-side pick is meant to compare models, so the first choice
+    is the best candidate from a DIFFERENT model than the primary that is
+    both closely tied with it (scores_closely_tied) and presentable
+    (alternate_is_presentable). Only when no other model's candidate
+    qualifies does it fall back to the plain runner-up under the same two
+    rules, which is usually the primary model's other call.
+
+    ``candidates`` come from candidates_best_first, best first;
+    ``runner_up`` is best_two_within_timelimit's runner-up as (model label,
+    score, reply text).
+    """
+    if primary_score is None:
+        return None
+    if primary_model:
+        for model, score, text in candidates:
+            if not model or model == primary_model:
+                continue
+            if not scores_closely_tied(primary_score, score):
+                # Best first: nothing further down is tied either.
+                break
+            if alternate_is_presentable(
+                text,
+                primary_text,
+                chat_history=chat_history,
+                current_message=current_message,
+            ):
+                return AlternateChoice(text.strip(), model, True)
+    if runner_up is None:
+        return None
+    model, score, text = runner_up
+    if not text or not scores_closely_tied(primary_score, score):
+        return None
+    if not alternate_is_presentable(
+        text,
+        primary_text,
+        chat_history=chat_history,
+        current_message=current_message,
+    ):
+        return None
+    cross_model = bool(model and primary_model and model != primary_model)
+    return AlternateChoice(text.strip(), model, cross_model)
+
+
+def credit_for_delivered_reply(
+    own: ReplyCredit,
+    follow_ups: Sequence[Tuple[str, ReplyCredit]],
+    delivered_text: str,
+) -> ReplyCredit:
+    """Which model to credit with a pass's delivered reply.
+
+    A tool follow-up's reply is joined onto, or replaces, the reply that
+    asked for the tool. So the latest follow-up whose reply appears in the
+    delivered text wrote what the person reads last, and gets the credit.
+    When no follow-up's reply made it in (none ran, or the tool kept the
+    original), the pass's own pick keeps it.
+
+    ``follow_ups`` pairs each follow-up's reply text with its credit, in the
+    order they ran. The text stays a local of the pass and is never
+    recorded.
+    """
+    for text, credit in reversed(follow_ups):
+        stripped = (text or "").strip()
+        if stripped and stripped in delivered_text:
+            return credit
+    return own

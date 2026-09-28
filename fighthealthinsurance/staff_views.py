@@ -43,7 +43,16 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.chat.turn_record import (
+    COMPLETED_STATUSES,
+    STATUS_EMPTY,
+    STATUS_ERROR,
+    STATUS_LATE,
+    STATUS_REPEAT,
+    STATUS_UNSCORED,
+)
 from fighthealthinsurance.models import (
+    ChatTurn,
     ChooserCandidate,
     ChooserSkip,
     ChooserVote,
@@ -1469,6 +1478,218 @@ PLACEHOLDER_MODEL_LABELS = frozenset(
 )
 
 
+# ChatTurn call statuses the live chat table gives a column each. The rest
+# ("scored") is the calls that returned a usable candidate.
+CHAT_CALL_PROBLEMS = (
+    STATUS_LATE,
+    STATUS_UNSCORED,
+    STATUS_ERROR,
+    STATUS_EMPTY,
+    STATUS_REPEAT,
+)
+
+# ChatTurn columns the live chat section reads. Every one is metadata: model
+# labels, enums, flags, and the calls list (labels, statuses, times, scores).
+CHAT_TURN_FIELDS = (
+    "created_at",
+    "outcome",
+    "use_external",
+    "backends",
+    "fallback_backends",
+    "calls",
+    "winner_model",
+    "winner_external",
+    "runner_up_model",
+    "retry_ran",
+    "retry_used",
+    "alternate_offered",
+    "alternate_model",
+    "alternate_cross_model",
+    "preferred",
+)
+
+
+def _percent(part: int, whole: int) -> Optional[float]:
+    """part / whole as a percentage, or None when there is no whole."""
+    return part / whole * 100.0 if whole else None
+
+
+def _chat_label(name: Any) -> str:
+    return normalize_model_label(name) or ATTEMPT_UNKNOWN_MODEL
+
+
+class _ChatTally:
+    """One window's live chat numbers, fed one ChatTurn row at a time."""
+
+    def __init__(self) -> None:
+        self.outcomes: Counter = Counter()
+        self.turns = 0
+        self.external_allowed = 0
+        self.external_wins = 0
+        self.retry_ran = 0
+        self.retry_used = 0
+        self.alternates = 0
+        self.cross_alternates = 0
+        self.picks: Counter = Counter()
+        self.same_model_pairs = 0
+        self.same_model_picks: Counter = Counter()
+        self.models: Dict[str, Dict[str, Any]] = {}
+        self.durations: Dict[str, List[int]] = defaultdict(list)
+        self.pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def _model(self, label: str) -> Dict[str, Any]:
+        row = self.models.get(label)
+        if row is None:
+            row = {
+                "model_name": label,
+                "asked": 0,
+                "wins": 0,
+                "runner_up": 0,
+                "calls": 0,
+                **{status: 0 for status in CHAT_CALL_PROBLEMS},
+                "sbs_shown": 0,
+                "sbs_answered": 0,
+                "sbs_preferred": 0,
+            }
+            self.models[label] = row
+        return row
+
+    def add(self, row: Tuple[Any, ...]) -> None:
+        (
+            _created_at,
+            outcome,
+            use_external,
+            backends,
+            fallback_backends,
+            calls,
+            winner,
+            winner_external,
+            runner_up,
+            retry_ran,
+            retry_used,
+            alternate_offered,
+            alternate,
+            cross_model,
+            preferred,
+        ) = row
+        self.turns += 1
+        self.outcomes[outcome] += 1
+        if use_external:
+            self.external_allowed += 1
+        if retry_ran:
+            self.retry_ran += 1
+        if retry_used:
+            self.retry_used += 1
+
+        # A model counts as asked once per turn, however many calls it got:
+        # every primary backend, and the fallbacks only when the retry ran.
+        asked = {_chat_label(n) for n in (backends or [])}
+        if retry_ran:
+            asked |= {_chat_label(n) for n in (fallback_backends or [])}
+        for label in asked:
+            self._model(label)["asked"] += 1
+        # Wins and outside-model wins go to the model whose reply was
+        # delivered (winner_model): a tool follow-up's pick when one wrote
+        # the reply, not the first pass's.
+        winner_label = _chat_label(winner) if winner else None
+        if outcome == ChatTurn.Outcome.OK and winner_label is not None:
+            self._model(winner_label)["wins"] += 1
+            if winner_external is True:
+                self.external_wins += 1
+        if runner_up:
+            self._model(_chat_label(runner_up))["runner_up"] += 1
+
+        for call in calls or []:
+            if not isinstance(call, dict):
+                continue
+            label = _chat_label(call.get("model"))
+            model_row = self._model(label)
+            model_row["calls"] += 1
+            status = call.get("status")
+            if status in CHAT_CALL_PROBLEMS:
+                model_row[status] += 1
+            ms = call.get("ms")
+            if status in COMPLETED_STATUSES and isinstance(ms, int):
+                self.durations[label].append(ms)
+
+        if not alternate_offered:
+            return
+        self.alternates += 1
+        if preferred:
+            self.picks[preferred] += 1
+        if not cross_model or winner_label is None or not alternate:
+            # Two answers from one model say nothing about which model
+            # people prefer, so these only get a count of their own.
+            self.same_model_pairs += 1
+            if preferred:
+                self.same_model_picks[preferred] += 1
+            return
+        self.cross_alternates += 1
+        alternate_label = _chat_label(alternate)
+        pair = self.pairs.setdefault(
+            (winner_label, alternate_label),
+            {
+                "primary_model": winner_label,
+                "alternate_model": alternate_label,
+                "offered": 0,
+                "answered": 0,
+                "primary": 0,
+                "alternate": 0,
+            },
+        )
+        pair["offered"] += 1
+        for label in (winner_label, alternate_label):
+            self._model(label)["sbs_shown"] += 1
+        if preferred in ("primary", "alternate"):
+            pair["answered"] += 1
+            pair[preferred] += 1
+            for label in (winner_label, alternate_label):
+                self._model(label)["sbs_answered"] += 1
+            picked = winner_label if preferred == "primary" else alternate_label
+            self._model(picked)["sbs_preferred"] += 1
+
+    def result(self) -> Dict[str, Any]:
+        rows = list(self.models.values())
+        for row in rows:
+            row["win_rate"] = _percent(row["wins"], row["asked"])
+            row["sbs_rate"] = _percent(row["sbs_preferred"], row["sbs_answered"])
+            found = self.durations.get(row["model_name"])
+            row["median_ms"] = int(round(statistics.median(found))) if found else None
+        rows.sort(key=lambda r: (-r["asked"], -r["calls"], r["model_name"]))
+        ok = self.outcomes[ChatTurn.Outcome.OK]
+        return {
+            "summary": {
+                "turns": self.turns,
+                "ok": ok,
+                "failed": self.outcomes[ChatTurn.Outcome.FAILED],
+                "timeout": self.outcomes[ChatTurn.Outcome.TIMEOUT],
+                "external_allowed": self.external_allowed,
+                "external_share": _percent(self.external_allowed, self.turns),
+                "external_wins": self.external_wins,
+                "external_win_share": _percent(self.external_wins, ok),
+                "retry_ran": self.retry_ran,
+                "retry_used": self.retry_used,
+                "alternates": self.alternates,
+                "cross_alternates": self.cross_alternates,
+                "picks": sum(self.picks.values()),
+                "picked_primary": self.picks["primary"],
+                "picked_alternate": self.picks["alternate"],
+                "same_model_pairs": self.same_model_pairs,
+                "same_model_picked_primary": self.same_model_picks["primary"],
+                "same_model_picked_alternate": self.same_model_picks["alternate"],
+            },
+            "rows": rows,
+            "side_by_side_rows": sorted(
+                (r for r in rows if r["sbs_shown"]),
+                key=lambda r: (-r["sbs_shown"], r["model_name"]),
+            ),
+            "pairs": sorted(
+                self.pairs.values(),
+                key=lambda p: (-p["offered"], p["primary_model"], p["alternate_model"]),
+            ),
+        }
+
+
 def _is_placeholder_model(name: str) -> bool:
     # "legacy-" covers legacy-unattributed and every legacy-unresolved (Class).
     return name in PLACEHOLDER_MODEL_LABELS or name.startswith("legacy-")
@@ -1702,8 +1923,9 @@ class ModelUsageDashboardView(generic.TemplateView):
         past 100%.
 
     Beside those, each bounded window shows per-model appeal-generation call
-    outcomes from ModelCallAttempt, and every model row carries the model's
-    state today (see _model_states). Neither calls a model.
+    outcomes from ModelCallAttempt and the live chat model race from
+    ChatTurn (see _chat_stats), and every model row carries the model's
+    state today (see _model_states). None of it calls a model.
 
     All stored model names pass through normalize_model_label so historical
     object-repr values aggregate per class (without memory addresses) even
@@ -1725,9 +1947,13 @@ class ModelUsageDashboardView(generic.TemplateView):
         # began and are deleted with their denial, so an all-time total would
         # look complete while missing most of the history. Leaving it out
         # also keeps the page's largest scan bounded.
-        call_attempts = self._call_attempt_stats(
-            [(slug, since) for slug, _label, since in windows if since is not None]
-        )
+        bounded = [
+            (slug, since) for slug, _label, since in windows if since is not None
+        ]
+        call_attempts = self._call_attempt_stats(bounded)
+        # Bounded windows only, for the same reasons as the call table: turn
+        # records start when turn recording began and go with their chat.
+        live_chat = self._chat_stats(bounded)
         participation = self._chooser_participation(windows)
         windows_ctx: List[Dict[str, Any]] = []
         for slug, label, since in windows:
@@ -1746,6 +1972,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "call_attempts": call_attempts.get(slug),
+                    "live_chat": live_chat.get(slug),
                     "totals": {
                         # Every chosen row in the window, re-picks included.
                         "picks": sum(r["chosen"] for r in proposed),
@@ -1768,6 +1995,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                 w["chooser_appeal"],
                 w["chooser_chat"],
                 (w["call_attempts"] or {}).get("rows", []),
+                (w["live_chat"] or {}).get("rows", []),
             )
         ]
         states = _model_states(r["model_name"] for rows in model_tables for r in rows)
@@ -2338,6 +2566,40 @@ class ModelUsageDashboardView(generic.TemplateView):
                 capped and oldest is not None and since <= oldest
             )
         return out
+
+    @staticmethod
+    def _chat_stats(
+        windows: List[Tuple[str, datetime.datetime]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """The live chat model race for each bounded window, from ChatTurn.
+
+        One read of the widest window, bucketed in Python. Per window: a
+        summary (turns by outcome, how often outside models were allowed and
+        how often one's answer was delivered, retries, alternates offered
+        and picks received), a row per model (turns that asked it, wins =
+        OK turns that delivered its reply, win rate = wins / turns asked,
+        runner-up count, calls by status and the median time of calls that
+        returned, scored or not) and the side-by-side pairs.
+
+        Side-by-side per-model numbers and pair rows count only pairs from
+        two different models; a pair from one model says nothing about which
+        model people prefer, so those get a count in the summary instead.
+        """
+        if not windows:
+            return {}
+        tallies = {slug: _ChatTally() for slug, _since in windows}
+        widest = min(since for _slug, since in windows)
+        rows = (
+            ChatTurn.objects.filter(created_at__gte=widest)
+            .order_by()
+            .values_list(*CHAT_TURN_FIELDS)
+        )
+        for row in rows.iterator(chunk_size=500):
+            created_at = row[0]
+            for slug, since in windows:
+                if created_at >= since:
+                    tallies[slug].add(row)
+        return {slug: tally.result() for slug, tally in tallies.items()}
 
 
 class ModelBackendStatusView(generic.TemplateView):

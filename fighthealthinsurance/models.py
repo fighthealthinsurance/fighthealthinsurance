@@ -3716,6 +3716,107 @@ class ChatDocument(models.Model):
         return f"ChatDocument {self.id}: {self.document_name} ({self.char_count} chars)"
 
 
+class ChatTurn(models.Model):
+    """Which models raced for one chat turn, how each call ended, which one
+    won, and which side-by-side answer the person picked.
+
+    Metadata only: no message, reply, summary, history, context or document
+    text, and exception class names rather than exception text. The only
+    strings are model labels, backend descriptors and the enum values below.
+    ``chat`` cascades and is non-nullable, so deleting a chat (including
+    ``RemoveDataHelper.remove_data_for_email``) takes its turns with it and
+    no row can outlive its chat.
+
+    One row per turn counted in ``fhi_chat_turns_total``; ``outcome`` uses
+    the same values. Written by ``chat/turn_record.py``.
+    """
+
+    class Outcome(models.TextChoices):
+        OK = "ok", "OK"
+        FAILED = "failed", "Failed"
+        TIMEOUT = "timeout", "Timed out"
+
+    class Preferred(models.TextChoices):
+        NONE = "", "No pick"
+        PRIMARY = "primary", "Primary"
+        ALTERNATE = "alternate", "Alternate"
+
+    # Also the turn_id the client echoes back with its side-by-side pick.
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    chat = models.ForeignKey(
+        OngoingChat,
+        on_delete=models.CASCADE,
+        related_name="model_turns",
+        # Non-nullable so a turn can never outlive the chat it describes.
+        null=False,
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    outcome = models.CharField(max_length=16, choices=Outcome.choices)
+    # Whether the person allowed outside models for this turn.
+    use_external = models.BooleanField()
+    # Registry labels of the primary fan-out, in order (a backend listed
+    # twice by the router appears twice), and of the retry fallbacks.
+    backends = models.JSONField(default=list, blank=True)
+    fallback_backends = models.JSONField(default=list, blank=True)
+    # One entry per model call: {model, backend, external, pass (primary,
+    # retry or tool), depth, history (truncated, full, retry_short or
+    # retry_full), variant, status (scored, repeat, empty, unscored, error or
+    # late), error (exception class name or ""), ms (null only when late),
+    # score (null when rejected or never scored)}.
+    calls = models.JSONField(default=list, blank=True)
+    # The model whose reply was delivered. When a tool follow-up wrote the
+    # reply, that follow-up's pick; otherwise the first pass's.
+    winner_model = models.CharField(max_length=200, blank=True, default="")
+    winner_score = models.FloatField(null=True, blank=True)
+    # Which pass produced the delivered reply: "primary", "retry" (the first
+    # pass's retry) or "tool" (a tool follow-up, retried or not).
+    winner_pass = models.CharField(max_length=16, blank=True, default="")
+    # Whether the winning model is an outside (paid) one; null when unknown.
+    winner_external = models.BooleanField(null=True, blank=True)
+    # The first pass's pick, before any tool follow-up. Same as the winner
+    # unless a tool follow-up wrote the reply; the runner-up, the tie and
+    # the alternate compare against this one.
+    first_pass_model = models.CharField(max_length=200, blank=True, default="")
+    first_pass_score = models.FloatField(null=True, blank=True)
+    runner_up_model = models.CharField(max_length=200, blank=True, default="")
+    runner_up_score = models.FloatField(null=True, blank=True)
+    # Winner and runner-up within ALTERNATE_CLOSE_TIE_RATIO of each other.
+    closely_tied = models.BooleanField(default=False)
+    # Candidates hard-rejected as repeats, across every pass of the turn.
+    rejected_repeats = models.PositiveIntegerField(default=0)
+    # The delivered reply still repeated a recent reply.
+    delivered_repeat = models.BooleanField(default=False)
+    # Any pass of the turn ran the retry (so the fallbacks were asked), and
+    # whether the delivered answer came from a retry.
+    retry_ran = models.BooleanField(default=False)
+    retry_used = models.BooleanField(default=False)
+    tool_passes = models.PositiveSmallIntegerField(default=0)
+    tool_rewrote = models.BooleanField(default=False)
+    # The primary pass plus its retry, and the whole turn, in milliseconds.
+    fanout_ms = models.PositiveIntegerField(null=True, blank=True)
+    turn_ms = models.PositiveIntegerField(null=True, blank=True)
+    alternate_offered = models.BooleanField(default=False)
+    alternate_model = models.CharField(max_length=200, blank=True, default="")
+    # The offered pair came from two different models.
+    alternate_cross_model = models.BooleanField(default=False)
+    # The person's side-by-side pick. The first pick wins.
+    preferred = models.CharField(
+        max_length=16, blank=True, default="", choices=Preferred.choices
+    )
+    preferred_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["chat", "-created_at"], name="chatturn_chat_created_idx"
+            ),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"ChatTurn<{self.outcome} {self.winner_model or 'no winner'}>"
+
+
 class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type: ignore
     """
     Stores lead data from trial chat users who have not created a full account.

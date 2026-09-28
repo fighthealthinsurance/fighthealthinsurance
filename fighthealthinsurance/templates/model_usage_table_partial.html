@@ -1,6 +1,7 @@
 {% comment %}
 One usage table. kind picks the counts: "picks" (ProposedAppeal, per draft shown),
-"votes" (chooser), "calls" (ModelCallAttempt), or none (context level, per
+"votes" (chooser), "calls" (ModelCallAttempt), "chat" (ChatTurn model race),
+"sidebyside" (ChatTurn side-by-side picks), or none (context level, per
 draft). show_state adds the model state tag; show_quality adds the scorer
 columns, which only the ProposedAppeal table ever fills. Each state is its own
 branch with a literal class so the contrast gate can measure every tag.
@@ -32,6 +33,23 @@ branch with a literal class so the contrast gate can measure every tag.
       <th class="num" title="not_registered, no_prompt, all_backends_failed and any other outcome">Other</th>
       <th class="num" title="Share of calls made at the backup or retry stages">Backup or retry</th>
       <th class="num" title="Median time of OK calls, including time queued">Median OK time</th>
+      {% elif kind == "chat" %}
+      <th class="num" title="Turns that asked this model: in the fan-out, or among the fallbacks when the retry ran">Turns asked</th>
+      <th class="num" title="OK turns that delivered this model's answer">Wins</th>
+      <th class="num" title="Wins / turns asked">Win rate</th>
+      <th class="num" title="Turns where this model's answer came second">Runner-up</th>
+      <th class="num">Calls</th>
+      <th class="num" title="Still running when the turn stopped waiting">Late</th>
+      <th class="num" title="Answered, but its pass stopped comparing answers before scoring it">Unscored</th>
+      <th class="num" title="The call failed">Error</th>
+      <th class="num" title="Answered with nothing usable">Empty</th>
+      <th class="num" title="Rejected for repeating a recent reply">Repeat</th>
+      <th class="num" title="Median time of calls that answered">Median time</th>
+      {% elif kind == "sidebyside" %}
+      <th class="num" title="Pairs from two different models that showed this model's answer">Pairs shown</th>
+      <th class="num" title="Of those, pairs where the person picked an answer">Pairs picked</th>
+      <th class="num" title="Picks of this model's answer">Picked</th>
+      <th class="num" title="Picked / pairs picked">Pick rate</th>
       {% else %}
       <th class="num">Chosen</th>
       <th class="num">Presented</th>
@@ -88,6 +106,38 @@ branch with a literal class so the contrast gate can measure every tag.
       <td class="num">&mdash;</td>
       {% else %}
       <td class="num">{{ r.median_ms }} ms</td>
+      {% endif %}
+      {% elif kind == "chat" %}
+      <td class="num">{{ r.asked }}</td>
+      <td class="num">{{ r.wins }}</td>
+      {% if r.win_rate is None %}
+      {# Never asked in the window: no denominator, never 0.0%. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.win_rate|floatformat:1 }}%</td>
+      {% endif %}
+      <td class="num">{{ r.runner_up }}</td>
+      <td class="num">{{ r.calls }}</td>
+      <td class="num">{{ r.late }}</td>
+      <td class="num">{{ r.unscored }}</td>
+      <td class="num">{{ r.error }}</td>
+      <td class="num">{{ r.empty }}</td>
+      <td class="num">{{ r.repeat }}</td>
+      {% if r.median_ms is None %}
+      {# No call from this model answered in the window. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.median_ms }} ms</td>
+      {% endif %}
+      {% elif kind == "sidebyside" %}
+      <td class="num">{{ r.sbs_shown }}</td>
+      <td class="num">{{ r.sbs_answered }}</td>
+      <td class="num">{{ r.sbs_preferred }}</td>
+      {% if r.sbs_rate is None %}
+      {# No pick came in for this model's pairs: no denominator. #}
+      <td class="num">&mdash;</td>
+      {% else %}
+      <td class="num">{{ r.sbs_rate|floatformat:1 }}%</td>
       {% endif %}
       {% else %}
       <td class="num">{{ r.chosen }}</td>

@@ -19,6 +19,7 @@ from fighthealthinsurance.models import (
     AppealAttachment,
     AppealTemplates,
     ChatLeads,
+    ChatTurn,
     ChooserCandidate,
     ChooserTask,
     ChooserVote,
@@ -1057,6 +1058,57 @@ class OngoingChatAdmin(admin.ModelAdmin):
             isinstance(obj.edited_chat_history, list)
             and len(obj.edited_chat_history) > 0
         )
+
+
+@admin.register(ChatTurn)
+class ChatTurnAdmin(admin.ModelAdmin):
+    """Which models raced for each chat turn (read-only).
+
+    Rows are written by the chat and hold metadata only. Deleting stays
+    allowed: the admin refuses to delete an OngoingChat when a registered
+    related model can't be deleted, so blocking it here would block
+    deleting chats.
+    """
+
+    list_display = (
+        "id",
+        "chat_id",
+        "created_at",
+        "outcome",
+        "winner_model",
+        "winner_pass",
+        "first_pass_model",
+        "use_external",
+        "alternate_offered",
+        "alternate_model",
+        "preferred",
+    )
+    search_fields = (
+        "id",
+        "chat__id",
+        "winner_model",
+        "first_pass_model",
+        "alternate_model",
+    )
+    list_filter = (
+        "outcome",
+        "use_external",
+        "alternate_offered",
+        "alternate_cross_model",
+        "preferred",
+        "retry_used",
+        "created_at",
+    )
+    ordering = ("-created_at",)
+
+    def get_readonly_fields(self, request, obj=None):
+        return [f.name for f in self.model._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(ChooserTask)
