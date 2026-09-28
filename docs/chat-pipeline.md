@@ -259,10 +259,19 @@ own connection and a 0.5s statement timeout on PostgreSQL. Only one
 refresh runs at a time per process, and turns meanwhile use the cached
 row (the default before any row has been read). A refresh that fails
 keeps the cached row, which is still followed only while it is fresh.
-Rows come from `manage.py compute_chat_policy` (by hand or from a CronJob)
-and are shown on the staff ML Model Usage Dashboard whether or not chat
-follows them. Rows are never edited; rows older than 30 days are deleted
-after a new one is written. Each
+Rows come from the `chat-routing-policy` Temporal Schedule, which runs
+`ChatRoutingPolicyWorkflow` once a day on its own queue in the
+appeal-worker pods while `TEMPORAL_ENABLED` and
+`TEMPORAL_CHAT_POLICY_ENABLED` are on (off by default; see
+`k8s/temporal/README.md`), or from `manage.py compute_chat_policy` (by hand
+or from a CronJob). Both write the same row, and its `source` says which;
+a Schedule run's row also carries its run id, so each run writes one row
+at most, and the command writes a new row every time. The Schedule's
+history holds the window, the run id and the row id only, and Temporal
+is never on the turn path: if runs stop, the newest row passes the age
+limit above and chat routes by the default. Rows are shown on the staff ML
+Model Usage Dashboard whether or not chat follows them. Rows are never
+edited; rows older than 30 days are deleted after a new one is written. Each
 ChatTurn row records how its primary pass started the outside models
 (`external_start`: immediate, after_delay, early or skipped) and the delay
 it used; held-back calls that were never sent have the status "skipped".

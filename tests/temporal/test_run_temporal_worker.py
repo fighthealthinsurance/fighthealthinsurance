@@ -3,6 +3,7 @@ loudly on a bad role and never silently host the wrong queues."""
 
 import asyncio
 import os
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -58,31 +59,45 @@ def _recording_worker_cls():
     return cls
 
 
-def _run_with(role, **flags):
+_BASE_SETTINGS = dict(
+    TEMPORAL_ENABLED=True,
+    TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
+    TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
+    TEMPORAL_CHAT_POLICY_ENABLED=False,
+    TEMPORAL_TASK_QUEUE="q-fax",
+    TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
+    TEMPORAL_CHAT_POLICY_TASK_QUEUE="q-policy",
+    TEMPORAL_HOST="test-host",
+    TEMPORAL_NAMESPACE="test-ns",
+)
+
+_ENSURE = "fighthealthinsurance.temporal_client.ensure_chat_policy_schedule"
+
+
+def _run_capture(options, ensure=None, connect=None, **flags):
+    """Run _run with stand-ins for the Worker class, the client connect and
+    the Schedule call; return each Worker's construction kwargs."""
     from django.test import override_settings
     from unittest.mock import AsyncMock, Mock
 
     worker_cls = _recording_worker_cls()
-    settings = dict(
-        TEMPORAL_ENABLED=True,
-        TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
-        TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
-        TEMPORAL_TASK_QUEUE="q-fax",
-        TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
-        TEMPORAL_HOST="test-host",
-        TEMPORAL_NAMESPACE="test-ns",
-    )
+    settings = dict(_BASE_SETTINGS)
     settings.update(flags)
     with (
         patch("temporalio.worker.Worker", worker_cls),
         patch(
             "fighthealthinsurance.temporal_client.get_temporal_client",
-            AsyncMock(return_value=Mock()),
+            connect or AsyncMock(return_value=Mock()),
         ),
+        patch(_ENSURE, ensure or AsyncMock(return_value="created")),
         override_settings(**settings),
     ):
-        asyncio.run(asyncio.wait_for(Command()._run({"queues": role}), timeout=2))
-    return [c.kwargs.get("task_queue") for c in worker_cls.call_args_list]
+        asyncio.run(asyncio.wait_for(Command()._run(options), timeout=2))
+    return [c.kwargs for c in worker_cls.call_args_list]
+
+
+def _run_with(role, **flags):
+    return [k.get("task_queue") for k in _run_capture({"queues": role}, **flags)]
 
 
 def test_fax_role_hosts_only_the_fax_queue():
@@ -287,30 +302,7 @@ def test_worker_manifests_are_redundant_and_scraped():
 
 def _run_with_options(options, **flags):
     """Like _run_with but with arbitrary command options (task_queue etc.)."""
-    from django.test import override_settings
-    from unittest.mock import AsyncMock, Mock
-
-    worker_cls = _recording_worker_cls()
-    settings = dict(
-        TEMPORAL_ENABLED=True,
-        TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
-        TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
-        TEMPORAL_TASK_QUEUE="q-fax",
-        TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
-        TEMPORAL_HOST="test-host",
-        TEMPORAL_NAMESPACE="test-ns",
-    )
-    settings.update(flags)
-    with (
-        patch("temporalio.worker.Worker", worker_cls),
-        patch(
-            "fighthealthinsurance.temporal_client.get_temporal_client",
-            AsyncMock(return_value=Mock()),
-        ),
-        override_settings(**settings),
-    ):
-        asyncio.run(asyncio.wait_for(Command()._run(options), timeout=2))
-    return [c.kwargs for c in worker_cls.call_args_list]
+    return _run_capture(options, **flags)
 
 
 def test_task_queue_override_applies_to_the_selected_role():
@@ -426,15 +418,7 @@ def _run_until_signal(role, sig, command=None, **flags):
         real_install(*args, **kwargs)
         ready.set()
 
-    settings = dict(
-        TEMPORAL_ENABLED=True,
-        TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
-        TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
-        TEMPORAL_TASK_QUEUE="q-fax",
-        TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
-        TEMPORAL_HOST="test-host",
-        TEMPORAL_NAMESPACE="test-ns",
-    )
+    settings = dict(_BASE_SETTINGS)
     settings.update(flags)
 
     async def main():
@@ -452,6 +436,7 @@ def _run_until_signal(role, sig, command=None, **flags):
             AsyncMock(return_value=Mock()),
         ),
         patch.object(cmd, "install_shutdown_handlers", _install_and_signal_ready),
+        patch(_ENSURE, AsyncMock(return_value="created")),
         override_settings(**settings),
     ):
         asyncio.run(main())
@@ -783,3 +768,209 @@ def test_handle_off_the_main_thread_leaves_a_preinstalled_guard_alone():
         assert _signal.getsignal(_signal.SIGTERM) == early_stop._handler
     finally:
         early_stop.restore()
+
+
+# --- The chat routing policy queue ---------------------------------------------
+#
+# Hosted by the appeal-worker process (roles appeal and all) as a Worker of
+# its own, gated on TEMPORAL_ENABLED and TEMPORAL_CHAT_POLICY_ENABLED and
+# independent of the journey flags.
+
+
+def test_appeal_role_with_journey_dark_and_policy_on_hosts_only_the_policy_queue():
+    assert _run_with(
+        "appeal",
+        TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+        TEMPORAL_CHAT_POLICY_ENABLED=True,
+    ) == ["q-policy"]
+
+
+def test_appeal_role_with_journey_and_policy_on_hosts_both_queues():
+    assert _run_with("appeal", TEMPORAL_CHAT_POLICY_ENABLED=True) == [
+        "q-appeal",
+        "q-policy",
+    ]
+
+
+def test_all_role_with_policy_on_hosts_every_queue():
+    assert _run_with("all", TEMPORAL_CHAT_POLICY_ENABLED=True) == [
+        "q-fax",
+        "q-appeal",
+        "q-policy",
+    ]
+
+
+def test_policy_off_changes_nothing():
+    assert _run_with("appeal", TEMPORAL_CHAT_POLICY_ENABLED=False) == ["q-appeal"]
+    assert _run_with("all", TEMPORAL_CHAT_POLICY_ENABLED=False) == [
+        "q-fax",
+        "q-appeal",
+    ]
+
+
+def test_the_policy_flag_needs_temporal_enabled():
+    """TEMPORAL_ENABLED off: nothing policy-shaped is hosted, and the dark
+    appeal role idles as before."""
+    with pytest.raises(asyncio.TimeoutError):
+        _run_with(
+            "appeal",
+            TEMPORAL_ENABLED=False,
+            TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
+            TEMPORAL_CHAT_POLICY_ENABLED=True,
+        )
+
+
+def test_the_fax_role_never_hosts_the_policy_queue_or_touches_the_schedule():
+    from unittest.mock import AsyncMock
+
+    ensure = AsyncMock(return_value="created")
+    kwargs = _run_capture(
+        {"queues": "fax"}, ensure=ensure, TEMPORAL_CHAT_POLICY_ENABLED=True
+    )
+    assert [k["task_queue"] for k in kwargs] == ["q-fax"]
+    ensure.assert_not_awaited()
+
+
+def test_the_policy_worker_registers_only_the_policy_workflow_and_activity():
+    from fighthealthinsurance.activities import chat_routing_policy
+    from fighthealthinsurance.workflows.chat_routing_policy import (
+        ChatRoutingPolicyWorkflow,
+    )
+
+    kwargs = _run_capture({"queues": "appeal"}, TEMPORAL_CHAT_POLICY_ENABLED=True)
+    by_queue = {k["task_queue"]: k for k in kwargs}
+    policy = by_queue["q-policy"]
+    assert policy["workflows"] == [ChatRoutingPolicyWorkflow]
+    assert policy["activities"] == [chat_routing_policy.compute_and_store_chat_policy]
+    assert policy["max_concurrent_activities"] == 1
+    # Its own Worker: nothing of the policy's rides on the appeal Worker.
+    appeal = by_queue["q-appeal"]
+    assert ChatRoutingPolicyWorkflow not in appeal["workflows"]
+    assert chat_routing_policy.compute_and_store_chat_policy not in appeal["activities"]
+    # The drain covers the activity's two-minute bound and fits inside the
+    # appeal Worker's, which the pod's grace period is sized for.
+    assert (
+        timedelta(minutes=2)
+        <= policy["graceful_shutdown_timeout"]
+        <= appeal["graceful_shutdown_timeout"]
+    )
+
+
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        (dict(TEMPORAL_CHAT_POLICY_ENABLED=True), True),
+        (dict(TEMPORAL_CHAT_POLICY_ENABLED=False), False),
+    ],
+)
+def test_the_schedule_is_kept_in_step_after_connecting(flags, expected):
+    from unittest.mock import AsyncMock, Mock
+
+    order = []
+    client = Mock(name="client")
+
+    async def connect(**kwargs):
+        order.append("connect")
+        return client
+
+    async def ensure(got_client, *, enabled):
+        order.append(("ensure", got_client is client, enabled))
+        return "created"
+
+    _run_capture(
+        {"queues": "appeal"},
+        ensure=AsyncMock(side_effect=ensure),
+        connect=connect,
+        **flags,
+    )
+    assert order == ["connect", ("ensure", True, expected)]
+
+
+def test_the_idle_appeal_role_still_pauses_the_schedule():
+    """Everything dark: no Worker, but a Schedule left from when the flag was
+    on is paused, so it stops starting runs nobody will pick up."""
+    from unittest.mock import AsyncMock
+
+    ensure = AsyncMock(return_value="paused")
+    with pytest.raises(asyncio.TimeoutError):
+        _run_capture(
+            {"queues": "appeal"},
+            ensure=ensure,
+            TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+            TEMPORAL_CHAT_POLICY_ENABLED=False,
+        )
+    ensure.assert_awaited_once()
+    assert ensure.await_args.kwargs == {"enabled": False}
+
+
+def test_a_failing_schedule_call_does_not_stop_hosting():
+    from unittest.mock import AsyncMock
+
+    from loguru import logger
+
+    secret = "text that must not reach a log"
+    lines: list = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="DEBUG")
+    try:
+        kwargs = _run_capture(
+            {"queues": "appeal"},
+            ensure=AsyncMock(side_effect=RuntimeError(secret)),
+            TEMPORAL_CHAT_POLICY_ENABLED=True,
+        )
+    finally:
+        logger.remove(sink)
+    assert [k["task_queue"] for k in kwargs] == ["q-appeal", "q-policy"]
+    assert any("RuntimeError" in line for line in lines)
+    assert not any(secret in line for line in lines)
+
+
+def test_a_hanging_schedule_call_is_bounded():
+    import fighthealthinsurance.management.commands.run_temporal_worker as cmd
+
+    async def hang(client, *, enabled):
+        await asyncio.sleep(60)
+
+    with patch.object(cmd, "SCHEDULE_ENSURE_TIMEOUT_SECONDS", 0.05):
+        kwargs = _run_capture(
+            {"queues": "appeal"}, ensure=hang, TEMPORAL_CHAT_POLICY_ENABLED=True
+        )
+    assert [k["task_queue"] for k in kwargs] == ["q-appeal", "q-policy"]
+
+
+def test_task_queue_override_leaves_the_policy_queue_alone():
+    kwargs = _run_with_options(
+        {"queues": "appeal", "task_queue": "custom"},
+        TEMPORAL_CHAT_POLICY_ENABLED=True,
+    )
+    assert [k["task_queue"] for k in kwargs] == ["custom", "q-policy"]
+
+
+def test_sigterm_drains_the_policy_worker_too():
+    import signal
+
+    calls = _run_until_signal(
+        "appeal",
+        signal.SIGTERM,
+        TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+        TEMPORAL_CHAT_POLICY_ENABLED=True,
+    )
+    assert calls == ["q-policy"]
+
+
+def test_the_appeal_manifest_names_the_policy_queue_and_leaves_the_flag_off():
+    """Applying the manifest must not turn the policy on (the flag comes from
+    the app secrets), and its queue must match the settings default that a
+    web pod running ensure_temporal_schedules would use."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    text = (root / "k8s" / "temporal" / "appeal-worker.yaml").read_text()
+    m = re.search(
+        r'name: TEMPORAL_CHAT_POLICY_TASK_QUEUE\s*\n\s*value: "([^"]+)"', text
+    )
+    assert m, "appeal-worker.yaml must name the chat policy queue"
+    settings_src = (root / "fighthealthinsurance" / "settings.py").read_text()
+    default = re.search(r'"TEMPORAL_CHAT_POLICY_TASK_QUEUE", "([^"]+)"', settings_src)
+    assert default and m.group(1) == default.group(1)
+    assert not re.search(r"name: TEMPORAL_CHAT_POLICY_ENABLED\b", text)

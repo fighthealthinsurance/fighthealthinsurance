@@ -3842,9 +3842,11 @@ class ChatRoutingPolicy(models.Model):
     force when, for the last 30 days. Rows older than that are deleted
     after a new one is written (``ml/chat_policy.prune_old_chat_policies``).
     Written by ``ml/chat_policy.compute_and_store_chat_policy`` (the
-    ``compute_chat_policy`` command, or a scheduled job) from ChatTurn
-    metadata, and read by ``ml/chat_policy.aget_chat_policy`` on the chat
-    path. Holds model names and numbers only.
+    ``compute_chat_policy`` command, or the ``chat-routing-policy``
+    Temporal Schedule) from ChatTurn metadata, and read by
+    ``ml/chat_policy.aget_chat_policy`` on the chat path. A Temporal run
+    writes at most one row, keyed by its run id. Holds model names, numbers
+    and that id only.
 
     A policy can only narrow the outside models the router already picks:
     it never adds a model and never overrides a person's choice to keep
@@ -3868,6 +3870,19 @@ class ChatRoutingPolicy(models.Model):
         ),
     )
     source = models.CharField(max_length=16, choices=Source.choices)
+    # The Temporal workflow run that wrote the row, so a run writes at most
+    # one row however often its activity is retried. Empty (NULL) for rows
+    # from the compute_chat_policy command, which may repeat.
+    run_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "The Temporal workflow run that wrote this row; each run writes "
+            "at most one. Empty for rows from the compute_chat_policy command."
+        ),
+    )
     # Readers ignore a row whose version they do not know.
     schema_version = models.PositiveSmallIntegerField(default=1)
     # The ChatTurn window the policy was computed from, and how many turns
@@ -3896,6 +3911,13 @@ class ChatRoutingPolicy(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run_id"],
+                condition=models.Q(run_id__isnull=False),
+                name="uniq_chatroutingpolicy_run_id",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"ChatRoutingPolicy<{self.source} {self.created_at}>"

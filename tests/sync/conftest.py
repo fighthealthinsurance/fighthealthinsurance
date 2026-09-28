@@ -16,5 +16,6 @@ def _no_live_temporal():
         TEMPORAL_ENABLED=False,
         TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
         TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
+        TEMPORAL_CHAT_POLICY_ENABLED=False,
     ):
         yield
