@@ -1116,14 +1116,14 @@ class MLRouter(object):
         if text is not None:
             text_optional = f"--- Full-ish article text: {text[0:max_input_chars]} ---"
         system_prompts = [
-            "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
+            "You are a helpful assistant summarizing article(s) for a person or other LLM writing an appeal. Be very concise."
         ]
         instructions = (
             "If present in the input include a list of the most relevant "
             "articles referenced (with PMID / DOIs or links if present in the "
-            "input). If multile studies prefer US studies then generic "
+            "input). If multiple studies prefer US studies then generic "
             "non-country specific and then other countries. We're focused on "
-            "helping american patients and providers."
+            "helping American patients and providers."
         )
         # Each attempt must carry SOURCE TEXT. The abstract-only retry below is
         # skipped when there is no abstract: with abstract=None its prompt would
@@ -1145,6 +1145,16 @@ class MLRouter(object):
                 f"Summarize the following {title} for use in a health insurance "
                 f"appeal: {abstract_optional}. {instructions}"
             )
+        return await self._run_summarizer(models, system_prompts, attempts)
+
+    async def _run_summarizer(
+        self,
+        models: list[RemoteModelLike],
+        system_prompts: list[str],
+        attempts: list[str],
+    ) -> Optional[str]:
+        """Try each prompt in ``attempts`` on each model in turn; return the
+        first non-trivial summary."""
         for m in models:
             for prompt in attempts:
                 try:
@@ -1173,6 +1183,62 @@ class MLRouter(object):
                         f"({len(r.strip())} chars); trying the next option"
                     )
         return None
+
+    DENIAL_SUMMARY_SYSTEM_PROMPT = (
+        "You condense health insurance denial letters so an appeal can be "
+        "written from the condensed version. Keep every fact an appeal would "
+        "need, drop boilerplate, and never add anything that is not in the "
+        "letter."
+    )
+
+    async def summarize_denial_letter(
+        self,
+        text: str,
+        *,
+        use_external: bool,
+        max_input_chars: int,
+    ) -> Optional[str]:
+        """Condense a long denial letter for use as the appeal prompt's
+        denial text.
+
+        Distinct from ``summarize`` (which is framed for PubMed articles:
+        PMIDs, DOIs, a preference for US studies) because the letter is not
+        an article and what must survive is different: the denied service and
+        codes, the payer's stated reasons and cited policies, dates,
+        identifiers, and how/when to appeal. ``use_external`` MUST be the
+        denial's own opt-in since the letter carries PHI.
+        """
+        if not text or not text.strip():
+            return None
+        models = self.summarize_backends(use_external)
+        truncated = len(text) > max_input_chars
+        body = text[0:max_input_chars]
+        truncation_note = (
+            "\n[The letter was cut off here; summarize what is shown.]"
+            if truncated
+            else ""
+        )
+        prompt = (
+            "Condense the following health insurance denial letter for use in "
+            "an appeal. Keep, verbatim where possible:\n"
+            "- the denied service, procedure, or drug, with any CPT/HCPCS/NDC "
+            "codes\n"
+            "- the diagnosis and any ICD codes\n"
+            "- the payer's stated reason(s) for denial and any policy, "
+            "guideline, or criteria it cites\n"
+            "- dates of service and of the decision\n"
+            "- claim, member, plan, and group identifiers, and the insurer's "
+            "name\n"
+            "- the appeal deadline and how to appeal (address, fax, portal, "
+            "phone)\n"
+            "Leave out generic notices, marketing, and repeated disclaimers. "
+            "Do not add facts that are not in the letter. Output plain text "
+            "with no preamble.\n\n"
+            f"--- Denial letter:\n{body}{truncation_note}\n---"
+        )
+        return await self._run_summarizer(
+            models, [self.DENIAL_SUMMARY_SYSTEM_PROMPT], [prompt]
+        )
 
     def working(self) -> bool:
         """Return if we have candidates to route to. (TODO: Check they're alive)"""

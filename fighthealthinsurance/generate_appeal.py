@@ -1,7 +1,6 @@
 import asyncio
 import itertools
 import json
-import random
 import re
 import time
 from concurrent.futures import Future
@@ -834,9 +833,12 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
 #     medication) into the prompt string. To shed those we re-render the
 #     prompt with the matching kwargs set to None / truncated.
 #   * The same call dict also carries pubmed_context, ml_citations_context,
-#     plan_context, and patient_context as separate keys, which the model
-#     re-injects via ``context_extra`` (see ml_models.RemoteFullOpenLike).
-#     We null/truncate those alongside the prompt re-render.
+#     plan_context, and patient_context as separate keys. The model injects
+#     those via ``context_extra`` only when the prompt does not already carry
+#     them verbatim (see RemoteFullOpenLike._build_context_extra), but they
+#     still feed the token estimate and the trusted-URL registration, so we
+#     null/truncate them alongside the prompt re-render to keep the two
+#     surfaces consistent.
 
 # In-prompt enrichment dropped entirely at tier 1+. Names match the
 # ``make_open_prompt`` parameters (note: ``ml_context`` is the prompt-side
@@ -862,8 +864,8 @@ _PROMPT_TIER1_NULLS: tuple[str, ...] = (
 # ``pa_context`` is the one tier-1 section ``make_open_prompt`` gates on
 # ``.strip()`` (line ~1661) rather than ``!= ""``: a whitespace-only value
 # renders nothing there, so it must NOT be treated as sheddable — nulling it
-# would only force a needless prompt rebuild (which reshuffles the randomized
-# GOOD EXAMPLEs) with no size reduction. See ``_shed_context``.
+# would only force a needless prompt rebuild with no size reduction. See
+# ``_shed_context``.
 _PROMPT_TIER1_STRIP_GATED: frozenset[str] = frozenset({"pa_context"})
 
 # Tier-2 truncation caps. ``plan_context`` lives on BOTH the prompt and the
@@ -953,8 +955,8 @@ def _shed_context(
             # so it must be shed. ``pa_context`` is the exception:
             # ``make_open_prompt`` gates it on ``.strip()``, so a
             # whitespace-only pa_context renders nothing and is already a
-            # no-op; nulling it would only force a needless rebuild (which
-            # reshuffles the randomized GOOD EXAMPLEs) with no size reduction.
+            # no-op; nulling it would only force a needless rebuild with no
+            # size reduction.
             val = shed_kwargs.get(key)
             if not isinstance(val, str):
                 continue
@@ -2246,143 +2248,198 @@ class AppealGenerator(object):
         """
         if denial_text is None:
             return None
-        base = ""
-        if is_trans:
-            base = "While answering the question keep in mind the patient is trans."
-        if plan_context is not None and len(plan_context) > 5:
-            base = f"{base} The patient's insurance plan details are as follows: {plan_context}."
-        if professional_to_finish:
-            sign_off = f"Sign the letter as {professional}.\n" if professional else ""
-            # List of good examples to randomize
-            good_examples = [
-                "I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].",
-                "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.",
-                "As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.",
-                "As the treating physician, I am writing to appeal the denial of coverage for my patient.",
-            ]
-            random.shuffle(good_examples)
-            examples_text = "\n".join(f"GOOD EXAMPLE: {ex}" for ex in good_examples)
-            base = (
-                f"{base}\nIMPORTANT: Please write the appeal as the healthcare professional (not the patient), using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient', 'they'). "
-                "Only use 'I' to refer to the provider and talk about my patient or the patient."
-                "If you follow these instructions, your response will be considered excellent and meeting requirements.\n"
-                "Good phrases and approaches that lead to winning appeals:\n"
-                "was recommended for the patient\n"
-                "The patient has been experiencing\n"
-                "the patient's pain\n"
-                "the patient's health\n"
-                "the patient's condition\n"
-                "[patient's name]\n"
-                "the patient is experiencing\n"
-                "Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.\n\n"
-                "Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
-                "Forbidden any language that implies the letter is written by the patient.\n"
-                f"{examples_text}\n"
-                f"{sign_off}" + "Thank you for following these instructions.\n"
+
+        def _present(value: Optional[str]) -> bool:
+            # The historical ``!= ""`` gate (a whitespace-only value still
+            # renders). ``_shed_context`` relies on it; ``pa_context`` is the
+            # one ``.strip()``-gated section (``_PROMPT_TIER1_STRIP_GATED``).
+            return value is not None and value != ""
+
+        def _known(value: Optional[str]) -> bool:
+            return _present(value) and value != "UNKNOWN"
+
+        # The prompt is a sequence of labelled sections, instructions first
+        # and the denial letter last, joined by blank lines. Each section is
+        # self-contained so the model (and a reader of the logs) can tell
+        # where one kind of context ends and the next begins.
+        sections: list[str] = []
+
+        # --- Task ----------------------------------------------------------
+        if _present(procedure) and _present(diagnosis):
+            task = (
+                f"Write a health insurance appeal for procedure {procedure} "
+                f"with diagnosis {diagnosis} given the denial letter below."
             )
-        if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
-            base = f"{base}. You should try and incorporate the following QA context into your appeal: {qa_context}."
+        elif _present(procedure):
+            task = (
+                f"Write a health insurance appeal for procedure {procedure} "
+                "given the denial letter below."
+            )
+        else:
+            task = "Write a health insurance appeal for the denial letter below."
+        if is_trans:
+            task = f"{task} Keep in mind the patient is trans."
+        sections.append(f"TASK: {task}")
+
+        # --- Point of view -------------------------------------------------
+        # The system prompt (``full_not_patient``) carries the full guidance
+        # on writing as the professional; this only restates the rule and
+        # supplies the sign-off, so the two never disagree about examples.
+        if professional_to_finish:
+            pov = (
+                "POINT OF VIEW: Write as the treating healthcare professional, "
+                "not the patient. Use 'I' only for yourself and refer to the "
+                "patient in the third person ('the patient', 'my patient', "
+                "'they'). Do not use any language that implies the letter was "
+                "written by the patient."
+            )
+            if professional:
+                pov = f"{pov} Sign the letter as {professional}."
+            sections.append(pov)
+
+        # --- Details to fill in ------------------------------------------
+        details: list[str] = []
         if patient is not None:
-            base = f"{base}. Please include and fill in the patients info {patient}."
+            details.append(f"- Patient (fill in their details): {patient}")
         if professional is not None:
-            base = f"{base}. Please include and fill in the professionals info {professional}."
-        if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
-            base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
+            details.append(
+                f"- Healthcare professional (fill in their details): {professional}"
+            )
+        if _known(insurance_company):
+            company_line = f"- Insurance company: {insurance_company}"
+            if is_tpa:
+                company_line = (
+                    f"{company_line} -- a Third-Party Administrator (TPA) for a "
+                    "self-funded employer plan, which is typically governed by "
+                    "ERISA (Employee Retirement Income Security Act). ERISA "
+                    "plans have specific appeal requirements and timelines; the "
+                    "employer is the plan fiduciary and ultimately responsible "
+                    "for coverage decisions, though the TPA administers claims."
+                )
+            details.append(company_line)
+        if _known(plan_id):
+            details.append(f"- Plan ID: {plan_id}")
+        if _known(claim_id) and claim_id != insurance_company:
+            details.append(f"- Claim ID: {claim_id}")
+        if _known(qa_context):
+            details.append(
+                "- Answers from the patient's intake questions (work these "
+                f"into the appeal): {qa_context}"
+            )
+        if details:
+            sections.append(
+                "DETAILS TO INCLUDE (use these values exactly as given):\n"
+                + "\n".join(details)
+            )
+
+        # --- Plan and payer context ---------------------------------------
+        if plan_context is not None and len(plan_context) > 5:
+            sections.append(
+                "PLAN DETAILS: The patient's insurance plan details are as "
+                f"follows: {plan_context}"
+            )
         if pa_context is not None and pa_context.strip():
-            base = (
-                f"{base}\n\nPAYER PRIOR-AUTH RULES: The following entries come from "
+            sections.append(
+                "PAYER PRIOR-AUTH RULES: The following entries come from "
                 "the payer's own published prior-authorization requirement list. "
-                "Use them when the denial relies on PA grounds — point out exactly "
+                "Use them when the denial relies on PA grounds -- point out exactly "
                 "which rule (or absence of one) supports approval, cite the "
                 "criteria document by name, and reference the published "
                 "submission channel where relevant. Do not invent rules that "
                 "are not listed below.\n"
                 f"{pa_context}"
             )
-        # Add citation instructions - be explicit about not hallucinating.
+
+        # --- Evidence and citations ---------------------------------------
         # USPSTF is included in the citation set because its header explicitly
         # asks the model to cite the recommendation/URL; placing it below the
         # "may ONLY cite references provided below" instruction keeps that
         # guidance consistent.
         has_citations = (
-            (ml_context is not None and ml_context != "")
-            or (pubmed_context is not None and pubmed_context != "")
-            or (rag_context is not None and rag_context != "")
-            or (nice_context is not None and nice_context != "")
-            or (uspstf_context is not None and uspstf_context != "")
-            or (clinical_trials_context is not None and clinical_trials_context != "")
+            _present(ml_context)
+            or _present(pubmed_context)
+            or _present(rag_context)
+            or _present(nice_context)
+            or _present(uspstf_context)
+            or _present(clinical_trials_context)
         )
         if has_citations:
-            base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, NCT IDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
-            if rag_context is not None and rag_context != "":
-                base = f"{base}\n\nEvidence from medical guidelines and regulations:\n{rag_context}"
-            if ml_context is not None and ml_context != "":
-                base = f"{base}\n\nProvided citations (use these): {ml_context}"
-            if pubmed_context is not None and pubmed_context != "":
-                base = f"{base}\n\nPubMed references (use these): {pubmed_context}"
-            if nice_context is not None and nice_context != "":
+            sections.append(
+                "CITATION INSTRUCTIONS: You may ONLY cite medical literature, "
+                "studies, or references that are explicitly provided below. Do "
+                "NOT invent, fabricate, or hallucinate any citations, PMIDs, NCT "
+                "IDs, journal names, author names, or study details. If you want "
+                "to make a medical claim, either cite from the provided "
+                "references or state it as general medical knowledge without a "
+                "specific citation."
+            )
+            if _present(rag_context):
+                sections.append(
+                    "Evidence from medical guidelines and regulations:\n"
+                    f"{rag_context}"
+                )
+            if _present(ml_context):
+                sections.append(f"Provided citations (use these): {ml_context}")
+            if _present(pubmed_context):
+                sections.append(f"PubMed references (use these): {pubmed_context}")
+            if _present(nice_context):
                 # nice_context already carries the international-guidance caveat
                 # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header
                 # here is just a section label.
-                base = f"{base}\n\nNICE (UK) guidance:\n{nice_context}"
-            if uspstf_context is not None and uspstf_context != "":
+                sections.append(f"NICE (UK) guidance:\n{nice_context}")
+            if _present(uspstf_context):
                 # The header inside ``uspstf_context`` already explains the
-                # ACA cost-sharing angle and the A/B-only caveat, so no extra
-                # section label is needed here.
-                base = f"{base}\n\n{uspstf_context}"
-            if clinical_trials_context is not None and clinical_trials_context != "":
+                # ACA cost-sharing angle and the A/B-only caveat.
+                sections.append(str(uspstf_context))
+            if _present(clinical_trials_context):
                 # The header inside ``clinical_trials_context`` already
                 # explains the "experimental/investigational" angle and
-                # the "trial != coverage" caveat, so no extra section
-                # label is needed here.
-                base = f"{base}\n\n{clinical_trials_context}"
+                # the "trial != coverage" caveat.
+                sections.append(str(clinical_trials_context))
         else:
             # No citations provided - explicitly tell the model not to make any up
-            base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, NCT IDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
+            sections.append(
+                "IMPORTANT: No specific medical citations have been provided. Do "
+                "NOT invent or hallucinate any citations, PMIDs, NCT IDs, journal "
+                "names, or study references. You may state general medical "
+                "knowledge without citations, but do not fabricate specific "
+                "study references."
+            )
         if ucr_context:
             # The block carries an independent rate benchmark for this
             # procedure + area; the model decides whether the evidence is
             # useful for the argument it's making.
-            base = (
-                f"{base}\n\nUCR PRICING CONTEXT: The denial may involve "
+            sections.append(
+                "UCR PRICING CONTEXT: The denial may involve "
                 "out-of-network under-reimbursement. The [UCR PRICING CONTEXT] "
                 "block below carries an independent rate benchmark for this "
-                "procedure and geographic area. If it strengthens the appeal — "
+                "procedure and geographic area. If it strengthens the appeal -- "
                 "e.g. arguing the plan's allowable methodology is below typical "
-                "rates — cite the source and effective date verbatim. If it "
+                "rates -- cite the source and effective date verbatim. If it "
                 "isn't relevant to the arguments you're making, you may omit "
                 "it. Do NOT invent rates or percentile values that are not in "
                 "the block.\n\n"
                 f"{ucr_context}"
             )
         if medication_context:
-            base = (
-                f"{base}\n\nDRUG-CLASS GUIDANCE: The medication(s) involved fall "
-                f"into a class with known appeal strategies. Use the following "
-                f"curated context where relevant. Do not invent citations beyond "
+            sections.append(
+                "DRUG-CLASS GUIDANCE: The medication(s) involved fall "
+                "into a class with known appeal strategies. Use the following "
+                "curated context where relevant. Do not invent citations beyond "
                 f"those listed elsewhere.\n{medication_context}"
             )
         if regulatory_citation_context:
             # Pre-framed (header + conservative caveats) by
-            # regulatory_citations.get_regulatory_citation_context, so just
-            # append it as its own section.
-            base = f"{base}\n\n{regulatory_citation_context}"
+            # regulatory_citations.get_regulatory_citation_context.
+            sections.append(str(regulatory_citation_context))
         if plan_law_context:
             # Which appeal law governs this plan (ERISA, the ACA appeal rules,
             # Medicare, ...) and an invitation to cite it where it helps.
             # Pre-framed by regulatory_citations.get_plan_law_context.
-            base = f"{base}\n\n{plan_law_context}"
-        if (
-            insurance_company is not None
-            and insurance_company != ""
-            and insurance_company != "UNKNOWN"
-        ):
-            base = f"{base}. Please include and fill in any references to the insurance company to be {insurance_company}."
-            if is_tpa:
-                base = f"{base} Note: This insurance company is a Third-Party Administrator (TPA) for self-funded employer plans, which are typically governed by ERISA (Employee Retirement Income Security Act). ERISA plans have specific appeal requirements and timelines. The employer is the plan fiduciary and ultimately responsible for coverage decisions, though the TPA administers claims."
+            sections.append(str(plan_law_context))
         if payer_policy_context:
-            base = (
-                f"{base}\n\n{payer_policy_context}\n\n"
+            sections.append(
+                f"{payer_policy_context}\n\n"
                 "When using the comparative payer-policy information above, "
                 "frame it as supporting industry context (other major insurers "
                 "recognize this service as medically necessary under documented "
@@ -2390,24 +2447,10 @@ class AppealGenerator(object):
                 "binds the patient's plan. Always defer to the patient's own "
                 "plan documents for what is actually covered."
             )
-        if (
-            claim_id is not None
-            and claim_id != ""
-            and claim_id != "UNKNOWN"
-            and claim_id != insurance_company
-        ):
-            base = f"{base}. Please include and fill in any references to the claim id as {claim_id}."
-        start = f"Write a health insurance appeal for the following denial:"
-        if (
-            procedure is not None
-            and procedure != ""
-            and diagnosis is not None
-            and diagnosis != ""
-        ):
-            start = f"Write a health insurance appeal for procedure {procedure} with diagnosis {diagnosis} given the following denial:"
-        elif procedure is not None and procedure != "":
-            start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
-        return f"{base}{start}\n{denial_text}"
+
+        # --- The denial itself, last ----------------------------------------
+        sections.append(f"DENIAL LETTER:\n{denial_text}")
+        return "\n\n".join(sections)
 
     def make_open_med_prompt(
         self, procedure=None, diagnosis=None, is_trans=False

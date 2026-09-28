@@ -10,8 +10,10 @@ external-review for DOI, peer-to-peer clinical review for the medical
 director, ERISA § 503 / fiduciary duty for DOL EBSA.
 
 We reuse `model.generate_prior_auth_response` because, like prior auths,
-these are short professional letters (rather than long appeal letters
-that benefit from parallel multi-temperature exploration).
+these are short letters (rather than long appeal letters that benefit
+from parallel multi-temperature exploration) -- but with this module's
+own system prompt and point of view, since the letter is from the
+patient unless the denial is being finished by a professional.
 """
 
 import datetime
@@ -25,7 +27,19 @@ from fighthealthinsurance.escalation_addresses import (
     RECIPIENT_MEDICAL_DIRECTOR,
     EscalationRecipient,
 )
+from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.ml.ml_router import ml_router
+
+# System prompt for this path. The prior-auth one it used to inherit
+# ("helping a healthcare professional") pushed every letter toward the
+# professional's voice even when the letter is from the patient.
+REGULATOR_LETTER_SYSTEM_PROMPT = (
+    "You write short, formal cover letters about health insurance denials to "
+    "insurance regulators and health-plan executives. Write in the voice the "
+    "prompt specifies (the patient, or the treating professional), keep a "
+    "factual and restrained tone, cite only statutes and facts that appear in "
+    "the prompt, and output only the letter text."
+)
 
 _DOI_FRAMING = (
     "Frame this letter as a complaint to the state Department of "
@@ -51,13 +65,19 @@ _DOL_EBSA_FRAMING = (
     "Frame this letter as a request for enforcement assistance to the "
     "U.S. Department of Labor's Employee Benefits Security "
     "Administration (EBSA). The plan appears to be an ERISA-covered "
-    "self-funded employer plan. Reference the ERISA claims-and-appeals "
-    "regulations at 29 C.F.R. § 2560.503-1, summarize the denial and "
-    "the specific provisions that may have been violated (e.g. failure "
-    "to provide the specific reason for denial, failure to identify the "
-    "internal rule or guideline relied on, or failure to meet timing "
-    "requirements). Request that EBSA review the plan's compliance and "
-    "open an inquiry if appropriate. Tone: factual, formal, restrained."
+    "self-funded employer plan. You may reference the ERISA "
+    "claims-and-appeals regulations at 29 C.F.R. § 2560.503-1 (ERISA "
+    "§ 503); summarize the denial and the specific provisions that may "
+    "have been violated (e.g. failure to provide the specific reason for "
+    "denial, failure to identify the internal rule or guideline relied "
+    "on, or failure to meet timing requirements). Request that EBSA "
+    "review the plan's compliance and open an inquiry if appropriate. "
+    "Tone: factual, formal, restrained."
+)
+
+_DEFAULT_FRAMING = (
+    "Frame this letter as a respectful request for the recipient to "
+    "review the denial."
 )
 
 _FRAMING_BY_RECIPIENT_TYPE = {
@@ -66,17 +86,81 @@ _FRAMING_BY_RECIPIENT_TYPE = {
     RECIPIENT_DOL_EBSA: _DOL_EBSA_FRAMING,
 }
 
+# The one concrete ask each letter must close with, per recipient.
+_ASK_BY_RECIPIENT_TYPE = {
+    RECIPIENT_DOI: (
+        "an investigation of the plan's handling of this claim and "
+        "confirmation of whether external (independent) medical review is "
+        "available"
+    ),
+    RECIPIENT_MEDICAL_DIRECTOR: (
+        "a peer-to-peer review with the treating clinician and a personal "
+        "re-examination of the denial"
+    ),
+    RECIPIENT_DOL_EBSA: (
+        "an EBSA review of the plan's compliance and an inquiry if appropriate"
+    ),
+}
+_DEFAULT_ASK = "a review of the denial"
+
+# Human-readable roles; the internal codes ("doi", "dol_ebsa") mean nothing
+# to the model.
+_ROLE_LABEL_BY_RECIPIENT_TYPE = {
+    RECIPIENT_DOI: "state insurance regulator (Department of Insurance)",
+    RECIPIENT_MEDICAL_DIRECTOR: "the health plan's medical director",
+    RECIPIENT_DOL_EBSA: (
+        "U.S. Department of Labor, Employee Benefits Security Administration"
+    ),
+}
+
+# How much of the denial letter to quote. Cut at a sentence/paragraph
+# boundary so the excerpt reads as a coherent document, not a torn page.
+DENIAL_EXCERPT_MAX_CHARS = 4000
+
+
+def _letter_is_from_professional(denial: Any, professional: Optional[bool]) -> bool:
+    if professional is not None:
+        return professional
+    return bool(getattr(denial, "professional_to_finish", False))
+
 
 def make_regulator_letter_prompt(
     denial: Any,
     recipient: EscalationRecipient,
+    professional: Optional[bool] = None,
 ) -> str:
-    """Build the prompt for a single regulator/executive cover letter."""
-    framing = _FRAMING_BY_RECIPIENT_TYPE.get(
-        recipient.recipient_type,
-        "Frame this letter as a respectful request for the recipient to "
-        "review the denial.",
+    """Build the prompt for a single regulator/executive cover letter.
+
+    ``professional`` picks the letter's voice; when None it follows the
+    denial's ``professional_to_finish`` flag (the same signal the appeal
+    itself uses), so the cover letter and the appeal it accompanies are
+    written by the same person.
+    """
+    framing = _FRAMING_BY_RECIPIENT_TYPE.get(recipient.recipient_type, _DEFAULT_FRAMING)
+    ask = _ASK_BY_RECIPIENT_TYPE.get(recipient.recipient_type, _DEFAULT_ASK)
+    role_label = _ROLE_LABEL_BY_RECIPIENT_TYPE.get(
+        recipient.recipient_type, recipient.recipient_type
     )
+    from_professional = _letter_is_from_professional(denial, professional)
+
+    if from_professional:
+        author = (
+            "the treating healthcare professional, writing about their patient "
+            "in the third person"
+        )
+        placeholder_note = (
+            "Use placeholders like {{Your Name}}, {{Your Practice}}, "
+            "{{Your Phone Number}} for the professional's details and "
+            "{{FIRST_NAME}} {{LAST_NAME}} and {{SCSID}} for the patient's; "
+            "the user will fill those in."
+        )
+    else:
+        author = "the patient, writing in the first person"
+        placeholder_note = (
+            "Use placeholders like {{FIRST_NAME}} {{LAST_NAME}}, "
+            "{{Your Address}}, {{Your Phone Number}}, and {{SCSID}} where "
+            "personal information is needed; the user will fill those in."
+        )
 
     insurance_company = (
         denial.insurance_company
@@ -93,42 +177,45 @@ def make_regulator_letter_prompt(
 
     extras = []
     if state_name:
-        extras.append(f"State: {state_name}")
+        extras.append(f"- State: {state_name}")
     if recipient.recipient_type == RECIPIENT_DOI and external_review_available:
         extras.append(
-            "Note: external (independent) medical review IS available in this state — "
-            "ask the regulator to point the patient to the right form/process."
+            "- Note: external (independent) medical review IS available in this "
+            "state — ask the regulator to point the patient to the right "
+            "form/process."
         )
     if plan_id:
-        extras.append(f"Plan ID: {plan_id}")
+        extras.append(f"- Plan ID: {plan_id}")
 
     extras_block = "\n".join(extras)
 
     qa_context = getattr(denial, "qa_context", "") or ""
     denial_text = getattr(denial, "denial_text", "") or ""
+    denial_excerpt = truncate_at_boundary(denial_text, DENIAL_EXCERPT_MAX_CHARS)
 
     prompt = f"""\
-Write a one-page cover letter from a patient (or, if marked, the
-treating professional) to the following recipient, accompanying a
-parallel internal appeal that is already being pursued. The letter
-should fit on a single page and be ready to print and mail or fax.
+Write a one-page cover letter from {author} to the recipient below,
+accompanying a parallel internal appeal that is already being pursued.
+The letter should fit on a single page and be ready to print and mail
+or fax.
 
 Recipient: {recipient.name}
-Recipient role: {recipient.recipient_type}
+Recipient role: {role_label}
 Recipient address: {recipient.address or "(see denial letter for address)"}
 
 {framing}
 
 Important rules:
 - Do NOT fabricate citations, statutes, regulations, study names, or
-  PMIDs. Only reference statutes you are explicitly given (e.g. ERISA
-  § 503 / 29 C.F.R. § 2560.503-1 above for the EBSA letter).
-- Use placeholders like {{{{FIRST_NAME}}}} {{{{LAST_NAME}}}}, {{{{Your Address}}}},
-  {{{{Your Phone Number}}}}, and {{{{SCSID}}}} where personal information is
-  needed; the user will fill those in.
-- Keep tone professional and restrained. This is being read by a
+  PMIDs. Only reference statutes or regulations that appear in this
+  prompt.
+- {placeholder_note}
+- Where a value below is shown in [square brackets] it is unknown: keep
+  a bracketed placeholder for the user to fill in rather than inventing
+  one.
+- Keep the tone professional and restrained. This is being read by a
   regulator or executive, not the insurer.
-- End with a concrete ask (investigation, peer-to-peer, EBSA inquiry).
+- End with one concrete ask: {ask}.
 - Reference the denial below by its key facts: insurance company,
   procedure, diagnosis, and claim id.
 
@@ -142,7 +229,7 @@ Denial summary:
 Patient context (Q&A): {qa_context or "(none provided)"}
 
 Denial letter excerpt:
-{denial_text[:4000]}
+{denial_excerpt}
 
 Today's date is {datetime.date.today().isoformat()}.
 
@@ -163,7 +250,8 @@ async def generate_regulator_letter(
     Returns the letter text, or None if no model is available or
     generation failed.
     """
-    prompt = make_regulator_letter_prompt(denial, recipient)
+    professional = _letter_is_from_professional(denial, None)
+    prompt = make_regulator_letter_prompt(denial, recipient, professional=professional)
     models = ml_router.get_chat_backends(use_external=use_external)
     if not models:
         logger.warning("No chat backends available for regulator letter generation")
@@ -172,7 +260,11 @@ async def generate_regulator_letter(
     last_error: Optional[Exception] = None
     for model in models[:3]:
         try:
-            text: Optional[str] = await model.generate_prior_auth_response(prompt)
+            text: Optional[str] = await model.generate_prior_auth_response(
+                prompt,
+                system_prompt=REGULATOR_LETTER_SYSTEM_PROMPT,
+                prof_pov=professional,
+            )
             if text and len(text.strip()) > 50:
                 return text
         except Exception as e:
