@@ -2587,7 +2587,8 @@ section:not(.slider) .share-subcopy {
     transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 .trust-chip-link:hover,
-.trust-chip-link:focus {
+.trust-chip-link:focus,
+.trust-chip-link:active {
     color: #fff;
     text-decoration: none;
     background: rgba(165, 196, 34, 0.35);
@@ -3255,7 +3256,15 @@ textarea,
     -webkit-backdrop-filter: none;
     /* A flat plum panel under the home copy, so the words sit on one colour
        rather than on whichever part of the photograph lands behind them. */
-    background: rgba(43, 15, 61, 0.78);
+    background: #2b0f3d;
+}
+
+/* On that panel the site's deep-green focus ring nearly disappears, so a
+   focused control in the home copy rings in white instead: 16.96:1 on
+   the plum. The id outranks each button's own ring rule; only the colour
+   changes, so width and offset stay theirs. *
+#home .hero-inner :focus-visible {
+    outline-color: #fff;
 }
 
 /* The block under the home hero: why the site exists, paying what you can,

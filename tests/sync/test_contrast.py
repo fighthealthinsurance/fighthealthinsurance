@@ -1452,15 +1452,6 @@ WHITE_ON_BRAND_LIME = (
 
 EXCEPTIONS: tuple[Exempt, ...] = (
     Exempt(
-        "main.css",
-        "a:hover, a:active, a:focus",
-        "The site-wide hover green, paired here with the home hero's trust "
-        "chip. It never lands there: .trust-chip-link:hover names two classes "
-        "and sets that label white, 6.27:1 on the chip. Since the hero copy "
-        "moved onto a flat panel the gate can resolve the chip's ground, but "
-        "it pairs each rule with a ground without weighing which rule wins.",
-    ),
-    Exempt(
         "custom.css",
         ".hidden-error-message",
         "Form error text in plain red, 4.00:1. Recolouring error states "
