@@ -61,6 +61,10 @@ CC_DISABLED_SENTINEL = "none"
 # the COFACTOR_INTRO_CONTACT setting is absent (see get_cofactor_intro_contact).
 DEFAULT_COFACTOR_INTRO_CONTACT = "Rebeca Morales <rmorales@cofactorai.com>"
 
+# How the new-signup email refers to its Cofactor contact when the configured
+# COFACTOR_INTRO_CONTACT is a bare address with no display name.
+UNNAMED_COFACTOR_CONTACT = "the Cofactor AI team"
+
 # Obvious test / spam signups we never introduce. These are filtered out of the
 # processing queue and the CSV export entirely (never shown, never counted)
 # rather than skipped, so they don't clutter the staff workflow. Includes FHI's
@@ -389,16 +393,22 @@ def build_base_intro_email(pro: InterestedProfessional) -> str:
     return BASE_INTRO_EMAIL.format(**_intro_format_kwargs(pro))
 
 
+def _cofactor_intro_contact_name() -> Optional[str]:
+    """Display name of the new-signup Cofactor contact, or ``None`` for a bare
+    address (the email then refers to :data:`UNNAMED_COFACTOR_CONTACT`)."""
+    return parseaddr(get_cofactor_intro_contact())[0].strip() or None
+
+
 def build_new_signup_intro_email(pro: InterestedProfessional) -> str:
     """Render the approved new-signup email for ``pro``, introducing the
     configured Cofactor AI contact by name (the always-safe fallback for the
     one-press new-signup intro)."""
-    name = parseaddr(get_cofactor_intro_contact())[0].strip()
+    name = _cofactor_intro_contact_name()
     return NEW_SIGNUP_INTRO_EMAIL.format(
         **_intro_format_kwargs(pro),
-        cofactor_contact=name or "the Cofactor AI team",
+        cofactor_contact=name or UNNAMED_COFACTOR_CONTACT,
         cofactor_contact_intro=(
-            f"{name} at Cofactor AI" if name else "the Cofactor AI team"
+            f"{name} at Cofactor AI" if name else UNNAMED_COFACTOR_CONTACT
         ),
     )
 
@@ -689,6 +699,22 @@ def _is_safe_intro_draft(text: Optional[str]) -> bool:
     return intro_wording_problem(stripped) is None
 
 
+def _is_safe_new_signup_intro_draft(text: Optional[str]) -> bool:
+    """Guard an AI draft of the *new-signup* email.
+
+    On top of :func:`_is_safe_intro_draft`, the draft must still name the
+    configured Cofactor contact and say they are copied: that contact is CC'd
+    on the send regardless of what the body says, so a draft that drops them,
+    or stops saying they're on the thread, would go out contradicting its own
+    CC line. A rejected draft falls back to the approved new-signup email.
+    """
+    if not _is_safe_intro_draft(text):
+        return False
+    lowered = (text or "").lower()
+    contact = (_cofactor_intro_contact_name() or UNNAMED_COFACTOR_CONTACT).lower()
+    return contact in lowered and "copied" in lowered
+
+
 async def agenerate_intro_email(
     pro: InterestedProfessional, *, new_signup: bool = False
 ) -> str:
@@ -705,9 +731,11 @@ async def agenerate_intro_email(
     if new_signup:
         base = build_new_signup_intro_email(pro)
         system_prompt = NEW_SIGNUP_INTRO_SYSTEM_PROMPT
+        validator = _is_safe_new_signup_intro_draft
     else:
         base = build_base_intro_email(pro)
         system_prompt = INTRO_SYSTEM_PROMPT
+        validator = _is_safe_intro_draft
     try:
         # best_external_models filters by availability/health; the raw
         # cost-ordered list would serially wait out (30s each) backends the
@@ -737,7 +765,7 @@ async def agenerate_intro_email(
         temperature=0.4,
         timeout=30.0,
         label="proconnector intro",
-        validator=_is_safe_intro_draft,
+        validator=validator,
         models=models,
     )
     return result or base

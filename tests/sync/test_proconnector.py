@@ -2917,6 +2917,36 @@ class NewSignupAIDraftTest(TestCase):
             generate_intro_email(self.pro, new_signup=True)
         self.assertEqual(fake.last_system_prompts, [NEW_SIGNUP_INTRO_SYSTEM_PROMPT])
 
+    def _draft_with(self, text):
+        fake = _FakeModel(result=text)
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
+            return generate_intro_email(self.pro, new_signup=True)
+
+    # Passes every shared wording rule, so only the new-signup checks differ.
+    SAFE_TAIL = (
+        " We have a sourcing agreement with Cofactor AI; FHI may receive "
+        "compensation if you choose to work with them, which supports our "
+        "consumer mission. Thank you for your interest."
+    )
+
+    def test_draft_naming_rebeca_as_copied_is_used(self):
+        text = "Dear Dr. Smith, let me introduce you to Rebeca Morales, copied here." + self.SAFE_TAIL
+        self.assertEqual(self._draft_with(text), text)
+
+    def test_draft_dropping_rebeca_falls_back(self):
+        text = "Dear Dr. Smith, let me introduce you to Cofactor AI, copied here." + self.SAFE_TAIL
+        self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
+
+    def test_draft_not_saying_rebeca_is_copied_falls_back(self):
+        text = "Dear Dr. Smith, please email Rebeca Morales at Cofactor AI." + self.SAFE_TAIL
+        self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
+
+    def test_backlog_draft_is_not_held_to_the_named_introduction(self):
+        text = "Dear Dr. Smith, let me introduce you to Cofactor AI." + self.SAFE_TAIL
+        fake = _FakeModel(result=text)
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
+            self.assertEqual(generate_intro_email(self.pro), text)
+
     def test_backlog_draft_keeps_the_no_cc_system_prompt(self):
         fake = _FakeModel(result=None)
         with patch.object(proconnector, "ml_router", _fake_router([fake])):
