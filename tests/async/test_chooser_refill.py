@@ -382,6 +382,15 @@ class TestRefillOutcome:
         ):
             assert await check_and_refill_task_pool() is True
 
+    async def test_one_type_failing_while_the_other_refills_reports_success(self):
+        """Counted as a failed tick, it got the actor replaced, which cannot
+        fix the failing type's backends and could kill a batch mid-run."""
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+            new=AsyncMock(side_effect=[0, 3]),
+        ):
+            assert await check_and_refill_task_pool() is True
+
     async def test_a_batch_counts_the_tasks_that_came_out_ready(self):
         with patch(
             "fighthealthinsurance.chooser_tasks._generate_single_task",

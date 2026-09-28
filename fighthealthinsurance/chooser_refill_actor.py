@@ -66,9 +66,11 @@ class ChooserRefillActor:
         while self.running:
             try:
                 # Check and refill the task pool. A refill that ran to the
-                # end but produced no usable task (every model failed, so each
-                # task came out DISABLED) is a failed tick too: the pool is
-                # not being refilled.
+                # end but produced no usable task of any type it needed
+                # (every model failed, so each task came out DISABLED) is a
+                # failed tick too: the pool is not being refilled. One type
+                # failing while another refills is not (see
+                # check_and_refill_task_pool).
                 if await check_and_refill_task_pool():
                     self._consecutive_failures = 0
                 else:
