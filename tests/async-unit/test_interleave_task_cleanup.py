@@ -165,6 +165,28 @@ async def test_a_source_failure_is_reported_once_when_closed_after_it(log_captur
 
 
 @pytest.mark.asyncio
+async def test_a_timeout_raised_by_the_source_ends_the_stream(log_capture):
+    """wait_for raises the same TimeoutError for the keep-alive timer and for
+    a source whose own call timed out. The second used to be taken for the
+    first: the finished task was waited on again, re-raised at once, and the
+    stream sent keep-alive newlines forever (review)."""
+
+    async def times_out_at_once():
+        raise asyncio.TimeoutError()
+        yield  # pragma: no cover - makes this an async generator
+
+    agen = _interleave_iterator_for_keep_alive(times_out_at_once(), timeout=60)
+    items = []
+    with log_capture() as cap:
+        async for item in agen:
+            items.append(item)
+            if len(items) > 50:
+                break
+    assert len(items) <= 50, "the stream spun on the finished task"
+    assert any("TimeoutError" in m for m in cap.messages("ERROR"))
+
+
+@pytest.mark.asyncio
 async def test_cancelling_the_consumer_still_cancels_the_in_flight_item():
     """The cancellation path keeps its historical behaviour: a cancelled
     receive() takes the in-flight __anext__ down with it."""

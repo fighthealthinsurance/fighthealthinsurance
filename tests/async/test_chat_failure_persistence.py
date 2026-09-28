@@ -575,6 +575,33 @@ class ChatHangupOutcomeTest(APITestCase):
         replies = await self._assistant_replies(chat)
         self.assertEqual([m["content"] for m in replies], [self.REPLY])
 
+    async def test_no_frame_is_written_after_the_client_is_found_gone(self):
+        """Once one send finds the socket closed, later frames fail at once
+        instead of each making a doomed transport write."""
+        from fighthealthinsurance.client_gone import ClientGone
+
+        user, chat = await _make_professional_chat("gonewrite1", "9999910037")
+        send = AsyncMock(side_effect=ClientGone())
+        interface = ChatInterface(send_json_message_func=send, chat=chat, user=user)
+        for _ in range(3):
+            with self.assertRaises(ClientGone):
+                await interface.send_status_message("Still working...")
+        self.assertEqual(send.await_count, 1)
+
+    async def test_a_departed_turn_still_notes_its_reply_check_health(self):
+        """The reply check ran whether or not anyone stayed to read the
+        reply, so its health note is written as on any other turn end."""
+        user, chat = await _make_professional_chat("gonegate1", "9999910038")
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        gate = AsyncMock()
+        interface._reply_gate = gate
+        with patch("fighthealthinsurance.chat_interface.record_chat_turn"):
+            await interface._end_turn_client_gone()
+        gate.anote_health.assert_awaited_once()
+        self.assertIsNone(interface._reply_gate)
+
     async def test_a_budget_run_out_after_the_hangup_is_not_a_timeout(self):
         _, outcomes, errors = await self._run_turn(
             "budgetgone1",

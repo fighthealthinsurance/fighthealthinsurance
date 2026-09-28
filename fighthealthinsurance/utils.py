@@ -1099,6 +1099,25 @@ async def _interleave_iterator_for_keep_alive(
                 await asyncio.sleep(0)
                 yield "\n"
             except asyncio.TimeoutError:
+                if (
+                    task is not None
+                    and task.done()
+                    and not task.cancelled()
+                    and isinstance(task.exception(), asyncio.TimeoutError)
+                ):
+                    # The source itself raised TimeoutError (a model call's
+                    # own deadline, say). wait_for raises the same builtin
+                    # for the keep-alive timer, but this task is finished:
+                    # looping back to wait on it again would re-raise at once,
+                    # forever, streaming keep-alive newlines and never ending
+                    # (review). It is a source failure like any other.
+                    logger.opt(exception=task.exception()).error(
+                        "Error in generator: TimeoutError from the source"
+                    )
+                    _retire_anext_task(task, cancel=True)
+                    task = None
+                    yield "\n"
+                    continue
                 # Shield was cancelled but the task is still running.
                 # Loop back and create a fresh shield for the same task.
                 yield "\n"

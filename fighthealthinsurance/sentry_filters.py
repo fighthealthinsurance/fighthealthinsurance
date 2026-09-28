@@ -192,12 +192,17 @@ def before_send_filter(event: Any, hint: Any) -> Any:
     # entry readable: one scrubbed to a non-dict could be the real crash in
     # the chain (review).
     whole_chain = len(values) == len(raw_exception_entries(event))
-    shutting_down = (
+    shutdown_artifact = (
         whole_chain
         and any(exc.get("type") == "SystemExit" for exc in values)
         and all(is_sigterm_teardown(exc) for exc in values)
+        and any(
+            exc.get("type") == "RuntimeError"
+            and EVENT_LOOP_SHUTDOWN_MARKER in as_text(exc.get("value"))
+            for exc in values
+        )
     )
-    # Same guard as shutting_down: a real crash chained with the watcher
+    # Same guard as shutdown_artifact: a real crash chained with the watcher
     # race must still reach Sentry, so the event is dropped only when the
     # race is all it holds (review).
     only_grpc_watcher_race = (
@@ -209,6 +214,16 @@ def before_send_filter(event: Any, hint: Any) -> Any:
             for exc in values
         )
     )
+    # Both are verdicts on the whole event, so they are made once, here.
+    if only_grpc_watcher_race:
+        logger.warning(
+            f"gRPC channel watcher race (filtered from Sentry): "
+            f"{as_text(values[0].get('value'))[:200]}"
+        )
+        return None
+    if shutdown_artifact:
+        logger.debug("Event loop shutdown artifact (filtered from Sentry)")
+        return None
     for exc in values:
         exc_value = as_text(exc.get("value"))
         if "Logstream proxy failed to connect" in exc_value:
@@ -220,19 +235,6 @@ def before_send_filter(event: Any, hint: Any) -> Any:
             logger.warning(
                 f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
             )
-            return None
-        if only_grpc_watcher_race:
-            logger.warning(
-                f"gRPC channel watcher race (filtered from Sentry): "
-                f"{exc_value[:200]}"
-            )
-            return None
-        if (
-            shutting_down
-            and exc.get("type") == "RuntimeError"
-            and EVENT_LOOP_SHUTDOWN_MARKER in exc_value
-        ):
-            logger.debug("Event loop shutdown artifact (filtered from Sentry)")
             return None
         # Narrow on purpose: only channels' own "nothing matched" ValueError,
         # never a ValueError raised inside a consumer.

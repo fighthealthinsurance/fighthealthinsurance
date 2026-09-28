@@ -235,6 +235,11 @@ class ChatInterface:
             departure (see ``_client_gone``)."""
             if "chat_id" not in message:
                 message["chat_id"] = str(chat.id)
+            if self._client_gone:
+                # No write into a socket already found closed: every later
+                # frame (heartbeat, tool status, progress) fails the same way,
+                # so fail it here without the doomed transport call.
+                raise ClientGone()
             try:
                 await send_json_message_func(message)
             except ClientGone:
@@ -496,13 +501,18 @@ class ChatInterface:
         if self._turn is not None:
             self._turn.counted_outcome = outcome
 
-    def _end_turn_client_gone(self) -> None:
+    async def _end_turn_client_gone(self) -> None:
         """The client left mid-turn: counted "client_gone" in the metric, and
         no ChatTurn row (chat/turn_record.py says why), so nothing to shadow
-        score either."""
+        score either. A reply check that ran still gets its health note, as
+        in _write_turn_record: the check's health does not depend on whether
+        anyone stayed to read the reply."""
         self._count_turn("client_gone")
         self._turn = None
         self._shadow_runner_up = None
+        gate, self._reply_gate = self._reply_gate, None
+        if gate is not None:
+            await gate.anote_health()
 
     async def _end_turn_after_exception(self) -> None:
         """An exception is escaping the turn (chat/turn_record.py lists how
@@ -2322,7 +2332,7 @@ class ChatInterface:
                     f"Chat {chat.id}: reply persisted but not sent; the "
                     f"client left mid-turn"
                 )
-                self._end_turn_client_gone()
+                await self._end_turn_client_gone()
                 return
             # Side-by-side alternate answer (ChatGPT-style "here's another
             # take"): cleaned like the primary, dropped if cleaning leaves it
@@ -2380,7 +2390,7 @@ class ChatInterface:
                     f"Chat {chat.id}: reply persisted but not delivered; the "
                     f"client left as it was sent"
                 )
-                self._end_turn_client_gone()
+                await self._end_turn_client_gone()
                 return
             except BaseException:
                 # Any other send failure, or a cancellation, is counted "ok"
@@ -2438,7 +2448,7 @@ class ChatInterface:
                 # alerting on is the RATE of hangups climbing (which would
                 # mean we got slow, or a proxy started reaping sockets), and
                 # that is a metric question, not one issue per user.
-                self._end_turn_client_gone()
+                await self._end_turn_client_gone()
                 return
 
             # Provide more helpful error message based on context
