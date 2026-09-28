@@ -19,7 +19,7 @@ as its class name only.
 
 How a turn's row follows fhi_chat_turns_total. The row's outcome is always
 the one the metric counted for the turn, and a turn the metric never counts
-gets no row:
+gets no row (nor does one it counts "client_gone"):
 
 * A turn that ends normally writes its row after its reply or error frame.
 * An exception that escapes a turn after its models were asked (while the
@@ -27,6 +27,9 @@ gets no row:
   row says "failed", unless the metric had already counted it; then the row
   keeps that outcome. An exception before the models were asked leaves no
   row and no count.
+* A turn the client left (counted "client_gone") gets no row. Its reply,
+  if there was one, reached nobody, so it says nothing about which answer
+  people prefer, and the row's outcomes are the three the dashboard reads.
 * A turn cancelled before the metric counted it (a disconnect while the
   models are still answering, for instance) gets no row: the metric does
   not count cancelled turns either, and a row with no outcome would say

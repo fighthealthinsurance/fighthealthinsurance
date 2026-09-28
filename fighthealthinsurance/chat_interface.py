@@ -117,6 +117,7 @@ from fighthealthinsurance.ml.ml_models import (
     remove_repeated_blocks,
     remove_repeated_sentences,
 )
+from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.ml import chat_shadow
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -219,11 +220,31 @@ class ChatInterface:
         state_hint: Optional[str] = None,
         debug_llm: bool = False,
     ):
-        def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
-            """Wraps the send_json_message_func to ensure it's always awaited."""
+        # Set by the first send that finds the client gone, and never unset:
+        # a disconnected socket does not come back, and a reconnect gets a
+        # new consumer and a new ChatInterface. Recorded HERE, at the one
+        # send path, because the ClientGone itself does not always reach
+        # handle_chat_message: the heartbeat task and BaseTool.handle both
+        # swallow it, and a turn that finishes after the user left
+        # was then counted "ok" and sent its reply into a closed socket
+        # (review).
+        self._client_gone = False
+
+        async def wrap_send_json_message_func(message: Dict[str, Any]) -> None:
+            """Every frame to the client: stamps the chat id, and remembers a
+            departure (see ``_client_gone``)."""
             if "chat_id" not in message:
                 message["chat_id"] = str(chat.id)
-            return send_json_message_func(message)
+            if self._client_gone:
+                # No write into a socket already found closed: every later
+                # frame (heartbeat, tool status, progress) fails the same way,
+                # so fail it here without the doomed transport call.
+                raise ClientGone()
+            try:
+                await send_json_message_func(message)
+            except ClientGone:
+                self._client_gone = True
+                raise
 
         self.send_json_message_func = wrap_send_json_message_func
         self.pubmed_tools = PubMedTools()
@@ -346,6 +367,12 @@ class ChatInterface:
                 await asyncio.sleep(interval)
                 try:
                     await self.send_status_message("Still working on your reply...")
+                except ClientGone:
+                    # Nobody left to keep alive. The send path has recorded
+                    # the departure; the turn itself finishes and persists
+                    # its reply so a reconnect can replay it, and is counted
+                    # "client_gone" rather than "ok".
+                    return
                 except Exception:
                     # One failed send must not end heartbeats for the rest of
                     # the turn (a transient send error is exactly the flaky
@@ -473,6 +500,19 @@ class ChatInterface:
         record_chat_turn(outcome)
         if self._turn is not None:
             self._turn.counted_outcome = outcome
+
+    async def _end_turn_client_gone(self) -> None:
+        """The client left mid-turn: counted "client_gone" in the metric, and
+        no ChatTurn row (chat/turn_record.py says why), so nothing to shadow
+        score either. A reply check that ran still gets its health note, as
+        in _write_turn_record: the check's health does not depend on whether
+        anyone stayed to read the reply."""
+        self._count_turn("client_gone")
+        self._turn = None
+        self._shadow_runner_up = None
+        gate, self._reply_gate = self._reply_gate, None
+        if gate is not None:
+            await gate.anote_health()
 
     async def _end_turn_after_exception(self) -> None:
         """An exception is escaping the turn (chat/turn_record.py lists how
@@ -2124,6 +2164,10 @@ class ChatInterface:
             self._turn.reached_models = True
         # Exception class name only, for the failure log below.
         turn_error: Optional[str] = None
+        # A turn can also end because the user left. That is not a generation
+        # failure and must not be counted, reported or apologised for -- see
+        # the failure branch below.
+        client_hung_up = False
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -2171,20 +2215,50 @@ class ChatInterface:
                         f"recent reply (all anti-repeat rungs exhausted)"
                     )
         except asyncio.TimeoutError:
-            logger.error(
-                f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
-                f"{chat.id}; giving up on this turn"
-            )
-            # Recorded here as "timeout"; the shared failure branch below
-            # checks this flag so the same turn isn't also counted "failed".
-            turn_timed_out = True
-            self._count_turn("timeout")
+            if self._client_gone:
+                # The heartbeat saw the user leave, then the model ran out
+                # the clock. Reporting that as a timeout logged an ERROR (a
+                # Sentry issue) for a hangup and counted the one turn under
+                # both "timeout" and "client_gone" (review). The failure
+                # branch below records it once, as the departure it was.
+                client_hung_up = True
+                logger.warning(
+                    f"Chat {chat.id}: turn budget ran out after the client "
+                    f"left; abandoning the turn"
+                )
+            else:
+                logger.error(
+                    f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
+                    f"{chat.id}; giving up on this turn"
+                )
+                # Recorded here as "timeout"; the shared failure branch below
+                # checks this flag so the same turn isn't also counted "failed".
+                turn_timed_out = True
+                self._count_turn("timeout")
         except Exception as e:
-            turn_error = type(e).__name__
-            logger.opt(exception=True).error(
-                f"Chat generation failed for chat {chat.id}: {turn_error}"
-            )
-            logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
+            # The status/heartbeat frames this turn writes go down the same
+            # socket as the reply, so a user who closes the tab mid-turn
+            # surfaces here as a failed generation. It isn't one: nothing
+            # broke and nobody is waiting. isinstance, not a type sniff of
+            # e: this try also wraps every tool handler and model call, and
+            # a "connection reset by peer" out of Postgres or a model
+            # backend is a real failure that the user (still here) must be
+            # told about (review). A departure seen by a send that something
+            # else swallowed is in self._client_gone, checked below.
+            if isinstance(e, ClientGone):
+                client_hung_up = True
+                logger.warning(
+                    f"Chat {chat.id}: client disconnected mid-turn; "
+                    f"abandoning the turn"
+                )
+            else:
+                turn_error = type(e).__name__
+                logger.opt(exception=True).error(
+                    f"Chat generation failed for chat {chat.id}: {turn_error}"
+                )
+                logger.debug(
+                    f"Models tried for failed chat {chat.id}: {primary_models}"
+                )
         finally:
             heartbeat_task.cancel()
             # Backstop for the once-per-turn loop metric. The depth-0 exits
@@ -2251,7 +2325,15 @@ class ChatInterface:
             # Launch background summary after save so the task can read the latest history
             if background_summary_task is not None:
                 await fire_and_forget_in_new_threadpool(background_summary_task)
-            self._count_turn("ok")
+            if self._client_gone:
+                # The reply is generated and persisted above, so a reconnect
+                # replays it; there is just nobody here to send it to.
+                logger.info(
+                    f"Chat {chat.id}: reply persisted but not sent; the "
+                    f"client left mid-turn"
+                )
+                await self._end_turn_client_gone()
+                return
             # Side-by-side alternate answer (ChatGPT-style "here's another
             # take"): cleaned like the primary, dropped if cleaning leaves it
             # too similar to what we're already sending. Ephemeral -- only
@@ -2292,13 +2374,31 @@ class ChatInterface:
             turn = self._turn
             turn_id = str(turn.turn_id) if turn is not None else None
             runner_up_for_shadow, self._shadow_runner_up = self._shadow_runner_up, None
-            # A send that raises or is cancelled still leaves the row, "ok"
-            # as counted: handle_chat_message writes it.
-            await self.send_message_to_client(
-                final_response_text,
-                alternate_content=alternate_content,
-                turn_id=turn_id,
-            )
+            try:
+                await self.send_message_to_client(
+                    final_response_text,
+                    alternate_content=alternate_content,
+                    turn_id=turn_id,
+                )
+            except ClientGone:
+                # The reply itself was the first write to find the socket
+                # closed -- a fast turn, or a tab closed after the last
+                # status frame. Counting "ok" before this send filed exactly
+                # those hangups as successes (review). The reply is persisted
+                # above, so a reconnect still replays it.
+                logger.info(
+                    f"Chat {chat.id}: reply persisted but not delivered; the "
+                    f"client left as it was sent"
+                )
+                await self._end_turn_client_gone()
+                return
+            except BaseException:
+                # Any other send failure, or a cancellation, is counted "ok"
+                # as it always was: the reply was generated and saved, and
+                # handle_chat_message still leaves the row.
+                self._count_turn("ok")
+                raise
+            self._count_turn("ok")
             # Awaited, not fire-and-forget: channels handles one frame at a
             # time per connection, so this row exists before the person's
             # side-by-side pick for it can arrive.
@@ -2333,6 +2433,24 @@ class ChatInterface:
                 logger.opt(exception=True).error(
                     f"Could not persist user message for failed turn in chat {chat.id}"
                 )
+            if client_hung_up or self._client_gone:
+                # The user's message is persisted above, so a reconnect
+                # replays it. Everything below reports "a user got NOTHING",
+                # which is only true when there was a user left to get it:
+                # counting, paging and apologising to an absent client turned
+                # every closed tab into four separate Sentry issues, one of
+                # them fingerprinted by the message text itself.
+                logger.info(
+                    f"Chat {chat.id}: turn abandoned because the client left; "
+                    f"not counted as a generation failure"
+                )
+                # Still counted, under its own outcome: the thing worth
+                # alerting on is the RATE of hangups climbing (which would
+                # mean we got slow, or a proxy started reaping sockets), and
+                # that is a metric question, not one issue per user.
+                await self._end_turn_client_gone()
+                return
+
             # Provide more helpful error message based on context
             err_msg = (
                 "Sorry, all available models (including backup models) are currently "
@@ -2444,6 +2562,15 @@ class ChatInterface:
 
             # Progress callback for countdown display
             async def _progress_callback(remaining: int, total: int) -> None:
+                try:
+                    await _send_progress(remaining, total)
+                except ClientGone:
+                    # Progress frames are advisory. The analysis runs on and
+                    # is persisted below, so a reconnect replays it rather
+                    # than the agents' work being thrown away mid-run.
+                    pass
+
+            async def _send_progress(remaining: int, total: int) -> None:
                 if total == 0:
                     await self.send_status_message("Finalizing analysis...")
                 elif total == 1 and remaining == 1:
@@ -2490,6 +2617,10 @@ class ChatInterface:
                     "Could not analyze the policy document. Please try again or contact support."
                 )
 
+        except ClientGone:
+            # Not an analysis failure, and nobody to apologise to: the
+            # apology below would only raise ClientGone again.
+            logger.info(f"Chat {chat.id}: client left during policy analysis")
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error handling policy analysis for chat {chat.id}: "
