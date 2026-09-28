@@ -4723,18 +4723,20 @@ class DeepInfra(RemoteFullOpenLike):
         "Qwen/Qwen3.8-2.4T-A95B",
         "moonshotai/Kimi-K3",
     ]
-    # Chat replies are short: cap each model's output, tighter for the wordy
-    # and the expensive ones, and turn Qwen's thinking off (it thinks by
-    # default, which made its eval run take minutes).
+    # Chat replies are short: cap each model's output. Qwen3.8 and Kimi-K3
+    # reason before they answer, and the cap counts the reasoning too, so
+    # theirs are higher. In a streamed timing run (2026-09-27, 20 chat-sized
+    # questions each) Qwen at 800 spent the whole cap reasoning on 2 of 20,
+    # and Kimi at 800 did on 13 of 20 and cut the other 7 short. DeepInfra
+    # refuses to turn Qwen's thinking off ("Disabling thinking is not
+    # supported"), so no such flag is sent. A reply that is all reasoning
+    # comes back empty and the fan-out treats it as unusable.
     _CHAT_REQUEST_EXTRAS: ClassVar[dict[str, dict[str, Any]]] = {
         "mistralai/Mistral-Small-3.2-24B-Instruct-2506": {"max_tokens": 1024},
         "zai-org/GLM-5.3-Flash": {"max_tokens": 1024},
         "deepseek-ai/DeepSeek-V4.1-Flash": {"max_tokens": 1024},
-        "Qwen/Qwen3.8-2.4T-A95B": {
-            "max_tokens": 800,
-            "chat_template_kwargs": {"enable_thinking": False},
-        },
-        "moonshotai/Kimi-K3": {"max_tokens": 800},
+        "Qwen/Qwen3.8-2.4T-A95B": {"max_tokens": 1600},
+        "moonshotai/Kimi-K3": {"max_tokens": 3000},
     }
 
     def _request_extras(self, model: str) -> dict[str, Any]:
