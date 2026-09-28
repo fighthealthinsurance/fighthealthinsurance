@@ -932,6 +932,12 @@ class TestOkAcknowledgement:
     def test_short_acknowledgements_pass(self, reply):
         assert mhc._looks_like_ok(reply)
 
+    @pytest.mark.parametrize("reply", ["OK[1]", "OK [1][2]", "OK.[^3]"])
+    def test_an_ok_with_citation_markers_passes(self, reply):
+        """Search-backed models (Perplexity) cite sources; the marker's digits
+        read as a status code and failed the probe."""
+        assert mhc._looks_like_ok(reply)
+
     @pytest.mark.parametrize(
         "reply",
         [
@@ -940,6 +946,7 @@ class TestOkAcknowledgement:
             "no ok",
             "can't OK",
             "HTTP 200 OK",
+            "[200] OK",
             "<title>200 OK</title>",
             "I am unable to reply with only OK as instructed",
             "a broken token",
