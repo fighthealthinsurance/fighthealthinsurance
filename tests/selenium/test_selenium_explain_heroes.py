@@ -39,7 +39,7 @@ PAGES = {
     "state-help/california/": "state-help-hero",
     "glossary/": "glossary-index-hero",
     "turning-26": "turning26-hero",
-    "preparing-for-2026": "prep2026-hero",
+    "preparing-for-2027": "prep2027-hero",
     "denial-language/": "denial-library-hero",
     "medicaid-eligibility": "medicaid-eligibility-hero",
 }

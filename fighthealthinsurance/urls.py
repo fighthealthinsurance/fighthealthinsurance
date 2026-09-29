@@ -266,8 +266,14 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="how-to-help",
     ),
     path(
+        "preparing-for-2027",
+        views.Preparing2027View.as_view(),
+        name="preparing-2027",
+    ),
+    # The 2026 guide became the 2027 one; old links land on the current page.
+    path(
         "preparing-for-2026",
-        views.Preparing2026View.as_view(),
+        RedirectView.as_view(pattern_name="preparing-2027", permanent=True),
         name="preparing-2026",
     ),
     path(

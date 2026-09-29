@@ -559,10 +559,10 @@ class HowToHelpView(StaticIshView):
     template_name = "how_to_help.html"
 
 
-class Preparing2026View(StaticIshView):
+class Preparing2027View(StaticIshView):
     """Landing page helping users prepare for 2026 insurance changes."""
 
-    template_name = "preparing_2026.html"
+    template_name = "preparing_2027.html"
 
 
 class Turning26View(StaticIshView):

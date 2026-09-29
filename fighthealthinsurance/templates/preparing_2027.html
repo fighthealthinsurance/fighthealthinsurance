@@ -1,0 +1,326 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Preparing for 2027: Health Insurance Changes You Need to Know{% endblock title %}
+{% block metatitle %}Preparing for 2027: Health Insurance Changes You Need to Know - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}What changes in health coverage for 2027: Marketplace premiums and dates, Medicaid work requirements, Medicare's drug cap and negotiated prices, HSA limits, prior authorization, and a fall checklist.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="prep2027-hero" class="slider">
+    <div class="row">
+        <div class="item item-first fhi-hero-short">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner" style="max-width: 900px;">
+                    <p class="hero-tagline">Open enrollment starts this fall</p>
+                    <h1 class="hero-headline">Prepare for 2027 Insurance Changes</h1>
+                    <p class="hero-subcopy">Marketplace premiums are going up, Medicaid adds work requirements, and Medicare's drug costs change. Here's what changes in 2027 and what to do before it does.</p>
+                    <div class="hero-cta-group">
+                        <a href="#fall-checklist" class="section-btn btn btn-default smoothScroll primary-cta">Fall Action Checklist</a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{% url 'scan' %}" class="btn btn-outline-green smoothScroll secondary-cta">Already Denied? Generate Appeal</a>
+                        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll tertiary-cta">Ask AI Assistant</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Key Dates -->
+<section id="key-dates" class="fhi-band">
+    <div class="fhi-band-inner">
+        <div class="fhi-band-column">
+            <h2 class="fhi-center fhi-mb-6">The dates that matter this fall</h2>
+            <div class="fhi-list prep-dates">
+                <div class="fhi-list-item"><strong>By September 30</strong> Medicare plans send your Annual Notice of Change: next year's costs, drug list and network.</div>
+                <div class="fhi-list-item"><strong>October 15 to December 7</strong> Medicare open enrollment. Changes start January 1.</div>
+                <div class="fhi-list-item"><strong>November 1</strong> Marketplace open enrollment starts for 2027 coverage.</div>
+                <div class="fhi-list-item"><strong>December 15</strong> Last day to pick a Marketplace plan that starts January 1.</div>
+                <div class="fhi-list-item"><strong>January 1, 2027</strong> New plans start, and Medicaid work requirements begin in most states that haven't already started them.</div>
+                <div class="fhi-list-item"><strong>January 15, 2027</strong> Marketplace open enrollment ends. Plans picked after December 15 start February 1. State-run marketplaces can set their own dates.</div>
+                <div class="fhi-list-item"><strong>January 1 to March 31, 2027</strong> If you're in a Medicare Advantage plan, you get one more chance to switch.</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Areas to Watch -->
+<section id="areas-to-watch" class="fhi-band fhi-band-alt">
+    <div class="fhi-band-inner">
+        <div class="fhi-band-column">
+            <h2 class="fhi-center fhi-mb-6">What changes in 2027</h2>
+
+            <div class="fhi-accordion">
+                <details class="fhi-accordion-item" name="areas-to-watch" open>
+                    <summary>
+                        <h3 class="fhi-accordion-question">Marketplace (HealthCare.gov) plans</h3>
+                    </summary>
+                    <div class="fhi-accordion-body">
+                        <ul>
+                            <li><strong>The extra premium help is gone.</strong> The larger tax credits from 2021 to 2025 ended, and Congress hasn't brought them back. In 2027, people earning up to 400% of the poverty level pay at most 10.22% of their income for the benchmark plan, and there's no help above 400%.</li>
+                            <li><strong>Premiums are likely to rise again.</strong> Insurers have asked for a median increase of about 15% for 2027, after about 20% for 2026. Final prices come out around November 1.</li>
+                            <li><strong>The most you can pay out of pocket</strong> for covered care in 2027 is $12,000 for one person and $24,000 for a family.</li>
+                            <li><strong>Many lawfully present immigrants lose premium tax credits on January 1, 2027,</strong> including refugees, people with asylum and people with Temporary Protected Status. Green card holders can still get them.</li>
+                            <li><strong>Plans still renew on their own in 2027,</strong> premium help included. Automatic renewal with premium help ends for 2028, and staying put may cost you more even now. Compare plans this year.</li>
+                        </ul>
+                        <p class="fhi-mb-0"><strong>What to do:</strong> Update your income on your application, compare plans instead of letting yours renew, and check whether a bronze plan with an HSA or a different metal level costs less overall.</p>
+                    </div>
+                </details>
+
+                <details class="fhi-accordion-item" name="areas-to-watch">
+                    <summary>
+                        <h3 class="fhi-accordion-question">Medicaid</h3>
+                    </summary>
+                    <div class="fhi-accordion-body">
+                        <ul>
+                            <li><strong>Work requirements start by January 1, 2027</strong> for adults 19 to 64 who got Medicaid through expansion. You'll need about 80 hours a month of work, volunteering, job training or at least half-time school, or earnings of about 80 times the federal minimum wage. Some states started in 2026.</li>
+                            <li><strong>Many people are exempt,</strong> including people who are pregnant or recently gave birth, people with disabilities or who are medically frail, parents or caregivers of children under 14, American Indians and Alaska Natives, and former foster youth.</li>
+                            <li><strong>Expansion adults renew every 6 months</strong> instead of once a year.</li>
+                            <li><strong>Medicaid covers less time before you apply.</strong> Starting January 1, 2027, it can pay bills from 1 month before you apply if you're an expansion adult, or 2 months for others, down from 3. Apply quickly after a hospital stay.</li>
+                        </ul>
+                        <p class="fhi-mb-0"><strong>What to do:</strong> Keep your address up to date with your state, answer every notice (you have 30 days before coverage ends), and keep proof of your hours or exemption. Our <a href="{% url 'medicaid-faq' %}">Medicaid work requirements FAQ</a> has more.</p>
+                    </div>
+                </details>
+
+                <details class="fhi-accordion-item" name="areas-to-watch">
+                    <summary>
+                        <h3 class="fhi-accordion-question">Medicare</h3>
+                    </summary>
+                    <div class="fhi-accordion-body">
+                        <ul>
+                            <li><strong>The most you'll pay for Part D drugs in 2027 is $2,400,</strong> up from $2,100. The standard deductible rises to $700.</li>
+                            <li><strong>Negotiated prices for 15 more drugs start January 1,</strong> including Ozempic, Rybelsus and Wegovy, Trelegy Ellipta, Xtandi, Ibrance, Linzess, Vraylar, Otezla and Janumet.</li>
+                            <li><strong>The Part B premium is projected at about $209.50 a month,</strong> up from $202.90. The official number usually comes out in the fall.</li>
+                            <li><strong>In six states (AZ, NJ, OH, OK, TX and WA),</strong> Original Medicare now requires prior authorization for some services, such as skin substitutes and nerve stimulator implants.</li>
+                        </ul>
+                        <p class="fhi-mb-0"><strong>What to do:</strong> Read your Annual Notice of Change, then compare plans in the <a href="https://www.medicare.gov/plan-compare/" target="_blank" rel="noopener noreferrer">Medicare Plan Finder</a> between October 15 and December 7, checking that your drugs and doctors are covered.</p>
+                    </div>
+                </details>
+
+                <details class="fhi-accordion-item" name="areas-to-watch">
+                    <summary>
+                        <h3 class="fhi-accordion-question">Employer plans, HSAs and FSAs</h3>
+                    </summary>
+                    <div class="fhi-accordion-body">
+                        <ul>
+                            <li><strong>HSA limits for 2027</strong> are $4,500 for one person and $9,000 for a family, plus $1,000 more if you're 55 or older.</li>
+                            <li><strong>An HSA-eligible plan</strong> needs a deductible of at least $1,750 for one person or $3,500 for a family.</li>
+                            <li><strong>The 2027 FSA limit isn't out yet.</strong> For 2026 it's $3,400, and plans can let you carry over up to $680.</li>
+                            <li><strong>Job-based coverage counts as affordable</strong> if your share for the cheapest self-only plan is at most 10.22% of household income. If it costs more, you may qualify for Marketplace help instead.</li>
+                        </ul>
+                        <p class="fhi-mb-0"><strong>What to do:</strong> Spend down your 2026 FSA or check your plan's carry-over rules, and set your 2027 HSA contributions to the new limits.</p>
+                    </div>
+                </details>
+
+                <details class="fhi-accordion-item" name="areas-to-watch">
+                    <summary>
+                        <h3 class="fhi-accordion-question">Prior authorization</h3>
+                    </summary>
+                    <div class="fhi-accordion-body">
+                        <ul>
+                            <li><strong>Since January 2026,</strong> Medicare Advantage, Medicaid and HealthCare.gov plans have had to give a specific reason for every prior authorization denial. That reason is a starting point for your appeal.</li>
+                            <li><strong>By January 1, 2027,</strong> those plans must let you check the status of a prior authorization online, and move your records when you switch plans. Drugs aren't included yet.</li>
+                            <li><strong>Many insurers have promised</strong> that when you switch plans in the middle of treatment, the new plan will honor your old approvals for 90 days. It's a voluntary pledge, so ask your plan.</li>
+                        </ul>
+                        <p class="fhi-mb-0"><strong>What to do:</strong> Before January 1, get prior authorizations for ongoing treatment renewed or documented. If you're switching plans, ask the new plan how it handles approvals you already have.</p>
+                    </div>
+                </details>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Fall Checklist -->
+<section id="fall-checklist" class="fhi-band">
+    <div class="fhi-band-inner">
+        <div class="fhi-band-column">
+            <h2 class="fhi-center fhi-mb-6">Your fall checklist</h2>
+            <ol class="fhi-list prep-checklist">
+                <li class="fhi-list-item"><strong>Read your renewal notice.</strong> Medicare's Annual Notice of Change, or your Marketplace or employer renewal. Check that your drugs are still covered and whether they now need prior authorization or step therapy.</li>
+                <li class="fhi-list-item"><strong>On Medicare, compare plans between October 15 and December 7.</strong> Check whether any of your drugs are among the 15 with new negotiated prices.</li>
+                <li class="fhi-list-item"><strong>On the Marketplace, update your income and compare plans between November 1 and December 15</strong> for coverage from January 1.</li>
+                <li class="fhi-list-item"><strong>Check that your doctors, hospitals and pharmacy are in the plan's 2027 network</strong> before you pick it.</li>
+                <li class="fhi-list-item"><strong>If you got premium tax credits, file your taxes and reconcile them</strong> (Form 8962), and fix any income mismatch your marketplace asks about.</li>
+                <li class="fhi-list-item"><strong>On Medicaid through expansion, keep your address current</strong> and gather proof of your work hours or exemption. Answer notices within 30 days.</li>
+                <li class="fhi-list-item"><strong>Renew or document prior authorizations for ongoing treatment</strong> before January 1.</li>
+                <li class="fhi-list-item"><strong>Use your 2026 FSA balance</strong> and set your 2027 HSA contributions.</li>
+            </ol>
+        </div>
+    </div>
+</section>
+
+<!-- Your Rights -->
+<section id="denial-rights" class="fhi-band fhi-band-alt">
+    <div class="fhi-band-inner">
+        <div class="fhi-band-column">
+            <h2 class="fhi-center fhi-mb-6">If you're denied in 2027</h2>
+            <div class="fhi-grid fhi-grid-3">
+                <div>
+                    <div class="fhi-card fhi-center">
+                        <div class="fhi-card-body">
+                            <div class="prep-mark" aria-hidden="true">&#10003;</div>
+                            <h3 class="fhi-card-title">You can appeal</h3>
+                            <p class="fhi-card-text">Every plan has to offer at least one internal appeal. After that, you can usually ask for independent review by doctors who don't work for your insurer.</p>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="fhi-card fhi-center">
+                        <div class="fhi-card-body">
+                            <div class="prep-mark" aria-hidden="true">&#128337;</div>
+                            <h3 class="fhi-card-title">Deadlines matter</h3>
+                            <p class="fhi-card-text">Most plans give you at least 180 days to appeal. If waiting could harm your health, ask for an expedited appeal, which is usually decided within 72 hours.</p>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="fhi-card fhi-center">
+                        <div class="fhi-card-body">
+                            <div class="prep-mark" aria-hidden="true">&#128221;</div>
+                            <h3 class="fhi-card-title">Appeals often work</h3>
+                            <p class="fhi-card-text">Very few denials are ever appealed, but many appeals win. A letter that answers the insurer's specific reason with medical evidence gives you the best chance.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="fhi-center fhi-mt-6">
+                <h3 class="fhi-mb-4">Ready to fight a denial?</h3>
+                <div class="fhi-cluster fhi-cluster-center">
+                    <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">Generate an Appeal</a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">Chat with AI Assistant</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Unknowns -->
+<section id="unknowns" class="fhi-band">
+    <div class="fhi-band-inner">
+        <div class="fhi-band-column">
+            <h2 class="fhi-center fhi-mb-6">What we don't know yet</h2>
+            <ul class="prep-unknowns">
+                <li>Final 2027 Marketplace premiums, posted around November 1.</li>
+                <li>Whether Congress brings back the extra premium tax credits.</li>
+                <li>The official 2027 Medicare Part B premium, and the 2027 FSA limit.</li>
+                <li>How a federal court case ends: it has paused several 2027 Marketplace rules, and an appeal could change them or the enrollment dates.</li>
+                <li>How each state checks work hours and defines "medically frail," and whether more states delay their start to 2028.</li>
+                <li>Whether prior authorization rules are extended to drugs.</li>
+            </ul>
+            <p class="fhi-hint fhi-center">We'll update this page as these are decided.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Resources -->
+<section id="resources" class="fhi-band fhi-band-alt">
+    <div class="fhi-band-inner">
+        <div class="fhi-band-column">
+            <h2 class="fhi-center fhi-mb-6">More help</h2>
+            <div class="fhi-grid fhi-grid-2">
+                <div>
+                    <div class="fhi-card">
+                        <div class="fhi-card-body">
+                            <h3 class="fhi-card-title">From us</h3>
+                            <ul class="prep-links">
+                                <li><a href="{% url 'medicaid-faq' %}">Medicaid work requirements FAQ</a></li>
+                                <li><a href="{% url 'medicaid-eligibility' %}">Check if you may qualify for Medicaid (experimental)</a></li>
+                                <li><a href="{% url 'blog-post' slug='250903-glp1-denials-what-to-do' %}">GLP-1 denials: what to do</a></li>
+                                <li><a href="{% url 'blog' %}">All blog posts</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="fhi-card">
+                        <div class="fhi-card-body">
+                            <h3 class="fhi-card-title">Elsewhere</h3>
+                            <ul class="prep-links">
+                                <li><a href="https://www.healthcare.gov/" target="_blank" rel="noopener noreferrer">HealthCare.gov</a></li>
+                                <li><a href="https://www.medicare.gov/plan-compare/" target="_blank" rel="noopener noreferrer">Medicare Plan Finder</a></li>
+                                <li><a href="https://www.kff.org/interactive/subsidy-calculator/" target="_blank" rel="noopener noreferrer">KFF subsidy calculator</a></li>
+                                <li><a href="https://www.kff.org/medicaid/medicaid-work-requirements-tracker-1115-waivers/" target="_blank" rel="noopener noreferrer">KFF Medicaid work requirements tracker</a></li>
+                                <li><a href="{% url 'other-resources' %}">More resources</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Sources and Disclaimer -->
+<section id="sources" class="fhi-band-short">
+    <div class="fhi-band-inner">
+        <div class="fhi-band-column">
+            <div class="fhi-box">
+                <p class="fhi-hint fhi-small fhi-mb-2"><strong>Sources:</strong>
+                    <a href="https://www.healthcare.gov/quick-guide/dates-and-deadlines/" target="_blank" rel="noopener noreferrer">HealthCare.gov dates</a>,
+                    <a href="https://www.irs.gov/pub/irs-drop/rp-26-26.pdf" target="_blank" rel="noopener noreferrer">IRS Rev. Proc. 2026-26</a> (premium credit and affordability percentages),
+                    <a href="https://www.kff.org/affordable-care-act/how-much-and-why-aca-marketplace-premiums-are-going-up-in-2027/" target="_blank" rel="noopener noreferrer">KFF on 2027 premiums</a>,
+                    <a href="https://www.cms.gov/files/document/2027-papi-parameters-guidance-2026-01-29.pdf" target="_blank" rel="noopener noreferrer">CMS 2027 out-of-pocket limits</a>,
+                    <a href="https://www.kff.org/medicaid/health-provisions-in-the-2025-federal-budget-reconciliation-law/" target="_blank" rel="noopener noreferrer">KFF on the 2025 budget law</a>,
+                    <a href="https://www.cms.gov/newsroom/fact-sheets/medicaid-community-engagement-requirement-certain-individuals-interim-final-rule-comment-period-cms" target="_blank" rel="noopener noreferrer">CMS on Medicaid work requirements</a>,
+                    <a href="https://www.cms.gov/files/document/2027-announcement.pdf" target="_blank" rel="noopener noreferrer">CMS 2027 Part D amounts</a>,
+                    <a href="https://www.cms.gov/files/document/fact-sheet-negotiated-prices-ipay-2027.pdf" target="_blank" rel="noopener noreferrer">CMS 2027 negotiated drug prices</a>,
+                    <a href="https://www.cms.gov/oact/tr/2026" target="_blank" rel="noopener noreferrer">Medicare Trustees Report</a>,
+                    <a href="https://www.cms.gov/priorities/innovation/innovation-models/wiser" target="_blank" rel="noopener noreferrer">CMS WISeR</a>,
+                    <a href="https://www.irs.gov/pub/irs-drop/rp-26-24.pdf" target="_blank" rel="noopener noreferrer">IRS Rev. Proc. 2026-24</a> (HSA limits),
+                    <a href="https://www.cms.gov/newsroom/fact-sheets/cms-interoperability-prior-authorization-final-rule-cms-0057-f" target="_blank" rel="noopener noreferrer">CMS prior authorization rule</a>.
+                </p>
+                <p class="fhi-hint fhi-small fhi-mb-0">
+                    <strong>Please note:</strong> This page is general information, not legal, medical or financial advice. Plans vary, so check your own plan's documents. Some 2027 numbers are proposed or projected and may change. Last updated: September 2026.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #prep2027-hero .hero-inner {
+        padding-inline: 2rem;
+        border-radius: 14px;
+    }
+    .prep-dates .fhi-list-item,
+    .prep-checklist .fhi-list-item {
+        border-left: 4px solid #a5c422;
+    }
+    .prep-dates strong {
+        display: block;
+    }
+    .prep-checklist {
+        padding-left: 0;
+        list-style-position: inside;
+    }
+    .prep-checklist .fhi-list-item {
+        display: list-item;
+    }
+    .prep-mark {
+        font-size: 2.5rem;
+        line-height: 1.2;
+        margin-bottom: 1rem;
+        color: #157347;
+    }
+    .prep-links {
+        padding-left: 0;
+        list-style: none;
+        margin-bottom: 0;
+    }
+    .prep-links li + li {
+        margin-top: 0.5rem;
+    }
+    section {
+        scroll-margin-top: 80px;
+    }
+    @media (max-width: 768px) {
+        #prep2027-hero .hero-inner {
+            padding-inline: 1.5rem;
+        }
+    }
+</style>
+{% endblock extra_style %}
