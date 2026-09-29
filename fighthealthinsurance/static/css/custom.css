@@ -3441,3 +3441,120 @@ textarea,
         max-width: 100%;
     }
 }
+
+/* ---- Page kit: the site's own layout pieces ------------------------------
+   What Bootstrap's grid, card, list-group, alert and utility classes gave the
+   content pages, rebuilt on our tokens so a page can drop Bootstrap one page
+   at a time. Each piece matches what it replaces closely enough that a page
+   moved onto it looks the same, and the style gates measure it like the rest
+   of our CSS.
+   -------------------------------------------------------------------------- */
+
+/* A full-width band of the page, and its column. */
+.fhi-band { padding-block: var(--fhi-space-9); }
+.fhi-band-short { padding-block: var(--fhi-space-6); }
+.fhi-band-notice { padding-top: var(--fhi-space-6); padding-bottom: var(--fhi-space-2); }
+.fhi-band-alt { background-color: #f8f9fa; }
+/* The band's inner width carries no padding of its own: the column inside
+   it does, so text sits 12px from a phone's edge and a desktop column is
+   760px with 736px of text, as Bootstrap's container, row and column gave. */
+.fhi-band-inner {
+    width: 100%;
+    max-width: var(--fhi-page-wide);
+    margin-inline: auto;
+}
+.fhi-band-column {
+    width: 100%;
+    max-width: var(--fhi-page-reading);
+    margin-inline: auto;
+    padding-inline: var(--fhi-space-3);
+}
+
+/* Cards in a grid: one column on a phone, two or three from 768px up. */
+.fhi-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--fhi-space-6);
+}
+@media (min-width: 768px) {
+    .fhi-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .fhi-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.fhi-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    height: 100%;
+    overflow-wrap: break-word;
+    background-color: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.175);
+    border-radius: var(--fhi-space-2);
+}
+.fhi-card-body { flex: 1 1 auto; padding: var(--fhi-space-4); }
+.fhi-card-title { margin-bottom: var(--fhi-space-2); }
+.fhi-card-subtitle { margin-top: calc(-1 * var(--fhi-space-1)); }
+.fhi-card-text:last-child { margin-bottom: 0; }
+.fhi-card-warning { border-color: #ffc107; }
+
+/* A list of items that read as one block, divided by rules. */
+.fhi-list {
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--fhi-space-2);
+}
+.fhi-list-item {
+    position: relative;
+    display: block;
+    padding: var(--fhi-space-2) var(--fhi-space-4);
+    background-color: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.125);
+}
+.fhi-list-item + .fhi-list-item { border-top-width: 0; }
+.fhi-list-item:first-child { border-top-left-radius: inherit; border-top-right-radius: inherit; }
+.fhi-list-item:last-child { border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
+
+/* A boxed notice: warning amber, dark ink (7.21:1). */
+.fhi-notice {
+    position: relative;
+    padding: var(--fhi-space-4);
+    margin-bottom: var(--fhi-space-4);
+    border: 1px solid transparent;
+    border-radius: var(--fhi-space-2);
+}
+.fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+.fhi-notice-heading { color: inherit; }
+.fhi-notice-link { font-weight: 700; color: #523e02; }
+
+/* A bordered box on the light band colour. */
+.fhi-box {
+    padding: var(--fhi-space-4);
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: var(--fhi-space-2);
+}
+
+/* Type. */
+.fhi-center { text-align: center; }
+.fhi-lead { font-size: var(--fhi-text-subsection); font-weight: 400; }
+.fhi-small { font-size: var(--fhi-text-small); }
+.fhi-text-warning { color: #8a5a00; }
+
+/* Arrangement: a stack that pushes its last item down, and a wrapping row. */
+.fhi-stack { display: flex; flex-direction: column; }
+.fhi-push-end { margin-top: auto; align-self: flex-start; }
+.fhi-cluster { display: flex; flex-wrap: wrap; gap: var(--fhi-space-2); }
+.fhi-cluster-center { justify-content: center; align-items: center; gap: var(--fhi-space-4); }
+
+/* Spacing, on our scale. Bootstrap's 1 to 5 steps map to .25, .5, 1, 1.5
+   and 3rem; these keep those values, named by the token they use. */
+.fhi-mt-1 { margin-top: var(--fhi-space-1); }
+.fhi-mt-2 { margin-top: var(--fhi-space-2); }
+.fhi-mt-4 { margin-top: var(--fhi-space-4); }
+.fhi-mt-6 { margin-top: var(--fhi-space-6); }
+.fhi-mb-0 { margin-bottom: 0; }
+.fhi-mb-1 { margin-bottom: var(--fhi-space-1); }
+.fhi-mb-4 { margin-bottom: var(--fhi-space-4); }
+.fhi-mb-6 { margin-bottom: var(--fhi-space-6); }
+.fhi-me-2 { margin-right: var(--fhi-space-2); }
