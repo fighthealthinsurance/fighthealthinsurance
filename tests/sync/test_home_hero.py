@@ -12,6 +12,9 @@ CUSTOM_CSS = (
     / "css"
     / "custom.css"
 ).read_text()
+# Comments stripped first, so a rule left inside an unclosed comment cannot
+# satisfy these tests while the browser ignores it.
+CSS_WITHOUT_COMMENTS = re.sub(r"/\*.*?(?:\*/|$)", "", CUSTOM_CSS, flags=re.DOTALL)
 
 
 def _luminance(hex_colour: str) -> float:
@@ -28,7 +31,7 @@ def _ratio(a: str, b: str) -> float:
 
 
 def _body(selector: str) -> str:
-    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", CUSTOM_CSS)
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", CSS_WITHOUT_COMMENTS)
     assert match, f"no rule for {selector}"
     return match.group(1)
 
@@ -54,6 +57,6 @@ class HomeHeroTest(SimpleTestCase):
 
     def test_the_trust_chip_link_is_white_when_pressed_too(self):
         selector = re.search(
-            r"([^{}]*\.trust-chip-link:hover[^{}]*)\{", CUSTOM_CSS
+            r"([^{}]*\.trust-chip-link:hover[^{}]*)\{", CSS_WITHOUT_COMMENTS
         ).group(1)
         self.assertIn(".trust-chip-link:active", selector)

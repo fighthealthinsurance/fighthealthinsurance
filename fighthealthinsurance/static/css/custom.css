@@ -3265,7 +3265,7 @@ textarea,
 /* On that panel the site's deep-green focus ring nearly disappears, so a
    focused control in the home copy rings in white instead: 16.96:1 on
    the plum. The id outranks each button's own ring rule; only the colour
-   changes, so width and offset stay theirs. *
+   changes, so width and offset stay theirs. */
 #home .hero-inner :focus-visible {
     outline-color: #fff;
 }
