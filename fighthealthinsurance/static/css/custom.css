@@ -3463,12 +3463,19 @@ textarea,
     max-width: var(--fhi-page-wide);
     margin-inline: auto;
 }
+/* The column follows Bootstrap's container and col-lg-8 at each breakpoint,
+   so a page moved onto it keeps its widths at every size: the whole phone,
+   then 540, 720, 640 (two thirds of 960), 760 and 880px. */
 .fhi-band-column {
     width: 100%;
-    max-width: var(--fhi-page-reading);
     margin-inline: auto;
     padding-inline: var(--fhi-space-3);
 }
+@media (min-width: 576px) { .fhi-band-column { max-width: 540px; } }
+@media (min-width: 768px) { .fhi-band-column { max-width: 720px; } }
+@media (min-width: 992px) { .fhi-band-column { max-width: 640px; } }
+@media (min-width: 1200px) { .fhi-band-column { max-width: 760px; } }
+@media (min-width: 1400px) { .fhi-band-column { max-width: 880px; } }
 
 /* Cards in a grid: one column on a phone, two or three from 768px up. */
 .fhi-grid {
@@ -3537,6 +3544,8 @@ textarea,
 
 /* Type. */
 .fhi-center { text-align: center; }
+/* Hint text: the site's muted grey, 5.74:1 on white. */
+.fhi-hint { color: var(--fhi-muted); }
 .fhi-lead { font-size: var(--fhi-text-subsection); font-weight: 400; }
 .fhi-small { font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
