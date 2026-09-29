@@ -198,7 +198,8 @@ class BaseDenialForm(forms.Form):
     use_external_models = forms.BooleanField(required=False, initial=True)
     denial_text = forms.CharField(required=True)
     email = forms.EmailField(required=True)
-    subscribe = forms.BooleanField(required=False, initial=True)
+    # Unticked until the person ticks it: the site promises no dark patterns.
+    subscribe = forms.BooleanField(required=False, initial=False)
 
 
 class DenialForm(BaseDenialForm):
