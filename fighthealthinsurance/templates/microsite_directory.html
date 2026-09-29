@@ -82,5 +82,14 @@
     .microsite-card .fhi-card-title a:hover {
         color: var(--fhi-green-ink);
     }
+
+    /* Some condition names are long, so a badge wraps inside its card
+       rather than running past it, or past a small phone's edge. */
+    .microsite-card .fhi-badge {
+        max-width: 100%;
+        white-space: normal;
+        line-height: 1.25;
+        text-align: left;
+    }
 </style>
 {% endblock extra_style %}
