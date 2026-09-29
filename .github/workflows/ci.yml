@@ -24,8 +24,13 @@ jobs:
   # runs Selenium. Being wrong in that direction costs 12 minutes; being wrong
   # the other way ships a broken form (a client-side gate regression was caught
   # by this suite and nothing else).
+  # Every job has a time limit about three times its slowest healthy run
+  # (2026-09-29: Selenium 14 min, the test suites 8, the checks under 3).
+  # GitHub's default is six hours, and a Selenium run whose chat tests kept
+  # failing ground on for all six before anyone could see why.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       ui: ${{ steps.filter.outputs.ui }}
     steps:
@@ -69,6 +74,7 @@ jobs:
 
   style:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,6 +98,7 @@ jobs:
 
   shell-linter:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,6 +111,7 @@ jobs:
 
   types:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,6 +139,7 @@ jobs:
 
   npm-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v3
         with:
@@ -145,6 +154,7 @@ jobs:
 
   tests-sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -221,6 +231,7 @@ jobs:
 
   tests-selenium:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     needs: changes
     if: needs.changes.outputs.ui == 'true'
     strategy:
@@ -298,6 +309,7 @@ jobs:
 
   tests-sync-actor:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -450,6 +462,7 @@ jobs:
 
   tests-async:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -534,6 +547,7 @@ jobs:
 
   tests-async-unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
