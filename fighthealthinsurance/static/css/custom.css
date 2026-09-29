@@ -3499,6 +3499,13 @@ textarea,
 @media (min-width: 992px) {
     .fhi-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+/* Three cards a row on a desktop, two on a tablet. */
+@media (min-width: 768px) {
+    .fhi-grid-2-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 992px) {
+    .fhi-grid-2-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 
 .fhi-card {
     position: relative;
@@ -3546,11 +3553,16 @@ textarea,
 .fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
 .fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
 .fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
+.fhi-badge.fhi-badge-info { background-color: #0dcaf0; color: #212529; }
+/* A card whose one link covers the whole card, so the card is the target. */
+.fhi-stretched-link::after { content: ""; position: absolute; inset: 0; z-index: 1; }
 
 /* A list of items that read as one block, divided by rules. */
 .fhi-list {
     display: flex;
     flex-direction: column;
+    padding-left: 0;
+    margin-bottom: 0;
     border-radius: var(--fhi-space-2);
 }
 .fhi-list-item {
@@ -3563,6 +3575,8 @@ textarea,
 .fhi-list-item + .fhi-list-item { border-top-width: 0; }
 .fhi-list-item:first-child { border-top-left-radius: inherit; border-top-right-radius: inherit; }
 .fhi-list-item:last-child { border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
+/* An item with a marker beside its text, the two centred on one line. */
+.fhi-list-item-row { display: flex; align-items: center; }
 
 /* A boxed notice: warning amber, dark ink (7.21:1). */
 .fhi-notice {
@@ -3576,6 +3590,7 @@ textarea,
 .fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
 .fhi-notice-heading { color: inherit; }
 .fhi-notice-link { font-weight: 700; color: #523e02; }
+.fhi-notice-info .fhi-notice-link { color: #1f1f1f; }
 
 /* A bordered box on the light band colour. */
 .fhi-box {
@@ -3611,6 +3626,7 @@ textarea,
 .fhi-mt-2 { margin-top: var(--fhi-space-2); }
 .fhi-mt-4 { margin-top: var(--fhi-space-4); }
 .fhi-mt-6 { margin-top: var(--fhi-space-6); }
+.fhi-mt-9 { margin-top: var(--fhi-space-9); }
 .fhi-mb-0 { margin-bottom: 0; }
 .fhi-mb-1 { margin-bottom: var(--fhi-space-1); }
 .fhi-mb-2 { margin-bottom: var(--fhi-space-2); }
@@ -3618,3 +3634,5 @@ textarea,
 .fhi-mb-6 { margin-bottom: var(--fhi-space-6); }
 .fhi-mb-9 { margin-bottom: var(--fhi-space-9); }
 .fhi-me-2 { margin-right: var(--fhi-space-2); }
+.fhi-me-4 { margin-right: var(--fhi-space-4); }
+.fhi-ms-1 { margin-left: var(--fhi-space-1); }
