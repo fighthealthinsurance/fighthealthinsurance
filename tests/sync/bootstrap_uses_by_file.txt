@@ -296,7 +296,7 @@ how_to_help.html btn 10
 how_to_help.html col-md-6 2
 how_to_help.html row 1
 landing_base.html align-items-center 1
-landing_base.html btn 5
+landing_base.html btn 3
 landing_base.html container 4
 landing_base.html d-flex 1
 landing_base.html flex-column 1
