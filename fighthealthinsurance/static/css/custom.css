@@ -3504,6 +3504,36 @@ textarea,
 .fhi-card-subtitle { margin-top: calc(-1 * var(--fhi-space-1)); }
 .fhi-card-text:last-child { margin-bottom: 0; }
 .fhi-card-warning { border-color: #ffc107; }
+.fhi-card-info { border-color: #0dcaf0; }
+.fhi-card-header {
+    padding: var(--fhi-space-2) var(--fhi-space-4);
+    margin-bottom: 0;
+    background-color: rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.175);
+}
+.fhi-card-header:first-child { border-radius: var(--fhi-space-2) var(--fhi-space-2) 0 0; }
+/* Bootstrap drew this white on #0dcaf0, 1.96:1; the darker teal is 5.06:1. */
+.fhi-card-header.fhi-card-header-info { background-color: #087990; color: #fff; }
+
+/* A small label. The fills are Bootstrap's hover shades, which clear 4.5:1
+   under white with room to spare (5.8:1); its resting blue and green sit
+   right on it. */
+.fhi-badge {
+    display: inline-block;
+    padding: var(--fhi-space-1) var(--fhi-space-2);
+    font-size: var(--fhi-text-small);
+    font-weight: 700;
+    line-height: 1;
+    color: #fff;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: var(--fhi-space-2);
+}
+.fhi-badge.fhi-badge-success { background-color: #157347; }
+.fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
+.fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
+.fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
 
 /* A list of items that read as one block, divided by rules. */
 .fhi-list {
@@ -3549,12 +3579,14 @@ textarea,
 .fhi-lead { font-size: var(--fhi-text-subsection); font-weight: 400; }
 .fhi-small { font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
+.fhi-text-info { color: #087990; }
 
 /* Arrangement: a stack that pushes its last item down, and a wrapping row. */
 .fhi-stack { display: flex; flex-direction: column; }
 .fhi-push-end { margin-top: auto; align-self: flex-start; }
 .fhi-cluster { display: flex; flex-wrap: wrap; gap: var(--fhi-space-2); }
 .fhi-cluster-center { justify-content: center; align-items: center; gap: var(--fhi-space-4); }
+.fhi-spread { display: flex; width: 100%; justify-content: space-between; }
 
 /* Spacing, on our scale. Bootstrap's 1 to 5 steps map to .25, .5, 1, 1.5
    and 3rem; these keep those values, named by the token they use. */
@@ -3564,6 +3596,7 @@ textarea,
 .fhi-mt-6 { margin-top: var(--fhi-space-6); }
 .fhi-mb-0 { margin-bottom: 0; }
 .fhi-mb-1 { margin-bottom: var(--fhi-space-1); }
+.fhi-mb-2 { margin-bottom: var(--fhi-space-2); }
 .fhi-mb-4 { margin-bottom: var(--fhi-space-4); }
 .fhi-mb-6 { margin-bottom: var(--fhi-space-6); }
 .fhi-me-2 { margin-right: var(--fhi-space-2); }
