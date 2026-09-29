@@ -3476,6 +3476,11 @@ textarea,
 @media (min-width: 992px) { .fhi-band-column { max-width: 640px; } }
 @media (min-width: 1200px) { .fhi-band-column { max-width: 760px; } }
 @media (min-width: 1400px) { .fhi-band-column { max-width: 880px; } }
+/* The wider column, for a band of three or four cards: Bootstrap's
+   col-lg-10, so 800, 950 and 1100px from 992px up. */
+@media (min-width: 992px) { .fhi-band-column-wide { max-width: 800px; } }
+@media (min-width: 1200px) { .fhi-band-column-wide { max-width: 950px; } }
+@media (min-width: 1400px) { .fhi-band-column-wide { max-width: 1100px; } }
 
 /* Cards in a grid: one column on a phone, two or three from 768px up. */
 .fhi-grid {
@@ -3486,6 +3491,13 @@ textarea,
 @media (min-width: 768px) {
     .fhi-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .fhi-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+/* Four cards: two a row from 768px, all four in one row from 992px. */
+@media (min-width: 768px) {
+    .fhi-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 992px) {
+    .fhi-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 .fhi-card {
@@ -3561,6 +3573,7 @@ textarea,
     border-radius: var(--fhi-space-2);
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+.fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
 .fhi-notice-heading { color: inherit; }
 .fhi-notice-link { font-weight: 700; color: #523e02; }
 
@@ -3580,6 +3593,10 @@ textarea,
 .fhi-small { font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
 .fhi-text-info { color: #087990; }
+/* The site's green ink, 6.1:1 on white. */
+.fhi-text-success { color: var(--fhi-green-ink); }
+/* A list without bullets or indent. */
+.fhi-bare-list { padding-left: 0; list-style: none; }
 
 /* Arrangement: a stack that pushes its last item down, and a wrapping row. */
 .fhi-stack { display: flex; flex-direction: column; }
@@ -3599,4 +3616,5 @@ textarea,
 .fhi-mb-2 { margin-bottom: var(--fhi-space-2); }
 .fhi-mb-4 { margin-bottom: var(--fhi-space-4); }
 .fhi-mb-6 { margin-bottom: var(--fhi-space-6); }
+.fhi-mb-9 { margin-bottom: var(--fhi-space-9); }
 .fhi-me-2 { margin-right: var(--fhi-space-2); }
