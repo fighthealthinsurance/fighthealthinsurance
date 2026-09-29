@@ -299,7 +299,7 @@ async def process_single_url(
         print(f"Scrape/Extract failed for {target_url}: {e}")
         return []
 
-def extract_grantee_urls(
+def extract_lsc_grantee_urls(
     target_url: str = "https://www.lsc.gov/about-lsc/our-grantees",
     resolve_redirects: bool = True,
 ) -> dict:
