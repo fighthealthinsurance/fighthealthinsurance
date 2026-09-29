@@ -67,11 +67,11 @@ Upload your Health Insurance Denial
 		{% endif %}
 	<div class="together-form-group">
 	  <div>
-	    <label for="store_fname" class="form-label">First name <small class="fhi-hint">(kept in your browser)</small></label><br>
+	    <label for="store_fname" class="form-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label><br>
 	    <input type="text" id="store_fname" class="fhi-field">
 	  </div>
 	  <div>
-	    <label for="store_lname" class="form-label">Last name <small class="fhi-hint">(kept in your browser)</small></label><br>
+	    <label for="store_lname" class="form-label">Last name <small class="fhi-hint">(we try to keep this in your browser)</small></label><br>
 	    <input type="text" id="store_lname" class="fhi-field">
 	  </div>
 	</div>
@@ -89,7 +89,7 @@ Upload your Health Insurance Denial
 	  <div>
 	    <label for="store_street" class="form-label">
 	      Street address
-	      <small class="fhi-hint">(kept in your browser, e.g. 283 24th St)</small>
+	      <small class="fhi-hint">(we try to keep this in your browser, e.g. 283 24th St)</small>
 	    </label><br>
 	    <input type="text" id="store_street" name="street" class="fhi-field"><br>
 	  </div>
@@ -155,7 +155,7 @@ Upload your Health Insurance Denial
 	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
 		placeholder="Your denial goes here"
 		class="fhi-field">{{ocr_result}}</textarea><br>
-		<small class="fhi-hint">This version, with your details removed, is sent to our server.</small><br>
+		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small><br>
 	    <button type="button" id="scrub-2" class="btn btn-green">
 	      Remove personal details
 	    </button><br>
@@ -190,7 +190,7 @@ Upload your Health Insurance Denial
 			<div class="form-check">
 			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" checked class="fhi-check">
 				<label for="use_external_models" class="form-check-label">
-					Use outside AI services to get more appeal drafts. <b>Optional. Your letter is shared with those services</b> (for example, Microsoft Azure and Anthropic, among others), under their own terms.
+					Use outside AI services to get more appeal drafts. <b>Optional. Your letter is shared with those services</b> (for example, Google and Anthropic, among others), under their own terms.
 				</label>
 			</div>
 			<div class="form-check">
@@ -224,7 +224,7 @@ Upload your Health Insurance Denial
 			<div class="form-check mt-3 alert-box alert-warning">
 			<input type="checkbox" id="persistence_enabled" checked class="fhi-check">
 				<label for="persistence_enabled" class="form-check-label">
-					<b>Remember what I typed</b> if I go back (saved only in this browser).
+					<b>Remember what I typed</b> if I go back (saved in this browser).
 					<br><small class="fhi-hint"><strong>Leave this off on a shared or public computer.</strong></small>
 				</label>
 			</div>
@@ -257,13 +257,13 @@ Upload your Health Insurance Denial
 	    <button type="submit" class="btn btn-green fhi-btn-lg" id="submit">Submit</button>
 	</form>
 
-	<h2 class="fhi-form-note-title">What stays in your browser</h2>
+	<h2 class="fhi-form-note-title">What we try to keep in your browser</h2>
 	<p>
-	  Your name and street address stay in your browser, like a cookie, and we try not to store them on our server. You can clear them in your browser or from our <a href="{% url 'privacy_policy' %}">privacy policy</a> page. If you join the mailing list, we send your name and email to our server for it.
+	  We try to keep your name and street address in your browser, like a cookie, rather than on our server. You can clear them in your browser or from our <a href="{% url 'privacy_policy' %}">privacy policy</a> page. If you join the mailing list, we send your name and email to our server for it.
 	</p>
 	<h2 class="fhi-form-note-title" id="how-we-store-your-email">How we store your email</h2>
 	<p>
-	  We store a scrambled version of your email (a hash), so you can ask us to remove it without us keeping your real address.
+	  We aim to store only a scrambled version of your email (a hash), so you can ask us to remove it without us keeping your real address.
 	  If you turn on follow-ups or faxing, we keep your real email so we can remind you when the insurer's deadlines may have passed, and we may email you a better draft if our first one wasn't good.
 	  You can use a temporary email service, like <a href="https://proton.me/">Proton Mail</a>.
 	  If you join the mailing list, we keep your name and real email for it.
