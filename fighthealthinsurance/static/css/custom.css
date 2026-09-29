@@ -995,6 +995,9 @@ a.link:hover::after {
   .hero-cta-group {flex-direction:column;}
   .trust-bullets {flex-direction:column;}
   .how-it-works {flex-direction:column;}
+  /* Stacked steps have nothing beside them to point at, and the arrow would
+     hang past the edge of a phone now that no hero clips it. */
+  .how-step:not(:last-child)::after {display:none;}
   .pwyw-options {flex-direction:column;}
   .pwyw-option {flex:1 1 auto;}
 }
