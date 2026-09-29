@@ -3122,7 +3122,7 @@ textarea,
 
 /* ---- Questions that open in place ----------------------------------------
    The FAQ on every microsite and on the Denial Language Library, and the
-   lists on Preparing for 2026 and Turning 26. They were Bootstrap
+   lists on Preparing for 2027 and Turning 26. They were Bootstrap
    accordions, which opened only once bootstrap.bundle.min.js had arrived
    from a CDN, so a blocked or slow script left every answer shut. Each item
    is a <details> now: the browser opens it with no script, and keyboards

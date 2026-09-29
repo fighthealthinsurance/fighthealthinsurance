@@ -3,7 +3,7 @@
 bootstrap.bundle.min.js came from a CDN at the foot of every page. By the
 end all it did for our own markup was open the accordions on four pages:
 the FAQ on every microsite and on the Denial Language Library, and the
-lists on Preparing for 2026 and Turning 26. A blocked or slow script left
+lists on Preparing for 2027 and Turning 26. A blocked or slow script left
 every one of those answers shut, and nothing on the page said why.
 
 Each question is a <details> now, the way the header's dropdowns already
