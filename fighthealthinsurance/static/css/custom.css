@@ -154,7 +154,7 @@
        short floor only bites on a page with very little copy, and is low
        enough that it does not pad that copy out with empty picture. */
     --fhi-hero-floor: 650px;
-    --fhi-hero-floor-short: 240px;
+    --fhi-hero-floor-short: 224px;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
