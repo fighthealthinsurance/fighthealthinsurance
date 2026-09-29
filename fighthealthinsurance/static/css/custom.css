@@ -3485,6 +3485,14 @@ textarea,
    by the column's own padding, so the text lined up with the wrapper's.
    This does the same for a band column in .fhi-page-wide. */
 .fhi-row-bleed { margin-inline: calc(-1 * var(--fhi-space-3)); }
+/* That wrapper is fluid, not a Bootstrap container, so its column takes
+   Bootstrap's share of the row rather than the kit's fixed caps: all of
+   it below 992px, then two thirds (col-lg-8) or five sixths (col-lg-10). */
+.fhi-row-bleed > .fhi-band-column { max-width: none; }
+@media (min-width: 992px) {
+    .fhi-row-bleed > .fhi-band-column { max-width: 66.6667%; }
+    .fhi-row-bleed > .fhi-band-column-wide { max-width: 83.3333%; }
+}
 
 /* Cards in a grid: one column on a phone, two or three from 768px up. */
 .fhi-grid {
