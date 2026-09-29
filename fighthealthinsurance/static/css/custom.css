@@ -3481,6 +3481,10 @@ textarea,
 @media (min-width: 992px) { .fhi-band-column-wide { max-width: 800px; } }
 @media (min-width: 1200px) { .fhi-band-column-wide { max-width: 950px; } }
 @media (min-width: 1400px) { .fhi-band-column-wide { max-width: 1100px; } }
+/* Inside a padded page wrapper, Bootstrap's row pulled its column back out
+   by the column's own padding, so the text lined up with the wrapper's.
+   This does the same for a band column in .fhi-page-wide. */
+.fhi-row-bleed { margin-inline: calc(-1 * var(--fhi-space-3)); }
 
 /* Cards in a grid: one column on a phone, two or three from 768px up. */
 .fhi-grid {
@@ -3506,6 +3510,20 @@ textarea,
 @media (min-width: 992px) {
     .fhi-grid-2-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+/* Four across from 768px, like Bootstrap's col-md-3. */
+@media (min-width: 768px) {
+    .fhi-grid-4-across { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* One card a row on a small phone, two from 576px, three from 768px. */
+@media (min-width: 576px) {
+    .fhi-grid-1-2-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 768px) {
+    .fhi-grid-1-2-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+/* A grid whose items set their own space below, as Bootstrap's row did:
+   the gutter between columns only. */
+.fhi-grid.fhi-grid-cols-only { row-gap: 0; }
 
 .fhi-card {
     position: relative;
@@ -3599,6 +3617,12 @@ textarea,
     border: 1px solid #dee2e6;
     border-radius: var(--fhi-space-2);
 }
+/* The same light panel without the border. */
+.fhi-panel {
+    padding: var(--fhi-space-4);
+    background-color: #f8f9fa;
+    border-radius: var(--fhi-space-2);
+}
 
 /* Type. */
 .fhi-center { text-align: center; }
@@ -3618,6 +3642,8 @@ textarea,
 .fhi-push-end { margin-top: auto; align-self: flex-start; }
 .fhi-cluster { display: flex; flex-wrap: wrap; gap: var(--fhi-space-2); }
 .fhi-cluster-center { justify-content: center; align-items: center; gap: var(--fhi-space-4); }
+.fhi-row-center { display: flex; align-items: center; }
+.fhi-block { display: block; }
 .fhi-spread { display: flex; width: 100%; justify-content: space-between; }
 
 /* Spacing, on our scale. Bootstrap's 1 to 5 steps map to .25, .5, 1, 1.5

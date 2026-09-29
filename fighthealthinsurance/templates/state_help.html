@@ -32,17 +32,17 @@
 </section>
 
 <!-- Insurance Department Section -->
-<section id="insurance-department" class="py-5">
+<section id="insurance-department" class="fhi-band">
     <div class="fhi-page-wide">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
+        <div class="fhi-row-bleed">
+            <div class="fhi-band-column">
                 <div class="resource-card">
-                    <h2 class="mb-4">{{ state.insurance_department.name }}</h2>
-                    <p class="lead mb-4">Your state insurance department can help you understand your rights, file complaints against insurers, and access external review processes.</p>
+                    <h2 class="fhi-mb-6">{{ state.insurance_department.name }}</h2>
+                    <p class="fhi-lead fhi-mb-6">Your state insurance department can help you understand your rights, file complaints against insurers, and access external review processes.</p>
 
                     <div class="contact-info">
                         {% if state.insurance_department.url %}
-                        <div class="contact-item mb-3">
+                        <div class="contact-item fhi-mb-4">
                             <strong>Website:</strong>
                             <a href="{{ state.insurance_department.url }}" target="_blank" rel="noopener noreferrer">
                                 {{ state.insurance_department.url }}
@@ -51,19 +51,19 @@
                         {% endif %}
 
                         {% if state.insurance_department.consumer_line %}
-                        <div class="contact-item mb-3">
+                        <div class="contact-item fhi-mb-4">
                             <strong>Consumer Hotline:</strong>
                             <a href="tel:{{ state.insurance_department.consumer_line }}">{{ state.insurance_department.consumer_line }}</a>
                         </div>
                         {% elif state.insurance_department.phone %}
-                        <div class="contact-item mb-3">
+                        <div class="contact-item fhi-mb-4">
                             <strong>Phone:</strong>
                             <a href="tel:{{ state.insurance_department.phone }}">{{ state.insurance_department.phone }}</a>
                         </div>
                         {% endif %}
 
                         {% if state.insurance_department.complaint_url %}
-                        <div class="contact-item mb-3">
+                        <div class="contact-item fhi-mb-4">
                             <strong>File a Complaint:</strong>
                             <a href="{{ state.insurance_department.complaint_url }}" target="_blank" rel="noopener noreferrer">
                                 File a complaint online
@@ -78,22 +78,22 @@
 </section>
 
 <!-- Consumer Assistance Section -->
-<section id="consumer-assistance" class="py-5 bg-light">
+<section id="consumer-assistance" class="fhi-band fhi-band-alt">
     <div class="fhi-page-wide">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Consumer Assistance Programs</h2>
-                <p class="text-center text-muted mb-4">Free programs that can help you understand your health coverage options and resolve insurance problems.</p>
+        <div class="fhi-row-bleed">
+            <div class="fhi-band-column">
+                <h2 class="fhi-center fhi-mb-6">Consumer Assistance Programs</h2>
+                <p class="fhi-center fhi-hint fhi-mb-6">Free programs that can help you understand your health coverage options and resolve insurance problems.</p>
 
-                <div class="row">
+                <div class="fhi-grid fhi-grid-2 fhi-grid-cols-only">
                     {% if state.consumer_assistance.cap_name %}
-                    <div class="col-md-6 mb-4">
-                        <div class="card h-100 assistance-card cap-card">
-                            <div class="card-body">
-                                <h3 class="card-title">Consumer Assistance</h3>
-                                <p class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.cap_name }}</p>
+                    <div class="fhi-mb-6">
+                        <div class="fhi-card assistance-card cap-card">
+                            <div class="fhi-card-body">
+                                <h3 class="fhi-card-title">Consumer Assistance</h3>
+                                <p class="fhi-card-subtitle fhi-mb-2 fhi-hint">{{ state.consumer_assistance.cap_name }}</p>
                                 {% if state.consumer_assistance.cap_phone %}
-                                <p class="mb-2">
+                                <p class="fhi-mb-2">
                                     <strong>Phone:</strong>
                                     <a href="tel:{{ state.consumer_assistance.cap_phone }}">{{ state.consumer_assistance.cap_phone }}</a>
                                 </p>
@@ -109,13 +109,13 @@
                     {% endif %}
 
                     {% if state.consumer_assistance.ship_name %}
-                    <div class="col-md-6 mb-4">
-                        <div class="card h-100 assistance-card ship-card">
-                            <div class="card-body">
-                                <h3 class="card-title">SHIP (Medicare Assistance)</h3>
-                                <p class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.ship_name }}</p>
+                    <div class="fhi-mb-6">
+                        <div class="fhi-card assistance-card ship-card">
+                            <div class="fhi-card-body">
+                                <h3 class="fhi-card-title">SHIP (Medicare Assistance)</h3>
+                                <p class="fhi-card-subtitle fhi-mb-2 fhi-hint">{{ state.consumer_assistance.ship_name }}</p>
                                 {% if state.consumer_assistance.ship_phone %}
-                                <p class="mb-2">
+                                <p class="fhi-mb-2">
                                     <strong>Phone:</strong>
                                     <a href="tel:{{ state.consumer_assistance.ship_phone }}">{{ state.consumer_assistance.ship_phone }}</a>
                                 </p>
@@ -136,26 +136,26 @@
 </section>
 
 <!-- Medicaid Section -->
-<section id="medicaid" class="py-5">
+<section id="medicaid" class="fhi-band">
     <div class="fhi-page-wide">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Medicaid Resources</h2>
+        <div class="fhi-row-bleed">
+            <div class="fhi-band-column">
+                <h2 class="fhi-center fhi-mb-6">Medicaid Resources</h2>
 
-                <div class="card medicaid-card">
-                    <div class="card-body">
-                        <h3 class="card-title">{{ state.medicaid.agency_name }}</h3>
+                <div class="fhi-card medicaid-card">
+                    <div class="fhi-card-body">
+                        <h3 class="fhi-card-title">{{ state.medicaid.agency_name }}</h3>
 
-                        <div class="row mt-3">
-                            <div class="col-md-6">
+                        <div class="fhi-grid fhi-grid-2 fhi-grid-cols-only fhi-mt-4">
+                            <div>
                                 {% if state.medicaid.agency_phone %}
-                                <p class="mb-2">
+                                <p class="fhi-mb-2">
                                     <strong>Phone:</strong><br>
                                     <a href="tel:{{ state.medicaid.agency_phone }}">{{ state.medicaid.agency_phone }}</a>
                                 </p>
                                 {% endif %}
                                 {% if state.medicaid.agency_url %}
-                                <p class="mb-2">
+                                <p class="fhi-mb-2">
                                     <strong>Website:</strong><br>
                                     <a href="{{ state.medicaid.agency_url }}" target="_blank" rel="noopener noreferrer">
                                         Visit Medicaid Website {% include 'partials/opens_in_new_tab.html' %}
@@ -165,12 +165,12 @@
                             </div>
 
                             {% if state.medicaid.managed_care_ombudsman %}
-                            <div class="col-md-6">
-                                <div class="ombudsman-info p-3 bg-light rounded">
+                            <div>
+                                <div class="ombudsman-info fhi-panel">
                                     <h4>Medicaid Ombudsman</h4>
-                                    <p class="mb-1 small text-muted">{{ state.medicaid.managed_care_ombudsman.name }}</p>
+                                    <p class="fhi-mb-1 fhi-small fhi-hint">{{ state.medicaid.managed_care_ombudsman.name }}</p>
                                     {% if state.medicaid.managed_care_ombudsman.phone %}
-                                    <p class="mb-1">
+                                    <p class="fhi-mb-1">
                                         <strong>Phone:</strong>
                                         <a href="tel:{{ state.medicaid.managed_care_ombudsman.phone }}">{{ state.medicaid.managed_care_ombudsman.phone }}</a>
                                     </p>
@@ -193,14 +193,14 @@
 
 <!-- External Review Section -->
 {% if state.external_review and state.external_review.available %}
-<section id="external-review" class="py-5 bg-light">
+<section id="external-review" class="fhi-band fhi-band-alt">
     <div class="fhi-page-wide">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="card external-review-card">
-                    <div class="card-body text-center">
-                        <h2 class="mb-3">External Review Available</h2>
-                        <p class="lead">{{ state.name }} offers an independent external review process for health insurance denials. This is a free or low-cost way to have your denial reviewed by an independent third party.</p>
+        <div class="fhi-row-bleed">
+            <div class="fhi-band-column">
+                <div class="fhi-card external-review-card">
+                    <div class="fhi-card-body fhi-center">
+                        <h2 class="fhi-mb-4">External Review Available</h2>
+                        <p class="fhi-lead">{{ state.name }} offers an independent external review process for health insurance denials. This is a free or low-cost way to have your denial reviewed by an independent third party.</p>
                         {% if state.external_review.info_url %}
                         <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-lg">
                             Learn About External Review {% include 'partials/opens_in_new_tab.html' %}
@@ -216,18 +216,18 @@
 
 <!-- Additional Resources Section -->
 {% if state.additional_resources %}
-<section id="additional-resources" class="py-5">
+<section id="additional-resources" class="fhi-band">
     <div class="fhi-page-wide">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Additional Resources</h2>
-                <p class="text-center text-muted mb-4">Other organizations that may be able to help with health coverage issues.</p>
+        <div class="fhi-row-bleed">
+            <div class="fhi-band-column">
+                <h2 class="fhi-center fhi-mb-6">Additional Resources</h2>
+                <p class="fhi-center fhi-hint fhi-mb-6">Other organizations that may be able to help with health coverage issues.</p>
 
                 <div class="additional-resources-list">
                     {% for resource in state.additional_resources %}
-                    <div class="card mb-3 resource-item">
-                        <div class="card-body">
-                            <h3 class="card-title">
+                    <div class="fhi-card fhi-mb-4 resource-item">
+                        <div class="fhi-card-body">
+                            <h3 class="fhi-card-title">
                                 {% if resource.url %}
                                 <a href="{{ resource.url }}" target="_blank" rel="noopener noreferrer">
                                     {{ resource.name }} {% include 'partials/opens_in_new_tab.html' %}
@@ -237,7 +237,7 @@
                                 {% endif %}
                             </h3>
                             {% if resource.description %}
-                            <p class="card-text text-muted mb-0">{{ resource.description }}</p>
+                            <p class="fhi-card-text fhi-hint fhi-mb-0">{{ resource.description }}</p>
                             {% endif %}
                         </div>
                     </div>
@@ -250,13 +250,13 @@
 {% endif %}
 
 <!-- Final CTA Section -->
-<section id="final-cta" class="py-5 bg-light">
+<section id="final-cta" class="fhi-band fhi-band-alt">
     <div class="fhi-page-wide">
-        <div class="row">
-            <div class="col-lg-8 mx-auto text-center">
-                <h2 class="mb-3">Need Help With a Health Insurance Denial?</h2>
-                <p class="lead mb-4">Our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
-                <div class="d-flex justify-content-center gap-3 flex-wrap">
+        <div class="fhi-row-bleed">
+            <div class="fhi-band-column fhi-center">
+                <h2 class="fhi-mb-4">Need Help With a Health Insurance Denial?</h2>
+                <p class="fhi-lead fhi-mb-6">Our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
+                <div class="fhi-cluster fhi-cluster-center">
                     <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
                         Start Your Appeal
                     </a>
@@ -273,12 +273,12 @@
 </section>
 
 <!-- Disclaimer Section -->
-<section id="disclaimer" class="py-4">
+<section id="disclaimer" class="fhi-band-short">
     <div class="fhi-page-wide">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="disclaimer-box p-3 bg-light border rounded">
-                    <p class="text-muted small mb-0">
+        <div class="fhi-row-bleed">
+            <div class="fhi-band-column">
+                <div class="disclaimer-box fhi-box">
+                    <p class="fhi-hint fhi-small fhi-mb-0">
                         <strong>Disclaimer:</strong> The information on this page is provided for informational purposes only and may not be current. Contact information and program details change frequently. Please verify current details directly with each organization. Fight Health Insurance is not affiliated with any government agency or the organizations listed on this page. This is not legal advice.
                     </p>
                 </div>
