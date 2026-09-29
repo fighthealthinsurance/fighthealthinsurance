@@ -3441,3 +3441,17 @@ textarea,
         max-width: 100%;
     }
 }
+
+/* The two notes under the appeal form (what stays in your browser, how we
+   store your email): sized as subsections, not as the page's title. */
+.fhi-form-note-title {
+    font-size: var(--fhi-text-subsection);
+    line-height: var(--fhi-line-heading);
+    margin-top: var(--fhi-space-6);
+}
+
+/* Hint text under a label or field: the site's muted grey, 5.74:1 on white.
+   Ours rather than Bootstrap's .text-muted, which is on its way out. */
+.fhi-hint {
+    color: var(--fhi-muted);
+}

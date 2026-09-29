@@ -5,21 +5,21 @@
 <!-- User Information Section -->
 <div class="mb-4">
     <h4>Your Information</h4>
-    <p class="text-muted small">This information is saved in your browser to protect your privacy. It's used to replace personal details before sending messages to our AI service.</p>
+    <p class="text-muted small">We save this in your browser. We use it to take your name and details out of your messages before they reach our AI.</p>
 
     <div class="row">
         <div class="col-md-6 mb-3">
-            <label for="store_fname" class="form-label">First Name*</label>
+            <label for="store_fname" class="form-label">First name (required)</label>
             {{ form.first_name }}
         </div>
         <div class="col-md-6 mb-3">
-            <label for="store_lname" class="form-label">Last Name*</label>
+            <label for="store_lname" class="form-label">Last name (required)</label>
             {{ form.last_name }}
         </div>
     </div>
 
     <div class="mb-3">
-        <label for="email" class="form-label">Email*</label>
+        <label for="email" class="form-label">Email (required)</label>
         {{ form.email }}
     </div>
 
@@ -29,7 +29,7 @@
     </div>
 
     <div class="mb-3">
-        <label for="store_street" class="form-label">Street Address</label>
+        <label for="store_street" class="form-label">Street address</label>
         {{ form.address }}
     </div>
 
@@ -43,7 +43,7 @@
             {{ form.state }}
         </div>
         <div class="col-md-4 mb-3">
-            <label for="store_zip" class="form-label">ZIP Code</label>
+            <label for="store_zip" class="form-label">ZIP code</label>
             {{ form.zip_code }}
         </div>
     </div>
@@ -53,27 +53,26 @@
 
 <!-- Terms & Agreements Section -->
 <div class="mb-4">
-    <h4>Terms & Agreements</h4>
+    <h4>Terms</h4>
 
     <div class="form-check mb-3">
         {{ form.tos_agreement }}
         <label for="tos" class="form-check-label">
-            I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.*
+            I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition. (required)
         </label>
     </div>
 
     <div class="form-check mb-3">
         {{ form.privacy_policy }}
         <label for="privacy" class="form-check-label">
-            I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>.*
+            I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
         </label>
     </div>
 
     <div class="form-check mb-3">
         {{ form.subscribe }}
         <label for="subscribe" class="form-check-label">
-            I wish to subscribe for updates and news from Fight Health Insurance and Fight Paperwork (our pro-version).
-            Choosing to subscribe will not affect your experience, but we do appreciate it!
+            Send me news from Fight Health Insurance and Fight Paperwork, our version for professionals. Optional, but we appreciate it!
         </label>
     </div>
 
@@ -85,7 +84,7 @@
     <div class="mb-3">
         <label for="referral_source_details" class="form-label">Details (Optional)</label>
         {{ form.referral_source_details }}
-        <small class="form-text text-muted">Please provide specific details about your referral source if applicable</small>
+        <small class="form-text text-muted">For example, which search engine or who told you about us.</small>
     </div>
 </div>
 
@@ -93,22 +92,18 @@
 
 <!-- AI Model Options Section -->
 <div class="mb-4">
-    <h4>AI Model Options</h4>
-    <p class="text-muted small">Configure how we generate responses for you.</p>
+    <h4>Which AI answers you</h4>
+    <p class="text-muted small">Choose whether outside AI services can help answer.</p>
 
     <div class="form-check mb-3">
         {{ form.use_external_models }}
         <label for="use_external_models" class="form-check-label">
-            Allow external AI models. <b>This is not required and involves sharing your conversation with third parties</b>, including Anthropic, Microsoft Azure, DeepInfra, TypeSafe, etc., subject to their own terms of service.
+            Let outside AI services help answer. <b>Optional. Your conversation is shared with those services</b> (for example, Microsoft Azure and DeepInfra, among others), under their own terms.
         </label>
         <small class="form-text text-muted d-block mt-1">
-            We prefer our own FHI models and use their answers whenever they respond well.
-            When this is enabled, external AI providers are asked alongside them on each
-            message, so a good answer is ready if our models are slow, unavailable, or stuck
-            repeating themselves. The name, email, street address, city and ZIP code you
+            Our own models answer first. With this on, outside services are asked too, so you still get a good answer if ours are slow, down or stuck. The name, email, street address, city and ZIP code you
             entered above are removed in your browser first; please leave out other
-            identifying details, such as your phone number. Uncheck this to keep your chat
-            on our own models only.
+            identifying details, such as your phone number. Turn this off to keep your chat on our own models only.
         </small>
     </div>
 </div>

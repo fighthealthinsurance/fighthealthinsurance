@@ -1,12 +1,15 @@
-"""The consent line on the upload page names the same AI providers as the
-privacy policy. The policy moved to the current list in #999; the consent
-line, where the person actually agrees, still named two providers the site
-stopped using. Both lists are read from the templates so they cannot drift
-apart again without this failing.
+"""The privacy policy names every outside AI company the site sends text to,
+and each consent line gives a couple of them as examples, open-ended.
 
-The chat consent names the outside providers chat can use, each of them one
-the policy lists as well, and says which details the browser removes before
-a message is sent."""
+The complete list lives in the policy. Where the person agrees, the consent
+names real recipients "for example" and ends "among others", so it stays
+short and honest (Melanie, 2026-09-29). Every example must be a company the
+policy lists and that flow really sends to, so a consent can never name a
+company that receives nothing. The policy must name every company chat can
+reach, so a new outside backend fails here until the policy names it.
+
+The chat consent also says which details the browser removes before a
+message is sent."""
 
 import os
 import pathlib
@@ -36,20 +39,26 @@ def _ai_providers(text: str) -> list[str]:
     return [p.strip() for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1)) if p.strip() and p.strip().lower() != "etc"]
 
 
+def _examples(text: str) -> list[str]:
+    """The companies a consent gives as examples: "(for example, A and B,
+    among others)"."""
+    m = re.search(r"\(for example, ([^()]*?), among others\)", " ".join(text.split()))
+    assert m, "no '(for example, ..., among others)' in the consent"
+    return [p.strip() for p in re.split(r",\s*|\s+and\s+", m.group(1)) if p.strip()]
+
+
 class ConsentCopyTest(TestCase):
-    def test_upload_consent_names_the_policy_providers(self):
-        policy = (TEMPLATES / "privacy_policy.html").read_text()
+    def test_upload_consent_examples_are_companies_the_policy_lists(self):
+        policy = _ai_providers((TEMPLATES / "privacy_policy.html").read_text())
+        examples = _examples((TEMPLATES / "scrub.html").read_text())
+        self.assertTrue(examples)
+        self.assertLessEqual(set(examples), set(policy))
+        self.assertEqual(len(policy), 5)
+
+    def test_upload_consent_names_no_company_the_site_stopped_using(self):
         scrub = (TEMPLATES / "scrub.html").read_text()
-        self.assertEqual(_ai_providers(scrub), _ai_providers(policy))
-        self.assertEqual(len(_ai_providers(policy)), 5)
         for gone in ("OctoAI", "TogetherAI"):
             self.assertNotIn(gone, scrub)
-
-    def test_upload_consent_stays_open_ended(self):
-        # The named providers are the ones in use today; "etc." keeps the
-        # consent honest if another is added before the copy is (Melanie).
-        scrub = (TEMPLATES / "scrub.html").read_text()
-        self.assertIn("Perplexity, TypeSafe, etc.", scrub)
 
 
 # Each outside backend chat can route a conversation to, by the name the
@@ -179,28 +188,23 @@ class ChatConsentCopyTest(TestCase):
                 self.assertEqual(base.models(), [])
                 self.assertEqual(base.model_catalog(), [])
 
-    def test_rendered_chat_consent_names_the_current_providers(self):
-        expected = set(CHAT_BACKEND_PROVIDERS.values()) | set(QUALITY_CHECK_PROVIDERS)
+    def test_the_policy_names_every_company_chat_can_reach(self):
+        reachable = set(CHAT_BACKEND_PROVIDERS.values()) | set(QUALITY_CHECK_PROVIDERS)
         policy = _ai_providers((TEMPLATES / "privacy_policy.html").read_text())
+        self.assertLessEqual(reachable, set(policy))
+
+    def test_rendered_chat_consent_examples_are_companies_chat_sends_to(self):
+        reachable = set(CHAT_BACKEND_PROVIDERS.values()) | set(QUALITY_CHECK_PROVIDERS)
         for page in CHAT_CONSENT_PAGES:
             with self.subTest(page=page):
                 consent = _rendered_chat_consent(
                     self.client.get(reverse(page)).content.decode()
                 )
-                named = _ai_providers(consent)
-                self.assertEqual(sorted(named), sorted(expected))
-                # Every name is one the privacy policy lists too.
-                self.assertLessEqual(set(named), set(policy))
+                examples = _examples(consent)
+                self.assertTrue(examples)
+                self.assertLessEqual(set(examples), reachable)
                 for gone in NOT_CHAT_PROVIDERS:
                     self.assertNotIn(gone, consent)
-
-    def test_rendered_chat_consent_stays_open_ended(self):
-        for page in CHAT_CONSENT_PAGES:
-            with self.subTest(page=page):
-                consent = _rendered_chat_consent(
-                    self.client.get(reverse(page)).content.decode()
-                )
-                self.assertIn("TypeSafe, etc.", consent)
 
     def test_rendered_chat_consent_says_what_the_browser_removes(self):
         removed = ", ".join(list(SCRUBBED_IN_THE_BROWSER)[:-1])

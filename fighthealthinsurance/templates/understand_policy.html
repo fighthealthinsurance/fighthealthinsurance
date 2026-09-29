@@ -68,7 +68,7 @@
                                 </div>
 
                                 <div class="mb-3">
-                                    <label for="document_type" class="form-label fw-bold">Document Type*</label>
+                                    <label for="document_type" class="form-label fw-bold">Document type (required)</label>
                                     {{ form.document_type }}
                                     <div class="form-text">
                                         Select the type of document you're uploading.
@@ -76,7 +76,7 @@
                                 </div>
 
                                 <div class="mb-3">
-                                    <label for="policy_document" class="form-label fw-bold">Policy Document*</label>
+                                    <label for="policy_document" class="form-label fw-bold">Policy document (required)</label>
                                     {{ form.policy_document }}
                                     <div class="form-text">
                                         Upload your document (PDF, DOCX, or TXT — max 20MB).
@@ -87,7 +87,7 @@
                                 </div>
 
                                 <div class="mb-3">
-                                    <label for="plan_category" class="form-label fw-bold">What Type of Plan Is This?*</label>
+                                    <label for="plan_category" class="form-label fw-bold">What kind of plan is this? (required)</label>
                                     {{ form.plan_category }}
                                     <div class="form-text">
                                         Knowing your plan type helps us identify the right regulator and appeal rights. Your plan type affects who oversees your appeals:
@@ -102,7 +102,7 @@
                                 </div>
 
                                 <div class="mb-3">
-                                    <label for="user_question" class="form-label fw-bold">Your Question (Optional)</label>
+                                    <label for="user_question" class="form-label fw-bold">Your question (optional)</label>
                                     {{ form.user_question }}
                                     <div class="form-text">
                                         Have a specific question? Enter it here and we'll pay special attention to finding relevant information.
@@ -115,21 +115,21 @@
                             <!-- User Information Section -->
                             <div class="mb-4">
                                 <h4>Your Information</h4>
-                                <p class="text-muted small">This form is submitted to our server. Your email is hashed to associate your documents with your session. Your policy document is stored encrypted. If you opt in to the mailing list, your name and email are stored to send updates. We do not sell or share your personal information. <strong>Uploaded documents may be used in de-identified form to improve our AI models and help other patients fight denials.</strong></p>
+                                <p class="text-muted small">This form goes to our server. We keep a scrambled version of your email to link your documents to your visit, and we store your policy encrypted. If you join the mailing list, we keep your name and email to send updates. We don't sell or share your personal information. <strong>We may use uploaded documents, with identifying details removed, to improve our AI and help other patients.</strong></p>
 
                                 <div class="row">
                                     <div class="col-md-6 mb-3">
-                                        <label for="{{ form.first_name.id_for_label }}" class="form-label">First Name*</label>
+                                        <label for="{{ form.first_name.id_for_label }}" class="form-label">First name (required)</label>
                                         {{ form.first_name }}
                                     </div>
                                     <div class="col-md-6 mb-3">
-                                        <label for="{{ form.last_name.id_for_label }}" class="form-label">Last Name*</label>
+                                        <label for="{{ form.last_name.id_for_label }}" class="form-label">Last name (required)</label>
                                         {{ form.last_name }}
                                     </div>
                                 </div>
 
                                 <div class="mb-3">
-                                    <label for="{{ form.email.id_for_label }}" class="form-label">Email*</label>
+                                    <label for="{{ form.email.id_for_label }}" class="form-label">Email (required)</label>
                                     {{ form.email }}
                                 </div>
                             </div>
@@ -143,21 +143,21 @@
                                 <div class="form-check mb-3">
                                     {{ form.tos_agreement }}
                                     <label for="{{ form.tos_agreement.id_for_label }}" class="form-check-label">
-                                        I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I understand this analysis is for informational purposes only and is not legal or professional advice. I understand that my uploaded policy document may be used in de-identified form to train and improve Fight Health Insurance's AI models.*
+                                        I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I understand this is information only, not legal or professional advice, and that my policy may be used, with identifying details removed, to train Fight Health Insurance's AI. (required)
                                     </label>
                                 </div>
 
                                 <div class="form-check mb-3">
                                     {{ form.privacy_policy }}
                                     <label for="{{ form.privacy_policy.id_for_label }}" class="form-check-label">
-                                        I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>.*
+                                        I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
                                     </label>
                                 </div>
 
                                 <div class="form-check mb-3">
                                     {{ form.subscribe }}
                                     <label for="{{ form.subscribe.id_for_label }}" class="form-check-label">
-                                        I wish to subscribe for updates and news from Fight Health Insurance.
+                                        Send me news from Fight Health Insurance.
                                     </label>
                                 </div>
                             </div>
@@ -180,7 +180,7 @@
     <div class="container">
         <div class="row">
             <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">What Our AI Will Find For You</h2>
+                <h2 class="text-center mb-4">What you'll get: what's covered, what isn't, and the lines to quote in an appeal</h2>
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <div class="card h-100">
@@ -227,7 +227,7 @@
             <div class="col-lg-8 mx-auto">
                 <div class="disclaimer-box p-3 bg-warning-subtle border border-warning rounded">
                     <p class="text-dark mb-0">
-                        <strong>Important Disclaimer:</strong> This AI analysis is provided for informational purposes only and is not legal or professional advice. Insurance policies are complex documents, and this analysis may not capture all nuances. For definitive interpretations, contact your insurance company directly or consult with a qualified professional.
+                        <strong>Please note:</strong> This is information only, not legal or professional advice. Policies are complicated, and it may miss details. For a final answer, ask your insurer or a qualified professional.
                     </p>
                 </div>
             </div>

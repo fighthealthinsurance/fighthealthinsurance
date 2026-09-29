@@ -657,7 +657,6 @@ scrub.html mt-2 4
 scrub.html mt-3 2
 scrub.html p-0 1
 scrub.html small 2
-scrub.html text-muted 14
 server_side_ocr.html btn 1
 server_side_ocr_error.html btn 1
 single_optional_question.html alert 1
