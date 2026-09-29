@@ -559,10 +559,12 @@ class HowToHelpView(StaticIshView):
     template_name = "how_to_help.html"
 
 
-class Preparing2027View(StaticIshView):
-    """Landing page helping users prepare for 2026 insurance changes."""
+class CoverageChangesView(StaticIshView):
+    """The yearly guide to coverage changes (currently 2027), at a URL with
+    no year in it. Each fall the template's content moves to the new year;
+    the address stays."""
 
-    template_name = "preparing_2027.html"
+    template_name = "coverage_changes.html"
 
 
 class Turning26View(StaticIshView):

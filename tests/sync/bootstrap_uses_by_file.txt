@@ -87,6 +87,12 @@ chat_consent.html mt-2 1
 chat_consent.html row 1
 confirm_delete.html btn 1
 confirm_delete.html mt-3 1
+coverage_changes.html align-items-center 1
+coverage_changes.html btn 5
+coverage_changes.html d-flex 1
+coverage_changes.html flex-column 1
+coverage_changes.html justify-content-center 1
+coverage_changes.html row 1
 delete_data_email_sent.html alert 1
 delete_data_email_sent.html alert-info 1
 delete_data_email_sent.html mb-0 1
@@ -431,12 +437,6 @@ plan_documents.html form-text 1
 plan_documents.html h2 1
 plan_documents.html mt-2 1
 plan_documents.html text-muted 2
-preparing_2027.html align-items-center 1
-preparing_2027.html btn 5
-preparing_2027.html d-flex 1
-preparing_2027.html flex-column 1
-preparing_2027.html justify-content-center 1
-preparing_2027.html row 1
 professional.html alert 1
 professional.html alert-danger 1
 professional.html container 1
