@@ -28,7 +28,7 @@ DESKTOP = (1440, 900)
 # them stands for the rest. Each page is a label, a URL name and its kwargs.
 PAGES = (
     ("a microsite", "microsite", {"slug": "mri-denial"}),
-    ("Preparing for 2027", "preparing-2027", {}),
+    ("Coverage changes for 2027", "coverage-changes", {}),
 )
 
 STATE = """

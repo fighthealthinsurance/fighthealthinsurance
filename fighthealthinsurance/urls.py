@@ -266,14 +266,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="how-to-help",
     ),
     path(
-        "preparing-for-2027",
-        views.Preparing2027View.as_view(),
-        name="preparing-2027",
+        "coverage-changes",
+        views.CoverageChangesView.as_view(),
+        name="coverage-changes",
     ),
-    # The 2026 guide became the 2027 one; old links land on the current page.
+    # The yearly guide keeps one address with no year in it, so links and
+    # search ranking carry over from year to year; the page says which year
+    # it covers. The old yearly address lands on it.
     path(
         "preparing-for-2026",
-        RedirectView.as_view(pattern_name="preparing-2027", permanent=True),
+        RedirectView.as_view(pattern_name="coverage-changes", permanent=True),
         name="preparing-2026",
     ),
     path(

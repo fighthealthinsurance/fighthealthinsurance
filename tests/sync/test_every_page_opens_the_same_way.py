@@ -67,7 +67,7 @@ HERO_PAGES = [
     "glossary_index",
     STATE_PAGE,
     "turning-26",
-    "preparing-2027",
+    "coverage-changes",
     "denial-language-library",
     "medicaid-eligibility",
 ]
