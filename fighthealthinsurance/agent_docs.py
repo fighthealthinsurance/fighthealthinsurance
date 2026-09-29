@@ -73,7 +73,7 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
         "Denial language library",
         "common phrases insurers use in denials and what they mean",
     ),
-    "preparing-2026": ("Preparing for 2026", "insurance changes to plan for"),
+    "preparing-2027": ("Preparing for 2027", "insurance changes to plan for"),
     "turning-26": ("Turning 26", "coverage options when you age off a parent's plan"),
     "medicaid-eligibility": ("Medicaid eligibility", ""),
     "other-resources": ("Other resources", "organizations and tools beyond this site"),

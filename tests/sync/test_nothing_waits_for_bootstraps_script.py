@@ -85,7 +85,7 @@ HEAD_BLOCK = re.compile(r"{%\s*block\s+head\s*%}")
 # Each page with questions that open in place: the name its group shares
 # and how many questions it holds.
 GROUPS = {
-    "preparing-2026": ("areas-to-watch", 5),
+    "preparing-2027": ("areas-to-watch", 5),
     "turning-26": ("coverage-options", 5),
     "denial-language-library": ("library-faq", 4),
     "microsite": ("microsite-faq", None),
@@ -195,7 +195,7 @@ class NothingReachesForBootstrapsScriptTest(TestCase):
         """The source check misses a script that arrives by an include."""
         pages = [
             reverse("root"),
-            reverse("preparing-2026"),
+            reverse("preparing-2027"),
             reverse("microsite", kwargs={"slug": MICROSITE}),
         ]
         for url in pages:
@@ -357,7 +357,7 @@ class EachQuestionOpensByItselfTest(TestCase):
         group's other answers by hand has to run once every group on the
         page exists, so it sits after </main>, and it reads every group by
         its name rather than knowing the header's."""
-        html = self.client.get(reverse("preparing-2026")).content.decode()
+        html = self.client.get(reverse("preparing-2027")).content.decode()
         fallback = html.index("document.querySelectorAll('details[name]')")
         self.assertGreater(fallback, html.rindex("</main>"))
         self.assertGreater(fallback, html.rindex('name="areas-to-watch"'))
