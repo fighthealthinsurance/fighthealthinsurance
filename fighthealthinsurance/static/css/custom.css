@@ -3481,6 +3481,7 @@ textarea,
 .fhi-column {
     width: min(100% - 2 * var(--fhi-page-gutter), var(--fhi-page-reading));
     margin-inline: auto;
+    container-type: inline-size;
 }
 .fhi-column-wide { width: min(100% - 2 * var(--fhi-page-gutter), var(--fhi-page-wide)); }
 
@@ -3517,17 +3518,22 @@ textarea,
 }
 .fhi-cluster-center { justify-content: center; }
 
-/* Three or four cards that belong together: all in one row when the
-   column has room for them, otherwise one under another, so a group never
-   splits two and one. */
+/* Two to four cards that belong together, laid out by the width of the
+   column they sit in rather than the screen: one under another in a narrow
+   column, then side by side. Three go three across; four go two by two
+   until there is room for all four, so no group splits two and one and no
+   card gets too narrow to read. */
 .fhi-switcher {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--fhi-space-6);
 }
-.fhi-switcher > * {
-    flex-grow: 1;
-    flex-basis: calc((40rem - 100%) * 999);
+@container (min-width: 36rem) {
+    .fhi-switcher { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .fhi-switcher:has(> :nth-child(3):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container (min-width: 56rem) {
+    .fhi-switcher:has(> :nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 /* Cards: as many to a row as fit at about 14rem each, so three short cards
@@ -3596,6 +3602,18 @@ textarea,
     border-radius: var(--fhi-radius);
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+/* A link in a notice is the notice's ink, bold and underlined, so it
+   stands out from the text around it by more than colour. */
+.fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
+
+/* The small print at the foot of a page: a bordered light box. */
+.fhi-disclaimer {
+    padding: var(--fhi-space-4);
+    font-size: var(--fhi-text-small);
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: var(--fhi-radius);
+}
 
 /* A light panel. */
 .fhi-panel {
