@@ -109,11 +109,13 @@ for (const p of column.querySelectorAll('p, li')) {
   // What holds the paragraph, less its padding: the width it could fill.
   const parent = p.parentElement, ps = getComputedStyle(parent);
   const room = parent.clientWidth - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight);
-  // 65 zeros in this paragraph's own face and size is what 65ch resolves
-  // to. The probe sits on the body, so it cannot widen the paragraph.
+  // N zeros in this paragraph's own face and size is what Nch resolves to,
+  // N read from the --fhi-measure token. The probe sits on the body, so it
+  // cannot widen the paragraph.
   const face = getComputedStyle(p);
+  const chars = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fhi-measure'));
   const probe = document.createElement('span');
-  probe.textContent = '0'.repeat(65);
+  probe.textContent = '0'.repeat(chars);
   probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
   probe.style.fontFamily = face.fontFamily;
   probe.style.fontSize = face.fontSize;
@@ -318,7 +320,7 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                         f"{p['measure']:.0f}px measure."
                     )
                 # A paragraph that wraps is exactly as wide as the measure,
-                # so the widest one proves the measure really is 65ch and
+                # so the widest one proves the measure really is the token and
                 # not something narrower that the cap above would also pass.
                 longest = max(paragraphs, key=lambda p: p["width"])
                 assert abs(longest["width"] - longest["measure"]) <= 1, (

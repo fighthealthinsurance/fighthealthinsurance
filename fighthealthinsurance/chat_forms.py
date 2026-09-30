@@ -63,9 +63,10 @@ class BaseConsentForm(forms.Form):
         ),
     )
 
+    # Unticked until the person ticks it: the site promises no dark patterns.
     subscribe = forms.BooleanField(
         required=False,
-        initial=True,
+        initial=False,
         widget=forms.CheckboxInput(
             attrs={"class": "form-check-input", "id": "subscribe"}
         ),

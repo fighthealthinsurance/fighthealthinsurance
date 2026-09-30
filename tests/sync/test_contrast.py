@@ -1560,16 +1560,6 @@ UNRESOLVED: tuple[Exempt, ...] = (
     Exempt("custom.css", ".hero-tagline", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".hero-subcopy", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".secondary-cta, .tertiary-cta", HERO_VEIL),
-    Exempt("custom.css", ".how-step", HERO_VEIL),
-    Exempt("custom.css", ".how-step:not(:last-child)::after", HERO_VEIL),
-    Exempt("custom.css", ".how-step h6", HERO_VEIL),
-    Exempt("custom.css", ".how-step p", HERO_VEIL),
-    Exempt("custom.css", ".how-it-works-intro", HERO_PHOTOGRAPH),
-    Exempt("custom.css", ".trust-chip", HERO_VEIL),
-    Exempt("custom.css", ".trust-chip-link:hover, .trust-chip-link:focus", HERO_VEIL),
-    Exempt("main.css", "a:hover, a:active, a:focus", EVERY_LINK),
-    Exempt("main.css", "#home h1", HERO_PHOTOGRAPH),
-    Exempt("main.css", "#home h3", HERO_PHOTOGRAPH),
     Exempt("main.css", ".slider .caption", HERO_PHOTOGRAPH),
 )
 

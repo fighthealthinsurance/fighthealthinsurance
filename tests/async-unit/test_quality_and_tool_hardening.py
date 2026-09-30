@@ -137,6 +137,42 @@ class TestToolErrorPathCleansSyntax:
         assert "Here is my answer." in cleaned
         assert statuses  # the user was told something went wrong
 
+    @staticmethod
+    def _talking_tool(status):
+        class _TalkingTool(BaseTool):
+            pattern = r"\*\*talk\*\*"
+            name = "Talker"
+
+            async def execute(self, match, response_text, context, **kwargs):
+                await self.send_status_message("Processing...")
+                return response_text, context
+
+        return _TalkingTool(status)
+
+    @pytest.mark.asyncio
+    async def test_a_departed_client_gets_no_second_status_frame(self):
+        """A status frame finding the client gone is not this tool failing:
+        no tool-error status is tried into the same closed socket."""
+        from fighthealthinsurance.client_gone import ClientGone
+
+        status = AsyncMock(side_effect=ClientGone())
+        await self._talking_tool(status).handle("Answer. **talk**", "ctx")
+        assert status.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_departed_client_keeps_the_reply_for_replay(self):
+        """The model's reply already exists when a tool runs, so a hangup
+        found by the tool's status frame hands the reply back (tool syntax
+        stripped) for the turn to persist, instead of raising and abandoning
+        the turn with the reply discarded (review)."""
+        from fighthealthinsurance.client_gone import ClientGone
+
+        status = AsyncMock(side_effect=ClientGone())
+        cleaned, context, handled = await self._talking_tool(status).handle(
+            "Answer. **talk**", "ctx"
+        )
+        assert (cleaned, context, handled) == ("Answer.", "ctx", True)
+
     @pytest.mark.asyncio
     async def test_no_match_passes_through(self):
         tool = _ExplodingTool(AsyncMock())

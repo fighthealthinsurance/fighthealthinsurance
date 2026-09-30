@@ -6,7 +6,8 @@ from django.http import HttpResponse, HttpResponseForbidden, StreamingHttpRespon
 from django.shortcuts import render
 from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Exists, IntegerField, Max, Min, OuterRef, Q
+from django.db.models.functions import Cast
 from django.db.utils import NotSupportedError
 from django.utils import timezone
 from datetime import timedelta
@@ -775,28 +776,55 @@ def pro_signups_csv_single_lines(request):
     return response
 
 
+def _unique_signups_per_day_df() -> "pd.DataFrame":
+    """One row per (signup day, paid) with the count of professionals whose
+    FIRST signup landed on that day.
+
+    "Unique" means one per email across the whole table, which is what the
+    cumulative chart claims to show: InterestedProfessional.email is not
+    unique, so someone who submits the interest form on Monday and again on
+    Wednesday has two rows and must count once, on Monday.
+
+    Paid means paid on ANY of their signups. Taking the first row's flag
+    instead made a conversion invisible: unpaid on Monday, paid on
+    Wednesday, counted Unpaid forever (review).
+
+    Aggregated in the database -- one row back per professional, not per
+    signup (review). The SQL shape this used to try, ``.distinct("email")``
+    then ``.annotate()``, cannot work on either backend: SQLite raises
+    ``NotSupportedError`` for ``distinct(*fields)``, and Postgres raises
+    ``NotImplementedError("annotate() + distinct(fields) is not
+    implemented.")`` from the SQL compiler. The fallback only caught the
+    first, so the staff charts 500'd on every load in production
+    (PYTHON-DJANGO-00-J1).
+    """
+    per_professional = (
+        _interested_professionals_excluding_test_emails()
+        # Cleared so no default ordering widens the GROUP BY past email.
+        .order_by()
+        .values("email")
+        .annotate(
+            # Not "signup_date": an annotation may not shadow a model field.
+            first_signup=Min("signup_date"),
+            # Max over the flag as an integer: Postgres has no max(boolean).
+            ever_paid=Max(Cast("clicked_for_paid", IntegerField())),
+        )
+        .values("first_signup", "ever_paid")
+    )
+    df = pd.DataFrame(list(per_professional))
+    if df.empty:
+        return df
+    df["signup_date"] = df["first_signup"]
+    df["clicked_for_paid"] = df["ever_paid"].astype(bool)
+    return (
+        df.groupby(["signup_date", "clicked_for_paid"]).size().reset_index(name="count")
+    )
+
+
 @staff_member_required
 def signups_by_day(request):
-    # Query to count unique email signups per day, separated by paid status
-    try:
-        signups_per_day = (
-            _interested_professionals_excluding_test_emails()
-            .distinct("email")
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email"))
-        )
-        # Convert query results to a DataFrame
-        df = pd.DataFrame(list(signups_per_day))
-    except NotSupportedError:
-        signups_per_day = (
-            _interested_professionals_excluding_test_emails()
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email", distinct=True))
-        )
-        # Convert query results to a DataFrame
-        df = pd.DataFrame(list(signups_per_day))
+    # Count unique email signups per day, separated by paid status.
+    df = _unique_signups_per_day_df()
 
     logger.debug(f"Signup DataFrame: {len(df)} rows")
     if df.empty or "signup_date" not in df.columns:
@@ -1251,23 +1279,7 @@ def _render_pro_category_chart(request, *, field, title, axis_label, color, top_
 @staff_member_required
 def pro_signups_cumulative(request):
     """Cumulative growth of unique InterestedProfessional signups over time."""
-    try:
-        signups_per_day = (
-            _interested_professionals_excluding_test_emails()
-            .distinct("email")
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email"))
-        )
-        df = pd.DataFrame(list(signups_per_day))
-    except NotSupportedError:
-        signups_per_day = (
-            _interested_professionals_excluding_test_emails()
-            .order_by("signup_date")
-            .values("signup_date", "clicked_for_paid")
-            .annotate(count=Count("email", distinct=True))
-        )
-        df = pd.DataFrame(list(signups_per_day))
+    df = _unique_signups_per_day_df()
 
     if df.empty or "signup_date" not in df.columns:
         return HttpResponse("No signup data available.", content_type="text/plain")

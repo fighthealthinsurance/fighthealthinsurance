@@ -39,6 +39,11 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.client_gone import (
+    ClientGone,
+    client_is_gone,
+    message_means_client_gone,
+)
 from fighthealthinsurance.utils import strip_internal_keys
 from fighthealthinsurance.models import (
     ChatLeads,
@@ -108,6 +113,37 @@ class PerConnectionThreadSensitiveMixin:
 
     _ts_context: Optional[ThreadSensitiveContext] = None
 
+    async def send(self, *args, **kwargs):
+        """The socket-write boundary: a write that failed because the peer
+        left surfaces as ``ClientGone``.
+
+        This is the ONLY place ``client_is_gone`` runs. Here it is sound --
+        the exception provably came out of writing to this client's socket.
+        Applied to an arbitrary exception further up (a chat turn, a
+        generator) it would also match a Postgres "connection reset by peer"
+        or a ``ConnectionResetError`` from a model backend, and file a real
+        outage as "the user left" (review). So every consumer's handler
+        checks ``isinstance(e, ClientGone)`` and never sniffs the exception
+        itself, and ``websocket_receive`` below catches whatever no handler
+        does.
+
+        A consumer with an ``except Exception`` around its sends still needs
+        its own ``except ClientGone`` ahead of it: ClientGone IS an
+        Exception, and it must stay one -- a BaseException would fly past
+        the cleanup those handlers do (persisting the user's message, the
+        zero-appeal diagnostics). The backstop is for sends with no handler.
+
+        ``accept()``/``close()`` bypass this on purpose (they call
+        ``AsyncConsumer.send`` directly); only text/bytes frames come
+        through, which is exactly the set the handlers below care about.
+        """
+        try:
+            await super().send(*args, **kwargs)  # type: ignore[misc]
+        except Exception as e:
+            if client_is_gone(e):
+                raise ClientGone() from e
+            raise
+
     async def websocket_connect(self, message):
         from django.conf import settings
 
@@ -128,6 +164,19 @@ class PerConnectionThreadSensitiveMixin:
     async def websocket_receive(self, message):
         try:
             await super().websocket_receive(message)  # type: ignore[misc]
+        except ClientGone:
+            # Backstop for a write outside any consumer's own handler (an
+            # early validation frame, say). Before the send wrapper existed,
+            # uvicorn's run_asgi silently swallowed its ClientDisconnected
+            # from such a write; ClientGone is not one, so re-raising it would
+            # turn a silent hangup into "Exception in ASGI application" at
+            # ERROR (review). Nothing to report and nobody to report it to.
+            #
+            # Swallowed, not re-raised, so the consumer lives on to receive
+            # the websocket.disconnect uvicorn queues whenever it marks a
+            # socket disconnected -- and websocket_disconnect below exits the
+            # thread-sensitive context as usual.
+            logger.warning(f"{type(self).__name__}: client hung up")
         except BaseException:
             # Several receive() bodies deliberately re-raise after logging
             # (diagnostics), which kills the whole consumer task -- and
@@ -325,33 +374,6 @@ class StreamWireTracker:
         )
 
 
-# Substrings that mark a `stream_error` as the CLIENT going away mid-stream
-# rather than a server/model failure. uvloop raises a bare RuntimeError
-# ("unable to perform operation on <TCPTransport closed=True ...>; the handler
-# is closed") when we write to an already-closed socket; the asyncio selector
-# loop surfaces the same condition as ConnectionResetError/BrokenPipeError
-# (str: "connection reset", "broken pipe", "connection lost"). When the client
-# leaves, 0 appeals is expected and is NOT a generation failure.
-_CLIENT_DISCONNECT_MARKERS = (
-    "the handler is closed",
-    "unable to perform operation on",
-    "tcptransport closed",
-    "connection reset",
-    "connection lost",
-    "broken pipe",
-    "connectionreseterror",
-)
-
-
-def _stream_error_is_client_disconnect(stream_error: Optional[str]) -> bool:
-    """True when a zero-appeal `stream_error` was caused by the client
-    disconnecting mid-stream (closed transport), not by the server."""
-    if not stream_error:
-        return False
-    lowered = stream_error.lower()
-    return any(marker in lowered for marker in _CLIENT_DISCONNECT_MARKERS)
-
-
 def summarize_persisted_appeals(denial: Denial) -> str:
     """Return a compact count of what the server actually has on disk for a
     denial, for logging next to a client-reported failure.
@@ -400,6 +422,7 @@ async def log_zero_appeal_diagnostics(
     stream_error: Optional[str] = None,
     *,
     error_from_send: Optional[bool] = None,
+    client_disconnected: Optional[bool] = None,
     generation_id: Optional[str] = None,
     make_appeals_seconds: Optional[float] = None,
     first_model: Optional[str] = None,
@@ -423,10 +446,18 @@ async def log_zero_appeal_diagnostics(
     server-side log join to the client's ReportClientError via the shared
     APPEAL_GEN_DIAG tag + gen_id.
 
+    `client_disconnected` is the caller's verdict on the exception it caught
+    (``isinstance(e, client_gone.ClientGone)``: the send wrapper's word that
+    the write failed because the peer left). Pass it whenever the exception
+    object is in hand; leave it None to fall back to matching `stream_error`
+    text (``client_gone.message_means_client_gone``), which is all a caller
+    holding only a stored string has -- and which cannot see uvicorn's
+    message-less ``ClientDisconnected`` at all.
+
     `error_from_send` tells us whether `stream_error` came from writing to the
-    client socket. This gates the client-disconnect classification, which is
-    pure string matching and would otherwise fire on a SERVER-side failure that
-    happens to mention a reset connection -- e.g. a Postgres
+    client socket. It gates the client-disconnect classification above, and
+    keeps the final say over it: without that gate either signal would fire on
+    a SERVER-side failure that happens to look like a hangup -- e.g. a Postgres
     "could not receive data from server: Connection reset by peer" raised inside
     make_appeals. Misfiling that as "the user left" downgrades a real outage to
     WARNING. Pass False when the error provably came from the generator, True
@@ -490,9 +521,11 @@ async def log_zero_appeal_diagnostics(
     )
     # error_from_send is False => the failure came out of the generator, not a
     # socket write, so it cannot be the client hanging up no matter what the
-    # message says.
+    # message or the exception type says.
     is_client_disconnect = error_from_send is not False and (
-        _stream_error_is_client_disconnect(stream_error)
+        client_disconnected
+        if client_disconnected is not None
+        else message_means_client_gone(stream_error)
     )
     if is_client_disconnect:
         # Checked BEFORE the persisted-count branches: the user simply left, so
@@ -799,19 +832,44 @@ class StreamingAppealsBackend(
                     f"appeals ws: sent {appeal_count} payloads for denial {denial_id}"
                 )
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Error sending back appeals for denial {denial_id} after "
-                f"{appeal_count} appeals and {status_count} status frames "
-                f"(last phase={last_status_phase}, {wire.summary()}): {e}"
-            )
+            # A client that hung up mid-stream is the ordinary end of a
+            # stream, not a server fault: the user closed the tab, locked
+            # their phone, or walked out of coverage. ClientGone is raised
+            # only by the send wrapper, so a disconnect-shaped error out of
+            # the generator -- a Postgres "connection reset by peer", say --
+            # cannot be one and stays an ERROR.
+            hung_up = isinstance(e, ClientGone)
+            if hung_up:
+                # warning, not error: Sentry's LoggingIntegration raises an
+                # issue at ERROR, and paging on a user closing a tab is what
+                # buried the real stream failures underneath it. No
+                # exception=True either -- the traceback is uvicorn's socket
+                # write, every time, and it is what fingerprinted these into
+                # their own issue.
+                logger.warning(
+                    f"appeals ws: client hung up mid-stream for denial "
+                    f"{denial_id} after {appeal_count} appeals and "
+                    f"{status_count} status frames (last phase="
+                    f"{last_status_phase}, {wire.summary()})"
+                )
+            else:
+                logger.opt(exception=True).error(
+                    f"Error sending back appeals for denial {denial_id} after "
+                    f"{appeal_count} appeals and {status_count} status frames "
+                    f"(last phase={last_status_phase}, {wire.summary()}): {e}"
+                )
             if appeal_count == 0:
                 await log_zero_appeal_diagnostics(
                     denial_id=denial_id,
                     status_count=status_count,
                     last_status_phase=last_status_phase,
                     transport="websocket",
-                    stream_error=str(e),
+                    # ClientGone carries no text of its own; the transport
+                    # error that caused it is what tells a tab close from a
+                    # proxy reap or a uvloop closed-transport (review).
+                    stream_error=repr(e.__cause__) if hung_up else str(e),
                     error_from_send=error_from_send,
+                    client_disconnected=hung_up,
                     wire=wire.summary(),
                     **gen_fields.as_kwargs(),
                 )
@@ -834,6 +892,15 @@ class StreamingAppealsBackend(
                     )
                 except Exception:
                     logger.debug("appeals ws: could not send error frame")
+            if hung_up:
+                # Return, not raise: uvicorn's run_asgi swallows only its own
+                # ClientDisconnected. Any other hangup type re-raised out of
+                # the app (uvloop's closed-transport RuntimeError, a
+                # ConnectionResetError) is logged by uvicorn as "Exception in
+                # ASGI application" at ERROR with a traceback -- the very
+                # Sentry issue this branch exists to end (review). The
+                # finally below still closes the generator and the socket.
+                return
             raise
         except asyncio.CancelledError:
             # A real client hangup / server shutdown cancels receive().
@@ -910,6 +977,10 @@ class StreamingEscalationBackend(
                 await self.send(record)
                 await asyncio.sleep(0)
                 await self.send("\n")
+        except ClientGone:
+            # The user left mid-stream: the ordinary end of a stream, not a
+            # server fault, and there is nobody to send an error frame to.
+            logger.warning("escalation ws: client hung up mid-stream")
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Error sending back escalation letters: {e}"
@@ -1042,6 +1113,12 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
                 await self.send(json.dumps(record))
                 await asyncio.sleep(0)
             await asyncio.sleep(1)
+        except ClientGone:
+            # The user left mid-stream. Not re-raised: only uvicorn's own
+            # ClientDisconnected is swallowed by run_asgi; anything else
+            # escaping the app is logged there at ERROR (see the appeals
+            # consumer). The finally below still closes up.
+            logger.warning("entity ws: client hung up mid-stream")
         except Exception as e:
             # ERROR, not debug: a systemic extraction failure was invisible in
             # production logs.
@@ -1157,6 +1234,11 @@ class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsume
                     else:
                         logger.debug(f"prior-auth ws: malformed proposal {proposal}")
                     await asyncio.sleep(0)
+            except ClientGone:
+                # The user left mid-stream; nobody to send an error frame to,
+                # and not re-raised (see the appeals consumer for why). The
+                # finally below still closes the generator and the socket.
+                logger.warning("prior-auth ws: client hung up mid-stream")
             except Exception as e:
                 logger.opt(exception=True).error(
                     f"Error sending back prior auth proposals: {e}"
@@ -1186,7 +1268,23 @@ class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsume
                 except Exception:
                     logger.debug("prior-auth ws: error closing proposal generator")
                 await asyncio.sleep(1)
+                # Guarded like the sibling consumers': close() skips the send
+                # wrapper, so on a departed peer it raises uvicorn's raw
+                # ClientDisconnected, which the outer except Exception would
+                # log at ERROR -- the hangup this handler just logged as a
+                # warning, reported a second time (review).
+                try:
+                    await self.close()
+                except Exception:
+                    logger.debug("prior-auth ws: error closing connection")
+        except ClientGone:
+            # A write before the loop (the initial status frame) found the
+            # peer already gone. Same non-event as mid-stream.
+            logger.warning("prior-auth ws: client hung up before generation")
+            try:
                 await self.close()
+            except Exception:
+                logger.debug("prior-auth ws: error closing connection")
         except Exception as e:
             logger.opt(exception=True).error(f"Error in prior auth consumer: {e}")
             # Failures BEFORE the generation loop (auth lookup, status
@@ -1768,6 +1866,19 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 await self.chat_interface.replay_chat_history()
 
         except Exception as e:
+            # Nobody is listening: the exception IS the socket being gone, so
+            # there is no error to report and no one to report it to. Sending
+            # the frame below would raise the same exception a second time,
+            # out of the handler that exists to handle it. isinstance, not
+            # client_is_gone(e): this block also covers the chat lookup, the
+            # geo lookup and the whole turn, and a DB "connection reset by
+            # peer" raised in there is an outage, not a departure.
+            if isinstance(e, ClientGone):
+                logger.warning(
+                    f"chat ws: client hung up mid-turn for chat "
+                    f"{self.chat_id}; abandoning the turn"
+                )
+                return
             # Log the full traceback server-side at ERROR; send the client a
             # correlation ref rather than str(e) -- raw exception text can leak
             # internals (hostnames, SQL, model names) and is useless to users.
@@ -1775,12 +1886,21 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
             logger.opt(exception=True).error(
                 f"[chat-err {err_ref}] Error in ongoing chat: {type(e).__name__}"
             )
-            await self.send_json_message(
-                {
-                    "error": "Internal server error"
-                    f" (ref {err_ref}). Please try again."
-                }
-            )
+            try:
+                await self.send_json_message(
+                    {
+                        "error": "Internal server error"
+                        f" (ref {err_ref}). Please try again."
+                    }
+                )
+            except Exception:
+                # The socket died between the failure and the apology. The
+                # ERROR above is the record; a second traceback for the same
+                # turn is noise.
+                logger.warning(
+                    f"[chat-err {err_ref}] Could not deliver the error frame; "
+                    f"client is gone"
+                )
 
     def _get_professional_user(self, user):
         """Get the professional user from the Django user."""

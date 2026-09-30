@@ -64,6 +64,191 @@ class TestRayNoiseIsDropped:
         assert before_send_filter(event, {}) is event
 
 
+class TestInfrastructureTeardownNoiseIsDropped:
+    """Two unhandled exceptions that only ever mean "something shut down".
+
+    Neither is reachable from application code and neither is actionable, but
+    both arrive as unhandled errors at High priority: the gRPC channel-state
+    watcher racing Ray's teardown (PYTHON-DJANGO-00-MP) and uvloop refusing to
+    close a loop that is still running while asyncio unwinds a SIGTERM
+    (PYTHON-DJANGO-00-MR).
+    """
+
+    def test_grpc_channel_watcher_race_is_dropped(self):
+        event = _exc_event(
+            "ValueError", "Cannot monitor channel state: Channel closed!"
+        )
+        assert before_send_filter(event, {}) is None
+
+    def test_a_crash_chained_with_the_grpc_watcher_race_is_kept(self):
+        """A real exception raised while handling the watcher race is a root
+        cause, not teardown noise (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    {
+                        "type": "ValueError",
+                        "value": "Cannot monitor channel state: Channel closed!",
+                    },
+                    {"type": "KeyError", "value": "'denial_id'"},
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_the_loop_message_alone_is_kept(self):
+        """Without a SystemExit it means code closed a running loop -- a bug,
+        and possibly the tail of a crash whose root cause rides along."""
+        event = _exc_event("RuntimeError", "Cannot close a running event loop")
+        assert before_send_filter(event, {}) is event
+
+    def test_a_crash_that_chains_into_the_loop_message_is_kept(self):
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "KeyError", "value": "'denial_id'"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_the_shutdown_artifact_is_found_beside_its_chained_systemexit(self):
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "SystemExit", "value": "15"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is None
+
+    def test_the_production_shape_with_two_runtime_errors_is_dropped(self):
+        """The event this filter exists for carried two RuntimeErrors beside
+        its SystemExit: the runner raises more than one while unwinding."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "SystemExit", "value": "15"},
+                    {"type": "RuntimeError", "value": "Event loop stopped"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is None
+
+    def test_a_crash_that_rides_into_the_shutdown_is_kept(self):
+        """An application exception beside the shutdown pair is a root cause
+        that must not be dropped with the teardown noise (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "KeyError", "value": "'denial_id'"},
+                    {"type": "SystemExit", "value": "15"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_a_failed_exit_is_not_a_routine_shutdown(self):
+        """SystemExit: 1 is a process failing, not being told to stop."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "SystemExit", "value": "1"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_an_application_runtimeerror_in_the_shutdown_is_kept(self):
+        """RuntimeError is admitted only for the runner's own teardown
+        messages; an application one is a root cause (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    {"type": "RuntimeError", "value": "fax queue is wedged"},
+                    {"type": "SystemExit", "value": "15"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_an_unreadable_entry_in_the_shutdown_is_kept(self):
+        """An entry scrubbed to a non-dict could be the real crash, so a
+        chain that is not wholly readable is never dropped whole (review)."""
+        event = {
+            "exception": {
+                "values": [
+                    "[Filtered]",
+                    {"type": "SystemExit", "value": "15"},
+                    {
+                        "type": "RuntimeError",
+                        "value": "Cannot close a running event loop",
+                    },
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_an_unreadable_entry_beside_the_grpc_watcher_race_is_kept(self):
+        event = {
+            "exception": {
+                "values": [
+                    {
+                        "type": "ValueError",
+                        "value": "Cannot monitor channel state: Channel closed!",
+                    },
+                    "[Filtered]",
+                ]
+            }
+        }
+        assert before_send_filter(event, {}) is event
+
+    def test_a_systemexit_alone_is_kept(self):
+        """Only the teardown artifact is noise; an exit on its own is not."""
+        event = _exc_event("SystemExit", "15")
+        assert before_send_filter(event, {}) is event
+
+    @pytest.mark.parametrize(
+        "exc_type,value",
+        [
+            # Right text, wrong type: an application ValueError that happens to
+            # quote the grpc message must still report.
+            ("RuntimeError", "Cannot monitor channel state: Channel closed!"),
+            ("ValueError", "Cannot close a running event loop"),
+            # Right type, unrelated text.
+            ("ValueError", "Cannot monitor the appeal queue depth"),
+            ("RuntimeError", "Cannot close the fax connection"),
+        ],
+    )
+    def test_near_misses_are_kept(self, exc_type, value):
+        event = _exc_event(exc_type, value)
+        assert before_send_filter(event, {}) is event
+
+
 class TestUnroutedWebsocketIsDropped:
     """Channels raises ValueError for a websocket path matching no route; it
     escapes the ASGI app and uvicorn logs it at ERROR, so it becomes an event
@@ -153,16 +338,22 @@ class TestMalformedPayloadsDoNotDropEvents:
         "message",
         [
             # The marker is a PARAMETER of an unrelated failure.
-            {"message": "Failed to process job %s",
-             "params": ["Logstream proxy failed to connect"]},
+            {
+                "message": "Failed to process job %s",
+                "params": ["Logstream proxy failed to connect"],
+            },
             # The marker is only a dict KEY.
             {"Logstream proxy failed to connect": "irrelevant"},
             # The marker is in a sibling metadata field.
-            {"formatted": "Payment declined for order 42",
-             "debug_hint": "Unrecoverable error in data channel"},
+            {
+                "formatted": "Payment declined for order 42",
+                "debug_hint": "Unrecoverable error in data channel",
+            },
             # ...or nested deeper in metadata.
-            {"formatted": "DB timeout",
-             "ctx": {"note": "grpc_status:5 Channel for client x"}},
+            {
+                "formatted": "DB timeout",
+                "ctx": {"note": "grpc_status:5 Channel for client x"},
+            },
         ],
     )
     def test_marker_in_metadata_does_not_drop_a_real_error(self, message):

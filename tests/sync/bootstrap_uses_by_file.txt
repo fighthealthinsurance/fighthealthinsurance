@@ -296,7 +296,7 @@ how_to_help.html btn 10
 how_to_help.html col-md-6 2
 how_to_help.html row 1
 landing_base.html align-items-center 1
-landing_base.html btn 5
+landing_base.html btn 3
 landing_base.html container 4
 landing_base.html d-flex 1
 landing_base.html flex-column 1
@@ -657,7 +657,6 @@ scrub.html mt-2 4
 scrub.html mt-3 2
 scrub.html p-0 1
 scrub.html small 2
-scrub.html text-muted 14
 server_side_ocr.html btn 1
 server_side_ocr_error.html btn 1
 single_optional_question.html alert 1

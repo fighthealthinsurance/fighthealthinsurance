@@ -27,7 +27,7 @@ noise those probes *do* generate is one transaction per novel path, handled
 by :func:`before_send_transaction_filter`.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 # Ray client connection failures are transient infrastructure noise: Ray
 # reconnects on its own, so there is nothing to action in Sentry. They are
@@ -37,6 +37,39 @@ from typing import Any, Dict, List
 RAY_MESSAGE_MARKERS = (
     ("Logstream proxy failed to connect", "Ray logstream proxy connection failed"),
     ("Unrecoverable error in data channel", "Ray data channel error"),
+)
+
+# gRPC's channel-state watcher runs on a thread of its own and races Ray's
+# client teardown: when the channel closes first, cygrpc raises
+# ValueError("Cannot monitor channel state: Channel closed!") out of that
+# thread, unhandled. Same class as RAY_MESSAGE_MARKERS above -- Ray reconnects
+# and there is nothing to action -- but it arrives under the "threading"
+# mechanism with no Ray logger name, so neither ignore_logger nor the markers
+# above can see it. Narrow on purpose: paired with the ValueError type, this
+# string is grpc's own and appears nowhere in this codebase.
+GRPC_CHANNEL_WATCHER_MARKER = "Cannot monitor channel state"
+
+# uvloop refuses to close a loop that is still running, which is precisely
+# what asyncio's Runner attempts while unwinding a SIGTERM -- the event
+# carries a chained SystemExit: 15. A pod being told to stop (deploy,
+# scale-down, node drain) is routine, and this artifact of the shutdown path
+# says nothing about why it stopped.
+#
+# Dropped ONLY when the whole event is a SIGTERM shutdown: a SystemExit whose
+# code is 15, and nothing beside it but the runner's own teardown
+# RuntimeErrors. On its own the message means code called close() on a
+# running loop, which is a bug; a failed exit (SystemExit: 1) is not a routine
+# stop; and a real crash that chains into the teardown (a KeyError, or an
+# application RuntimeError, then the SIGTERM) must keep its root cause, so
+# anything else keeps the whole event (review). More than one RuntimeError is
+# admitted because the runner's unwinding raises more than one: the
+# production event this filter exists for carried two beside its SystemExit.
+EVENT_LOOP_SHUTDOWN_MARKER = "Cannot close a running event loop"
+SIGTERM_EXIT_CODE = "15"
+SHUTDOWN_RUNTIME_ERROR_MARKERS = (
+    EVENT_LOOP_SHUTDOWN_MARKER,
+    # asyncio's "Event loop stopped before Future completed."
+    "Event loop stopped",
 )
 
 # Channels raises this for a websocket path that matches no route. It escapes
@@ -94,6 +127,20 @@ def as_text(value: Any) -> str:
     return ""
 
 
+def raw_exception_entries(event: Any) -> Sequence[Any]:
+    """The event's ``exception.values`` as sent, unfiltered, or empty when
+    any level above the entries is malformed (see ``exception_values``)."""
+    if not isinstance(event, dict):
+        return []
+    exception = event.get("exception")
+    if not isinstance(exception, dict):
+        return []
+    values = exception.get("values")
+    if not isinstance(values, (list, tuple)):
+        return []
+    return values
+
+
 def exception_values(event: Any) -> List[Dict[str, Any]]:
     """The event's exception entries, defensively.
 
@@ -106,15 +153,18 @@ def exception_values(event: Any) -> List[Dict[str, Any]]:
     rather than surface, so every level is type-checked and a malformed
     payload yields "no exceptions found", which keeps the event.
     """
-    if not isinstance(event, dict):
-        return []
-    exception = event.get("exception")
-    if not isinstance(exception, dict):
-        return []
-    values = exception.get("values")
-    if not isinstance(values, (list, tuple)):
-        return []
-    return [value for value in values if isinstance(value, dict)]
+    return [value for value in raw_exception_entries(event) if isinstance(value, dict)]
+
+
+def is_sigterm_teardown(exc: dict) -> bool:
+    """True for one link of a SIGTERM shutdown's exception chain."""
+    exc_type = exc.get("type")
+    exc_value = as_text(exc.get("value"))
+    if exc_type == "SystemExit":
+        return exc_value.strip() == SIGTERM_EXIT_CODE
+    if exc_type == "RuntimeError":
+        return any(marker in exc_value for marker in SHUTDOWN_RUNTIME_ERROR_MARKERS)
+    return False
 
 
 def before_send_filter(event: Any, hint: Any) -> Any:
@@ -137,7 +187,44 @@ def before_send_filter(event: Any, hint: Any) -> Any:
             logger.warning(f"{description} (filtered from Sentry)")
             return None
 
-    for exc in exception_values(event):
+    values = exception_values(event)
+    # The whole-event drops below judge every entry, so they need every
+    # entry readable: one scrubbed to a non-dict could be the real crash in
+    # the chain (review).
+    whole_chain = len(values) == len(raw_exception_entries(event))
+    shutdown_artifact = (
+        whole_chain
+        and any(exc.get("type") == "SystemExit" for exc in values)
+        and all(is_sigterm_teardown(exc) for exc in values)
+        and any(
+            exc.get("type") == "RuntimeError"
+            and EVENT_LOOP_SHUTDOWN_MARKER in as_text(exc.get("value"))
+            for exc in values
+        )
+    )
+    # Same guard as shutdown_artifact: a real crash chained with the watcher
+    # race must still reach Sentry, so the event is dropped only when the
+    # race is all it holds (review).
+    only_grpc_watcher_race = (
+        whole_chain
+        and bool(values)
+        and all(
+            exc.get("type") == "ValueError"
+            and GRPC_CHANNEL_WATCHER_MARKER in as_text(exc.get("value"))
+            for exc in values
+        )
+    )
+    # Both are verdicts on the whole event, so they are made once, here.
+    if only_grpc_watcher_race:
+        logger.warning(
+            f"gRPC channel watcher race (filtered from Sentry): "
+            f"{as_text(values[0].get('value'))[:200]}"
+        )
+        return None
+    if shutdown_artifact:
+        logger.debug("Event loop shutdown artifact (filtered from Sentry)")
+        return None
+    for exc in values:
         exc_value = as_text(exc.get("value"))
         if "Logstream proxy failed to connect" in exc_value:
             logger.warning(

@@ -273,7 +273,13 @@ def record_ml_result(model: object, infer_type: object, result: str) -> None:
 
 
 def record_chat_turn(outcome: str) -> None:
-    """Record a chat turn outcome (ok / failed / timeout). Never raises."""
+    """Record a chat turn outcome. Never raises.
+
+    Outcomes: ok / failed / timeout / client_gone. ``client_gone`` is a turn
+    the user walked away from mid-flight -- not a failure, but worth watching
+    as a rate, since a climbing one means we got slow or something upstream
+    started reaping sockets.
+    """
     try:
         CHAT_TURNS_TOTAL.labels(outcome=outcome).inc()
     except Exception:  # pragma: no cover
