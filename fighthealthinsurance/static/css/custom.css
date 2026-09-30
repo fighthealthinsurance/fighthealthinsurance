@@ -3474,16 +3474,22 @@ textarea,
 .fhi-section-tight { padding-block: var(--fhi-space-6); }
 .fhi-section-alt { background-color: #f8f9fa; }
 
-/* The column a section's content sits in: the reading width, or the wide
-   one for a band of cards, never closer to the screen edge than the page
-   gutter. Its headings follow the wide tier's scale (above), since a band
-   holds cards and grids rather than prose. */
+/* The column a section's content sits in, sized the way the page tiers
+   are: the reading width, or the wide one for a band of cards, giving way
+   to the window with the page gutter beside it, and the whole screen less
+   the 16px edge padding on a phone. Its headings follow the wide tier's
+   scale (above), since a band holds cards and grids rather than prose. */
 .fhi-column {
-    width: min(100% - 2 * var(--fhi-page-gutter), var(--fhi-page-reading));
+    width: 100%;
+    max-width: min(var(--fhi-page-reading), 100% - 2 * var(--fhi-page-gutter));
     margin-inline: auto;
+    padding-inline: var(--fhi-space-4);
     container-type: inline-size;
 }
-.fhi-column-wide { width: min(100% - 2 * var(--fhi-page-gutter), var(--fhi-page-wide)); }
+.fhi-column-wide { max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-page-gutter)); }
+@media (max-width: 575px) {
+    .fhi-column { max-width: none; }
+}
 
 /* Children one under another, spaced by the parent. */
 .fhi-stack {
@@ -3499,6 +3505,7 @@ textarea,
 
 /* A stack whose contents sit in the middle: a call to action and its note. */
 .fhi-stack-centred { align-items: center; text-align: center; }
+.fhi-stack-centred > .btn { align-self: center; }
 
 /* A section's heading, and the line under it, sit in the middle of the
    column; the cards and lists after them keep their left edge. A band

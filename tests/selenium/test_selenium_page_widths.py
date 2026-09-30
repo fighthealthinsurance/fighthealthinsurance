@@ -63,15 +63,23 @@ PAGES = {
     "/mhmda": "reading",
 }
 
+# A page built from full-width bands under a hero holds its content in a
+# .fhi-column in each band, sized like the tiers. Path -> tier of the first
+# band's column. The measure checks are for prose pages and leave these out.
+BAND_PAGES = {
+    "/medicaid-eligibility": "reading",
+    "/turning-26": "reading",
+}
+
 COLUMN_JS = """
-const column = document.querySelector('.fhi-page, .fhi-page-wide');
+const column = document.querySelector(arguments[0] || '.fhi-page, .fhi-page-wide');
 if (!column) { return {missing: true}; }
 const style = getComputedStyle(column);
 const rect = column.getBoundingClientRect();
 const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
 const viewport = document.documentElement.clientWidth;
 return {
-  tier: column.classList.contains('fhi-page-wide') ? 'wide' : 'reading',
+  tier: column.matches('.fhi-page-wide, .fhi-column-wide') ? 'wide' : 'reading',
   // The padding box: the column as drawn, edge padding included.
   outer: column.clientWidth,
   inner: column.clientWidth - padding,
@@ -141,7 +149,7 @@ HEADINGS_JS = """
 const title = document.querySelector('main h1');
 if (!title) { return {missing: true}; }
 const sections = [];
-for (const column of document.querySelectorAll('.fhi-page, .fhi-page-wide')) {
+for (const column of document.querySelectorAll('.fhi-page, .fhi-page-wide, .fhi-column')) {
   for (const h2 of column.querySelectorAll('h2')) {
     if (!h2.checkVisibility()) { continue; }
     sections.push({text: h2.textContent.trim().slice(0, 40),
@@ -166,11 +174,11 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def _column(self, page, size):
+    def _column(self, page, size, selector=None):
         self.set_window_size(*size)
         self.open(f"{self.live_server_url}{page}")
         self.wait_for_ready_state_complete()
-        column = self.execute_script(COLUMN_JS)
+        column = self.execute_script(COLUMN_JS, selector)
         assert not column.get("missing"), f"{page} has no .fhi-page column"
         return column
 
@@ -191,6 +199,43 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                     assert not c["insideBootstrap"], (
                         f"{page}: the column sits inside a Bootstrap grid."
                     )
+
+    def test_a_band_column_is_sized_like_the_tiers(self):
+        """A band's column is its tier's width and centred at a desktop,
+        gives way to the window with a gutter in between, and on a phone is
+        the whole screen less the edge padding, as the page tiers are. None
+        of it runs past its edge or pushes the page sideways."""
+        for page, tier in BAND_PAGES.items():
+            for size in (DESKTOP, LAPTOP):
+                with self.subTest(page=page, width=size[0]):
+                    c = self._column(page, size, ".fhi-column")
+                    assert not c.get("missing"), f"{page} has no .fhi-column"
+                    assert c["tier"] == tier, f"{page} is on the {c['tier']} tier"
+                    assert abs(c["outer"] - TIER_WIDTH[tier]) <= 1, (
+                        f"{page} at {size[0]}px: the column is {c['outer']:.0f}px, "
+                        f"not {TIER_WIDTH[tier]}px."
+                    )
+                    assert abs(c["left"] - c["right"]) <= 2
+            for size in (SMALL_LAPTOP, TABLET):
+                with self.subTest(page=page, width=size[0]):
+                    c = self._column(page, size, ".fhi-column")
+                    assert c["outer"] <= TIER_WIDTH[tier] + 1
+                    assert min(c["left"], c["right"]) >= LEAST_GUTTER, (
+                        f"{page} at {size[0]}px: {c['left']:.0f}px on the left and "
+                        f"{c['right']:.0f}px on the right; the column runs to the edge."
+                    )
+                    assert not c["sideways"] and not c["escapes"], (
+                        f"{page} at {size[0]}px: sideways={c['sideways']} escapes={c['escapes']}"
+                    )
+            with self.subTest(page=page, width=PHONE[0]):
+                c = self._column(page, PHONE, ".fhi-column")
+                assert abs(c["outer"] - c["viewport"]) <= 1, (
+                    f"{page} on a phone: the column is {c['outer']:.0f}px of a "
+                    f"{c['viewport']:.0f}px screen."
+                )
+                assert abs(c["padding"] - 2 * EDGE_PADDING) <= 1
+                assert not c["sideways"], f"{page} scrolls sideways on a phone."
+                assert not c["escapes"], f"{page} on a phone: past the edge: {c['escapes']}"
 
     def test_a_narrow_window_keeps_a_buffer_beside_the_column(self):
         """Between a phone and a full laptop the column gives way to the
@@ -291,10 +336,10 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
         column sizes its headings now; this holds that a section on any
         moved page, at a desktop and on a phone, stays below the title."""
         checked = 0
-        for page in PAGES:
+        for page in [*PAGES, *BAND_PAGES]:
             for size in (DESKTOP, PHONE):
                 with self.subTest(page=page, width=size[0]):
-                    self._column(page, size)
+                    self._column(page, size, ".fhi-column" if page in BAND_PAGES else None)
                     found = self.execute_script(HEADINGS_JS)
                     assert not found.get("missing"), f"{page} has no h1 in <main>"
                     for h2 in found["sections"]:
