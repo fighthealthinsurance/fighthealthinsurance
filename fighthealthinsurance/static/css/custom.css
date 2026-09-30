@@ -3539,6 +3539,11 @@ textarea,
     gap: var(--fhi-space-4);
 }
 .fhi-cluster-center { justify-content: center; }
+/* A long unbroken name, such as a drug's chemical names joined by
+   slashes, breaks rather than pushing the page wider than a phone; so does
+   a button in a row of them. */
+.fhi-column { overflow-wrap: anywhere; }
+.fhi-cluster > .btn { max-width: 100%; white-space: normal; }
 
 /* Two to four cards that belong together, laid out by the width of the
    column they sit in rather than the screen: one under another in a narrow
@@ -3587,6 +3592,9 @@ textarea,
 /* A card's closing link or button sits at the foot, so a row of cards
    lines theirs up. */
 .fhi-card-action { margin-top: auto; align-self: flex-start; }
+/* A card whose title link covers the whole card, so the card is the target. */
+.fhi-card:has(.fhi-card-link) { position: relative; }
+.fhi-card-link::after { content: ""; position: absolute; inset: 0; }
 /* A coloured title bar across the top of a card. #087990 carries white
    at 5.06:1. */
 .fhi-card-banner {
@@ -3624,6 +3632,7 @@ textarea,
     border-radius: var(--fhi-radius);
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+.fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
 .fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
@@ -3658,6 +3667,9 @@ textarea,
 .fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
 .fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
 .fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
+.fhi-badge.fhi-badge-info { background-color: #0dcaf0; color: #212529; }
+/* Long condition names wrap inside the card rather than running past it. */
+.fhi-badge { max-width: 100%; }
 
 /* Text roles: the line that introduces a section, a small aside, and the
    colour of a warning or information icon. */
@@ -3665,3 +3677,4 @@ textarea,
 .fhi-note { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
 .fhi-text-info { color: #087990; }
+.fhi-text-success { color: var(--fhi-green-ink); }
