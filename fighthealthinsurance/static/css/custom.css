@@ -3455,3 +3455,138 @@ textarea,
 .fhi-hint {
     color: var(--fhi-muted);
 }
+
+/* ---- Content pages: sections, the column, stacks and cards ----------------
+   The few pieces a content page is built from, in place of Bootstrap's grid
+   and utilities. They lean on the browser rather than on breakpoints: the
+   column is one width token, a card grid fits as many cards as the room
+   allows, and a parent spaces its children with gap, so there are no
+   margin classes to keep in step.
+   -------------------------------------------------------------------------- */
+
+/* A full-width band of the page. */
+.fhi-section { padding-block: var(--fhi-space-9); }
+.fhi-section-tight { padding-block: var(--fhi-space-6); }
+.fhi-section-alt { background-color: #f8f9fa; }
+
+/* The column a section's content sits in: the reading width, or the wide
+   one for a band of cards, never closer to the screen edge than the page
+   gutter. */
+.fhi-column {
+    width: min(100% - 2 * var(--fhi-page-gutter), var(--fhi-page-reading));
+    margin-inline: auto;
+}
+.fhi-column-wide { width: min(100% - 2 * var(--fhi-page-gutter), var(--fhi-page-wide)); }
+
+/* Children one under another, spaced by the parent. */
+.fhi-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-4);
+}
+.fhi-stack > * { margin-block: 0; }
+.fhi-stack-loose { gap: var(--fhi-space-6); }
+
+/* A wrapping row, for buttons and links side by side. */
+.fhi-cluster {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--fhi-space-4);
+}
+.fhi-cluster-center { justify-content: center; }
+
+/* Cards: as many to a row as fit at about 14rem each, so three short cards
+   share the reading column on a desktop and one takes a phone's width.
+   Cards that hold paragraphs are roomy: 20rem each, so two to a row there
+   and the lines stay long enough to read. */
+.fhi-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
+    gap: var(--fhi-space-6);
+}
+.fhi-cards-roomy { --fhi-card-min: 20rem; }
+
+.fhi-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-2);
+    min-width: 0;
+    padding: var(--fhi-space-6);
+    overflow-wrap: break-word;
+    background-color: #fff;
+    border: 1px solid #d0d0d0;
+    border-radius: var(--fhi-radius);
+}
+.fhi-card > * { margin-block: 0; }
+.fhi-card-warning { border-color: #ffc107; }
+.fhi-card-info { border-color: #087990; }
+.fhi-card-subtitle { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
+/* A card's closing link or button sits at the foot, so a row of cards
+   lines theirs up. */
+.fhi-card-action { margin-top: auto; align-self: flex-start; }
+/* A coloured title bar across the top of a card. #087990 carries white
+   at 5.06:1. */
+.fhi-card-banner {
+    margin: calc(-1 * var(--fhi-space-6)) calc(-1 * var(--fhi-space-6)) var(--fhi-space-2);
+    padding: var(--fhi-space-2) var(--fhi-space-6);
+    color: #fff;
+    background-color: #087990;
+    border-radius: var(--fhi-radius) var(--fhi-radius) 0 0;
+}
+
+/* Items that read as one block, divided by rules. */
+.fhi-list {
+    padding: 0;
+    list-style: none;
+    background-color: #fff;
+    border: 1px solid #d0d0d0;
+    border-radius: var(--fhi-radius);
+}
+.fhi-list > * {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+    padding: var(--fhi-space-4);
+}
+.fhi-list > * + * { border-top: 1px solid #d0d0d0; }
+.fhi-list > * > * { margin-block: 0; }
+
+/* A boxed notice. Amber with dark ink, 7.21:1. */
+.fhi-notice {
+    padding: var(--fhi-space-4);
+    border: 1px solid transparent;
+    border-radius: var(--fhi-radius);
+}
+.fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+
+/* A light panel. */
+.fhi-panel {
+    padding: var(--fhi-space-4);
+    background-color: #f8f9fa;
+    border-radius: var(--fhi-radius);
+}
+
+/* A small label. The fills clear 4.5:1 under their ink. */
+.fhi-badge {
+    display: inline-block;
+    padding: var(--fhi-space-1) var(--fhi-space-2);
+    font-size: var(--fhi-text-small);
+    font-weight: 700;
+    line-height: 1.25;
+    color: #fff;
+    border-radius: var(--fhi-space-2);
+}
+.fhi-badge.fhi-badge-success { background-color: #157347; }
+.fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
+.fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
+.fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
+
+/* Text roles. */
+.fhi-center { text-align: center; }
+.fhi-lead { font-size: var(--fhi-text-subsection); }
+.fhi-small { font-size: var(--fhi-text-small); }
+.fhi-text-warning { color: #8a5a00; }
+.fhi-text-info { color: #087990; }
+/* An icon or badge before its text keeps a little space from it. */
+.fhi-marker { margin-inline-end: var(--fhi-space-2); }
