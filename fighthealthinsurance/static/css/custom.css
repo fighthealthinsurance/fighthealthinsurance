@@ -154,7 +154,7 @@
        short floor only bites on a page with very little copy, and is low
        enough that it does not pad that copy out with empty picture. */
     --fhi-hero-floor: 650px;
-    --fhi-hero-floor-short: 240px;
+    --fhi-hero-floor-short: 224px;
     /* A form control under 16px makes iOS Safari zoom the page when it takes
        focus, and it does not zoom back out. Measured on the upload page:
        inputs were rendering at 12px and 13.6px. */
@@ -3440,4 +3440,18 @@ textarea,
     .fhi-form-table textarea {
         max-width: 100%;
     }
+}
+
+/* The two notes under the appeal form (what stays in your browser, how we
+   store your email): sized as subsections, not as the page's title. */
+.fhi-form-note-title {
+    font-size: var(--fhi-text-subsection);
+    line-height: var(--fhi-line-heading);
+    margin-top: var(--fhi-space-6);
+}
+
+/* Hint text under a label or field: the site's muted grey, 5.74:1 on white.
+   Ours rather than Bootstrap's .text-muted, which is on its way out. */
+.fhi-hint {
+    color: var(--fhi-muted);
 }

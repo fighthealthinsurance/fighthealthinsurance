@@ -166,3 +166,23 @@ class ScrubPageCopyTest(TestCase):
             re.search(r"\bname\s*=", uploader.group(0), re.IGNORECASE),
             "the uploader grew a name= attribute: " + uploader.group(0),
         )
+
+    def test_scan_page_keeps_the_browser_only_fields_out_of_the_post(self):
+        """The name and street fields are only for scrubbing in the browser.
+        An input with a name inside the /process form is sent to the server,
+        so none of them may have one. ZIP code is sent on purpose: the form
+        has a field for it."""
+        body = Client().get(reverse("scan")).content.decode("utf-8")
+        for field_id in ("store_fname", "store_lname", "store_street"):
+            with self.subTest(field=field_id):
+                field = re.search(
+                    r"<input\b[^>]*\bid\s*=\s*[\"']%s[\"'][^>]*>" % field_id,
+                    body,
+                    re.IGNORECASE,
+                )
+                self.assertIsNotNone(field, f"{field_id} disappeared")
+                assert field is not None  # for mypy
+                self.assertIsNone(
+                    re.search(r"\bname\s*=", field.group(0), re.IGNORECASE),
+                    f"{field_id} has a name= attribute: " + field.group(0),
+                )

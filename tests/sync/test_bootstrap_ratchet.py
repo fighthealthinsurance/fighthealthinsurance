@@ -205,7 +205,7 @@ BASELINE: "dict[str, int]" = {
     "sizing": 83,
     "spacing": 695,
     "spinners": 3,
-    "text": 380,
+    "text": 366,
     "visibility and interaction": 8,
 }
 

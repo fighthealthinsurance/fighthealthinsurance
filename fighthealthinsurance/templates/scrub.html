@@ -67,19 +67,19 @@ Upload your Health Insurance Denial
 		{% endif %}
 	<div class="together-form-group">
 	  <div>
-	    <label for="store_fname" class="form-label">First name*</label><br>
+	    <label for="store_fname" class="form-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label><br>
 	    <input type="text" id="store_fname" class="fhi-field">
 	  </div>
 	  <div>
-	    <label for="store_lname" class="form-label">Last name*</label><br>
+	    <label for="store_lname" class="form-label">Last name <small class="fhi-hint">(we try to keep this in your browser)</small></label><br>
 	    <input type="text" id="store_lname" class="fhi-field">
 	  </div>
 	</div>
 	<div class="form-group">
 	  <div>
 	    <label for="email" class="form-label">
-	      <div id="email-label">Email**</div>
-	      <span class="d-block small text-muted">
+	      <div id="email-label">Email <small class="fhi-hint">(<a href="#how-we-store-your-email">how we store it</a>)</small></div>
+	      <span class="d-block small fhi-hint">
 	      </span>
 	    </label><br>
 	    <input type="email" id="email" name="email" class="fhi-field"><br>
@@ -88,15 +88,15 @@ Upload your Health Insurance Denial
 	<div class="together-form-group">
 	  <div>
 	    <label for="store_street" class="form-label">
-	      Street Address*
-	      <small class="text-muted">(e.g. 283 24th St)</small>
+	      Street address
+	      <small class="fhi-hint">(we try to keep this in your browser, e.g. 283 24th St)</small>
 	    </label><br>
-	    <input type="text" id="store_street" name="street" class="fhi-field"><br>
+	    <input type="text" id="store_street" class="fhi-field"><br>
 	  </div>
 	  <div>
 	    <label for="store_zip" class="form-label">
-	      Zip Code
-	      <small class="text-muted">(e.g. 94103)</small>
+	      ZIP code
+	      <small class="fhi-hint">(e.g. 94103)</small>
 	    </label><br>
 	    <input type="text" id="store_zip" name="zip" class="fhi-field"><br>
 	  </div>
@@ -106,22 +106,21 @@ Upload your Health Insurance Denial
 	<div class="form-check mt-2 mb-2" id="advanced_ocr_section">
 	    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
 	    <label for="advanced_ocr_enabled" class="form-check-label">
-		<b>Better text recognition for photos and scans</b> <span class="text-muted">(experimental)</span>
-		<small class="text-muted d-block">A small AI model that reads bad photos and faint scans much better.
+		<b>Better text recognition for photos and scans</b> <span class="fhi-hint">(experimental)</span>
+		<small class="fhi-hint d-block">A small AI model that reads bad photos and faint scans much better.
 		The first time you scan with this on, your browser downloads it from Hugging Face (about 1 GB) and keeps it
 		on this device. It runs on your device, and your file never leaves it. Standard recognition is faster and
 		fine for clear scans. You can remove the downloaded model later.</small>
 	    </label>
-	    <div id="advanced_ocr_status" class="text-muted small mt-1" role="status" aria-live="polite" hidden></div>
+	    <div id="advanced_ocr_status" class="fhi-hint small mt-1" role="status" aria-live="polite" hidden></div>
 	    <button type="button" id="advanced_ocr_remove_model" class="btn btn-link btn-sm p-0" hidden>Remove the downloaded model from this device (about 1 GB)</button>
 	</div>
 	{% endif %}
 	<div id="image_select_magic" style="visibility:visible">
 	    <label class="custom-file-label" for="uploader">
-			<b>Upload Insurance Denial</b>
+			<b>Upload your denial letter</b>
 		</label><br>
-		<small class="text-muted">Attach all insurance denial pages below:</small><br>
-		<small class="text-muted">Once uploaded, your file(s) will populate below in plain text.</small><br>
+		<small class="fhi-hint">Add every page. We'll turn it into text in the box below.</small><br>
 	    <div class="col-md-4">
 			{% comment %} DELIBERATELY has no name= attribute. The browser only includes
 			   a file input in the multipart body when it has a name, and this
@@ -143,30 +142,29 @@ Upload your Health Insurance Denial
 	    <div class="hidden-error-message hidden-progress-message" id="ocr_in_progress" role="alert" aria-live="polite">
 	      We're reading the file you uploaded. A scanned PDF is processed a page at
 	      a time, so this can take a little while. The text will appear in "Your
-	      Insurance Denial" below when it's done. You can also type or paste the
+      denial letter" below when it's done. You can also type or paste the
 	      denial text yourself instead of waiting.
 	    </div>
 	{% endif %}
 	<div class="form-group">
 	    <label for="denial_text" id="denial_text_label" class="form-label">
-			<b>Your Insurance Denial</b><br>
-			<small class="text-muted">If you are not uploading your health insurance denial file above, please copy and paste your denial below:</small><br>
-			<small class="text-muted">(Remove personally identifiable information (PII) as we store for machine learning and may review</small><br>
-			<small class="text-muted">OR click the button below to remove name and address from scanned text.)</small><br>
+			<b>Your denial letter</b><br>
+			<small class="fhi-hint">If you didn't upload it above, paste it here.</small><br>
+			<small class="fhi-hint">Take out your name, address and other personal details first, or use the Remove personal details button below. We keep this text to improve our AI, and people on our team may read it.</small><br>
 		</label><br>
 	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
 		placeholder="Your denial goes here"
 		class="fhi-field">{{ocr_result}}</textarea><br>
-		<small class="text-muted">This scrubbed version of your denial is transferred to our servers.</small><br>
+		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small><br>
 	    <button type="button" id="scrub-2" class="btn btn-green">
-	      Remove PII
+	      Remove personal details
 	    </button><br>
 		<br>
 		</div>
 	    <b>Policies</b>:
 	    <div class="form-check">
 	        <input type="checkbox" id="personalonly" name="personalonly" class="fhi-check">
-	        <label for="personalonly" class="form-check-label">I am aware that <b>this is for personal use only</b>. <a href="{% url 'pro_version' %}">Click here for those interested in a professional version (doctor/therapist/practitioner/office/hospital).</a></label>
+	        <label for="personalonly" class="form-check-label">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
 		</div>
 		<div class="form-check">
 		<input type="checkbox" id="privacy" name="privacy" class="fhi-check">
@@ -176,29 +174,29 @@ Upload your Health Insurance Denial
 		</div>
 		<div class="form-check">
 		<input type="checkbox" id="pii" name="pii" class="fhi-check">
-		<label for="pii" class="form-check-label">I have removed my personal identifiable information (PII) from the text areas above.</label>
+		<label for="pii" class="form-check-label">I've taken my personal details out of the letter above.</label>
 		</div>
 		<div class="form-check">
 		<input type="checkbox" id="tos" name="tos" class="fhi-check">
-		<label for="tos" class="form-check-label">I agree to the <a href="{% url 'tos' %}">terms of service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.</label>
+		<label for="tos" class="form-check-label">I agree to the <a href="{% url 'tos' %}">terms of service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition.</label>
 		</div>
 		<b>Optional</b>:
 			<div class="form-check">
 			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="fhi-check">
 				<label for="store_raw_email" class="form-check-label">
-					Store my email to follow-up with me (for the duration of automated follow ups + 30 days)**
+					Keep my email so you can check in about my appeal (until the follow-ups end, plus 30 days). <a href="#how-we-store-your-email">How we store it</a>
 				</label>
 			</div>
 			<div class="form-check">
 			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" checked class="fhi-check">
 				<label for="use_external_models" class="form-check-label">
-					Increase the number of possible appeals and use external models. <b>This is not required and involves sharing your data with third parties</b>, including Anthropic, Microsoft Azure, DeepInfra, Perplexity, TypeSafe, etc., subject to their own terms of service.
+					Use outside AI services to get more appeal drafts. <b>Optional. Your letter is shared with those services</b> (for example, Google and Anthropic, among others), under their own terms.
 				</label>
 			</div>
 			<div class="form-check">
 			<input type="checkbox" id="subscribe" name="subscribe" value="checked" class="fhi-check"{% if form.subscribe.value %} checked{% endif %}>
 				<label for="subscribe" class="form-check-label">
-					Subscribe to our mailing list for updates and news from Fight Health Insurance. We will store your e-mail for this option if selected.
+					Send me news from Fight Health Insurance. We keep your email for this only if you tick it.
 				</label>
 			</div>
 			<div class="form-group mt-3">
@@ -221,24 +219,24 @@ Upload your Health Insurance Denial
 					Details (Optional)
 				</label>
 				<input type="text" id="referral_source_details" name="referral_source_details" class="fhi-field" placeholder="E.g., which search engine, social media platform, or person's name">
-				<small class="form-text text-muted">Please provide specific details about your referral source if applicable</small>
+				<small class="form-text fhi-hint">Please provide specific details about your referral source if applicable</small>
 			</div>
 			<div class="form-check mt-3 alert-box alert-warning">
 			<input type="checkbox" id="persistence_enabled" checked class="fhi-check">
 				<label for="persistence_enabled" class="form-check-label">
-					<b>Remember form data</b> - Keep your entered information when navigating back (data stored locally in your browser).
-					<br><small class="text-muted"><strong>Warning:</strong> Uncheck this if using a public or shared computer. Your sensitive information should not be stored on shared devices.</small>
+					<b>Remember what I typed</b> if I go back (saved in this browser).
+					<br><small class="fhi-hint"><strong>Leave this off on a shared or public computer.</strong></small>
 				</label>
 			</div>
 	    </div>
 	    <div class="hidden-error-message" id="email_error" role="alert" aria-live="polite">
-	      We need your email to proceed, this allows us to delete your data later on request*.
+	      We need your email to go on. It lets us delete your data later if you ask.
 	    </div>
 	    <div class="hidden-error-message" id="agree_chk_error" role="alert" aria-live="polite">
-		Can't proceed as you didn't agree to all the terms.
+		Please tick each box under Policies to go on.
 	    </div>
 	    <div class="hidden-error-message" id="pii_error" role="alert" aria-live="polite">
-		Can't proceed as you didn't check that you had removed your personal identifiable information (PII) from the text areas.
+		Please tick the box to confirm you've taken your personal details out of the letter.
 	    </div>
 	    <div class="hidden-error-message" id="need_denial" role="alert" aria-live="polite">
 	      We need your denial in the box below. If you never got one, say so and
@@ -259,17 +257,17 @@ Upload your Health Insurance Denial
 	    <button type="submit" class="btn btn-green fhi-btn-lg" id="submit">Submit</button>
 	</form>
 
+	<h2 class="fhi-form-note-title">What we try to keep in your browser</h2>
 	<p>
-	  * We attempt not to store the fields marked with a single asterisk (*) on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription.
+	  We try to keep your name and street address in your browser, like a cookie, rather than on our server. You can clear them in your browser or from our <a href="{% url 'privacy_policy' %}">privacy policy</a> page. If you join the mailing list, we send your name and email to our server for it.
 	</p>
+	<h2 class="fhi-form-note-title" id="how-we-store-your-email">How we store your email</h2>
 	<p>
-	    ** We hash your email before storing it in our database, this allows you to request removal from our database (should you wish) without us having to store your raw e-mail.
-	    If you opt-in to follow-ups or faxing, we will store your raw email to follow-up after insurance
-		company timelines may have expired so you can "remind" them. If you opt-in, we may follow-up by email
-		after reviewing your denial with a better template if our machine learning model does not find a good
-		model on the first pass-through. You may choose to use a different or temporary email
-	    service, like <a href="https://proton.me/">proton mail.</a> Please review our <a
-		href="{% url 'privacy_policy' %}">privacy policy</a> for more details. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription and it will be stored in a non-hashed format for the mailing list subscription.
+	  We aim to store only a scrambled version of your email (a hash), so you can ask us to remove it without us keeping your real address.
+	  If you turn on follow-ups or faxing, we keep your real email so we can remind you when the insurer's deadlines may have passed, and we may email you a better draft if our first one wasn't good.
+	  You can use a temporary email service, like <a href="https://proton.me/">Proton Mail</a>.
+	  If you join the mailing list, we keep your name and real email for it.
+	  Our <a href="{% url 'privacy_policy' %}">privacy policy</a> has the details.
 	</p>
     </div>
 </section>
