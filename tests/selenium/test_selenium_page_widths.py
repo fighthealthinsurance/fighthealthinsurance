@@ -71,6 +71,7 @@ BAND_PAGES = {
     "/microsite/biologic-denial/": "reading",
     "/state-help/": "reading",
     "/state-help/california/": "reading",
+    "/coverage-changes": "reading",
 }
 
 COLUMN_JS = """
