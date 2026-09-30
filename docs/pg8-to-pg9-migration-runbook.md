@@ -706,8 +706,9 @@ For later checks, [`cnpg-drill`](https://github.com/danielgaskins/cnpg-drill)
 can run the disposable restore and clean up its Cluster and PVCs. It starts
 from a completed Barman Cloud Plugin Backup rather than the live primary. Use
 a separate `ObjectStore` in `totallylegitco` that points at the same B2 archive
-as `fhi-backup-store-9`, but whose credentials can only list and read backup
-and WAL objects. Confirm that those credentials cannot write to the bucket.
+as `fhi-backup-store-9`. Restrict its B2 key to the `fhi-pg-main-9/` prefix
+with list and read access to backup and WAL objects there. Do not grant it
+access to other prefixes or permission to write to the bucket.
 Provision the `pg-backup2-recovery-readonly` Secret through the normal secret
 process with keys `PG_ACCESS_KEY_ID` and `PG_ACCESS_SECRET_KEY`. This
 `ObjectStore` uses the same endpoint and checksum settings as
