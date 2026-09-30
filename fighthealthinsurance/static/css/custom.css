@@ -1995,7 +1995,7 @@ section:not(.slider) .share-subcopy {
    table cell or checkbox label (the consent links) inside the page content, but not one styled as a button, a
    card or navigation. :where() keeps it at zero-class specificity, so any
    component rule that sets its own decoration still wins. */
-main :where(p, li, dd, td, .form-check-label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
+main :where(p, li, dd, td, .form-check-label, .fhi-check-row label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
     text-decoration: underline;
     text-underline-offset: 0.15em;
     text-decoration-thickness: from-font;

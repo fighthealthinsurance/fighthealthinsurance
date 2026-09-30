@@ -58,18 +58,14 @@ class BaseConsentForm(forms.Form):
 
     privacy_policy = forms.BooleanField(
         required=True,
-        widget=forms.CheckboxInput(
-            attrs={"class": "fhi-check", "id": "privacy"}
-        ),
+        widget=forms.CheckboxInput(attrs={"class": "fhi-check", "id": "privacy"}),
     )
 
     # Unticked until the person ticks it: the site promises no dark patterns.
     subscribe = forms.BooleanField(
         required=False,
         initial=False,
-        widget=forms.CheckboxInput(
-            attrs={"class": "fhi-check", "id": "subscribe"}
-        ),
+        widget=forms.CheckboxInput(attrs={"class": "fhi-check", "id": "subscribe"}),
     )
 
 
