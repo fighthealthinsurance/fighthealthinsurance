@@ -2693,7 +2693,7 @@ TEMPLATE_BASELINE: dict[str, int] = {
     "templates/proconnector_quick_intro.html": 4,
     "templates/send_bulk_email.html": 1,
     "templates/staff_dashboard.html": 4,
-    "templates/state_help.html": 4,
+    "templates/state_help.html": 2,
 }
 
 

@@ -46,11 +46,17 @@ ON_A_COLUMN = {
 # Hero pages -> the class every band under the hero opens on. The first
 # wrapper on these pages is inside the hero, so the page is read band by
 # band instead: each full-width section after the hero holds its own column,
-# which is how a band keeps its background running edge to edge.
+# which is how a band keeps its background running edge to edge. A page
+# built from bands opens each one on .fhi-column, which reads the same
+# width tokens as the page tiers and shares the wide tier's heading scale.
 BANDS_ON_A_COLUMN = {
-    "state_help_index.html": "fhi-page-wide",
-    "state_help.html": "fhi-page-wide",
+    "state_help_index.html": "fhi-column",
+    "state_help.html": "fhi-column",
     "glossary_index.html": "fhi-page-wide",
+    "medicaid_eligibility.html": "fhi-column",
+    "turning_26.html": "fhi-column",
+    "patient_access.html": "fhi-column",
+    "microsite.html": "fhi-column",
 }
 
 FIRST_WRAPPER = re.compile(r"{%\s*block content\s*%}.*?<div class=\"([^\"]+)\"", re.S)
@@ -87,7 +93,8 @@ def test_each_band_under_a_hero_opens_on_its_column() -> None:
             label = re.search(r"\bid=\"([^\"]+)\"", attributes)
             label = label.group(1) if label else (band.group(1) if band else "a band")
             found = CLASS.search(inner)
-            found = found.group(1) if found and tag == "div" else None
+            # the first class names the column; the rest are how it is laid out
+            found = found.group(1).split()[0] if found and tag == "div" else None
             if found != expected:
                 wrong.append(f"{name} #{label}: opens on {found!r}, not {expected!r}")
     assert not wrong, "\n".join(wrong)
