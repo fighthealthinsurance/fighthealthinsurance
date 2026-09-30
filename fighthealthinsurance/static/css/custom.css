@@ -920,7 +920,7 @@ a.link:hover::after {
     top: 50%;
     transform: translateY(-50%);
     font-size: 2rem;
-    /* Solid lime: 5.87:1 on the step's tint over the plum ground. */
+    /* Solid lime, with the shadow below to lift it off the photograph. */
     color: #b8dd00;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
     z-index: 1;
@@ -3286,30 +3286,45 @@ textarea,
     position: relative;
 }
 
+/* The home copy sits straight on the blurred photograph, with no panel
+   behind it: Melanie prefers the open look (2026-09-30). */
 #home .hero-inner {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    /* A flat plum panel under the home copy, so the words sit on one colour
-       rather than on whichever part of the photograph lands behind them. */
-    background: #2b0f3d;
 }
 
-/* On that panel the site's deep-green focus ring nearly disappears, so a
-   focused control in the home copy rings in white instead: 16.96:1 on
-   the plum. The id outranks each button's own ring rule; only the colour
+/* On the photograph's darker colours the site's deep-green focus ring
+   nearly disappears, so a focused control in the home copy rings in white
+   instead. The id outranks each button's own ring rule; only the colour
    changes, so width and offset stay theirs. */
 #home .hero-inner :focus-visible {
     outline-color: #fff;
 }
 
 /* The block under the home hero: why the site exists, paying what you can,
-   and how it works. It used to sit on the photograph inside the hero; on
-   the hero's own plum it keeps the white and lime it was drawn in, and the
-   first screen is left to the headline and the three ways in. */
+   and how it works. It used to sit on the photograph inside the hero, and
+   it still does: the same blurred picture, so its cards keep the look they
+   had there, while the first screen is left to the headline and the ways
+   in. The dark colour only shows if the picture fails to load, and keeps
+   the white and lime readable then. */
 .home-why {
-    background: #2b0f3d;
+    position: relative;
+    overflow: hidden;
+    background: #1d1b20 url("../images/crinkledcolors-optimized.jpg") center / cover no-repeat;
     color: #fff;
     padding: var(--fhi-space-9) var(--fhi-space-4);
+}
+
+.home-why::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: inherit;
+    filter: blur(6px);
+}
+
+.home-why > * {
+    position: relative;
 }
 
 .home-why-inner {

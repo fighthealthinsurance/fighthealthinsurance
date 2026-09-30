@@ -1,4 +1,5 @@
-"""The home hero: a flat panel under the copy, and a ring you can see on it."""
+"""The home hero: the copy on the photograph, the block under it on the same
+photograph, and a focus ring you can see there."""
 
 import pathlib
 import re
@@ -37,23 +38,24 @@ def _body(selector: str) -> str:
 
 
 class HomeHeroTest(SimpleTestCase):
-    def test_the_copy_sits_on_an_opaque_panel(self):
-        # Any transparency lets the photograph change the colour behind the
-        # words, which is what the panel is there to stop.
-        panel = re.search(r"background:\s*#([0-9a-fA-F]{6});", _body("#home .hero-inner"))
-        self.assertIsNotNone(panel, "the home copy panel is not a solid colour")
+    def test_the_copy_sits_on_the_photograph(self):
+        # Melanie chose the open look (2026-09-30): no panel of any colour
+        # behind the headline and the ways in.
+        self.assertNotRegex(_body("#home .hero-inner"), r"background(-color)?\s*:")
 
-    def test_a_focused_control_on_the_panel_rings_in_a_visible_colour(self):
-        panel = re.search(
-            r"background:\s*#([0-9a-fA-F]{6});", _body("#home .hero-inner")
-        ).group(1)
+    def test_the_block_under_the_hero_sits_on_the_same_photograph(self):
+        body = _body(".home-why")
+        self.assertIn("crinkledcolors-optimized.jpg", body)
+        self.assertNotIn("#2b0f3d", body.lower())
+
+    def test_a_focused_control_in_the_home_copy_rings_in_white(self):
+        # The site's deep-green ring disappears into the photograph's darker
+        # colours; white reads on all of them.
         ring = re.search(
-            r"outline-color:\s*#([0-9a-fA-F]{3,6});",
+            r"outline-color:\s*(#[0-9a-fA-F]{3,6}|white)\s*;",
             _body("#home .hero-inner :focus-visible"),
-        ).group(1)
-        if len(ring) == 3:
-            ring = "".join(c * 2 for c in ring)
-        self.assertGreaterEqual(_ratio(ring, panel), 3.0)
+        ).group(1).lower()
+        self.assertIn(ring, ("#fff", "#ffffff", "white"))
 
     def test_the_trust_chip_link_is_white_when_pressed_too(self):
         selector = re.search(
