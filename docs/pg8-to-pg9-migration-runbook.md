@@ -702,6 +702,79 @@ critical-table counts match `-9`. **This is the gate that unlocks decommission.*
 Tear the drill down afterward (`kubectl delete cluster fhi-pg-restore-drill` + its
 PVC) so it does not itself accrue backups.
 
+For later checks, [`cnpg-drill`](https://github.com/danielgaskins/cnpg-drill)
+can run the disposable restore and clean up its Cluster and PVCs. It starts
+from a completed Barman Cloud Plugin Backup rather than the live primary. Use
+a separate `ObjectStore` in `totallylegitco` that points at the same B2 archive
+as `fhi-backup-store-9`, but whose credentials can only list and read backup
+and WAL objects. Confirm that those credentials cannot write to the bucket.
+Provision the `pg-backup2-recovery-readonly` Secret through the normal secret
+process with keys `PG_ACCESS_KEY_ID` and `PG_ACCESS_SECRET_KEY`. This
+`ObjectStore` uses the same endpoint and checksum settings as
+`k8s/fhi-pg-main-9-objectstore.yaml`:
+
+```yaml
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: fhi-backup-store-9-readonly
+  namespace: totallylegitco
+spec:
+  configuration:
+    destinationPath: s3://fhi-pg-backup-second/
+    endpointURL: https://s3.us-west-004.backblazeb2.com
+    s3Credentials:
+      accessKeyId:
+        name: pg-backup2-recovery-readonly
+        key: PG_ACCESS_KEY_ID
+      secretAccessKey:
+        name: pg-backup2-recovery-readonly
+        key: PG_ACCESS_SECRET_KEY
+  instanceSidecarConfiguration:
+    env:
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
+```
+
+Apply it after creating the Secret. The drill checks that this store's archive
+destination and endpoint match the source store before it starts.
+
+After installing `cnpg-drill` v0.1.3, save this as `pg9-drill.json`, replacing
+`fhi-backup-store-9-readonly` with the name of that recovery `ObjectStore`:
+
+```json
+{
+  "namespace": "totallylegitco",
+  "cluster": "fhi-pg-main-9",
+  "recoveryObjectStore": "fhi-backup-store-9-readonly",
+  "timeoutSeconds": 7200,
+  "maxBackupAgeSeconds": 93600,
+  "checks": [
+    {
+      "name": "django-migrations-present",
+      "database": "app",
+      "query": "SELECT CASE WHEN to_regclass('public.django_migrations') IS NOT NULL THEN 1 ELSE 0 END",
+      "expected": "1"
+    }
+  ]
+}
+```
+
+```bash
+cnpg-drill plan --config pg9-drill.json   # review the selected backup and restore manifest
+cnpg-drill run --config pg9-drill.json --report pg9-drill-result.json
+```
+
+Check the exit status and the report's `backupID`, `recoverySeconds`, SQL
+result, and `cleanup`. The 26-hour backup age matches this runbook's alert;
+adjust the two-hour timeout to the actual restore time and available capacity.
+The SQL check proves that the restored application schema is present. Keep the
+source-vs-restored critical-table count comparison above as the decommission
+gate. The JSON report includes cluster and backup identifiers, so store it with
+the same care as other operational logs.
+
 ---
 
 ## Decommission `-8` (only after a verified `-9` restore)
