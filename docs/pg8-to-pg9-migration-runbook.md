@@ -753,9 +753,9 @@ After installing `cnpg-drill` v0.1.3, save this as `pg9-drill.json`, replacing
   "maxBackupAgeSeconds": 93600,
   "checks": [
     {
-      "name": "django-migrations-present",
+      "name": "django-migrations-data",
       "database": "app",
-      "query": "SELECT CASE WHEN to_regclass('public.django_migrations') IS NOT NULL THEN 1 ELSE 0 END",
+      "query": "SELECT CASE WHEN count(*) > 0 THEN 1 ELSE 0 END FROM public.django_migrations",
       "expected": "1"
     }
   ]
@@ -770,9 +770,9 @@ cnpg-drill run --config pg9-drill.json --report pg9-drill-result.json
 Check the exit status and the report's `backupID`, `recoverySeconds`, SQL
 result, and `cleanup`. The 26-hour backup age matches this runbook's alert;
 adjust the two-hour timeout to the actual restore time and available capacity.
-The SQL check proves that the restored application schema is present. Keep the
-source-vs-restored critical-table count comparison above as the decommission
-gate. The JSON report includes cluster and backup identifiers, so store it with
+The SQL check proves that the restored application database contains migration
+records. Keep the source-vs-restored critical-table count comparison above as
+the decommission gate. The JSON report includes cluster and backup identifiers, so store it with
 the same care as other operational logs.
 
 ---
