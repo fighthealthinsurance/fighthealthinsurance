@@ -49,10 +49,10 @@
 <!-- How It Works Section -->
 <section id="how-it-works" class="fhi-section">
     <div class="fhi-column fhi-stack fhi-stack-loose">
-        <h2 class="fhi-center">How Our Eligibility Check Works</h2>
-        <p class="fhi-lead fhi-center">Medicaid eligibility depends on your state, income, household, age, and situation. Our AI assistant walks through it with you a few questions at a time.</p>
+        <h2>How Our Eligibility Check Works</h2>
+        <p class="fhi-lead">Medicaid eligibility depends on your state, income, household, age, and situation. Our AI assistant walks through it with you a few questions at a time.</p>
 
-        <div class="fhi-cards">
+        <div class="fhi-switcher">
             <div class="fhi-card step-card">
                 <div class="step-num" aria-hidden="true">1</div>
                 <h5>Tell us your state</h5>
@@ -71,7 +71,7 @@
         </div>
 
         <div class="fhi-card fhi-card-warning callout-card">
-            <h5><span class="fhi-text-warning fhi-marker" aria-hidden="true">&#9888;</span>Experimental: An Estimate, Not a Determination</h5>
+            <h5><span class="fhi-text-warning" aria-hidden="true">&#9888;</span> Experimental: An Estimate, Not a Determination</h5>
             <p>This checker is an <strong>experimental feature</strong>&mdash;the AI can make mistakes, and Medicaid rules change often. Only your state Medicaid agency can officially determine eligibility. Our check is a free, fast way to understand where you likely stand and what to gather before you apply&mdash;always confirm with your state.</p>
         </div>
     </div>
@@ -80,8 +80,8 @@
 <!-- What You'll Need Section -->
 <section id="what-you-need" class="fhi-section fhi-section-alt">
     <div class="fhi-column fhi-stack fhi-stack-loose">
-        <h2 class="fhi-center">What You'll Want Handy</h2>
-        <p class="fhi-center fhi-hint">You don't need documents to get an estimate&mdash;rough numbers are fine. For the actual application, this is what states typically ask about.</p>
+        <h2>What You'll Want Handy</h2>
+        <p class="fhi-hint">You don't need documents to get an estimate&mdash;rough numbers are fine. For the actual application, this is what states typically ask about.</p>
 
         <div class="fhi-list">
             <div>
@@ -106,9 +106,9 @@
             </div>
         </div>
 
-        <div class="fhi-center">
+        <div class="fhi-stack fhi-stack-centred">
             <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Start the Free Eligibility Check (Experimental)</a>
-            <p class="fhi-hint fhi-small">Experimental: results are estimates only&mdash;confirm with your state.</p>
+            <p class="fhi-note">Experimental: results are estimates only&mdash;confirm with your state.</p>
         </div>
     </div>
 </section>
@@ -116,8 +116,8 @@
 <!-- Pathways Section -->
 <section id="pathways" class="fhi-section">
     <div class="fhi-column fhi-stack fhi-stack-loose">
-        <h2 class="fhi-center">Common Ways People Qualify</h2>
-        <p class="fhi-center fhi-hint">Exact income limits vary by state and change yearly&mdash;these are the broad categories our assistant checks.</p>
+        <h2>Common Ways People Qualify</h2>
+        <p class="fhi-hint">Exact income limits vary by state and change yearly&mdash;these are the broad categories our assistant checks.</p>
 
         <div class="fhi-cards fhi-cards-roomy">
             <div class="fhi-card">
@@ -151,10 +151,10 @@
 <!-- Work Requirements Section -->
 <section id="work-requirements" class="fhi-section fhi-section-alt">
     <div class="fhi-column fhi-stack fhi-stack-loose">
-        <h2 class="fhi-center">The New Work Requirements</h2>
+        <h2>The New Work Requirements</h2>
 
         <div class="fhi-card fhi-card-warning callout-card">
-            <h5><span class="fhi-text-warning fhi-marker" aria-hidden="true">&#9888;</span>New Federal Rules</h5>
+            <h5><span class="fhi-text-warning" aria-hidden="true">&#9888;</span> New Federal Rules</h5>
             <p>New federal rules require many adults (ages 19&ndash;64) to complete at least <strong>80 hours per month</strong> of qualifying activities to keep Medicaid coverage. States must implement them by <strong>January 1, 2027</strong>&mdash;a few have started earlier, and some may get extensions. Because states check the one to three months before you apply or renew, your activity in late 2026 can already count.</p>
         </div>
 
@@ -180,11 +180,11 @@
         </div>
 
         <div class="fhi-card callout-card callout-tip">
-            <h5><span class="fhi-marker" aria-hidden="true">&#128161;</span>Keep Records Now</h5>
+            <h5><span aria-hidden="true">&#128161;</span> Keep Records Now</h5>
             <p>States may look back up to 3 months when checking hours. Keep pay stubs, class schedules, and volunteer logs&mdash;it's unfair paperwork, but good records are the best defense against wrongly losing coverage. If you're short of 80 hours, adding a class or regular volunteering can close the gap.</p>
         </div>
 
-        <div class="fhi-center">
+        <div class="fhi-stack fhi-stack-centred">
             <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Read the Work Requirements FAQ</a>
         </div>
     </div>
@@ -193,8 +193,8 @@
 <!-- If You Don't Qualify Section -->
 <section id="alternatives" class="fhi-section">
     <div class="fhi-column fhi-stack fhi-stack-loose">
-        <h2 class="fhi-center">If You Don't Qualify (or Lose Coverage)</h2>
-        <p class="fhi-center fhi-hint">A "no" on Medicaid isn't the end of the road. The assistant will point you to alternatives like these based on your situation.</p>
+        <h2>If You Don't Qualify (or Lose Coverage)</h2>
+        <p class="fhi-hint">A "no" on Medicaid isn't the end of the road. The assistant will point you to alternatives like these based on your situation.</p>
 
         <div class="fhi-cards fhi-cards-roomy">
             <div class="fhi-card">
@@ -229,8 +229,8 @@
 <!-- State Resources Section -->
 <section id="state-resources" class="fhi-section fhi-section-alt">
     <div class="fhi-column fhi-stack fhi-stack-loose">
-        <h2 class="fhi-center">Confirm With Your State</h2>
-        <p class="fhi-center">Ready to apply, or want the official word? Go straight to the source.</p>
+        <h2>Confirm With Your State</h2>
+        <p>Ready to apply, or want the official word? Go straight to the source.</p>
 
         <div class="fhi-cards fhi-cards-roomy">
             <div class="fhi-card">
@@ -249,7 +249,7 @@
 
 <!-- Final CTA Section -->
 <section id="final-cta" class="fhi-section">
-    <div class="fhi-column fhi-stack fhi-stack-loose fhi-center">
+    <div class="fhi-column fhi-stack fhi-stack-loose fhi-column-centred">
         <div>
             {% include "partials/experimental_badge.html" %}
         </div>
@@ -267,7 +267,7 @@
 <section id="disclaimer" class="fhi-section fhi-section-tight">
     <div class="fhi-column fhi-stack fhi-stack-loose">
         <div class="disclaimer-box fhi-panel">
-            <p class="fhi-hint fhi-small">
+            <p class="fhi-note">
                 <strong>Disclaimer:</strong> The Medicaid eligibility check is an <strong>EXPERIMENTAL feature</strong> that is under active development and can produce incorrect, incomplete, or outdated results. This page and our AI assistant provide informational estimates only&mdash;not legal, medical, or financial advice, and not an official eligibility determination. Medicaid and Medicare rules vary by state and change frequently, including the phase-in of federal work requirements. Always confirm with your state Medicaid agency or a benefits navigator before making decisions about your coverage. Last updated: August 2026.
             </p>
         </div>
@@ -390,7 +390,7 @@
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
     }
 
-    #main-content .fhi-card-title {
+    #main-content .fhi-card :is(h2, h3, h4, h5) {
         color: #272727;
         font-weight: 600;
     }
@@ -411,18 +411,18 @@
         box-shadow: 0 2px 6px rgba(123, 146, 10, 0.35);
     }
 
-    .step-card .fhi-card {
+    .fhi-card.step-card {
         padding: 1.5rem 1.4rem;
     }
 
-    .step-card .fhi-card-title {
+    .step-card :is(h2, h3, h4, h5) {
         font-size: 1.1rem;
         margin-bottom: 0.5rem;
     }
 
     @media (min-width: 768px) {
         /* keep step bodies aligned when titles wrap to two lines */
-        .step-card .fhi-card-title {
+        .step-card :is(h2, h3, h4, h5) {
             min-height: 3.05em;
         }
     }
