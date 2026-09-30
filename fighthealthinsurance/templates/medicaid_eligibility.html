@@ -32,356 +32,244 @@
 </section>
 
 <!-- Experimental Notice Banner -->
-<section id="experimental-notice" class="pt-4 pb-2">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="alert alert-warning experimental-banner mb-0" role="alert">
-                    <div class="banner-icon" aria-hidden="true">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
-                    </div>
-                    <div class="banner-body">
-                        <h2 class="alert-heading">This eligibility check is an experimental feature</h2>
-                        <p>It is <strong>new, under active development, and can be wrong, incomplete, or out of date</strong>. It gives a rough estimate&mdash;<strong>not</strong> an official eligibility determination, and not legal, medical, or financial advice. Only your state Medicaid agency can determine your eligibility for real. Please double-check everything it tells you with <a href="{% url 'state_help_index' %}" class="alert-link">your state</a> before making any decisions about your coverage.</p>
-                    </div>
-                </div>
+<section id="experimental-notice" class="fhi-section fhi-section-tight">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <div class="fhi-notice fhi-notice-warning experimental-banner" role="alert">
+            <div class="banner-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+            </div>
+            <div class="banner-body">
+                <h2>This eligibility check is an experimental feature</h2>
+                <p>It is <strong>new, under active development, and can be wrong, incomplete, or out of date</strong>. It gives a rough estimate&mdash;<strong>not</strong> an official eligibility determination, and not legal, medical, or financial advice. Only your state Medicaid agency can determine your eligibility for real. Please double-check everything it tells you with <a href="{% url 'state_help_index' %}" >your state</a> before making any decisions about your coverage.</p>
             </div>
         </div>
     </div>
 </section>
 
 <!-- How It Works Section -->
-<section id="how-it-works" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">How Our Eligibility Check Works</h2>
-                <p class="lead text-center mb-4">Medicaid eligibility depends on your state, income, household, age, and situation. Our AI assistant walks through it with you a few questions at a time.</p>
+<section id="how-it-works" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>How Our Eligibility Check Works</h2>
+        <p class="fhi-lead">Medicaid eligibility depends on your state, income, household, age, and situation. Our AI assistant walks through it with you a few questions at a time.</p>
 
-                <div class="row g-4">
-                    <div class="col-md-4">
-                        <div class="card h-100 step-card">
-                            <div class="card-body">
-                                <div class="step-num" aria-hidden="true">1</div>
-                                <h5 class="card-title">Tell us your state</h5>
-                                <p class="card-text">Medicaid is run by states and goes by many names&mdash;Medi-Cal (California), Apple Health (Washington), MassHealth (Massachusetts), TennCare (Tennessee), and more. Rules differ a lot between states.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="card h-100 step-card">
-                            <div class="card-body">
-                                <div class="step-num" aria-hidden="true">2</div>
-                                <h5 class="card-title">Answer a few questions</h5>
-                                <p class="card-text">The assistant only asks what it actually needs: things like your age, household size, monthly income, and whether you're pregnant, disabled, or applying for long-term care.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="card h-100 step-card">
-                            <div class="card-body">
-                                <div class="step-num" aria-hidden="true">3</div>
-                                <h5 class="card-title">Get an estimate + next steps</h5>
-                                <p class="card-text">You'll get an experimental, best-guess estimate for today's rules and for the new work requirements, alternatives if you don't qualify, and your state's contact info to confirm and apply.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card mt-4 border-warning callout-card">
-                    <div class="card-body">
-                        <h5 class="card-title"><span class="text-warning me-2" aria-hidden="true">&#9888;</span>Experimental: An Estimate, Not a Determination</h5>
-                        <p class="card-text mb-0">This checker is an <strong>experimental feature</strong>&mdash;the AI can make mistakes, and Medicaid rules change often. Only your state Medicaid agency can officially determine eligibility. Our check is a free, fast way to understand where you likely stand and what to gather before you apply&mdash;always confirm with your state.</p>
-                    </div>
-                </div>
+        <div class="fhi-switcher">
+            <div class="fhi-card step-card">
+                <div class="step-num" aria-hidden="true">1</div>
+                <h5>Tell us your state</h5>
+                <p>Medicaid is run by states and goes by many names&mdash;Medi-Cal (California), Apple Health (Washington), MassHealth (Massachusetts), TennCare (Tennessee), and more. Rules differ a lot between states.</p>
             </div>
+            <div class="fhi-card step-card">
+                <div class="step-num" aria-hidden="true">2</div>
+                <h5>Answer a few questions</h5>
+                <p>The assistant only asks what it actually needs: things like your age, household size, monthly income, and whether you're pregnant, disabled, or applying for long-term care.</p>
+            </div>
+            <div class="fhi-card step-card">
+                <div class="step-num" aria-hidden="true">3</div>
+                <h5>Get an estimate + next steps</h5>
+                <p>You'll get an experimental, best-guess estimate for today's rules and for the new work requirements, alternatives if you don't qualify, and your state's contact info to confirm and apply.</p>
+            </div>
+        </div>
+
+        <div class="fhi-card fhi-card-warning callout-card">
+            <h5><span class="fhi-text-warning" aria-hidden="true">&#9888;</span> Experimental: An Estimate, Not a Determination</h5>
+            <p>This checker is an <strong>experimental feature</strong>&mdash;the AI can make mistakes, and Medicaid rules change often. Only your state Medicaid agency can officially determine eligibility. Our check is a free, fast way to understand where you likely stand and what to gather before you apply&mdash;always confirm with your state.</p>
         </div>
     </div>
 </section>
 
 <!-- What You'll Need Section -->
-<section id="what-you-need" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">What You'll Want Handy</h2>
-                <p class="text-center text-muted mb-4">You don't need documents to get an estimate&mdash;rough numbers are fine. For the actual application, this is what states typically ask about.</p>
+<section id="what-you-need" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>What You'll Want Handy</h2>
+        <p class="fhi-hint">You don't need documents to get an estimate&mdash;rough numbers are fine. For the actual application, this is what states typically ask about.</p>
 
-                <div class="list-group">
-                    <div class="list-group-item">
-                        <h5 class="mb-1">Household basics</h5>
-                        <p class="mb-1">Your state, age, marital status, how many people are in your tax household, and how many children (under 19) live with you.</p>
-                    </div>
-                    <div class="list-group-item">
-                        <h5 class="mb-1">Monthly income before taxes</h5>
-                        <p class="mb-1">A rough total for your household&mdash;wages, self-employment, Social Security, unemployment. Most Medicaid categories compare this against a percentage of the Federal Poverty Level.</p>
-                    </div>
-                    <div class="list-group-item">
-                        <h5 class="mb-1">Health and disability status</h5>
-                        <p class="mb-1">Whether you're pregnant, receiving SSDI or otherwise disabled, on Medicare, or have conditions like ESRD (kidney failure) or ALS&mdash;these open different eligibility pathways.</p>
-                    </div>
-                    <div class="list-group-item">
-                        <h5 class="mb-1">Assets (65+, disabled, or long-term care)</h5>
-                        <p class="mb-1">For aged/blind/disabled and nursing-home pathways, states also look at countable assets (usually excluding your primary home) and, for long-term care, home equity.</p>
-                    </div>
-                    <div class="list-group-item">
-                        <h5 class="mb-1">Work, school, or volunteer hours</h5>
-                        <p class="mb-1">Under the new federal work requirements, many adults will need about 80 qualifying hours per month&mdash;so knowing your typical weekly hours helps estimate whether you'd keep coverage once they apply.</p>
-                    </div>
-                </div>
-
-                <div class="text-center mt-4">
-                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Start the Free Eligibility Check (Experimental)</a>
-                    <p class="text-muted small mt-2 mb-0">Experimental: results are estimates only&mdash;confirm with your state.</p>
-                </div>
+        <div class="fhi-list">
+            <div>
+                <h5>Household basics</h5>
+                <p>Your state, age, marital status, how many people are in your tax household, and how many children (under 19) live with you.</p>
             </div>
+            <div>
+                <h5>Monthly income before taxes</h5>
+                <p>A rough total for your household&mdash;wages, self-employment, Social Security, unemployment. Most Medicaid categories compare this against a percentage of the Federal Poverty Level.</p>
+            </div>
+            <div>
+                <h5>Health and disability status</h5>
+                <p>Whether you're pregnant, receiving SSDI or otherwise disabled, on Medicare, or have conditions like ESRD (kidney failure) or ALS&mdash;these open different eligibility pathways.</p>
+            </div>
+            <div>
+                <h5>Assets (65+, disabled, or long-term care)</h5>
+                <p>For aged/blind/disabled and nursing-home pathways, states also look at countable assets (usually excluding your primary home) and, for long-term care, home equity.</p>
+            </div>
+            <div>
+                <h5>Work, school, or volunteer hours</h5>
+                <p>Under the new federal work requirements, many adults will need about 80 qualifying hours per month&mdash;so knowing your typical weekly hours helps estimate whether you'd keep coverage once they apply.</p>
+            </div>
+        </div>
+
+        <div class="fhi-stack fhi-stack-centred">
+            <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Start the Free Eligibility Check (Experimental)</a>
+            <p class="fhi-note">Experimental: results are estimates only&mdash;confirm with your state.</p>
         </div>
     </div>
 </section>
 
 <!-- Pathways Section -->
-<section id="pathways" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Common Ways People Qualify</h2>
-                <p class="text-center text-muted mb-4">Exact income limits vary by state and change yearly&mdash;these are the broad categories our assistant checks.</p>
+<section id="pathways" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Common Ways People Qualify</h2>
+        <p class="fhi-hint">Exact income limits vary by state and change yearly&mdash;these are the broad categories our assistant checks.</p>
 
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Children &amp; CHIP</h5>
-                                <p class="card-text">Children under 19 generally qualify at higher household incomes than adults (often 200% of the poverty level or more). Even when parents don't qualify, kids frequently do&mdash;through Medicaid or the Children's Health Insurance Program (CHIP).</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Pregnancy</h5>
-                                <p class="card-text">Pregnant people qualify at higher income limits in most states (often around 200% of the poverty level, sometimes higher), with coverage that continues postpartum. Pregnancy is also generally exempt from work requirements.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Adults 19&ndash;64 (Expansion States)</h5>
-                                <p class="card-text">In the 40 states (plus DC) that expanded Medicaid, adults generally qualify with household income up to 138% of the poverty level. Ten states haven't expanded&mdash;there, childless adults often can't qualify regardless of income.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">65+ or Disabled (ABD)</h5>
-                                <p class="card-text">Aged/blind/disabled pathways look at both income and countable assets (roughly $2,000 single / $3,000 married in many states, excluding your home). Medicare Savings Programs and medically-needy "spend-down" options can help near the limits.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Long-Term Care</h5>
-                                <p class="card-text">Nursing home and home-care (HCBS) Medicaid has its own income cap (around $3,000/month in many states), asset limits, and home-equity rules. Miller trusts and spend-down planning can help if you're just over the limits.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Medicare (65+, SSDI, ESRD, ALS)</h5>
-                                <p class="card-text">Our assistant also checks Medicare: most people qualify at 65 with 10 years of work history, after 24 months on SSDI, or at any age with ESRD or ALS. Some people qualify for both Medicare and Medicaid ("dual eligible").</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-card">
+                <h5>Children &amp; CHIP</h5>
+                <p>Children under 19 generally qualify at higher household incomes than adults (often 200% of the poverty level or more). Even when parents don't qualify, kids frequently do&mdash;through Medicaid or the Children's Health Insurance Program (CHIP).</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Pregnancy</h5>
+                <p>Pregnant people qualify at higher income limits in most states (often around 200% of the poverty level, sometimes higher), with coverage that continues postpartum. Pregnancy is also generally exempt from work requirements.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Adults 19&ndash;64 (Expansion States)</h5>
+                <p>In the 40 states (plus DC) that expanded Medicaid, adults generally qualify with household income up to 138% of the poverty level. Ten states haven't expanded&mdash;there, childless adults often can't qualify regardless of income.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>65+ or Disabled (ABD)</h5>
+                <p>Aged/blind/disabled pathways look at both income and countable assets (roughly $2,000 single / $3,000 married in many states, excluding your home). Medicare Savings Programs and medically-needy "spend-down" options can help near the limits.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Long-Term Care</h5>
+                <p>Nursing home and home-care (HCBS) Medicaid has its own income cap (around $3,000/month in many states), asset limits, and home-equity rules. Miller trusts and spend-down planning can help if you're just over the limits.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Medicare (65+, SSDI, ESRD, ALS)</h5>
+                <p>Our assistant also checks Medicare: most people qualify at 65 with 10 years of work history, after 24 months on SSDI, or at any age with ESRD or ALS. Some people qualify for both Medicare and Medicaid ("dual eligible").</p>
             </div>
         </div>
     </div>
 </section>
 
 <!-- Work Requirements Section -->
-<section id="work-requirements" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">The New Work Requirements</h2>
+<section id="work-requirements" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>The New Work Requirements</h2>
 
-                <div class="card mb-4 border-warning callout-card">
-                    <div class="card-body">
-                        <h5 class="card-title"><span class="text-warning me-2" aria-hidden="true">&#9888;</span>New Federal Rules</h5>
-                        <p class="card-text mb-0">New federal rules require many adults (ages 19&ndash;64) to complete at least <strong>80 hours per month</strong> of qualifying activities to keep Medicaid coverage. States must implement them by <strong>January 1, 2027</strong>&mdash;a few have started earlier, and some may get extensions. Because states check the one to three months before you apply or renew, your activity in late 2026 can already count.</p>
-                    </div>
-                </div>
+        <div class="fhi-card fhi-card-warning callout-card">
+            <h5><span class="fhi-text-warning" aria-hidden="true">&#9888;</span> New Federal Rules</h5>
+            <p>New federal rules require many adults (ages 19&ndash;64) to complete at least <strong>80 hours per month</strong> of qualifying activities to keep Medicaid coverage. States must implement them by <strong>January 1, 2027</strong>&mdash;a few have started earlier, and some may get extensions. Because states check the one to three months before you apply or renew, your activity in late 2026 can already count.</p>
+        </div>
 
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h6 class="card-subtitle mb-3 wr-label">What Counts Toward 80 Hours</h6>
-                                <ul class="check-list mb-0">
-                                    <li>Work (including self-employment)</li>
-                                    <li>School or job training</li>
-                                    <li>Volunteering / community service</li>
-                                    <li>Caregiving (varies by state)</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h6 class="card-subtitle mb-3 wr-label">Groups Often Exempt</h6>
-                                <ul class="check-list mb-0">
-                                    <li>Pregnant people</li>
-                                    <li>People with disabilities or who are medically frail</li>
-                                    <li>People on Medicare</li>
-                                    <li>Children and many caretakers&mdash;see the FAQ for details</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card mt-4 callout-card callout-tip">
-                    <div class="card-body">
-                        <h5 class="card-title"><span class="me-2" aria-hidden="true">&#128161;</span>Keep Records Now</h5>
-                        <p class="card-text mb-0">States may look back up to 3 months when checking hours. Keep pay stubs, class schedules, and volunteer logs&mdash;it's unfair paperwork, but good records are the best defense against wrongly losing coverage. If you're short of 80 hours, adding a class or regular volunteering can close the gap.</p>
-                    </div>
-                </div>
-
-                <div class="text-center mt-4">
-                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Read the Work Requirements FAQ</a>
-                </div>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-card">
+                <h6 class="fhi-card-subtitle wr-label">What Counts Toward 80 Hours</h6>
+                <ul class="check-list">
+                    <li>Work (including self-employment)</li>
+                    <li>School or job training</li>
+                    <li>Volunteering / community service</li>
+                    <li>Caregiving (varies by state)</li>
+                </ul>
             </div>
+            <div class="fhi-card">
+                <h6 class="fhi-card-subtitle wr-label">Groups Often Exempt</h6>
+                <ul class="check-list">
+                    <li>Pregnant people</li>
+                    <li>People with disabilities or who are medically frail</li>
+                    <li>People on Medicare</li>
+                    <li>Children and many caretakers&mdash;see the FAQ for details</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="fhi-card callout-card callout-tip">
+            <h5><span aria-hidden="true">&#128161;</span> Keep Records Now</h5>
+            <p>States may look back up to 3 months when checking hours. Keep pay stubs, class schedules, and volunteer logs&mdash;it's unfair paperwork, but good records are the best defense against wrongly losing coverage. If you're short of 80 hours, adding a class or regular volunteering can close the gap.</p>
+        </div>
+
+        <div class="fhi-stack fhi-stack-centred">
+            <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Read the Work Requirements FAQ</a>
         </div>
     </div>
 </section>
 
 <!-- If You Don't Qualify Section -->
-<section id="alternatives" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">If You Don't Qualify (or Lose Coverage)</h2>
-                <p class="text-center text-muted mb-4">A "no" on Medicaid isn't the end of the road. The assistant will point you to alternatives like these based on your situation.</p>
+<section id="alternatives" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>If You Don't Qualify (or Lose Coverage)</h2>
+        <p class="fhi-hint">A "no" on Medicaid isn't the end of the road. The assistant will point you to alternatives like these based on your situation.</p>
 
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">ACA Marketplace Subsidies</h5>
-                                <p class="card-text">If your income is at or above 100% of the poverty level, premium tax credits on Healthcare.gov (or your state's marketplace) can make plans much cheaper. Losing Medicaid also triggers a Special Enrollment Period.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">CHIP for Your Kids</h5>
-                                <p class="card-text">Children often qualify for CHIP even when adults in the household earn too much for Medicaid. It's worth applying for kids regardless of your own result.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Medically Needy / Spend-Down</h5>
-                                <p class="card-text">Over 30 states let you qualify by "spending down"&mdash;subtracting high medical bills from your income. This can work for older adults and people with disabilities who are just over the limits.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Medicare Savings Programs &amp; Clinics</h5>
-                                <p class="card-text">If you're on Medicare with limited income, QMB/SLMB/QI programs can pay premiums and cost-sharing. Community health centers offer sliding-scale care while you sort out coverage.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-card">
+                <h5>ACA Marketplace Subsidies</h5>
+                <p>If your income is at or above 100% of the poverty level, premium tax credits on Healthcare.gov (or your state's marketplace) can make plans much cheaper. Losing Medicaid also triggers a Special Enrollment Period.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>CHIP for Your Kids</h5>
+                <p>Children often qualify for CHIP even when adults in the household earn too much for Medicaid. It's worth applying for kids regardless of your own result.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Medically Needy / Spend-Down</h5>
+                <p>Over 30 states let you qualify by "spending down"&mdash;subtracting high medical bills from your income. This can work for older adults and people with disabilities who are just over the limits.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Medicare Savings Programs &amp; Clinics</h5>
+                <p>If you're on Medicare with limited income, QMB/SLMB/QI programs can pay premiums and cost-sharing. Community health centers offer sliding-scale care while you sort out coverage.</p>
+            </div>
+        </div>
 
-                <div class="card mt-4 border-warning callout-card">
-                    <div class="card-body">
-                        <h5 class="card-title">Denied or Terminated? You Can Appeal.</h5>
-                        <p class="card-text">If your state denies your Medicaid application or ends your coverage&mdash;including over work-requirement paperwork&mdash;you have the right to a fair hearing, and deadlines matter. Our free tools can help you fight back, and your state's legal aid resources can help too.</p>
-                        <div class="d-flex flex-wrap gap-2 mt-1">
-                            <a href="{% url 'scan' %}" class="btn btn-green">Generate an Appeal</a>
-                            <a href="{% url 'chat' %}" class="btn btn-outline-green">Ask the AI Assistant</a>
-                        </div>
-                    </div>
-                </div>
+        <div class="fhi-card fhi-card-warning callout-card">
+            <h5>Denied or Terminated? You Can Appeal.</h5>
+            <p>If your state denies your Medicaid application or ends your coverage&mdash;including over work-requirement paperwork&mdash;you have the right to a fair hearing, and deadlines matter. Our free tools can help you fight back, and your state's legal aid resources can help too.</p>
+            <div class="fhi-cluster">
+                <a href="{% url 'scan' %}" class="btn btn-green">Generate an Appeal</a>
+                <a href="{% url 'chat' %}" class="btn btn-outline-green">Ask the AI Assistant</a>
             </div>
         </div>
     </div>
 </section>
 
 <!-- State Resources Section -->
-<section id="state-resources" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Confirm With Your State</h2>
-                <p class="text-center mb-4">Ready to apply, or want the official word? Go straight to the source.</p>
+<section id="state-resources" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Confirm With Your State</h2>
+        <p>Ready to apply, or want the official word? Go straight to the source.</p>
 
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body d-flex flex-column">
-                                <h5 class="card-title">Your State's Resources</h5>
-                                <p class="card-text">Find your state Medicaid agency, consumer assistance programs, and legal aid contacts&mdash;the assistant can also look these up for you in chat.</p>
-                                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green mt-auto align-self-start">Find Your State's Resources</a>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card h-100">
-                            <div class="card-body d-flex flex-column">
-                                <h5 class="card-title">Apply Through Healthcare.gov</h5>
-                                <p class="card-text">The Marketplace application automatically checks your Medicaid and CHIP eligibility and forwards your info to your state&mdash;one application covers both.</p>
-                                <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green mt-auto align-self-start">Learn More at Healthcare.gov</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-card">
+                <h5>Your State's Resources</h5>
+                <p>Find your state Medicaid agency, consumer assistance programs, and legal aid contacts&mdash;the assistant can also look these up for you in chat.</p>
+                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green fhi-card-action">Find Your State's Resources</a>
+            </div>
+            <div class="fhi-card">
+                <h5>Apply Through Healthcare.gov</h5>
+                <p>The Marketplace application automatically checks your Medicaid and CHIP eligibility and forwards your info to your state&mdash;one application covers both.</p>
+                <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green fhi-card-action">Learn More at Healthcare.gov</a>
             </div>
         </div>
     </div>
 </section>
 
 <!-- Final CTA Section -->
-<section id="final-cta" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto text-center">
-                <div class="mb-3">
-                    {% include "partials/experimental_badge.html" %}
-                </div>
-                <h2 class="mb-3">Find Out Where You Stand&mdash;In Minutes</h2>
-                <p class="lead mb-4">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
-                <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap">
-                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Check My Eligibility (Experimental)</a>
-                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Work Requirements FAQ</a>
-                    <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
-                </div>
-            </div>
+<section id="final-cta" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose fhi-column-centred">
+        <div>
+            {% include "partials/experimental_badge.html" %}
+        </div>
+        <h2>Find Out Where You Stand&mdash;In Minutes</h2>
+        <p class="fhi-lead">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Check My Eligibility (Experimental)</a>
+            <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Work Requirements FAQ</a>
+            <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
         </div>
     </div>
 </section>
 
 <!-- Disclaimer Section -->
-<section id="disclaimer" class="py-4">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="disclaimer-box p-3 bg-light border rounded">
-                    <p class="text-muted small mb-0">
-                        <strong>Disclaimer:</strong> The Medicaid eligibility check is an <strong>EXPERIMENTAL feature</strong> that is under active development and can produce incorrect, incomplete, or outdated results. This page and our AI assistant provide informational estimates only&mdash;not legal, medical, or financial advice, and not an official eligibility determination. Medicaid and Medicare rules vary by state and change frequently, including the phase-in of federal work requirements. Always confirm with your state Medicaid agency or a benefits navigator before making decisions about your coverage. Last updated: August 2026.
-                    </p>
-                </div>
-            </div>
+<section id="disclaimer" class="fhi-section fhi-section-tight">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <div class="disclaimer-box fhi-disclaimer">
+            <p class="fhi-note">
+                <strong>Disclaimer:</strong> The Medicaid eligibility check is an <strong>EXPERIMENTAL feature</strong> that is under active development and can produce incorrect, incomplete, or outdated results. This page and our AI assistant provide informational estimates only&mdash;not legal, medical, or financial advice, and not an official eligibility determination. Medicaid and Medicare rules vary by state and change frequently, including the phase-in of federal work requirements. Always confirm with your state Medicaid agency or a benefits navigator before making decisions about your coverage. Last updated: August 2026.
+            </p>
         </div>
     </div>
 </section>
@@ -465,8 +353,8 @@
         margin-top: 0.1rem;
     }
 
-    /* Beat custom.css `.alert-warning h4` mustard and main.css h2 sizing */
-    .experimental-banner .alert-heading {
+    /* Beat main.css h2 sizing: this heading is a banner's, not a section's */
+    .experimental-banner h2 {
         color: #212529;
         font-size: 1.2rem;
         font-weight: 700;
@@ -484,7 +372,7 @@
         margin-bottom: 0;
     }
 
-    .experimental-banner .alert-link {
+    .experimental-banner a {
         color: var(--fhi-green-ink);
         font-weight: 600;
         text-decoration: underline;
@@ -496,13 +384,13 @@
     }
 
     /* ---------- Cards ---------- */
-    #main-content .card {
+    #main-content .fhi-card {
         border: 1px solid #e8e8e8;
         border-radius: 10px;
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
     }
 
-    #main-content .card-title {
+    #main-content .fhi-card :is(h2, h3, h4, h5) {
         color: #272727;
         font-weight: 600;
     }
@@ -523,50 +411,50 @@
         box-shadow: 0 2px 6px rgba(123, 146, 10, 0.35);
     }
 
-    .step-card .card-body {
+    .fhi-card.step-card {
         padding: 1.5rem 1.4rem;
     }
 
-    .step-card .card-title {
+    .step-card :is(h2, h3, h4, h5) {
         font-size: 1.1rem;
         margin-bottom: 0.5rem;
     }
 
     @media (min-width: 768px) {
         /* keep step bodies aligned when titles wrap to two lines */
-        .step-card .card-title {
+        .step-card :is(h2, h3, h4, h5) {
             min-height: 3.05em;
         }
     }
 
     /* Callout cards: amber = experimental/warning, green = tip */
-    .callout-card .card-body {
+    .fhi-card.callout-card {
         padding: 1.35rem 1.5rem;
     }
 
-    .card.border-warning {
+    .fhi-card.fhi-card-warning {
         border-color: #f0dda2 !important;
         border-left: 4px solid #ffc107 !important;
         background: #fffdf7;
     }
 
-    .card.callout-tip {
+    .fhi-card.callout-tip {
         border-color: #dfe8bc !important;
         border-left: 4px solid #a5c422 !important;
         background: #fbfdf2;
     }
 
     /* ---------- "What you'll want handy" list ---------- */
-    .list-group-item {
+    .fhi-list > * {
         border-left: 4px solid #a5c422;
         padding: 1rem 1.25rem;
     }
 
-    .list-group-item:hover {
+    .fhi-list > *:hover {
         background-color: rgba(165, 196, 34, 0.05);
     }
 
-    .list-group-item h5 {
+    .fhi-list > * h5 {
         font-size: 1.05rem;
         font-weight: 600;
         color: #272727;
@@ -650,7 +538,7 @@
         background: linear-gradient(135deg, #f8f9fa 0%, #eef1e0 100%);
     }
 
-    #final-cta .lead {
+    #final-cta .fhi-lead {
         max-width: 44rem;
         margin-left: auto;
         margin-right: auto;
@@ -690,7 +578,7 @@
             height: 2rem;
         }
 
-        .experimental-banner .alert-heading {
+        .experimental-banner h2 {
             font-size: 1.1rem;
         }
 
@@ -703,7 +591,7 @@
     }
 
     @media (max-width: 576px) {
-        #final-cta .d-flex .btn {
+        #final-cta .fhi-cluster .btn {
             flex: 1 1 100%;
             max-width: 340px;
         }
