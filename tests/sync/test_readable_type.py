@@ -61,5 +61,7 @@ class ReadableTypeTest(SimpleTestCase):
         sel, body = rule(CUSTOM_CSS, r"main :where\(p, li")
         self.assertIn("text-decoration: underline", body)
         self.assertIn(".form-check-label", sel)
+        # the tick-box rows that replaced Bootstrap's .form-check on the consent pages
+        self.assertIn(".fhi-check-row label", sel)
         for component in ('[class*="btn"]', '[class*="card"]', '[class*="nav"]'):
             self.assertIn(component, sel)

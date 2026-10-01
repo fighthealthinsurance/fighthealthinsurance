@@ -455,7 +455,7 @@ function onDeviceStatus(message: string, action?: { label: string; run: () => vo
   if (action) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "btn btn-link btn-sm p-0 ms-1";
+    button.className = "btn btn-link btn-sm";
     button.textContent = action.label;
     button.addEventListener("click", () => {
       action.run();

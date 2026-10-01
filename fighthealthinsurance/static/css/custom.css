@@ -253,6 +253,12 @@ textarea.fhi-field {
     opacity: 0.5;
 }
 
+/* The same fade in the row that replaces .form-check: a box this browser
+   cannot use greys out its label too. */
+.fhi-check-row > .fhi-check:disabled ~ label {
+    opacity: 0.5;
+}
+
 /* A tick box is a box too, just square and sized to the text beside it. */
 .fhi-check {
     width: var(--fhi-space-4);
@@ -339,6 +345,24 @@ textarea.fhi-field {
     line-height: inherit;
 }
 
+/* The name of a step in the appeal flow: the h1 under the progress bar.
+   It held its size with Bootstrap's .h2 (24px on a phone, 32px on a
+   desktop). This is the section size, 24px to 28.8px, a step under a
+   content page's title because the progress bar above it already says
+   where the person is. */
+.fhi-step-title {
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
+}
+
+/* The heading inside a callout on a flow page, which held its size with
+   Bootstrap's .h3: a section heading in the reading column, a steady 22px,
+   a step under the step title. Its colour comes from the callout. */
+.fhi-callout-title {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;
@@ -363,9 +387,10 @@ textarea.fhi-field {
     background: #e8f5e9;
     border-left-color: #4caf50;
 }
-.alert-success h2,
-.alert-success h3,
-.alert-success h4 {
+/* The regulator letter review page is the last callout still named with
+   Bootstrap's alert-success. The flow's callouts use the .alert-box-*
+   names further down, which carry the same heading inks. */
+.alert-success h3 {
     color: #2e7d32;
 }
 
@@ -373,29 +398,15 @@ textarea.fhi-field {
     background: #ffebee;
     border-left-color: #f44336;
 }
-.alert-danger h3,
-.alert-danger p {
-    color: #c62828;
-}
 
 .alert-warning {
     background: #fff3cd;
     border-left-color: #ffc107;
 }
-.alert-warning h2,
-.alert-warning h4,
-.alert-warning li {
-    color: #856404;
-}
 
 .alert-info {
     background: #e3f2fd;
     border-left-color: #2196f3;
-}
-.alert-info h2,
-.alert-info h3,
-.alert-info h4 {
-    color: #1565c0;
 }
 
 /* Section headers with underline */
@@ -535,12 +546,14 @@ textarea.fhi-field {
     color: #666;
 }
 
-/* Form wrapper backgrounds */
+/* Form wrapper backgrounds. The fax form runs the column's full width: a
+   side margin inside the flow column left the letter box 192px wide on a
+   320px phone. */
 .form-wrapper {
     background: #f9f9f9;
-    padding: 1.5rem;
+    padding: var(--fhi-space-6);
     border-radius: 8px;
-    margin: 1rem 1.5rem;
+    margin: var(--fhi-space-4) 0;
 }
 .donate-wrapper {
     background-color: #f8f9fa;
@@ -1135,23 +1148,6 @@ a.link:hover::after {
     width: 100%;
 }
 
-.generic-main-content {
-    width: 80%;
-    max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
-    margin-top: 2rem;
-    padding: 0 15px;
-}
-
-/* Mobile: use more of the screen width */
-@media (max-width: 768px) {
-    .generic-main-content {
-        width: 95%;
-        padding: 0 10px;
-    }
-}
-
 .post-infered-table {
     width: 100%;
     margin: 0 auto;
@@ -1637,9 +1633,20 @@ section:not(.slider) .share-subcopy {
     background: #e8f5e9;
     border-left-color: #a5c422;
 }
+/* A callout's heading takes its box's ink, as the Bootstrap-named boxes'
+   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1, red 4.92:1. */
+.alert-box-success h2,
+.alert-box-success h4 {
+    color: #2e7d32;
+}
 .alert-box-warning {
     background: #fff3cd;
     border-left-color: #ffc107;
+}
+.alert-box-warning h2,
+.alert-box-warning h4,
+.alert-box-warning li {
+    color: #856404;
 }
 .alert-box-warning-light {
     background: #fff8e1;
@@ -1649,8 +1656,18 @@ section:not(.slider) .share-subcopy {
     background: #e3f2fd;
     border-left-color: #2196f3;
 }
-.alert-box-info h2 {
+.alert-box-info h2,
+.alert-box-info h3,
+.alert-box-info h4 {
     color: #1565c0;
+}
+.alert-box-danger {
+    background: #ffebee;
+    border-left-color: #f44336;
+}
+.alert-box-danger h3,
+.alert-box-danger p {
+    color: #c62828;
 }
 
 /* Navigation/Form actions row */
@@ -1885,6 +1902,13 @@ section:not(.slider) .share-subcopy {
     transform: translate(-50%, -50%);
 }
 
+/* The waiting page's three questions ("Why does this take time?") are
+   subsections of its h3, so they sit a step under it. main.css draws an h4
+   as large as that h3; Bootstrap's .h5 class used to make the difference. */
+#loading-more h4 {
+    font-size: var(--fhi-text-subsection);
+}
+
 /* Words for screen readers only: in the page and read aloud, drawn nowhere.
    Ours rather than Bootstrap's .visually-hidden, so it holds when Bootstrap
    is gone. Bootstrap 5 dropped the older .sr-only, and a page still using
@@ -1912,6 +1936,17 @@ section:not(.slider) .share-subcopy {
     border: 0.25rem solid var(--fhi-line);
     border-top-color: var(--fhi-green-ink);
     border-radius: 50%;
+}
+
+/* The spinner beside a heading's words: a line high, with a thinner ring.
+   flex: none because a heading that wraps on a phone squeezes every item
+   in its row, and an empty box gives way first, which can press the ring
+   into an oval. */
+.fhi-spinner-inline {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-width: 2px;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -1995,7 +2030,7 @@ section:not(.slider) .share-subcopy {
    table cell or checkbox label (the consent links) inside the page content, but not one styled as a button, a
    card or navigation. :where() keeps it at zero-class specificity, so any
    component rule that sets its own decoration still wins. */
-main :where(p, li, dd, td, .form-check-label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
+main :where(p, li, dd, td, .form-check-label, .fhi-check-row label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
     text-decoration: underline;
     text-underline-offset: 0.15em;
     text-decoration-thickness: from-font;
@@ -2197,13 +2232,8 @@ main :where(table) {
     width: 60px;
 }
 
-/* Appeals page layout - centered content with margins */
-#output-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 20px;
-}
-
+/* Appeals page layout: the back and start-over links sit in from the edge.
+   The drafts above them take the flow column's width, gutter included. */
 .form-nav-centered {
     padding: 0 20px;
 }
@@ -3450,16 +3480,17 @@ textarea,
     .fhi-form-table td {
         padding: 0 0 var(--fhi-space-4);
     }
+}
 
-    /* A field sized in columns rather than by a class, like the follow-up
-       form's cols="80" textareas, is wider than a phone. Stacked, the cell
-       is the whole row, so capping the field at its cell keeps its right
-       edge on screen instead of scrolling the form box sideways. */
-    .fhi-form-table input,
-    .fhi-form-table select,
-    .fhi-form-table textarea {
-        max-width: 100%;
-    }
+/* A field sized in columns rather than by a class, like the follow-up
+   form's cols="80" textareas, is wider than a phone, and beside its label
+   it is wider than the reading column too. Capping the field at its cell
+   keeps its right edge on screen instead of scrolling the form box
+   sideways, stacked on a phone or side by side above one. */
+.fhi-form-table input,
+.fhi-form-table select,
+.fhi-form-table textarea {
+    max-width: 100%;
 }
 
 /* The two notes under the appeal form (what stays in your browser, how we
@@ -3475,6 +3506,11 @@ textarea,
 .fhi-hint {
     color: var(--fhi-muted);
 }
+
+/* An aside inside a bold label, such as "(we try to keep this in your
+   browser)", stays at the running weight, so the label's own words are
+   what stand out. */
+.fhi-label .fhi-hint { font-weight: 400; }
 
 /* ---- Content pages: sections, the column, stacks and cards ----------------
    The few pieces a content page is built from, in place of Bootstrap's grid
@@ -3517,6 +3553,9 @@ textarea,
    across the column; in a centred stack it sits in the middle. */
 .fhi-stack > .btn,
 .fhi-card > .btn { align-self: flex-start; }
+/* The same in a tick box's row, where a grid cell would otherwise stretch
+   the button across the label's column. */
+.fhi-check-row > .btn { justify-self: start; }
 
 /* A stack whose contents sit in the middle: a call to action and its note. */
 .fhi-stack-centred { align-items: center; text-align: center; }
@@ -3624,9 +3663,14 @@ textarea,
     border-radius: var(--fhi-radius);
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+/* Something went wrong with what the reader sent: dark red on pale red, 7.1:1. */
+.fhi-notice-danger { color: #842029; background-color: #f8d7da; border-color: #f5c2c7; }
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
 .fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
+/* A list in a notice sits a step under the line that leads into it, and
+   the notice's own padding, not the list's margin, closes the box. */
+.fhi-notice > ul { margin-block: var(--fhi-space-2) 0; }
 
 /* The small print at the foot of a page: a bordered light box. */
 .fhi-disclaimer {
@@ -3665,3 +3709,30 @@ textarea,
 .fhi-note { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
 .fhi-text-info { color: #087990; }
+
+/* ---- Forms: a field's group, its label, a tick box's row, the buttons ------
+   The field and tick box themselves are .fhi-field and .fhi-check, near the
+   top of this file. These arrange them. */
+.fhi-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+}
+.fhi-field-group > * { margin-block: 0; }
+.fhi-label { font-weight: 700; }
+/* A tick box, its label beside it, and any note under the label in the
+   same column as the label's text. */
+.fhi-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--fhi-space-2);
+    row-gap: var(--fhi-space-1);
+    align-items: baseline;
+}
+.fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
+.fhi-check-row > * { margin: 0; }
+/* A form's buttons, each the full width of the form. */
+.fhi-actions {
+    display: grid;
+    gap: var(--fhi-space-2);
+}

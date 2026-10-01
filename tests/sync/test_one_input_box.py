@@ -190,6 +190,7 @@ class TheStylesheetDefinesThemTest(TestCase):
         self.assertIn("float: left", rule)
         self.assertIn("margin-left: -1.5em", rule)
         self.assertIn(":disabled ~ .form-check-label", css)
+        self.assertIn(".fhi-check-row > .fhi-check:disabled ~ label", css)
 
     def test_the_focus_ring_covers_them(self):
         from pathlib import Path

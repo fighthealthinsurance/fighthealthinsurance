@@ -7,23 +7,21 @@ Optional: Add Plan Documents
 {% load static %}
 
 {% block page_heading %}
-<h1 class="h2">Your plan documents</h1>
+<h1 class="fhi-step-title">Your plan documents</h1>
 {% endblock page_heading %}
 
 {% block formelm %}
-<div class="form-group" style="visibility:visible">
-  <label class="custom-file-label" for="plan_documents">
+<div class="fhi-field-group">
+  <label class="fhi-label" for="plan_documents">
     <b>Optional</b>: Plan Documents
-    <small class="text-muted">(e.g. summary description)</small>
-  </label><br>
+    <small class="fhi-hint">(e.g. summary description)</small>
+  </label>
   {% if plan_document_count %}
-  <p id="plan_documents_already_added" class="form-text text-muted">
+  <p id="plan_documents_already_added" class="fhi-note fhi-hint">
     {{ plan_document_count }} plan document{{ plan_document_count|pluralize }} already added to this appeal.
     Anything you pick here is added to {{ plan_document_count|pluralize:"it,them" }}, so there is no need to upload the same file again.
   </p>
   {% endif %}
-  <div class="col-md-4">
-    <input id="plan_documents" type="file" name="plan_documents" multiple="true" class="fhi-field mt-2"><br>
-  </div>
+  <input id="plan_documents" type="file" name="plan_documents" multiple="true" class="fhi-field">
 </div>
 {% endblock formelm %}
