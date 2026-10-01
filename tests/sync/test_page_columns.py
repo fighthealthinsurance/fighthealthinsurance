@@ -54,14 +54,11 @@ ON_A_COLUMN = {
 BANDS_ON_A_COLUMN = {
     "state_help_index.html": "fhi-column",
     "state_help.html": "fhi-column",
-    "glossary_index.html": "fhi-page-wide",
+    "glossary_index.html": "fhi-column",
     "medicaid_eligibility.html": "fhi-column",
     "turning_26.html": "fhi-column",
     "patient_access.html": "fhi-column",
     "microsite.html": "fhi-column",
-    "state_help_index.html": "fhi-page-wide",
-    "state_help.html": "fhi-page-wide",
-    "glossary_index.html": "fhi-column",
 }
 
 FIRST_WRAPPER = re.compile(r"{%\s*block content\s*%}.*?<div class=\"([^\"]+)\"", re.S)
