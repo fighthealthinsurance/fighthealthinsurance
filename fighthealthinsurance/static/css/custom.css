@@ -3625,7 +3625,7 @@ textarea,
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
 .fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
-/* Something went wrong with what the reader sent: dark red on pale red, 8.1:1. */
+/* Something went wrong with what the reader sent: dark red on pale red, 7.1:1. */
 .fhi-notice-danger { color: #842029; background-color: #f8d7da; border-color: #f5c2c7; }
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
