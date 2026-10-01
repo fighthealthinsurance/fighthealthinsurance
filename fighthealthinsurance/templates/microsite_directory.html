@@ -8,54 +8,46 @@
 <div class="fhi-page-wide">
     {% include "partials/page_title.html" with title="Treatment & Drug Resources" lede="Browse our treatment and drug-specific pages for targeted guidance on fighting health insurance denials. Each page includes common denial reasons, evidence we can use in your appeal, and assistance programs." %}
 
-    <div class="row">
-        <div class="col-12">
-            <h2 class="mb-4">All Resources</h2>
+    <div class="fhi-stack fhi-stack-loose">
+        <h2>All Resources</h2>
 
-            {% if microsites %}
-            <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
-                {% for microsite in microsites %}
-                <div class="col">
-                    <div class="card h-100 microsite-card">
-                        <div class="card-body">
-                            <h3 class="card-title">
-                                <a href="{% url 'microsite' slug=microsite.slug %}" class="stretched-link">
-                                    {{ microsite.title }}
-                                </a>
-                            </h3>
-                            <p class="card-text text-muted">{{ microsite.tagline }}</p>
-                            {% if microsite.default_condition %}
-                            <span class="badge bg-info text-dark">{{ microsite.default_condition }}</span>
-                            {% endif %}
-                            {% if microsite.medicare %}
-                            <span class="badge bg-primary">Medicare</span>
-                            {% endif %}
-                        </div>
-                    </div>
+        {% if microsites %}
+        <div class="fhi-cards fhi-cards-roomy">
+            {% for microsite in microsites %}
+            <div class="fhi-card microsite-card">
+                <h3>
+                    <a href="{% url 'microsite' slug=microsite.slug %}" class="fhi-card-link">
+                        {{ microsite.title }}
+                    </a>
+                </h3>
+                <p class="fhi-hint">{{ microsite.tagline }}</p>
+                {% if microsite.default_condition or microsite.medicare %}
+                <div class="fhi-cluster">
+                    {% if microsite.default_condition %}
+                    <span class="fhi-badge fhi-badge-info">{{ microsite.default_condition }}</span>
+                    {% endif %}
+                    {% if microsite.medicare %}
+                    <span class="fhi-badge fhi-badge-primary">Medicare</span>
+                    {% endif %}
                 </div>
-                {% endfor %}
+                {% endif %}
             </div>
-            {% else %}
-            <p class="text-muted">No resources are currently available.</p>
-            {% endif %}
+            {% endfor %}
         </div>
-    </div>
+        {% else %}
+        <p class="fhi-hint">No resources are currently available.</p>
+        {% endif %}
 
-    <div class="row mt-5">
-        <div class="col-12">
-            <div class="alert alert-info">
-                <strong>Don't see your treatment?</strong> Our main
-                <a href="{% url 'scan' %}" class="alert-link">appeal generator</a>
-                works for any health insurance denial. You can also
-                <a href="{% url 'chat' %}" class="alert-link">chat with our AI assistant</a>
-                for personalized guidance.
-            </div>
+        <div class="fhi-notice fhi-notice-info">
+            <strong>Don't see your treatment?</strong> Our main
+            <a href="{% url 'scan' %}">appeal generator</a>
+            works for any health insurance denial. You can also
+            <a href="{% url 'chat' %}">chat with our AI assistant</a>
+            for personalized guidance.
         </div>
-    </div>
 
-    <div class="row mt-3">
-        <div class="col-12 text-center">
-            <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg me-2">Start Your Appeal</a>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">Start Your Appeal</a>
             <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">Chat with AI</a>
         </div>
     </div>
@@ -74,12 +66,12 @@
         transform: translateY(-2px);
     }
 
-    .microsite-card .card-title a {
+    .microsite-card h3 a {
         color: #333;
         text-decoration: none;
     }
 
-    .microsite-card .card-title a:hover {
+    .microsite-card h3 a:hover {
         color: var(--fhi-green-ink);
     }
 </style>

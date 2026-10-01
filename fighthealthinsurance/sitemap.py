@@ -39,7 +39,7 @@ class StaticViewSitemap(Sitemap):
             "about",
             "pbs-newshour",
             "media-references",
-            "preparing-2026",
+            "coverage-changes",
             "turning-26",
             "other-resources",
             "faq",
