@@ -8,23 +8,21 @@
 {% block content %}
 <!-- Hero Section -->
 <section id="state-help-hero" class="slider">
-    <div class="row">
-        <div class="item item-first fhi-hero-short">
-            <div class="caption d-flex flex-column align-items-center justify-content-center">
-                <div class="hero-inner">
-                    <h3 class="hero-tagline">State Health Insurance Resources</h3>
-                    <h1 class="hero-headline">{{ state.name }} ({{ state.abbreviation }})</h1>
-                    <p class="hero-subcopy">Find help with health insurance problems, appeal denials, and access assistance programs in {{ state.name }}.</p>
-                    <div class="hero-cta-group">
-                        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta">
-                            Start Your Appeal
-                        </a>
-                    </div>
-                    <div class="hero-cta-group hero-cta-secondary">
-                        <a href="{% url 'chat' %}" class="btn btn-outline-green secondary-cta smoothScroll">
-                            Chat with AI Assistant
-                        </a>
-                    </div>
+    <div class="item item-first fhi-hero-short">
+        <div class="caption">
+            <div class="hero-inner">
+                <h3 class="hero-tagline">State Health Insurance Resources</h3>
+                <h1 class="hero-headline">{{ state.name }} ({{ state.abbreviation }})</h1>
+                <p class="hero-subcopy">Find help with health insurance problems, appeal denials, and access assistance programs in {{ state.name }}.</p>
+                <div class="hero-cta-group">
+                    <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta">
+                        Start Your Appeal
+                    </a>
+                </div>
+                <div class="hero-cta-group hero-cta-secondary">
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green secondary-cta smoothScroll">
+                        Chat with AI Assistant
+                    </a>
                 </div>
             </div>
         </div>

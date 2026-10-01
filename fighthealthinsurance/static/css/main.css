@@ -412,6 +412,7 @@ a:focus {
 .slider .caption {
     display: flex;
     justify-content: center;
+    align-items: center;
     flex-direction: column;
     text-align: center;
     height: 100%;

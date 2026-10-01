@@ -649,6 +649,8 @@ a.link:hover::after {
 /* Single column centered layout */
 .hero-inner {text-align:center; display:flex; flex-direction:column; align-items:center;}
 .hero-inner > .hero-cta-group {justify-content:center;}
+/* A badge above a hero's tagline, such as Medicaid's "Experimental". */
+.hero-inner > .hero-badge {margin-bottom: var(--fhi-space-4);}
 .trust-bullets {justify-content:center;}
 .trust-bullets li {text-align:center;}
 .pwyw-pill, .hero-subcopy, .hero-tagline, .hero-headline {margin-left:auto; margin-right:auto;}
@@ -1014,13 +1016,6 @@ a.link:hover::after {
     .trust-bullets, .how-it-works {max-width:1100px;}
     .how-step {flex:0 0 250px;}
     .hero-inner {max-width: 1200px; width:92%;}
-}
-/* Force full-width hero background while allowing inner content to widen */
-.slider .row {
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
 }
 @media (min-width:1200px){
     .hero-inner {max-width:none; width:100%; padding:2rem 4vw 2.75rem;}
@@ -3274,9 +3269,12 @@ textarea,
    own, and more than the 3px the copy box used to blur behind itself,
    which made the photo sharp everywhere but under the box. One blur, so
    the box's goes. */
+/* #home is a flex row (main.css), so its one band has to ask for the whole
+   width; Bootstrap's row used to force it there. */
 #home .item {
     position: relative;
     overflow: hidden;
+    width: 100%;
 }
 
 #home .item::before {
