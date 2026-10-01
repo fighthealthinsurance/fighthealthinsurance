@@ -1010,9 +1010,7 @@ def _layers_from(
 # fell through to whichever <body> fill any template declares, the printable
 # letter's grey included, and three pages failed for words that sit on white.
 # Take an entry out when the component it describes leaves the site.
-BOOTSTRAP_GROUNDS: tuple[Rule, ...] = (
-    Rule(BOOTSTRAP_SOURCE, 0, ".card", (("background-color", "#fff", False),)),
-)
+BOOTSTRAP_GROUNDS: tuple[Rule, ...] = ()
 
 
 class Painter:
