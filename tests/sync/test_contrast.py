@@ -1610,6 +1610,14 @@ UNREACHED: tuple[Exempt, ...] = (
         "ribbon is not on any page today.",
     ),
     Exempt("custom.css", ".pro-interest-form .errorlist", WRITTEN_AT_RUNTIME),
+    Exempt(
+        "custom.css", ".pro-interest-form > .fhi-notice .errorlist", WRITTEN_AT_RUNTIME
+    ),
+    # The blog and FAQ posts' breadcrumb, which blog_post.tsx renders. No
+    # template carries .fhi-breadcrumbs yet; when the glossary term page
+    # takes it, these two are reached and have to go.
+    Exempt("custom.css", ".fhi-breadcrumbs", WRITTEN_AT_RUNTIME),
+    Exempt("custom.css", ".fhi-breadcrumbs a", WRITTEN_AT_RUNTIME),
     Exempt("main.css", ".select-option", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a:visited", BOUGHT_THEME),

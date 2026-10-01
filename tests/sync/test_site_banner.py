@@ -266,7 +266,7 @@ class TestSiteBannerRendering(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Our AI models are having difficulty.")
-        self.assertContains(response, "alert-danger")
+        self.assertContains(response, 'class="fhi-notice fhi-notice-danger site-banner"')
 
     def test_inactive_banner_not_rendered(self):
         SiteBanner.objects.create(message="Do not show this", active=False)

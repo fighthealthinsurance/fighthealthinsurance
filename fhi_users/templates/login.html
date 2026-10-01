@@ -5,48 +5,38 @@ Login
 {% endblock title %}
 
 {% block content %}
-<div class="container">
-  <div class="card card-login mx-auto mt-5">
-    <div class="card-header">Login</div>
-    <div class="card-body">
-      {% if invalid %}
-      <div class="alert alert-danger">Invalid Username or password</div>
-      {% endif %}
-      {% if domain_invalid %}
-      <div class="alert alert-danger">Domain or phone number not found</div>
-      {% endif %}
-      <form action="{% url 'login' %}" method="post" id="loginForm">
-	{% csrf_token %}
-        <div class="form-group">
-          <div class="form-label-group">
-	    <label for="inputUsername">Username</label>
-            <input type="text" id="inputUsername" name="username" class="form-control" placeholder="username" autocomplete="username webauthn"  autofocus="autofocus">
-          </div>
-        </div>
-        <div class="form-group">
-          <div class="form-label-group">
-	    <label for="inputDomain">Domain</label>
-            <input type="text" id="inputDomain"  name="domain" class="form-control" placeholder="domain">
-          </div>
-        </div>
-        <div class="form-group">
-          <div class="form-label-group">
-	    <label for="inputPhone">Phone Number</label>
-            <input type="text" id="inputPhone"  name="phone" class="form-control" placeholder="phone number">
-          </div>
-        </div>
-        <div class="form-group">
-          <div class="form-label-group">
-	    <label for="inputPassword">Password</label>
-            <input type="password" id="inputPassword"  name="password" class="form-control" placeholder="Password" required="required">
-          </div>
-        </div>
-	
-        <button class="btn btn-primary btn-block" type="submit">Login</button><br/>
-
+<div class="fhi-page">
+  {% include "partials/page_title.html" with title="Login" %}
+  <div class="fhi-card">
+    {% if invalid %}
+    <div class="fhi-notice fhi-notice-danger">Invalid Username or password</div>
+    {% endif %}
+    {% if domain_invalid %}
+    <div class="fhi-notice fhi-notice-danger">Domain or phone number not found</div>
+    {% endif %}
+    <form class="fhi-stack" action="{% url 'login' %}" method="post" id="loginForm">
+      {% csrf_token %}
+      <div class="fhi-field-group">
+        <label class="fhi-label" for="inputUsername">Username</label>
+        <input type="text" id="inputUsername" name="username" class="fhi-field" placeholder="username" autocomplete="username webauthn"  autofocus="autofocus">
+      </div>
+      <div class="fhi-field-group">
+        <label class="fhi-label" for="inputDomain">Domain</label>
+        <input type="text" id="inputDomain"  name="domain" class="fhi-field" placeholder="domain">
+      </div>
+      <div class="fhi-field-group">
+        <label class="fhi-label" for="inputPhone">Phone Number</label>
+        <input type="text" id="inputPhone"  name="phone" class="fhi-field" placeholder="phone number">
+      </div>
+      <div class="fhi-field-group">
+        <label class="fhi-label" for="inputPassword">Password</label>
+        <input type="password" id="inputPassword"  name="password" class="fhi-field" placeholder="Password" required="required">
+      </div>
+      <div class="fhi-actions">
+        <button class="btn btn-primary btn-block" type="submit">Login</button>
         <button class="btn btn-primary btn-block" type="button" onclick="authen()">Login By Security Key</button>
-      </form>
-    </div>
+      </div>
+    </form>
   </div>
 </div>
 

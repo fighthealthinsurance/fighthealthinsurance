@@ -10,7 +10,7 @@ Confirm Data Deletion
         {% include "partials/page_title.html" with title="Confirm Data Deletion" %}
         <p>You are about to permanently delete all data associated with <strong>{{ email }}</strong>.</p>
         <p>This action cannot be undone.</p>
-        <form action="{% url 'confirm_delete_data' %}" method="post" class="mt-3">
+        <form class="fhi-stack" action="{% url 'confirm_delete_data' %}" method="post">
             {% csrf_token %}
             <input type="hidden" name="token" value="{{ token }}">
             <input type="hidden" name="email" value="{{ email }}">

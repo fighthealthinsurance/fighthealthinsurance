@@ -10,7 +10,7 @@ version) so editing a banner re-shows it to everyone.
 {% if site_banners %}
 <style>
   .site-banner-container { position: relative; z-index: 1031; }
-  .site-banner { border-radius: 0; margin-bottom: 0; }
+  .site-banner { border-radius: 0; text-align: center; }
   .site-banner-inner { position: relative; padding-left: 2.5rem; padding-right: 2.5rem; }
   .site-banner .site-banner-close {
     position: absolute; top: 50%; right: 0.75rem; transform: translateY(-50%);
@@ -19,11 +19,11 @@ version) so editing a banner re-shows it to everyone.
 </style>
 <div id="site-banner-container" class="site-banner-container">
   {% for banner in site_banners %}
-  <div class="alert alert-{{ banner.level }} site-banner text-center"
+  <div class="fhi-notice {% if banner.level == 'danger' %}fhi-notice-danger{% elif banner.level == 'info' %}fhi-notice-info{% else %}fhi-notice-warning{% endif %} site-banner"
        role="alert"
        data-banner-id="{{ banner.id }}"
        data-banner-version="{{ banner.version }}">
-    <div class="container site-banner-inner">
+    <div class="fhi-column fhi-column-wide site-banner-inner">
       <span class="site-banner-message">{{ banner.message|linebreaksbr }}</span>
       {% if banner.dismissible %}
       <button type="button" class="btn-close site-banner-close"

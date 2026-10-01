@@ -12,7 +12,9 @@ Thank you!
 </script>
 {% endblock scriptmagic %}
 {% block content %}
-<h2>Thank you for your feedback</h2>
+<div class="fhi-page">
+{% include "partials/page_title.html" with title="Thank you for your feedback" %}
+<div class="fhi-stack">
 <p>
   Your feedback helps us improve for the future.
 </p>
@@ -22,7 +24,7 @@ Thank you!
   </a>
 </p>
 
-<div class="container">
-  {% include 'partials/share_buttons.html' %}
+{% include 'partials/share_buttons.html' %}
+</div>
 </div>
 {% endblock content %}

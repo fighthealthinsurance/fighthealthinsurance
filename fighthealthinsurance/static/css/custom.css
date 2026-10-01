@@ -339,6 +339,24 @@ textarea.fhi-field {
     line-height: inherit;
 }
 
+/* The name of a step in the appeal flow: the h1 under the progress bar.
+   It held its size with Bootstrap's .h2 (24px on a phone, 32px on a
+   desktop). This is the section size, 24px to 28.8px, a step under a
+   content page's title because the progress bar above it already says
+   where the person is. */
+.fhi-step-title {
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
+}
+
+/* The heading inside a callout on a flow page, which held its size with
+   Bootstrap's .h3: a section heading in the reading column, a steady 22px,
+   a step under the step title. Its colour comes from the callout. */
+.fhi-callout-title {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;
@@ -364,8 +382,12 @@ textarea.fhi-field {
     border-left-color: #4caf50;
 }
 .alert-success h2,
-.alert-success h3,
 .alert-success h4 {
+    color: #2e7d32;
+}
+/* The regulator letter review's callout, an .alert-box-success with an h3,
+   keeps the green ink it had as alert-success: 4.56:1 on the box's fill. */
+.alert-box-success h3 {
     color: #2e7d32;
 }
 
@@ -932,7 +954,7 @@ a.link:hover::after {
 
 /* PWYW Panel */
 .pwyw-panel {background: rgba(255, 255, 255, 0.25); backdrop-filter: blur(8px); padding:1.3rem 1.5rem 1.5rem; border-radius:12px; color:#fff; margin:0 0 1.3rem; box-shadow:0 4px 14px rgba(0,0,0,.25); max-width:680px; border: 1px solid rgba(255, 255, 255, 0.3); border-top: 4px solid rgba(255, 255, 255, 0.9);}
-.pwyw-title {margin:0 0 .5rem; font-size:1.15rem; font-weight:700; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
+.pwyw-title {margin:0 0 .5rem; font-size:var(--fhi-text-lead); font-weight:700; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
 .pwyw-subcopy {font-size:0.95rem; line-height:1.5rem; margin:0 0 1rem; color:#fff; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);}
 .pwyw-options {display:flex; flex-wrap:wrap; gap:.8rem;}
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
@@ -1526,9 +1548,13 @@ a.link:hover::after {
     color: #fff;
 }
 
-/* Share panel on non-hero pages (with colored backgrounds) */
+/* Share panel on non-hero pages (with colored backgrounds). A page on the
+   reading column (.fhi-page) has neither a container nor a section around
+   the panel, so the column is named too; without it the thank-you pages
+   drew the hero's white words on the white page. */
 .container .share-panel,
-section:not(.slider) .share-panel {
+section:not(.slider) .share-panel,
+.fhi-page .share-panel {
     background: #fff;
     color: #333;
     border: 1px solid var(--fhi-line);
@@ -1536,12 +1562,14 @@ section:not(.slider) .share-panel {
     box-shadow: var(--fhi-shadow);
 }
 .container .share-title,
-section:not(.slider) .share-title {
+section:not(.slider) .share-title,
+.fhi-page .share-title {
     color: #333;
     text-shadow: none;
 }
 .container .share-subcopy,
-section:not(.slider) .share-subcopy {
+section:not(.slider) .share-subcopy,
+.fhi-page .share-subcopy {
     color: #555;
     text-shadow: none;
 }
@@ -1739,7 +1767,9 @@ section:not(.slider) .share-subcopy {
 /* Insurance Bullshit Bingo Styles */
 .bingo-section {
     background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    padding: 4rem 0;
+    /* The band's own side padding keeps the gradient showing beside the
+       board, as Bootstrap's .container inside it used to. */
+    padding: var(--fhi-space-10) var(--fhi-space-3);
     margin: 2rem 0;
 }
 
@@ -2591,6 +2621,19 @@ main :where(table) {
     margin: 0.35rem 0 0;
     color: #c0392b;
     font-size: 1.3rem;
+}
+
+/* The form's own errors, not one field's, sit in a red notice above the
+   fields, a field's gap clear of the first row. Its list takes the
+   notice's ink: the field errors' red is 4.1:1 on the notice's pale red,
+   the notice's ink 7.1:1. */
+.pro-interest-form > .fhi-notice {
+    margin-bottom: var(--fhi-space-5);
+}
+
+.pro-interest-form > .fhi-notice .errorlist {
+    margin: 0;
+    color: inherit;
 }
 
 .pro-interest-actions {
@@ -3624,6 +3667,9 @@ textarea,
     border-radius: var(--fhi-radius);
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+.fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
+/* Something went wrong with what the reader sent: dark red on pale red, 7.1:1. */
+.fhi-notice-danger { color: #842029; background-color: #f8d7da; border-color: #f5c2c7; }
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
 .fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
@@ -3637,12 +3683,46 @@ textarea,
     border-radius: var(--fhi-radius);
 }
 
+/* Where a page sits in the site: its parents as links, each after a
+   slash, then the page itself. A plain ordered list, so a screen reader
+   counts the steps, in place of Bootstrap's .breadcrumb. The grey is
+   --fhi-muted, 5.74:1 on white; the links are the green ink. */
+.fhi-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--fhi-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--fhi-muted);
+}
+.fhi-breadcrumbs > li + li::before {
+    content: "/";
+    margin-right: var(--fhi-space-2);
+}
+.fhi-breadcrumbs a { color: var(--fhi-green-ink); text-decoration: none; }
+.fhi-breadcrumbs a:hover { text-decoration: underline; }
+
 /* A light panel. */
 .fhi-panel {
     padding: var(--fhi-space-4);
     background-color: #f8f9fa;
     border-radius: var(--fhi-radius);
 }
+
+/* A photograph in the column: the size its file gives it, never wider
+   than the column, at its own proportions. The fax thank-you photo is
+   1088px wide and scrolled the page sideways on a phone. */
+.fhi-photo {
+    max-width: 100%;
+    height: auto;
+}
+
+/* A video embed that keeps its 16:9 shape at any width: the box takes its
+   height from its width and the frame fills it. Bootstrap's .ratio did the
+   same with a padding trick. */
+.fhi-video { aspect-ratio: 16 / 9; }
+.fhi-video > iframe { display: block; width: 100%; height: 100%; }
 
 /* A small label. The fills clear 4.5:1 under their ink. */
 .fhi-badge {
@@ -3665,3 +3745,30 @@ textarea,
 .fhi-note { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
 .fhi-text-info { color: #087990; }
+
+/* ---- Forms: a field's group, its label, a tick box's row, the buttons ------
+   The field and tick box themselves are .fhi-field and .fhi-check, near the
+   top of this file. These arrange them. */
+.fhi-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+}
+.fhi-field-group > * { margin-block: 0; }
+.fhi-label { font-weight: 700; }
+/* A tick box, its label beside it, and any note under the label in the
+   same column as the label's text. */
+.fhi-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--fhi-space-2);
+    row-gap: var(--fhi-space-1);
+    align-items: baseline;
+}
+.fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
+.fhi-check-row > * { margin: 0; }
+/* A form's buttons, each the full width of the form. */
+.fhi-actions {
+    display: grid;
+    gap: var(--fhi-space-2);
+}

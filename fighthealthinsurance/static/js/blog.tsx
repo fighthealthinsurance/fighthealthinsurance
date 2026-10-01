@@ -102,11 +102,11 @@ const BlogIndex: React.FC = () => {
   }, []);
 
   if (loading) {
-    return <div className="container mt-5"><div className="text-center">Loading...</div></div>;
+    return <div className="fhi-section"><div className="fhi-column fhi-column-centred">Loading...</div></div>;
   }
 
   return (
-    <div className="container">
+    <div className="fhi-page-wide">
       {/* The same title block every content page opens with; the markup and
           classes mirror templates/partials/page_title.html, which a React
           root cannot include. */}
@@ -116,49 +116,47 @@ const BlogIndex: React.FC = () => {
           Insights, tips, and strategies for fighting health insurance denials.
         </p>
       </header>
-      
-      {failedSlugs.length > 0 && (
-        <div className="alert alert-warning" role="alert">
-          <strong>Warning:</strong> Some blog posts could not be loaded: {failedSlugs.join(', ')}. This might be a deployment issue.
-        </div>
-      )}
 
-      <div className="row" style={{flexWrap: 'wrap'}}>
-        {posts.map(post => (
-          <div key={post.id} className="col-12 col-md-6 col-lg-4 mb-4" style={{paddingTop: '0.5rem', paddingBottom: '0.5rem'}}>
-            <div className="card h-100" style={{maxWidth: '400px', margin: '0 auto'}}>
-              <div className="card-body">
-                <h5 className="card-title" style={{color: '#a5c422'}}>{post.title}</h5>
-                <p className="card-text text-muted small mb-2">
-                  {post.date && (() => {
-                    // Only format if date matches YYYY-MM-DD
-                    const match = post.date.match(/^\d{4}-\d{2}-\d{2}$/);
-                    if (match) {
-                      const [year, month, day] = post.date.split('-');
-                      const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
-                      if (!isNaN(dateObj.getTime())) {
-                        return dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-                      }
-                    }
-                    // Fallback: show raw date
-                    return post.date;
-                  })()}
-                </p>
-                <p className="card-text flex-grow-1">{post.excerpt}</p>
-                <a href={`/blog/${post.slug}/`} className="btn mt-auto" style={{backgroundColor: '#a5c422', color: 'white', border: 'none', alignSelf: 'flex-start'}}>
-                  Read More
-                </a>
-              </div>
-            </div>
+      <div className="fhi-stack fhi-stack-loose">
+        {failedSlugs.length > 0 && (
+          <div className="fhi-notice fhi-notice-warning" role="alert">
+            <strong>Warning:</strong> Some blog posts could not be loaded: {failedSlugs.join(', ')}. This might be a deployment issue.
           </div>
-        ))}
-      </div>
-      
-      <div className="text-center mt-5">
-        <p className="text-muted">
-          More posts coming soon! Have a suggestion for a topic?{' '}
-          <a href="/contact/" className="link">Let us know</a>.
-        </p>
+        )}
+
+        <div className="fhi-cards fhi-cards-roomy">
+          {posts.map(post => (
+            <div key={post.id} className="fhi-card">
+              <h5 style={{color: 'var(--fhi-green-ink)'}}>{post.title}</h5>
+              <p className="fhi-note">
+                {post.date && (() => {
+                  // Only format if date matches YYYY-MM-DD
+                  const match = post.date.match(/^\d{4}-\d{2}-\d{2}$/);
+                  if (match) {
+                    const [year, month, day] = post.date.split('-');
+                    const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+                    if (!isNaN(dateObj.getTime())) {
+                      return dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                    }
+                  }
+                  // Fallback: show raw date
+                  return post.date;
+                })()}
+              </p>
+              <p>{post.excerpt}</p>
+              <a href={`/blog/${post.slug}/`} className="btn fhi-card-action" style={{backgroundColor: '#a5c422', color: 'white', border: 'none', alignSelf: 'flex-start'}}>
+                Read More
+              </a>
+            </div>
+          ))}
+        </div>
+
+        <div className="fhi-stack fhi-stack-centred">
+          <p className="fhi-hint">
+            More posts coming soon! Have a suggestion for a topic?{' '}
+            <a href="/contact/" className="link">Let us know</a>.
+          </p>
+        </div>
       </div>
     </div>
   );

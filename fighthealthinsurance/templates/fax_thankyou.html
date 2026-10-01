@@ -9,33 +9,37 @@ Thank you for using Fight Health Insurance & Our Fax Service!
 {% endblock scriptmagic %}
 {% block content %}
 <section id="contact">
-    <div class="container">
-      <div class="section-header text-align-center">
-	<h2>{% if already_sent %}Already received{% else %}Thank you!{% endif %}</h2>
-      </div>
-      {% if already_sent %}
-      <p>
+  <div class="fhi-page-wide">
+  {% if already_sent %}
+  {% include "partials/page_title.html" with title="Already received" %}
+  {% else %}
+  {% include "partials/page_title.html" with title="Thank you!" %}
+  {% endif %}
+  <div class="fhi-stack">
+  {% if already_sent %}
+  <p>
 	Good news &mdash; this appeal fax is already in our system and being processed (or has already been delivered). You don't need to send it again; you're all set.
-      </p>
-      {% else %}
-      <p>
+  </p>
+  {% else %}
+  <p>
 	The dream of the <a href="https://www.youtube.com/watch?v=U4hShMEk1Ew">90s is alive in Portland</a>, Seattle, and <a href="https://amzn.to/3UvGZaD">our FaxMachine (you can get your own too!)</a>.
-      </p>
-      {% endif %}
-      <div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem auto; max-width: 680px;">
-        <p style="color: #333; text-align: center; margin-bottom: 1rem;">
-          <strong>Appreciate us?</strong> Help us keep fighting for others:
-        </p>
-        <div style="background: white; padding: 1.5rem; border-radius: 8px;">
-          {% include 'partials/pwyw_panel.html' %}
-        </div>
-      </div>
-      <p>
-	<img src="{% static 'images/holden_and_carolyn_walk_in_seattle-optimized.jpg' %}" alt="Picture a very 90s esque picture here" align="center" width="1088" height="732"/>
-      </p>
-
-      {% include 'partials/share_buttons.html' %}
+  </p>
+  {% endif %}
+  <div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem auto; max-width: 680px;">
+    <p style="color: #333; text-align: center; margin-bottom: 1rem;">
+      <strong>Appreciate us?</strong> Help us keep fighting for others:
+    </p>
+    <div style="background: white; padding: 1.5rem; border-radius: 8px;">
+      {% include 'partials/pwyw_panel.html' %}
     </div>
+  </div>
+  <p>
+	<img class="fhi-photo" src="{% static 'images/holden_and_carolyn_walk_in_seattle-optimized.jpg' %}" alt="Picture a very 90s esque picture here" align="center" width="1088" height="732"/>
+  </p>
+
+  {% include 'partials/share_buttons.html' %}
+  </div>
+  </div>
 </section>
 {% endblock content %}
 

@@ -32,8 +32,9 @@ Frequently asked questions (FAQ)
       <div class="fhi-page">
       {% include "partials/page_title.html" with title="FAQ" %}
       
+      <div class="fhi-stack fhi-stack-loose">
       <!-- FAQ Navigation -->
-      <div class="mb-4">      
+      <div class="fhi-cluster">
             <form action="{% url 'medicaid-faq' %}" method="get" style="display:inline;">
             <button type="submit" class="fhi-btn">Medicaid FAQ</button>
             </form>
@@ -43,6 +44,7 @@ Frequently asked questions (FAQ)
       </div>
       
       <!-- General FAQ Content -->
+      <div>
       <h2>Would this also work for short-term medical leave denials?</h2>
       <p>
 	Probably not yet. Our AI is trained on health insurance, and the rules for short-term leave are very different.
@@ -55,6 +57,8 @@ Frequently asked questions (FAQ)
       <p>
 	 Email us at support42@fighthealthinsurance.com :)
       </p>
+      </div>
+      </div>
     </div>
 </section>
 {% endblock content %}
