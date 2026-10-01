@@ -53,80 +53,62 @@
 </section>
 
 <!-- Introduction Section -->
-<section id="microsite-intro" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="about-info">
-                    <h2>Understanding Your {{ microsite.default_procedure }} Denial</h2>
-                    <p class="lead">{{ microsite.intro }}</p>
-                </div>
-            </div>
+<section id="microsite-intro" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <div class="about-info">
+            <h2>Understanding Your {{ microsite.default_procedure }} Denial</h2>
+            <p class="fhi-lead">{{ microsite.intro }}</p>
         </div>
     </div>
 </section>
 
 <!-- Common Denial Reasons Section -->
 {% if microsite.common_denial_reasons %}
-<section id="denial-reasons" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Common Reasons for Denial</h2>
-                <div class="denial-reasons-list">
-                    <ul class="list-group">
-                        {% for reason in microsite.common_denial_reasons %}
-                        <li class="list-group-item d-flex align-items-center">
-                            <span class="badge bg-warning text-dark me-3">!</span>
-                            {{ reason }}
-                        </li>
-                        {% endfor %}
-                    </ul>
-                </div>
-            </div>
+<section id="denial-reasons" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Common Reasons for Denial</h2>
+        <div class="denial-reasons-list">
+            <ul class="fhi-list">
+                {% for reason in microsite.common_denial_reasons %}
+                <li class="fhi-media">
+                    <span class="fhi-badge fhi-badge-warning">!</span>
+                    {{ reason }}
+                </li>
+                {% endfor %}
+            </ul>
         </div>
     </div>
 </section>
 {% endif %}
 
 <!-- How We Help Section -->
-<section id="how-we-help" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto text-center">
-                <h2 class="mb-4">How We Help</h2>
-                <p class="lead">{{ microsite.how_we_help }}</p>
-                <div class="mt-4">
-                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-                       class="btn btn-green fhi-btn-lg">
-                        {{ microsite.cta }}
-                    </a>
-                </div>
-            </div>
+<section id="how-we-help" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose fhi-column-centred">
+        <h2>How We Help</h2>
+        <p class="fhi-lead">{{ microsite.how_we_help }}</p>
+        <div>
+            <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+               class="btn btn-green fhi-btn-lg">
+                {{ microsite.cta }}
+            </a>
         </div>
     </div>
 </section>
 
 <!-- Evidence Section -->
 {% if microsite.evidence_snippets %}
-<section id="evidence" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Some Types of Evidence We Can Use For Supporting Your Appeal</h2>
-                <div class="evidence-snippets">
-                    {% for snippet in microsite.evidence_snippets %}
-                    <div class="card mb-3">
-                        <div class="card-body">
-                            <p class="card-text mb-0">
-                                <i class="text-success me-2">&#10003;</i>
-                                {{ snippet }}
-                            </p>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
+<section id="evidence" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Some Types of Evidence We Can Use For Supporting Your Appeal</h2>
+        <div class="evidence-snippets fhi-stack">
+            {% for snippet in microsite.evidence_snippets %}
+            <div class="fhi-card">
+                <p>
+                    <i class="fhi-text-success">&#10003;</i>
+                    {{ snippet }}
+                </p>
             </div>
+            {% endfor %}
         </div>
     </div>
 </section>
@@ -134,25 +116,19 @@
 
 <!-- Alternatives Section -->
 {% if microsite.alternatives %}
-<section id="alternatives" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">While You're Fighting Your Denial</h2>
-                <p class="text-center text-muted mb-4">Talk to your provider about these options that might help bridge the gap:</p>
-                <div class="alternatives-list">
-                    {% for alternative in microsite.alternatives %}
-                    <div class="card mb-3">
-                        <div class="card-body">
-                            <p class="card-text mb-0">
-                                <i class="text-info me-2">&#8594;</i>
-                                {{ alternative }}
-                            </p>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
+<section id="alternatives" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>While You're Fighting Your Denial</h2>
+        <p class="fhi-hint">Talk to your provider about these options that might help bridge the gap:</p>
+        <div class="alternatives-list fhi-stack">
+            {% for alternative in microsite.alternatives %}
+            <div class="fhi-card">
+                <p>
+                    <i class="fhi-text-info">&#8594;</i>
+                    {{ alternative }}
+                </p>
             </div>
+            {% endfor %}
         </div>
     </div>
 </section>
@@ -166,60 +142,48 @@
 
 <!-- Patient Assistance Programs Section -->
 {% if microsite.assistance_programs %}
-<section id="assistance-programs" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Patient Assistance &amp; Copay Programs</h2>
-                <p class="text-center text-muted mb-4">These programs may help reduce your costs while you appeal:</p>
-                <div class="assistance-programs-list">
-                    {% for program in microsite.assistance_programs %}
-                    <div class="card mb-3 assistance-card">
-                        <div class="card-body">
-                            <h5 class="card-title mb-2">
-                                <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer" class="assistance-link">
-                                    {{ program.name }}
-                                    <i class="text-muted ms-1 icon-external-sm">&#8599;</i>
-                                </a>
-                            </h5>
-                            <p class="card-text text-muted mb-0">{{ program.description }}</p>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                <p class="text-muted small mt-4 mb-0 text-center">
-                    <em>Eligibility requirements and program terms may change. Please verify current details directly with each organization.</em>
-                </p>
+<section id="assistance-programs" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Patient Assistance &amp; Copay Programs</h2>
+        <p class="fhi-hint">These programs may help reduce your costs while you appeal:</p>
+        <div class="assistance-programs-list fhi-stack">
+            {% for program in microsite.assistance_programs %}
+            <div class="fhi-card assistance-card">
+                <h5>
+                    <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer" class="assistance-link">
+                        {{ program.name }}
+                        <i class="fhi-hint icon-external-sm">&#8599;</i>
+                    </a>
+                </h5>
+                <p class="fhi-hint">{{ program.description }}</p>
             </div>
+            {% endfor %}
         </div>
+        <p class=" fhi-note">
+            <em>Eligibility requirements and program terms may change. Please verify current details directly with each organization.</em>
+        </p>
     </div>
 </section>
 {% endif %}
 
 <!-- Advocacy Resources Section -->
 {% if microsite.advocacy_resources %}
-<section id="advocacy-resources" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Patient Advocacy &amp; Support Organizations</h2>
-                <p class="text-center text-muted mb-4">These organizations provide education, support, and advocacy for patients:</p>
-                <div class="advocacy-resources-list">
-                    {% for resource in microsite.advocacy_resources %}
-                    <div class="card mb-3 advocacy-card">
-                        <div class="card-body">
-                            <h5 class="card-title mb-2">
-                                <a href="{{ resource.url }}" target="_blank" rel="noopener noreferrer" class="advocacy-link">
-                                    {{ resource.name }}
-                                    <i class="text-muted ms-1 icon-external-sm">&#8599;</i>
-                                </a>
-                            </h5>
-                            <p class="card-text text-muted mb-0">{{ resource.description }}</p>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
+<section id="advocacy-resources" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Patient Advocacy &amp; Support Organizations</h2>
+        <p class="fhi-hint">These organizations provide education, support, and advocacy for patients:</p>
+        <div class="advocacy-resources-list fhi-stack">
+            {% for resource in microsite.advocacy_resources %}
+            <div class="fhi-card advocacy-card">
+                <h5>
+                    <a href="{{ resource.url }}" target="_blank" rel="noopener noreferrer" class="advocacy-link">
+                        {{ resource.name }}
+                        <i class="fhi-hint icon-external-sm">&#8599;</i>
+                    </a>
+                </h5>
+                <p class="fhi-hint">{{ resource.description }}</p>
             </div>
+            {% endfor %}
         </div>
     </div>
 </section>
@@ -227,74 +191,62 @@
 
 <!-- FAQ Section -->
 {% if microsite.faq %}
-<section id="faq" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Frequently Asked Questions</h2>
-                <div class="fhi-accordion">
-                    {% for item in microsite.faq %}
-                    <details class="fhi-accordion-item" name="microsite-faq"{% if forloop.first %} open{% endif %}>
-                        <summary>
-                            <h3 class="fhi-accordion-question">{{ item.question }}</h3>
-                        </summary>
-                        <div class="fhi-accordion-body">
-                            {{ item.answer }}
-                        </div>
-                    </details>
-                    {% endfor %}
+<section id="faq" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Frequently Asked Questions</h2>
+        <div class="fhi-accordion">
+            {% for item in microsite.faq %}
+            <details class="fhi-accordion-item" name="microsite-faq"{% if forloop.first %} open{% endif %}>
+                <summary>
+                    <h3 class="fhi-accordion-question">{{ item.question }}</h3>
+                </summary>
+                <div class="fhi-accordion-body">
+                    {{ item.answer }}
                 </div>
-            </div>
+            </details>
+            {% endfor %}
         </div>
     </div>
 </section>
 {% endif %}
 
 <!-- Final CTA Section -->
-<section id="final-cta" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto text-center">
-                {% if microsite.medicare %}
-                <h2 class="mb-3">Need Help Understanding Medicare Work Requirements?</h2>
-                <p class="lead mb-4">Chat with our AI assistant to get personalized guidance on navigating the new requirements.</p>
-                {% else %}
-                <h2 class="mb-3">Ready to Fight Your {{ microsite.default_procedure }} Denial?</h2>
-                <p class="lead mb-4">Our free AI-powered tool will help you generate a compelling appeal letter in minutes.</p>
-                {% endif %}
-                <div class="d-flex justify-content-center gap-3 flex-wrap">
-                    {% if not microsite.medicare %}
-                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-                       class="btn btn-green fhi-btn-lg">
-                        Start Your Appeal
-                    </a>
-                    {% endif %}
-                    <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
-                       class="btn {% if microsite.medicare %}btn-green{% else %}btn-outline-green{% endif %} fhi-btn-lg">
-                        Chat with AI Assistant
-                    </a>
-                    {% if microsite.blog_post_url %}
-                    <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green fhi-btn-lg">
-                        Read Our Guide
-                    </a>
-                    {% endif %}
-                </div>
-            </div>
+<section id="final-cta" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose fhi-column-centred">
+        {% if microsite.medicare %}
+        <h2>Need Help Understanding Medicare Work Requirements?</h2>
+        <p class="fhi-lead">Chat with our AI assistant to get personalized guidance on navigating the new requirements.</p>
+        {% else %}
+        <h2>Ready to Fight Your {{ microsite.default_procedure }} Denial?</h2>
+        <p class="fhi-lead">Our free AI-powered tool will help you generate a compelling appeal letter in minutes.</p>
+        {% endif %}
+        <div class="fhi-cluster fhi-cluster-center">
+            {% if not microsite.medicare %}
+            <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+               class="btn btn-green fhi-btn-lg">
+                Start Your Appeal
+            </a>
+            {% endif %}
+            <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
+               class="btn {% if microsite.medicare %}btn-green{% else %}btn-outline-green{% endif %} fhi-btn-lg">
+                Chat with AI Assistant
+            </a>
+            {% if microsite.blog_post_url %}
+            <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green fhi-btn-lg">
+                Read Our Guide
+            </a>
+            {% endif %}
         </div>
     </div>
 </section>
 
 <!-- Disclaimer Section -->
-<section id="disclaimer" class="py-4">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="disclaimer-box p-3 bg-light border rounded">
-                    <p class="text-muted small mb-0">
-                        <strong>Disclaimer:</strong> Fight Health Insurance is not affiliated with, endorsed by, or partnered with any pharmaceutical manufacturer, healthcare provider, medical device company, or patient assistance program{% if microsite.manufacturer %}, including {{ microsite.manufacturer }}{% endif %}. All information provided is for educational and informational purposes only and does not constitute medical or legal advice. Please consult with your healthcare provider regarding treatment options and with your insurance company regarding coverage decisions.
-                    </p>
-                </div>
-            </div>
+<section id="disclaimer" class="fhi-section fhi-section-tight">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <div class="disclaimer-box fhi-disclaimer">
+            <p class="fhi-note">
+                <strong>Disclaimer:</strong> Fight Health Insurance is not affiliated with, endorsed by, or partnered with any pharmaceutical manufacturer, healthcare provider, medical device company, or patient assistance program{% if microsite.manufacturer %}, including {{ microsite.manufacturer }}{% endif %}. All information provided is for educational and informational purposes only and does not constitute medical or legal advice. Please consult with your healthcare provider regarding treatment options and with your insurance company regarding coverage decisions.
+            </p>
         </div>
     </div>
 </section>
@@ -354,15 +306,15 @@
         text-align: center;
     }
 
-    .denial-reasons-list .list-group-item {
+    .denial-reasons-list .fhi-list > * {
         border-left: 4px solid #ffc107;
     }
 
-    .evidence-snippets .card {
+    .evidence-snippets .fhi-card {
         border-left: 4px solid #28a745;
     }
 
-    .alternatives-list .card {
+    .alternatives-list .fhi-card {
         border-left: 4px solid #17a2b8;
     }
 
