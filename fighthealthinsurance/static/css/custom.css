@@ -960,9 +960,9 @@ a.link:hover::after {
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
 .pwyw-option input[type=radio] {margin:0; accent-color:#a5c422;}
 .pwyw-option small {display:block; font-size:var(--fhi-text-micro); opacity:.9; color: #fff;}
-.pwyw-option.custom {flex:1 1 165px;}
+.pwyw-option.custom {flex:1 1 165px; min-width:0;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
-.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
+.pwyw-custom-input {flex:1; min-width:0; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 /* The hero panel is dark and the photograph behind it is anything, so the
    fill alone does not tell the reader where the button ends. The glow does:
@@ -3673,6 +3673,9 @@ textarea,
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
 .fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
+/* A paragraph in a notice is the notice's ink too, not main.css's grey,
+   which falls under 4.5:1 on the notice fills. */
+.fhi-notice p { color: inherit; }
 
 /* The small print at the foot of a page: a bordered light box. */
 .fhi-disclaimer {
