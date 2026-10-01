@@ -51,7 +51,6 @@ PAGES = {
     "/how-to-help": "wide",
     "/media-references": "wide",
     "/treatments/": "wide",
-    "/glossary/": "wide",
     "/state-help/": "wide",
     "/state-help/california/": "wide",
     "/remove_data": "reading",
@@ -67,6 +66,7 @@ PAGES = {
 # .fhi-column in each band, sized like the tiers. Path -> tier of the first
 # band's column. The measure checks are for prose pages and leave these out.
 BAND_PAGES = {
+    "/glossary/": "wide",
     "/medicaid-eligibility": "reading",
     "/turning-26": "reading",
 }
@@ -286,7 +286,7 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                 self.wait_for_ready_state_complete()
                 self.type("#id_email", "nobody@example.com")
                 self.click("#submit")
-                self.wait_for_element(".alert-info")
+                self.wait_for_element(".fhi-notice-info")
                 c = self.execute_script(COLUMN_JS)
                 assert not c.get("missing"), "Check Your Email has no .fhi-page column"
                 if size is PHONE:
@@ -303,7 +303,7 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                     f"Check Your Email at {size[0]}px: past the column's edge: {c['escapes']}"
                 )
                 note = self.execute_script(
-                    "return document.querySelector('.alert-info').getBoundingClientRect().width"
+                    "return document.querySelector('.fhi-notice-info').getBoundingClientRect().width"
                 )
                 assert note <= min(640, c["inner"]) + 1, (
                     f"Check Your Email at {size[0]}px: the note is {note:.0f}px wide in a "

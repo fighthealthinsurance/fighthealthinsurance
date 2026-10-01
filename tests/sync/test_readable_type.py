@@ -54,7 +54,7 @@ class ReadableTypeTest(SimpleTestCase):
     def test_the_reading_size_leaves_sized_and_card_text_alone(self):
         sel, body = rule(CUSTOM_CSS, r"\.fhi-page :where\(p, li\):not")
         self.assertIn("var(--fhi-text-reading)", body)
-        for kept in (".lead", ".small", ".breadcrumb-item", '[class*="card"] *'):
+        for kept in (".lead", ".small", ".fhi-lead", ".fhi-note", ".fhi-breadcrumbs *", '[class*="card"] *'):
             self.assertIn(kept, sel)
 
     def test_links_in_running_text_and_consent_labels_underline(self):

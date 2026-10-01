@@ -1599,6 +1599,10 @@ UNREACHED: tuple[Exempt, ...] = (
         "No template carries this class; it is the pill the pay-what-you-want "
         "panel used before the panel was rebuilt.",
     ),
+    # Only the blog post's breadcrumb carries .breadcrumb-item now, and
+    # blog_post.tsx renders it, so the gate cannot see its ground. The
+    # glossary term page moved to .fhi-breadcrumbs.
+    Exempt("custom.css", ".breadcrumb-item a", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-active", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-done", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-skipped", WRITTEN_AT_RUNTIME),

@@ -41,6 +41,8 @@ ON_A_COLUMN = {
     "removed_data.html": "fhi-page fhi-page-centred",
     "delete_data_email_sent.html": "fhi-page fhi-page-centred",
     "share_denial.html": "fhi-page fhi-page-centred",
+    "unsubscribed.html": "fhi-page fhi-page-centred",
+    "stripe_finish_error.html": "fhi-page fhi-page-centred",
 }
 
 # Hero pages -> the class every band under the hero opens on. The first
@@ -50,7 +52,7 @@ ON_A_COLUMN = {
 BANDS_ON_A_COLUMN = {
     "state_help_index.html": "fhi-page-wide",
     "state_help.html": "fhi-page-wide",
-    "glossary_index.html": "fhi-page-wide",
+    "glossary_index.html": "fhi-column",
 }
 
 FIRST_WRAPPER = re.compile(r"{%\s*block content\s*%}.*?<div class=\"([^\"]+)\"", re.S)
@@ -87,7 +89,8 @@ def test_each_band_under_a_hero_opens_on_its_column() -> None:
             label = re.search(r"\bid=\"([^\"]+)\"", attributes)
             label = label.group(1) if label else (band.group(1) if band else "a band")
             found = CLASS.search(inner)
-            found = found.group(1) if found and tag == "div" else None
+            # the first class names the column; the rest are how it is laid out
+            found = found.group(1).split()[0] if found and tag == "div" else None
             if found != expected:
                 wrong.append(f"{name} #{label}: opens on {found!r}, not {expected!r}")
     assert not wrong, "\n".join(wrong)
