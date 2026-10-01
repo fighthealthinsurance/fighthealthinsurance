@@ -19,65 +19,75 @@ include it unconditionally.
         <p class="fhi-hint">Curated copay foundations, manufacturer programs, and safety-net clinics that may help with the cost while you appeal.</p>
 
         {% if financial_assistance.diagnosis_specific %}
-        <h3 class="assistance-subheading">For your condition</h3>
-        {% for program in financial_assistance.diagnosis_specific %}
-        <div class="fhi-card financial-assistance-card">
-            <h4 class="fhi-card-title">
-                <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
-            </h4>
-            <p class="fhi-hint">{{ program.description }}</p>
-            {% if program.eligibility_note %}<p class="fhi-note"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
-            {% if program.phone %}<p class="fhi-note">Phone: {{ program.phone }}</p>{% endif %}
+        <div class="fhi-stack">
+            <h3 class="assistance-subheading">For your condition</h3>
+            {% for program in financial_assistance.diagnosis_specific %}
+            <div class="fhi-card financial-assistance-card">
+                <h4 class="fhi-card-title">
+                    <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
+                </h4>
+                <p class="fhi-hint">{{ program.description }}</p>
+                {% if program.eligibility_note %}<p class="fhi-note"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
+                {% if program.phone %}<p class="fhi-note">Phone: {{ program.phone }}</p>{% endif %}
+            </div>
+            {% endfor %}
         </div>
-        {% endfor %}
         {% endif %}
 
         {% if financial_assistance.manufacturer %}
-        <h3 class="assistance-subheading">Manufacturer copay programs</h3>
-        {% for program in financial_assistance.manufacturer %}
-        <div class="fhi-card financial-assistance-card">
-            <h4 class="fhi-card-title">
-                <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
-            </h4>
-            <p class="fhi-hint">{{ program.description }}</p>
-            {% if program.eligibility_note %}<p class="fhi-note"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
+        <div class="fhi-stack">
+            <h3 class="assistance-subheading">Manufacturer copay programs</h3>
+            {% for program in financial_assistance.manufacturer %}
+            <div class="fhi-card financial-assistance-card">
+                <h4 class="fhi-card-title">
+                    <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
+                </h4>
+                <p class="fhi-hint">{{ program.description }}</p>
+                {% if program.eligibility_note %}<p class="fhi-note"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
+            </div>
+            {% endfor %}
         </div>
-        {% endfor %}
         {% endif %}
 
         {% if financial_assistance.general %}
-        <h3 class="assistance-subheading">General copay foundations &amp; directories</h3>
-        {% for program in financial_assistance.general %}
-        <div class="fhi-card financial-assistance-card">
-            <h4 class="fhi-card-title">
-                <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
-            </h4>
-            <p class="fhi-hint">{{ program.description }}</p>
-            {% if program.eligibility_note %}<p class="fhi-note"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
-            {% if program.phone %}<p class="fhi-note">Phone: {{ program.phone }}</p>{% endif %}
+        <div class="fhi-stack">
+            <h3 class="assistance-subheading">General copay foundations &amp; directories</h3>
+            {% for program in financial_assistance.general %}
+            <div class="fhi-card financial-assistance-card">
+                <h4 class="fhi-card-title">
+                    <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
+                </h4>
+                <p class="fhi-hint">{{ program.description }}</p>
+                {% if program.eligibility_note %}<p class="fhi-note"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
+                {% if program.phone %}<p class="fhi-note">Phone: {{ program.phone }}</p>{% endif %}
+            </div>
+            {% endfor %}
         </div>
-        {% endfor %}
         {% endif %}
 
         {% if financial_assistance.safety_net %}
-        <h3 class="assistance-subheading">Safety-net clinics &amp; 340B</h3>
-        {% for program in financial_assistance.safety_net %}
-        <div class="fhi-card financial-assistance-card">
-            <h4 class="fhi-card-title">
-                <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
-            </h4>
-            <p class="fhi-hint">{{ program.description }}</p>
+        <div class="fhi-stack">
+            <h3 class="assistance-subheading">Safety-net clinics &amp; 340B</h3>
+            {% for program in financial_assistance.safety_net %}
+            <div class="fhi-card financial-assistance-card">
+                <h4 class="fhi-card-title">
+                    <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>
+                </h4>
+                <p class="fhi-hint">{{ program.description }}</p>
+            </div>
+            {% endfor %}
         </div>
-        {% endfor %}
         {% endif %}
 
         {% if financial_assistance.state_medicaid_name %}
-        <h3 class="assistance-subheading">State Medicaid pathway</h3>
-        <div class="fhi-card financial-assistance-card">
-            <h4 class="fhi-card-title">
-                {% if financial_assistance.state_medicaid_url %}<a href="{{ financial_assistance.state_medicaid_url }}" target="_blank" rel="noopener noreferrer">{{ financial_assistance.state_medicaid_name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>{% else %}{{ financial_assistance.state_medicaid_name }}{% endif %}
-            </h4>
-            {% if financial_assistance.state_medicaid_phone %}<p class="fhi-note">Phone: {{ financial_assistance.state_medicaid_phone }}</p>{% endif %}
+        <div class="fhi-stack">
+            <h3 class="assistance-subheading">State Medicaid pathway</h3>
+            <div class="fhi-card financial-assistance-card">
+                <h4 class="fhi-card-title">
+                    {% if financial_assistance.state_medicaid_url %}<a href="{{ financial_assistance.state_medicaid_url }}" target="_blank" rel="noopener noreferrer">{{ financial_assistance.state_medicaid_name }} <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i><span class="fhi-visually-hidden">(opens in a new tab)</span></a>{% else %}{{ financial_assistance.state_medicaid_name }}{% endif %}
+                </h4>
+                {% if financial_assistance.state_medicaid_phone %}<p class="fhi-note">Phone: {{ financial_assistance.state_medicaid_phone }}</p>{% endif %}
+            </div>
         </div>
         {% endif %}
 
