@@ -3531,6 +3531,15 @@ textarea,
 .fhi-column-centred > .btn { align-self: center; }
 .fhi-stack-loose { gap: var(--fhi-space-6); }
 
+/* A marker, badge or abbreviation beside its text, centred on one line. */
+.fhi-media {
+    display: flex;
+    align-items: center;
+    gap: var(--fhi-space-4);
+}
+.fhi-media > *,
+.fhi-media > * > * { margin-block: 0; }
+
 /* A wrapping row, for buttons and links side by side. */
 .fhi-cluster {
     display: flex;
@@ -3566,10 +3575,12 @@ textarea,
 /* Cards: as many to a row as fit at about 14rem each, so three short cards
    share the reading column on a desktop and one takes a phone's width.
    Cards that hold paragraphs are roomy: 20rem each, so two to a row there
-   and the lines stay long enough to read. */
+   and the lines stay long enough to read. A short run keeps the same card
+   size and leaves the rest of the row empty, so a lone card never stretches
+   across the row. */
 .fhi-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
@@ -3621,6 +3632,8 @@ textarea,
 }
 .fhi-list > * + * { border-top: 1px solid #d0d0d0; }
 .fhi-list > * > * { margin-block: 0; }
+/* A list item can itself be a media row: a badge beside its text. */
+.fhi-list > .fhi-media { flex-direction: row; }
 
 /* A list without bullets or indent. */
 .fhi-bare-list { padding-left: 0; list-style: none; }
