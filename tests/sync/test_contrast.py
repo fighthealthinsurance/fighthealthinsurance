@@ -1597,13 +1597,6 @@ UNREACHED: tuple[Exempt, ...] = (
         "No template carries this class; it is the pill the pay-what-you-want "
         "panel used before the panel was rebuilt.",
     ),
-    # Only the blog post's breadcrumb carries .breadcrumb-item now, and
-    # blog_post.tsx renders it, so the gate cannot see its ground. The
-    # glossary term page moved to .fhi-breadcrumbs.
-    Exempt("custom.css", ".breadcrumb-item a", WRITTEN_AT_RUNTIME),
-    # blog_post.tsx renders the blog and FAQ "not found" message as an
-    # alert-danger with a paragraph; no template carries it.
-    Exempt("custom.css", ".alert-danger p", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-active", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-done", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-skipped", WRITTEN_AT_RUNTIME),
@@ -1618,11 +1611,6 @@ UNREACHED: tuple[Exempt, ...] = (
     Exempt(
         "custom.css", ".pro-interest-form > .fhi-notice .errorlist", WRITTEN_AT_RUNTIME
     ),
-    # The blog and FAQ posts' breadcrumb, which blog_post.tsx renders. No
-    # template carries .fhi-breadcrumbs yet; when the glossary term page
-    # takes it, these two are reached and have to go.
-    Exempt("custom.css", ".fhi-breadcrumbs", WRITTEN_AT_RUNTIME),
-    Exempt("custom.css", ".fhi-breadcrumbs a", WRITTEN_AT_RUNTIME),
     Exempt("main.css", ".select-option", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a:visited", BOUGHT_THEME),
