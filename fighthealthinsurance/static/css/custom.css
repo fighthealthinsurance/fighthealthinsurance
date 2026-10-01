@@ -363,6 +363,25 @@ textarea.fhi-field {
     line-height: var(--fhi-line-heading);
 }
 
+/* The intake flow's column steps its headings down the way the reading
+   tier does: a step's own title (.fhi-step-title) leads, then sections and
+   every callout's heading share one size, whatever level the page gave
+   them, and a fourth level outside a callout is the lead size. On the
+   send-your-appeal page the callout headings had run larger than the page
+   title and the sections equal to it. :where() keeps the defaults at no
+   weight, so a page's own heading class still wins. */
+.container-narrow :where(h2, h3) {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+.container-narrow :where(h4) {
+    font-size: var(--fhi-text-lead);
+}
+.container-narrow .alert-box > :is(h2, h3, h4) {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;
@@ -397,6 +416,12 @@ textarea.fhi-field {
 .alert-danger {
     background: #ffebee;
     border-left-color: #f44336;
+}
+/* The blog and FAQ's "not found" message, which blog_post.tsx renders as a
+   Bootstrap alert-danger with a paragraph: its sentence stays error red
+   rather than the body grey main.css gives every p. 5.0:1 on the fill. */
+.alert-danger p {
+    color: #c62828;
 }
 
 .alert-warning {
@@ -951,9 +976,9 @@ a.link:hover::after {
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
 .pwyw-option input[type=radio] {margin:0; accent-color:#a5c422;}
 .pwyw-option small {display:block; font-size:var(--fhi-text-micro); opacity:.9; color: #fff;}
-.pwyw-option.custom {flex:1 1 165px;}
+.pwyw-option.custom {flex:1 1 165px; min-width:0;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
-.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
+.pwyw-custom-input {flex:1; min-width:0; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 /* The hero panel is dark and the photograph behind it is anything, so the
    fill alone does not tell the reader where the button ends. The glow does:
@@ -1172,6 +1197,11 @@ a.link:hover::after {
     padding: 0; /* Resets padding */
 }
 
+/* In a stack, a hidden message would still take a slot and double the gap
+   around it, so until it is shown it takes no part in the layout. */
+.fhi-stack > .hidden-error-message:not(.visible) {
+    display: none;
+}
 .hidden-error-message.visible {
   visibility: visible; /* Makes the element visible */
   height: auto; /* Allows the content to occupy its natural height */
@@ -3482,6 +3512,29 @@ textarea,
     }
 }
 
+/* In the reading column a form table always puts each label above its
+   field, as it does on a phone. The column is never wide enough for a field
+   sized in columns beside its label: follow-up's two cols="80" boxes ran
+   about 100px past it at a desktop. */
+.fhi-page .fhi-form-table,
+.fhi-page .fhi-form-table tbody,
+.fhi-page .fhi-form-table tr,
+.fhi-page .fhi-form-table th,
+.fhi-page .fhi-form-table td {
+    display: block;
+    width: 100%;
+}
+
+.fhi-page .fhi-form-table th {
+    padding: var(--fhi-space-3) 0 var(--fhi-space-1);
+    background: transparent;
+    border-bottom: 0;
+}
+
+.fhi-page .fhi-form-table td {
+    padding: 0 0 var(--fhi-space-4);
+}
+
 /* A field sized in columns rather than by a class, like the follow-up
    form's cols="80" textareas, is wider than a phone, and beside its label
    it is wider than the reading column too. Capping the field at its cell
@@ -3556,6 +3609,9 @@ textarea,
 /* The same in a tick box's row, where a grid cell would otherwise stretch
    the button across the label's column. */
 .fhi-check-row > .btn { justify-self: start; }
+/* A link-style button in the row, such as Remove the downloaded model, lines
+   up with the label's text rather than sitting inside button padding. */
+.fhi-check-row .btn-link { padding: 0; }
 
 /* A stack whose contents sit in the middle: a call to action and its note. */
 .fhi-stack-centred { align-items: center; text-align: center; }

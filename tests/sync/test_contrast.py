@@ -1599,6 +1599,9 @@ UNREACHED: tuple[Exempt, ...] = (
         "No template carries this class; it is the pill the pay-what-you-want "
         "panel used before the panel was rebuilt.",
     ),
+    # blog_post.tsx renders the blog and FAQ "not found" message as an
+    # alert-danger with a paragraph; no template carries it.
+    Exempt("custom.css", ".alert-danger p", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-active", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-done", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-skipped", WRITTEN_AT_RUNTIME),
