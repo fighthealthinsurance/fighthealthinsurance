@@ -1967,7 +1967,13 @@ GRADIENT_BUTTON_CLASSES = (
 # Same family, drawn as an edge rather than a fill. They carry the size scale
 # but not the white-on-lime measurement, because their fill is not the lime.
 OUTLINE_BUTTON_CLASSES = frozenset(
-    ("fhi-button-secondary", "fhi-button-neutral", "secondary-cta")
+    (
+        "fhi-button-secondary",
+        "fhi-button-neutral",
+        "fhi-button-outbound",
+        "fhi-button-danger",
+        "secondary-cta",
+    )
 )
 # Every class that makes or styles one of our buttons, for the checks that
 # hold for all of them.

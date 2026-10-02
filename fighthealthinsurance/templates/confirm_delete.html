@@ -14,7 +14,7 @@ Confirm Data Deletion
             {% csrf_token %}
             <input type="hidden" name="token" value="{{ token }}">
             <input type="hidden" name="email" value="{{ email }}">
-            <button type="submit" class="fhi-button fhi-button-primary">Confirm Deletion</button>
+            <button type="submit" class="fhi-button fhi-button-danger">Confirm Deletion</button>
         </form>
     </div>
 </section>

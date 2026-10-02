@@ -89,7 +89,7 @@
                 </p>
                 {% endif %}
                 {% if state.consumer_assistance.cap_url %}
-                <a href="{{ state.consumer_assistance.cap_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary fhi-button-small">
+                <a href="{{ state.consumer_assistance.cap_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
                     Visit Website {% include 'partials/opens_in_new_tab.html' %}
                 </a>
                 {% endif %}
@@ -107,7 +107,7 @@
                 </p>
                 {% endif %}
                 {% if state.consumer_assistance.ship_url %}
-                <a href="{{ state.consumer_assistance.ship_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary fhi-button-small">
+                <a href="{{ state.consumer_assistance.ship_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
                     Visit Website {% include 'partials/opens_in_new_tab.html' %}
                 </a>
                 {% endif %}
@@ -154,7 +154,7 @@
                     </p>
                     {% endif %}
                     {% if state.medicaid.managed_care_ombudsman.url %}
-                    <a href="{{ state.medicaid.managed_care_ombudsman.url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-neutral fhi-button-small">
+                    <a href="{{ state.medicaid.managed_care_ombudsman.url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
                         Learn More
                     </a>
                     {% endif %}
@@ -173,7 +173,7 @@
             <h2>External Review Available</h2>
             <p class="fhi-lead">{{ state.name }} offers an independent external review process for health insurance denials. This is a free or low-cost way to have your denial reviewed by an independent third party.</p>
             {% if state.external_review.info_url %}
-            <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary">
+            <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound">
                 Learn About External Review {% include 'partials/opens_in_new_tab.html' %}
             </a>
             {% endif %}

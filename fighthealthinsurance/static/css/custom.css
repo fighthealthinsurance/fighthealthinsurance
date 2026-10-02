@@ -176,6 +176,11 @@
     /* Part of a button's box in every role, so the padding a button
        draws is the token's less this. */
     --fhi-btn-border: 2px;
+    /* A button that takes the reader to another organisation's site, and
+       one that deletes something: 6.67:1 and 6.91:1 on white. */
+    --fhi-outbound: #0b5cad;
+    --fhi-danger: #a33131;
+    --fhi-danger-soft: #fdf1f0;
 }
 
 /* Skip link for keyboard navigation (accessibility) */
@@ -663,17 +668,22 @@ li > a.link {
     outline-offset: 3px;
 }
 
-/* An edge in olive, 3.52:1 on white, and a green-ink label, 6.00:1. Hover
-   fills it with the label's colour and turns the label white, 6.00:1. */
+/* An edge in the brand lime and a green-ink label, 6.00:1 on white. Hover
+   fills it with the lime (Melanie, 2026-10-02) and turns the label the page's
+   ink, 6.3:1 on the lime; white would be 2:1. The hero's own buttons on the
+   photograph are .secondary-cta, which stay white. */
 .fhi-button-secondary {
-    border-color: var(--fhi-olive);
+    border-color: var(--fhi-green);
+    color: var(--fhi-green-ink);
+}
+.fhi-button-secondary:focus {
     color: var(--fhi-green-ink);
 }
 .fhi-button-secondary:hover,
 .fhi-button-secondary:active {
-    background-color: var(--fhi-green-ink);
-    border-color: var(--fhi-green-ink);
-    color: #fff;
+    background-color: var(--fhi-green);
+    border-color: var(--fhi-green);
+    color: var(--fhi-ink);
 }
 
 /* The same shape in grey: an edge at 3.45:1 on white, a label at 7.46:1,
@@ -692,6 +702,40 @@ li > a.link {
     background-color: var(--fhi-ink-2);
     border-color: var(--fhi-ink-2);
     color: #fff;
+}
+
+/* A link to another organisation's site (a state's consumer assistance
+   office, healthcare.gov): a blue edge and label, so it reads as a way out
+   rather than a step on ours, and white on blue when hovered, 6.67:1. */
+.fhi-button-outbound {
+    border-color: var(--fhi-outbound);
+    color: var(--fhi-outbound);
+}
+.fhi-button-outbound:focus {
+    color: var(--fhi-outbound);
+}
+.fhi-button-outbound:hover,
+.fhi-button-outbound:active {
+    background-color: var(--fhi-outbound);
+    border-color: var(--fhi-outbound);
+    color: #fff;
+}
+
+/* An action that deletes something: a red edge and label, calm rather than
+   alarming. Hovered it takes a pale red fill and keeps its red label,
+   6.25:1, instead of turning into a solid red block. */
+.fhi-button-danger {
+    border-color: var(--fhi-danger);
+    color: var(--fhi-danger);
+}
+.fhi-button-danger:focus {
+    color: var(--fhi-danger);
+}
+.fhi-button-danger:hover,
+.fhi-button-danger:active {
+    background-color: var(--fhi-danger-soft);
+    border-color: var(--fhi-danger);
+    color: var(--fhi-danger);
 }
 
 /* The sizes. Each comes after the roles, so the size a button is given is
