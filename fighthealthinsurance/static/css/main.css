@@ -399,9 +399,6 @@ a:focus {
     margin: 0;
 }
 
-.slider .container {
-    width: 100%;
-}
 
 /* The caption fills its band, however tall the band's floor makes it, and
    centres the copy in it both ways. Bootstrap's row used to stretch the
