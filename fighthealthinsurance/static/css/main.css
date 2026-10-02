@@ -144,6 +144,9 @@ h4 {
 
 h5 {
     font-weight: 500;
+    /* Its size was Bootstrap's 1.25rem, never set here; without it an h5
+       falls to the browser's 13px. */
+    font-size: var(--fhi-text-subsection);
 }
 
 h1 {

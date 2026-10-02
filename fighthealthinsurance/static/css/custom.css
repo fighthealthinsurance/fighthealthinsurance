@@ -1,8 +1,6 @@
-/* The box model is ours, not the CDN's. Bootstrap's stylesheet carries the
-   same rule, so nothing changes while it loads; without it every element
-   that pairs width:100% with padding (the intake wrapper, .fhi-field) would
-   overflow a phone by its padding, and a 390px page would scroll sideways
-   because a download failed. */
+/* The box model. Without it every element that pairs width:100% with
+   padding (the intake wrapper, .fhi-field) would overflow a phone by its
+   padding, and a 390px page would scroll sideways. */
 *,
 *::before,
 *::after {
@@ -10,14 +8,159 @@
 }
 
 /* The hidden attribute hides, whatever display a rule gives the element.
-   Bootstrap's stylesheet carries the same rule, so nothing changes while it
-   loads; without it, the browser's own [hidden] loses to any rule of ours
-   that sets display, and the element shows. */
+   Without it, the browser's own [hidden] loses to any rule of ours that
+   sets display, and the element shows. */
 [hidden] {
     display: none !important;
 }
 
+/* ---- Where every page starts ---------------------------------------------
+   The browser's own defaults, corrected where this site's pages depend on
+   something else. Each rule below was found by loading the pages with and
+   without Bootstrap's stylesheet and reading what changed (the textarea and
+   code rules by reading the templates of pages behind a login); anything
+   the pages showed no need for is not here. Values that read like a design
+   decision (the 1.5 line height, the #212529 ink) are the ones the site has
+   been drawn with, kept so nothing shifts; changing one is a design call
+   for its own change, not part of this one.
+   ------------------------------------------------------------------------ */
+
+
+html {
+    /* Phone browsers in landscape enlarge text they think is too small.
+       Our sizes are already set for phones. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    /* The browser frames the page in 8px of white; our header, bands and
+       footer run to the window's edge. */
+    margin: 0;
+    line-height: var(--fhi-line-base);
+    color: var(--fhi-ink-base);
+    /* No grey box flashing over a link or button as it is tapped. */
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Headings sit flush under whatever is above them and keep half a line
+   below. The browser's margins are in em, so they differ at every level and
+   grow with the heading (2.33em above an h6). */
+h1, h2, h3, h4, h5, h6 {
+    margin-block: 0 var(--fhi-space-2);
+}
+
+/* A paragraph or list keeps a line of space after it and none before, so the
+   first one in a card or callout starts at the top of its padding. */
+p,
+ul,
+ol {
+    margin-block: 0 var(--fhi-space-4);
+}
+
+/* A list is indented 2rem rather than the browser's 40px. */
+ul,
+ol {
+    padding-inline-start: var(--fhi-space-7);
+}
+
+/* Small print is 87.5% of the text around it; the browser's 'smaller' is
+   about 83%, 13.3px on 16px text. */
+small {
+    font-size: 0.875em;
+}
+
+/* An image or icon in a line of text centres on that text. On the baseline,
+   where the browser puts it, an icon rides above the middle of its label and
+   each image leaves a few pixels of descender space under itself. */
+img,
+svg {
+    vertical-align: middle;
+}
+
+/* A dividing line: one pixel in the text's own colour at a quarter strength,
+   across its column. The browser draws a grey groove with auto side margins,
+   which can leave it short and centred. */
+hr {
+    margin: var(--fhi-space-4) 0;
+    border: 0;
+    border-top: 1px solid;
+    color: inherit;
+    opacity: 0.25;
+}
+
+/* Table cells share their edges instead of each standing 2px apart, and a
+   header cell lines up with its column instead of centring over it. */
+table {
+    border-collapse: collapse;
+}
+th {
+    text-align: inherit;
+}
+
+/* Form controls take the page's typeface, size and line height. Browsers
+   give them a small system face of their own (13.3px Arial in Chrome,
+   monospace in a textarea), so a box would not match the label above it.
+   Not the whole `font`: that would also pass on the weight, and the amount
+   box inside the bold pay-what-you-want label would turn bold. */
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* The Choose File button inside a file input, which the rule above does not
+   reach: without this the upload box on the first step of the appeal is 4 to
+   6px shorter, its button in 13px Arial. appearance: button because at the
+   default (auto) Chrome pins the button's line height to normal whatever
+   font says. */
+::file-selector-button {
+    font: inherit;
+    appearance: button;
+}
+
+/* A label keeps the margins and the max-width its rules give it, which an
+   inline element ignores. main.css counts on this to stop a long label
+   growing past a phone. */
+label {
+    display: inline-block;
+}
+
+/* A text box grows taller, never wider than the column it fills. */
+textarea {
+    resize: vertical;
+}
+
+/* A button shows the hand, as a link does. Browsers keep the arrow over
+   buttons. */
+button:enabled,
+input:is([type="submit"], [type="button"]):enabled {
+    cursor: pointer;
+}
+
+/* Code and preformatted text in a monospace face that every system has, a
+   step smaller than the text around it. Left alone the browser picks Courier
+   on a Mac and drops it to 13px. */
+code,
+pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.875em;
+}
+pre {
+    margin-block: 0 var(--fhi-space-4);
+}
+
 :root {
+    /* The line height text gets when nothing sets its own: list items,
+       labels, table cells, and every heading, since main.css tells headings
+       to inherit it. Paragraphs open up to --fhi-line-body. */
+    --fhi-line-base: 1.5;
+    /* The colour of that same text. A shade darker than --fhi-ink (#333);
+       moving to --fhi-ink would be visible on every page. */
+    --fhi-ink-base: #212529;
     /* Palette already in use across this file, named once. */
     --fhi-green: #a5c422;
     --fhi-lime: #ADD100;
@@ -278,19 +421,8 @@ textarea.fhi-field {
     border: 1px solid var(--fhi-field-line);
 }
 
-/* Bootstrap clears the outline on its own controls with `.btn:focus-visible
-   {outline: 0}` and `.form-control:focus {outline: 0}`, and those beat a bare
-   `:focus-visible` on specificity whatever order the sheets load in. Its
-   replacement glow resolves through --bs-btn-focus-shadow-rgb, which a plain
-   .btn never defines, so on Next, Continue, Generate My Appeal and Confirm
-   Deletion the reset lands and nothing takes its place. These selectors match
-   Bootstrap's weight so the ring survives on the buttons the eight-step form
-   is actually made of. */
-.btn:focus-visible,
-.btn-check:focus-visible + .btn,
-.form-control:focus-visible,
-.form-select:focus-visible,
-.form-check-input:focus-visible,
+/* The site's own input box and tick box ring the way the rest of the site
+   does, at a weight their own rules cannot quietly undo. */
 .fhi-field:focus-visible,
 .fhi-check:focus-visible {
     outline: 2px solid var(--fhi-green-ink);
@@ -312,27 +444,6 @@ textarea.fhi-field {
 .share-btn:focus,
 .share-btn:active {
     color: #fff;
-}
-
-/* Bootstrap's reboot writes `.h1,...,.h6 {font-weight:500; line-height:1.2}`,
-   and a class beats main.css's `h1,...,h6 {font-weight:600;
-   line-height:inherit}` on specificity, so a heading given a size class to
-   hold its size loses the site's weight and line height with it. .h5 stays
-   out: main.css sets h5 to 500 too, so 600 here would make `.h5` heavier
-   than a real h5. */
-.h2,
-.h3 {
-    font-weight: 600;
-    line-height: inherit;
-}
-
-/* .h5 takes only the line height. main.css gives a real h5 weight 500, which
-   is what Bootstrap's class writes too, so the weight needs no correction and
-   pinning 600 here would make a heading wearing the class heavier than the
-   element it stands in for. Line height is the half that does drift: the
-   element inherits the body's and the class does not. */
-.h5 {
-    line-height: inherit;
 }
 
 /* The name of a step in the appeal flow: the h1 under the progress bar.

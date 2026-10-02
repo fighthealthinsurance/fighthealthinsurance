@@ -49,7 +49,7 @@ CLASS_LIST_SOURCE = (
 )
 CLASS_LIST_HEADER = (
     "# Every class name Bootstrap 5.2.3 styles, one per line, sorted: the class\n"
-    "# selectors of its stylesheet, the version base.html loads. Read by\n"
+    "# selectors of its stylesheet, the version base.html loaded. Read by\n"
     "# test_bootstrap_ratchet.py.\n"
     "# Our own classes that only look like Bootstrap's, such as btn-default and\n"
     "# no-gutters in custom.css, are not in it, because 5.2.3 does not have them.\n"

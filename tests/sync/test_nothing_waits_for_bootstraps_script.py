@@ -188,8 +188,8 @@ class NothingReachesForBootstrapsScriptTest(TestCase):
     def test_base_html_loads_no_bootstrap_script(self):
         source = _live_markup(BASE.read_text())
         self.assertEqual(BOOTSTRAP_SCRIPT.findall(source), [])
-        # Its stylesheet is still on the page, which is a separate job.
-        self.assertIn("bootstrap@5.2.3/dist/css/bootstrap.min.css", source)
+        # Nor its stylesheet: custom.css starts every page from its own reset.
+        self.assertNotIn("bootstrap.min.css", source)
 
     def test_no_rendered_page_loads_one_either(self):
         """The source check misses a script that arrives by an include."""

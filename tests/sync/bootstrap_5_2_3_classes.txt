@@ -1,5 +1,5 @@
 # Every class name Bootstrap 5.2.3 styles, one per line, sorted: the class
-# selectors of its stylesheet, the version base.html loads. Read by
+# selectors of its stylesheet, the version base.html loaded. Read by
 # test_bootstrap_ratchet.py.
 # Our own classes that only look like Bootstrap's, such as btn-default and
 # no-gutters in custom.css, are not in it, because 5.2.3 does not have them.
