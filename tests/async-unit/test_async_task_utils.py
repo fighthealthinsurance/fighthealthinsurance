@@ -825,10 +825,10 @@ class TestStagedStart:
             result = await best_two_within_timelimit(
                 [ours, theirs],
                 _scores({}),
-                timeout=2.0,
+                timeout=10.0,
                 extended_timeout=0.0,
                 deferred=[theirs],
-                defer_seconds=1.0,
+                defer_seconds=5.0,
                 stage=stage,
             )
             assert inspect.getcoroutinestate(theirs) == inspect.CORO_CLOSED
@@ -840,8 +840,10 @@ class TestStagedStart:
         assert "theirs" not in probe.started
         assert stage.outcome == STAGE_SKIPPED
         assert stage.started_after is None
-        # It did not wait out the delay.
-        assert loop.time() - started < 0.5
+        # It did not wait out the delay. The delay is long and the bound is
+        # half of it, so a busy CI runner cannot fail this by being slow: at
+        # a 1 s delay and a 0.5 s bound it did, at 0.59 and 0.62 s.
+        assert loop.time() - started < 2.5
         assert _never_awaited_warnings(caught) == []
 
     @pytest.mark.asyncio
@@ -1093,10 +1095,10 @@ class TestCheckedStagedStart:
             result = await best_two_within_timelimit(
                 [ours, theirs],
                 _scores({}),
-                timeout=2.0,
+                timeout=10.0,
                 extended_timeout=0.0,
                 deferred=[theirs],
-                defer_seconds=1.0,
+                defer_seconds=5.0,
                 stage=stage,
                 check=check,
             )
@@ -1111,7 +1113,7 @@ class TestCheckedStagedStart:
         assert stage.outcome == STAGE_SKIPPED
         assert stage.check_passed is True
         assert stage.started_after is None
-        assert loop.time() - started < 0.5
+        assert loop.time() - started < 2.5
         assert _never_awaited_warnings(caught) == []
 
     @pytest.mark.asyncio
