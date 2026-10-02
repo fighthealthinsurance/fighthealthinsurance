@@ -6,23 +6,19 @@ Unsubscribed from Mailing List
 
 <!-- UNSUBSCRIBE -->
 <section id="unsubscribe">
-    <div class="row mt-5 mb-5">
-        <div class="caption d-flex flex-column align-items-center justify-content-center">
-            <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center" style="margin-top: 10vh;">
-                <h2 class="unsubscribe-header">Unsubscribed</h2>
-                {% if error %}
-                <p>{{ error }}</p>
-                {% elif email %}
-                <p>You have been successfully unsubscribed from our mailing list.</p>
-                <p>Email <strong>{{ email }}</strong> will no longer receive marketing emails from us.</p>
-                {% else %}
-                <p>You have been successfully unsubscribed from our mailing list.</p>
-                {% endif %}
-                <p class="mt-3">
-                    <a href="/">Return to Home</a>
-                </p>
-            </div>
-        </div>
+    <div class="fhi-page fhi-page-centred">
+        {% include "partials/page_title.html" with title="Unsubscribed" %}
+        {% if error %}
+        <p>{{ error }}</p>
+        {% elif email %}
+        <p>You have been successfully unsubscribed from our mailing list.</p>
+        <p>Email <strong>{{ email }}</strong> will no longer receive marketing emails from us.</p>
+        {% else %}
+        <p>You have been successfully unsubscribed from our mailing list.</p>
+        {% endif %}
+        <p>
+            <a href="/">Return to Home</a>
+        </p>
     </div>
 </section>
 

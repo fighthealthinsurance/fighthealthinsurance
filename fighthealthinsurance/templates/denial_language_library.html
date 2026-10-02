@@ -26,192 +26,162 @@
 </section>
 
 <!-- Introduction Section -->
-<section id="library-intro" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-10 mx-auto">
-                <div class="about-info text-center">
-                    <h2>Understanding Denial Language</h2>
-                    <p class="lead">
-                        Insurance denials often use vague, technical, or misleading language designed to discourage appeals.
-                        This library translates common denial phrases into plain English and shows you how to fight back.
-                    </p>
-                    <p>
-                        Each entry includes what the phrase really means, why insurers use it, and specific strategies to counter it in your appeal.
-                        <strong>Knowledge empowers you to challenge unfair denials.</strong>
-                    </p>
-                </div>
-            </div>
+<section id="library-intro" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <div class="fhi-stack fhi-stack-centred">
+            <h2>Understanding Denial Language</h2>
+            <p class="fhi-lead">
+                Insurance denials often use vague, technical, or misleading language designed to discourage appeals.
+                This library translates common denial phrases into plain English and shows you how to fight back.
+            </p>
+            <p>
+                Each entry includes what the phrase really means, why insurers use it, and specific strategies to counter it in your appeal.
+                <strong>Knowledge empowers you to challenge unfair denials.</strong>
+            </p>
         </div>
     </div>
 </section>
 
 <!-- Denial Phrases Library -->
-<section id="denial-phrases" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-10 mx-auto">
-                <h2 class="text-center mb-5">Common Denial Phrases Decoded</h2>
-                
-                {% if denial_phrases %}
-                <div class="denial-library">
-                    {% for phrase, data in denial_phrases %}
-                    <div class="denial-card card mb-4 shadow-sm">
-                        <div class="card-header bg-primary text-white">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <h3 class="denial-phrase mb-0">"{{ phrase }}"</h3>
-                            </div>
+<section id="denial-phrases" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Common Denial Phrases Decoded</h2>
+        
+        {% if denial_phrases %}
+        <div class="denial-library fhi-stack fhi-stack-loose">
+            {% for phrase, data in denial_phrases %}
+            <div class="denial-card fhi-card">
+                <h3 class="denial-phrase fhi-card-banner">"{{ phrase }}"</h3>
+                <!-- What It Means -->
+                <div class="denial-section">
+                    <h4 class="section-title">
+                        <span class="section-icon">💡</span>
+                        What It Really Means
+                    </h4>
+                    <p class="section-content">{{ data.what_it_means }}</p>
+                </div>
+
+                <!-- Why Insurers Use It -->
+                <div class="denial-section">
+                    <h4 class="section-title">
+                        <span class="section-icon">⚠️</span>
+                        Why Insurers Use This
+                    </h4>
+                    <p class="section-content fhi-hint">{{ data.why_insurers_use_it }}</p>
+                </div>
+
+                <!-- How to Counter -->
+                <div class="denial-section">
+                    <h4 class="section-title">
+                        <span class="section-icon">✊</span>
+                        How to Counter This Denial
+                    </h4>
+                    <ul class="counter-strategies">
+                        {% for strategy in data.how_to_counter %}
+                        <li>{{ strategy }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <!-- Success Rate -->
+                <div class="denial-footer">
+                    <div class="fhi-cluster">
+                        <div class="success-rate">
+                            <strong>Appeal Success Rate:</strong> 
+                            <span class="fhi-badge fhi-badge-success">{{ data.success_rate }}</span>
                         </div>
-                        <div class="card-body">
-                            <!-- What It Means -->
-                            <div class="denial-section mb-4">
-                                <h4 class="section-title">
-                                    <span class="section-icon">💡</span>
-                                    What It Really Means
-                                </h4>
-                                <p class="section-content">{{ data.what_it_means }}</p>
-                            </div>
-
-                            <!-- Why Insurers Use It -->
-                            <div class="denial-section mb-4">
-                                <h4 class="section-title">
-                                    <span class="section-icon">⚠️</span>
-                                    Why Insurers Use This
-                                </h4>
-                                <p class="section-content text-muted">{{ data.why_insurers_use_it }}</p>
-                            </div>
-
-                            <!-- How to Counter -->
-                            <div class="denial-section">
-                                <h4 class="section-title">
-                                    <span class="section-icon">✊</span>
-                                    How to Counter This Denial
-                                </h4>
-                                <ul class="counter-strategies">
-                                    {% for strategy in data.how_to_counter %}
-                                    <li>{{ strategy }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </div>
-
-                            <!-- Success Rate -->
-                            <div class="denial-footer mt-4 pt-3 border-top">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div class="success-rate">
-                                        <strong>Appeal Success Rate:</strong> 
-                                        <span class="badge bg-success">{{ data.success_rate }}</span>
-                                    </div>
-                                    <a href="{% url 'scan' %}?denial_reason={{ phrase|urlencode }}" 
-                                       class="btn btn-sm btn-primary">
-                                        Start Your Appeal
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+                        <a href="{% url 'scan' %}?denial_reason={{ phrase|urlencode }}" 
+                           class="btn btn-sm btn-primary">
+                            Start Your Appeal
+                        </a>
                     </div>
-                    {% endfor %}
                 </div>
-                {% else %}
-                <div class="alert alert-warning text-center">
-                    <p class="mb-0">Denial language library is currently unavailable. Please try again later.</p>
-                </div>
-                {% endif %}
             </div>
+            {% endfor %}
         </div>
+        {% else %}
+        <div class="fhi-notice fhi-notice-warning fhi-stack fhi-stack-centred">
+            <p>Denial language library is currently unavailable. Please try again later.</p>
+        </div>
+        {% endif %}
     </div>
 </section>
 
 <!-- Call to Action -->
-<section id="library-cta" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto text-center">
-                <h2 class="mb-4">Got a Denial?</h2>
-                <p class="lead mb-4">
-                    Use our free AI-powered tool to generate a compelling appeal letter that addresses your specific denial reason.
-                </p>
-                <div class="d-flex justify-content-center gap-3 flex-wrap">
-                    <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
-                        Generate Appeal Letter
-                    </a>
-                    <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">
-                        Chat with AI Assistant
-                    </a>
-                </div>
-            </div>
+<section id="library-cta" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose fhi-column-centred">
+        <h2>Got a Denial?</h2>
+        <p class="fhi-lead">
+            Use our free AI-powered tool to generate a compelling appeal letter that addresses your specific denial reason.
+        </p>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
+                Generate Appeal Letter
+            </a>
+            <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">
+                Chat with AI Assistant
+            </a>
         </div>
     </div>
 </section>
 
 <!-- Additional Resources -->
-<section id="additional-resources" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-10 mx-auto">
-                <h2 class="text-center mb-4">Additional Resources</h2>
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">❓ FAQ</h5>
-                                <p class="card-text">Common questions about appealing insurance denials.</p>
-                                <a href="{% url 'faq' %}" class="btn btn-sm btn-outline-primary">Read FAQ</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+<section id="additional-resources" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Additional Resources</h2>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-card">
+                <h5>❓ FAQ</h5>
+                <p>Common questions about appealing insurance denials.</p>
+                <a href="{% url 'faq' %}" class="btn btn-sm btn-outline-primary">Read FAQ</a>
             </div>
         </div>
     </div>
 </section>
 
 <!-- SEO-Friendly FAQ Section -->
-<section id="library-faq" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-10 mx-auto">
-                <h2 class="text-center mb-4">Frequently Asked Questions</h2>
-                <div class="fhi-accordion">
-                    <details class="fhi-accordion-item" name="library-faq" open>
-                        <summary>
-                            <h3 class="fhi-accordion-question">Why do insurance companies use confusing language in denials?</h3>
-                        </summary>
-                        <div class="fhi-accordion-body">
-                            Insurance companies often use vague or technical language to make denials seem more legitimate and to discourage appeals. 
-                            Terms like "not medically necessary" sound official but are often subjective. Understanding what these phrases really mean 
-                            helps you craft a stronger appeal.
-                        </div>
-                    </details>
-                    <details class="fhi-accordion-item" name="library-faq">
-                        <summary>
-                            <h3 class="fhi-accordion-question">Can I appeal even if the denial seems final?</h3>
-                        </summary>
-                        <div class="fhi-accordion-body">
-                            Yes! Most insurance denials can and should be appealed. You typically have the right to an internal appeal with your insurer, 
-                            and often an external appeal with an independent reviewer. Many denials are overturned on appeal, especially with proper documentation.
-                        </div>
-                    </details>
-                    <details class="fhi-accordion-item" name="library-faq">
-                        <summary>
-                            <h3 class="fhi-accordion-question">How long do I have to appeal a denial?</h3>
-                        </summary>
-                        <div class="fhi-accordion-body">
-                            Deadlines vary by plan and state, but typically you have 180 days for a standard appeal. Urgent or expedited appeals may have 
-                            shorter deadlines. Always check your denial letter for specific timelines and don't delay - the sooner you appeal, the better.
-                        </div>
-                    </details>
-                    <details class="fhi-accordion-item" name="library-faq">
-                        <summary>
-                            <h3 class="fhi-accordion-question">What's the success rate of insurance appeals?</h3>
-                        </summary>
-                        <div class="fhi-accordion-body">
-                            Success rates vary by denial type and plan, but many appeals succeed - especially with proper documentation. Studies show that 
-                            patients who appeal have a significant chance of overturning denials, yet most people don't appeal at all. Don't give up - 
-                            insurers count on you not fighting back.
-                        </div>
-                    </details>
+<section id="library-faq" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Frequently Asked Questions</h2>
+        <div class="fhi-accordion">
+            <details class="fhi-accordion-item" name="library-faq" open>
+                <summary>
+                    <h3 class="fhi-accordion-question">Why do insurance companies use confusing language in denials?</h3>
+                </summary>
+                <div class="fhi-accordion-body">
+                    Insurance companies often use vague or technical language to make denials seem more legitimate and to discourage appeals. 
+                    Terms like "not medically necessary" sound official but are often subjective. Understanding what these phrases really mean 
+                    helps you craft a stronger appeal.
                 </div>
-            </div>
+            </details>
+            <details class="fhi-accordion-item" name="library-faq">
+                <summary>
+                    <h3 class="fhi-accordion-question">Can I appeal even if the denial seems final?</h3>
+                </summary>
+                <div class="fhi-accordion-body">
+                    Yes! Most insurance denials can and should be appealed. You typically have the right to an internal appeal with your insurer, 
+                    and often an external appeal with an independent reviewer. Many denials are overturned on appeal, especially with proper documentation.
+                </div>
+            </details>
+            <details class="fhi-accordion-item" name="library-faq">
+                <summary>
+                    <h3 class="fhi-accordion-question">How long do I have to appeal a denial?</h3>
+                </summary>
+                <div class="fhi-accordion-body">
+                    Deadlines vary by plan and state, but typically you have 180 days for a standard appeal. Urgent or expedited appeals may have 
+                    shorter deadlines. Always check your denial letter for specific timelines and don't delay - the sooner you appeal, the better.
+                </div>
+            </details>
+            <details class="fhi-accordion-item" name="library-faq">
+                <summary>
+                    <h3 class="fhi-accordion-question">What's the success rate of insurance appeals?</h3>
+                </summary>
+                <div class="fhi-accordion-body">
+                    Success rates vary by denial type and plan, but many appeals succeed - especially with proper documentation. Studies show that 
+                    patients who appeal have a significant chance of overturning denials, yet most people don't appeal at all. Don't give up - 
+                    insurers count on you not fighting back.
+                </div>
+            </details>
         </div>
     </div>
 </section>
@@ -262,10 +232,15 @@
     .denial-phrase {
         font-size: 1.5rem;
         font-weight: 600;
+        background-color: #0b5ed7;
     }
 
     .denial-section {
-        margin-bottom: 1.5rem;
+        margin-bottom: var(--fhi-space-4);
+    }
+
+    .denial-section > :last-child {
+        margin-bottom: 0;
     }
 
     .section-title {
@@ -311,9 +286,15 @@
     }
 
     .denial-footer {
+        margin: 0 calc(-1 * var(--fhi-space-6)) calc(-1 * var(--fhi-space-6));
+        padding: var(--fhi-space-4) var(--fhi-space-6);
         background-color: #f8f9fa;
-        margin: -1rem -1rem -1rem -1rem;
-        padding: 1rem 1rem 0.5rem 1rem;
+        border-top: 1px solid var(--fhi-line);
+        border-radius: 0 0 var(--fhi-radius) var(--fhi-radius);
+    }
+
+    .success-rate {
+        flex: 1 1 16rem;
     }
 
     .btn-green {
@@ -336,11 +317,6 @@
     .btn-outline-green:hover {
         background-color: #28a745;
         color: white;
-    }
-
-    #library-intro .about-info {
-        max-width: 800px;
-        margin: 0 auto;
     }
 
     @media (max-width: 768px) {

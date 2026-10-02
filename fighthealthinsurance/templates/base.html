@@ -158,6 +158,8 @@
                             <summary class="nav-link">Resources</summary>
                             <ul class="fhi-nav-submenu">
                                 <li><a href="{% url 'other-resources' %}">Guides</a></li>
+                                {# The yearly guide: the address stays, the year in this label moves with the page's content. #}
+                                <li><a href="{% url 'coverage-changes' %}">Coverage Changes for 2027</a></li>
                                 <li><a href="{% url 'blog' %}">Blog</a></li>
                             </ul>
                         </details>
@@ -268,7 +270,7 @@
 			                <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" target="_blank" rel="noopener noreferrer">Support our Development</a>
                             <a href="https://github.com/orgs/fighthealthinsurance/repositories" target="_blank" rel="noopener noreferrer">Contribute on GitHub</a>
                         </div>
-                        <div class="footer-social" style="margin-top: 32px; display: flex; gap: 32px; justify-content: center; align-items: center;">
+                        <div class="footer-social">
                             <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" class="footer-social-link">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tabler-icon tabler-icon-brand-instagram ">
                                     <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
