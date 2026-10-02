@@ -12,12 +12,42 @@ from fighthealthinsurance.denial_history_consent import (
     still_allowed,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.question_parsing import is_junk_question
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
 
 # Maps a get_appeal_questions coroutine to the originating model's quality score
-QuestionsCoroutine = Coroutine[Any, Any, List[Tuple[str, str]]]
+QuestionsCoroutine = Coroutine[Any, Any, Optional[List[Tuple[str, str]]]]
 AwaitableQualityMap = Dict[QuestionsCoroutine, int]
+
+# A procedure or diagnosis that names nothing: what extraction can make of a
+# denial like "Test". Generic questions are shared by everyone with the same
+# pair, so a pair holding one of these is never asked about.
+_PLACEHOLDER_CONDITIONS = frozenset(
+    {"test", "testing", "n/a", "na", "none", "unknown", "null", "not specified", "-"}
+)
+# Fewer than this many questions is not worth sharing with everyone who has
+# the same procedure and diagnosis.
+_MIN_CACHED_QUESTIONS = 2
+
+
+def _is_placeholder_condition(value: str) -> bool:
+    return value.strip(" .") in _PLACEHOLDER_CONDITIONS
+
+
+def _shareable(
+    procedure: str, diagnosis: str, questions: List[Tuple[str, str]]
+) -> bool:
+    """Whether a generic set is fit to cache for everyone with this pair.
+    Only when both sides name something: a real denial often names a
+    procedure and no diagnosis, and still gets questions, but three of the
+    four cached sets that held a model's refusal had one side empty."""
+    return (
+        procedure != ""
+        and diagnosis != ""
+        and len(questions) >= _MIN_CACHED_QUESTIONS
+        and not any(is_junk_question(q) for q, _ in questions)
+    )
 
 
 def questions_fingerprint(procedure: Optional[str], diagnosis: Optional[str]) -> str:
@@ -129,24 +159,34 @@ class MLAppealQuestionsHelper:
         procedure = procedure.strip().lower() if procedure else ""
         diagnosis = diagnosis.strip().lower() if diagnosis else ""
 
-        # Skip if we don't have enough information
-        if procedure == "" and diagnosis == "":
+        # Skip when there is nothing to ask about, or either side is a
+        # placeholder such as "test", which is what a non-denial produces.
+        if (procedure == "" and diagnosis == "") or any(
+            _is_placeholder_condition(v) for v in (procedure, diagnosis)
+        ):
             # Nothing to ask about is not an answer of nothing: None, so the
             # caller does not read this as a finished run with no questions.
-            logger.debug(f"Missing procedure and diagnosis for generic questions")
+            logger.debug(f"Missing procedure or diagnosis for generic questions")
             return None
 
-        # Check for existing cached questions first
+        # Check for existing cached questions first, skipping any set that
+        # holds a refusal or a placeholder (cached before the questions were
+        # checked), oldest first as before.
         try:
-            cached = await GenericQuestionGeneration.objects.filter(
+            async for cached in GenericQuestionGeneration.objects.filter(
                 procedure=procedure, diagnosis=diagnosis
-            ).afirst()
-
-            if cached:
+            ).order_by("id"):
+                cached_questions = cast(
+                    List[Tuple[str, str]], cached.generated_questions
+                )
+                if not cached_questions or any(
+                    is_junk_question(q) for q, _ in cached_questions
+                ):
+                    continue
                 logger.debug(
                     f"Found cached generic questions for {procedure}/{diagnosis}"
                 )
-                return cast(List[Tuple[str, str]], cached.generated_questions)
+                return cached_questions
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error fetching cached generic questions: {e}"
@@ -182,8 +222,9 @@ class MLAppealQuestionsHelper:
             questions_without_answers = list(map(lambda xy: (xy[0], ""), questions))
             questions = questions_without_answers
 
-        # If we have questions, cache them for future use
-        if questions:
+        # Cache them for other people only when there are enough of them and
+        # none is junk; either way this person still gets them.
+        if questions and _shareable(procedure, diagnosis, questions):
             try:
                 await GenericQuestionGeneration.objects.acreate(
                     procedure=procedure,
@@ -270,10 +311,12 @@ class MLAppealQuestionsHelper:
         procedure = procedure.strip().lower() if procedure else ""
         diagnosis = diagnosis.strip().lower() if diagnosis else ""
 
-        if (not denial_text or denial_text == "") and (
-            not patient_context or patient_context == ""
+        # Too little to ask about: the same bar the citations use. A denial of
+        # "Test" otherwise reaches every model, which can only refuse.
+        if len((denial_text or "").strip()) < 5 and (
+            len((patient_context or "").strip()) < 5
         ):
-            logger.debug(f"All patient specific context is unset, quick return.")
+            logger.debug(f"Too little patient specific context, quick return.")
             return None
 
         # If no cached questions exist, generate them

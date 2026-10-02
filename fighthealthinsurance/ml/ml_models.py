@@ -116,6 +116,10 @@ CleanerUtils.is_valid_url = classmethod(  # type: ignore[assignment,method-assig
 
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_ALIASES
+from fighthealthinsurance.ml.question_parsing import (
+    NO_QUESTIONS,
+    parse_appeal_questions,
+)
 from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
     strip_boilerplate_service,
@@ -1895,7 +1899,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         diagnosis: Optional[str],
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
-    ) -> List[Tuple[str, str]]:
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate a list of questions that could help craft a better appeal for
         this specific denial.
@@ -1906,9 +1910,12 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             plan_context: Optional insurance plan context
 
         Returns:
-            A list of tuples (question, answer) where answer may be empty
+            A list of tuples (question, answer) where answer may be empty;
+            [] when the model said there is nothing to ask, and None when
+            there is no answer (a backend without questions returns None,
+            so it never reads as "nothing to ask").
         """
-        return []
+        return None
 
     async def get_fax_number(self, prompt) -> Optional[str]:
         """
@@ -4149,7 +4156,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         diagnosis: Optional[str],
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
-    ) -> List[Tuple[str, str]]:
+    ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate a list of questions that could help craft a better appeal for
         this specific denial.
@@ -4162,7 +4169,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
             plan_context: Optional insurance plan context
 
         Returns:
-            A list of tuples (question, answer) where answer may be empty
+            A list of tuples (question, answer) where answer may be empty;
+            [] when the model said there is nothing to ask; None when the
+            call failed or the reply held no usable question
+            (question_parsing.parse_appeal_questions).
         """
         procedure_opt = (
             f"The procedure denied was {procedure} so only ask questions relevant to {procedure}"
@@ -4177,6 +4187,16 @@ class RemoteFullOpenLike(RemoteOpenLike):
             f"The denial text is: {denial_text}"
             if denial_text
             else "No denial text provided, use other context clues as to the denial. Remember do not guess patient information UNKNOWN is an acceptable answer for unknown patient info."
+        )
+        # A way to say "this is not a denial" (someone typed "Test"), so the
+        # model does not explain itself or invent a template instead. Only
+        # when there is denial text to judge: the generic and prior-auth
+        # calls have none, and missing history is never a reason to ask
+        # nothing, since that is when the questions help most.
+        not_a_denial_opt = (
+            f"If the denial text above is not a health insurance denial at all (for example a test word or a placeholder), reply with exactly {NO_QUESTIONS} and nothing else. Missing patient history is never a reason to reply {NO_QUESTIONS}. Never reply with an explanation, a template or placeholders such as [Question]."
+            if denial_text
+            else ""
         )
         # Procedure opt is in their multiple times intentionally. ~computers~
         prompt = f"""
@@ -4193,6 +4213,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         For example:
         1. What is the patient's age? 45
         2. Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?
+        {not_a_denial_opt}
         """
 
         system_prompts: list[str] = self.get_system_prompts("questions")
@@ -4208,77 +4229,15 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         if result is None:
             logger.warning("Failed to generate appeal questions")
-            return []
+            return None
 
-        # Process the result into a list of questions with potential answers
-        questions_with_answers: List[Tuple[str, str]] = []
-
-        if "Rationale for questions" in result:
+        questions = parse_appeal_questions(result)
+        if questions is None:
+            # Not the reply itself: it can carry the patient's history.
             logger.debug(
-                f"Received poorly formatted response from {self.model} when asking for questions. {result}"
+                f"No usable questions in a {len(result)}-character reply from {self.model}"
             )
-            return []
-
-        # Handle the case where the model returns a single block of text
-        if "\n" not in result and len(result) > 100:
-            # Try to extract questions with regex patterns
-            # Look for patterns like "1. Question? Answer" or numbering + question + question mark
-            potential_questions = re.findall(
-                r"(?:\d+\.|\*|\-|\•)?\s*(?:\*\*)?([^.!?]+\?)(?:\*\*)?\s*([^.!?\d][^.!?\d]*?)(?=(?:\d+\.|\*|\-|\•)?\s*(?:\*\*)?[A-Z]|\Z)",
-                result,
-            )
-            for q, a in potential_questions:
-                questions_with_answers.append((q.strip(), a.strip()))
-            if questions_with_answers:
-                return questions_with_answers
-
-        # Process line by line if we have multiple lines or the above extraction didn't work
-        for line in result.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-
-            # Remove numbering and bullet points at the beginning of the line
-            # This handles formats like "1. ", "1) ", "• ", "- ", "* ", etc.
-            line = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", line)
-
-            # Handle markdown-style bold formatting like "**Question?** Answer"
-            bold_match = re.search(r"\*\*([^*]+?)\*\*\s*(.*)", line)
-            if bold_match:
-                question = bold_match.group(1).strip()
-                answer = bold_match.group(2).strip()
-
-                # Make sure question ends with question mark
-                if not question.endswith("?"):
-                    question += "?"
-
-                questions_with_answers.append((question, answer))
-                continue
-
-            # Skip header lines
-            if line.lower().startswith(("here are", "questions", "additional")):
-                continue
-
-            # Parse potential answer if present (format: "Question? Answer")
-            question_parts = line.split("?", 1)
-            if len(question_parts) > 1:
-                question_text = question_parts[0].strip() + "?"
-                # Handle potential formatting in answers like "A: ", ": ", etc.
-                # The "A" must be followed by a colon to count as a prefix:
-                # the old character class [A:] matched a bare leading "A", so
-                # any answer that simply started with A lost its first letter
-                # ("Age 47" -> "ge 47", "Atorvastatin" -> "torvastatin") and
-                # the corrupted answer flowed into qa_context and the appeal.
-                answer_text = question_parts[1].strip()
-                answer_text = re.sub(r"^(?:A\s*:|:)[\s:]*", "", answer_text)
-                questions_with_answers.append((question_text, answer_text))
-            else:
-                # Ensure line ends with a question mark if it doesn't have one
-                if not line.endswith("?"):
-                    line += "?"
-                questions_with_answers.append((line, ""))
-
-        return questions_with_answers
+        return questions
 
     async def get_citations(
         self,
