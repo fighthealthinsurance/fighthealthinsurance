@@ -49,17 +49,32 @@
     transition: all 0.3s ease;
 }
 
-.flow-progress-step.completed .flow-progress-circle {
-    background: var(--fhi-green-ink);
-    border-color: var(--fhi-green-ink);
-    color: white;
+/* Done and current steps wear the buttons' lime: the same two-stop fill,
+   twice the circle's width, and the same ink as the button text. */
+.flow-progress-step.completed .flow-progress-circle,
+.flow-progress-step.active .flow-progress-circle {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
+    background-size: 200% auto;
+    border-color: var(--fhi-btn-fill-b);
+    color: var(--fhi-btn-ink);
 }
 
+/* The current step shimmers gently: the fill slides across and back, the
+   way a button's does on hover, so the eye finds where you are. */
 .flow-progress-step.active .flow-progress-circle {
-    background: white;
-    border-color: var(--fhi-green);
-    color: var(--fhi-green-ink);
-    box-shadow: 0 0 0 4px rgba(165, 196, 34, 0.2);
+    box-shadow: 0 0 0 4px rgba(165, 196, 34, 0.25);
+    animation: flow-progress-shimmer 2.4s ease-in-out infinite alternate;
+}
+
+@keyframes flow-progress-shimmer {
+    from { background-position: left center; }
+    to { background-position: right center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flow-progress-step.active .flow-progress-circle {
+        animation: none;
+    }
 }
 
 .flow-progress-label {

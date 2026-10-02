@@ -42,7 +42,6 @@ glossary_index.html btn-outline-secondary 2
 glossary_index.html btn-sm 2
 glossary_index.html disabled 1
 how_to_help.html btn 10
-landing_base.html btn 3
 media_references.html btn 1
 medicaid_eligibility.html btn 12
 medicaid_eligibility.html btn-lg 1

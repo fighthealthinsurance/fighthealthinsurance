@@ -1558,23 +1558,20 @@ UNRESOLVED: tuple[Exempt, ...] = (
     Exempt("custom.css", ".hero-tagline", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".hero-subcopy", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".secondary-cta, .tertiary-cta", HERO_VEIL),
-    Exempt("main.css", ".slider .caption", HERO_PHOTOGRAPH),
-    # The home copy and the block under it sit on the photograph again, not
-    # on a flat panel (Melanie, 2026-09-30).
-    Exempt("main.css", "#home h1", HERO_PHOTOGRAPH),
-    Exempt("main.css", "#home h3", HERO_PHOTOGRAPH),
-    Exempt("custom.css", ".home-why", HERO_PHOTOGRAPH),
-    Exempt("custom.css", ".how-it-works-intro", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".how-step", HERO_VEIL),
     Exempt("custom.css", ".how-step:not(:last-child)::after", HERO_VEIL),
     Exempt("custom.css", ".how-step h6", HERO_VEIL),
     Exempt("custom.css", ".how-step p", HERO_VEIL),
+    Exempt("custom.css", ".how-it-works-intro", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".trust-chip", HERO_VEIL),
     Exempt(
         "custom.css",
         ".trust-chip-link:hover, .trust-chip-link:focus, .trust-chip-link:active",
         HERO_VEIL,
     ),
+    Exempt("main.css", "#home h1", HERO_PHOTOGRAPH),
+    Exempt("main.css", "#home h3", HERO_PHOTOGRAPH),
+    Exempt("main.css", ".slider .caption", HERO_PHOTOGRAPH),
 )
 
 
