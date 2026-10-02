@@ -1,0 +1,8 @@
+{% comment %}
+Overrides django-mfa2's modal.html, which its TrustedDevices start page
+includes inside our base.html. The package's dialog is a Bootstrap modal:
+hidden only by Bootstrap's stylesheet and opened only by a script that
+never loads on these pages (it sits in a {% block head %} base.html does
+not have). With Bootstrap gone it would show as a stray Close button, so it
+renders nothing; no template of ours includes a modal.html.
+{% endcomment %}

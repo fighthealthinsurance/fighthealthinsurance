@@ -151,6 +151,14 @@ pre {
 }
 pre {
     margin-block: 0 var(--fhi-space-4);
+    /* A long line scrolls inside the block instead of running out of it:
+       chat renders a reply's fenced text as <pre><code> in a bubble that
+       clips what overflows. */
+    overflow: auto;
+}
+/* Code inside a block keeps the block's size rather than shrinking twice. */
+pre code {
+    font-size: inherit;
 }
 
 :root {

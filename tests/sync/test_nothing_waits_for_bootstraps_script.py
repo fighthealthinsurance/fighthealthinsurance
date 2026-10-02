@@ -13,9 +13,9 @@ groups is built so the browser opens it by itself, one answer at a time,
 with the question still a heading.
 
 Pages from an installed package can render inside base.html as well, and
-django-mfa2's do. Two of its templates still carry data-bs attributes.
-Neither can do anything today, for the reasons PACKAGE_PAGES_WAITING gives,
-and a test fails the day either reason stops holding.
+django-mfa2's do. One of its templates still carries a data-bs attribute.
+It can do nothing today, for the reason PACKAGE_PAGES_WAITING gives, and a
+test fails the day that reason stops holding.
 """
 
 import re
@@ -72,10 +72,9 @@ PACKAGE_PAGES_WAITING = {
     # Method dropdown. Its view stops before the page renders, because
     # settings does not set MFA_UNALLOWED_METHODS.
     "MFA.html": ["data-bs-toggle"],
-    # The pop-up its pages include. Only the package's own scripts open
-    # it, with Bootstrap's modal(), and they sit in a {% block head %}
-    # that base.html does not have, so they never load.
-    "modal.html": ["data-bs-dismiss", "data-bs-dismiss"],
+    # The pop-up its pages include (modal.html) is ours now: an empty
+    # template that shadows the package's, since with Bootstrap's stylesheet
+    # gone nothing hid it and nothing could open it.
 }
 
 EXTENDS = re.compile(r"""{%\s*extends\s+["']([^"']+)["']""")
