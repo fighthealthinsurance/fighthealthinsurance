@@ -12,33 +12,27 @@ Renders nothing when `pharmacy_suggestion` is None / falsy, so callers can
 include it unconditionally.
 {% endcomment %}
 {% if pharmacy_suggestion %}
-<section id="pharmacy-coupons" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">Pharmacy Discount Options</h2>
-                <p class="text-center text-muted mb-4">{{ pharmacy_suggestion.bridge_message }}</p>
-                <div class="pharmacy-coupons-list">
-                    {% for option in pharmacy_suggestion.pharmacy_options %}
-                    <div class="card mb-3 pharmacy-coupon-card">
-                        <div class="card-body">
-                            <h3 class="h5 card-title mb-2">
-                                <a href="{{ option.url }}" target="_blank" rel="noopener noreferrer" class="pharmacy-coupon-link">
-                                    {{ option.name }}
-                                    <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i>
-                                    <span class="visually-hidden">(opens in a new tab)</span>
-                                </a>
-                            </h3>
-                            <p class="card-text text-muted mb-0">{{ option.description }}</p>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                <p class="text-muted small mt-4 mb-0 text-center">
-                    <em>{{ pharmacy_suggestion.oop_max_warning }}</em>
-                </p>
+<section id="pharmacy-coupons" class="fhi-section">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Pharmacy Discount Options</h2>
+        <p class="fhi-hint">{{ pharmacy_suggestion.bridge_message }}</p>
+        <div class="pharmacy-coupons-list fhi-stack">
+            {% for option in pharmacy_suggestion.pharmacy_options %}
+            <div class="fhi-card pharmacy-coupon-card">
+                <h3 class="fhi-card-title">
+                    <a href="{{ option.url }}" target="_blank" rel="noopener noreferrer" class="pharmacy-coupon-link">
+                        {{ option.name }}
+                        <i class="fhi-hint icon-external-sm" aria-hidden="true">&#8599;</i>
+                        <span class="fhi-visually-hidden">(opens in a new tab)</span>
+                    </a>
+                </h3>
+                <p class="fhi-hint">{{ option.description }}</p>
             </div>
+            {% endfor %}
         </div>
+        <p class=" fhi-note">
+            <em>{{ pharmacy_suggestion.oop_max_warning }}</em>
+        </p>
     </div>
 </section>
 {% endif %}

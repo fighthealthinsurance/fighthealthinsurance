@@ -33,204 +33,174 @@
 </section>
 
 <!-- Main Form Section -->
-<section id="policy-form" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-10 mx-auto">
-                <div class="card shadow-sm">
-                    <div class="card-body p-4">
-                        <h2 class="card-title mb-4">Upload Your Policy Document</h2>
+<section id="policy-form" class="fhi-section">
+    <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-loose">
+        <div class="fhi-card">
+            <h2>Upload Your Policy Document</h2>
 
-                        {% if form.errors or form.non_field_errors %}
-                        <div class="alert alert-danger">
-                            {% if form.non_field_errors %}
-                                {{ form.non_field_errors }}
-                            {% endif %}
-                            {% if form.errors %}
-                                <ul class="mb-0">
-                                {% for field, errors in form.errors.items %}
-                                    {% for error in errors %}
-                                    <li>{{ field }}: {{ error }}</li>
-                                    {% endfor %}
-                                {% endfor %}
-                                </ul>
-                            {% endif %}
+            {% if form.errors or form.non_field_errors %}
+            <div class="fhi-notice fhi-notice-danger">
+                {% if form.non_field_errors %}
+                    {{ form.non_field_errors }}
+                {% endif %}
+                {% if form.errors %}
+                    <ul>
+                    {% for field, errors in form.errors.items %}
+                        {% for error in errors %}
+                        <li>{{ field }}: {{ error }}</li>
+                        {% endfor %}
+                    {% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <form class="fhi-stack" method="post" action="{% url 'understand_policy' %}" id="understand_policy_form" enctype="multipart/form-data">
+                {% csrf_token %}
+
+                <!-- Document Upload Section -->
+                <div class="fhi-stack">
+                    <div class="fhi-notice fhi-notice-info">
+                        <strong>Tip:</strong> Upload your Summary of Benefits and Coverage (SBC) or Medical Policy document. These are typically available from your insurance company's website or your HR department.
+                    </div>
+
+                    <div class="fhi-field-group">
+                        <label for="document_type" class="fhi-label">Document type (required)</label>
+                        {{ form.document_type }}
+                        <div class="fhi-note">
+                            Select the type of document you're uploading.
                         </div>
-                        {% endif %}
+                    </div>
 
-                        <form method="post" action="{% url 'understand_policy' %}" id="understand_policy_form" enctype="multipart/form-data">
-                            {% csrf_token %}
+                    <div class="fhi-field-group">
+                        <label for="policy_document" class="fhi-label">Policy document (required)</label>
+                        {{ form.policy_document }}
+                        <div class="fhi-note">
+                            Upload your document (PDF, DOCX, or TXT — max 20MB).
+                        </div>
+                        <div class="fhi-note">
+                            <strong>Training use:</strong> Your document will be stored encrypted and may be used in de-identified form to train and improve our AI models, helping us better assist patients fighting insurance denials.
+                        </div>
+                    </div>
 
-                            <!-- Document Upload Section -->
-                            <div class="mb-4">
-                                <div class="alert alert-info">
-                                    <strong>Tip:</strong> Upload your Summary of Benefits and Coverage (SBC) or Medical Policy document. These are typically available from your insurance company's website or your HR department.
-                                </div>
+                    <div class="fhi-field-group">
+                        <label for="plan_category" class="fhi-label">What kind of plan is this? (required)</label>
+                        {{ form.plan_category }}
+                        <div class="fhi-note">
+                            Knowing your plan type helps us identify the right regulator and appeal rights. Your plan type affects who oversees your appeals:
+                        </div>
+                        <div class="fhi-note">
+                            <strong>ERISA employer plans</strong> &rarr; Dept. of Labor &bull;
+                            <strong>ACA Marketplace</strong> &rarr; HHS / State Insurance Dept. &bull;
+                            <strong>Medicare</strong> &rarr; CMS &bull;
+                            <strong>Medicaid/CHIP</strong> &rarr; State Medicaid Agency &bull;
+                            <strong>Not sure?</strong> Select "I'm Not Sure" and we'll try to determine it from your document.
+                        </div>
+                    </div>
 
-                                <div class="mb-3">
-                                    <label for="document_type" class="form-label fw-bold">Document type (required)</label>
-                                    {{ form.document_type }}
-                                    <div class="form-text">
-                                        Select the type of document you're uploading.
-                                    </div>
-                                </div>
-
-                                <div class="mb-3">
-                                    <label for="policy_document" class="form-label fw-bold">Policy document (required)</label>
-                                    {{ form.policy_document }}
-                                    <div class="form-text">
-                                        Upload your document (PDF, DOCX, or TXT — max 20MB).
-                                    </div>
-                                    <div class="form-text mt-1">
-                                        <strong>Training use:</strong> Your document will be stored encrypted and may be used in de-identified form to train and improve our AI models, helping us better assist patients fighting insurance denials.
-                                    </div>
-                                </div>
-
-                                <div class="mb-3">
-                                    <label for="plan_category" class="form-label fw-bold">What kind of plan is this? (required)</label>
-                                    {{ form.plan_category }}
-                                    <div class="form-text">
-                                        Knowing your plan type helps us identify the right regulator and appeal rights. Your plan type affects who oversees your appeals:
-                                    </div>
-                                    <div class="form-text mt-1 small">
-                                        <strong>ERISA employer plans</strong> &rarr; Dept. of Labor &bull;
-                                        <strong>ACA Marketplace</strong> &rarr; HHS / State Insurance Dept. &bull;
-                                        <strong>Medicare</strong> &rarr; CMS &bull;
-                                        <strong>Medicaid/CHIP</strong> &rarr; State Medicaid Agency &bull;
-                                        <strong>Not sure?</strong> Select "I'm Not Sure" and we'll try to determine it from your document.
-                                    </div>
-                                </div>
-
-                                <div class="mb-3">
-                                    <label for="user_question" class="form-label fw-bold">Your question (optional)</label>
-                                    {{ form.user_question }}
-                                    <div class="form-text">
-                                        Have a specific question? Enter it here and we'll pay special attention to finding relevant information.
-                                    </div>
-                                </div>
-                            </div>
-
-                            <hr class="my-4">
-
-                            <!-- User Information Section -->
-                            <div class="mb-4">
-                                <h4>Your Information</h4>
-                                <p class="text-muted small">This form goes to our server. We store your policy encrypted, with a scrambled version of your email so you can ask us to delete it. If you join the mailing list, we keep your name and email to send updates. We don't sell or share your personal information. <strong>We may use uploaded documents, with identifying details removed as best we can, to improve our AI and help other patients.</strong></p>
-
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label for="{{ form.first_name.id_for_label }}" class="form-label">First name (required)</label>
-                                        {{ form.first_name }}
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label for="{{ form.last_name.id_for_label }}" class="form-label">Last name (required)</label>
-                                        {{ form.last_name }}
-                                    </div>
-                                </div>
-
-                                <div class="mb-3">
-                                    <label for="{{ form.email.id_for_label }}" class="form-label">Email (required)</label>
-                                    {{ form.email }}
-                                </div>
-                            </div>
-
-                            <hr class="my-4">
-
-                            <!-- Terms & Agreements Section -->
-                            <div class="mb-4">
-                                <h4>Terms & Agreements</h4>
-
-                                <div class="form-check mb-3">
-                                    {{ form.tos_agreement }}
-                                    <label for="{{ form.tos_agreement.id_for_label }}" class="form-check-label">
-                                        I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I understand this is information only, not legal or professional advice, and that my policy may be used, with identifying details removed as best we can, to train Fight Health Insurance's AI. (required)
-                                    </label>
-                                </div>
-
-                                <div class="form-check mb-3">
-                                    {{ form.privacy_policy }}
-                                    <label for="{{ form.privacy_policy.id_for_label }}" class="form-check-label">
-                                        I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
-                                    </label>
-                                </div>
-
-                                <div class="form-check mb-3">
-                                    {{ form.subscribe }}
-                                    <label for="{{ form.subscribe.id_for_label }}" class="form-check-label">
-                                        Send me news from Fight Health Insurance.
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div class="d-grid gap-2">
-                                <button type="submit" class="btn btn-green fhi-btn-lg">
-                                    Analyze My Policy
-                                </button>
-                            </div>
-                        </form>
+                    <div class="fhi-field-group">
+                        <label for="user_question" class="fhi-label">Your question (optional)</label>
+                        {{ form.user_question }}
+                        <div class="fhi-note">
+                            Have a specific question? Enter it here and we'll pay special attention to finding relevant information.
+                        </div>
                     </div>
                 </div>
-            </div>
+
+                <hr>
+
+                <!-- User Information Section -->
+                <div class="fhi-stack">
+                    <h4>Your Information</h4>
+                    <p class="fhi-note">This form goes to our server. We store your policy encrypted, with a scrambled version of your email so you can ask us to delete it. If you join the mailing list, we keep your name and email to send updates. We don't sell or share your personal information. <strong>We may use uploaded documents, with identifying details removed as best we can, to improve our AI and help other patients.</strong></p>
+
+                    <div class="fhi-cards fhi-cards-roomy">
+                        <div class="fhi-field-group">
+                            <label for="{{ form.first_name.id_for_label }}" class="fhi-label">First name (required)</label>
+                            {{ form.first_name }}
+                        </div>
+                        <div class="fhi-field-group">
+                            <label for="{{ form.last_name.id_for_label }}" class="fhi-label">Last name (required)</label>
+                            {{ form.last_name }}
+                        </div>
+                    </div>
+
+                    <div class="fhi-field-group">
+                        <label for="{{ form.email.id_for_label }}" class="fhi-label">Email (required)</label>
+                        {{ form.email }}
+                    </div>
+                </div>
+
+                <hr>
+
+                <!-- Terms & Agreements Section -->
+                <div class="fhi-stack">
+                    <h4>Terms & Agreements</h4>
+
+                    <div class="fhi-check-row">
+                        {{ form.tos_agreement }}
+                        <label for="{{ form.tos_agreement.id_for_label }}">
+                            I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I understand this is information only, not legal or professional advice, and that my policy may be used, with identifying details removed as best we can, to train Fight Health Insurance's AI. (required)
+                        </label>
+                    </div>
+
+                    <div class="fhi-check-row">
+                        {{ form.privacy_policy }}
+                        <label for="{{ form.privacy_policy.id_for_label }}">
+                            I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
+                        </label>
+                    </div>
+
+                    <div class="fhi-check-row">
+                        {{ form.subscribe }}
+                        <label for="{{ form.subscribe.id_for_label }}">
+                            Send me news from Fight Health Insurance.
+                        </label>
+                    </div>
+                </div>
+
+                <div class="fhi-actions">
+                    <button type="submit" class="btn btn-green fhi-btn-lg">
+                        Analyze My Policy
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </section>
 
 <!-- What We Analyze Section -->
-<section id="what-we-analyze" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">What you'll get: what's covered, what isn't, and the lines to quote in an appeal</h2>
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Coverage (Inclusions)</h5>
-                                <p class="card-text text-muted">Identify what treatments, procedures, and services are covered by your plan.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Exclusions</h5>
-                                <p class="card-text text-muted">Find what's explicitly not covered and understand the limitations.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Appeal-Relevant Clauses</h5>
-                                <p class="card-text text-muted">Locate deadlines, procedures, and medical necessity definitions for appeals.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Quotable Sections</h5>
-                                <p class="card-text text-muted">Get exact quotes with page numbers that you can use in appeal letters.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+<section id="what-we-analyze" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>What you'll get: what's covered, what isn't, and the lines to quote in an appeal</h2>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-card">
+                <h5>Coverage (Inclusions)</h5>
+                <p class="fhi-hint">Identify what treatments, procedures, and services are covered by your plan.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Exclusions</h5>
+                <p class="fhi-hint">Find what's explicitly not covered and understand the limitations.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Appeal-Relevant Clauses</h5>
+                <p class="fhi-hint">Locate deadlines, procedures, and medical necessity definitions for appeals.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Quotable Sections</h5>
+                <p class="fhi-hint">Get exact quotes with page numbers that you can use in appeal letters.</p>
             </div>
         </div>
     </div>
 </section>
 
 <!-- Disclaimer -->
-<section id="disclaimer" class="py-4">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="disclaimer-box p-3 bg-warning-subtle border border-warning rounded">
-                    <p class="text-dark mb-0">
-                        <strong>Please note:</strong> This is information only, not legal or professional advice. Policies are complicated, and it may miss details. For a final answer, ask your insurer or a qualified professional.
-                    </p>
-                </div>
-            </div>
+<section id="disclaimer" class="fhi-section fhi-section-tight">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <div class="disclaimer-box fhi-disclaimer">
+            <p>
+                <strong>Please note:</strong> This is information only, not legal or professional advice. Policies are complicated, and it may miss details. For a final answer, ask your insurer or a qualified professional.
+            </p>
         </div>
     </div>
 </section>
@@ -264,12 +234,12 @@
         border-color: #ffc107 !important;
     }
 
-    #what-we-analyze .card {
+    #what-we-analyze .fhi-card {
         border-left: 4px solid #a5c422;
         transition: box-shadow 0.2s ease;
     }
 
-    #what-we-analyze .card:hover {
+    #what-we-analyze .fhi-card:hover {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
 </style>

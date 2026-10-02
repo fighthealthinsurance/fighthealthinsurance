@@ -466,6 +466,8 @@ textarea.fhi-field {
     /* An h1 reads --fhi-text-hero for the image hero; a page title is the
        page size, the same size the section h2s used to give these pages. */
     font-size: var(--fhi-text-page);
+    /* Even lines, not one word left alone on the second. */
+    text-wrap: balance;
     line-height: var(--fhi-line-heading);
     color: var(--fhi-ink);
     margin: 0;
@@ -611,6 +613,13 @@ a.link::after {
 a.link:hover::after {
     transform: scaleX(1);
     transform-origin: bottom left;
+}
+
+/* In a list item the link flows with the words around it. As an
+   inline-block it wraps as one box in a narrow column, so the bullet sat
+   beside its last line and the description dropped below it. */
+li > a.link {
+    display: inline;
 }
 
 .font-weight-bold {
@@ -1243,7 +1252,8 @@ a.link:hover::after {
     padding: 5px;
 }
 
-.img-fluid.img-logo {
+/* The social icons under a photo on About Us. */
+.img-logo {
     max-width: 25px;
     margin: auto;
     border: none;
@@ -1258,28 +1268,6 @@ a.link:hover::after {
 .row {
     display: flex;
     flex-wrap: wrap;
-}
-
-.row.no-gutters {
-    margin: 0;
-    justify-content: center;
-}
-
-.row.no-gutters .col-md-2 {
-    padding: 0;
-    flex: 0 0 auto;
-    width: auto;
-}
-
-.row.no-gutters .col-md-2 img{
-    width: 100%;
-    height: auto;
-    margin: 5px;
-}
-
-.row .col-md-2 {
-    margin: 10px;
-    flex-basis: 20%;
 }
 
 #id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
@@ -1317,6 +1305,15 @@ a.link:hover::after {
         flex-wrap: nowrap;
     }
 }
+/* The logos share their strip equally and each sits in the middle of its
+   share. Every logo, in either strip, is capped at the same 140px
+   (.featured-logo) so the two strips read as one set. */
+.featured-row > a,
+.featured-row-highlight > a {
+    flex: 1 1 0;
+    padding: var(--fhi-space-2);
+    text-align: center;
+}
 .featured-row a {
     display: block;
     transition: transform 0.3s ease, opacity 0.3s ease;
@@ -1326,7 +1323,7 @@ a.link:hover::after {
     transform: scale(1.05);
     opacity: 1;
 }
-.featured-row .img-fluid.img-thumbnail {
+.featured-logo {
     max-width: 140px;
     height: auto;
     margin: 0 auto;
@@ -1337,7 +1334,8 @@ a.link:hover::after {
     box-shadow: none;
     transition: all 0.3s ease;
 }
-.featured-row a:hover .img-fluid.img-thumbnail {
+.featured-row a:hover .featured-logo,
+.featured-row-highlight a:hover .featured-logo {
     box-shadow: none;
 }
 .featured-row-highlight {
@@ -1715,7 +1713,17 @@ section:not(.slider) .share-subcopy {
     align-items: center;
 }
 
-/* Footer social icons */
+/* Footer social icons: one centred row that wraps. Six 48px icons with
+   32px between them need 448px, so on a phone narrower than that the row
+   wraps instead of pushing the page sideways. */
+.footer-social {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--fhi-space-4) var(--fhi-space-7);
+    margin-top: var(--fhi-space-7);
+}
 .footer-social-link {
     display: flex;
     align-items: center;
@@ -2048,9 +2056,10 @@ section:not(.slider) .share-subcopy {
 }
 
 /* Running prose in the reading column is a step larger. Text that states
-   its own size (.lead, .small), sits in a card, or is a breadcrumb keeps
-   the size it was given. */
-.fhi-page :where(p, li):not(.lead, .small, .breadcrumb-item, [class*="card"] *) {
+   its own size (.lead, .small, .fhi-lead, .fhi-note), sits in a card, or
+   is a breadcrumb keeps the size it was given. Each name in the list is
+   one class, so the rule stays at two classes of specificity. */
+.fhi-page :where(p, li):not(.lead, .small, .fhi-lead, .fhi-note, .fhi-breadcrumbs *, [class*="card"] *) {
     font-size: var(--fhi-text-reading);
 }
 
@@ -2160,16 +2169,24 @@ main :where(table) {
 /* The delete flow's notes ("Don't see the email?") read best at 640px,
    which used to be an inline style on the alert. An inline style beats
    the cap above, so on a phone the note ran 373px in a 350px column.
-   Here the two limits are one rule, and the smaller wins. */
-.fhi-page-centred > .alert {
+   Here the two limits are one rule, and the smaller wins. A notice reads
+   from its left edge even in a centred column: its bullet list, centred
+   line by line, was hard to follow, which is what Bootstrap's text-start
+   on each alert used to fix. */
+.fhi-page-centred > .fhi-notice {
     max-width: min(640px, 100%);
+    text-align: start;
 }
 
 /* The support address is one word. In bold Poppins it is 320px, and a
    list item inside the phone note has 284px, so the page scrolled 5px
-   sideways. A word that cannot fit breaks; nothing else changes. */
-.fhi-page .alert,
-.fhi-page a[href^="mailto:"] {
+   sideways. A word that cannot fit breaks; nothing else changes. About
+   Us sets its addresses in cards on the wide column, as little as 240px
+   on a 320px phone, and its a.link is an inline-block, which keeps a word
+   whole unless it may break anywhere. */
+.fhi-page .fhi-notice,
+.fhi-page a[href^="mailto:"],
+.fhi-page-wide a[href^="mailto:"] {
     overflow-wrap: anywhere;
 }
 
@@ -2180,14 +2197,21 @@ main :where(table) {
     text-align: center;
 }
 
+/* The centred column spaces what it holds: each piece sits a paragraph's
+   distance above the next, as Bootstrap's paragraph and alert margins
+   did, so a notice or a form no longer touches the line under it. The
+   title block keeps its own spacing. */
+.fhi-page-centred > :not(.fhi-page-title) {
+    margin-block: 0 var(--fhi-space-4);
+}
+
 /* The press logos on About Us: a row that wraps and centres, each
    wordmark near the size the home page's featured row gives its logos
    (five to a line in the reading column, the same five centred in the
    wide one). On Bootstrap's col-md-2 they were a sixth of the
    row, which in a 760px column is a 99px wordmark nobody can read. The
-   image is capped at its link, since .img-fluid.img-thumbnail otherwise
-   lets it ask for 200px and a flex item will not shrink below its
-   content. */
+   image is capped at its link: a wordmark asks for its own width, 411px
+   to 884px here, and a flex item will not shrink below its content. */
 .fhi-logo-row {
     display: flex;
     flex-wrap: wrap;
@@ -2199,8 +2223,20 @@ main :where(table) {
     flex: 0 1 136px;
 }
 
-.fhi-logo-row .img-fluid.img-thumbnail {
+.fhi-logo-row img {
     max-width: 100%;
+    /* The small inset Bootstrap's thumbnail gave each logo, which keeps the
+       second row clear of the pink shadow under it. */
+    padding: var(--fhi-space-1);
+}
+/* A photo at the head of a card, as on About Us: centred, and no wider
+   than 200px or the card. It centres with align-self rather than auto
+   margins, which in a card stretched to its row's height would push the
+   photo down into the spare space. */
+.fhi-portrait {
+    align-self: center;
+    max-width: min(200px, 100%);
+    height: auto;
 }
 
 /* Container utilities */
@@ -2529,16 +2565,22 @@ main :where(table) {
     .about-steps {
         max-width: 100%;
     }
+    /* The strip scrolls sideways on a phone, so it starts at its left edge:
+       centred, the logos that overflowed to the left could never be
+       scrolled back to (Fast Company, CBS and NewsNation were unreachable). */
     .featured-row,
     .featured-row-highlight {
+        justify-content: flex-start;
         flex-wrap: nowrap;
         overflow-x: auto;
+        /* A logo snapped to the strip's edge keeps room for its focus ring. */
+        scroll-padding-inline: var(--fhi-space-2);
         -webkit-overflow-scrolling: touch;
         scroll-snap-type: x mandatory;
         padding: 1rem 0.5rem;
     }
-    .featured-row .col-md-2,
-    .featured-row-highlight .col-md-2 {
+    .featured-row > a,
+    .featured-row-highlight > a {
         flex: 0 0 auto;
         scroll-snap-align: start;
         min-width: 120px;
@@ -2954,10 +2996,16 @@ textarea,
     pointer-events: none;
 }
 
+/* The alphabet wraps onto more rows wherever the bar is narrower than
+   twenty-six letters, each row centred under the bar. */
+.glossary-letters {
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
 .letter-header {
     border-bottom: 2px solid var(--fhi-green-ink);
     padding-bottom: var(--fhi-space-2);
-    margin-bottom: var(--fhi-space-4);
     color: var(--fhi-green-ink);
 }
 
@@ -2967,17 +3015,18 @@ textarea,
     color: inherit;
 }
 
-.term-card .card {
+.term-card .fhi-card {
+    height: 100%;
     border-left: 3px solid transparent;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-    .term-card .card {
+    .term-card .fhi-card {
         transition: all 0.2s ease;
     }
 }
 
-.term-card:hover .card {
+.term-card:hover .fhi-card {
     box-shadow: var(--fhi-shadow);
     border-left-color: var(--fhi-green-ink);
 }
@@ -2990,7 +3039,7 @@ textarea,
     border-left: 4px solid var(--fhi-green-ink);
 }
 
-.term-definition .lead {
+.term-definition .fhi-lead {
     line-height: var(--fhi-line-body);
 }
 
@@ -3001,12 +3050,6 @@ textarea,
 
 .breadcrumb-item a:hover {
     text-decoration: underline;
-}
-
-/* Scoped to the glossary: the same class is on three other pages that never
-   asked for this border, and !important would have taken theirs too. */
-.glossary-disclaimer.disclaimer-box {
-    border-color: var(--fhi-line) !important;
 }
 
 #final-cta {
@@ -3182,7 +3225,7 @@ textarea,
 
 /* ---- Questions that open in place ----------------------------------------
    The FAQ on every microsite and on the Denial Language Library, and the
-   lists on Preparing for 2026 and Turning 26. They were Bootstrap
+   lists on Preparing for 2027 and Turning 26. They were Bootstrap
    accordions, which opened only once bootstrap.bundle.min.js had arrived
    from a CDN, so a blocked or slow script left every answer shut. Each item
    is a <details> now: the browser opens it with no script, and keyboards
@@ -3626,6 +3669,15 @@ textarea,
 .fhi-column-centred > .btn { align-self: center; }
 .fhi-stack-loose { gap: var(--fhi-space-6); }
 
+/* A marker, badge or abbreviation beside its text, centred on one line. */
+.fhi-media {
+    display: flex;
+    align-items: center;
+    gap: var(--fhi-space-4);
+}
+.fhi-media > *,
+.fhi-media > * > * { margin-block: 0; }
+
 /* A wrapping row, for buttons and links side by side. */
 .fhi-cluster {
     display: flex;
@@ -3634,6 +3686,11 @@ textarea,
     gap: var(--fhi-space-4);
 }
 .fhi-cluster-center { justify-content: center; }
+/* A long unbroken name, such as a drug's chemical names joined by
+   slashes, breaks rather than pushing the page wider than a phone; so does
+   a button in a row of them. */
+.fhi-column { overflow-wrap: anywhere; }
+.fhi-cluster > .btn { max-width: 100%; white-space: normal; }
 
 /* Two to four cards that belong together, laid out by the width of the
    column they sit in rather than the screen: one under another in a narrow
@@ -3656,10 +3713,12 @@ textarea,
 /* Cards: as many to a row as fit at about 14rem each, so three short cards
    share the reading column on a desktop and one takes a phone's width.
    Cards that hold paragraphs are roomy: 20rem each, so two to a row there
-   and the lines stay long enough to read. */
+   and the lines stay long enough to read. A short run keeps the same card
+   size and leaves the rest of the row empty, so a lone card never stretches
+   across the row. */
 .fhi-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
@@ -3679,9 +3738,15 @@ textarea,
 .fhi-card-warning { border-color: #ffc107; }
 .fhi-card-info { border-color: #087990; }
 .fhi-card-subtitle { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
+/* A card's own title, a step below the section's subheadings (the
+   column's h3 is --fhi-text-subsection). */
+.fhi-card-title { font-size: var(--fhi-text-lead); }
 /* A card's closing link or button sits at the foot, so a row of cards
    lines theirs up. */
 .fhi-card-action { margin-top: auto; align-self: flex-start; }
+/* A card whose title link covers the whole card, so the card is the target. */
+.fhi-card:has(.fhi-card-link) { position: relative; }
+.fhi-card-link::after { content: ""; position: absolute; inset: 0; }
 /* A coloured title bar across the top of a card. #087990 carries white
    at 5.06:1. */
 .fhi-card-banner {
@@ -3708,6 +3773,8 @@ textarea,
 }
 .fhi-list > * + * { border-top: 1px solid #d0d0d0; }
 .fhi-list > * > * { margin-block: 0; }
+/* A list item can itself be a media row: a badge beside its text. */
+.fhi-list > .fhi-media { flex-direction: row; }
 
 /* A list without bullets or indent. */
 .fhi-bare-list { padding-left: 0; list-style: none; }
@@ -3719,6 +3786,7 @@ textarea,
     border-radius: var(--fhi-radius);
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+.fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
 /* Something went wrong with what the reader sent: dark red on pale red, 7.1:1. */
 .fhi-notice-danger { color: #842029; background-color: #f8d7da; border-color: #f5c2c7; }
 /* A link in a notice is the notice's ink, bold and underlined, so it
@@ -3736,6 +3804,26 @@ textarea,
     border: 1px solid #dee2e6;
     border-radius: var(--fhi-radius);
 }
+
+/* Where a page sits in the site: its parents as links, each after a
+   slash, then the page itself. A plain ordered list, so a screen reader
+   counts the steps, in place of Bootstrap's .breadcrumb. The grey is
+   --fhi-muted, 5.74:1 on white; the links are the green ink. */
+.fhi-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--fhi-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--fhi-muted);
+}
+.fhi-breadcrumbs > li + li::before {
+    content: "/";
+    margin-right: var(--fhi-space-2);
+}
+.fhi-breadcrumbs a { color: var(--fhi-green-ink); text-decoration: none; }
+.fhi-breadcrumbs a:hover { text-decoration: underline; }
 
 /* A light panel. */
 .fhi-panel {
@@ -3758,6 +3846,9 @@ textarea,
 .fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
 .fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
 .fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
+.fhi-badge.fhi-badge-info { background-color: #0dcaf0; color: #212529; }
+/* Long condition names wrap inside the card rather than running past it. */
+.fhi-badge { max-width: 100%; }
 
 /* Text roles: the line that introduces a section, a small aside, and the
    colour of a warning or information icon. */
@@ -3792,3 +3883,4 @@ textarea,
     display: grid;
     gap: var(--fhi-space-2);
 }
+.fhi-text-success { color: var(--fhi-green-ink); }
