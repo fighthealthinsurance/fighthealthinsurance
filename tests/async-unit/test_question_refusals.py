@@ -433,3 +433,18 @@ def test_numbered_questions_on_one_line_are_read_one_by_one():
         ("Has the patient tried physical therapy for six weeks?", "Yes"),
         ("What did the MRI show?", "Disc herniation at L4-L5"),
     ]
+
+
+def test_a_number_in_brackets_inside_a_question_is_not_numbering():
+    """ "(at least 30) despite" once cut the question at "30)"."""
+    reply = (
+        "Has the patient maintained a qualifying BMI (at least 30) despite "
+        "lifestyle changes? UNKNOWN"
+    )
+    assert parse_appeal_questions(reply) == [
+        (
+            "Has the patient maintained a qualifying BMI (at least 30) despite "
+            "lifestyle changes?",
+            "",
+        )
+    ]

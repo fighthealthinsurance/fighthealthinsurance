@@ -106,8 +106,25 @@ _ANSWER_PREFIX = re.compile(r"^(?:A\s*:|:)[\s:]*")
 # A label in front of the question, such as "Question:" or "Q2:".
 _QUESTION_LABEL = re.compile(r"^(?:question|q)\s*\d*\s*:\s*", re.IGNORECASE)
 _LETTER = re.compile(r"[A-Za-z]")
-# Where a reply on one line starts its next numbered item: "... 45 2. Has".
-_NEXT_NUMBERED = re.compile(r"\s+(?=\d+[.)]\s)")
+# A numbered item inside a one-line reply: "... 45 2. Has the patient".
+_ITEM_NUMBER = re.compile(r"(?<=\s)(\d{1,2})[.)]\s+(?=[A-Z*])")
+
+
+def _numbered_items(text: str) -> List[str]:
+    """A one-line reply cut at its numbering, but only numbering that counts
+    up from 1 and starts a sentence: "(at least 30) despite" is a number in
+    a question, not item 30."""
+    if not re.match(r"\s*1[.)]\s", text):
+        return [text]
+    items, start, expected = [], 0, 2
+    for match in _ITEM_NUMBER.finditer(text):
+        if int(match.group(1)) != expected:
+            continue
+        items.append(text[start : match.start()])
+        start, expected = match.start(), expected + 1
+    items.append(text[start:])
+    return items
+
 
 # Lines that introduce a list rather than belong to it.
 _HEADER_STARTS = ("here are", "questions", "additional")
@@ -214,7 +231,7 @@ def parse_appeal_questions(text: Optional[str]) -> Optional[List[Tuple[str, str]
     # however many "?" it holds: cutting it anywhere else guesses where one
     # question's answer ends and the next question starts.
     if len(lines) == 1:
-        lines = _NEXT_NUMBERED.split(text)
+        lines = _numbered_items(text)
     for line in lines:
         split = _split_line(line)
         if split is None:
