@@ -698,7 +698,7 @@ function applyRanking(final: boolean): void {
   const button = document.createElement("button");
   button.id = "appeal-show-more";
   button.type = "button";
-  button.className = "btn btn-outline-secondary";
+  button.className = "fhi-button fhi-button-neutral";
   button.style.margin = "8px 20px 24px";
   button.textContent = `Show ${hidden.length} more draft${hidden.length === 1 ? "" : "s"}`;
   button.setAttribute("aria-expanded", "false");

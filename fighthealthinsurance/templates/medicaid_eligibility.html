@@ -18,11 +18,11 @@
                 <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
                 <p class="hero-subcopy">Answer a few questions with our free, <strong>experimental</strong> AI assistant and get a rough estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required. It's an estimate only, <strong>not</strong> an official determination&mdash;always confirm with your state.</p>
                 <div class="hero-cta-group">
-                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="section-btn btn btn-default primary-cta">Try the Experimental Eligibility Check</a>
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="fhi-button fhi-button-primary fhi-button-large primary-cta">Try the Experimental Eligibility Check</a>
                 </div>
                 <div class="hero-cta-group hero-cta-secondary">
-                    <a href="#how-it-works" class="btn btn-outline-green smoothScroll secondary-cta">How It Works</a>
-                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green tertiary-cta">Work Requirements FAQ</a>
+                    <a href="#how-it-works" class="fhi-button secondary-cta smoothScroll">How It Works</a>
+                    <a href="{% url 'medicaid-faq' %}" class="fhi-button secondary-cta">Work Requirements FAQ</a>
                 </div>
             </div>
         </div>
@@ -105,7 +105,7 @@
         </div>
 
         <div class="fhi-stack fhi-stack-centred">
-            <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Start the Free Eligibility Check (Experimental)</a>
+            <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="fhi-button fhi-button-primary fhi-button-large">Start the Free Eligibility Check (Experimental)</a>
             <p class="fhi-note">Experimental: results are estimates only&mdash;confirm with your state.</p>
         </div>
     </div>
@@ -183,7 +183,7 @@
         </div>
 
         <div class="fhi-stack fhi-stack-centred">
-            <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Read the Work Requirements FAQ</a>
+            <a href="{% url 'medicaid-faq' %}" class="fhi-button fhi-button-secondary fhi-button-large">Read the Work Requirements FAQ</a>
         </div>
     </div>
 </section>
@@ -217,8 +217,8 @@
             <h5>Denied or Terminated? You Can Appeal.</h5>
             <p>If your state denies your Medicaid application or ends your coverage&mdash;including over work-requirement paperwork&mdash;you have the right to a fair hearing, and deadlines matter. Our free tools can help you fight back, and your state's legal aid resources can help too.</p>
             <div class="fhi-cluster">
-                <a href="{% url 'scan' %}" class="btn btn-green">Generate an Appeal</a>
-                <a href="{% url 'chat' %}" class="btn btn-outline-green">Ask the AI Assistant</a>
+                <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary">Generate an Appeal</a>
+                <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary">Ask the AI Assistant</a>
             </div>
         </div>
     </div>
@@ -234,12 +234,12 @@
             <div class="fhi-card">
                 <h5>Your State's Resources</h5>
                 <p>Find your state Medicaid agency, consumer assistance programs, and legal aid contacts&mdash;the assistant can also look these up for you in chat.</p>
-                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green fhi-card-action">Find Your State's Resources</a>
+                <a href="{% url 'state_help_index' %}" class="fhi-button fhi-button-secondary fhi-card-action">Find Your State's Resources</a>
             </div>
             <div class="fhi-card">
                 <h5>Apply Through Healthcare.gov</h5>
                 <p>The Marketplace application automatically checks your Medicaid and CHIP eligibility and forwards your info to your state&mdash;one application covers both.</p>
-                <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green fhi-card-action">Learn More at Healthcare.gov</a>
+                <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary fhi-card-action">Learn More at Healthcare.gov</a>
             </div>
         </div>
     </div>
@@ -254,9 +254,9 @@
         <h2>Find Out Where You Stand&mdash;In Minutes</h2>
         <p class="fhi-lead">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
         <div class="fhi-cluster fhi-cluster-center">
-            <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="btn btn-green fhi-btn-lg">Check My Eligibility (Experimental)</a>
-            <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green fhi-btn-lg">Work Requirements FAQ</a>
-            <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
+            <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="fhi-button fhi-button-primary fhi-button-large">Check My Eligibility (Experimental)</a>
+            <a href="{% url 'medicaid-faq' %}" class="fhi-button fhi-button-secondary fhi-button-large">Work Requirements FAQ</a>
+            <a href="{% url 'state_help_index' %}" class="fhi-button fhi-button-neutral fhi-button-large">State Resources</a>
         </div>
     </div>
 </section>
@@ -494,43 +494,6 @@
         font-weight: 700;
     }
 
-    /* ---------- Buttons ---------- */
-    /* .btn-green's gradient comes from the site-wide custom.css -- don't
-       re-declare it here or the page drifts when the brand style changes.
-       Only the page-specific sizing/recolor overrides below are local. */
-
-    /* Page-scoped recolor: the site default (#a5c422 + black hover) reads
-       poorly on this page's white sections. */
-    .btn-outline-green {
-        color: var(--fhi-green-ink);
-        border-color: var(--fhi-olive);
-    }
-
-    .btn-outline-green:hover {
-        background-color: #7B920A;
-        border-color: #7B920A;
-        color: var(--fhi-btn-ink);
-    }
-
-    /* Restore a real size hierarchy: custom.css pins .btn-green to 1rem,
-       which made the primary CTA smaller than its outline neighbors. */
-    .btn-green.btn-lg {
-        font-size: 1.15rem;
-        font-weight: 700;
-        padding: 0.8rem 1.5rem;
-    }
-
-    .btn-outline-green.btn-lg,
-    .btn-outline-secondary.btn-lg {
-        font-size: 1.05rem;
-        padding: 0.75rem 1.2rem;
-    }
-
-    .btn:focus-visible {
-        outline: 3px solid var(--fhi-green-deep);
-        outline-offset: 2px;
-    }
-
     /* ---------- Final CTA ---------- */
     #final-cta {
         background: linear-gradient(135deg, #f8f9fa 0%, #eef1e0 100%);
@@ -579,17 +542,10 @@
         .experimental-banner h2 {
             font-size: 1.1rem;
         }
-
-        .btn-green.btn-lg,
-        .btn-outline-green.btn-lg,
-        .btn-outline-secondary.btn-lg {
-            font-size: 1rem;
-            padding: 0.6rem 1.1rem;
-        }
     }
 
     @media (max-width: 576px) {
-        #final-cta .fhi-cluster .btn {
+        #final-cta .fhi-cluster .fhi-button {
             flex: 1 1 100%;
             max-width: 340px;
         }

@@ -38,7 +38,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 <div class="appeal-donate-wrapper donate-wrapper">
   <p style="color: #333; margin-bottom: 1rem;">
     <strong>💙 Help us help others:</strong> Fight Health Insurance is completely free. If we've helped you, please consider supporting our work so we can help more people:
-    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
+    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="fhi-button fhi-button-primary" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
       Pay What You Want (optional)
     </a>
   </p>
@@ -108,7 +108,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   </div>
 </div>
 
-<button id="descrub" class="btn btn-green" style="font-size:1.1rem; padding:12px 24px; margin:1rem 0;">
+<button id="descrub" class="fhi-button fhi-button-primary" style="margin:1rem 0;">
   ✏️ Fill in your PII (Personal Information)
 </button>
 
@@ -140,7 +140,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
     </label>
   </div>
   <input type="hidden" name="fax_amount" value="0">
-  <button id="fax_appeal" class="btn-green" style="font-size:1.1rem; padding:12px 24px;">
+  <button id="fax_appeal" class="fhi-button fhi-button-primary">
     📠 Fax My Appeal (Pay What You Want)
   </button>
 </form>
@@ -152,7 +152,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
     Click the "Print Appeal" button below to print your appeal letter. Then mail it to the address shown on your denial letter.
     <strong>We recommend using certified mail</strong> so you have proof of delivery.
   </p>
-  <button id="print_appeal" class="btn" style="font-size:1.1rem; padding:12px 24px; margin-left:1.5rem;">
+  <button id="print_appeal" class="fhi-button fhi-button-secondary" style="margin-left:1.5rem;">
     🖨️ Print My Appeal (to mail yourself)
   </button>
 </div>
@@ -187,7 +187,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
     <input type="hidden" name="email" value="{{ user_email }}">
     <input type="hidden" name="denial_id" value="{{ denial_id }}">
     {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
-    <button type="submit" id="generate_escalation_packet" class="btn btn-default" style="font-size:1.05rem; padding:10px 20px;">
+    <button type="submit" id="generate_escalation_packet" class="fhi-button fhi-button-secondary">
       📨 Click here to draft regulator letters (opens in a new window)
     </button>
   </form>
@@ -221,7 +221,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   <p style="font-size:1.05rem;">
     We're honored to help you fight for the care you deserve. If our service has been helpful, please consider supporting us:
   </p>
-  <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer" style="margin-top:1rem; display:inline-block; padding:10px 20px; font-size:1.05rem;">
+  <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="fhi-button fhi-button-primary" id="support-our-dev-button" target="_blank" rel="noopener noreferrer" style="margin-top:1rem;">
     💙 Support Our Mission (Pay What You Want)
   </a>
 </div>
@@ -232,11 +232,11 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 
 <div style="margin:1.5rem 0; display:flex; justify-content:center; gap:1rem; align-items:center;">
   {% if back_url %}
-  <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+  <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">
     ← {{ back_label|default:"Back" }}
   </a>
   {% endif %}
-  <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
+  <a href="{% url 'scan' %}" class="fhi-button fhi-button-quiet">
     Start over with a new denial
   </a>
 </div>

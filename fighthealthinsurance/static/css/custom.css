@@ -173,6 +173,9 @@
     --fhi-btn-pad-y-lg: 0.85rem;
     --fhi-btn-pad-x-lg: 2.2rem;
     --fhi-btn-height-lg: 56px;
+    /* Part of a button's box in every role, so the padding a button
+       draws is the token's less this. */
+    --fhi-btn-border: 2px;
 }
 
 /* Skip link for keyboard navigation (accessibility) */
@@ -289,34 +292,16 @@ textarea.fhi-field {
     outline-offset: 2px;
 }
 
-/* A button's label keeps its colour while it is being hovered, focused or
-   pressed. main.css recolours every a:hover, a:active and a:focus on the site,
-   and that beats a button's own `.btn-green {color: var(--fhi-btn-ink)}` on
-   specificity, so without this the hero call to action writes dark olive on
-   its own lime fill the moment you tab to it. Every brand button reads the
-   one ink token here too, so the swap stays a single value. */
-.btn-green:hover,
-.btn-green:focus,
-.btn-green:active,
-.section-btn:hover,
-.section-btn:focus,
-.section-btn:active {
-    color: var(--fhi-btn-ink);
-}
-
-/* Same reason, kept apart because neither of these wears the brand lime: the
-   skip link is white on black and the secondary button is white on grey, and
-   both stay white whatever the brand button's ink becomes. */
+/* A link's label keeps its colour while it is being hovered, focused or
+   pressed: main.css recolours every a:hover, a:active and a:focus on the
+   site. The skip link is white on black and stays white. */
 .skip-link:hover,
 .skip-link:focus,
-.skip-link:active,
-.btn-secondary-custom:hover,
-.btn-secondary-custom:focus,
-.btn-secondary-custom:active {
+.skip-link:active {
     color: #fff;
 }
 
-/* Same reason, kept apart because one of the four share buttons wears
+/* Same for the share buttons, kept apart because one of the four wears
    Facebook's blue and is excused in the gate by name. */
 .share-btn:hover,
 .share-btn:focus,
@@ -600,58 +585,219 @@ li > a.link {
     font-weight: bold;
 }
 
-.btn-green, .btn-green:focus {
+/* ---- Buttons
+   One button, named for what it does on the page rather than for its colour.
+   .fhi-button is the box every button shares, and one role class says how
+   loud it is:
+     fhi-button-primary    the page's main action, on the brand lime sweep
+     fhi-button-secondary  another action worth taking: an olive edge
+     fhi-button-neutral    a utility (back, show more, a letter in a bar):
+                           a grey edge
+     fhi-button-quiet      reads as a link and keeps a button's target
+   fhi-button-small and fhi-button-large take the size from the token scale;
+   with neither, a button is medium.
+   The border is part of every button's box, transparent on the primary, so a
+   primary and a secondary side by side are the same height, and the padding
+   gives the border back so the box is the size the tokens say. A transparent
+   border is also what keeps a button's edge in forced-colours mode, which
+   draws it in the system's text colour. */
+.fhi-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--fhi-space-2);
+    box-sizing: border-box;
+    max-width: 100%;
+    min-height: var(--fhi-btn-height-md);
+    margin: 0;
+    padding: calc(var(--fhi-btn-pad-y-md) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-md) - var(--fhi-btn-border));
+    border: var(--fhi-btn-border) solid transparent;
+    border-radius: 4px;
+    background-color: transparent;
+    font-size: var(--fhi-btn-font-md);
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+    text-decoration: none;
+    white-space: normal;
+    vertical-align: middle;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+/* The fill is twice the button's width, so moving the background is what
+   slides the lime across on hover. */
+.fhi-button-primary {
     background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
     background-size: 200% auto;
     color: var(--fhi-btn-ink);
-    transition: all 0.3s;
-    border-radius: 4px;
-    border: none;
-    line-height: 1.5;
-    font-weight: 600;
     box-shadow: 0 3px 12px rgba(165, 196, 34, 0.35);
 }
-/* The default size, on a selector that names no state. Size on a state
-   selector outranks the size classes below on specificity, so a large
-   button would shrink back to medium the moment it took keyboard focus.
-   This rule ties with .fhi-btn-lg and loses to it on source order, which
-   is what lets a button keep its size through every state. */
-.btn-green {
-    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-    min-height: var(--fhi-btn-height-md);
-    font-size: var(--fhi-btn-font-md);
-}
-/* The fill slides in from the right on hover. The gradient is twice the width
-   of the button, so moving the background is what draws it across. */
-.btn-green:hover {
+.fhi-button-primary:hover {
     background-position: right center;
-    color: var(--fhi-btn-ink);
     box-shadow: 0 4px 16px rgba(165, 196, 34, 0.5);
 }
-
-.btn-delete, .pro-submit-btn{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
-.btn-delete, .pro-submit-btn {
-   margin: 10px;
-   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-   min-height: var(--fhi-btn-height-md);
-   font-size: var(--fhi-btn-font-md);
-   line-height: 1.5;
-   text-align: center;
-   transition: 0.5s;
-   background-size: 200% auto;
-   color: var(--fhi-btn-ink);
-   box-shadow: 0 0 20px #eee;
-   border-radius: 5px;
-   display: block;
-   border:none;
+/* The label keeps its ink while the button is hovered, focused or pressed:
+   main.css recolours every a:hover, a:active and a:focus, and that outranks
+   a single class. */
+.fhi-button-primary:hover,
+.fhi-button-primary:focus,
+.fhi-button-primary:active {
+    color: var(--fhi-btn-ink);
+}
+/* Focus flips the gradient: the dark stop comes to both ends and the bright
+   one to the middle, the reverse of the resting fill.
+   The flip cannot carry focus on its own. Hover's slide to `right center`
+   already shows dark on the left running to bright on the right, the same
+   colours in the same order the flipped gradient draws at rest, and a focus
+   state that looks like a hover state is not an indicator. So focus also
+   draws a ring, outside the button, in the deep end of the button's own
+   ramp: 6.17:1 against the bright stop, 3.48:1 against the dark one and
+   9.69:1 against a white page. Hover never draws it. On the hero the ring
+   sits on the photograph, where no stylesheet can say what is behind it. */
+.fhi-button-primary:focus-visible {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
+    background-position: left center;
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 3px;
 }
 
-.btn-delete:hover, .pro-submit-btn:hover{
-   background-position: right center;
-   color: var(--fhi-btn-ink);
-   text-decoration: none;
+/* An edge in olive, 3.52:1 on white, and a green-ink label, 6.00:1. Hover
+   fills it with the label's colour and turns the label white, 6.00:1. */
+.fhi-button-secondary {
+    border-color: var(--fhi-olive);
+    color: var(--fhi-green-ink);
+}
+.fhi-button-secondary:hover,
+.fhi-button-secondary:active {
+    background-color: var(--fhi-green-ink);
+    border-color: var(--fhi-green-ink);
+    color: #fff;
 }
 
+/* The same shape in grey: an edge at 3.45:1 on white, a label at 7.46:1,
+   and white on the label's colour when hovered. The focus rule comes first
+   so a hovered button that also has focus still turns white; it is there
+   because main.css turns a focused link green. */
+.fhi-button-neutral {
+    border-color: var(--fhi-field-line);
+    color: var(--fhi-ink-2);
+}
+.fhi-button-neutral:focus {
+    color: var(--fhi-ink-2);
+}
+.fhi-button-neutral:hover,
+.fhi-button-neutral:active {
+    background-color: var(--fhi-ink-2);
+    border-color: var(--fhi-ink-2);
+    color: #fff;
+}
+
+/* The sizes. Each comes after the roles, so the size a button is given is
+   the one it keeps in every state. */
+.fhi-button-small {
+    font-size: var(--fhi-btn-font-sm);
+    padding: calc(var(--fhi-btn-pad-y-sm) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-sm) - var(--fhi-btn-border));
+    min-height: var(--fhi-btn-height-sm);
+}
+.fhi-button-large {
+    font-size: var(--fhi-btn-font-lg);
+    padding: calc(var(--fhi-btn-pad-y-lg) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-lg) - var(--fhi-btn-border));
+    min-height: var(--fhi-btn-height-lg);
+}
+
+/* A link with a button's height: underlined, at the weight of running text,
+   and flush with the text beside it. After the sizes, which would otherwise
+   put the side padding back. */
+.fhi-button-quiet {
+    padding-inline: 0;
+    font-family: inherit;
+    font-weight: 400;
+    color: var(--fhi-ink-2);
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+.fhi-button-quiet:hover,
+.fhi-button-quiet:active {
+    color: var(--fhi-green-ink);
+}
+
+/* A button that cannot be used yet, or a letter with nothing under it. */
+.fhi-button:disabled,
+.fhi-button[aria-disabled="true"] {
+    opacity: 0.55;
+    box-shadow: none;
+    pointer-events: none;
+}
+
+/* A row of small buttons, such as an alphabet to jump through. Each is a
+   touch target high and only as wide as its letter needs, so the whole
+   alphabet fits one row on a desktop and wraps where it does not.
+   On a phone the bar is instead one row that scrolls sideways, each
+   letter a touch target square: wrapped, twenty-six of them filled five
+   rows. The padding keeps a focused letter's ring inside the scroller,
+   which would otherwise clip it, and the negative margin gives that
+   room back so the row lines up with what is around it. */
+.fhi-button-bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--fhi-space-1);
+}
+.fhi-button-bar > .fhi-button {
+    min-width: var(--fhi-space-7);
+    padding-inline: var(--fhi-space-2);
+}
+@media (max-width: 575.98px) {
+    .fhi-button-bar {
+        align-self: stretch;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        padding: var(--fhi-space-1);
+        margin: calc(-1 * var(--fhi-space-1));
+    }
+    .fhi-button-bar > .fhi-button {
+        flex: 0 0 auto;
+        min-width: var(--fhi-btn-height-sm);
+    }
+}
+
+/* The control that dismisses a message: a cross drawn in the message's own
+   colour, on a touch target square. */
+.fhi-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    inline-size: var(--fhi-btn-height-sm);
+    block-size: var(--fhi-btn-height-sm);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background-color: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.fhi-close:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Motion only for readers who have not asked for less. main.css gives every
+   link a half-second transition, so a reader who has asked gets none here. */
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-button {
+        transition: background-position 0.3s ease, background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.3s ease;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .fhi-button {
+        transition: none;
+    }
+}
 .logo {
     width: 75px;
 }
@@ -674,7 +820,7 @@ li > a.link {
 .hero-inner > .hero-badge {margin-bottom: var(--fhi-space-4);}
 .trust-bullets {justify-content:center;}
 .trust-bullets li {text-align:center;}
-.pwyw-pill, .hero-subcopy, .hero-tagline, .hero-headline {margin-left:auto; margin-right:auto;}
+.hero-subcopy, .hero-tagline, .hero-headline {margin-left:auto; margin-right:auto;}
 .hero-subcopy {text-align:center;}
 @media (max-width: 768px){
   .hero-cta-group a {flex:1 1 auto;}
@@ -685,44 +831,6 @@ li > a.link {
 .hero-tagline {margin-bottom: .25rem; font-weight: 600; color: var(--fhi-green); font-size: 1.15rem; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 .hero-subcopy {font-size: 1.05rem; line-height: 1.5rem; margin: .75rem 0 1.25rem; color: #fff; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 
-/* Hero Primary CTA - Large button above other CTAs */
-.hero-primary-cta {
-    font-size: var(--fhi-btn-font-lg) !important;
-    font-weight: 700 !important;
-    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important;
-    min-height: var(--fhi-btn-height-lg) !important;
-    margin: 1rem 0 !important;
-    box-shadow: 0 6px 20px rgba(165, 196, 34, 0.4) !important;
-    border: none !important;
-    transform: scale(1);
-    transition: transform 0.2s ease, box-shadow 0.2s ease !important;
-}
-.hero-primary-cta:hover {
-    transform: scale(1.05);
-    box-shadow: 0 8px 28px rgba(165, 196, 34, 0.6) !important;
-}
-
-.pwyw-pill {
-    display: inline-block;
-    background: linear-gradient(90deg, var(--fhi-btn-fill-a), var(--fhi-btn-fill-b));
-    color: var(--fhi-btn-ink);
-    padding:.4rem 1rem;
-    font-size:.95rem;
-    border-radius: 999px;
-    box-shadow:0 4px 12px rgba(0,0,0,.25);
-    margin-bottom:.75rem;
-    letter-spacing:.5px;
-    border: none;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-weight: 600;
-}
-.pwyw-pill:hover {
-    transform: translateY(-2px);
-    box-shadow:0 6px 16px rgba(0,0,0,.3);
-    background: linear-gradient(90deg, var(--fhi-btn-fill-b), var(--fhi-btn-fill-a));
-}
-
 .hero-cta-group {display: flex; flex-wrap: wrap; gap: .85rem; margin: .5rem auto 1rem; align-items: center; justify-content: center; width: 100%; box-sizing: border-box;}
 .hero-cta-group.hero-cta-secondary {margin-top: 0.5rem; margin-bottom: 1.5rem; display: flex !important;}
 /* The hero buttons used to be locked to one height, which made the call to
@@ -730,15 +838,42 @@ li > a.link {
    size: each button brings its own, so the primary reads as the primary. */
 .hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
-/* A page's primary action, in the hero and in the body of the state pages.
-   Large, and edged in the deep end of its own ramp: it sits on a photograph
-   the stylesheets cannot read, so the fill alone cannot say where the button
-   ends. 6.17:1 against the bright stop of that fill, 3.48:1 against the dark
-   one, over the 3:1 WCAG 1.4.11 asks of a control's boundary. */
-.primary-cta {font-size: var(--fhi-btn-font-lg) !important; font-weight:700 !important; padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important; min-height: var(--fhi-btn-height-lg) !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
-.primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
-.secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size: var(--fhi-btn-font-md) !important; padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md) !important; min-height: var(--fhi-btn-height-md) !important; line-height: 1.5 !important;}
-.secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green-ink) !important; color:#fff !important; border-color: var(--fhi-green-ink) !important;}
+/* A page's primary action in the hero: bold, and lifted off the photograph
+   by a lime glow. On a picture no stylesheet can read, the fill alone
+   cannot say where the button ends; the glow does, without the line a
+   border would draw (the product owner's call of 2026-09-13). */
+.primary-cta {
+    font-weight: 700;
+    box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4);
+}
+.primary-cta:hover {
+    box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6);
+}
+@media (prefers-reduced-motion: no-preference) {
+    .primary-cta {
+        transition: background-position 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
+    }
+    .primary-cta:hover {
+        transform: scale(1.03);
+    }
+}
+/* The hero's other actions, frosted glass over the photograph: a white
+   label and edge on a light veil, filling with green ink on hover. */
+.secondary-cta,
+.secondary-cta:focus {
+    background-color: rgba(255, 255, 255, 0.15);
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
+    border-color: rgba(255, 255, 255, 0.6);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.secondary-cta:hover,
+.secondary-cta:active {
+    background-color: var(--fhi-green-ink);
+    border-color: var(--fhi-green-ink);
+    color: #fff;
+}
 
 /* Value Proposition Two-Column Layout */
 #why-fhi .home-why-inner .value-prop-container {
@@ -981,10 +1116,6 @@ li > a.link {
    the ink further down. */
 .pwyw-thanks {font-size:var(--fhi-text-micro); color:var(--fhi-green);}
 
-/* Outline variant for chat/pro buttons */
-.btn-outline-green {background:transparent; border:2px solid var(--fhi-green); color:var(--fhi-green-ink); transition:.3s;}
-.btn-outline-green:hover {background:#000; color:#fff;}
-
 /* Drafts page phase list. These four states used to be colour literals the
    appeal fetcher wrote into a style attribute at runtime, where no
    stylesheet gate could see them. */
@@ -1043,75 +1174,6 @@ li > a.link {
     .hero-grid {max-width:1600px; margin:0 auto;}
 }
 
-
-.section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
-.section-btn, .section-btn.btn.btn-default.smoothScroll {
-   margin: 10px;
-   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-   min-height: var(--fhi-btn-height-md);
-   font-size: var(--fhi-btn-font-md);
-   line-height: 1.5;
-   text-align: center;
-   transition: 0.5s;
-   background-size: 200% auto;
-   color: var(--fhi-btn-ink);
-   box-shadow: 0 0 20px #eee;
-   border-radius: 4px;
-   border:none;
-}
-
-.section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover {
-   background-position: right center;
-   color: var(--fhi-btn-ink);
-   text-decoration: none;
-}
-
-/* Focus on a button that carries the sweep flips the gradient: the dark stop
-   comes to both ends and the bright one to the middle, the reverse of the
-   resting fill.
-   The flip cannot carry focus on its own. The fill is twice the button's
-   width, so hover's slide to `right center` already shows dark on the left
-   running to bright on the right, and that is the same sequence of colours
-   the flipped gradient draws at rest. A reader cannot tell the two apart by
-   the fill, and a focus state that looks like a hover state is not an
-   indicator. So focus also draws a ring, outside the button, in the deep end
-   of the button's own ramp: 6.17:1 against the bright stop, 3.48:1 against
-   the dark one and 9.69:1 against a white page. Hover never draws it, which
-   is the difference the reader can see. On the hero the ring sits on the
-   photograph, where no stylesheet can say what is behind it, the same limit
-   the gate names for everything else in that band. */
-.btn-green:focus-visible,
-.btn-delete:focus-visible,
-.pro-submit-btn:focus-visible,
-.section-btn:focus-visible,
-.section-btn.btn.btn-default.smoothScroll:focus-visible {
-    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
-    background-position: left center;
-    outline: 3px solid var(--fhi-green-deep);
-    outline-offset: 3px;
-}
-
-/* The three sizes, as classes that read the size tokens. A button's size is
-   its role: large on a page's primary action, small in the nav, and nothing
-   at all on the rest, which leaves them medium. */
-.fhi-btn-sm {
-    font-size: var(--fhi-btn-font-sm);
-    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm);
-    min-height: var(--fhi-btn-height-sm);
-    line-height: 1.5;
-}
-.fhi-btn-md {
-    font-size: var(--fhi-btn-font-md);
-    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-    min-height: var(--fhi-btn-height-md);
-    line-height: 1.5;
-}
-.fhi-btn-lg {
-    font-size: var(--fhi-btn-font-lg);
-    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg);
-    min-height: var(--fhi-btn-height-lg);
-    line-height: 1.5;
-}
 
 .custom-angle-up {
   display: inline-block;
@@ -2231,30 +2293,6 @@ main :where(table) {
     margin-top: 2.5rem !important;
 }
 
-/* Muted link style */
-.btn-link-muted {
-    color: #6c757d;
-    text-decoration: underline;
-    font-size: 0.9rem;
-}
-.btn-link-muted:hover {
-    color: #495057;
-}
-
-/* Secondary button style */
-.btn-secondary-custom {
-    background: #6c757d;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 3px;
-    text-decoration: none;
-}
-.btn-secondary-custom:hover {
-    background: #5a6268;
-    color: white;
-    text-decoration: none;
-}
-
 /* External link icon (small) - extracted from microsite.html */
 .icon-external-sm {
     font-size: 0.8em;
@@ -2639,7 +2677,7 @@ main :where(table) {
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pro-interest-form input:focus,
+.pro-interest-form input:not([type="submit"]):focus,
 .pro-interest-form textarea:focus {
     border-color: var(--fhi-green-ink);
     box-shadow: 0 0 0 3px rgba(165, 196, 34, 0.18);
@@ -2689,12 +2727,8 @@ main :where(table) {
     margin-top: 1.75rem;
 }
 
-.pro-interest-form .pro-submit-btn {
+.pro-interest-actions > .fhi-button {
     width: 100%;
-    margin: 0;
-    padding: 0.8rem 1.5rem;
-    font-size: 1.6rem;
-    font-weight: 600;
 }
 
 @media (max-width: 768px) {
@@ -2974,23 +3008,6 @@ textarea,
     position: sticky;
     top: 0;
     z-index: 5;
-}
-
-.letter-btn {
-    margin: var(--fhi-space-1);
-    min-width: var(--fhi-space-7);
-}
-
-.letter-btn.disabled {
-    opacity: 0.4;
-    pointer-events: none;
-}
-
-/* The alphabet wraps onto more rows wherever the bar is narrower than
-   twenty-six letters, each row centred under the bar. */
-.glossary-letters {
-    flex-wrap: wrap;
-    justify-content: center;
 }
 
 .letter-header {
@@ -3631,18 +3648,19 @@ textarea,
 .fhi-stack > * { margin-block: 0; }
 /* A button in a stack or card keeps its own width rather than stretching
    across the column; in a centred stack it sits in the middle. */
-.fhi-stack > .btn,
-.fhi-card > .btn { align-self: flex-start; }
+.fhi-stack > .fhi-button,
+.fhi-card > .fhi-button { align-self: flex-start; }
 /* The same in a tick box's row, where a grid cell would otherwise stretch
    the button across the label's column. */
-.fhi-check-row > .btn { justify-self: start; }
-/* A link-style button in the row, such as Remove the downloaded model, lines
-   up with the label's text rather than sitting inside button padding. */
-.fhi-check-row .btn-link { padding: 0; }
+.fhi-check-row > .fhi-button { justify-self: start; }
+/* A quiet button in the row, such as Remove the downloaded model or the
+   Undo after a status line, sits in the line of text beside it rather
+   than in a button's box. */
+.fhi-check-row .fhi-button-quiet { padding: 0; min-height: 0; }
 
 /* A stack whose contents sit in the middle: a call to action and its note. */
 .fhi-stack-centred { align-items: center; text-align: center; }
-.fhi-stack-centred > .btn { align-self: center; }
+.fhi-stack-centred > .fhi-button { align-self: center; }
 
 /* A section's heading, and the line under it, sit in the middle of the
    column; the cards and lists after them keep their left edge. A band
@@ -3650,7 +3668,7 @@ textarea,
 .fhi-column > h2,
 .fhi-column > h2 + p { text-align: center; }
 .fhi-column-centred { text-align: center; }
-.fhi-column-centred > .btn { align-self: center; }
+.fhi-column-centred > .fhi-button { align-self: center; }
 .fhi-stack-loose { gap: var(--fhi-space-6); }
 
 /* A marker, badge or abbreviation beside its text, centred on one line. */
@@ -3671,10 +3689,9 @@ textarea,
 }
 .fhi-cluster-center { justify-content: center; }
 /* A long unbroken name, such as a drug's chemical names joined by
-   slashes, breaks rather than pushing the page wider than a phone; so does
-   a button in a row of them. */
+   slashes, breaks rather than pushing the page wider than a phone. A
+   button already wraps inside its own width. */
 .fhi-column { overflow-wrap: anywhere; }
-.fhi-cluster > .btn { max-width: 100%; white-space: normal; }
 
 /* Two to four cards that belong together, laid out by the width of the
    column they sit in rather than the screen: one under another in a narrow

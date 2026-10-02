@@ -32,12 +32,12 @@ Getting Your Questions Ready
 
     <div id="manual-continue" style="display:none; text-align:center; margin-top:1rem;">
       <p style="margin-bottom:0.75rem; color:#4f5b67;">Ready to keep going? Hit continue.</p>
-      <button type="submit" class="btn btn-green">Continue →</button>
+      <button type="submit" class="fhi-button fhi-button-primary">Continue →</button>
     </div>
     <noscript>
       <div style="text-align:center; margin-top:1rem;">
         <p style="margin-bottom:0.75rem; color:#4f5b67;">JavaScript is off, so this step needs a quick click.</p>
-        <button type="submit" class="btn btn-green">Continue →</button>
+        <button type="submit" class="fhi-button fhi-button-primary">Continue →</button>
       </div>
     </noscript>
   </form>
@@ -51,7 +51,7 @@ Getting Your Questions Ready
       itself as soon as one of them answers.
     </p>
     {% if back_url %}
-    <a href="{{ back_url }}" class="btn btn-secondary-custom">← {{ back_label|default:"Back to review" }}</a>
+    <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">← {{ back_label|default:"Back to review" }}</a>
     {% endif %}
   </div>
 </div>

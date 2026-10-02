@@ -52,9 +52,10 @@
 
         <!-- Quick Jump -->
         <div class="quick-jump fhi-stack fhi-stack-centred">
-            <div class="btn-group flex-wrap" role="group" aria-label="Jump to letter">
-                {% for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
-                <a href="#letter-{{ letter }}" class="btn btn-outline-secondary btn-sm letter-btn">{{ letter }}</a>
+            {% regroup states by name.0 as letter_groups %}
+            <div class="fhi-button-bar" role="group" aria-label="Jump to letter">
+                {% for letter_group in letter_groups %}
+                <a href="#letter-{{ letter_group.grouper }}" class="fhi-button fhi-button-neutral fhi-button-small">{{ letter_group.grouper }}</a>
                 {% endfor %}
             </div>
         </div>
@@ -98,28 +99,28 @@
             <div class="fhi-card national-card">
                 <h3>CMS Consumer Assistance</h3>
                 <p>The Centers for Medicare & Medicaid Services maintains a directory of state consumer assistance programs.</p>
-                <a href="https://www.cms.gov/cciio/resources/consumer-assistance-grants" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                <a href="https://www.cms.gov/cciio/resources/consumer-assistance-grants" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary fhi-button-small">
                     Visit CMS {% include 'partials/opens_in_new_tab.html' %}
                 </a>
             </div>
             <div class="fhi-card national-card">
                 <h3>NAIC Insurance Departments</h3>
                 <p>The National Association of Insurance Commissioners provides a directory of all state insurance departments.</p>
-                <a href="https://content.naic.org/state-insurance-departments" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                <a href="https://content.naic.org/state-insurance-departments" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary fhi-button-small">
                     Visit NAIC {% include 'partials/opens_in_new_tab.html' %}
                 </a>
             </div>
             <div class="fhi-card national-card">
                 <h3>SHIP National Network</h3>
                 <p>State Health Insurance Assistance Programs provide free Medicare counseling in every state.</p>
-                <a href="https://www.shiphelp.org/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                <a href="https://www.shiphelp.org/" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary fhi-button-small">
                     Visit SHIP {% include 'partials/opens_in_new_tab.html' %}
                 </a>
             </div>
             <div class="fhi-card national-card">
                 <h3>Medicaid.gov</h3>
                 <p>Official federal resource for Medicaid information, including state-by-state program details.</p>
-                <a href="https://www.medicaid.gov/state-overviews/index.html" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                <a href="https://www.medicaid.gov/state-overviews/index.html" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary fhi-button-small">
                     Visit Medicaid.gov {% include 'partials/opens_in_new_tab.html' %}
                 </a>
             </div>
@@ -150,10 +151,10 @@
         <h2>Need Help With a Health Insurance Denial?</h2>
         <p class="fhi-lead">Our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
         <div class="fhi-cluster fhi-cluster-center">
-            <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
+            <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large">
                 Start Your Appeal
             </a>
-            <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">
+            <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary fhi-button-large">
                 Chat with AI Assistant
             </a>
         </div>
@@ -200,11 +201,6 @@
         padding: 1rem;
         border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-
-    .letter-btn {
-        margin: 2px;
-        min-width: 32px;
     }
 
     .letter-header {
@@ -296,7 +292,6 @@
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    /* btn-green and btn-outline-green are defined in custom.css */
 
     /* Smooth scroll for letter navigation */
     html {

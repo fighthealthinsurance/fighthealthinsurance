@@ -366,7 +366,7 @@ const ESCALATION_MARKUP = `
   <form action="/choose-escalation-letter/" method="post">
     <input type="hidden" name="escalation_uuid" value="" />
     <textarea name="letter_text" class="appeal_text"></textarea>
-    <button type="submit" class="btn btn-green">Save and review this letter</button>
+    <button type="submit" class="fhi-button fhi-button-primary">Save and review this letter</button>
   </form>
 </div>
 `;

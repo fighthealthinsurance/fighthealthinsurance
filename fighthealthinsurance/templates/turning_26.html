@@ -15,11 +15,11 @@
                 <h1 class="hero-headline">Turning 26: Your Health Insurance Guide</h1>
                 <p class="hero-subcopy">Aging off a parent's health plan is a qualifying life event. You have 60 days to enroll in new coverage&mdash;here's how to make the transition without gaps or surprises.</p>
                 <div class="hero-cta-group">
-                    <a href="#coverage-options" class="section-btn btn btn-default smoothScroll primary-cta">See Your Options</a>
+                    <a href="#coverage-options" class="fhi-button fhi-button-primary fhi-button-large primary-cta smoothScroll">See Your Options</a>
                 </div>
                 <div class="hero-cta-group hero-cta-secondary">
-                    <a href="{% url 'scan' %}" class="btn btn-outline-green smoothScroll secondary-cta">Already Denied? Generate Appeal</a>
-                    <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll tertiary-cta">Ask AI Assistant</a>
+                    <a href="{% url 'scan' %}" class="fhi-button secondary-cta">Already Denied? Generate Appeal</a>
+                    <a href="{% url 'chat' %}" class="fhi-button secondary-cta">Ask AI Assistant</a>
                 </div>
             </div>
         </div>
@@ -295,12 +295,12 @@
             <div class="fhi-card">
                 <h5>State-Specific Resources</h5>
                 <p>Your state's insurance department can help with enrollment questions, complaints, and understanding your rights.</p>
-                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green">Find Your State's Resources</a>
+                <a href="{% url 'state_help_index' %}" class="fhi-button fhi-button-secondary">Find Your State's Resources</a>
             </div>
             <div class="fhi-card">
                 <h5>Extended Age Limits</h5>
                 <p>A few states require plans to cover dependents beyond age 26 (e.g., New Jersey up to 31, New York up to 29 for some plans). Check your state's rules.</p>
-                <a href="https://www.healthcare.gov/young-adults/children-under-26/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green">Learn More at Healthcare.gov</a>
+                <a href="https://www.healthcare.gov/young-adults/children-under-26/" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-secondary">Learn More at Healthcare.gov</a>
             </div>
         </div>
     </div>
@@ -312,9 +312,9 @@
         <h2>Denied After Turning 26? We Can Help.</h2>
         <p class="fhi-lead">Coverage transitions are a common time for denials. Our AI-powered tool helps you generate appeal letters in minutes, for free.</p>
         <div class="fhi-cluster fhi-cluster-center">
-            <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">Generate an Appeal</a>
-            <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">AI Chat Assistant</a>
-            <a href="{% url 'how-to-help' %}" class="btn btn-outline-secondary btn-lg">Help Our Mission</a>
+            <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large">Generate an Appeal</a>
+            <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary fhi-button-large">AI Chat Assistant</a>
+            <a href="{% url 'how-to-help' %}" class="fhi-button fhi-button-neutral fhi-button-large">Help Our Mission</a>
         </div>
     </div>
 </section>
@@ -358,30 +358,6 @@
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    .btn-green {
-        background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
-        background-size: 200% auto;
-        border: none;
-        color: var(--fhi-btn-ink);
-        transition: 0.5s;
-    }
-
-    .btn-green:hover {
-        background-position: right center;
-        color: var(--fhi-btn-ink);
-    }
-
-    .btn-outline-green {
-        color: var(--fhi-green-ink);
-        border-color: var(--fhi-olive);
-    }
-
-    .btn-outline-green:hover {
-        background-color: #7B920A;
-        border-color: #7B920A;
-        color: var(--fhi-btn-ink);
-    }
-
     section {
         scroll-margin-top: 80px;
     }
@@ -389,11 +365,6 @@
     @media (max-width: 768px) {
         #turning26-hero .hero-inner {
             padding-inline: 1.5rem;
-        }
-
-        .btn-lg {
-            padding: 0.5rem 1rem;
-            font-size: 1rem;
         }
     }
 </style>
