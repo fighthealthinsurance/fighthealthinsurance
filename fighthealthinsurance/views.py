@@ -3146,10 +3146,12 @@ class ChatUserConsentView(FormView):
         return super().get(request, *args, **kwargs)
 
 
-class PwywThanksView(generic.TemplateView):
+class PwywThanksView(PublicCachedPageMixin, generic.TemplateView):
     """Where Stripe sends the tab it opened for a pay-what-you-want payment,
     paid or cancelled. It holds nothing about the person's case: the page
-    they came from is still open in their first tab."""
+    they came from is still open in their first tab, and the mixin empties
+    the session's denial id that base.html would otherwise put in a meta
+    tag. Not cached: the page differs by ?donation=."""
 
     template_name = "pwyw_thanks.html"
 

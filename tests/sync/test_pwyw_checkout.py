@@ -127,6 +127,16 @@ class PWYWThanksPageTest(TestCase):
         self.assertContains(response, "Thank you")
         self.assertContains(response, "still open in your other tab")
 
+    def test_the_thank_you_page_carries_no_case_id(self):
+        """A visitor partway through an appeal has its id in the session;
+        base.html would put it in a meta tag on any page that keeps it."""
+        session = self.client.session
+        session["denial_uuid"] = "11111111-2222-3333-4444-555555555555"
+        session.save()
+        response = self.client.get("/pwyw/thanks?donation=success")
+        self.assertNotContains(response, "11111111-2222-3333-4444-555555555555")
+        self.assertNotContains(response, "fhi-session-key")
+
     def test_the_page_says_nothing_was_charged_after_a_cancel(self):
         response = self.client.get("/pwyw/thanks?donation=cancelled")
         self.assertEqual(response.status_code, 200)
