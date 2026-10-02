@@ -21,6 +21,7 @@ from fighthealthinsurance.views import (
     DENIAL_REF_QUERY_PARAM,
     add_pubmed_article_fields,
     build_back_url,
+    fax_cancel_ref_choices,
     issue_fax_cancel_ref,
     resolve_fax_cancel_ref,
 )
@@ -70,7 +71,8 @@ class FaxPaymentCancelledView(View):
     """
 
     def get(self, request):
-        ref = resolve_fax_cancel_ref(request, request.GET.get(DENIAL_REF_QUERY_PARAM))
+        token = request.GET.get(DENIAL_REF_QUERY_PARAM)
+        ref = resolve_fax_cancel_ref(request, token)
         fax = None
         if ref is not None:
             fax_uuid, hashed_email = ref
@@ -82,6 +84,7 @@ class FaxPaymentCancelledView(View):
         denial = fax.denial_id if fax is not None else None
         if fax is None or denial is None:
             return render(request, "fax_payment_cancelled.html", status=404)
+        choices = fax_cancel_ref_choices(request, token)
 
         if fax.sent and fax.fax_success:
             fax_status = "sent"
@@ -96,8 +99,14 @@ class FaxPaymentCancelledView(View):
                 "email": fax.email,
                 "semi_sekret": denial.semi_sekret,
                 "fax_phone": fax.destination or denial.appeal_fax_number,
-                "insurance_company": denial.insurance_company,
-                "completed_appeal_text": fax.appeal_text,
+                # The insurer as the person typed it on the fax form, and
+                # whether the health history went, from the reference: the
+                # staged fax keeps neither. Their name is not kept anywhere,
+                # so they type it again.
+                "insurance_company": choices.get("insurer") or denial.insurance_company,
+                "include_provided_health_history": choices.get(
+                    "include_history", False
+                ),
             }
         )
         # Only the articles the person left ticked, so a corrected copy
@@ -116,9 +125,11 @@ class FaxPaymentCancelledView(View):
             request,
             "appeal.html",
             context={
-                # Both boxes hold the letter that was sent, as when the fax
-                # form comes back with an error (StageFaxView), so rebuilding
-                # it from the details panel keeps the person's edits.
+                # The draft box holds the letter that was sent, and the
+                # finished-letter box starts empty, so appeal.ts builds it
+                # from the draft and keeps it in step with later edits. A
+                # filled finished box reads to the script as the person's own
+                # edit, after which edits to the draft never reach the fax.
                 "appeal": fax.appeal_text,
                 "user_email": fax.email,
                 "denial_id": denial.denial_id,
@@ -273,7 +284,11 @@ class StageFaxView(generic.FormView):
         # this browser's session can open.
         cancel_path = reverse("fax_payment_cancelled")
         cancel_ref = issue_fax_cancel_ref(
-            self.request, staged.uuid, staged.hashed_email
+            self.request,
+            staged.uuid,
+            staged.hashed_email,
+            include_history=bool(form_data.get("include_provided_health_history")),
+            insurer=form_data.get("insurance_company"),
         )
         if cancel_ref:
             cancel_path += "?" + urlencode({DENIAL_REF_QUERY_PARAM: cancel_ref})

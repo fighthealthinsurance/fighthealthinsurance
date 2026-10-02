@@ -2349,27 +2349,40 @@ FAX_CANCEL_REF_TTL_SECONDS = 24 * 60 * 60
 
 
 def issue_fax_cancel_ref(
-    request, fax_uuid: str, hashed_email: str
+    request,
+    fax_uuid: str,
+    hashed_email: str,
+    *,
+    include_history: bool = False,
+    insurer: typing.Optional[str] = None,
 ) -> typing.Optional[str]:
-    """Mint this session's reference to a staged fax, for Stripe's cancel_url."""
+    """Mint this session's reference to a staged fax, for Stripe's cancel_url.
+
+    It also carries two choices the fax form had that the staged fax does
+    not keep, so the page can put them back: whether the health history went
+    with it, and the insurer as the person typed it. Never their name: the
+    reference travels to Stripe, encrypted or not."""
     if not fax_uuid or not hashed_email:
         return None
     fernet = _denial_ref_fernet(request.session, create=True)
     if fernet is None:
         return None
     payload = json.dumps(
-        {"k": _FAX_CANCEL_REF_KIND, "f": str(fax_uuid), "h": str(hashed_email)}
+        {
+            "k": _FAX_CANCEL_REF_KIND,
+            "f": str(fax_uuid),
+            "h": str(hashed_email),
+            "i": bool(include_history),
+            "n": (insurer or "")[:200],
+        }
     )
     return fernet.encrypt(payload.encode("utf-8")).decode("ascii")
 
 
-def resolve_fax_cancel_ref(request, token) -> typing.Optional[typing.Tuple[str, str]]:
-    """The (fax uuid, hashed email) a cancel reference names, or None.
-
-    None for a string this session never issued, one older than
-    ``FAX_CANCEL_REF_TTL_SECONDS``, and a back link's reference, which this
-    session can decrypt but which names a case, not a fax.
-    """
+def _fax_cancel_payload(
+    request, token
+) -> typing.Optional[typing.Dict[str, typing.Any]]:
+    """The decrypted cancel reference, or None (see resolve_fax_cancel_ref)."""
     if not token or not isinstance(token, str):
         return None
     fernet = _denial_ref_fernet(request.session, create=False)
@@ -2382,6 +2395,19 @@ def resolve_fax_cancel_ref(request, token) -> typing.Optional[typing.Tuple[str, 
         return None
     if not isinstance(payload, dict) or payload.get("k") != _FAX_CANCEL_REF_KIND:
         return None
+    return payload
+
+
+def resolve_fax_cancel_ref(request, token) -> typing.Optional[typing.Tuple[str, str]]:
+    """The (fax uuid, hashed email) a cancel reference names, or None.
+
+    None for a string this session never issued, one older than
+    ``FAX_CANCEL_REF_TTL_SECONDS``, and a back link's reference, which this
+    session can decrypt but which names a case, not a fax.
+    """
+    payload = _fax_cancel_payload(request, token)
+    if payload is None:
+        return None
     fax_uuid = payload.get("f")
     hashed_email = payload.get("h")
     if not isinstance(fax_uuid, str) or not isinstance(hashed_email, str):
@@ -2389,6 +2415,20 @@ def resolve_fax_cancel_ref(request, token) -> typing.Optional[typing.Tuple[str, 
     if not fax_uuid or not hashed_email:
         return None
     return fax_uuid, hashed_email
+
+
+def fax_cancel_ref_choices(request, token) -> typing.Dict[str, typing.Any]:
+    """The fax form's choices a cancel reference carries: whether the health
+    history went with the fax, and the insurer as typed. Empty for anything
+    resolve_fax_cancel_ref would refuse."""
+    payload = _fax_cancel_payload(request, token)
+    if payload is None:
+        return {}
+    insurer = payload.get("n")
+    return {
+        "include_history": payload.get("i") is True,
+        "insurer": insurer if isinstance(insurer, str) and insurer else None,
+    }
 
 
 def denial_ref_from_query(request) -> typing.Dict[str, str]:

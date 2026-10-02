@@ -120,7 +120,10 @@ upload page with an explanation and a support address instead of a blank form.
 Stripe's `cancel_url` for a fax payment uses the same scheme. When Fax My
 Appeal stages a fax, `StageFaxView` mints a reference with
 `views.issue_fax_cancel_ref`: the staged fax's uuid and hashed email,
-encrypted with the same session key, carrying its own minting time. Stripe
+plus the two fax-form choices the staged fax does not keep (the insurer name
+as typed and whether the health history went), encrypted with the same
+session key and carrying its own minting time. The person's name is never in
+it, so they type it again. Stripe
 holds that address, and it reaches analytics and access logs once the person
 is sent back, so it carries no id. `FaxPaymentCancelledView` shows the letter
 only when the reference decrypts in this session and names a staged fax with

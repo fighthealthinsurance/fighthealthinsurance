@@ -23,6 +23,7 @@ from fighthealthinsurance.models import (
     PubMedArticleSummarized,
     PubMedQueryData,
 )
+from fighthealthinsurance import views as views_module
 from fighthealthinsurance.views import (
     FAX_CANCEL_REF_TTL_SECONDS,
     issue_denial_ref_token,
@@ -33,10 +34,12 @@ EMAIL = "patient@example.com"
 LETTER = "Dear Insurer, please cover my treatment. Signed, Pat Example."
 
 
-def mint(client: Client, fax_uuid: str, hashed_email: str) -> str:
+def mint(client: Client, fax_uuid: str, hashed_email: str, **choices) -> str:
     """A cancel reference minted in this client's session, as staging does."""
     session = client.session
-    ref = issue_fax_cancel_ref(SimpleNamespace(session=session), fax_uuid, hashed_email)
+    ref = issue_fax_cancel_ref(
+        SimpleNamespace(session=session), fax_uuid, hashed_email, **choices
+    )
     session.save()
     assert ref
     return ref
@@ -76,7 +79,10 @@ class FaxPaymentCancelledViewTest(TestCase):
         self.assertIn("nothing was charged", page)
         self.assertIn(LETTER, page)
         form = response.context["fax_form"]
-        self.assertEqual(form.initial["completed_appeal_text"], LETTER)
+        # The letter goes in the draft box; the finished box starts empty so
+        # the page's script builds it from the draft and keeps it in step.
+        self.assertEqual(response.context["appeal"], LETTER)
+        self.assertNotIn("completed_appeal_text", form.initial)
         self.assertEqual(form.initial["fax_phone"], "15551234567")
         self.assertEqual(form.initial["insurance_company"], "Example Health")
         self.assertEqual(form.initial["email"], EMAIL)
@@ -86,6 +92,25 @@ class FaxPaymentCancelledViewTest(TestCase):
         self.assertIn(reverse("stagefaxview"), page)
         self.assertIn('name="fax_pwyw" value="0"', page)
         self.assertIn('id="print_appeal"', page)
+
+    def test_the_insurer_typed_and_the_history_choice_come_back(self):
+        ref = mint(
+            self.client,
+            self.fax.uuid,
+            self.hashed_email,
+            include_history=True,
+            insurer="Example Health of Ohio",
+        )
+        form = self.get(ref).context["fax_form"]
+        self.assertEqual(form.initial["insurance_company"], "Example Health of Ohio")
+        self.assertTrue(form.initial["include_provided_health_history"])
+
+    def test_without_choices_the_history_box_starts_unticked(self):
+        form = self.get(mint(self.client, self.fax.uuid, self.hashed_email)).context[
+            "fax_form"
+        ]
+        self.assertFalse(form.initial["include_provided_health_history"])
+        self.assertEqual(form.initial["insurance_company"], "Example Health")
 
     def test_says_the_fax_is_still_going_out(self):
         page = self.get(mint(self.client, self.fax.uuid, self.hashed_email))
@@ -235,9 +260,10 @@ class StageFaxCancelUrlTest(TestCase):
                     "email": EMAIL,
                     "semi_sekret": self.denial.semi_sekret,
                     "name": "Pat Example",
-                    "insurance_company": "Example Health",
+                    "insurance_company": "Example Health of Ohio",
                     "fax_phone": "15551234567",
                     "completed_appeal_text": LETTER,
+                    "include_provided_health_history": "on",
                     "fax_pwyw": "5",
                 },
             )
@@ -272,3 +298,19 @@ class StageFaxCancelUrlTest(TestCase):
         response = self.client.get(f"{cancel.path}?{cancel.query}")
         self.assertEqual(response.status_code, 200)
         self.assertIn(LETTER, response.content.decode())
+
+    def test_cancelling_brings_back_the_insurer_typed_and_the_history_choice(self):
+        cancel = urlparse(self.stage()["cancel_url"])
+        form = self.client.get(f"{cancel.path}?{cancel.query}").context["fax_form"]
+        self.assertEqual(form.initial["insurance_company"], "Example Health of Ohio")
+        self.assertTrue(form.initial["include_provided_health_history"])
+
+    def test_the_name_typed_never_goes_into_the_cancel_address(self):
+        """The reference travels to Stripe; even encrypted it holds no name."""
+        cancel_url = self.stage()["cancel_url"]
+        self.assertNotIn("Pat", cancel_url)
+        token = parse_qs(urlparse(cancel_url).query)["ref"][0]
+        fernet = views_module._denial_ref_fernet(self.client.session, create=False)
+        payload = json.loads(fernet.decrypt(token.encode()).decode())
+        self.assertNotIn("Pat Example", json.dumps(payload))
+        self.assertEqual(set(payload), {"k", "f", "h", "i", "n"})
