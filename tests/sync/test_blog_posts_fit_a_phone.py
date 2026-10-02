@@ -46,6 +46,19 @@ def test_blog_post_tsx_has_a_function_that_boxes_each_table() -> None:
     )
 
 
+def test_a_table_box_takes_keyboard_focus() -> None:
+    """A wide table scrolls inside its box, so the box must be reachable by
+    Tab, and a focusable region needs a name."""
+    source = BLOG_POST_TSX.read_text()
+    wrapper = _table_wrapper(source)
+    body = re.search(rf"^const {wrapper} = .*?^\}};", source, re.M | re.S).group(0)
+    assert re.search(r"\.tabIndex\s*=\s*0\b", body), (
+        "the table box no longer takes focus, so a keyboard cannot scroll a "
+        "wide table sideways"
+    )
+    assert "'role', 'region'" in body and "'aria-label'" in body
+
+
 def test_every_part_of_a_post_goes_through_the_table_box() -> None:
     """The post's body and the HTML block some posts open with."""
     source = BLOG_POST_TSX.read_text()

@@ -45,6 +45,15 @@ const wrapTablesToScroll = (html: string): string => {
     if (table.parentElement?.classList.contains('scroll-x')) return;
     const box = document.createElement('div');
     box.className = 'scroll-x';
+    // A box that scrolls has to take focus, or someone on a keyboard tabs
+    // past a table with no links in it and never sees its right-hand side.
+    // As a focusable region it needs a name to be announced by.
+    box.tabIndex = 0;
+    box.setAttribute('role', 'region');
+    box.setAttribute(
+      'aria-label',
+      table.querySelector('caption')?.textContent?.trim() || 'Table'
+    );
     table.replaceWith(box);
     box.appendChild(table);
   });
