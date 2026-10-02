@@ -1059,6 +1059,18 @@ class ChooseAppealHelper:
             draft_unsaved=draft_unsaved,
             presented_ids=presented_ids,
         )
+        articles = cls.candidate_articles(denial_id, denial)
+        return (denial.appeal_fax_number, denial.insurance_company, articles)
+
+    @classmethod
+    def candidate_articles(
+        cls, denial_id, denial: Denial
+    ) -> Optional[QuerySet[PubMedArticleSummarized]]:
+        """The PubMed articles the send page offers to include with a fax.
+
+        Its own step so the page a cancelled fax payment returns to can offer
+        the same articles as the page the person left.
+        """
         articles = None
         article_ids = None
 
@@ -1091,7 +1103,7 @@ class ChooseAppealHelper:
                 logger.debug(f"Error finding articles {article_ids}: {e}")
 
         logger.debug(f"Loaded articles {articles}...")
-        return (denial.appeal_fax_number, denial.insurance_company, articles)
+        return articles
 
 
 @dataclass
