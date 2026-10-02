@@ -158,6 +158,8 @@
                             <summary class="nav-link">Resources</summary>
                             <ul class="fhi-nav-submenu">
                                 <li><a href="{% url 'other-resources' %}">Guides</a></li>
+                                {# The yearly guide: the address stays, the year in this label moves with the page's content. #}
+                                <li><a href="{% url 'coverage-changes' %}">Coverage Changes for 2027</a></li>
                                 <li><a href="{% url 'blog' %}">Blog</a></li>
                             </ul>
                         </details>

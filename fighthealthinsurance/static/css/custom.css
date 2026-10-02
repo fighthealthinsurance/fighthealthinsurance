@@ -1983,7 +1983,7 @@ section:not(.slider) .share-subcopy {
    table cell or checkbox label (the consent links) inside the page content, but not one styled as a button, a
    card or navigation. :where() keeps it at zero-class specificity, so any
    component rule that sets its own decoration still wins. */
-main :where(p, li, dd, td, .form-check-label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
+main :where(p, li, dd, td, .form-check-label, .fhi-check-row label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
     text-decoration: underline;
     text-underline-offset: 0.15em;
     text-decoration-thickness: from-font;
@@ -3116,7 +3116,7 @@ textarea,
 
 /* ---- Questions that open in place ----------------------------------------
    The FAQ on every microsite and on the Denial Language Library, and the
-   lists on Preparing for 2026 and Turning 26. They were Bootstrap
+   lists on Preparing for 2027 and Turning 26. They were Bootstrap
    accordions, which opened only once bootstrap.bundle.min.js had arrived
    from a CDN, so a blocked or slow script left every answer shut. Each item
    is a <details> now: the browser opens it with no script, and keyboards
@@ -3525,6 +3525,15 @@ textarea,
 .fhi-column-centred > .btn { align-self: center; }
 .fhi-stack-loose { gap: var(--fhi-space-6); }
 
+/* A marker, badge or abbreviation beside its text, centred on one line. */
+.fhi-media {
+    display: flex;
+    align-items: center;
+    gap: var(--fhi-space-4);
+}
+.fhi-media > *,
+.fhi-media > * > * { margin-block: 0; }
+
 /* A wrapping row, for buttons and links side by side. */
 .fhi-cluster {
     display: flex;
@@ -3533,6 +3542,11 @@ textarea,
     gap: var(--fhi-space-4);
 }
 .fhi-cluster-center { justify-content: center; }
+/* A long unbroken name, such as a drug's chemical names joined by
+   slashes, breaks rather than pushing the page wider than a phone; so does
+   a button in a row of them. */
+.fhi-column { overflow-wrap: anywhere; }
+.fhi-cluster > .btn { max-width: 100%; white-space: normal; }
 
 /* Two to four cards that belong together, laid out by the width of the
    column they sit in rather than the screen: one under another in a narrow
@@ -3555,10 +3569,12 @@ textarea,
 /* Cards: as many to a row as fit at about 14rem each, so three short cards
    share the reading column on a desktop and one takes a phone's width.
    Cards that hold paragraphs are roomy: 20rem each, so two to a row there
-   and the lines stay long enough to read. */
+   and the lines stay long enough to read. A short run keeps the same card
+   size and leaves the rest of the row empty, so a lone card never stretches
+   across the row. */
 .fhi-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
@@ -3584,6 +3600,9 @@ textarea,
 /* A card's closing link or button sits at the foot, so a row of cards
    lines theirs up. */
 .fhi-card-action { margin-top: auto; align-self: flex-start; }
+/* A card whose title link covers the whole card, so the card is the target. */
+.fhi-card:has(.fhi-card-link) { position: relative; }
+.fhi-card-link::after { content: ""; position: absolute; inset: 0; }
 /* A coloured title bar across the top of a card. #087990 carries white
    at 5.06:1. */
 .fhi-card-banner {
@@ -3610,6 +3629,8 @@ textarea,
 }
 .fhi-list > * + * { border-top: 1px solid #d0d0d0; }
 .fhi-list > * > * { margin-block: 0; }
+/* A list item can itself be a media row: a badge beside its text. */
+.fhi-list > .fhi-media { flex-direction: row; }
 
 /* A list without bullets or indent. */
 .fhi-bare-list { padding-left: 0; list-style: none; }
@@ -3621,6 +3642,9 @@ textarea,
     border-radius: var(--fhi-radius);
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+.fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
+/* Something went wrong with what the reader sent: dark red on pale red, 7.1:1. */
+.fhi-notice-danger { color: #842029; background-color: #f8d7da; border-color: #f5c2c7; }
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
 .fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
@@ -3655,6 +3679,9 @@ textarea,
 .fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
 .fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
 .fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
+.fhi-badge.fhi-badge-info { background-color: #0dcaf0; color: #212529; }
+/* Long condition names wrap inside the card rather than running past it. */
+.fhi-badge { max-width: 100%; }
 
 /* Text roles: the line that introduces a section, a small aside, and the
    colour of a warning or information icon. */
@@ -3662,3 +3689,31 @@ textarea,
 .fhi-note { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
 .fhi-text-info { color: #087990; }
+
+/* ---- Forms: a field's group, its label, a tick box's row, the buttons ------
+   The field and tick box themselves are .fhi-field and .fhi-check, near the
+   top of this file. These arrange them. */
+.fhi-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+}
+.fhi-field-group > * { margin-block: 0; }
+.fhi-label { font-weight: 700; }
+/* A tick box, its label beside it, and any note under the label in the
+   same column as the label's text. */
+.fhi-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--fhi-space-2);
+    row-gap: var(--fhi-space-1);
+    align-items: baseline;
+}
+.fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
+.fhi-check-row > * { margin: 0; }
+/* A form's buttons, each the full width of the form. */
+.fhi-actions {
+    display: grid;
+    gap: var(--fhi-space-2);
+}
+.fhi-text-success { color: var(--fhi-green-ink); }

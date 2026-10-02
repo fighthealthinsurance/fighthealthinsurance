@@ -3,7 +3,7 @@
 bootstrap.bundle.min.js came from a CDN at the foot of every page. By the
 end all it did for our own markup was open the accordions on four pages:
 the FAQ on every microsite and on the Denial Language Library, and the
-lists on Preparing for 2026 and Turning 26. A blocked or slow script left
+lists on Preparing for 2027 and Turning 26. A blocked or slow script left
 every one of those answers shut, and nothing on the page said why.
 
 Each question is a <details> now, the way the header's dropdowns already
@@ -85,7 +85,7 @@ HEAD_BLOCK = re.compile(r"{%\s*block\s+head\s*%}")
 # Each page with questions that open in place: the name its group shares
 # and how many questions it holds.
 GROUPS = {
-    "preparing-2026": ("areas-to-watch", 5),
+    "coverage-changes": ("areas-to-watch", 5),
     "turning-26": ("coverage-options", 5),
     "denial-language-library": ("library-faq", 4),
     "microsite": ("microsite-faq", None),
@@ -195,7 +195,7 @@ class NothingReachesForBootstrapsScriptTest(TestCase):
         """The source check misses a script that arrives by an include."""
         pages = [
             reverse("root"),
-            reverse("preparing-2026"),
+            reverse("coverage-changes"),
             reverse("microsite", kwargs={"slug": MICROSITE}),
         ]
         for url in pages:
@@ -357,7 +357,7 @@ class EachQuestionOpensByItselfTest(TestCase):
         group's other answers by hand has to run once every group on the
         page exists, so it sits after </main>, and it reads every group by
         its name rather than knowing the header's."""
-        html = self.client.get(reverse("preparing-2026")).content.decode()
+        html = self.client.get(reverse("coverage-changes")).content.decode()
         fallback = html.index("document.querySelectorAll('details[name]')")
         self.assertGreater(fallback, html.rindex("</main>"))
         self.assertGreater(fallback, html.rindex('name="areas-to-watch"'))

@@ -1,6 +1,6 @@
 """The questions that open in place, in a real browser.
 
-The FAQ on every microsite and the list on Preparing for 2026 were Bootstrap
+The FAQ on every microsite and the list on Preparing for 2027 were Bootstrap
 accordions, and opened only once Bootstrap's script had come in from a CDN.
 They are <details> now, and the script is gone. What a sync test cannot
 establish is that the browser really does the rest: that a question opens
@@ -28,7 +28,7 @@ DESKTOP = (1440, 900)
 # them stands for the rest. Each page is a label, a URL name and its kwargs.
 PAGES = (
     ("a microsite", "microsite", {"slug": "mri-denial"}),
-    ("Preparing for 2026", "preparing-2026", {}),
+    ("Coverage changes for 2027", "coverage-changes", {}),
 )
 
 STATE = """
