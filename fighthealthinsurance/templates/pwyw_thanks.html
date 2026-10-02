@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}
+{% if cancelled %}No payment made{% else %}Thank you{% endif %}
+{% endblock title %}
+
+{% block content %}
+<div class="fhi-page fhi-page-centred">
+    {% if cancelled %}
+    {% include "partials/page_title.html" with title="No payment made" %}
+    <p>
+        That's fine: Fight Health Insurance is free, and nothing was charged.
+    </p>
+    {% else %}
+    {% include "partials/page_title.html" with title="Thank you" %}
+    <p>
+        Your support helps us keep helping people fight their denials.
+    </p>
+    {% endif %}
+    <p>
+        You can close this tab. The page you were on, with your appeal if you
+        were working on one, is still open in your other tab.
+    </p>
+</div>
+{% endblock content %}
