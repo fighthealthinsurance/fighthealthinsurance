@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %}
+Payment Cancelled
+{% endblock title %}
+{% block content %}
+{% comment %}
+What a cancelled fax payment lands on when its link does not open a letter
+in this browser (FaxPaymentCancelledView). Nothing here is about one fax in
+particular: a link opened in another browser must not tell it anything.
+{% endcomment %}
+<section id="fax-payment-cancelled">
+    <div class="fhi-page fhi-page-centred">
+        {% include "partials/page_title.html" with title="Payment cancelled" %}
+        <p>You cancelled the payment, so nothing was charged.</p>
+        <p>If you pressed Fax My Appeal, we started sending your fax right then. Paying is optional, so it goes out either way.</p>
+
+        <div class="fhi-notice fhi-notice-info" role="status">
+            We can't show your letter here. To keep it private, it only opens in the browser you sent it from, for one day.
+        </div>
+
+        <p><strong>Need help?</strong> Email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.</p>
+        <p><a href="{% url 'scan' %}">Start a new appeal</a></p>
+    </div>
+</section>
+
+{% endblock content %}

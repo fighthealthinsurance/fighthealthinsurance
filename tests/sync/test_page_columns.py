@@ -54,6 +54,7 @@ ON_A_COLUMN = {
     "share_denial.html": "fhi-page fhi-page-centred",
     "unsubscribed.html": "fhi-page fhi-page-centred",
     "stripe_finish_error.html": "fhi-page fhi-page-centred",
+    "fax_payment_cancelled.html": "fhi-page fhi-page-centred",
 }
 
 # Hero pages -> the class every band under the hero opens on. The first

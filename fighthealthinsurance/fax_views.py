@@ -1,10 +1,13 @@
 import json
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.decorators import method_decorator
 from django.views import View, generic
+from django.views.decorators.cache import never_cache
 
 import stripe
 from loguru import logger
@@ -14,6 +17,13 @@ from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.models import *
 from fighthealthinsurance.stripe_utils import get_or_create_price
+from fighthealthinsurance.views import (
+    DENIAL_REF_QUERY_PARAM,
+    add_pubmed_article_fields,
+    build_back_url,
+    issue_fax_cancel_ref,
+    resolve_fax_cancel_ref,
+)
 
 
 class FaxFollowUpView(generic.FormView):
@@ -36,6 +46,97 @@ class SendFaxView(View):
             self.request,
             "fax_thankyou.html",
             {"already_sent": result == "already_sent"},
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+class FaxPaymentCancelledView(View):
+    """Where Stripe sends someone who cancels paying for a fax.
+
+    Cancel used to land on the home page, with the letter the person had
+    just edited gone from the screen. This gives it back, editable, from the
+    staged fax the server already holds, with the fax form, print and mail.
+
+    Pressing Fax My Appeal staged the fax and started sending it before the
+    checkout page opened (SendFaxHelper.stage_appeal_as_fax), so cancelling
+    the payment does not stop the fax: paying is optional. The page says so,
+    and offers the fax form for a corrected copy rather than as a retry.
+
+    The address carries only a reference that opens in the browser that
+    staged the fax (views.issue_fax_cancel_ref). Anything else, a stale or
+    tampered reference or one from another browser, gets a page with no
+    letter on it. Never cached: the page holds the letter and the case's
+    secret.
+    """
+
+    def get(self, request):
+        ref = resolve_fax_cancel_ref(request, request.GET.get(DENIAL_REF_QUERY_PARAM))
+        fax = None
+        if ref is not None:
+            fax_uuid, hashed_email = ref
+            fax = (
+                FaxesToSend.objects.filter(uuid=fax_uuid, hashed_email=hashed_email)
+                .select_related("denial_id")
+                .first()
+            )
+        denial = fax.denial_id if fax is not None else None
+        if fax is None or denial is None:
+            return render(request, "fax_payment_cancelled.html", status=404)
+
+        if fax.sent and fax.fax_success:
+            fax_status = "sent"
+        elif fax.sent:
+            fax_status = "failed"
+        else:
+            fax_status = "sending"
+
+        fax_form = core_forms.FaxForm(
+            initial={
+                "denial_id": denial.denial_id,
+                "email": fax.email,
+                "semi_sekret": denial.semi_sekret,
+                "fax_phone": fax.destination or denial.appeal_fax_number,
+                "insurance_company": denial.insurance_company,
+                "completed_appeal_text": fax.appeal_text,
+            }
+        )
+        # Only the articles the person left ticked, so a corrected copy
+        # carries what the first one did.
+        chosen_pmids = (
+            {str(pmid) for pmid in fax.pmids} if isinstance(fax.pmids, list) else None
+        )
+        add_pubmed_article_fields(
+            fax_form,
+            common_view_logic.ChooseAppealHelper.candidate_articles(
+                denial.denial_id, denial
+            ),
+            chosen_pmids,
+        )
+        return render(
+            request,
+            "appeal.html",
+            context={
+                # Both boxes hold the letter that was sent, as when the fax
+                # form comes back with an error (StageFaxView), so rebuilding
+                # it from the details panel keeps the person's edits.
+                "appeal": fax.appeal_text,
+                "user_email": fax.email,
+                "denial_id": denial.denial_id,
+                "semi_sekret": denial.semi_sekret,
+                "fax_form": fax_form,
+                "fax_payment_cancelled": True,
+                "fax_status": fax_status,
+                "current_step": 8,
+                "back_url": build_back_url(
+                    request,
+                    "generate_appeal",
+                    denial.denial_id,
+                    fax.email,
+                    denial.semi_sekret,
+                ),
+                "back_label": "Back to appeals",
+                "fhi_always_restore": True,
+            },
         )
 
 
@@ -167,6 +268,15 @@ class StageFaxView(generic.FormView):
         from fhi_users.audit import tracking_metadata_for_request
 
         metadata.update(tracking_metadata_for_request(self.request))
+        # Cancelling brings the person back to their letter, not the home
+        # page. The address names the staged fax only through a reference
+        # this browser's session can open.
+        cancel_path = reverse("fax_payment_cancelled")
+        cancel_ref = issue_fax_cancel_ref(
+            self.request, staged.uuid, staged.hashed_email
+        )
+        if cancel_ref:
+            cancel_path += "?" + urlencode({DENIAL_REF_QUERY_PARAM: cancel_ref})
         checkout = stripe.checkout.Session.create(
             line_items=items,  # type: ignore
             mode="payment",  # No subscriptions
@@ -179,7 +289,7 @@ class StageFaxView(generic.FormView):
                     },
                 ),
             ),
-            cancel_url=self.request.build_absolute_uri(reverse("root")),
+            cancel_url=self.request.build_absolute_uri(cancel_path),
             customer_email=form.cleaned_data["email"],
             metadata=metadata,
         )
