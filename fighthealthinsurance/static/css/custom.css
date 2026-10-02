@@ -923,16 +923,41 @@ li > a.link {
     border-color: var(--fhi-green-ink);
     color: #fff;
 }
+/* The home hero's content keeps the side room Bootstrap's .row used to give
+   it (a 12px gutter on each side of its column), so the Why and Pay what
+   you want boxes sit where they did. */
+#home .item {
+    padding-inline: var(--fhi-space-3);
+}
+/* The home hero's four outlined links keep the corners and keyboard ring
+   the earlier home page gave them (Melanie, 2026-10-02): a little rounder
+   than .fhi-button's 4px. */
+#home .hero-cta-secondary > a {
+    vertical-align: middle;
+    border-radius: 6px;
+}
+#home .hero-cta-secondary > a:focus-visible {
+    outline-style: solid;
+    outline-width: 2px;
+    outline-offset: 2px;
+}
+/* On the photograph's darker colours the site's deep-green focus ring
+   nearly disappears, so a focused control in the home copy rings in white
+   instead. Only the colour changes, so width and offset stay each
+   control's own. */
+#home .hero-inner :focus-visible {
+    outline-color: #fff;
+}
 
 /* Value Proposition Two-Column Layout */
-#why-fhi .home-why-inner .value-prop-container {
+#home .hero-inner .value-prop-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.8rem;
     margin-top: 1.2rem;
     align-items: stretch;
 }/* Benefits Card (Left) */
-#why-fhi .home-why-inner .value-prop-container .benefits-card {
+#home .hero-inner .value-prop-container .benefits-card {
     background: rgba(30, 20, 60, 0.85) !important;
     backdrop-filter: blur(8px) !important;
     -webkit-backdrop-filter: blur(8px) !important;
@@ -942,14 +967,14 @@ li > a.link {
     border: 1px solid rgba(165, 196, 34, 0.3) !important;
     height: 100%;
 }
-#why-fhi .home-why-inner .value-prop-container .benefits-card .benefits-title {
+#home .hero-inner .value-prop-container .benefits-card .benefits-title {
     font-size: 1.1rem;
     font-weight: 700;
     margin-bottom: 0.5rem;
     color: #a5c422;
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
 }
-#why-fhi .home-why-inner .value-prop-container .benefits-card .benefits-list {
+#home .hero-inner .value-prop-container .benefits-card .benefits-list {
     list-style: none;
     padding: 0;
     margin: 0;
@@ -957,21 +982,21 @@ li > a.link {
     flex-direction: column;
     gap: 0.3rem;
 }
-#why-fhi .home-why-inner .benefits-list li {
+#home .hero-inner .benefits-list li {
     display: flex !important; 
     align-items: flex-start !important; 
     gap: .5rem !important;
 }
-#why-fhi .home-why-inner .value-prop-container .benefits-card .benefit-icon {
+#home .hero-inner .value-prop-container .benefits-card .benefit-icon {
     font-size: 1.1rem;
     margin-right: 0.4rem;
     flex-shrink: 0;
 }
-#why-fhi .home-why-inner .benefit-content {
+#home .hero-inner .benefit-content {
     flex: 1 !important;
     text-align: left !important;
 }
-#why-fhi .home-why-inner .benefit-content strong {
+#home .hero-inner .benefit-content strong {
     display: block !important; 
     font-size: 0.95rem !important; 
     font-weight: 600 !important; 
@@ -979,7 +1004,7 @@ li > a.link {
     margin-bottom: .2rem !important; 
     text-shadow: 1px 1px 3px rgba(0,0,0,0.25) !important;
 }
-#why-fhi .home-why-inner .benefit-content p {
+#home .hero-inner .benefit-content p {
     margin: 0 !important; 
     font-size: 0.9rem !important; 
     line-height: 1.4 !important; 
@@ -988,12 +1013,12 @@ li > a.link {
 }
 
 /* Payment Card Wrapper (Right) */
-#why-fhi .home-why-inner .payment-card-wrapper {
+#home .hero-inner .payment-card-wrapper {
     display: flex !important; 
     align-items: stretch !important;
     width: 100% !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel {
+#home .hero-inner .payment-card-wrapper .pwyw-panel {
     margin: 0 !important;
     width: 100% !important;
     height: 100% !important;
@@ -1007,7 +1032,7 @@ li > a.link {
     border: 1px solid rgba(165, 196, 34, 0.3) !important;
     text-align: left !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-title {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-title {
     margin: 0 0 0.5rem !important;
     font-size: 1.1rem !important;
     font-weight: 700 !important;
@@ -1015,7 +1040,7 @@ li > a.link {
     text-align: center !important;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.3) !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-subcopy {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-subcopy {
     color: #fff !important;
     opacity: 1 !important;
     text-align: left !important;
@@ -1023,14 +1048,14 @@ li > a.link {
     line-height: 1.4 !important;
     margin-bottom: 0.5rem !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-options {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-options {
     display: flex !important;
     flex-wrap: wrap !important;
     gap: 0.3rem !important;
     align-items: flex-start !important;
     justify-content: space-between !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
     background: rgba(255, 255, 255, 0.2) !important;
     border: 1px solid rgba(255, 255, 255, 0.3) !important;
     border-radius: 4px !important;
@@ -1053,7 +1078,7 @@ li > a.link {
     width: calc(50% - 0.15rem) !important;
 }
 @media (max-width: 1200px) {
-    #why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
+    #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
         flex: 0 0 100% !important;
         max-width: 100% !important;
         width: 100% !important;
@@ -1062,16 +1087,16 @@ li > a.link {
 }
 
 @media (min-width: 1201px) {
-    #why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
+    #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
         min-height: 32px !important;
     }
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option:hover {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option:hover {
     background: rgba(165, 196, 34, 0.25) !important;
     border-color: rgba(165, 196, 34, 0.6) !important;
     transform: translateX(3px) !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option input[type=radio] {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option input[type=radio] {
     margin: 0 !important;
     accent-color: #a5c422 !important;
     width: 12px !important;
@@ -1079,7 +1104,7 @@ li > a.link {
     cursor: pointer !important;
     flex-shrink: 0 !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option small {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option small {
     display: inline !important;
     font-size: 0.75rem !important;
     color: rgba(255, 255, 255, 0.85) !important;
@@ -1087,14 +1112,14 @@ li > a.link {
     margin-left: 0.2rem !important;
     white-space: nowrap !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option .custom-wrapper {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option .custom-wrapper {
     display: flex !important;
     align-items: center !important;
     gap: 0.3rem !important;
     width: 100% !important;
     flex-wrap: nowrap !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option .pwyw-custom-input {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option .pwyw-custom-input {
     width: 80px !important;
     flex: 0 0 80px !important;
     padding: 0.2rem 0.3rem !important;
@@ -1104,14 +1129,14 @@ li > a.link {
     margin: 0 !important;
     height: auto !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-actions {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-actions {
     text-align: left !important;
     margin-top: 0.5rem !important;
 }
 
 /* Mobile responsiveness */
 @media (max-width: 768px) {
-  #why-fhi .home-why-inner .value-prop-container {
+  #home .hero-inner .value-prop-container {
       grid-template-columns: 1fr !important; 
       gap: 1.3rem !important;
   }
@@ -1155,11 +1180,11 @@ li > a.link {
    the picture turns out to be, without drawing a line around it. A border
    was tried here and read as a box on the page. */
 .pwyw-submit {min-width:180px;}
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
     box-shadow: 0 4px 16px rgba(165, 196, 34, 0.45) !important;
 }
 /* The hero's panel is a dark purple veil over the photograph (see
-   #why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel above), so this
+   #home .hero-inner .payment-card-wrapper .pwyw-panel above), so this
    confirmation keeps the brand green rather than the ink: green-ink reads at
    1.8:1 to 3.0:1 there. The white panel on the appeal pages overrides it with
    the ink further down. */
@@ -1206,8 +1231,7 @@ li > a.link {
   .hero-cta-group {flex-direction:column;}
   .trust-bullets {flex-direction:column;}
   .how-it-works {flex-direction:column;}
-  /* Stacked steps have nothing beside them to point at, and the arrow would
-     hang past the edge of a phone now that no hero clips it. */
+  /* Stacked steps have nothing beside them to point at. */
   .how-step:not(:last-child)::after {display:none;}
   .pwyw-options {flex-direction:column;}
   .pwyw-option {flex:1 1 auto;}
@@ -3444,54 +3468,9 @@ textarea,
     position: relative;
 }
 
-/* The home copy sits straight on the blurred photograph, with no panel
-   behind it: Melanie prefers the open look (2026-09-30). */
 #home .hero-inner {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-}
-
-/* On the photograph's darker colours the site's deep-green focus ring
-   nearly disappears, so a focused control in the home copy rings in white
-   instead. The id outranks each button's own ring rule; only the colour
-   changes, so width and offset stay theirs. */
-#home .hero-inner :focus-visible {
-    outline-color: #fff;
-}
-
-/* The block under the home hero: why the site exists, paying what you can,
-   and how it works. It used to sit on the photograph inside the hero, and
-   it still does: the same blurred picture, so its cards keep the look they
-   had there, while the first screen is left to the headline and the ways
-   in. The dark colour only shows if the picture fails to load, and keeps
-   the white and lime readable then. */
-.home-why {
-    position: relative;
-    overflow: hidden;
-    background: #1d1b20 url("../images/crinkledcolors-optimized.jpg") center / cover no-repeat;
-    color: #fff;
-    padding: var(--fhi-space-9) var(--fhi-space-4);
-}
-
-.home-why::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: inherit;
-    filter: blur(6px);
-}
-
-.home-why > * {
-    position: relative;
-}
-
-.home-why-inner {
-    max-width: 1100px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
 }
 
 /* The copy's last piece brings its own bottom margin: 20px under a
