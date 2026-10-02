@@ -1234,28 +1234,6 @@ a.link:hover::after {
     flex-wrap: wrap;
 }
 
-.row.no-gutters {
-    margin: 0;
-    justify-content: center;
-}
-
-.row.no-gutters .col-md-2 {
-    padding: 0;
-    flex: 0 0 auto;
-    width: auto;
-}
-
-.row.no-gutters .col-md-2 img{
-    width: 100%;
-    height: auto;
-    margin: 5px;
-}
-
-.row .col-md-2 {
-    margin: 10px;
-    flex-basis: 20%;
-}
-
 #id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
     border-radius: .375rem;
     padding: .375rem .75rem;
@@ -1291,6 +1269,15 @@ a.link:hover::after {
         flex-wrap: nowrap;
     }
 }
+/* The logos share their strip equally and each sits in the middle of its
+   share. Every logo, in either strip, is capped at the same 140px
+   (.featured-logo) so the two strips read as one set. */
+.featured-row > a,
+.featured-row-highlight > a {
+    flex: 1 1 0;
+    padding: var(--fhi-space-2);
+    text-align: center;
+}
 .featured-row a {
     display: block;
     transition: transform 0.3s ease, opacity 0.3s ease;
@@ -1300,7 +1287,7 @@ a.link:hover::after {
     transform: scale(1.05);
     opacity: 1;
 }
-.featured-row .img-fluid.img-thumbnail {
+.featured-logo {
     max-width: 140px;
     height: auto;
     margin: 0 auto;
@@ -1311,7 +1298,8 @@ a.link:hover::after {
     box-shadow: none;
     transition: all 0.3s ease;
 }
-.featured-row a:hover .img-fluid.img-thumbnail {
+.featured-row a:hover .featured-logo,
+.featured-row-highlight a:hover .featured-logo {
     box-shadow: none;
 }
 .featured-row-highlight {
@@ -2469,16 +2457,22 @@ main :where(table) {
     .about-steps {
         max-width: 100%;
     }
+    /* The strip scrolls sideways on a phone, so it starts at its left edge:
+       centred, the logos that overflowed to the left could never be
+       scrolled back to (Fast Company, CBS and NewsNation were unreachable). */
     .featured-row,
     .featured-row-highlight {
+        justify-content: flex-start;
         flex-wrap: nowrap;
         overflow-x: auto;
+        /* A logo snapped to the strip's edge keeps room for its focus ring. */
+        scroll-padding-inline: var(--fhi-space-2);
         -webkit-overflow-scrolling: touch;
         scroll-snap-type: x mandatory;
         padding: 1rem 0.5rem;
     }
-    .featured-row .col-md-2,
-    .featured-row-highlight .col-md-2 {
+    .featured-row > a,
+    .featured-row-highlight > a {
         flex: 0 0 auto;
         scroll-snap-align: start;
         min-width: 120px;
@@ -3600,6 +3594,9 @@ textarea,
 .fhi-card-warning { border-color: #ffc107; }
 .fhi-card-info { border-color: #087990; }
 .fhi-card-subtitle { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
+/* A card's own title, a step below the section's subheadings (the
+   column's h3 is --fhi-text-subsection). */
+.fhi-card-title { font-size: var(--fhi-text-lead); }
 /* A card's closing link or button sits at the foot, so a row of cards
    lines theirs up. */
 .fhi-card-action { margin-top: auto; align-self: flex-start; }
