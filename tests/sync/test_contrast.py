@@ -1578,6 +1578,12 @@ WRITTEN_AT_RUNTIME = (
 )
 
 UNREACHED: tuple[Exempt, ...] = (
+    # pwyw.js writes this link into the panel's message only when the
+    # browser blocks the payment tab; no template carries it. It takes the
+    # message's own colour.
+    Exempt("custom.css", ".pwyw-thanks a", WRITTEN_AT_RUNTIME),
+    Exempt("custom.css", ".pwyw-thanks a:hover", WRITTEN_AT_RUNTIME),
+    Exempt("custom.css", ".pwyw-thanks a:focus", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-active", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-done", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-skipped", WRITTEN_AT_RUNTIME),

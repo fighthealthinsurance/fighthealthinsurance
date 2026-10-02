@@ -1189,6 +1189,16 @@ li > a.link {
    1.8:1 to 3.0:1 there. The white panel on the appeal pages overrides it with
    the ink further down. */
 .pwyw-thanks {font-size:var(--fhi-text-micro); color:var(--fhi-green);}
+/* The link offered when the browser blocks the payment tab reads in the
+   message's own colour, underlined, so it stands out on the dark home
+   panel as well as on white instead of taking the site's dark link ink. */
+.pwyw-thanks a,
+.pwyw-thanks a:hover,
+.pwyw-thanks a:focus {
+    color: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+}
 
 /* Drafts page phase list. These four states used to be colour literals the
    appeal fetcher wrote into a style attribute at runtime, where no

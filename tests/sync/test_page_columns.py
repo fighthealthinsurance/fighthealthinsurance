@@ -48,6 +48,7 @@ ON_A_COLUMN = {
     "glossary.html": "fhi-page",
     "followup.html": "fhi-page",
     "remove_data.html": "fhi-page fhi-page-centred",
+    "pwyw_thanks.html": "fhi-page fhi-page-centred",
     "confirm_delete.html": "fhi-page fhi-page-centred",
     "removed_data.html": "fhi-page fhi-page-centred",
     "delete_data_email_sent.html": "fhi-page fhi-page-centred",
