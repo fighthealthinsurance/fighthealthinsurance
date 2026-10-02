@@ -3146,6 +3146,19 @@ class ChatUserConsentView(FormView):
         return super().get(request, *args, **kwargs)
 
 
+class PwywThanksView(generic.TemplateView):
+    """Where Stripe sends the tab it opened for a pay-what-you-want payment,
+    paid or cancelled. It holds nothing about the person's case: the page
+    they came from is still open in their first tab."""
+
+    template_name = "pwyw_thanks.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["cancelled"] = self.request.GET.get("donation") == "cancelled"
+        return context
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
@@ -3153,7 +3166,6 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
     try:
         data = json.loads(request.body)
         amount = int(data.get("amount", 0))
-        return_url = data.get("return_url", "")
 
         if amount <= 0:
             return HttpResponse(
@@ -3166,35 +3178,15 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
 
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
-        # Validate and construct success/cancel URLs
-        # Use return_url if provided and it's a relative path, otherwise use root
-        if (
-            return_url
-            and return_url.startswith("/")
-            and not return_url.startswith("//")
-        ):
-            base_url = request.build_absolute_uri(return_url)
-            # Add donation=success parameter
-            from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
-
-            parsed = urlparse(base_url)
-            query_params = parse_qs(parsed.query)
-            query_params["donation"] = ["success"]
-            new_query = urlencode(query_params, doseq=True)
-            success_url = urlunparse(
-                (
-                    parsed.scheme,
-                    parsed.netloc,
-                    parsed.path,
-                    parsed.params,
-                    new_query,
-                    parsed.fragment,
-                )
-            )
-            cancel_url = base_url
-        else:
-            success_url = request.build_absolute_uri("/") + "?donation=success"
-            cancel_url = request.build_absolute_uri("/")
+        # Stripe opens in a tab of its own (pwyw.js), so it comes back to a
+        # page that only says thank you and to close the tab: the page the
+        # person was on, often their appeal letter, stays open in the first
+        # tab. Coming back to that page instead failed on the letter page,
+        # which answers only POST, so the tab showed a blank 405 and a reload
+        # did the same.
+        thanks_url = request.build_absolute_uri(reverse("pwyw_thanks"))
+        success_url = thanks_url + "?donation=success"
+        cancel_url = thanks_url + "?donation=cancelled"
 
         # Persist the line items so an expired/abandoned donation checkout can
         # be rebuilt by CompletePaymentView via the recovery email link. PWYW

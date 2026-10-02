@@ -10,7 +10,7 @@
 # That only lowers a number or drops a line. A use that has to grow is
 # raised here by hand, in the same commit, which says why.
 404.html btn 1
-appeal.html btn 7
+appeal.html btn 5
 appeal.html btn-link 1
 appeal.html btn-secondary 1
 appeals.html btn 4

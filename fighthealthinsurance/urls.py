@@ -63,6 +63,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.create_pwyw_checkout,
         name="pwyw_checkout",
     ),
+    path(
+        "pwyw/thanks",
+        views.PwywThanksView.as_view(),
+        name="pwyw_thanks",
+    ),
     re_path("timbit/sentry-debug/(?P<path>.+)", trigger_error, name="fake_fetch_url"),
     path("timbit/charts/", include(("charts.urls", "charts"), namespace="charts")),
     path("timbit/admin/", admin.site.urls),
