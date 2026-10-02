@@ -29,7 +29,7 @@ Upload your Health Insurance Denial
 {% endblock scriptmagic %}
 
 {% block content %}
-<section class="scan-section mt-2">
+<section class="scan-section">
     <div class="container-narrow">
 	{% include "partials/page_title.html" with title="Generate an Appeal" %}
 	{% if resume_help %}
@@ -47,7 +47,7 @@ Upload your Health Insurance Denial
 	</div>
 	{% endif %}
 	{% if default_procedure or default_condition %}
-	<div class="alert-box alert-success" style="margin-bottom:1.5rem;">
+	<div class="alert-box alert-box-success">
 	    <p>You started from the <strong>{{ microsite_title }}</strong> page. We'll pre-fill {% if default_procedure %}your procedure as <strong>{{ default_procedure }}</strong>{% endif %}{% if default_procedure and default_condition %} and {% endif %}{% if default_condition %}your condition as <strong>{{ default_condition }}</strong>{% endif %} later in the process. You can still change it if needed.</p>
 	</div>
 	{% endif %}
@@ -57,7 +57,7 @@ Upload your Health Insurance Denial
 	</div>
 	{% endif %}
 	<div class="main-form">
-	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
+	<form class="fhi-stack" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
 		{% if default_procedure or default_condition %}
 		<input type="hidden" name="default_procedure" value="{{ default_procedure }}">
@@ -66,62 +66,60 @@ Upload your Health Insurance Denial
 		<input type="hidden" name="microsite_title" value="{{ microsite_title }}">
 		{% endif %}
 	<div class="together-form-group">
-	  <div>
-	    <label for="store_fname" class="form-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label><br>
+	  <div class="fhi-field-group">
+	    <label for="store_fname" class="fhi-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
 	    <input type="text" id="store_fname" class="fhi-field">
 	  </div>
-	  <div>
-	    <label for="store_lname" class="form-label">Last name <small class="fhi-hint">(we try to keep this in your browser)</small></label><br>
+	  <div class="fhi-field-group">
+	    <label for="store_lname" class="fhi-label">Last name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
 	    <input type="text" id="store_lname" class="fhi-field">
 	  </div>
 	</div>
-	<div class="form-group">
-	  <div>
-	    <label for="email" class="form-label">
+	<div class="fhi-field-group">
+	    <label for="email" class="fhi-label">
 	      <div id="email-label">Email <small class="fhi-hint">(<a href="#how-we-store-your-email">how we store it</a>)</small></div>
-	      <span class="d-block small fhi-hint">
+	      <span class="fhi-note">
 	      </span>
-	    </label><br>
-	    <input type="email" id="email" name="email" class="fhi-field"><br>
-	  </div>
+	    </label>
+	    <input type="email" id="email" name="email" class="fhi-field">
 	</div>
 	<div class="together-form-group">
-	  <div>
-	    <label for="store_street" class="form-label">
+	  <div class="fhi-field-group">
+	    <label for="store_street" class="fhi-label">
 	      Street address
 	      <small class="fhi-hint">(we try to keep this in your browser, e.g. 283 24th St)</small>
-	    </label><br>
-	    <input type="text" id="store_street" class="fhi-field"><br>
+	    </label>
+	    <input type="text" id="store_street" class="fhi-field">
 	  </div>
-	  <div>
-	    <label for="store_zip" class="form-label">
+	  <div class="fhi-field-group">
+	    <label for="store_zip" class="fhi-label">
 	      ZIP code
 	      <small class="fhi-hint">(e.g. 94103)</small>
-	    </label><br>
-	    <input type="text" id="store_zip" name="zip" class="fhi-field"><br>
+	    </label>
+	    <input type="text" id="store_zip" name="zip" class="fhi-field">
 	  </div>
 	</div>
 	{% if upload_more %}
 	{% if advanced_ocr_offered %}
-	<div class="form-check mt-2 mb-2" id="advanced_ocr_section">
+	<div class="fhi-check-row" id="advanced_ocr_section">
 	    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
-	    <label for="advanced_ocr_enabled" class="form-check-label">
+	    <label for="advanced_ocr_enabled">
 		<b>Better text recognition for photos and scans</b> <span class="fhi-hint">(experimental)</span>
-		<small class="fhi-hint d-block">A small AI model that reads bad photos and faint scans much better.
+		<br><small class="fhi-hint">A small AI model that reads bad photos and faint scans much better.
 		The first time you scan with this on, your browser downloads it from Hugging Face (about 1 GB) and keeps it
 		on this device. It runs on your device, and your file never leaves it. Standard recognition is faster and
 		fine for clear scans. You can remove the downloaded model later.</small>
 	    </label>
-	    <div id="advanced_ocr_status" class="fhi-hint small mt-1" role="status" aria-live="polite" hidden></div>
-	    <button type="button" id="advanced_ocr_remove_model" class="btn btn-link btn-sm p-0" hidden>Remove the downloaded model from this device (about 1 GB)</button>
+	    <div id="advanced_ocr_status" class="fhi-note" role="status" aria-live="polite" hidden></div>
+	    <button type="button" id="advanced_ocr_remove_model" class="btn btn-link btn-sm" hidden>Remove the downloaded model from this device (about 1 GB)</button>
 	</div>
 	{% endif %}
-	<div id="image_select_magic" style="visibility:visible">
-	    <label class="custom-file-label" for="uploader">
+	<div id="image_select_magic" class="fhi-field-group" style="visibility:visible">
+	    <label for="uploader">
 			<b>Upload your denial letter</b>
-		</label><br>
-		<small class="fhi-hint">Add every page. We'll turn it into text in the box below.</small><br>
-	    <div class="col-md-4">
+		</label>
+		<small class="fhi-hint">Add every page. We'll turn it into text in the box below.</small>
+	    <div>
 			{% comment %} DELIBERATELY has no name= attribute. The browser only includes
 			   a file input in the multipart body when it has a name, and this
 			   input sits inside the /process form. With a name, every denial
@@ -132,7 +130,7 @@ Upload your Health Insurance Denial
 			   getElementById("uploader"), so the id is all it needs. Do not
 			   add a name back without also changing what the copy below
 			   promises. {% endcomment %}
-			<input id="uploader" type="file" multiple="true" class="fhi-field mt-2"><br>
+			<input id="uploader" type="file" multiple="true" class="fhi-field">
 	    </div>
 	</div>
 	{% comment %} Sits right under the uploader, where the read is triggered: on a
@@ -146,8 +144,8 @@ Upload your Health Insurance Denial
 	      denial text yourself instead of waiting.
 	    </div>
 	{% endif %}
-	<div class="form-group">
-	    <label for="denial_text" id="denial_text_label" class="form-label">
+	<div>
+	    <label for="denial_text" id="denial_text_label" class="fhi-label">
 			<b>Your denial letter</b><br>
 			<small class="fhi-hint">If you didn't upload it above, paste it here.</small><br>
 			<small class="fhi-hint">Take out your name, address and other personal details first, or use the Remove personal details button below. We keep this text to improve our AI, and people on our team may read it.</small><br>
@@ -158,49 +156,48 @@ Upload your Health Insurance Denial
 		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small><br>
 	    <button type="button" id="scrub-2" class="btn btn-green">
 	      Remove personal details
-	    </button><br>
-		<br>
+	    </button>
 		</div>
-	    <b>Policies</b>:
-	    <div class="form-check">
+	    <div><b>Policies</b>:</div>
+	    <div class="fhi-check-row">
 	        <input type="checkbox" id="personalonly" name="personalonly" class="fhi-check">
-	        <label for="personalonly" class="form-check-label">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
+	        <label for="personalonly">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
 		</div>
-		<div class="form-check">
+		<div class="fhi-check-row">
 		<input type="checkbox" id="privacy" name="privacy" class="fhi-check">
-		<label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
+		<label for="privacy">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
 		    policy.</a>
 		</label>
 		</div>
-		<div class="form-check">
+		<div class="fhi-check-row">
 		<input type="checkbox" id="pii" name="pii" class="fhi-check">
-		<label for="pii" class="form-check-label">I've taken my personal details out of the letter above.</label>
+		<label for="pii">I've taken my personal details out of the letter above.</label>
 		</div>
-		<div class="form-check">
+		<div class="fhi-check-row">
 		<input type="checkbox" id="tos" name="tos" class="fhi-check">
-		<label for="tos" class="form-check-label">I agree to the <a href="{% url 'tos' %}">terms of service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition.</label>
+		<label for="tos">I agree to the <a href="{% url 'tos' %}">terms of service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition.</label>
 		</div>
-		<b>Optional</b>:
-			<div class="form-check">
+		<div><b>Optional</b>:</div>
+			<div class="fhi-check-row">
 			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="fhi-check">
-				<label for="store_raw_email" class="form-check-label">
+				<label for="store_raw_email">
 					Keep my email so you can check in about my appeal (until the follow-ups end, plus 30 days). <a href="#how-we-store-your-email">How we store it</a>
 				</label>
 			</div>
-			<div class="form-check">
+			<div class="fhi-check-row">
 			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" checked class="fhi-check">
-				<label for="use_external_models" class="form-check-label">
+				<label for="use_external_models">
 					Use outside AI services to get more appeal drafts. <b>Optional. Your letter is shared with those services</b> (for example, Google and Anthropic, among others), under their own terms.
 				</label>
 			</div>
-			<div class="form-check">
+			<div class="fhi-check-row">
 			<input type="checkbox" id="subscribe" name="subscribe" value="checked" class="fhi-check"{% if form.subscribe.value %} checked{% endif %}>
-				<label for="subscribe" class="form-check-label">
+				<label for="subscribe">
 					Send me news from Fight Health Insurance. We keep your email for this only if you tick it.
 				</label>
 			</div>
-			<div class="form-group mt-3">
-				<label for="referral_source" class="form-label">
+			<div class="fhi-field-group">
+				<label for="referral_source" class="fhi-label">
 					How did you hear about us? (Optional)
 				</label>
 				<!-- Note: These options should match REFERRAL_SOURCE_CHOICES in forms/__init__.py -->
@@ -214,16 +211,16 @@ Upload your Health Insurance Denial
 					<option value="Other">Other</option>
 				</select>
 			</div>
-			<div class="form-group mt-2">
-				<label for="referral_source_details" class="form-label">
+			<div class="fhi-field-group">
+				<label for="referral_source_details" class="fhi-label">
 					Details (Optional)
 				</label>
 				<input type="text" id="referral_source_details" name="referral_source_details" class="fhi-field" placeholder="E.g., which search engine, social media platform, or person's name">
-				<small class="form-text fhi-hint">Please provide specific details about your referral source if applicable</small>
+				<small class="fhi-note fhi-hint">Please provide specific details about your referral source if applicable</small>
 			</div>
-			<div class="form-check mt-3 alert-box alert-warning">
+			<div class="fhi-check-row alert-box alert-box-warning">
 			<input type="checkbox" id="persistence_enabled" checked class="fhi-check">
-				<label for="persistence_enabled" class="form-check-label">
+				<label for="persistence_enabled">
 					<b>Remember what I typed</b> if I go back (saved in this browser).
 					<br><small class="fhi-hint"><strong>Leave this off on a shared or public computer.</strong></small>
 				</label>

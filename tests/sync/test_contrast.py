@@ -1601,6 +1601,9 @@ UNREACHED: tuple[Exempt, ...] = (
     # blog_post.tsx renders it, so the gate cannot see its ground. The
     # glossary term page moved to .fhi-breadcrumbs.
     Exempt("custom.css", ".breadcrumb-item a", WRITTEN_AT_RUNTIME),
+    # blog_post.tsx renders the blog and FAQ "not found" message as an
+    # alert-danger with a paragraph; no template carries it.
+    Exempt("custom.css", ".alert-danger p", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-active", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-done", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-skipped", WRITTEN_AT_RUNTIME),

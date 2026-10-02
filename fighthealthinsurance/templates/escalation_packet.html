@@ -5,64 +5,64 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
 {% endblock title %}
 
 {% block content %}
-<div class="container" style="padding-top:1rem;">
-  <div class="alert-box alert-info">
-    <h3>📨 Regulator Escalation Packet</h3>
-    <p style="font-size:1.05rem;">
-      We're drafting parallel cover letters you can send alongside your
-      appeal, addressed to the people who hold your plan accountable. Each
-      letter is tailored to its recipient's role.
-    </p>
-  </div>
+<div class="container-narrow">
+<div class="alert-box alert-box-info">
+  <h3>📨 Regulator Escalation Packet</h3>
+  <p style="font-size:1.05rem;">
+    We're drafting parallel cover letters you can send alongside your
+    appeal, addressed to the people who hold your plan accountable. Each
+    letter is tailored to its recipient's role.
+  </p>
+</div>
 
-  {% if recipients_count == 0 %}
-  <div class="alert-box alert-warning">
-    <p>
-      We weren't able to identify any regulator recipients for this denial.
-      Make sure you've filled in your state on the earlier steps.
-    </p>
-    <p>
-      <a href="{{ back_url }}" class="btn btn-secondary">← {{ back_label }}</a>
-    </p>
-  </div>
-  {% else %}
-  <div class="alert-box" style="background:#f8f9fa; border:1px solid #dee2e6; padding:1rem;">
-    <h4 style="margin-top:0;">We'll generate {{ recipients_count }} letter{{ recipients_count|pluralize }} for:</h4>
-    <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.6;">
-      {% for r in recipients %}
-        <li>
-          <strong>{{ r.name }}</strong>
-          {% if r.phone %}<br><span style="font-size:0.9rem;">📞 {{ r.phone }}</span>{% endif %}
-          {% if r.url %}<br><span style="font-size:0.9rem;">🔗 <a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.url }}</a></span>{% endif %}
-          {% if r.rationale %}<br><span style="color:#555; font-size:0.9rem;">{{ r.rationale }}</span>{% endif %}
-        </li>
-      {% endfor %}
-    </ul>
-  </div>
+{% if recipients_count == 0 %}
+<div class="alert-box alert-box-warning">
+  <p>
+    We weren't able to identify any regulator recipients for this denial.
+    Make sure you've filled in your state on the earlier steps.
+  </p>
+  <p>
+    <a href="{{ back_url }}" class="btn btn-secondary">← {{ back_label }}</a>
+  </p>
+</div>
+{% else %}
+<div class="alert-box" style="background:#f8f9fa; border:1px solid #dee2e6; padding:1rem;">
+  <h4 style="margin-top:0;">We'll generate {{ recipients_count }} letter{{ recipients_count|pluralize }} for:</h4>
+  <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.6;">
+    {% for r in recipients %}
+      <li>
+        <strong>{{ r.name }}</strong>
+        {% if r.phone %}<br><span style="font-size:0.9rem;">📞 {{ r.phone }}</span>{% endif %}
+        {% if r.url %}<br><span style="font-size:0.9rem;">🔗 <a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.url }}</a></span>{% endif %}
+        {% if r.rationale %}<br><span style="color:#555; font-size:0.9rem;">{{ r.rationale }}</span>{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</div>
 
-  <div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
-    <h4>Drafting your regulator letters…</h4>
-    <p style="color:#666;">This usually takes 1 to 2 minutes per recipient.</p>
-  </div>
+<div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
+  <h4>Drafting your regulator letters…</h4>
+  <p style="color:#666;">This usually takes 1 to 2 minutes per recipient.</p>
+</div>
 
-  <div id="escalation-letters"></div>
+<div id="escalation-letters"></div>
 
-  <div id="base-letter-form" style="display:none;">
-    <form action="{% url 'choose_escalation_letter' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" style="margin:1rem 0;">
-      {% csrf_token %}
-      <input type="hidden" name="email" value="{{ user_email }}">
-      <input type="hidden" name="denial_id" value="{{ denial_id }}">
-      <input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">
-      <input type="hidden" name="escalation_uuid" value="">
-      <textarea style="width:100%" rows="20" name="letter_text" class="appeal_text"></textarea>
-      <button type="submit" class="btn btn-green" style="margin-top:0.5rem;">Save and review this letter</button>
-    </form>
-  </div>
+<div id="base-letter-form" style="display:none;">
+  <form action="{% url 'choose_escalation_letter' %}" method="post" class="fhi-stack" style="margin:1rem 0;">
+    {% csrf_token %}
+    <input type="hidden" name="email" value="{{ user_email }}">
+    <input type="hidden" name="denial_id" value="{{ denial_id }}">
+    <input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">
+    <input type="hidden" name="escalation_uuid" value="">
+    <textarea style="width:100%" rows="20" name="letter_text" class="appeal_text"></textarea>
+    <button type="submit" class="btn btn-green">Save and review this letter</button>
+  </form>
+</div>
 
-  <div class="form-nav-centered" style="margin-top:1.5rem;">
-    <a href="{{ back_url }}" class="btn btn-secondary-custom">← {{ back_label }}</a>
-  </div>
-  {% endif %}
+<div class="form-nav-centered" style="margin-top:1.5rem;">
+  <a href="{{ back_url }}" class="btn btn-secondary-custom">← {{ back_label }}</a>
+</div>
+{% endif %}
 </div>
 
 {% if recipients_count > 0 %}

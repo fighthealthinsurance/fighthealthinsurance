@@ -253,6 +253,12 @@ textarea.fhi-field {
     opacity: 0.5;
 }
 
+/* The same fade in the row that replaces .form-check: a box this browser
+   cannot use greys out its label too. */
+.fhi-check-row > .fhi-check:disabled ~ label {
+    opacity: 0.5;
+}
+
 /* A tick box is a box too, just square and sized to the text beside it. */
 .fhi-check {
     width: var(--fhi-space-4);
@@ -339,6 +345,43 @@ textarea.fhi-field {
     line-height: inherit;
 }
 
+/* The name of a step in the appeal flow: the h1 under the progress bar.
+   It held its size with Bootstrap's .h2 (24px on a phone, 32px on a
+   desktop). This is the section size, 24px to 28.8px, a step under a
+   content page's title because the progress bar above it already says
+   where the person is. */
+.fhi-step-title {
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
+}
+
+/* The heading inside a callout on a flow page, which held its size with
+   Bootstrap's .h3: a section heading in the reading column, a steady 22px,
+   a step under the step title. Its colour comes from the callout. */
+.fhi-callout-title {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+
+/* The intake flow's column steps its headings down the way the reading
+   tier does: a step's own title (.fhi-step-title) leads, then sections and
+   every callout's heading share one size, whatever level the page gave
+   them, and a fourth level outside a callout is the lead size. On the
+   send-your-appeal page the callout headings had run larger than the page
+   title and the sections equal to it. :where() keeps the defaults at no
+   weight, so a page's own heading class still wins. */
+.container-narrow :where(h2, h3) {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+.container-narrow :where(h4) {
+    font-size: var(--fhi-text-lead);
+}
+.container-narrow .alert-box > :is(h2, h3, h4) {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+
 /* Alert/callout box styles - extracted from inline styles */
 .alert-box {
     padding: 1.5rem;
@@ -363,9 +406,10 @@ textarea.fhi-field {
     background: #e8f5e9;
     border-left-color: #4caf50;
 }
-.alert-success h2,
-.alert-success h3,
-.alert-success h4 {
+/* The regulator letter review page is the last callout still named with
+   Bootstrap's alert-success. The flow's callouts use the .alert-box-*
+   names further down, which carry the same heading inks. */
+.alert-success h3 {
     color: #2e7d32;
 }
 
@@ -373,7 +417,9 @@ textarea.fhi-field {
     background: #ffebee;
     border-left-color: #f44336;
 }
-.alert-danger h3,
+/* The blog and FAQ's "not found" message, which blog_post.tsx renders as a
+   Bootstrap alert-danger with a paragraph: its sentence stays error red
+   rather than the body grey main.css gives every p. 5.0:1 on the fill. */
 .alert-danger p {
     color: #c62828;
 }
@@ -382,20 +428,10 @@ textarea.fhi-field {
     background: #fff3cd;
     border-left-color: #ffc107;
 }
-.alert-warning h2,
-.alert-warning h4,
-.alert-warning li {
-    color: #856404;
-}
 
 .alert-info {
     background: #e3f2fd;
     border-left-color: #2196f3;
-}
-.alert-info h2,
-.alert-info h3,
-.alert-info h4 {
-    color: #1565c0;
 }
 
 /* Section headers with underline */
@@ -537,12 +573,14 @@ textarea.fhi-field {
     color: #666;
 }
 
-/* Form wrapper backgrounds */
+/* Form wrapper backgrounds. The fax form runs the column's full width: a
+   side margin inside the flow column left the letter box 192px wide on a
+   320px phone. */
 .form-wrapper {
     background: #f9f9f9;
-    padding: 1.5rem;
+    padding: var(--fhi-space-6);
     border-radius: 8px;
-    margin: 1rem 1.5rem;
+    margin: var(--fhi-space-4) 0;
 }
 .donate-wrapper {
     background-color: #f8f9fa;
@@ -947,9 +985,9 @@ li > a.link {
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
 .pwyw-option input[type=radio] {margin:0; accent-color:#a5c422;}
 .pwyw-option small {display:block; font-size:var(--fhi-text-micro); opacity:.9; color: #fff;}
-.pwyw-option.custom {flex:1 1 165px;}
+.pwyw-option.custom {flex:1 1 165px; min-width:0;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
-.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
+.pwyw-custom-input {flex:1; min-width:0; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 /* The hero panel is dark and the photograph behind it is anything, so the
    fill alone does not tell the reader where the button ends. The glow does:
@@ -1144,23 +1182,6 @@ li > a.link {
     width: 100%;
 }
 
-.generic-main-content {
-    width: 80%;
-    max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
-    margin-top: 2rem;
-    padding: 0 15px;
-}
-
-/* Mobile: use more of the screen width */
-@media (max-width: 768px) {
-    .generic-main-content {
-        width: 95%;
-        padding: 0 10px;
-    }
-}
-
 .post-infered-table {
     width: 100%;
     margin: 0 auto;
@@ -1185,6 +1206,11 @@ li > a.link {
     padding: 0; /* Resets padding */
 }
 
+/* In a stack, a hidden message would still take a slot and double the gap
+   around it, so until it is shown it takes no part in the layout. */
+.fhi-stack > .hidden-error-message:not(.visible) {
+    display: none;
+}
 .hidden-error-message.visible {
   visibility: visible; /* Makes the element visible */
   height: auto; /* Allows the content to occupy its natural height */
@@ -1635,9 +1661,20 @@ section:not(.slider) .share-subcopy {
     background: #e8f5e9;
     border-left-color: #a5c422;
 }
+/* A callout's heading takes its box's ink, as the Bootstrap-named boxes'
+   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1, red 4.92:1. */
+.alert-box-success h2,
+.alert-box-success h4 {
+    color: #2e7d32;
+}
 .alert-box-warning {
     background: #fff3cd;
     border-left-color: #ffc107;
+}
+.alert-box-warning h2,
+.alert-box-warning h4,
+.alert-box-warning li {
+    color: #856404;
 }
 .alert-box-warning-light {
     background: #fff8e1;
@@ -1647,8 +1684,18 @@ section:not(.slider) .share-subcopy {
     background: #e3f2fd;
     border-left-color: #2196f3;
 }
-.alert-box-info h2 {
+.alert-box-info h2,
+.alert-box-info h3,
+.alert-box-info h4 {
     color: #1565c0;
+}
+.alert-box-danger {
+    background: #ffebee;
+    border-left-color: #f44336;
+}
+.alert-box-danger h3,
+.alert-box-danger p {
+    color: #c62828;
 }
 
 /* Navigation/Form actions row */
@@ -1893,6 +1940,13 @@ section:not(.slider) .share-subcopy {
     transform: translate(-50%, -50%);
 }
 
+/* The waiting page's three questions ("Why does this take time?") are
+   subsections of its h3, so they sit a step under it. main.css draws an h4
+   as large as that h3; Bootstrap's .h5 class used to make the difference. */
+#loading-more h4 {
+    font-size: var(--fhi-text-subsection);
+}
+
 /* Words for screen readers only: in the page and read aloud, drawn nowhere.
    Ours rather than Bootstrap's .visually-hidden, so it holds when Bootstrap
    is gone. Bootstrap 5 dropped the older .sr-only, and a page still using
@@ -1920,6 +1974,17 @@ section:not(.slider) .share-subcopy {
     border: 0.25rem solid var(--fhi-line);
     border-top-color: var(--fhi-green-ink);
     border-radius: 50%;
+}
+
+/* The spinner beside a heading's words: a line high, with a thinner ring.
+   flex: none because a heading that wraps on a phone squeezes every item
+   in its row, and an empty box gives way first, which can press the ring
+   into an oval. */
+.fhi-spinner-inline {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-width: 2px;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -2233,13 +2298,8 @@ main :where(table) {
     width: 60px;
 }
 
-/* Appeals page layout - centered content with margins */
-#output-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 20px;
-}
-
+/* Appeals page layout: the back and start-over links sit in from the edge.
+   The drafts above them take the flow column's width, gutter included. */
 .form-nav-centered {
     padding: 0 20px;
 }
@@ -3493,16 +3553,40 @@ textarea,
     .fhi-form-table td {
         padding: 0 0 var(--fhi-space-4);
     }
+}
 
-    /* A field sized in columns rather than by a class, like the follow-up
-       form's cols="80" textareas, is wider than a phone. Stacked, the cell
-       is the whole row, so capping the field at its cell keeps its right
-       edge on screen instead of scrolling the form box sideways. */
-    .fhi-form-table input,
-    .fhi-form-table select,
-    .fhi-form-table textarea {
-        max-width: 100%;
-    }
+/* In the reading column a form table always puts each label above its
+   field, as it does on a phone. The column is never wide enough for a field
+   sized in columns beside its label: follow-up's two cols="80" boxes ran
+   about 100px past it at a desktop. */
+.fhi-page .fhi-form-table,
+.fhi-page .fhi-form-table tbody,
+.fhi-page .fhi-form-table tr,
+.fhi-page .fhi-form-table th,
+.fhi-page .fhi-form-table td {
+    display: block;
+    width: 100%;
+}
+
+.fhi-page .fhi-form-table th {
+    padding: var(--fhi-space-3) 0 var(--fhi-space-1);
+    background: transparent;
+    border-bottom: 0;
+}
+
+.fhi-page .fhi-form-table td {
+    padding: 0 0 var(--fhi-space-4);
+}
+
+/* A field sized in columns rather than by a class, like the follow-up
+   form's cols="80" textareas, is wider than a phone, and beside its label
+   it is wider than the reading column too. Capping the field at its cell
+   keeps its right edge on screen instead of scrolling the form box
+   sideways, stacked on a phone or side by side above one. */
+.fhi-form-table input,
+.fhi-form-table select,
+.fhi-form-table textarea {
+    max-width: 100%;
 }
 
 /* The two notes under the appeal form (what stays in your browser, how we
@@ -3518,6 +3602,11 @@ textarea,
 .fhi-hint {
     color: var(--fhi-muted);
 }
+
+/* An aside inside a bold label, such as "(we try to keep this in your
+   browser)", stays at the running weight, so the label's own words are
+   what stand out. */
+.fhi-label .fhi-hint { font-weight: 400; }
 
 /* ---- Content pages: sections, the column, stacks and cards ----------------
    The few pieces a content page is built from, in place of Bootstrap's grid
@@ -3560,6 +3649,12 @@ textarea,
    across the column; in a centred stack it sits in the middle. */
 .fhi-stack > .btn,
 .fhi-card > .btn { align-self: flex-start; }
+/* The same in a tick box's row, where a grid cell would otherwise stretch
+   the button across the label's column. */
+.fhi-check-row > .btn { justify-self: start; }
+/* A link-style button in the row, such as Remove the downloaded model, lines
+   up with the label's text rather than sitting inside button padding. */
+.fhi-check-row .btn-link { padding: 0; }
 
 /* A stack whose contents sit in the middle: a call to action and its note. */
 .fhi-stack-centred { align-items: center; text-align: center; }
