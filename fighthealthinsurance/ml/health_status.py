@@ -3,7 +3,9 @@ Lightweight, cached health snapshot for model backends.
 
 What & why:
 - Computes how many model backends are currently reachable/healthy.
-- Runs at startup and caches results; refreshes periodically (hourly) in background.
+- Starts on the first selection or status request (there is no startup hook),
+  caches results, and refreshes periodically (hourly) in the background; until
+  the first sweep lands every backend reads as unchecked and selection fails open.
 - Avoids heavy checks per request; endpoint simply returns the cached snapshot.
 
 Trade-offs:
@@ -16,7 +18,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from loguru import logger
 
@@ -209,11 +211,17 @@ class _HealthStatus:
 
         # Choose a small, representative set of backends
         candidates = []
+        # ids of the context-only candidates: swept, never counted as alive.
+        context_only_ids: Set[int] = set()
         enumeration_error: Optional[str] = None
         try:
             logger.debug("Starting to look up the models")
             router = ml_router_module.ml_router
-            candidates = list(router.all_models_by_cost)
+            # Context-only backends (citations) are swept too: they are in no
+            # generation pool, so nothing checked them between deploys.
+            context_only = list(getattr(router, "context_only_models_by_cost", []))
+            context_only_ids = {id(m) for m in context_only}
+            candidates = list(router.all_models_by_cost) + context_only
             # Chat's own outside models live outside the general pools; the
             # sweep checks them too, so one that stops answering loses its
             # place in the chat roster.
@@ -265,16 +273,29 @@ class _HealthStatus:
                             logger.debug(f"Health check error for {name}: {e}")
                     else:
                         err = f"timeout>{timeout_seconds}s"
-                        details.append(
-                            BackendHealthDetail(name=name, ok=False, error=err)
-                        )
                     new_health[_model_key(m)] = bool(ok)
                     if ok:
-                        alive_count += 1
+                        # alive_models is the public "a model is ready to
+                        # write your appeal" number, and a context-only
+                        # backend can't draft, so it never counts.
+                        if id(m) not in context_only_ids:
+                            alive_count += 1
                         if is_internal:
                             internal_alive += 1
                     elif is_internal:
                         internal_failures.append(
+                            BackendHealthDetail(
+                                name=name, ok=False, error=err or "not ok"
+                            )
+                        )
+                    else:
+                        # The public snapshot lists failing EXTERNAL backends,
+                        # timed out or not. Internal failures stay out of it
+                        # (their names are internal wire paths) and drive the
+                        # alert instead. It used to list only timeouts, of
+                        # either kind, so a hard-down external was absent and
+                        # a slow internal host was published.
+                        details.append(
                             BackendHealthDetail(
                                 name=name, ok=False, error=err or "not ok"
                             )
@@ -420,15 +441,23 @@ class _HealthStatus:
         """
         Recalculate health snapshot (called from background timer).
 
-        Acquires lock, performs refresh, then schedules next refresh outside lock.
+        Acquires lock, performs refresh, then schedules next refresh outside
+        lock. The next refresh is armed whatever happens: an exception here
+        used to end the timer chain for the life of the process, freezing the
+        cached map every routing decision reads.
         """
-        with self._lock:
-            pending_alert = self._refresh_unlocked()
+        try:
+            with self._lock:
+                pending_alert = self._refresh_unlocked()
 
-        self._alert_if_all_internal_dead(*pending_alert)
-
-        # Since only one timer no need to worry about lock.
-        self._schedule_refresh()
+            self._alert_if_all_internal_dead(*pending_alert)
+        except Exception:
+            logger.opt(exception=True).error(
+                "Model health sweep failed; keeping the previous snapshot"
+            )
+        finally:
+            # Since only one timer no need to worry about lock.
+            self._schedule_refresh()
 
 
 def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any]]:
@@ -437,9 +466,9 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     Unlike :meth:`_HealthStatus.get_snapshot`, which returns a cached summary
     (used by the public ``live_models_status`` endpoint and deliberately keeps
     internal failures out of ``details``), this returns a full per-backend
-    breakdown — ``{"name", "ok", "external", "error"}`` — for the staff-only
-    system status dashboard. It does not send alerts or mutate the cached
-    snapshot.
+    breakdown — ``{"name", "ok", "external", "context_only", "error"}`` — for
+    the staff-only system status dashboard. It does not send alerts or mutate
+    the cached snapshot.
 
     Checks run in parallel with a shared deadline; a backend whose check has
     not finished by ``timeout_seconds`` is reported as not-ok with a timeout
@@ -447,7 +476,14 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     external, then by name) so on-call sees failures at the top.
     """
     try:
-        candidates = list(ml_router_module.ml_router.all_models_by_cost)
+        router = ml_router_module.ml_router
+        # Context-only backends (citations) included: "every known backend"
+        # used to leave them out because they are in no generation pool.
+        # Their rows say so, and callers counting what can draft leave them
+        # out, as the public snapshot does.
+        context_only = list(getattr(router, "context_only_models_by_cost", []))
+        context_only_ids = {id(m) for m in context_only}
+        candidates = list(router.all_models_by_cost) + context_only
     except Exception:
         # Propagate rather than returning [] — an empty list is indistinguishable
         # from "no models registered" and would let the caller (_model_status)
@@ -497,6 +533,7 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                     "name": name,
                     "ok": ok,
                     "external": is_external,
+                    "context_only": id(m) in context_only_ids,
                     "error": err,
                     "ref": ref_by_id.get(id(m)),
                 }

@@ -65,7 +65,7 @@ from .ml.ml_models import (
     describe_model_error,
     repetition_penalty,
 )
-from .ml.ml_router import ml_router
+from .ml.ml_router import appeal_backup_names, ml_router
 
 
 class ExtractionUnavailable(Exception):
@@ -2964,8 +2964,15 @@ class AppealGenerator(object):
             for model_name in model_names
         ]
 
-        backup_model_names = ml_router.generate_text_backend_names(
-            use_external=denial.use_external
+        # Backup: only backends the primary did not already run. For an
+        # opt-out denial that is nothing (the internal names ARE the primary
+        # list) and the stage is skipped, so the shed ladder no longer waits
+        # for a round of the same calls to fail the same way; for an opt-in
+        # denial it is the external backends. The privacy boundary is
+        # unchanged: use_external=False never yields an external name here.
+        backup_model_names = appeal_backup_names(
+            ml_router.generate_text_backend_names(use_external=denial.use_external),
+            model_names,
         )
         backup_calls = [
             {
@@ -3170,11 +3177,17 @@ class AppealGenerator(object):
         # report whether the primary won or a shed-tier retry rescued it.
         winning_stage: Optional[str] = "primary" if first is not None else None
         shed_tier_used: Optional[int] = None
+        if first is not None and first.context_level == CONTEXT_LEVEL_TIER1_SHED:
+            # A proactive shed sibling, submitted under the primary stage,
+            # won: that is a context-overflow rescue, and the diagnostic that
+            # counts rescues used to miss exactly this case.
+            shed_tier_used = 1
 
         if first is None and backup_calls:
             logger.warning(
                 f"{gen_prefix}Primary empty for denial {denial_id}; trying "
-                f"backup_calls (n={len(backup_calls)}, use_external={use_ext})"
+                f"backup_calls (n={len(backup_calls)}, use_external={use_ext}, "
+                f"models={backup_model_names})"
             )
             appeals = make_async_model_calls(backup_calls, stage="backup")
             first, appeals = _peek_real_or_none(appeals, denial_id, "backup", recorder)
@@ -3182,12 +3195,22 @@ class AppealGenerator(object):
                 winning_stage = "backup"
 
         if first is None:
-            ext_note = (
-                "external models WERE included in backup_calls"
-                if use_ext
-                else "use_external=False — NO EXTERNAL FALLBACK PERMITTED "
-                "(user opt-out respected)"
-            )
+            # Named from the list that actually ran, not from the consent
+            # flag: with consent given but every external unconfigured or
+            # marked down, the old note claimed an external fallback that
+            # never happened.
+            if not use_ext:
+                ext_note = (
+                    "use_external=False — NO EXTERNAL FALLBACK PERMITTED "
+                    "(user opt-out respected)"
+                )
+            elif backup_model_names:
+                ext_note = f"external backup tried: {backup_model_names}"
+            else:
+                ext_note = (
+                    "use_external=True but no external backend was selectable "
+                    "for the backup"
+                )
             logger.error(
                 f"{gen_prefix}make_appeals: primary+backup both produced 0 for "
                 f"denial {denial_id} ({ext_note}); retrying primary internal-only"

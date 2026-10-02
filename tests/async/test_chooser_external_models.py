@@ -21,6 +21,9 @@ from fighthealthinsurance import chooser_tasks
 from fighthealthinsurance.chooser_tasks import (
     _generate_appeal_candidates,
     _generate_chat_candidates,
+    _labeled_fields,
+    _parse_conversation,
+    _scenario_writers,
     _select_candidate_models,
 )
 from fighthealthinsurance.models import ChooserCandidate, ChooserTask
@@ -99,9 +102,132 @@ class ScenarioModel(FakeModel):
     def __init__(self, scenario):
         super().__init__("fhi-scenario", external=False)
         self._scenario = scenario
+        self.calls = 0
 
     async def _infer_no_context(self, system_prompts, prompt, **kwargs):
+        self.calls += 1
         return self._scenario
+
+
+class NarrowModel(ScenarioModel):
+    """The fhi-legacy shape: cheapest, first in the router's list, and unable
+    to follow an instruction (it answers with nothing)."""
+
+    def __init__(self):
+        super().__init__(None)
+        self.name = "fhi-legacy"
+
+    def supports_general_instructions(self):
+        return False
+
+
+MARKDOWN_SCENARIO_TEXT = (
+    "**Procedure:** MRI of lumbar spine\n"
+    "- Diagnosis: chronic lower back pain\n"
+    "1. Insurance Company: Acme Health Assurance\n"
+    "**Denial Reason:** The plan determined the imaging was not medically necessary."
+)
+
+
+class TestScenarioWriters:
+    def test_skips_a_backend_that_cannot_follow_instructions(self):
+        narrow = NarrowModel()
+        general = ScenarioModel(SCENARIO_TEXT)
+        assert _scenario_writers([narrow, general]) == [general]
+
+    def test_falls_back_to_the_first_backend_when_none_is_general(self):
+        narrow = NarrowModel()
+        assert _scenario_writers([narrow]) == [narrow]
+
+    def test_a_backend_without_the_flag_counts_as_general(self):
+        plain = FakeModel("plain")
+        assert _scenario_writers([plain]) == [plain]
+
+    def test_at_most_the_configured_number_of_backends_write(self):
+        models = [FakeModel(f"plain-{i}") for i in range(4)]
+        with patch("fighthealthinsurance.chooser_tasks.CHOOSER_SCENARIO_WRITERS", 2):
+            assert _scenario_writers(models) == models[:2]
+
+
+class TestLabelParsing:
+    def test_reads_markdown_bulleted_and_numbered_labels(self):
+        fields = _labeled_fields(MARKDOWN_SCENARIO_TEXT)
+        assert fields["procedure"] == "MRI of lumbar spine"
+        assert fields["diagnosis"] == "chronic lower back pain"
+        assert fields["insurance_company"] == "Acme Health Assurance"
+        assert fields["denial_reason"].startswith("The plan determined")
+
+    def test_a_line_emphasised_whole_reads_without_the_markers(self):
+        fields = _labeled_fields("**Procedure: MRI of lumbar spine**")
+        assert fields["procedure"] == "MRI of lumbar spine"
+
+    def test_a_value_emphasised_whole_reads_without_the_markers(self):
+        fields = _labeled_fields("Procedure: **MRI of lumbar spine**")
+        assert fields["procedure"] == "MRI of lumbar spine"
+
+    def test_emphasis_inside_a_value_is_kept_whole(self):
+        """Stripping markers from both ends stored this as "MRI** of lumbar
+        spine" and showed it to candidate models and voters."""
+        fields = _labeled_fields("Procedure: **MRI** of lumbar spine")
+        assert fields["procedure"] == "**MRI** of lumbar spine"
+
+    def test_conversation_labels_may_carry_markdown(self):
+        history, final = _parse_conversation(
+            "**USER:** My MRI claim was denied by my insurer.\n"
+            "**ASSISTANT:** I can help you appeal that denial.\n"
+            "**USER:** What documents do I need to get started?"
+        )
+        assert final == "What documents do I need to get started?"
+        assert [m["role"] for m in history] == ["user", "assistant"]
+        assert history[0]["content"] == "My MRI claim was denied by my insurer."
+
+    def test_a_role_label_emphasised_before_its_colon_is_read(self):
+        """With the colon outside the bold the whole transcript used to parse
+        as nothing, and the task fell back to a single question."""
+        history, final = _parse_conversation(
+            "**User**: My MRI claim was denied by my insurer.\n"
+            "**Assistant**: I can help you appeal that denial.\n"
+            "**User**: What documents do I need to get started?"
+        )
+        assert final == "What documents do I need to get started?"
+        assert [m["role"] for m in history] == ["user", "assistant"]
+
+    def test_emphasis_ending_a_turn_is_kept_whole(self):
+        history, final = _parse_conversation(
+            "USER: My claim needs a prior authorization.\n"
+            "ASSISTANT: I can help with that.\n"
+            "USER: What is *prior auth*"
+        )
+        assert final == "What is *prior auth*"
+
+    def test_plain_conversation_still_parses(self):
+        history, final = _parse_conversation(CONVERSATION_TEXT)
+        assert final == "What documents do I need to get started?"
+        assert len(history) == 2
+
+    def test_every_answered_follow_up_stays_in_the_history(self):
+        """Only the trailing user turn is the question; a follow-up the
+        assistant already answered stays between its two assistant turns."""
+        history, final = _parse_conversation(
+            "USER: My MRI claim was denied.\n"
+            "ASSISTANT: I can help you appeal that denial.\n"
+            "USER: Do I need my doctor's notes?\n"
+            "ASSISTANT: Yes, ask for the notes from your last visit.\n"
+            "USER: How long do I have to file?"
+        )
+        assert final == "How long do I have to file?"
+        assert [m["role"] for m in history] == [
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ]
+        assert history[2]["content"] == "Do I need my doctor's notes?"
+
+    def test_a_transcript_ending_with_the_assistant_has_no_question(self):
+        history, final = _parse_conversation("USER: Hi there.\nASSISTANT: Hello!")
+        assert final is None
+        assert [m["role"] for m in history] == ["user", "assistant"]
 
 
 class TestSelectCandidateModels:
@@ -202,6 +328,211 @@ class TestAppealCandidatesUseExternalModels:
         ):
             await _generate_appeal_candidates(task)
         assert await ChooserCandidate.objects.filter(task=task).acount() == 0
+
+    async def test_the_scenario_is_written_by_a_general_purpose_backend(self):
+        """The router lists the narrow fhi-legacy fine-tune first; it must
+        not be the one asked to invent a scenario."""
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        narrow = NarrowModel()
+        scenario = ScenarioModel(SCENARIO_TEXT)
+        claude = FakeModel("azure-anthropic/claude-opus-4-8", external=True)
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=[narrow, scenario, claude]),
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ):
+            await _generate_appeal_candidates(task)
+
+        await task.arefresh_from_db()
+        assert scenario.calls >= 1
+        assert task.context_json["procedure"] == "MRI of lumbar spine"
+        assert await ChooserCandidate.objects.filter(task=task).acount() >= 2
+
+    async def test_an_empty_scenario_reply_disables_the_task_without_raising(self):
+        """A backend that does not answer returns None. That used to raise
+        inside the parser and disable the task; now it is disabled on purpose,
+        with a log line naming the backend."""
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=[NarrowModel()]),
+        ):
+            await _generate_appeal_candidates(task)
+
+        await task.arefresh_from_db()
+        assert task.status == "DISABLED"
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 0
+
+    async def test_markdown_labelled_scenario_is_parsed(self):
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(
+                return_value=[
+                    ScenarioModel(MARKDOWN_SCENARIO_TEXT),
+                    FakeModel("fhi-2025-nov"),
+                ]
+            ),
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ):
+            await _generate_appeal_candidates(task)
+
+        await task.arefresh_from_db()
+        assert task.context_json["insurance_company"] == "Acme Health Assurance"
+        assert task.context_json["denial_text_preview"].startswith("The plan")
+
+    async def test_missing_fields_disable_the_task_instead_of_placeholders(self):
+        """A scenario the parser cannot read used to become a READY task about
+        'Medical procedure' for 'Medical condition', served to voters."""
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(
+                return_value=[
+                    ScenarioModel("Dear Insurance Company, I am writing to appeal."),
+                    FakeModel("fhi-2025-nov"),
+                ]
+            ),
+        ):
+            await _generate_appeal_candidates(task)
+
+        await task.arefresh_from_db()
+        assert task.status == "DISABLED"
+        assert not task.context_json
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestChatFallbackIsBounded:
+    async def test_a_silent_backend_disables_the_task_after_bounded_attempts(self):
+        """The single-question fallback used to loop ``while not answer`` on a
+        call that returns None for every failure, spinning forever against a
+        down backend."""
+        task = await ChooserTask.objects.acreate(
+            task_type="chat", status="QUEUED", source="synthetic"
+        )
+        silent = ScenarioModel(None)
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=[silent]),
+        ), patch("fighthealthinsurance.chooser_tasks.CHOOSER_FALLBACK_ATTEMPTS", 2):
+            await _generate_chat_candidates(task)
+
+        await task.arefresh_from_db()
+        assert task.status == "DISABLED"
+        # One conversation attempt plus the bounded fallback attempts.
+        assert silent.calls == 1 + 2
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 0
+
+
+class RaisingModel(ScenarioModel):
+    """A writer whose call raises instead of returning None."""
+
+    def __init__(self):
+        super().__init__(None)
+        self.name = "raising-writer"
+
+    async def _infer_no_context(self, system_prompts, prompt, **kwargs):
+        self.calls += 1
+        raise RuntimeError("backend exploded")
+
+
+def _writer(name, reply):
+    writer = ScenarioModel(reply)
+    writer.name = name
+    return writer
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestAReplyThatCantBeUsedGoesToTheNextWriter:
+    """The first general-purpose backend used to write every scenario, so one
+    answering junk disabled every task while the backends behind it were
+    never asked."""
+
+    async def _appeal_context(self, writers):
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=writers + [FakeModel("fhi-2025-nov")]),
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ):
+            await _generate_appeal_candidates(task)
+        await task.arefresh_from_db()
+        return task.context_json
+
+    async def _chat_context(self, writers):
+        task = await ChooserTask.objects.acreate(
+            task_type="chat", status="QUEUED", source="synthetic"
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=writers),
+        ), patch.object(
+            chooser_tasks.ml_router,
+            "get_chat_backends",
+            MagicMock(return_value=[FakeModel("fhi-2025-nov")]),
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ), patch(
+            "fighthealthinsurance.chooser_tasks.CHOOSER_FALLBACK_ATTEMPTS", 2
+        ):
+            await _generate_chat_candidates(task)
+        await task.arefresh_from_db()
+        return task.context_json
+
+    async def test_an_unreadable_scenario_is_rewritten_by_the_next_writer(self):
+        junk = _writer("junk-writer", "Dear Insurance Company, I am writing.")
+        context = await self._appeal_context(
+            [junk, _writer("good-writer", SCENARIO_TEXT)]
+        )
+        assert context["procedure"] == "MRI of lumbar spine"
+
+    async def test_a_writer_that_raises_hands_the_scenario_on(self):
+        context = await self._appeal_context(
+            [RaisingModel(), _writer("good-writer", SCENARIO_TEXT)]
+        )
+        assert context["procedure"] == "MRI of lumbar spine"
+
+    async def test_the_next_writers_conversation_beats_a_single_question(self):
+        """A reply that is not a transcript would pass as a single question;
+        the next writer's conversation is asked for first."""
+        junk = _writer("junk-writer", APPEAL_TEXT)
+        context = await self._chat_context(
+            [junk, _writer("good-writer", CONVERSATION_TEXT)]
+        )
+        assert context["prompt"] == "What documents do I need to get started?"
+        assert len(context["history"]) == 2
+        assert junk.calls == 1
+
+    async def test_the_single_question_fallback_asks_the_next_writer_too(self):
+        silent = _writer("silent-writer", None)
+        question = "How do I appeal a denied MRI claim?"
+        context = await self._chat_context([silent, _writer("asker", question)])
+        assert context == {"prompt": question, "history": []}
+        # Asked for a conversation, then for a question twice.
+        assert silent.calls == 1 + 2
 
 
 @pytest.mark.asyncio

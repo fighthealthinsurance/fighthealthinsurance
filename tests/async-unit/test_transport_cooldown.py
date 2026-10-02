@@ -62,6 +62,30 @@ class TestStrikeAccounting:
         assert m._transport_cooling("http://other.host/v1", "other") is True
 
 
+class TestBudgetTimeoutStrikes:
+    """A call that gets no answer within a generous budget strikes at most
+    once per strike window, so its strike has to count for longer than that
+    window or three could never add up."""
+
+    @staticmethod
+    def _time_out_at(m, *moments):
+        with patch("fighthealthinsurance.ml.ml_models.time.monotonic") as clock:
+            for moment in moments:
+                clock.return_value = moment
+                m._note_budget_timeout(m.api_base, m.model, 300.0)
+            return m._transport_cooling(m.api_base, m.model)
+
+    def test_hung_calls_a_minute_apart_start_a_cooldown(self):
+        assert self._time_out_at(_model(), 1000.0, 1061.0, 1122.0) is True
+
+    def test_the_legs_of_one_hung_call_strike_once(self):
+        assert self._time_out_at(_model(), 1000.0, 1000.0, 1000.0) is False
+
+    def test_timeout_strikes_stop_counting_after_their_keep_time(self):
+        late = 1000.0 + RemoteFullOpenLike.TIMEOUT_STRIKE_KEEP_SECONDS + 62.0
+        assert self._time_out_at(_model(), 1000.0, 1061.0, late) is False
+
+
 class TestRouterVisibility:
     def test_is_available_false_while_all_endpoints_cool(self):
         m = _model()

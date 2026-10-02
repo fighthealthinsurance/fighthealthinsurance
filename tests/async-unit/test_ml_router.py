@@ -8,7 +8,11 @@ import asyncio
 from typing import Optional
 
 from fighthealthinsurance import env_utils
-from fighthealthinsurance.ml.ml_router import MLRouter, _EXTERNAL_GENERALIST
+from fighthealthinsurance.ml.ml_router import (
+    MLRouter,
+    _EXTERNAL_GENERALIST,
+    appeal_backup_names,
+)
 from fighthealthinsurance.ml.ml_models import (
     DeepInfra,
     ModelDescription,
@@ -222,6 +226,22 @@ class TestMLRouterGenerateTextBackendNames(unittest.TestCase):
                 f"Name '{name}' returned by generate_text_backend_names cannot be "
                 f"looked up in models_by_name. This would cause 'No backend for {name}' errors.",
             )
+
+
+class TestAppealBackupNames(unittest.TestCase):
+    """The appeals backup pass never repeats a name the primary pass called."""
+
+    def test_keeps_only_names_the_primary_did_not_call_in_order(self):
+        self.assertEqual(
+            appeal_backup_names(
+                ["fhi-a", "fhi-b", "ext-2", "ext-1"], ["fhi-b", "fhi-a"]
+            ),
+            ["ext-2", "ext-1"],
+        )
+
+    def test_is_empty_when_the_backup_list_is_the_primary_list(self):
+        """An opt-out denial: both lists are the internal names."""
+        self.assertEqual(appeal_backup_names(["fhi-a", "fhi-b"], ["fhi-a", "fhi-b"]), [])
 
 
 class TestMLRouterChatBackends(unittest.TestCase):

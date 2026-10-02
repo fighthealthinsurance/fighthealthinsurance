@@ -1,8 +1,10 @@
 import asyncio
 import time
+from typing import Union
 
 import ray
 
+from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
 from fighthealthinsurance.fax_actor import FaxActor
 
 
@@ -32,7 +34,16 @@ class FaxPollingActor:
         """Check if the actor is healthy and running."""
         return getattr(self, "running", False)
 
-    async def run(self) -> bool:
+    async def run(self) -> Union[bool, str]:
+        if getattr(self, "running", False):
+            # A fresh process attaching to this actor calls run() again (see
+            # BaseActorRef.get); async actors run calls concurrently, so
+            # without this it became a second polling loop.
+            self._logger.warning(
+                "FaxPollingActor.run called while its loop is running; "
+                "not starting a second loop"
+            )
+            return RUN_ALREADY_STARTED
         self._logger.info("Starting run")
         self.running = True
         while self.running:

@@ -876,6 +876,20 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(status["level"], "not_scoring")
         self.assertEqual(status["unscored"], 1)
 
+    def test_a_chosen_copy_is_not_an_eligible_draft(self):
+        """Picking a draft inserts an unscored chosen=True copy stamped with
+        the pick time. It read as an eligible draft the scorer had missed and
+        flipped the badge to NOT SCORING while scoring worked."""
+        denial = self._denial()
+        self._draft(denial, scored=True)
+        copy = self._draft(denial, minutes_ago=1)
+        ProposedAppeal.objects.filter(pk=copy.pk).update(chosen=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "scoring")
+        self.assertEqual(status["unscored"], 0)
+        self.assertEqual(status["stalled"], 0)
+
     def test_drafts_that_were_never_eligible_do_not_count_as_unscored(self):
         """Still in flight (younger than the drain window), speculative, or
         from a denial that did not allow external models."""
@@ -1054,7 +1068,73 @@ class AdminStatusLetterScoringTest(TestCase):
         )
 
 
+class AdminStatusCountsOnlyDraftingModelsTest(TestCase):
+    """A context-only backend (citations) is listed but not counted.
+    Perplexity's check always passes, so with every generation backend down
+    the page read DEGRADED, "1 / 2 backends responding", instead of DOWN."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _get(self):
+        details = [
+            {
+                "name": "fhi-2025",
+                "ok": False,
+                "external": False,
+                "context_only": False,
+                "error": "not ok",
+            },
+            {
+                "name": "sonar",
+                "ok": True,
+                "external": True,
+                "context_only": True,
+                "error": None,
+            },
+        ]
+        with mock.patch(_MODELS, return_value=details), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            return self.client.get(reverse("admin_status"))
+
+    def test_a_generation_outage_reads_down_with_a_citation_backend_up(self):
+        self.assertContains(self._get(), '<span class="status-badge bad">DOWN</span>')
+
+    def test_the_context_only_backend_is_still_listed(self):
+        self.assertContains(self._get(), "context-only, not counted")
+
+
 class ComputeModelHealthDetailsTest(TestCase):
+    def test_a_context_only_backend_is_marked_as_such(self):
+        from fighthealthinsurance.ml.health_status import compute_model_health_details
+
+        class Drafts:
+            model = "fhi-2025"
+            external = False
+
+            def model_is_ok(self):
+                return True
+
+        class Cites:
+            model = "sonar"
+            external = True
+
+            def model_is_ok(self):
+                return True
+
+        fake_router = mock.MagicMock()
+        fake_router.all_models_by_cost = [Drafts()]
+        fake_router.context_only_models_by_cost = [Cites()]
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
+            details = compute_model_health_details(timeout_seconds=2)
+
+        self.assertEqual(
+            {d["name"]: d["context_only"] for d in details},
+            {"fhi-2025": False, "sonar": True},
+        )
+
     def test_classifies_and_sorts_problems_first(self):
         from fighthealthinsurance.ml.health_status import compute_model_health_details
 

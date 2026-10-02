@@ -15,10 +15,15 @@ calls relied on the router's internal-only default.
 """
 
 import asyncio
+import datetime
 import random
-from typing import List, Optional, cast
+import re
+import threading
+from typing import List, Optional, Tuple, cast
 
 from django.conf import settings
+from django.db.models import QuerySet
+from django.utils import timezone
 
 from channels.db import database_sync_to_async
 from loguru import logger
@@ -43,6 +48,32 @@ CHOOSER_NUM_CANDIDATES = getattr(settings, "CHOOSER_NUM_CANDIDATES", 4)
 # Whether to add a synthesized candidate (combining the per-model outputs)
 # to each task so the chooser can measure synthesis vs. single models.
 CHOOSER_INCLUDE_SYNTHESIS = getattr(settings, "CHOOSER_INCLUDE_SYNTHESIS", True)
+# Ceiling for the coverage trigger (see check_and_refill_task_pool): once this
+# many fresh tasks exist, a backend that still has too few is not worth
+# another batch. It sits above CHOOSER_MIN_READY_TASKS on purpose: a pool
+# bootstrapped with no votes yet is all fresh, and a lower ceiling would turn
+# the trigger off in exactly the pool it exists for, one built before a
+# provider was configured.
+CHOOSER_MAX_UNSCORED_TASKS = getattr(
+    settings, "CHOOSER_MAX_UNSCORED_TASKS", 2 * CHOOSER_MIN_READY_TASKS
+)
+# How often the chat fallback may re-ask for a single question before the task
+# is given up (see _ask_for_single_question).
+CHOOSER_FALLBACK_ATTEMPTS = getattr(settings, "CHOOSER_FALLBACK_ATTEMPTS", 3)
+# How many backends may write one task's scenario or conversation: a reply
+# that can't be used goes to the next (see _scenario_writers).
+CHOOSER_SCENARIO_WRITERS = getattr(settings, "CHOOSER_SCENARIO_WRITERS", 3)
+# At most one background prefill per process per this many seconds (see
+# trigger_prefill_async): a page load and an empty next-task fetch both ask.
+CHOOSER_PREFILL_THROTTLE_SECONDS = getattr(
+    settings, "CHOOSER_PREFILL_THROTTLE_SECONDS", 60
+)
+# A QUEUED task younger than this marks a generation still running somewhere
+# (see _generation_underway); an older one was left behind by a process that
+# died mid-generation, and no longer holds prefills off.
+CHOOSER_GENERATION_CLAIM_SECONDS = getattr(
+    settings, "CHOOSER_GENERATION_CLAIM_SECONDS", 15 * 60
+)
 
 
 def _model_display_name(model) -> str:
@@ -88,51 +119,351 @@ def _select_candidate_models(models: List, limit: int) -> List:
     return selected
 
 
-async def check_and_refill_task_pool():
+_LABEL_MARKUP_RE = re.compile(r"^[\s\-\*\u2022\d\.\)\(#>]+")
+_OPENING_EMPHASIS_RE = re.compile(r"^[*_`]+")
+_TRAILING_EMPHASIS_RE = re.compile(r"\s*([*_`]+)$")
+
+
+def _strip_label_emphasis(value: str) -> str:
+    """``value`` without the markdown emphasis its label left on it.
+
+    That is the closing half of an emphasised label ("**Procedure:** MRI"),
+    the closing half of a line emphasised whole ("**Procedure: MRI**"), and
+    a pair wrapping the whole value ("Procedure: **MRI**"). Emphasis inside
+    the value is the model's text and stays: stripping markers from both
+    ends stored "**MRI** of lumbar spine" as "MRI** of lumbar spine" and
+    "What is *prior auth*" as "What is *prior auth".
     """
-    Check if the pool of READY tasks is below threshold and trigger generation if needed.
+    value = value.strip()
+    opening = _OPENING_EMPHASIS_RE.match(value)
+    if opening and value[opening.end() :][:1].isspace():
+        value = value[opening.end() :].strip()
+    opening = _OPENING_EMPHASIS_RE.match(value)
+    if opening:
+        marker, closing = opening.group(0), opening.group(0)[::-1]
+        inner = value[len(marker) : len(value) - len(closing)]
+        if (
+            inner.strip()
+            and value.endswith(closing)
+            and marker not in inner
+            and closing not in inner
+        ):
+            return inner.strip()
+    trailing = _TRAILING_EMPHASIS_RE.search(value)
+    if trailing and trailing.group(1) not in value[: trailing.start()]:
+        value = value[: trailing.start()]
+    return value.strip()
 
-    This is the main entry point for the lazy auto-refill mechanism.
-    Uses a distributed lock to ensure only one instance runs at a time.
+
+def _split_label(raw: str) -> Optional[Tuple[str, str]]:
+    """``(label, value)`` for a "Label: value" line, else None.
+
+    List bullets, numbering and markdown emphasis around the label are
+    dropped, so "**Procedure:** MRI", "**Procedure**: MRI", "1. Procedure:
+    MRI" and "- Procedure: MRI" all read as ("Procedure", "MRI"). Models
+    decorate labels freely; the old parser required the bare form and
+    treated every other spelling as a missing field.
     """
-    from django.core.cache import cache
+    line = _LABEL_MARKUP_RE.sub("", raw.strip())
+    if ":" not in line:
+        return None
+    label, value = line.split(":", 1)
+    return label.strip().strip("*_` ").strip(), _strip_label_emphasis(value)
 
-    lock_key = "chooser_task_refill_lock"
-    lock_timeout = 5  # 5 seconds - non-blocking, quick return if already running
 
-    # Try to acquire the lock
-    lock_acquired = await database_sync_to_async(cache.add)(
-        lock_key, "locked", lock_timeout
+def _labeled_fields(text: str) -> dict:
+    """``{label: value}`` for every "Label: value" line of ``text``. Labels
+    are lower-cased with spaces as underscores; see _split_label for the
+    markdown that is dropped."""
+    fields: dict = {}
+    for raw in text.split("\n"):
+        split = _split_label(raw)
+        if split is None:
+            continue
+        key = split[0].lower().replace(" ", "_")
+        if key and split[1]:
+            fields[key] = split[1]
+    return fields
+
+
+def _parse_conversation(text: str):
+    """``(history, final_user_prompt)`` from a USER:/ASSISTANT: transcript.
+
+    Every turn goes into the history in order, and only a trailing user turn
+    comes back out, as the question the candidates answer (None when the
+    transcript ends with the assistant). A user turn used to be held back
+    whenever it followed an assistant turn, so in a transcript with two
+    answered follow-ups the middle question was dropped and two assistant
+    turns sat side by side. Labels may carry list or markdown decoration
+    ("**USER:**", "**User**:", see _split_label); continuation lines are kept
+    as written.
+    """
+    history: list = []
+    current_role = None
+    current_content: list = []
+
+    def flush():
+        content = " ".join(current_content).strip()
+        if current_role and content:
+            history.append({"role": current_role, "content": content})
+
+    for raw in text.strip().split("\n"):
+        split = _split_label(raw)
+        role = split[0].lower() if split else None
+        if split and role in ("user", "assistant"):
+            flush()
+            current_role = role
+            current_content = [split[1]]
+        elif current_role and raw.strip():
+            current_content.append(raw.strip())
+    flush()
+    if not history or history[-1]["role"] != "user":
+        return history, None
+    final_user_prompt = history.pop()["content"]
+    return history, final_user_prompt
+
+
+def _scenario_writers(models: List) -> List:
+    """The backends that write a task's synthetic scenario or conversation,
+    in the order they are asked.
+
+    The router's generation list starts with the cheapest internal backend,
+    which in production is the fhi-legacy appeal fine-tune. It does not
+    follow instructions (its own docstring: blank lines and stray digits), so
+    every scenario request either came back empty, which raised in the parser
+    and disabled the task before a single candidate existed, or came back as
+    text no field could be read from. These are the backends that say they
+    follow general instructions, up to ``CHOOSER_SCENARIO_WRITERS`` of them,
+    and a reply that can't be used goes to the next: with one writer, a
+    backend answering junk disabled every task while the backends behind it
+    were never asked. When none says it follows instructions, the first
+    backend writes, rather than none.
+    """
+    general = []
+    for model in models:
+        supports = getattr(model, "supports_general_instructions", None)
+        if supports is None or supports():
+            general.append(model)
+    if general:
+        return general[: max(1, CHOOSER_SCENARIO_WRITERS)]
+    logger.warning(
+        "Chooser: no general-purpose backend is registered; writing the "
+        f"scenario with {_model_display_name(models[0])}"
+    )
+    return models[:1]
+
+
+async def _ask_writer(writer, system_prompt: str, prompt: str) -> Optional[str]:
+    """``writer``'s reply, or None when it gave none. A writer that raised
+    gave none too, so the next writer is asked rather than the task failing."""
+    try:
+        reply = await writer._infer_no_context(
+            system_prompts=[system_prompt], prompt=prompt
+        )
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Chooser: {_model_display_name(writer)} raised instead of "
+            f"answering: {e}"
+        )
+        return None
+    return str(reply) if reply else None
+
+
+def _usable_question(question: Optional[str]) -> bool:
+    """Long enough to be a question, and short enough to be one message."""
+    return question is not None and 10 <= len(question) <= 1000
+
+
+async def _ask_for_single_question(model, prompt: str) -> Optional[str]:
+    """Up to ``CHOOSER_FALLBACK_ATTEMPTS`` calls; None when none answered.
+
+    The model call returns None on every way of not answering (transport
+    failure, cooldown, 429 back-off) rather than raising, so the retry has to
+    be bounded here: unbounded, it spun the refill thread forever against a
+    backend that was down.
+    """
+    for attempt in range(1, CHOOSER_FALLBACK_ATTEMPTS + 1):
+        answer = await _ask_writer(
+            model, "Generate a natural user question about health insurance.", prompt
+        )
+        if answer and answer.strip():
+            return answer
+        logger.info(
+            f"Chooser: {_model_display_name(model)} returned no question "
+            f"(attempt {attempt}/{CHOOSER_FALLBACK_ATTEMPTS})"
+        )
+    return None
+
+
+def _note_unusable_candidate(task: ChooserTask, model, kind: str, response) -> None:
+    """A backend answered with nothing usable. Logged, because the retry
+    sweep fills the slot with whichever backend does answer: without this a
+    task whose external backends both failed went READY with internal
+    candidates only and no trace of why."""
+    size = len(response.strip()) if isinstance(response, str) else 0
+    logger.info(
+        f"Chooser task {task.id}: {_model_display_name(model)} returned no "
+        f"usable {kind} candidate ({size} chars)"
     )
 
-    if not lock_acquired:
-        logger.debug("Another instance is already refilling chooser tasks, skipping")
-        return
 
+# Serialises refills within a process. A refill now awaits its whole batch,
+# so this is held for the batch's duration. The cache "lock" it replaces was
+# released the moment the batch had been handed to a background thread, and
+# was process-local anyway (Prod's cache is LocMemCache), so it never kept
+# two batches apart. Across processes the refill actor is one named Ray
+# actor, and its run loop is started once (see BaseActorRef.get).
+_refill_guard = threading.Lock()
+_refill_in_progress = False
+
+
+def _claim_refill() -> bool:
+    global _refill_in_progress
+    with _refill_guard:
+        if _refill_in_progress:
+            return False
+        _refill_in_progress = True
+        return True
+
+
+def _release_refill() -> None:
+    global _refill_in_progress
+    with _refill_guard:
+        _refill_in_progress = False
+
+
+async def check_and_refill_task_pool() -> bool:
+    """Generate a batch of tasks for every type whose pool needs one.
+
+    Three triggers, checked in order (see ``_refill_reason``): the READY pool
+    is short, fresh (unvoted) tasks are short, or an external backend the
+    chooser would compare today has no fresh tasks comparing it. The third is
+    what lets a newly configured provider into the pool: READY is monotonic
+    (nothing moves a task out of it), so without it a pool bootstrapped before
+    the provider existed never built a task for it.
+
+    Awaits the batch, so a second tick cannot start another batch while one
+    is still running; a tick that finds a refill in progress returns at once.
+
+    Returns False when types needed a batch and none of those batches
+    produced a READY task, else True. Generation errors are caught per task
+    and leave the task DISABLED, so a refill whose every model failed still
+    returns normally; the refill actor needs this to tell that from a pool
+    that is being refilled. One type failing while another refills is not a
+    failed refill: it used to count as one, so the actor was reported
+    unhealthy and replaced, which cannot fix a type whose backends are
+    failing, and could kill it mid-batch, leaving a QUEUED task that holds
+    page prefills off (see _generation_underway).
+    """
+    if not _claim_refill():
+        logger.debug("A chooser refill is already running in this process; skipping")
+        return True
     try:
+        needed = produced = 0
         for task_type in ["appeal", "chat"]:
-            ready_count = await _count_ready_tasks(task_type)
-            unscored_count = await _count_unscored_tasks(task_type)
-            # Back-fill when either the overall READY pool is low OR there are
-            # fewer than CHOOSER_MIN_UNSCORED_TASKS fresh (unscored) tasks left
-            # to collect votes on.
-            if (
-                ready_count < CHOOSER_MIN_READY_TASKS
-                or unscored_count < CHOOSER_MIN_UNSCORED_TASKS
-            ):
-                logger.info(
-                    f"Chooser {task_type} tasks below threshold "
-                    f"(ready={ready_count}/{CHOOSER_MIN_READY_TASKS}, "
-                    f"unscored={unscored_count}/{CHOOSER_MIN_UNSCORED_TASKS}). "
-                    f"Triggering generation of {CHOOSER_GENERATION_BATCH_SIZE} tasks."
+            reason = await _refill_reason(task_type)
+            if reason is None:
+                continue
+            needed += 1
+            logger.info(
+                f"Chooser {task_type} tasks need generating ({reason}). "
+                f"Generating {CHOOSER_GENERATION_BATCH_SIZE} tasks."
+            )
+            ready = await _generate_batch_tasks(
+                task_type, CHOOSER_GENERATION_BATCH_SIZE
+            )
+            if ready:
+                produced += 1
+            else:
+                logger.warning(
+                    f"Chooser {task_type} refill ({reason}) produced no usable task"
                 )
-                # Fire and forget the generation tasks
-                await fire_and_forget_in_new_threadpool(
-                    _generate_batch_tasks(task_type, CHOOSER_GENERATION_BATCH_SIZE)
-                )
+        return needed == 0 or produced > 0
     finally:
-        # Release the lock
-        await database_sync_to_async(cache.delete)(lock_key)
+        _release_refill()
+
+
+async def _refill_reason(task_type: str) -> Optional[str]:
+    """Why ``task_type`` needs a batch, or None when the pool is healthy."""
+    ready_count = await _count_ready_tasks(task_type)
+    if ready_count < CHOOSER_MIN_READY_TASKS:
+        return f"ready={ready_count}/{CHOOSER_MIN_READY_TASKS}"
+    unscored_count = await _count_unscored_tasks(task_type)
+    if unscored_count < CHOOSER_MIN_UNSCORED_TASKS:
+        return f"unscored={unscored_count}/{CHOOSER_MIN_UNSCORED_TASKS}"
+    # Coverage refills are capped: a backend that never returns a usable
+    # candidate would otherwise justify a batch every tick, forever.
+    if unscored_count >= CHOOSER_MAX_UNSCORED_TASKS:
+        return None
+    uncovered = await _external_backends_without_fresh_tasks(task_type)
+    if uncovered:
+        return f"no fresh tasks compare {sorted(uncovered)}"
+    return None
+
+
+def _comparable_backends(task_type: str) -> List:
+    """The backends candidate generation draws from for ``task_type``."""
+    if task_type == "appeal":
+        return cast(List, ml_router.generate_text_backends(use_external=True))
+    return cast(List, ml_router.get_chat_backends(use_external=True))
+
+
+def _fresh_tasks(task_type: str) -> "QuerySet[ChooserTask]":
+    """READY synthetic tasks of ``task_type`` with no vote yet: the fresh
+    ("unscored") tasks, the ones still able to gather new preference data."""
+    from django.db.models import Count
+
+    return (
+        ChooserTask.objects.filter(
+            task_type=task_type, status="READY", source="synthetic"
+        )
+        .annotate(vote_count=Count("votes"))
+        .filter(vote_count=0)
+    )
+
+
+async def _fresh_task_coverage(task_type: str) -> dict:
+    """How many fresh tasks of ``task_type`` hold a candidate from each
+    backend, keyed by the persisted model name."""
+    from django.db.models import Count
+
+    fresh_ids = _fresh_tasks(task_type).values("id")
+    coverage: dict = {}
+    # .order_by() clears the Meta ordering, which would otherwise leak into
+    # the GROUP BY.
+    async for row in (
+        ChooserCandidate.objects.filter(task_id__in=fresh_ids, is_active=True)
+        .order_by()
+        .values("model_name")
+        .annotate(tasks=Count("task", distinct=True))
+    ):
+        coverage[row["model_name"]] = row["tasks"]
+    return coverage
+
+
+async def _external_backends_without_fresh_tasks(task_type: str) -> set:
+    """External backends the chooser would compare today that fewer than
+    ``CHOOSER_MIN_UNSCORED_TASKS`` fresh tasks actually compare.
+
+    Externals only: the internal backends fill their candidate slots on every
+    task, while the externals rotate through theirs, and comparing providers
+    is what the chooser is for.
+    """
+    try:
+        backends = _comparable_backends(task_type)
+    except Exception as e:
+        logger.warning(f"Chooser: could not list backends for {task_type}: {e}")
+        return set()
+    # Named the way candidates are stored, or the lookup below could miss.
+    external = {
+        canonical_model_name(m) for m in backends if getattr(m, "external", False)
+    }
+    if not external:
+        return set()
+    coverage = await _fresh_task_coverage(task_type)
+    return {
+        name for name in external if coverage.get(name, 0) < CHOOSER_MIN_UNSCORED_TASKS
+    }
 
 
 async def _count_ready_tasks(task_type: str) -> int:
@@ -154,35 +485,28 @@ async def _count_unscored_tasks(task_type: str) -> int:
     track unscored tasks separately from the overall READY pool.
     """
 
-    from django.db.models import Count
-
-    return cast(
-        int,
-        await database_sync_to_async(
-            ChooserTask.objects.filter(
-                task_type=task_type, status="READY", source="synthetic"
-            )
-            .annotate(vote_count=Count("votes"))
-            .filter(vote_count=0)
-            .count
-        )(),
-    )
+    return await _fresh_tasks(task_type).acount()
 
 
-async def _generate_batch_tasks(task_type: str, batch_size: int):
-    """Generate a batch of chooser tasks with candidates."""
+async def _generate_batch_tasks(task_type: str, batch_size: int) -> int:
+    """Generate a batch of chooser tasks with candidates; returns how many
+    came out READY."""
+    ready = 0
     for _ in range(batch_size):
         try:
-            await _generate_single_task(task_type)
+            if await _generate_single_task(task_type):
+                ready += 1
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error generating chooser task of type {task_type}: {e}"
             )
+    return ready
 
 
-async def _generate_single_task(task_type: str):
+async def _generate_single_task(task_type: str) -> bool:
     """
-    Generate a single ChooserTask with candidates.
+    Generate a single ChooserTask with candidates; returns whether it came
+    out READY.
 
     For appeals: generates multiple synthetic appeal letters for a sample context
     For chat: generates multiple synthetic chat responses for a sample prompt
@@ -212,6 +536,7 @@ async def _generate_single_task(task_type: str):
             logger.info(
                 f"ChooserTask {task.id} is now READY with {task.num_candidates_generated} candidates"
             )
+            return True
         else:
             task.status = "DISABLED"
             await database_sync_to_async(task.save)()
@@ -225,6 +550,7 @@ async def _generate_single_task(task_type: str):
         )
         task.status = "DISABLED"
         await database_sync_to_async(task.save)()
+    return False
 
 
 async def _generate_appeal_candidates(task: ChooserTask):
@@ -240,8 +566,9 @@ async def _generate_appeal_candidates(task: ChooserTask):
         await database_sync_to_async(task.save)()
         return
 
-    # Use first model to generate synthetic denial scenario
-    scenario_model = generation_models[0]
+    # The scenario writers must follow instructions; the cheapest internal
+    # backend (fhi-legacy) does not. See _scenario_writers.
+    writers = _scenario_writers(generation_models)
     try:
         scenario_prompt = (
             "We are building a system to help patients appeal health insurance denials. "
@@ -254,54 +581,47 @@ async def _generate_appeal_candidates(task: ChooserTask):
             "Denial Reason: [a 1-2 sentence realistic denial reason, such as 'not medically necessary', 'experimental treatment', 'out of network', etc.]\n\n"
             "Be creative and varied. Use real medical terminology for procedures and diagnoses."
         )
-
-        scenario_response = await scenario_model._infer_no_context(
-            system_prompts=[
-                "You are a system that generates realistic but fictional health insurance scenarios. "
-                "These are used to improve model selection for a health insurance appeal assistance service. "
-                "Generate varied, realistic scenarios using real medical terminology."
-            ],
-            prompt=scenario_prompt,
+        scenario_system_prompt = (
+            "You are a system that generates realistic but fictional health insurance scenarios. "
+            "These are used to improve model selection for a health insurance appeal assistance service. "
+            "Generate varied, realistic scenarios using real medical terminology."
         )
 
-        # Parse the response to extract fields
-        context = {}
-        for line in scenario_response.split("\n"):
-            if ":" in line:
-                key, value = line.split(":", 1)
-                key = key.strip().lower().replace(" ", "_")
-                value = value.strip()
-                if key == "procedure":
-                    context["procedure"] = value
-                elif key == "diagnosis":
-                    context["diagnosis"] = value
-                elif key == "insurance_company":
-                    context["insurance_company"] = value
-                elif key == "denial_reason":
-                    context["denial_text_preview"] = value
-
-        # Ensure all required fields are present
-        if not all(
-            k in context
-            for k in [
-                "procedure",
-                "diagnosis",
-                "insurance_company",
-                "denial_text_preview",
-            ]
-        ):
-            # If parsing failed, try a simpler extraction or log warning
+        context = None
+        for writer in writers:
+            # A backend that did not answer returns None rather than raising;
+            # the parser reads it as "no fields" and the next writer is asked.
+            scenario_response = await _ask_writer(
+                writer, scenario_system_prompt, scenario_prompt
+            )
+            fields = _labeled_fields(scenario_response or "")
+            written = {
+                "procedure": fields.get("procedure"),
+                "diagnosis": fields.get("diagnosis"),
+                "insurance_company": fields.get("insurance_company"),
+                "denial_text_preview": fields.get("denial_reason"),
+            }
+            missing = [k for k, v in written.items() if not v]
+            if not missing:
+                context = written
+                break
+            preview = (scenario_response or "")[:200]
             logger.warning(
-                f"Could not parse all fields from scenario response: {scenario_response[:200]}"
+                f"ChooserTask {task.id}: scenario from "
+                f"{_model_display_name(writer)} is missing {missing}. "
+                f"Response started: {preview!r}"
             )
-            # Try to use whatever we got, filling in missing fields
-            context.setdefault("procedure", "Medical procedure")
-            context.setdefault("diagnosis", "Medical condition")
-            context.setdefault("insurance_company", "Insurance Company")
-            context.setdefault(
-                "denial_text_preview",
-                scenario_response[:200] if scenario_response else "Claim denied.",
+        if context is None:
+            # No placeholders: a task about "Medical procedure" for "Medical
+            # condition" measures nothing, and it used to go READY and reach
+            # voters. Disable it; the next batch tries again.
+            logger.warning(
+                f"ChooserTask {task.id}: no complete scenario from "
+                f"{len(writers)} writer(s); disabling the task"
             )
+            task.status = "DISABLED"
+            await task.asave()
+            return
 
         task.context_json = context
         await database_sync_to_async(task.save)()
@@ -359,6 +679,8 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 produced.add(id(model))
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
+            else:
+                _note_unusable_candidate(task, model, "appeal", response)
         except Exception as e:
             logger.warning(f"Error generating appeal candidate with model {model}: {e}")
 
@@ -391,6 +713,8 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     produced.add(id(model))
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
+                else:
+                    _note_unusable_candidate(task, model, "appeal", response)
             except Exception as e:
                 logger.warning(
                     f"Error generating appeal candidate (retry) with model {model}: {e}"
@@ -419,8 +743,9 @@ async def _generate_chat_candidates(task: ChooserTask):
         await database_sync_to_async(task.save)()
         return
 
-    # Use first model to generate synthetic conversation
-    prompt_model = generation_models[0]
+    # The conversation writers must follow instructions; the cheapest
+    # internal backend (fhi-legacy) does not. See _scenario_writers.
+    writers = _scenario_writers(generation_models)
     try:
         # Generate a multi-turn conversation scenario
         conversation_prompt = (
@@ -440,69 +765,36 @@ async def _generate_chat_candidates(task: ChooserTask):
             "Make the conversation natural and include specific details (procedures, conditions, timeframes, etc.)."
         )
 
-        conversation_response = await prompt_model._infer_no_context(
-            system_prompts=[
-                "You are a system that generates realistic chat conversations about health insurance, "
-                "Medicare, Medicaid, and prior authorizations for improving model selection. "
-                "Generate varied, natural-sounding conversations."
-            ],
-            prompt=conversation_prompt,
+        conversation_system_prompt = (
+            "You are a system that generates realistic chat conversations about health insurance, "
+            "Medicare, Medicaid, and prior authorizations for improving model selection. "
+            "Generate varied, natural-sounding conversations."
         )
 
-        # Parse the conversation into history and final prompt
-        history = []
-        final_user_prompt = None
-
-        lines = conversation_response.strip().split("\n")
-        current_role = None
-        current_content = []
-
-        for line in lines:
-            line = line.strip()
-            if line.upper().startswith("USER:"):
-                # Save previous message if exists
-                if current_role and current_content:
-                    content = " ".join(current_content).strip()
-                    if current_role == "user" and content:
-                        # This might be the final user message or part of history
-                        if history and history[-1].get("role") == "assistant":
-                            final_user_prompt = content
-                        else:
-                            history.append({"role": "user", "content": content})
-                    elif current_role == "assistant" and content:
-                        history.append({"role": "assistant", "content": content})
-                        final_user_prompt = (
-                            None  # Reset since we got an assistant response
-                        )
-
-                current_role = "user"
-                current_content = [line[5:].strip()]  # Remove "USER:" prefix
-            elif line.upper().startswith("ASSISTANT:"):
-                # Save previous user message
-                if current_role == "user" and current_content:
-                    content = " ".join(current_content).strip()
-                    if content:
-                        history.append({"role": "user", "content": content})
-
-                current_role = "assistant"
-                current_content = [line[10:].strip()]  # Remove "ASSISTANT:" prefix
-            elif current_role and line:
-                current_content.append(line)
-
-        # Handle the last message
-        if current_role and current_content:
-            content = " ".join(current_content).strip()
-            if current_role == "user" and content:
-                final_user_prompt = content
-            elif current_role == "assistant" and content:
-                history.append({"role": "assistant", "content": content})
-
-        # Validate we have a usable conversation
-        if not final_user_prompt or len(final_user_prompt) < 10:
-            # Fallback: try generating a simple single question
-            logger.warning(
-                "Could not parse conversation, falling back to single question"
+        # Every writer is asked for a conversation before any is asked for a
+        # single question: a conversation from the next writer beats a
+        # question from one that could not write one.
+        history: list = []
+        final_user_prompt: Optional[str] = None
+        for writer in writers:
+            # A backend that did not answer returns None rather than raising.
+            conversation_response = await _ask_writer(
+                writer, conversation_system_prompt, conversation_prompt
             )
+            history, final_user_prompt = _parse_conversation(
+                conversation_response or ""
+            )
+            if _usable_question(final_user_prompt):
+                break
+            logger.warning(
+                f"ChooserTask {task.id}: could not parse a conversation from "
+                f"{_model_display_name(writer)}"
+            )
+            final_user_prompt = None
+
+        if final_user_prompt is None:
+            # Fallback: try generating a simple single question
+            history = []
             simple_prompt = (
                 "Generate a realistic 1-2 sentence question someone might ask about one of:\n"
                 "- Appealing a health insurance denial\n"
@@ -510,24 +802,21 @@ async def _generate_chat_candidates(task: ChooserTask):
                 "- Medicare or Medicaid eligibility\n"
                 "Just the question, nothing else."
             )
-            final_user_prompt = None
-            while not final_user_prompt:
-                final_user_prompt = await prompt_model._infer_no_context(
-                    system_prompts=[
-                        "Generate a natural user question about health insurance."
-                    ],
-                    prompt=simple_prompt,
+            for writer in writers:
+                question = await _ask_for_single_question(writer, simple_prompt)
+                if question:
+                    question = question.strip().strip('"').strip("'").strip()
+                if _usable_question(question):
+                    final_user_prompt = question
+                    break
+            if final_user_prompt is None:
+                logger.warning(
+                    f"ChooserTask {task.id}: no usable conversation or question "
+                    f"from {len(writers)} writer(s); disabling the task"
                 )
-            if final_user_prompt:
-                final_user_prompt = (
-                    final_user_prompt.strip().strip('"').strip("'").strip()
-                )
-            history = []
-
-        if len(final_user_prompt) < 10 or len(final_user_prompt) > 1000:
-            task.status = "DISABLED"
-            await database_sync_to_async(task.save)()
-            return
+                task.status = "DISABLED"
+                await task.asave()
+                return
 
         task.context_json = {
             "prompt": final_user_prompt,
@@ -592,6 +881,8 @@ async def _generate_chat_candidates(task: ChooserTask):
                 produced.add(id(model))
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
+            else:
+                _note_unusable_candidate(task, model, "chat", response)
         except Exception as e:
             logger.warning(f"Error generating chat candidate with model {model}: {e}")
 
@@ -627,6 +918,8 @@ async def _generate_chat_candidates(task: ChooserTask):
                     produced.add(id(model))
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
+                else:
+                    _note_unusable_candidate(task, model, "chat", response)
             except Exception as e:
                 logger.warning(
                     f"Error generating chat candidate (retry) with model {model}: {e}"
@@ -736,6 +1029,9 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             metadata={"source": "synthetic", "synthesized": True},
         )
         task.num_candidates_generated = next_index + 1
+        # The synthesized draft is one more than the base slots: raise the
+        # expectation with it, or every synthesized task reads as one over.
+        task.num_candidates_expected = max(task.num_candidates_expected, next_index + 1)
         await database_sync_to_async(task.save)()
         logger.info(
             f"Added synthesized {kind} candidate to task {task.id} "
@@ -821,40 +1117,90 @@ async def _synthesize_chat_candidate(
     return None
 
 
-async def prefill_if_needed(min_ready: int = 1):
+async def prefill_if_needed(min_ready: int = 1, exhausted: Optional[str] = None):
     """
     Check if there are enough READY tasks and trigger generation if not.
     This is a lightweight check intended to be called on page load.
 
     Args:
         min_ready: Minimum number of ready tasks required for each type.
+        exhausted: A task type some session has already answered every READY
+            task of. The pool is not short, so the count alone would never
+            generate one, and that session would see "No tasks available"
+            until the refill actor next ran.
     """
 
     for task_type in ["appeal", "chat"]:
         ready_count = await _count_ready_tasks(task_type)
         if ready_count < min_ready:
-            logger.info(
-                f"Chooser {task_type} tasks below minimum ({ready_count} < {min_ready}). "
-                f"Triggering generation of 1 task."
+            reason = f"below minimum ({ready_count} < {min_ready})"
+        elif task_type == exhausted:
+            reason = f"all {ready_count} used up by a session"
+        else:
+            continue
+        if await _generation_underway(task_type):
+            logger.debug(
+                f"Chooser {task_type} tasks {reason}, but one is already "
+                "being generated; not starting another"
             )
-            # Fire and forget - don't wait for completion
-            await fire_and_forget_in_new_threadpool(_generate_single_task(task_type))
+            continue
+        logger.info(
+            f"Chooser {task_type} tasks {reason}. Triggering generation of 1 task."
+        )
+        # Fire and forget - don't wait for completion
+        await fire_and_forget_in_new_threadpool(_generate_single_task(task_type))
 
 
-def trigger_prefill_async():
+async def _generation_underway(task_type: str) -> bool:
+    """Whether a ``task_type`` task is being generated now, in any process.
+
+    The prefill throttle lives in the cache, which is per process
+    (LocMemCache), so every web worker could start its own generation while
+    the pool was empty, each one paying for a round of external calls. Every
+    generation creates its task QUEUED first and settles it READY or DISABLED
+    when done, so a recent QUEUED row is a sign every worker, and the refill
+    actor's batches, can see. It is a check, not a lock: two workers checking
+    in the same instant can both start one, but no longer every worker.
+    """
+    since = timezone.now() - datetime.timedelta(
+        seconds=CHOOSER_GENERATION_CLAIM_SECONDS
+    )
+    return await ChooserTask.objects.filter(
+        task_type=task_type, status="QUEUED", created_at__gte=since
+    ).aexists()
+
+
+def trigger_prefill_async(exhausted: Optional[str] = None) -> bool:
     """
     Trigger async pre-fill of chooser tasks.
     Safe to call from sync context - fires and forgets in a background thread.
-    """
-    import threading
 
-    min_ready = 1
+    Throttled to one prefill per process per CHOOSER_PREFILL_THROTTLE_SECONDS:
+    every chooser page load and every empty next-task fetch asks, and each
+    prefill is a full task generation. A prefill for a type a session has
+    used up (``exhausted``, see prefill_if_needed) has its own window, so a
+    page load just before cannot hold it off. Across processes, a prefill
+    skips a type that is already being generated (see _generation_underway).
+    Returns whether a prefill was started.
+    """
+    from django.core.cache import cache
+
+    throttle_key = "chooser_prefill_recently_triggered"
+    if exhausted:
+        throttle_key += f":{exhausted}"
+    try:
+        if not cache.add(throttle_key, 1, CHOOSER_PREFILL_THROTTLE_SECONDS):
+            logger.debug("Chooser prefill requested again within the throttle window")
+            return False
+    except Exception as e:
+        # A cache that cannot answer must not stop the prefill.
+        logger.debug(f"Chooser prefill throttle unavailable: {e}")
 
     def run_prefill():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(prefill_if_needed(min_ready=1))
+            loop.run_until_complete(prefill_if_needed(min_ready=1, exhausted=exhausted))
         except Exception as e:
             logger.opt(exception=True).warning(f"Error in prefill task: {e}")
         finally:
@@ -863,6 +1209,7 @@ def trigger_prefill_async():
     thread = threading.Thread(target=run_prefill)
     thread.daemon = True
     thread.start()
+    return True
 
 
 # Utility function to manually trigger task generation (for testing/admin purposes)

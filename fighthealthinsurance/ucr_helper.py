@@ -98,11 +98,20 @@ def dispatch_ucr_refresh(denial_id: int) -> None:
 
     if ray_cluster_available():
         try:
+            import ray
+
             from fighthealthinsurance.ucr_refresh_actor_ref import (
                 ucr_refresh_actor_ref,
             )
 
-            actor, _task = ucr_refresh_actor_ref.get  # type: ignore[misc]
+            try:
+                # Attach by name. ``ucr_refresh_actor_ref.get`` health-checks
+                # a running actor (up to 10s) and can kill and replace it (up
+                # to 30s more): the launcher's call, not one a request should
+                # wait on or make. It is still what starts a missing actor.
+                actor = ray.get_actor(ucr_refresh_actor_ref.actor_name, namespace="fhi")
+            except ValueError:
+                actor, _task = ucr_refresh_actor_ref.get  # type: ignore[misc]
             actor.refresh_denial.remote(denial_id)
             return
         except Exception:

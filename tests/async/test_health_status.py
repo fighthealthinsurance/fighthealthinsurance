@@ -56,6 +56,18 @@ class _SlowInternalGood:
         return True
 
 
+class _ContextOnlyGood:
+    """A citations backend: in the router's context-only pool, never in a
+    generation pool."""
+
+    model = "sonar"
+    external = True
+    context_only = True
+
+    def model_is_ok(self):
+        return True
+
+
 class TestHealthStatus(TestCase):
     """Tests for cached model health endpoint behavior."""
 
@@ -64,6 +76,64 @@ class TestHealthStatus(TestCase):
         # timestamp leaks across tests. Reset it so each test sees a
         # clean "no email sent yet" state.
         health_status._last_alert_sent_at = None
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_context_only_backends_are_swept_too(self, fake_router):
+        """They are in no generation pool, so nothing checked them between
+        deploys and model_ok answered None for them forever."""
+        citations = _ContextOnlyGood()
+        fake_router.all_models_by_cost = [_InternalGood()]
+        fake_router.context_only_models_by_cost = [citations]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        assert health_status.model_ok(citations) is True
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_a_context_only_backend_never_counts_as_alive(self, fake_router):
+        """alive_models tells the public status widget a model is ready to
+        write an appeal. A citations backend can't write one, so with every
+        generation backend down the count is zero even while it is healthy."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        fake_router.context_only_models_by_cost = [_ContextOnlyGood()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        assert health_status.get_snapshot()["alive_models"] == 0
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_details_list_failing_externals_and_no_internal_failures(
+        self, fake_router
+    ):
+        """The public snapshot names failing external providers, timed out or
+        not; internal failures stay out of it (their names are internal wire
+        paths) and drive the alert instead."""
+        fake_router.all_models_by_cost = [
+            _InternalBad(),
+            _ExternalBad(),
+            _ExternalGood(),
+        ]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+        details = health_status.get_snapshot()["details"]
+
+        assert [d["name"] for d in details] == ["external-bad"]
+        assert details[0]["ok"] is False
+
+    def test_a_failing_sweep_still_arms_the_next_one(self):
+        """An exception in the sweep used to end the timer chain for the life
+        of the process, freezing the cached map every routing decision reads."""
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        with mock.patch.object(
+            _HealthStatus, "_refresh_unlocked", side_effect=RuntimeError("boom")
+        ), mock.patch.object(_HealthStatus, "_schedule_refresh") as rearm:
+            _HealthStatus._refresh(health_status)
+
+        rearm.assert_called_once()
 
     def test_snapshot_shape(self):
         print("Getting router...")

@@ -19,7 +19,7 @@ from llm_result_utils.cleaner_utils import CleanerUtils
 
 # Importing ml_models installs the bounded is_valid_url override on
 # CleanerUtils (see _bounded_is_valid_url).
-from fighthealthinsurance.ml.ml_models import RemoteHealthInsurance
+from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteHealthInsurance
 
 _ENV_VARS = [
     "HEALTH_BACKEND_HOST",
@@ -124,3 +124,85 @@ class TestModelIsOkProbesEffectiveBase:
         ) as mock_get:
             assert m.model_is_ok() is True
         assert mock_get.call_args.args[0] == "http://backup.internal:80/v1/models"
+
+
+class TestModelIsOkFallsBackToTheBackup:
+    """Inference falls back to the backup when the primary fails, and the
+    router drops a backend the health sweep marks down. Probing the primary
+    alone took a backend whose backup was still answering out of appeals."""
+
+    PRIMARY = "http://primary.internal/v1"
+    BACKUP = "http://backup.internal/v1"
+
+    def _model(self):
+        return RemoteFullOpenLike(
+            self.PRIMARY, "tok", "m", backup_api_base=self.BACKUP
+        )
+
+    @staticmethod
+    def _serving(model_id):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"data": [{"id": model_id}]}
+        return resp
+
+    def _probe(self, answers):
+        """model_is_ok() with each /models URL answered from ``answers``
+        (an exception is raised); the result and the requests.get calls."""
+
+        def get(url, **kwargs):
+            answer = answers[url]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        with patch(
+            "fighthealthinsurance.ml.ml_models.requests.get", side_effect=get
+        ) as mock_get:
+            ok = self._model().model_is_ok()
+        return ok, mock_get.call_args_list
+
+    def _down_primary(self):
+        import requests
+
+        return self._probe(
+            {
+                f"{self.PRIMARY}/models": requests.Timeout("read timed out"),
+                f"{self.BACKUP}/models": self._serving("m"),
+            }
+        )
+
+    def test_a_down_primary_with_a_serving_backup_is_ok(self):
+        ok, _ = self._down_primary()
+        assert ok is True
+
+    def test_a_hung_primary_leaves_the_backup_time_before_the_sweep_gives_up(self):
+        """The sweep waits 10s for a backend and the staff status page 8s. A
+        primary given all of that on its own would time out with the backup
+        never asked. requests times the connect and the read separately, so
+        both count."""
+        _, calls = self._down_primary()
+        assert sum(sum(c.kwargs["timeout"]) for c in calls) < 8
+
+    def test_a_lone_endpoint_gives_most_of_its_time_to_the_read(self):
+        """A host that is up connects in milliseconds; a provider's long
+        /models list is the slow part."""
+        with patch(
+            "fighthealthinsurance.ml.ml_models.requests.get",
+            return_value=self._serving("m"),
+        ) as mock_get:
+            RemoteFullOpenLike(self.PRIMARY, "tok", "m").model_is_ok()
+        connect, read = mock_get.call_args.kwargs["timeout"]
+        assert read > connect
+
+    def test_a_serving_primary_is_ok_without_probing_the_backup(self):
+        _, calls = self._probe({f"{self.PRIMARY}/models": self._serving("m")})
+        assert [c.args[0] for c in calls] == [f"{self.PRIMARY}/models"]
+
+    def test_neither_endpoint_serving_the_model_is_not_ok(self):
+        ok, _ = self._probe(
+            {
+                f"{self.PRIMARY}/models": self._serving("other"),
+                f"{self.BACKUP}/models": self._serving("other"),
+            }
+        )
+        assert ok is False

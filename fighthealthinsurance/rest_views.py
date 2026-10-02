@@ -2539,33 +2539,24 @@ class ChooserViewSet(viewsets.ViewSet):
         task = available_tasks.first()
 
         if not task:
-            # Generate a single task synchronously (blocking) since nothing is available
-            from asgiref.sync import async_to_sync
-
-            from fighthealthinsurance.chooser_tasks import _generate_single_task
+            # Nothing for this session. Generation used to run right here,
+            # synchronously, on an anonymous and unthrottled endpoint: one
+            # scenario call plus up to a dozen candidate calls, two of them to
+            # paid providers, holding a worker for minutes, on demand. Hand
+            # the pool to the throttled background prefill instead and tell
+            # the client to come back; the refill actor tops the pool up too.
+            # The pool may not be short at all, only used up by this session,
+            # so say which type ran out.
+            from fighthealthinsurance.chooser_tasks import trigger_prefill_async
 
             try:
-                # Generate one task immediately for this request (blocking call)
-                async_to_sync(_generate_single_task)(task_type)
+                trigger_prefill_async(exhausted=task_type)
             except Exception as e:
-                logger.warning(f"Failed to generate task on demand: {e}")
-                return Response(
-                    {"message": "No tasks available", "task_type": task_type},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-
-            # Try to get the task again
-            task = (
-                ChooserTask.objects.filter(task_type=task_type, status="READY")
-                .exclude(id__in=excluded_task_ids)
-                .first()
+                logger.warning(f"Could not trigger chooser prefill: {e}")
+            return Response(
+                {"message": "No tasks available", "task_type": task_type},
+                status=status.HTTP_404_NOT_FOUND,
             )
-
-            if not task:
-                return Response(
-                    {"message": "No tasks available", "task_type": task_type},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
 
         # Get candidates for this task
         candidates = ChooserCandidate.objects.filter(
@@ -2596,7 +2587,6 @@ class ChooserViewSet(viewsets.ViewSet):
             }
             for c in candidates
         ]
-
         # Served in random order, so the voter is blind to model class: the
         # stored order (internal model first, synthesized last) is otherwise
         # perfectly correlated with the position on the page, and a vote for
@@ -2706,6 +2696,24 @@ class ChooserViewSet(viewsets.ViewSet):
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Chosen candidate was not in the presented candidates"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Every presented id must be one of this task's active candidates,
+        # the only ones the next-task endpoint serves: the usage dashboard
+        # counts each as a presentation of its model, so an id from another
+        # task, or a candidate taken out of rotation, could deflate that
+        # model's win rate at will.
+        task_candidate_ids = set(
+            ChooserCandidate.objects.filter(task=task, is_active=True).values_list(
+                "id", flat=True
+            )
+        )
+        if any(cid not in task_candidate_ids for cid in presented_candidate_ids):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "Presented candidates do not all belong to this task"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
