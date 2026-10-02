@@ -1995,7 +1995,7 @@ section:not(.slider) .share-subcopy {
    table cell or checkbox label (the consent links) inside the page content, but not one styled as a button, a
    card or navigation. :where() keeps it at zero-class specificity, so any
    component rule that sets its own decoration still wins. */
-main :where(p, li, dd, td, .form-check-label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
+main :where(p, li, dd, td, .form-check-label, .fhi-check-row label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
     text-decoration: underline;
     text-underline-offset: 0.15em;
     text-decoration-thickness: from-font;
@@ -3646,6 +3646,8 @@ textarea,
 }
 .fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
 .fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
+/* Something went wrong with what the reader sent: dark red on pale red, 7.1:1. */
+.fhi-notice-danger { color: #842029; background-color: #f8d7da; border-color: #f5c2c7; }
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
 .fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
@@ -3690,4 +3692,31 @@ textarea,
 .fhi-note { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
 .fhi-text-info { color: #087990; }
+
+/* ---- Forms: a field's group, its label, a tick box's row, the buttons ------
+   The field and tick box themselves are .fhi-field and .fhi-check, near the
+   top of this file. These arrange them. */
+.fhi-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+}
+.fhi-field-group > * { margin-block: 0; }
+.fhi-label { font-weight: 700; }
+/* A tick box, its label beside it, and any note under the label in the
+   same column as the label's text. */
+.fhi-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--fhi-space-2);
+    row-gap: var(--fhi-space-1);
+    align-items: baseline;
+}
+.fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
+.fhi-check-row > * { margin: 0; }
+/* A form's buttons, each the full width of the form. */
+.fhi-actions {
+    display: grid;
+    gap: var(--fhi-space-2);
+}
 .fhi-text-success { color: var(--fhi-green-ink); }

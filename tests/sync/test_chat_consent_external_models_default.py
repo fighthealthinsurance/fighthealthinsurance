@@ -12,7 +12,7 @@ from fighthealthinsurance.chat_forms import UserConsentForm
 
 CHECKED_CHECKBOX = (
     '<input type="checkbox" name="use_external_models" '
-    'class="form-check-input" id="use_external_models" checked>'
+    'class="fhi-check" id="use_external_models" checked>'
 )
 
 
