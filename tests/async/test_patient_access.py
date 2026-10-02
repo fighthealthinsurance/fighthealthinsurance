@@ -203,7 +203,7 @@ class PatientAccessLinksTest(TestCase):
         self.assertContains(response, "mailto:support42@fighthealthinsurance.com")
 
 
-PROFESSIONAL_MENU = '<summary class="nav-link">Professional</summary>'
+PROFESSIONAL_MENU = '<summary class="fhi-nav-link">Professional</summary>'
 
 
 class PatientAccessNavigationTest(TestCase):

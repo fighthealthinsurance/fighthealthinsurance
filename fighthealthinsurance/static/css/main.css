@@ -229,12 +229,6 @@ a:focus {
     text-align: center;
 }
 
-.border-top {
-    border-top: 1px solid #f2f2f2;
-    margin-top: 4em;
-    padding-top: 2.5em;
-}
-
 .news-thumb {
     background: #ffffff;
     border-radius: 10px;
@@ -381,9 +375,6 @@ a:focus {
     margin: 0;
 }
 
-.slider .container {
-    width: 100%;
-}
 
 /* The caption fills its band, however tall the band's floor makes it, and
    centres the copy in it both ways. Bootstrap's row used to stretch the
@@ -744,9 +735,26 @@ a:focus {
      FOOTER
   -----------------------------------------*/
 
+/* 12px in from the window's sides, as the header is, so the .fhi-shell
+   column inside each comes out the same width and the footer lines up
+   under the header's row. On a phone the footer's column is the screen. */
 footer {
     padding-top: var(--fhi-space-11);
     padding-bottom: var(--fhi-space-8);
+    padding-inline: var(--fhi-space-3);
+}
+
+@media (max-width: 575px) {
+    footer {
+        padding-inline: 0;
+    }
+}
+
+/* A hairline across the footer's column, with the links and icons under it. */
+footer > .fhi-shell {
+    border-top: 1px solid var(--fhi-line);
+    margin-top: var(--fhi-space-10);
+    padding-top: var(--fhi-space-8);
 }
 
 footer h4 {
@@ -932,10 +940,6 @@ footer a:hover {
 
     .footer-thumb {
 	padding-bottom: var(--fhi-space-3);
-    }
-
-    .border-top {
-	text-align: center;
     }
 
     .copyright-text {

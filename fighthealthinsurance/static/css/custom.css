@@ -847,8 +847,12 @@ li > a.link {
         transition: none;
     }
 }
+/* The header's mark, 75px at every width. height: auto keeps it square:
+   the img carries width="150" height="150" so the browser can reserve its
+   box before the file arrives, and without this the 150 would stand. */
 .logo {
     width: 75px;
+    height: auto;
 }
 
 /* Hero improvements */
@@ -1358,14 +1362,6 @@ li > a.link {
     height: 5px;
 }
 
-.img-fluid.img-thumbnail {
-    max-width: 200px;
-    margin: auto;
-    border: none;
-    height: auto;
-    padding: 5px;
-}
-
 /* The social icons under a photo on About Us. */
 .img-logo {
     max-width: 25px;
@@ -1373,15 +1369,6 @@ li > a.link {
     border: none;
     height: auto;
     padding: 5px;
-}
-
-.row.align-items-center {
-    box-shadow: rgba(0, 0, 0, 0.1) 0px 10px 50px;
-}
-
-.row {
-    display: flex;
-    flex-wrap: wrap;
 }
 
 #id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
@@ -1481,9 +1468,13 @@ li > a.link {
     margin-bottom: 2.5rem;
     color: #333;
 }
+/* 16rem rather than 280px: the band sits on the wide column now, a little
+   narrower than Bootstrap's container was, and at 280px the three cards
+   split two and one on a 1024px screen. At 16rem they share a row from
+   about 980px wide, where they did before. */
 .testimonials-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
     gap: 1.5rem;
     max-width: 1200px;
     margin: 0 auto;
@@ -1665,10 +1656,9 @@ li > a.link {
 }
 
 /* Share panel on non-hero pages (with colored backgrounds). A page on the
-   reading column (.fhi-page) has neither a container nor a section around
-   the panel, so the column is named too; without it the thank-you pages
-   drew the hero's white words on the white page. */
-.container .share-panel,
+   reading column (.fhi-page) has no section around the panel, so the
+   column is named too; without it the thank-you pages drew the hero's
+   white words on the white page. */
 section:not(.slider) .share-panel,
 .fhi-page .share-panel {
     background: #fff;
@@ -1677,13 +1667,11 @@ section:not(.slider) .share-panel,
     border-top: 4px solid var(--fhi-green);
     box-shadow: var(--fhi-shadow);
 }
-.container .share-title,
 section:not(.slider) .share-title,
 .fhi-page .share-title {
     color: #333;
     text-shadow: none;
 }
-.container .share-subcopy,
 section:not(.slider) .share-subcopy,
 .fhi-page .share-subcopy {
     color: #555;
@@ -3168,6 +3156,36 @@ textarea,
    Desktop opens the menu with CSS and hides the toggle; the phone keeps the
    real disclosure behaviour.
    -------------------------------------------------------------------------- */
+
+/* The header's row and the footer's. On a big screen it is the wide
+   column's width, so the logo and the footer sit over the page's own edges
+   rather than out past them. Narrower, it is its parent less 12px a side;
+   the header and footer keep 12px from the window themselves, so on a
+   tablet the row starts 24px in and the logo 36px in, where they were. It
+   follows the window; Bootstrap's container, which this replaces, jumped
+   between five fixed widths. */
+.fhi-shell {
+    width: 100%;
+    max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-space-3));
+    margin-inline: auto;
+    padding-inline: var(--fhi-space-3);
+}
+
+@media (max-width: 575px) {
+    /* A phone has no width to spare: the row is the screen. */
+    .fhi-shell {
+        max-width: none;
+    }
+}
+
+/* The logo, then the menu. On a phone the menu is the whole width, so it
+   wraps under the logo; a desktop puts the two side by side (below). */
+.fhi-nav-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
 .fhi-nav {
     width: 100%;
 }
@@ -3187,6 +3205,14 @@ textarea,
     display: none;
 }
 
+/* The three bars beside "Menu", an inline SVG drawn in the toggle's own
+   colour. In em, so it grows with the word when someone sets a larger
+   text size. */
+.fhi-nav-toggle-icon {
+    width: 1.5em;
+    height: 1.5em;
+}
+
 .fhi-nav-list {
     display: flex;
     flex-direction: column;
@@ -3196,8 +3222,7 @@ textarea,
     list-style: none;
 }
 
-.fhi-nav-list > li > .nav-link,
-.fhi-nav-group > summary.nav-link {
+.fhi-nav-link {
     display: block;
     padding: var(--fhi-space-2) var(--fhi-space-3);
     /* 44px minimum row, the same rule the rest of the nav follows. */
@@ -3208,12 +3233,22 @@ textarea,
     list-style: none;
 }
 
-.fhi-nav-group > summary.nav-link::-webkit-details-marker {
+summary.fhi-nav-link::-webkit-details-marker {
     display: none;
 }
 
-.fhi-nav-group > summary.nav-link::after {
+summary.fhi-nav-link::after {
     content: " \25BE";
+}
+
+/* Every item in the row answers the pointer the way the links in its
+   dropdowns do. The links get this from main.css's a:hover; a summary is
+   not a link, so it is said here for both. Only where there is a pointer:
+   on a phone a tapped summary would otherwise stay green after it opens. */
+@media (hover: hover) {
+    .fhi-nav-link:hover {
+        color: var(--fhi-green-ink);
+    }
 }
 
 .fhi-nav-submenu {
@@ -3279,6 +3314,12 @@ textarea,
         display: none;
     }
 
+    /* The logo and the menu share one line. The menu gives way and wraps
+       its own items; the logo keeps its 75px. */
+    .fhi-nav-bar {
+        flex-wrap: nowrap;
+    }
+
     .fhi-nav-list {
         flex-direction: row;
         /* Seven items and the button do not fit beside the logo on a small
@@ -3290,8 +3331,7 @@ textarea,
         gap: var(--fhi-space-2);
     }
 
-    .fhi-nav-list > li > .nav-link,
-    .fhi-nav-group > summary.nav-link,
+    .fhi-nav-link,
     .fhi-nav-cta a {
         white-space: nowrap;
     }

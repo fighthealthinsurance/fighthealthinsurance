@@ -42,7 +42,7 @@ LENGTH = re.compile(r"(-?[\d.]+)(px|rem|em)\b", re.IGNORECASE)
 # Every page renders this. It is migrated, and a literal here is a regression.
 SHELL_SELECTOR = re.compile(
     r"(^|[\s,>])(header|\.navbar|\.nav(?![\w-])|#nav(?![\w-])"
-    r"|\.fhi-nav|\.fhi-chat-button"
+    r"|\.fhi-nav|\.fhi-shell|\.fhi-chat-button"
     r"|footer(?![\w-])|\.footer|\.copyright)"
 )
 
@@ -67,7 +67,7 @@ SHELL_KEEPS_ITS_LITERAL = {
 # Off-scale spacing declarations still in each stylesheet, counted on
 # 2026-09-13. Lower these as the values are migrated; the test refuses to let
 # them grow, and refuses to let a stale number sit above what is really there.
-BASELINE = {"custom.css": 62, "main.css": 43}
+BASELINE = {"custom.css": 61, "main.css": 43}
 
 
 def _lengths(value: str):

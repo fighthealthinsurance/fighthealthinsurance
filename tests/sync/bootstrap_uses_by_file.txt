@@ -9,17 +9,3 @@
 #   python tests/sync/test_bootstrap_ratchet.py --lower
 # That only lowers a number or drops a line. A use that has to grow is
 # raised here by hand, in the same commit, which says why.
-base.html border-top 1
-base.html col-md-12 1
-base.html col-sm-12 1
-base.html container 2
-base.html img-fluid 1
-base.html nav-link 6
-base.html navbar 1
-base.html navbar-expand-lg 1
-base.html navbar-toggler-icon 1
-base.html row 1
-landing_base.html container 4
-microsite.html img-fluid 1
-microsite.html rounded 1
-microsite.html shadow 1
