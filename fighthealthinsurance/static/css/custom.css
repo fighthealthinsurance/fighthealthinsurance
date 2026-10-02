@@ -2312,6 +2312,15 @@ main :where(table) {
     overflow-wrap: anywhere;
 }
 
+/* A blog or FAQ post's text (blog_post.tsx renders it into .md-content).
+   A word with no space in it, such as a long code name or a path, breaks
+   rather than running past a phone's edge. break-word, not anywhere: a
+   post's tables sit in a .scroll-x box, and anywhere would let a table
+   squeeze to the phone by splitting every figure mid-number instead. */
+.md-content {
+    overflow-wrap: break-word;
+}
+
 .fhi-page-centred {
     display: flex;
     flex-direction: column;
@@ -3761,6 +3770,9 @@ textarea,
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
+/* Two columns on the wide page and one on a phone, for a pair of groups
+   too long to sit three across, such as the Resources page's. */
+.fhi-cards-wide { --fhi-card-min: 26rem; }
 
 .fhi-card {
     display: flex;

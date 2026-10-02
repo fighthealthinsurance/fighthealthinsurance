@@ -115,6 +115,24 @@ devices. A link opened on a second phone or computer, or one that has sat
 unused for about twelve hours, will not reopen the appeal. It lands on the
 upload page with an explanation and a support address instead of a blank form.
 
+## The way back from a cancelled fax payment
+
+Stripe's `cancel_url` for a fax payment uses the same scheme. When Fax My
+Appeal stages a fax, `StageFaxView` mints a reference with
+`views.issue_fax_cancel_ref`: the staged fax's uuid and hashed email,
+plus the two fax-form choices the staged fax does not keep (the insurer name
+as typed and whether the health history went), encrypted with the same
+session key and carrying its own minting time. The person's name is never in
+it, so they type it again. Stripe
+holds that address, and it reaches analytics and access logs once the person
+is sent back, so it carries no id. `FaxPaymentCancelledView` shows the letter
+only when the reference decrypts in this session and names a staged fax with
+that uuid and hashed email. Anything else gets a page with no letter on it.
+A reference resolves for one day (`FAX_CANCEL_REF_TTL_SECONDS`), because
+Stripe keeps a checkout page open for up to a day. Nothing new is stored in
+the session: it uses the random secret a back link uses, minted if the
+session has none yet.
+
 ## Owner decisions this rests on
 
 Melanie settled two of these on 2026-09-13 and they are not reviewer calls to

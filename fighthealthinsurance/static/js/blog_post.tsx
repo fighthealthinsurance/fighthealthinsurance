@@ -32,6 +32,34 @@ marked.setOptions({
   renderer
 });
 
+// A table is as wide as its columns need, whatever the screen. The premium
+// table in the unaffordable-coverage post is six columns of figures, 416px,
+// and on a 390px phone it pushed the whole page sideways. Every table a post
+// renders, from markdown or raw HTML, goes in a .scroll-x box (main.css), so
+// a wide one scrolls inside that box and the page stays the screen's width.
+const wrapTablesToScroll = (html: string): string => {
+  // A template's content is inert: nothing in it loads or runs.
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  template.content.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement?.classList.contains('scroll-x')) return;
+    const box = document.createElement('div');
+    box.className = 'scroll-x';
+    // A box that scrolls has to take focus, or someone on a keyboard tabs
+    // past a table with no links in it and never sees its right-hand side.
+    // As a focusable region it needs a name to be announced by.
+    box.tabIndex = 0;
+    box.setAttribute('role', 'region');
+    box.setAttribute(
+      'aria-label',
+      table.querySelector('caption')?.textContent?.trim() || 'Table'
+    );
+    table.replaceWith(box);
+    box.appendChild(table);
+  });
+  return template.innerHTML;
+};
+
 interface BlogPostProps {
   slug: string;
   type?: 'blog' | 'faq';
@@ -211,7 +239,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
             const potentialLeadingContent = contentParts[0].trim();
             // A simple check to see if it's likely HTML
             if (potentialLeadingContent.startsWith('<') && potentialLeadingContent.endsWith('>')) {
-                setLeadingContent(DOMPurify.sanitize(potentialLeadingContent));
+                setLeadingContent(wrapTablesToScroll(DOMPurify.sanitize(potentialLeadingContent)));
                 mainContent = contentParts.slice(1).join(separator);
             }
         }
@@ -253,7 +281,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
         const rawHtml = await marked.parse(processedContent);
         const safeHtml = DOMPurify.sanitize(rawHtml);
         
-        setContent(safeHtml);
+        setContent(wrapTablesToScroll(safeHtml));
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
         setError(`Failed to load content: ${errorMessage}`);

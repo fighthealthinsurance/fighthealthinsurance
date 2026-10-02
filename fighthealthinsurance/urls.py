@@ -227,6 +227,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         fax_views.StageFaxView.as_view(),
         name="stagefaxview",
     ),
+    # Stripe's cancel_url for a fax payment: back to the letter.
+    path(
+        "v0/stagefax/cancelled",
+        fax_views.FaxPaymentCancelledView.as_view(),
+        name="fax_payment_cancelled",
+    ),
     # View an appeal
     path(
         "v0/appeal/<uuid:appeal_uuid>/appeal.pdf",
