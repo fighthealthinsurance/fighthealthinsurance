@@ -125,7 +125,9 @@ class TestAppealQuestionsGeneration:
         # Everything after the first "?" becomes the answer
         assert len(result) == 1
         assert result[0][0] == "Was the stroke confirmed to occur during birth?"
-        assert result[0][1] == "Yes. Was it localized to the left MCA? Yes, it was."
+        # The rest of the line holds a second question, so it is not shown
+        # as a hint: a hint is an answer, not more questions.
+        assert result[0][1] == ""
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_no_question_mark(self):

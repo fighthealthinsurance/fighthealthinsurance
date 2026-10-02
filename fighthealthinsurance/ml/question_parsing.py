@@ -87,18 +87,27 @@ _META_ANSWER_PHRASES = _META_PHRASES + (
     "i can help",
 )
 
+
+def _phrase_pattern(phrases: Tuple[str, ...]) -> "re.Pattern[str]":
+    """Match a phrase only as whole words: "as an ai" must not match inside
+    "Has an airway obstruction been documented?"."""
+    return re.compile(
+        r"\b(?:" + "|".join(re.escape(p) for p in phrases) + r")\b", re.IGNORECASE
+    )
+
+
+_META = _phrase_pattern(_META_PHRASES)
+_META_ANSWER = _phrase_pattern(_META_ANSWER_PHRASES)
+_REFUSAL = _phrase_pattern(_REFUSAL_PHRASES)
+
 _NUMBERING = re.compile(r"^\s*(?:\d+[.)\-]|\*|•|-)\s+")
 _BOLD_LEAD = re.compile(r"\*\*([^*]+?)\*\*\s*(.*)")
 _ANSWER_PREFIX = re.compile(r"^(?:A\s*:|:)[\s:]*")
 # A label in front of the question, such as "Question:" or "Q2:".
 _QUESTION_LABEL = re.compile(r"^(?:question|q)\s*\d*\s*:\s*", re.IGNORECASE)
 _LETTER = re.compile(r"[A-Za-z]")
-# Numbering or a bullet, an optional bold question ending in "?", then its
-# answer up to the next item.
-_SINGLE_BLOCK = re.compile(
-    r"(?:\d+\.|\*|\-|•)?\s*(?:\*\*)?([^.!?]+\?)(?:\*\*)?\s*"
-    r"([^.!?\d][^.!?\d]*?)(?=(?:\d+\.|\*|\-|•)?\s*(?:\*\*)?[A-Z]|\Z)"
-)
+# Where a reply on one line starts its next numbered item: "... 45 2. Has".
+_NEXT_NUMBERED = re.compile(r"\s+(?=\d+[.)]\s)")
 
 # Lines that introduce a list rather than belong to it.
 _HEADER_STARTS = ("here are", "questions", "additional")
@@ -121,8 +130,7 @@ def is_junk_question(question: str) -> bool:
         return True
     if _PLACEHOLDER.search(q):
         return True
-    low = q.lower()
-    return any(phrase in low for phrase in _META_PHRASES)
+    return bool(_META.search(q))
 
 
 def clean_suggested_answer(answer: str) -> str:
@@ -137,8 +145,11 @@ def clean_suggested_answer(answer: str) -> str:
     # What is left of a placeholder or a word cut short: "[" or a lone "U".
     if a.startswith("[") or (len(a) == 1 and a.isalpha()):
         return ""
-    low = a.lower()
-    if any(phrase in low for phrase in _META_ANSWER_PHRASES):
+    if _META_ANSWER.search(a):
+        return ""
+    # A hint holding another question is the rest of a line with several
+    # questions on it, not an answer; nor is one that starts with UNKNOWN.
+    if "?" in a or a.split()[0].upper().strip(".,;:") == "UNKNOWN":
         return ""
     return a
 
@@ -156,8 +167,7 @@ def _refuses(text: str) -> bool:
     no question mark, or before a line's first one. A suggested answer may
     quote the patient ("I can't walk more than a block") and is not read."""
     for line in text.split("\n"):
-        head = line.split("?", 1)[0].lower()
-        if any(phrase in head for phrase in _REFUSAL_PHRASES):
+        if _REFUSAL.search(line.split("?", 1)[0]):
             return True
     return False
 
@@ -198,20 +208,14 @@ def parse_appeal_questions(text: Optional[str]) -> Optional[List[Tuple[str, str]
     if _refuses(text):
         return None
     pairs: List[Tuple[str, str]] = []
-    # A reply in one long block can hold several "Question? Answer" pairs.
-    # The pattern cannot cross a ".", so "(e.g., Weight Watchers) for six
-    # months?" comes out as a fragment; a question has to start with a letter.
-    # It also cuts an answer at its first capital letter, so a block with one
-    # question goes through the line split below, which keeps the answer
-    # whole.
-    if "\n" not in text and len(text) > 100 and text.count("?") > 1:
-        for question, answer in _SINGLE_BLOCK.findall(text):
-            question = _CITATION_MARK.sub("", question.replace("**", "")).strip()
-            if question[:1].isalpha() and not is_junk_question(question):
-                pairs.append((question, clean_suggested_answer(answer)))
-        if pairs:
-            return pairs
-    for line in text.split("\n"):
+    lines = text.split("\n")
+    # A reply on one line can still number its questions; each numbered item
+    # is read as a line of its own. Without numbering a line is one question,
+    # however many "?" it holds: cutting it anywhere else guesses where one
+    # question's answer ends and the next question starts.
+    if len(lines) == 1:
+        lines = _NEXT_NUMBERED.split(text)
+    for line in lines:
         split = _split_line(line)
         if split is None:
             continue

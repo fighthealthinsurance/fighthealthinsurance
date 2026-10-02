@@ -391,3 +391,45 @@ async def test_a_cached_set_with_an_introduction_line_is_not_served():
         )
     assert result == GOOD
     model.get_appeal_questions.assert_called()
+
+
+# --- Found in the second review -------------------------------------------------
+
+
+def test_a_refusal_phrase_inside_a_word_is_not_a_refusal():
+    """ "as an ai" is inside "Has an airway"."""
+    reply = (
+        "Has an airway obstruction been documented?\n"
+        "Has the patient tried conservative treatment? Yes"
+    )
+    assert parse_appeal_questions(reply) == [
+        ("Has an airway obstruction been documented?", ""),
+        ("Has the patient tried conservative treatment?", "Yes"),
+    ]
+
+
+def test_several_unnumbered_questions_on_one_line_leave_no_fragments():
+    reply = (
+        "Has the patient had symptoms for more than six weeks before the MRI "
+        "was ordered? UNKNOWN Has the patient tried physical therapy? UNKNOWN"
+    )
+    assert parse_appeal_questions(reply) == [
+        (
+            "Has the patient had symptoms for more than six weeks before the MRI "
+            "was ordered?",
+            "",
+        )
+    ]
+
+
+def test_numbered_questions_on_one_line_are_read_one_by_one():
+    reply = (
+        "1. What is the patient's age? 45 2. Has the patient tried physical "
+        "therapy for six weeks? Yes 3. What did the MRI show? Disc herniation "
+        "at L4-L5"
+    )
+    assert parse_appeal_questions(reply) == [
+        ("What is the patient's age?", "45"),
+        ("Has the patient tried physical therapy for six weeks?", "Yes"),
+        ("What did the MRI show?", "Disc herniation at L4-L5"),
+    ]
