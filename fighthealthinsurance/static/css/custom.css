@@ -762,6 +762,11 @@ li > a.link {
     text-decoration: underline;
     text-underline-offset: 0.15em;
 }
+/* Focus first, as with the neutral role, so main.css's green focused link
+   does not win while a hover still turns it green. */
+.fhi-button-quiet:focus {
+    color: var(--fhi-ink-2);
+}
 .fhi-button-quiet:hover,
 .fhi-button-quiet:active {
     color: var(--fhi-green-ink);
