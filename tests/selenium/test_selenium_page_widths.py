@@ -51,6 +51,7 @@ PAGES = {
     "/how-to-help": "wide",
     "/media-references": "wide",
     "/treatments/": "wide",
+    "/glossary/": "wide",
     "/state-help/": "wide",
     "/state-help/california/": "wide",
     "/remove_data": "reading",
@@ -69,6 +70,11 @@ BAND_PAGES = {
     "/glossary/": "wide",
     "/medicaid-eligibility": "reading",
     "/turning-26": "reading",
+    "/professionals/patient-access": "wide",
+    "/microsite/biologic-denial/": "reading",
+    "/state-help/": "reading",
+    "/state-help/california/": "reading",
+    "/coverage-changes": "reading",
 }
 
 COLUMN_JS = """

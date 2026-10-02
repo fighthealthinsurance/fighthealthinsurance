@@ -1244,28 +1244,6 @@ li > a.link {
     flex-wrap: wrap;
 }
 
-.row.no-gutters {
-    margin: 0;
-    justify-content: center;
-}
-
-.row.no-gutters .col-md-2 {
-    padding: 0;
-    flex: 0 0 auto;
-    width: auto;
-}
-
-.row.no-gutters .col-md-2 img{
-    width: 100%;
-    height: auto;
-    margin: 5px;
-}
-
-.row .col-md-2 {
-    margin: 10px;
-    flex-basis: 20%;
-}
-
 #id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
     border-radius: .375rem;
     padding: .375rem .75rem;
@@ -1301,6 +1279,15 @@ li > a.link {
         flex-wrap: nowrap;
     }
 }
+/* The logos share their strip equally and each sits in the middle of its
+   share. Every logo, in either strip, is capped at the same 140px
+   (.featured-logo) so the two strips read as one set. */
+.featured-row > a,
+.featured-row-highlight > a {
+    flex: 1 1 0;
+    padding: var(--fhi-space-2);
+    text-align: center;
+}
 .featured-row a {
     display: block;
     transition: transform 0.3s ease, opacity 0.3s ease;
@@ -1310,7 +1297,7 @@ li > a.link {
     transform: scale(1.05);
     opacity: 1;
 }
-.featured-row .img-fluid.img-thumbnail {
+.featured-logo {
     max-width: 140px;
     height: auto;
     margin: 0 auto;
@@ -1321,7 +1308,8 @@ li > a.link {
     box-shadow: none;
     transition: all 0.3s ease;
 }
-.featured-row a:hover .img-fluid.img-thumbnail {
+.featured-row a:hover .featured-logo,
+.featured-row-highlight a:hover .featured-logo {
     box-shadow: none;
 }
 .featured-row-highlight {
@@ -2006,7 +1994,7 @@ section:not(.slider) .share-subcopy {
    table cell or checkbox label (the consent links) inside the page content, but not one styled as a button, a
    card or navigation. :where() keeps it at zero-class specificity, so any
    component rule that sets its own decoration still wins. */
-main :where(p, li, dd, td, .form-check-label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
+main :where(p, li, dd, td, .form-check-label, .fhi-check-row label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
     text-decoration: underline;
     text-underline-offset: 0.15em;
     text-decoration-thickness: from-font;
@@ -2507,16 +2495,22 @@ main :where(table) {
     .about-steps {
         max-width: 100%;
     }
+    /* The strip scrolls sideways on a phone, so it starts at its left edge:
+       centred, the logos that overflowed to the left could never be
+       scrolled back to (Fast Company, CBS and NewsNation were unreachable). */
     .featured-row,
     .featured-row-highlight {
+        justify-content: flex-start;
         flex-wrap: nowrap;
         overflow-x: auto;
+        /* A logo snapped to the strip's edge keeps room for its focus ring. */
+        scroll-padding-inline: var(--fhi-space-2);
         -webkit-overflow-scrolling: touch;
         scroll-snap-type: x mandatory;
         padding: 1rem 0.5rem;
     }
-    .featured-row .col-md-2,
-    .featured-row-highlight .col-md-2 {
+    .featured-row > a,
+    .featured-row-highlight > a {
         flex: 0 0 auto;
         scroll-snap-align: start;
         min-width: 120px;
@@ -3161,7 +3155,7 @@ textarea,
 
 /* ---- Questions that open in place ----------------------------------------
    The FAQ on every microsite and on the Denial Language Library, and the
-   lists on Preparing for 2026 and Turning 26. They were Bootstrap
+   lists on Preparing for 2027 and Turning 26. They were Bootstrap
    accordions, which opened only once bootstrap.bundle.min.js had arrived
    from a CDN, so a blocked or slow script left every answer shut. Each item
    is a <details> now: the browser opens it with no script, and keyboards
@@ -3587,6 +3581,11 @@ textarea,
     gap: var(--fhi-space-4);
 }
 .fhi-cluster-center { justify-content: center; }
+/* A long unbroken name, such as a drug's chemical names joined by
+   slashes, breaks rather than pushing the page wider than a phone; so does
+   a button in a row of them. */
+.fhi-column { overflow-wrap: anywhere; }
+.fhi-cluster > .btn { max-width: 100%; white-space: normal; }
 
 /* Two to four cards that belong together, laid out by the width of the
    column they sit in rather than the screen: one under another in a narrow
@@ -3634,9 +3633,15 @@ textarea,
 .fhi-card-warning { border-color: #ffc107; }
 .fhi-card-info { border-color: #087990; }
 .fhi-card-subtitle { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
+/* A card's own title, a step below the section's subheadings (the
+   column's h3 is --fhi-text-subsection). */
+.fhi-card-title { font-size: var(--fhi-text-lead); }
 /* A card's closing link or button sits at the foot, so a row of cards
    lines theirs up. */
 .fhi-card-action { margin-top: auto; align-self: flex-start; }
+/* A card whose title link covers the whole card, so the card is the target. */
+.fhi-card:has(.fhi-card-link) { position: relative; }
+.fhi-card-link::after { content: ""; position: absolute; inset: 0; }
 /* A coloured title bar across the top of a card. #087990 carries white
    at 5.06:1. */
 .fhi-card-banner {
@@ -3736,6 +3741,9 @@ textarea,
 .fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
 .fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
 .fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
+.fhi-badge.fhi-badge-info { background-color: #0dcaf0; color: #212529; }
+/* Long condition names wrap inside the card rather than running past it. */
+.fhi-badge { max-width: 100%; }
 
 /* Text roles: the line that introduces a section, a small aside, and the
    colour of a warning or information icon. */
@@ -3743,3 +3751,31 @@ textarea,
 .fhi-note { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
 .fhi-text-warning { color: #8a5a00; }
 .fhi-text-info { color: #087990; }
+
+/* ---- Forms: a field's group, its label, a tick box's row, the buttons ------
+   The field and tick box themselves are .fhi-field and .fhi-check, near the
+   top of this file. These arrange them. */
+.fhi-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+}
+.fhi-field-group > * { margin-block: 0; }
+.fhi-label { font-weight: 700; }
+/* A tick box, its label beside it, and any note under the label in the
+   same column as the label's text. */
+.fhi-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--fhi-space-2);
+    row-gap: var(--fhi-space-1);
+    align-items: baseline;
+}
+.fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
+.fhi-check-row > * { margin: 0; }
+/* A form's buttons, each the full width of the form. */
+.fhi-actions {
+    display: grid;
+    gap: var(--fhi-space-2);
+}
+.fhi-text-success { color: var(--fhi-green-ink); }
