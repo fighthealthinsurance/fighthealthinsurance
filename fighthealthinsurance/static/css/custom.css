@@ -3706,6 +3706,9 @@ textarea,
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
+/* Two columns on the wide page and one on a phone, for a pair of groups
+   too long to sit three across, such as the Resources page's. */
+.fhi-cards-wide { --fhi-card-min: 26rem; }
 
 .fhi-card {
     display: flex;
