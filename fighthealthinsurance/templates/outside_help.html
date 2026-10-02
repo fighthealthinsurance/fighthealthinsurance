@@ -49,15 +49,15 @@ Additional Resources & Questions
   {% endif %}
   <div class="form-nav-row">
     {% if back_url %}
-    <a href="{{ back_url }}" class="btn btn-secondary-custom">
+    <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">
       ← {{ back_label|default:"Back" }}
     </a>
     {% else %}
-    <a href="{% url 'scan' %}" class="btn-link-muted">
+    <a href="{% url 'scan' %}" class="fhi-button fhi-button-quiet fhi-button-small">
       Start over with a new denial
     </a>
     {% endif %}
-    <input type="submit" value="Generate My Appeal &rarr;" id="submit" class="btn-green">
+    <input type="submit" value="Generate My Appeal &rarr;" id="submit" class="fhi-button fhi-button-primary">
   </div>
   </form>
 

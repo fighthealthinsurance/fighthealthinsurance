@@ -75,6 +75,16 @@ BAND_PAGES = {
 }
 
 COLUMN_JS = """
+// Inside a box that scrolls sideways on its own (.scroll-x, or a bar of
+// letters with overflow-x: auto), a child past the column's edge is reached
+// by scrolling that box, not the page.
+const inSideScroller = el => {
+  for (let p = el.parentElement; p && p !== column; p = p.parentElement) {
+    if (p.classList.contains('scroll-x')) return true;
+    if (['auto', 'scroll'].includes(getComputedStyle(p).overflowX)) return true;
+  }
+  return false;
+};
 const column = document.querySelector(arguments[0] || '.fhi-page, .fhi-page-wide');
 if (!column) { return {missing: true}; }
 const style = getComputedStyle(column);
@@ -100,7 +110,7 @@ return {
   // boxes: a .row is 24px wider than its parent by design and its
   // columns pad the content back inside, so neither draws anything.
   escapes: Array.from(column.querySelectorAll('*'))
-    .filter(el => el.checkVisibility() && !el.closest('.scroll-x') && el.tagName !== 'SCRIPT')
+    .filter(el => el.checkVisibility() && !inSideScroller(el) && el.tagName !== 'SCRIPT')
     .filter(el => !el.matches('.row, [class*="col-"], .col'))
     .filter(el => {
       const r = el.getBoundingClientRect();

@@ -111,7 +111,7 @@ Upload your Health Insurance Denial
 		fine for clear scans. You can remove the downloaded model later.</small>
 	    </label>
 	    <div id="advanced_ocr_status" class="fhi-note" role="status" aria-live="polite" hidden></div>
-	    <button type="button" id="advanced_ocr_remove_model" class="btn btn-link btn-sm" hidden>Remove the downloaded model from this device (about 1 GB)</button>
+	    <button type="button" id="advanced_ocr_remove_model" class="fhi-button fhi-button-quiet fhi-button-small" hidden>Remove the downloaded model from this device (about 1 GB)</button>
 	</div>
 	{% endif %}
 	<div id="image_select_magic" class="fhi-field-group" style="visibility:visible">
@@ -154,7 +154,7 @@ Upload your Health Insurance Denial
 		placeholder="Your denial goes here"
 		class="fhi-field">{{ocr_result}}</textarea><br>
 		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small><br>
-	    <button type="button" id="scrub-2" class="btn btn-green">
+	    <button type="button" id="scrub-2" class="fhi-button fhi-button-primary">
 	      Remove personal details
 	    </button>
 		</div>
@@ -251,7 +251,7 @@ Upload your Health Insurance Denial
 	      own device and is never uploaded to us, so we can't read it for you
 	      on our end. Clear photos and text PDFs read better than scans.
 	    </div>
-	    <button type="submit" class="btn btn-green fhi-btn-lg" id="submit">Submit</button>
+	    <button type="submit" class="fhi-button fhi-button-primary fhi-button-large" id="submit">Submit</button>
 	</form>
 
 	<h2 class="fhi-form-note-title">What we try to keep in your browser</h2>

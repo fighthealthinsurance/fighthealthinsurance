@@ -77,7 +77,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
   <textarea class="fhi-field" rows="20" name="appeal_text" id="appeal_text">
   </textarea>
 
-  <button type="submit" id="submit" class="btn btn-green">Choose This One</button>
+  <button type="submit" id="submit" class="fhi-button fhi-button-primary">Choose This One</button>
 </form>
 </div>
 <div id="output-container">
@@ -97,7 +97,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
     <input type="hidden" name="email" value="{{ user_email }}">
     <input type="hidden" name="denial_id" value="{{ denial_id }}">
     {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
-    <button type="submit" id="generate_escalation_packet" class="btn btn-default" style="font-size:1.05rem; padding:10px 20px;">
+    <button type="submit" id="generate_escalation_packet" class="fhi-button fhi-button-secondary">
       📨 Click here to draft regulator letters (opens in a new window)
     </button>
   </form>
@@ -116,7 +116,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
     creative and may produce additional drafts for you to choose from.
     Your denial text is sent to a third-party model provider when you opt in.
   </p>
-  <button type="button" id="request-external-models-btn" class="btn btn-green">
+  <button type="button" id="request-external-models-btn" class="fhi-button fhi-button-primary">
     Generate more appeals using external models
   </button>
   <div id="external-models-status" style="margin-top: 0.75rem; font-size: 0.95rem;"></div>
@@ -125,11 +125,11 @@ Fight Your Health Insurance Denial: Choose an Appeal
 
 <div class="form-nav-centered">
   {% if back_url %}
-  <a href="{{ back_url }}" class="btn btn-secondary-custom">
+  <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">
     ← {{ back_label|default:"Back" }}
   </a>
   {% endif %}
-  <a href="{% url 'scan' %}" class="btn-link-muted">
+  <a href="{% url 'scan' %}" class="fhi-button fhi-button-quiet fhi-button-small">
     Start over with a new denial
   </a>
 </div>

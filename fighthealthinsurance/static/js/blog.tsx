@@ -144,7 +144,7 @@ const BlogIndex: React.FC = () => {
                 })()}
               </p>
               <p>{post.excerpt}</p>
-              <a href={`/blog/${post.slug}/`} className="btn fhi-card-action" style={{backgroundColor: '#a5c422', color: 'white', border: 'none', alignSelf: 'flex-start'}}>
+              <a href={`/blog/${post.slug}/`} className="fhi-button fhi-button-secondary fhi-card-action">
                 Read More
               </a>
             </div>

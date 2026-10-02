@@ -221,36 +221,12 @@ a:focus {
     margin-top: 0;
 }
 
-/* The `background` shorthand here used to clear custom.css's gradient, so a
-   section button outside the hero rendered as a flat panel of lime. It is a
-   background-color now: the sweep paints over it, and it is the dark stop, so
-   a button whose gradient does not paint is the readable end of the ramp. */
-.section-btn {
-    background-color: var(--fhi-btn-fill-b);
-    border: 0;
-    border-radius: 3px;
-    color: var(--fhi-btn-ink);
-    font-size: var(--fhi-btn-font-md);
-    font-weight: 500;
-    line-height: 1.5;
-    min-height: var(--fhi-btn-height-md);
-    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-}
-
 .text-align-right {
     text-align: right;
 }
 
 .text-align-center {
     text-align: center;
-}
-
-.btn-gray {
-    background: #393939;
-}
-
-.btn-blue {
-    background: #4267b2;
 }
 
 .news-thumb {
@@ -631,27 +607,6 @@ a:focus {
 .news-social-share {
     text-align: center;
     padding-top: 22px;
-}
-
-.news-social-share .btn {
-    border-radius: 100px;
-    border: none;
-    font-size: var(--fhi-text-micro);
-    font-weight: 600;
-    margin: 2px 6px;
-    padding: 8px 14px;
-}
-
-.news-social-share .btn-primary {
-    background: #3b5998;
-}
-
-.news-social-share .btn-success {
-    background: #1da1f2;
-}
-
-.news-social-share .btn-danger {
-    background: #dd4b39;
 }
 
 .news-social-share a .fa {

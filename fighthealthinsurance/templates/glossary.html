@@ -54,14 +54,14 @@
             {% endfor %}
         </div>
         <div>
-            <a href="{% url 'glossary_index' %}" class="btn btn-outline-secondary">
+            <a href="{% url 'glossary_index' %}" class="fhi-button fhi-button-neutral">
                 &larr; Back to full glossary
             </a>
         </div>
     </section>
     {% else %}
     <section id="back-to-glossary" class="fhi-section fhi-section-alt">
-        <a href="{% url 'glossary_index' %}" class="btn btn-outline-secondary">
+        <a href="{% url 'glossary_index' %}" class="fhi-button fhi-button-neutral">
             &larr; Back to full glossary
         </a>
     </section>
@@ -73,10 +73,10 @@
             <h2>Facing This in a Denial Letter?</h2>
             <p class="fhi-lead">Our free AI-powered tool can help you turn a confusing denial into a compelling appeal letter in minutes.</p>
             <div class="fhi-cluster fhi-cluster-center">
-                <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
+                <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large">
                     Start Your Appeal
                 </a>
-                <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">
+                <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary fhi-button-large">
                     Chat with AI Assistant
                 </a>
             </div>

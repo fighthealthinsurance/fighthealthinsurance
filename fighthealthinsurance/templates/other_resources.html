@@ -5,29 +5,6 @@ Other Resources
 {% block metadescription %}Fight Health Insurance is a generative AI tool to help you fight your health insurance denial. This is a list of other resources to help you fight for a fair outcome with your health insurance provider.{% endblock metadescription %}
 {% block content %}
 <style>
-/* FHI button style for this page */
-.fhi-btn {
-    background: #a5c422;
-    color: #fff;
-    border: none;
-    border-radius: 7px;
-    padding: 0.375rem 0.75rem;
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 1rem;
-    box-shadow: none;
-    transition: background 0.2s;
-    display: inline-block;
-}
-.fhi-btn:hover, .fhi-btn:focus {
-    background: #8eb31d;
-    color: #fff;
-    text-decoration: none;
-}
-.fhi-btn[aria-disabled="true"] {
-    opacity: 0.7;
-    pointer-events: none;
-}
 .text-fhi-green {
     color: var(--fhi-green-ink) !important;
 }
@@ -96,27 +73,30 @@ Other Resources
     <div class="fhi-stack fhi-stack-loose">
         <div class="fhi-cluster">
             <form action="{% url 'faq' %}" method="get">
-                <button type="submit" class="fhi-btn">FAQ</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">FAQ</button>
             </form>
             <form action="{% url 'blog' %}" method="get">
-                <button type="submit" class="fhi-btn">Blog</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">Blog</button>
             </form>
             <form action="{% url 'denial-language-library' %}" method="get">
-                <button type="submit" class="fhi-btn">Denial Language Library</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">Denial Language Library</button>
             </form>
             <form action="{% url 'microsite_directory' %}" method="get">
-                <button type="submit" class="fhi-btn">Treatment Resources</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">Treatment Resources</button>
             </form>
             {% comment %}
               The glossary's only way in. Without this the index and all
               59 term pages are reachable from the sitemap and nowhere a
               person can click.
             {% endcomment %}
-            <a href="{% url 'glossary_index' %}" class="fhi-btn">Glossary</a>
+            <a href="{% url 'glossary_index' %}" class="fhi-button fhi-button-secondary fhi-button-small">Glossary</a>
         </div>
 
-        <div class="fhi-cards fhi-cards-roomy">
-            <div class="fhi-stack fhi-stack-loose">
+        <!-- Two columns across the page, like the blog's cards: the
+             government resources on one side, the shorter groups stacked on
+             the other. One column on a phone. -->
+        <div class="fhi-cards fhi-cards-wide">
+            <section class="fhi-card fhi-stack fhi-stack-loose">
                 <h2 class="text-fhi-green">Government Resources</h2>
                 <div class="fhi-stack">
                     <h3>State & Local Advocates</h3>
@@ -139,44 +119,46 @@ Other Resources
                         <li><a class="link" href="https://marketplace.cms.gov/technical-assistance-resources/how-to-appeal-a-decision.pdf">CMS.gov</a> - detailed appeal guidance</li>
                     </ul>
                 </div>
+            </section>
+
+            <div class="fhi-stack fhi-stack-loose">
+                <section class="fhi-card fhi-stack">
+                    <h2 class="text-fhi-green">Condition-Specific Resources</h2>
+                    <p class="fhi-note">
+                        Organizations focused on specific conditions often provide the most relevant and detailed guidance.
+                    </p>
+                    <ul>
+                        <li><a class="link" href="https://www.jdrf.org/">JDRF</a> - Diabetes resources and advocacy</li>
+                        <li><a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">Cancer Support Community</a> - Cancer-related appeals</li>
+                        <li><a class="link" href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">National MS Society</a> - Multiple Sclerosis resources</li>
+                    </ul>
+                    <p class="fhi-note">
+                        <em>These resources are often created by people in similar situations and can provide highly relevant guidance.</em>
+                    </p>
+                </section>
+
+                <section class="fhi-card fhi-stack">
+                    <h2 class="text-fhi-green">General Resources</h2>
+                    <p>
+                        While general-purpose websites may not be as specific to your situation, they can provide helpful overviews:
+                    </p>
+                    <ul>
+                        <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
+                        <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
+                    </ul>
+                </section>
+
+                <!-- Coping Resources, with the link to Bingo -->
+                <section class="fhi-card fhi-stack">
+                    <h2 class="text-fhi-green">Coping Resources</h2>
+                    <p>
+                        Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
+                    </p>
+                    <ul>
+                        <li><a href="{% url 'bingo' %}" class="link">Insurance Bullshit Bingo</a> - A humorous take on common denial reasons</li>
+                    </ul>
+                </section>
             </div>
-
-            <div class="fhi-stack">
-                <h2 class="text-fhi-green">Condition-Specific Resources</h2>
-                <p class="fhi-note">
-                    Organizations focused on specific conditions often provide the most relevant and detailed guidance.
-                </p>
-                <ul>
-                    <li><a class="link" href="https://www.jdrf.org/">JDRF</a> - Diabetes resources and advocacy</li>
-                    <li><a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">Cancer Support Community</a> - Cancer-related appeals</li>
-                    <li><a class="link" href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">National MS Society</a> - Multiple Sclerosis resources</li>
-                </ul>
-                <p class="fhi-note">
-                    <em>These resources are often created by people in similar situations and can provide highly relevant guidance.</em>
-                </p>
-            </div>
-        </div>
-
-        <div class="fhi-stack">
-            <h2 class="text-fhi-green">General Resources</h2>
-            <p>
-                While general-purpose websites may not be as specific to your situation, they can provide helpful overviews:
-            </p>
-            <ul>
-                <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
-                <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
-            </ul>
-        </div>
-
-        <!-- Coping Resources Section with Link to Bingo -->
-        <div class="fhi-stack">
-            <h2 class="text-fhi-green">Coping Resources</h2>
-            <p>
-                Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
-            </p>
-            <ul>
-                <li><a href="{% url 'bingo' %}" class="link">Insurance Bullshit Bingo</a> - A humorous take on common denial reasons</li>
-            </ul>
         </div>
 
         <!-- Simple RSS Section -->

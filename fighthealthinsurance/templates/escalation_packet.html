@@ -22,7 +22,7 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
     Make sure you've filled in your state on the earlier steps.
   </p>
   <p>
-    <a href="{{ back_url }}" class="btn btn-secondary">← {{ back_label }}</a>
+    <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">← {{ back_label }}</a>
   </p>
 </div>
 {% else %}
@@ -55,12 +55,12 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
     <input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">
     <input type="hidden" name="escalation_uuid" value="">
     <textarea style="width:100%" rows="20" name="letter_text" class="appeal_text"></textarea>
-    <button type="submit" class="btn btn-green">Save and review this letter</button>
+    <button type="submit" class="fhi-button fhi-button-primary">Save and review this letter</button>
   </form>
 </div>
 
 <div class="form-nav-centered" style="margin-top:1.5rem;">
-  <a href="{{ back_url }}" class="btn btn-secondary-custom">← {{ back_label }}</a>
+  <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">← {{ back_label }}</a>
 </div>
 {% endif %}
 </div>

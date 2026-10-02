@@ -11,11 +11,17 @@ version) so editing a banner re-shows it to everyone.
 <style>
   .site-banner-container { position: relative; z-index: 1031; }
   .site-banner { border-radius: 0; text-align: center; }
-  .site-banner-inner { position: relative; padding-left: 2.5rem; padding-right: 2.5rem; }
-  .site-banner .site-banner-close {
-    position: absolute; top: 50%; right: 0.75rem; transform: translateY(-50%);
+  /* The message sits in the middle column and the close button in its own
+     column at the right, a touch target wide, so the two can never overlap.
+     The empty column on the left matches it and keeps the message centred. */
+  .site-banner-inner {
+    display: grid;
+    grid-template-columns: var(--fhi-btn-height-sm) minmax(0, 1fr) var(--fhi-btn-height-sm);
+    align-items: center;
+    gap: var(--fhi-space-2);
   }
-  .site-banner-message { white-space: normal; }
+  .site-banner-message { grid-column: 2; white-space: normal; }
+  .site-banner .site-banner-close { grid-column: 3; }
 </style>
 <div id="site-banner-container" class="site-banner-container">
   {% for banner in site_banners %}
@@ -26,8 +32,10 @@ version) so editing a banner re-shows it to everyone.
     <div class="fhi-column fhi-column-wide site-banner-inner">
       <span class="site-banner-message">{{ banner.message|linebreaksbr }}</span>
       {% if banner.dismissible %}
-      <button type="button" class="btn-close site-banner-close"
-              aria-label="Dismiss message"></button>
+      <button type="button" class="fhi-close site-banner-close"
+              aria-label="Dismiss message">
+        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
       {% endif %}
     </div>
   </div>

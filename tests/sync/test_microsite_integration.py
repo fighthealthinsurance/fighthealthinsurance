@@ -190,7 +190,7 @@ class MicrositeGuideLinkTest(TestCase):
 
     def test_the_closing_guide_link_matches_its_green_neighbours(self):
         _hero, closing = self._guide_link_classes()
-        self.assertIn("btn-outline-green", closing)
-        self.assertIn("fhi-btn-lg", closing)
+        self.assertIn("fhi-button-secondary", closing)
+        self.assertIn("fhi-button-large", closing)
         self.assertNotIn("btn-outline-primary", closing)
         self.assertNotIn("btn-lg", closing)

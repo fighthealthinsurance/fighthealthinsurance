@@ -41,7 +41,7 @@
             Pay what you can. $0 is totally fine.
         </p>
         <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" target="_blank" rel="noopener noreferrer"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+           class="fhi-button fhi-button-primary">
             Donate Now
         </a>
     </section>
@@ -84,7 +84,7 @@
         </div>
         <p style="margin-top: 1rem; text-align: center;">
             You can also help us improve by using our
-            <a href="{% url 'chooser' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
+            <a href="{% url 'chooser' %}" class="fhi-button fhi-button-secondary">
                 Chooser Interface
             </a>
             to contribute anonymized data about insurance denials.
@@ -103,7 +103,7 @@
             helps patients fight unfair denials.
         </p>
         <a href="https://github.com/orgs/fighthealthinsurance/repositories" target="_blank" rel="noopener noreferrer"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+           class="fhi-button fhi-button-primary">
             View on GitHub
         </a>
     </section>
@@ -123,7 +123,7 @@
             <li>CDN, storage, or database credits</li>
         </ul>
         <a href="mailto:support42@fighthealthinsurance.com?subject=Cloud%20Resources"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+           class="fhi-button fhi-button-primary">
             Get in Touch
         </a>
     </section>
@@ -135,12 +135,14 @@
             into your workflow so your patients can fight denials more effectively. Learn about our
             professional version or explore patient and market access partnerships.
         </p>
-        <a href="{% url 'pro_version' %}" class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
-            Professional Version
-        </a>
-        <a href="{% url 'patient_access' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
-            Patient &amp; Market Access
-        </a>
+        <div class="fhi-cluster">
+            <a href="{% url 'pro_version' %}" class="fhi-button fhi-button-primary">
+                Professional Version
+            </a>
+            <a href="{% url 'patient_access' %}" class="fhi-button fhi-button-secondary">
+                Patient &amp; Market Access
+            </a>
+        </div>
     </section>
 
     <section id="connectors" class="persona-section" style="background-color: #f3e5f5;">
@@ -158,26 +160,30 @@
             <li>Legal aid and pro bono networks</li>
             <li>Health policy organizations</li>
         </ul>
-        <a href="mailto:support42@fighthealthinsurance.com?subject=Organization%20Introduction"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
-            Make an Introduction
-        </a>
-        <a href="mailto:support42@fighthealthinsurance.com" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
-            Share Your Story
-        </a>
+        <div class="fhi-cluster">
+            <a href="mailto:support42@fighthealthinsurance.com?subject=Organization%20Introduction"
+               class="fhi-button fhi-button-primary">
+                Make an Introduction
+            </a>
+            <a href="mailto:support42@fighthealthinsurance.com" class="fhi-button fhi-button-secondary">
+                Share Your Story
+            </a>
+        </div>
     </section>
 
-    <section style="text-align: center; padding: 3rem 0; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
+    <section style="text-align: center; padding: 3rem 2rem; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
         <h2 style="margin-bottom: 1rem;">Ready to Get Started?</h2>
         <p style="font-size: 1.1rem; margin-bottom: 2rem;">
             Generate your healthcare claim appeal in minutes with AI.
         </p>
-        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
-            Generate an Appeal
-        </a>
-        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
-            AI Chat
-        </a>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary">
+                Generate an Appeal
+            </a>
+            <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary">
+                AI Chat
+            </a>
+        </div>
     </section>
 </div>
 {% endblock content %}
