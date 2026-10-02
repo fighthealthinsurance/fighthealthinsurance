@@ -1666,7 +1666,17 @@ section:not(.slider) .share-subcopy {
     align-items: center;
 }
 
-/* Footer social icons */
+/* Footer social icons: one centred row that wraps. Six 48px icons with
+   32px between them need 448px, so on a phone narrower than that the row
+   wraps instead of pushing the page sideways. */
+.footer-social {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--fhi-space-4) var(--fhi-space-7);
+    margin-top: var(--fhi-space-7);
+}
 .footer-social-link {
     display: flex;
     align-items: center;
