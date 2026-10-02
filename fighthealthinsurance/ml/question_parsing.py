@@ -55,7 +55,25 @@ _META_PHRASES = (
     "please provide more",
     "could you provide more",
     "share the denial letter",
+    "provide the denial",
+    "share the denial",
+    "the actual denial",
     "once you share",
+)
+
+# A reply that refuses anywhere is not used at all: a question left after
+# the refusal is the model asking for input ("Can you provide the denial
+# letter?"), not asking about the patient. First person, so a question or
+# answer about the patient does not trip it.
+_REFUSAL_PHRASES = (
+    "i cannot",
+    "i can't",
+    "i can not",
+    "i'm sorry",
+    "i am sorry",
+    "i'm unable",
+    "i am unable",
+    "as an ai",
 )
 
 # An answer is only shown as a hint, so blanking a doubtful one costs
@@ -94,6 +112,11 @@ def is_junk_question(question: str) -> bool:
     q = question.strip()
     if len(_LETTER.findall(q)) < 3:
         return True
+    # An introduction the old parser turned into a question by adding "?"
+    # ("Here are some questions to help with the appeal:?"). Cached rows
+    # from before this check can still hold one.
+    if q.rstrip("?").rstrip().endswith(":") or q.lower().startswith("here are"):
+        return True
     if len(q) > MAX_QUESTION_CHARS:
         return True
     if _PLACEHOLDER.search(q):
@@ -111,6 +134,9 @@ def clean_suggested_answer(answer: str) -> str:
     a = _ANSWER_PREFIX.sub("", a).strip()
     if not a or _PLACEHOLDER.search(a) or a.upper().strip(".") == "UNKNOWN":
         return ""
+    # What is left of a placeholder or a word cut short: "[" or a lone "U".
+    if a.startswith("[") or (len(a) == 1 and a.isalpha()):
+        return ""
     low = a.lower()
     if any(phrase in low for phrase in _META_ANSWER_PHRASES):
         return ""
@@ -123,6 +149,17 @@ def _said_no_questions(text: str) -> bool:
     return any(
         line.strip().strip("*`. ").upper() == NO_QUESTIONS for line in text.split("\n")
     )
+
+
+def _refuses(text: str) -> bool:
+    """Whether the model refused anywhere outside an answer: in a line with
+    no question mark, or before a line's first one. A suggested answer may
+    quote the patient ("I can't walk more than a block") and is not read."""
+    for line in text.split("\n"):
+        head = line.split("?", 1)[0].lower()
+        if any(phrase in head for phrase in _REFUSAL_PHRASES):
+            return True
+    return False
 
 
 def _split_line(line: str) -> Optional[Tuple[str, str]]:
@@ -158,11 +195,16 @@ def parse_appeal_questions(text: Optional[str]) -> Optional[List[Tuple[str, str]
         return None
     if "Rationale for questions" in text:
         return None
+    if _refuses(text):
+        return None
     pairs: List[Tuple[str, str]] = []
     # A reply in one long block can hold several "Question? Answer" pairs.
     # The pattern cannot cross a ".", so "(e.g., Weight Watchers) for six
     # months?" comes out as a fragment; a question has to start with a letter.
-    if "\n" not in text and len(text) > 100:
+    # It also cuts an answer at its first capital letter, so a block with one
+    # question goes through the line split below, which keeps the answer
+    # whole.
+    if "\n" not in text and len(text) > 100 and text.count("?") > 1:
         for question, answer in _SINGLE_BLOCK.findall(text):
             question = _CITATION_MARK.sub("", question.replace("**", "")).strip()
             if question[:1].isalpha() and not is_junk_question(question):

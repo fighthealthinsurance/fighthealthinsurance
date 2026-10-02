@@ -318,3 +318,76 @@ async def test_a_placeholder_procedure_asks_no_model():
         )
     assert result is None
     model.get_appeal_questions.assert_not_called()
+
+
+# --- Found in review ----------------------------------------------------------
+
+
+def test_a_one_line_reply_with_a_placeholder_answer_shows_no_hint():
+    """The one-line pattern used to cut the answer at its first capital
+    letter, so "[Answer if available]" came out as the hint "["."""
+    reply = (
+        "Has the patient participated in a structured weight loss program for "
+        "at least six months before requesting coverage? [Answer if available]"
+    )
+    [(question, answer)] = parse_appeal_questions(reply)
+    assert answer == ""
+
+
+def test_a_one_line_reply_keeps_its_whole_answer():
+    reply = (
+        "Has the patient tried physical therapy for back pain before this MRI "
+        "was ordered? Yes, PT for 6 weeks at Kaiser"
+    )
+    assert parse_appeal_questions(reply)[0][1] == "Yes, PT for 6 weeks at Kaiser"
+
+
+def test_a_refusal_followed_by_a_request_for_the_letter_gives_no_questions():
+    reply = (
+        "I cannot generate clinical questions without the denial text.\n"
+        "Can you provide the denial letter?"
+    )
+    assert parse_appeal_questions(reply) is None
+
+
+def test_a_one_line_refusal_ending_in_a_question_gives_no_questions():
+    reply = (
+        "I cannot generate clinical questions without the denial text. "
+        "Could you share the actual denial text?"
+    )
+    assert parse_appeal_questions(reply) is None
+
+
+def test_an_answer_that_quotes_the_patient_does_not_drop_the_question():
+    reply = (
+        "What limits the patient's daily activities? "
+        "Patient reports 'I can't walk more than a block'"
+    )
+    questions = parse_appeal_questions(reply)
+    assert questions is not None
+    assert questions[0][0] == "What limits the patient's daily activities?"
+
+
+def test_an_old_cached_introduction_line_is_junk():
+    assert is_junk_question("Here are some questions to help with the appeal:?")
+
+
+@pytest.mark.django_db
+@pytest.mark.asyncio
+async def test_a_cached_set_with_an_introduction_line_is_not_served():
+    procedure, diagnosis = _pair("ankle mri", "ankle pain")
+    await GenericQuestionGeneration.objects.acreate(
+        procedure=procedure,
+        diagnosis=diagnosis,
+        generated_questions=[
+            ["Here are some questions to help with the appeal:?", ""],
+            ["Has the patient tried physical therapy?", ""],
+        ],
+    )
+    model, patches = _backends(GOOD)
+    with patches[0], patches[1]:
+        result = await MLAppealQuestionsHelper.generate_generic_questions(
+            procedure=procedure, diagnosis=diagnosis
+        )
+    assert result == GOOD
+    model.get_appeal_questions.assert_called()
