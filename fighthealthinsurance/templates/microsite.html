@@ -41,7 +41,7 @@
                 {% if microsite.image %}
                     </div>
                     <div class="hero-image">
-                        <img src="{{ microsite.image }}" alt="{{ microsite.default_procedure }}" class="img-fluid rounded shadow">
+                        <img src="{{ microsite.image }}" alt="{{ microsite.default_procedure }}">
                     </div>
                 </div>
                 {% endif %}
@@ -279,10 +279,16 @@
         max-width: 280px;
     }
 
+    /* The photo never runs wider than its column, keeps its proportions,
+       and has the rounded corners and soft shadow the site's cards have. */
     #microsite-hero .hero-image img {
+        max-width: 100%;
+        height: auto;
         max-height: 280px;
         width: auto;
         object-fit: contain;
+        border-radius: var(--fhi-radius);
+        box-shadow: var(--fhi-shadow);
     }
 
     @media (max-width: 768px) {

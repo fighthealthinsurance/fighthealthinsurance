@@ -42,7 +42,7 @@ LENGTH = re.compile(r"(-?[\d.]+)(px|rem|em)\b", re.IGNORECASE)
 # Every page renders this. It is migrated, and a literal here is a regression.
 SHELL_SELECTOR = re.compile(
     r"(^|[\s,>])(header|\.navbar|\.nav(?![\w-])|#nav(?![\w-])"
-    r"|\.fhi-nav|\.fhi-chat-button"
+    r"|\.fhi-nav|\.fhi-shell|\.fhi-chat-button"
     r"|footer(?![\w-])|\.footer|\.copyright)"
 )
 

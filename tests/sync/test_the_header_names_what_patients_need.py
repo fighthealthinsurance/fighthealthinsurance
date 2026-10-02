@@ -93,7 +93,7 @@ class TheNavIsSevenThingsTest(TestCase):
     def test_help_is_its_own_item_and_goes_to_join_the_fight(self):
         nav = _nav(self.html)
 
-        help_link = f'href="{reverse("how-to-help")}" class="nav-link">Help</a>'
+        help_link = f'href="{reverse("how-to-help")}" class="fhi-nav-link">Help</a>'
         self.assertIn(help_link, nav)
         self.assertGreater(nav.index(">Help<"), nav.index(">Delete<"))
         self.assertLess(nav.index(">Help<"), nav.index("Professional"))

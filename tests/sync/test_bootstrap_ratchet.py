@@ -177,30 +177,35 @@ DATA_BS = "data-bs attributes"
 # 2026-09-25: the rest of the content pages moved onto the page column, which
 # took 29 containers, 9 rows, 9 columns and 2 d-flex with them, and the jump
 # links on how_to_help left Bootstrap's nav pills for tiles of our own.
+# 2026-10-02: the header and footer left Bootstrap's navbar, container, row
+# and columns for .fhi-shell and the header's own classes, the home page's
+# lower bands moved onto the wide column, and the microsite photo lost
+# img-fluid, rounded and shadow. That took the grid, the navbar, images and
+# borders to zero.
 BASELINE: "dict[str, int]" = {
     "form-control": 0,
     "form-check-input": 0,
     "card": 0,
     "btn": 131,
-    "row": 1,
-    "col-": 2,
-    "container": 6,
+    "row": 0,
+    "col-": 0,
+    "container": 0,
     "alert": 0,
     "d-flex": 0,
     # The families.
     "alerts": 0,
     "badges": 0,
-    "borders and shadows": 3,
+    "borders and shadows": 0,
     "breadcrumbs": 0,
     "buttons": 182,
     "cards": 0,
     "colours and backgrounds": 0,
     "display and flex": 1,
     "forms": 0,
-    "grid": 9,
-    "images and figures": 2,
+    "grid": 0,
+    "images and figures": 0,
     "list groups": 0,
-    "navs and the navbar": 9,
+    "navs and the navbar": 0,
     "shared state": 1,
     "sizing": 0,
     "spacing": 0,
