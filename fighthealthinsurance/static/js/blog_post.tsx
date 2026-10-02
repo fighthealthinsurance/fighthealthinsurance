@@ -322,7 +322,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
             <h4>Content Not Found</h4>
             <p>The {contentType} you're looking for doesn't exist.</p>
           </div>
-          <a href={backUrl} className="btn btn-success">{backText}</a>
+          <a href={backUrl} className="fhi-button fhi-button-neutral">{backText}</a>
         </div>
       </div>
     );
@@ -399,14 +399,14 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
             <p>
               Get personalized assistance with your health insurance appeal.
             </p>
-            <a href="/" className="btn" style={{backgroundColor: '#a5c422', color: 'white', border: 'none'}}>Start Appeal Generator</a>
+            <a href="/" className="fhi-button fhi-button-primary">Start Appeal Generator</a>
           </div>
           <div className="fhi-card">
             <h5 style={{color: 'var(--fhi-green-ink)'}}>More Resources</h5>
             <p>
               Explore additional tools and information to fight denials.
             </p>
-            <a href="/other-resources" className="btn" style={{backgroundColor: 'transparent', color: '#a5c422', border: '1px solid #a5c422'}}>View Resources</a>
+            <a href="/other-resources" className="fhi-button fhi-button-secondary">View Resources</a>
           </div>
         </div>
       </div>

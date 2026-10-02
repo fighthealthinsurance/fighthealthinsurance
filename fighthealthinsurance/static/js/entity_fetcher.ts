@@ -154,7 +154,7 @@ function actionButton(text: string, submits: boolean): HTMLButtonElement {
   // Stable handles for the browser tests: the labels change with the outcome.
   button.id = submits ? 'entity-continue' : 'entity-retry';
   button.textContent = text;
-  button.className = submits ? 'btn btn-green' : 'btn btn-secondary';
+  button.className = submits ? 'fhi-button fhi-button-primary' : 'fhi-button fhi-button-secondary';
   button.style.cssText = 'margin: 0 0.25rem;';
   return button;
 }

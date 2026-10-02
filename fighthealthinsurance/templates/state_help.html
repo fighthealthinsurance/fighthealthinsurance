@@ -15,12 +15,12 @@
                 <h1 class="hero-headline">{{ state.name }} ({{ state.abbreviation }})</h1>
                 <p class="hero-subcopy">Find help with health insurance problems, appeal denials, and access assistance programs in {{ state.name }}.</p>
                 <div class="hero-cta-group">
-                    <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta">
+                    <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large primary-cta">
                         Start Your Appeal
                     </a>
                 </div>
                 <div class="hero-cta-group hero-cta-secondary">
-                    <a href="{% url 'chat' %}" class="btn btn-outline-green secondary-cta smoothScroll">
+                    <a href="{% url 'chat' %}" class="fhi-button secondary-cta">
                         Chat with AI Assistant
                     </a>
                 </div>
@@ -89,7 +89,7 @@
                 </p>
                 {% endif %}
                 {% if state.consumer_assistance.cap_url %}
-                <a href="{{ state.consumer_assistance.cap_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                <a href="{{ state.consumer_assistance.cap_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
                     Visit Website {% include 'partials/opens_in_new_tab.html' %}
                 </a>
                 {% endif %}
@@ -107,7 +107,7 @@
                 </p>
                 {% endif %}
                 {% if state.consumer_assistance.ship_url %}
-                <a href="{{ state.consumer_assistance.ship_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                <a href="{{ state.consumer_assistance.ship_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
                     Visit Website {% include 'partials/opens_in_new_tab.html' %}
                 </a>
                 {% endif %}
@@ -154,7 +154,7 @@
                     </p>
                     {% endif %}
                     {% if state.medicaid.managed_care_ombudsman.url %}
-                    <a href="{{ state.medicaid.managed_care_ombudsman.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary">
+                    <a href="{{ state.medicaid.managed_care_ombudsman.url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
                         Learn More
                     </a>
                     {% endif %}
@@ -173,7 +173,7 @@
             <h2>External Review Available</h2>
             <p class="fhi-lead">{{ state.name }} offers an independent external review process for health insurance denials. This is a free or low-cost way to have your denial reviewed by an independent third party.</p>
             {% if state.external_review.info_url %}
-            <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-lg">
+            <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound">
                 Learn About External Review {% include 'partials/opens_in_new_tab.html' %}
             </a>
             {% endif %}
@@ -217,13 +217,13 @@
         <h2>Need Help With a Health Insurance Denial?</h2>
         <p class="fhi-lead">Our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
         <div class="fhi-cluster fhi-cluster-center">
-            <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
+            <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large">
                 Start Your Appeal
             </a>
-            <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">
+            <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary fhi-button-large">
                 Chat with AI Assistant
             </a>
-            <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">
+            <a href="{% url 'state_help_index' %}" class="fhi-button fhi-button-neutral fhi-button-large">
                 View All States
             </a>
         </div>
@@ -318,28 +318,6 @@
 
     #final-cta {
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-    }
-
-    .btn-green {
-        background-color: #28a745;
-        border-color: #28a745;
-        color: var(--fhi-btn-ink);
-    }
-
-    .btn-green:hover {
-        background-color: #218838;
-        border-color: #1e7e34;
-        color: var(--fhi-btn-ink);
-    }
-
-    .btn-outline-green {
-        color: #28a745;
-        border-color: #28a745;
-    }
-
-    .btn-outline-green:hover {
-        background-color: #28a745;
-        color: white;
     }
 </style>
 {% endblock extra_style %}

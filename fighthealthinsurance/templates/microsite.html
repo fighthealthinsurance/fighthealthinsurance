@@ -23,18 +23,18 @@
                 column on a phone. {% endcomment %}
                 <div class="hero-cta-group">
                     {% if microsite.blog_post_url %}
-                    <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green secondary-cta">
+                    <a href="{{ microsite.blog_post_url }}" class="fhi-button secondary-cta">
                         Read Our Guide
                     </a>
                     {% endif %}
                     {% if not microsite.medicare %}
                     <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-                       class="section-btn btn btn-default smoothScroll primary-cta">
+                       class="fhi-button fhi-button-primary fhi-button-large primary-cta">
                         Start Your Appeal
                     </a>
                     {% endif %}
                     <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
-                       class="btn {% if microsite.medicare %}btn-default section-btn primary-cta{% else %}btn-outline-green secondary-cta{% endif %} smoothScroll">
+                       class="fhi-button {% if microsite.medicare %}fhi-button-primary fhi-button-large primary-cta{% else %}secondary-cta{% endif %}">
                         Chat with AI Assistant
                     </a>
                 </div>
@@ -86,7 +86,7 @@
         <p class="fhi-lead">{{ microsite.how_we_help }}</p>
         <div>
             <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-               class="btn btn-green fhi-btn-lg">
+               class="fhi-button fhi-button-primary fhi-button-large">
                 {{ microsite.cta }}
             </a>
         </div>
@@ -221,16 +221,16 @@
         <div class="fhi-cluster fhi-cluster-center">
             {% if not microsite.medicare %}
             <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-               class="btn btn-green fhi-btn-lg">
+               class="fhi-button fhi-button-primary fhi-button-large">
                 Start Your Appeal
             </a>
             {% endif %}
             <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
-               class="btn {% if microsite.medicare %}btn-green{% else %}btn-outline-green{% endif %} fhi-btn-lg">
+               class="fhi-button {% if microsite.medicare %}fhi-button-primary{% else %}fhi-button-secondary{% endif %} fhi-button-large">
                 Chat with AI Assistant
             </a>
             {% if microsite.blog_post_url %}
-            <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green fhi-btn-lg">
+            <a href="{{ microsite.blog_post_url }}" class="fhi-button fhi-button-secondary fhi-button-large">
                 Read Our Guide
             </a>
             {% endif %}
@@ -362,6 +362,5 @@
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    /* .btn-green and .btn-outline-green are defined in custom.css */
 </style>
 {% endblock extra_style %}

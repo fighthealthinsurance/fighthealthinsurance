@@ -526,6 +526,11 @@ VOID_TAGS = frozenset(
     "area base br col embed hr img input link meta param source track wbr".split()
 )
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+# Django's own comments never render either. A partial that shows how to use
+# it in a {% comment %} would otherwise put its example markup on the page.
+_DJANGO_COMMENT = re.compile(
+    r"\{%\s*comment\b.*?%\}.*?\{%\s*endcomment\s*%\}|\{#.*?#\}", re.S
+)
 _DJANGO = re.compile(r"\{%.*?%\}|\{\{.*?\}\}", re.S)
 _INCLUDE = re.compile(r"\{%\s*include\s+[\"']([^\"']+)[\"'][^%]*%\}")
 _EXTENDS = re.compile(r"\{%\s*extends\s+[\"']([^\"']+)[\"']\s*%\}")
@@ -659,6 +664,7 @@ def template_markup(name: str, stack: tuple[str, ...] = ()) -> str:
     if name in stack or not path.is_file():
         return ""
     text = _HTML_COMMENT.sub(" ", path.read_text(errors="replace"))
+    text = _DJANGO_COMMENT.sub(" ", text)
     text = _STYLE_OPEN.sub('<style %s="%s"' % (_STYLE_SOURCE, name), text)
     parent = _EXTENDS.search(text)
     if parent is not None:
@@ -1491,29 +1497,13 @@ EXCEPTIONS: tuple[Exempt, ...] = (
         ".media-reference-link:hover, .media-reference-link:focus",
         BRAND_PINK,
     ),
-    Exempt("custom.css", ".btn-green, .btn-green:focus", WHITE_ON_BRAND_LIME),
-    Exempt("custom.css", ".btn-green:hover", WHITE_ON_BRAND_LIME),
+    Exempt("custom.css", ".fhi-button-primary", WHITE_ON_BRAND_LIME),
     Exempt(
         "custom.css",
-        ".btn-green:hover, .btn-green:focus, .btn-green:active, "
-        ".section-btn:hover, .section-btn:focus, .section-btn:active",
+        ".fhi-button-primary:hover, .fhi-button-primary:focus, "
+        ".fhi-button-primary:active",
         WHITE_ON_BRAND_LIME,
     ),
-    Exempt("custom.css", ".btn-delete, .pro-submit-btn", WHITE_ON_BRAND_LIME),
-    Exempt(
-        "custom.css", ".btn-delete:hover, .pro-submit-btn:hover", WHITE_ON_BRAND_LIME
-    ),
-    Exempt(
-        "custom.css",
-        ".section-btn, .section-btn.btn.btn-default.smoothScroll",
-        WHITE_ON_BRAND_LIME,
-    ),
-    Exempt(
-        "custom.css",
-        ".section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover",
-        WHITE_ON_BRAND_LIME,
-    ),
-    Exempt("main.css", ".section-btn", WHITE_ON_BRAND_LIME),
     Exempt("custom.css", ".fhi-nav-cta a", WHITE_ON_BRAND_LIME),
     Exempt(
         "custom.css",
@@ -1557,7 +1547,7 @@ UNRESOLVED: tuple[Exempt, ...] = (
     Exempt("custom.css", ".hero-headline", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".hero-tagline", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".hero-subcopy", HERO_PHOTOGRAPH),
-    Exempt("custom.css", ".secondary-cta, .tertiary-cta", HERO_VEIL),
+    Exempt("custom.css", ".secondary-cta, .secondary-cta:focus", HERO_VEIL),
     Exempt("custom.css", ".how-step", HERO_VEIL),
     Exempt("custom.css", ".how-step:not(:last-child)::after", HERO_VEIL),
     Exempt("custom.css", ".how-step h6", HERO_VEIL),
@@ -1588,12 +1578,6 @@ WRITTEN_AT_RUNTIME = (
 )
 
 UNREACHED: tuple[Exempt, ...] = (
-    Exempt(
-        "custom.css",
-        ".pwyw-pill",
-        "No template carries this class; it is the pill the pay-what-you-want "
-        "panel used before the panel was rebuilt.",
-    ),
     # pwyw.js writes this link into the panel's message only when the
     # browser blocks the payment tab; no template carries it. It takes the
     # message's own colour.
@@ -1975,21 +1959,33 @@ def test_every_excuse_carries_a_reason() -> None:
 
 # The one token every label on the lime reads, the classes that wear the lime,
 # and the two inks recorded beside the token as the candidates for a swap.
+# btn-green is the flat lime button the two standalone error pages draw for
+# themselves, since they load no stylesheet.
 INK_TOKEN = "--fhi-btn-ink"
-BRAND_BUTTON_CLASSES = frozenset(
-    ("btn-green", "section-btn", "btn-delete", "pro-submit-btn", "pwyw-pill")
-)
+BRAND_BUTTON_CLASSES = frozenset(("fhi-button-primary", "fhi-chat-button", "btn-green"))
 GRADIENT_BUTTON_CLASSES = (
-    "btn-green",
-    "section-btn",
-    "btn-delete",
-    "pro-submit-btn",
+    "fhi-button-primary",
     "fhi-chat-button",
 )
 # Same family, drawn as an edge rather than a fill. They carry the size scale
 # but not the white-on-lime measurement, because their fill is not the lime.
 OUTLINE_BUTTON_CLASSES = frozenset(
-    ("btn-outline-green", "secondary-cta", "tertiary-cta")
+    (
+        "fhi-button-secondary",
+        "fhi-button-neutral",
+        "fhi-button-outbound",
+        "fhi-button-danger",
+        "secondary-cta",
+    )
+)
+# Every class that makes or styles one of our buttons, for the checks that
+# hold for all of them.
+BUTTON_CLASSES = (
+    BRAND_BUTTON_CLASSES
+    | OUTLINE_BUTTON_CLASSES
+    | frozenset(
+        ("fhi-button", "fhi-button-quiet", "fhi-button-small", "fhi-button-large")
+    )
 )
 DARK_INK_CANDIDATES = ("#2b0f3d", "#1a1a1a")
 DECISION_DATE = "2026-09-13"
@@ -2365,16 +2361,9 @@ BUTTON_SIZES = ("sm", "md", "lg")
 # Where each size is applied, and the role that decides it.
 SIZE_ROLES = (
     ("custom.css", ".fhi-nav-cta a", "sm"),
-    ("custom.css", ".primary-cta", "lg"),
-    ("custom.css", ".hero-primary-cta", "lg"),
-    ("custom.css", ".fhi-btn-sm", "sm"),
-    ("custom.css", ".fhi-btn-md", "md"),
-    ("custom.css", ".fhi-btn-lg", "lg"),
-    ("custom.css", ".btn-green", "md"),
-    ("custom.css", ".btn-delete, .pro-submit-btn", "md"),
-    ("custom.css", ".section-btn, .section-btn.btn.btn-default.smoothScroll", "md"),
-    ("custom.css", ".secondary-cta, .tertiary-cta", "md"),
-    ("main.css", ".section-btn", "md"),
+    ("custom.css", ".fhi-button", "md"),
+    ("custom.css", ".fhi-button-small", "sm"),
+    ("custom.css", ".fhi-button-large", "lg"),
 )
 
 
@@ -2455,8 +2444,8 @@ def test_a_buttons_size_comes_from_its_role_not_from_a_literal() -> None:
 def test_the_primary_action_on_a_page_is_marked_large() -> None:
     """The role is in the markup where the template is what knows it."""
     dom = template_dom()
-    carried = dom.by_class.get("fhi-btn-lg", [])
-    assert carried, "no template marks its primary action with .fhi-btn-lg"
+    carried = dom.by_class.get("fhi-button-large", [])
+    assert carried, "no template marks its primary action with .fhi-button-large"
     where = {node.template for node in carried}
     for template in ("scrub.html", "remove_data.html"):
         assert template in where, (
@@ -2657,8 +2646,8 @@ STATE_PSEUDO = (":hover", ":focus", ":focus-visible", ":focus-within", ":active"
 def test_no_state_selector_decides_a_buttons_size() -> None:
     """A button may not change size when it is hovered or focused.
 
-    .fhi-btn-lg is one class. .btn-green:focus is a class and a pseudo-class,
-    so it outranks it. While the medium size sat on that selector, the site's
+    A size class is one class. A role with :focus is a class and a
+    pseudo-class, so it outranks it. While the medium size sat on that selector, the site's
     largest button snapped back to medium the moment a keyboard reached it:
     the target moved under the pointer, and the one control a patient tabs to
     on the upload page was the one that jumped.
@@ -2670,7 +2659,7 @@ def test_no_state_selector_decides_a_buttons_size() -> None:
     for rule in load_rules() + load_template_rules():
         for selector in rule.selectors:
             steps = split_selector(selector)
-            if not steps or not (steps[-1][1].classes & BRAND_BUTTON_CLASSES):
+            if not steps or not (steps[-1][1].classes & BUTTON_CLASSES):
                 continue
             if not any(state in selector for state in STATE_PSEUDO):
                 continue
@@ -2704,15 +2693,13 @@ TEMPLATE_BASELINE: dict[str, int] = {
     "templates/500.html": 1,
     "templates/admin_model_query.html": 4,
     "templates/admin_status.html": 4,
-    "templates/denial_language_library.html": 3,
-    "templates/faq.html": 3,
-    "templates/other_resources.html": 4,
+    "templates/denial_language_library.html": 1,
+    "templates/other_resources.html": 1,
     "templates/proconnector.html": 5,
     "templates/proconnector_letter.html": 1,
     "templates/proconnector_quick_intro.html": 4,
     "templates/send_bulk_email.html": 1,
     "templates/staff_dashboard.html": 4,
-    "templates/state_help.html": 2,
 }
 
 
@@ -2864,14 +2851,10 @@ def test_a_standalone_page_declares_the_ink_it_uses() -> None:
 # decided by whichever stylesheet happens to be later.
 BOOTSTRAP_SIZE_CLASSES = ("btn-lg", "btn-sm")
 BRAND_BUTTON_MARKUP_CLASSES = (
+    "fhi-button",
     "btn-green",
-    "btn-outline-green",
-    "section-btn",
-    "btn-delete",
-    "pro-submit-btn",
     "primary-cta",
     "secondary-cta",
-    "tertiary-cta",
 )
 _CLASS_ATTR = re.compile(r'class="([^"]*)"')
 
@@ -2882,7 +2865,7 @@ def test_no_brand_button_takes_its_size_from_bootstrap() -> None:
     Sixteen of them carried Bootstrap's .btn-lg. It sets 1.25rem type like
     ours does, so they looked close enough to miss, but it also sets its own
     padding and no minimum height at all, which is what the 44px touch target
-    on these buttons depends on. And .btn-lg and .fhi-btn-lg are both single
+    on these buttons depends on. And .btn-lg and our large size are both single
     classes, so nothing but stylesheet order decides which one applies.
     """
     offenders = []
@@ -2907,5 +2890,5 @@ def test_no_brand_button_takes_its_size_from_bootstrap() -> None:
                     )
     assert not offenders, (
         "these brand buttons are sized by Bootstrap rather than by the scale. "
-        "Use fhi-btn-sm, fhi-btn-md or fhi-btn-lg:\n  %s" % "\n  ".join(offenders)
+        "Use fhi-button-small or fhi-button-large:\n  %s" % "\n  ".join(offenders)
     )

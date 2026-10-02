@@ -209,7 +209,7 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                 centres = self.execute_script("""
                     const row = document.querySelector('#microsite-hero .hero-cta-group');
                     const guide = document.createElement('a');
-                    guide.href = '#'; guide.className = 'btn btn-outline-primary';
+                    guide.href = '#'; guide.className = 'fhi-button secondary-cta';
                     guide.textContent = 'Read Our Guide';
                     row.prepend(guide);
                     return Array.from(row.querySelectorAll('a'))

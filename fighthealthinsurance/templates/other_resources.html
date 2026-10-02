@@ -5,29 +5,6 @@ Other Resources
 {% block metadescription %}Fight Health Insurance is a generative AI tool to help you fight your health insurance denial. This is a list of other resources to help you fight for a fair outcome with your health insurance provider.{% endblock metadescription %}
 {% block content %}
 <style>
-/* FHI button style for this page */
-.fhi-btn {
-    background: #a5c422;
-    color: #fff;
-    border: none;
-    border-radius: 7px;
-    padding: 0.375rem 0.75rem;
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 1rem;
-    box-shadow: none;
-    transition: background 0.2s;
-    display: inline-block;
-}
-.fhi-btn:hover, .fhi-btn:focus {
-    background: #8eb31d;
-    color: #fff;
-    text-decoration: none;
-}
-.fhi-btn[aria-disabled="true"] {
-    opacity: 0.7;
-    pointer-events: none;
-}
 .text-fhi-green {
     color: var(--fhi-green-ink) !important;
 }
@@ -96,23 +73,23 @@ Other Resources
     <div class="fhi-stack fhi-stack-loose">
         <div class="fhi-cluster">
             <form action="{% url 'faq' %}" method="get">
-                <button type="submit" class="fhi-btn">FAQ</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">FAQ</button>
             </form>
             <form action="{% url 'blog' %}" method="get">
-                <button type="submit" class="fhi-btn">Blog</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">Blog</button>
             </form>
             <form action="{% url 'denial-language-library' %}" method="get">
-                <button type="submit" class="fhi-btn">Denial Language Library</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">Denial Language Library</button>
             </form>
             <form action="{% url 'microsite_directory' %}" method="get">
-                <button type="submit" class="fhi-btn">Treatment Resources</button>
+                <button type="submit" class="fhi-button fhi-button-secondary fhi-button-small">Treatment Resources</button>
             </form>
             {% comment %}
               The glossary's only way in. Without this the index and all
               59 term pages are reachable from the sitemap and nowhere a
               person can click.
             {% endcomment %}
-            <a href="{% url 'glossary_index' %}" class="fhi-btn">Glossary</a>
+            <a href="{% url 'glossary_index' %}" class="fhi-button fhi-button-secondary fhi-button-small">Glossary</a>
         </div>
 
         <!-- Two columns across the page, like the blog's cards: the
