@@ -402,36 +402,10 @@ textarea.fhi-field {
     margin: 0;
 }
 
-.alert-success {
-    background: #e8f5e9;
-    border-left-color: #4caf50;
-}
-/* The regulator letter review page is the last callout still named with
-   Bootstrap's alert-success. The flow's callouts use the .alert-box-*
-   names further down, which carry the same heading inks. */
-.alert-success h3 {
+/* The regulator letter review's callout, an .alert-box-success with an h3,
+   keeps the green ink it had as alert-success: 4.56:1 on the box's fill. */
+.alert-box-success h3 {
     color: #2e7d32;
-}
-
-.alert-danger {
-    background: #ffebee;
-    border-left-color: #f44336;
-}
-/* The blog and FAQ's "not found" message, which blog_post.tsx renders as a
-   Bootstrap alert-danger with a paragraph: its sentence stays error red
-   rather than the body grey main.css gives every p. 5.0:1 on the fill. */
-.alert-danger p {
-    color: #c62828;
-}
-
-.alert-warning {
-    background: #fff3cd;
-    border-left-color: #ffc107;
-}
-
-.alert-info {
-    background: #e3f2fd;
-    border-left-color: #2196f3;
 }
 
 /* Section headers with underline */
@@ -981,7 +955,7 @@ li > a.link {
 
 /* PWYW Panel */
 .pwyw-panel {background: rgba(255, 255, 255, 0.25); backdrop-filter: blur(8px); padding:1.3rem 1.5rem 1.5rem; border-radius:12px; color:#fff; margin:0 0 1.3rem; box-shadow:0 4px 14px rgba(0,0,0,.25); max-width:680px; border: 1px solid rgba(255, 255, 255, 0.3); border-top: 4px solid rgba(255, 255, 255, 0.9);}
-.pwyw-title {margin:0 0 .5rem; font-size:1.15rem; font-weight:700; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
+.pwyw-title {margin:0 0 .5rem; font-size:var(--fhi-text-lead); font-weight:700; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
 .pwyw-subcopy {font-size:0.95rem; line-height:1.5rem; margin:0 0 1rem; color:#fff; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);}
 .pwyw-options {display:flex; flex-wrap:wrap; gap:.8rem;}
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
@@ -1545,9 +1519,13 @@ li > a.link {
     color: #fff;
 }
 
-/* Share panel on non-hero pages (with colored backgrounds) */
+/* Share panel on non-hero pages (with colored backgrounds). A page on the
+   reading column (.fhi-page) has neither a container nor a section around
+   the panel, so the column is named too; without it the thank-you pages
+   drew the hero's white words on the white page. */
 .container .share-panel,
-section:not(.slider) .share-panel {
+section:not(.slider) .share-panel,
+.fhi-page .share-panel {
     background: #fff;
     color: #333;
     border: 1px solid var(--fhi-line);
@@ -1555,12 +1533,14 @@ section:not(.slider) .share-panel {
     box-shadow: var(--fhi-shadow);
 }
 .container .share-title,
-section:not(.slider) .share-title {
+section:not(.slider) .share-title,
+.fhi-page .share-title {
     color: #333;
     text-shadow: none;
 }
 .container .share-subcopy,
-section:not(.slider) .share-subcopy {
+section:not(.slider) .share-subcopy,
+.fhi-page .share-subcopy {
     color: #555;
     text-shadow: none;
 }
@@ -1789,7 +1769,9 @@ section:not(.slider) .share-subcopy {
 /* Insurance Bullshit Bingo Styles */
 .bingo-section {
     background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    padding: 4rem 0;
+    /* The band's own side padding keeps the gradient showing beside the
+       board, as Bootstrap's .container inside it used to. */
+    padding: var(--fhi-space-10) var(--fhi-space-3);
     margin: 2rem 0;
 }
 
@@ -2690,6 +2672,19 @@ main :where(table) {
     font-size: 1.3rem;
 }
 
+/* The form's own errors, not one field's, sit in a red notice above the
+   fields, a field's gap clear of the first row. Its list takes the
+   notice's ink: the field errors' red is 4.1:1 on the notice's pale red,
+   the notice's ink 7.1:1. */
+.pro-interest-form > .fhi-notice {
+    margin-bottom: var(--fhi-space-5);
+}
+
+.pro-interest-form > .fhi-notice .errorlist {
+    margin: 0;
+    color: inherit;
+}
+
 .pro-interest-actions {
     margin-top: 1.75rem;
 }
@@ -3036,15 +3031,6 @@ textarea,
 
 .term-definition .fhi-lead {
     line-height: var(--fhi-line-body);
-}
-
-.breadcrumb-item a {
-    color: var(--fhi-green-ink);
-    text-decoration: none;
-}
-
-.breadcrumb-item a:hover {
-    text-decoration: underline;
 }
 
 #final-cta {
@@ -3793,6 +3779,9 @@ textarea,
 /* A list in a notice sits a step under the line that leads into it, and
    the notice's own padding, not the list's margin, closes the box. */
 .fhi-notice > ul { margin-block: var(--fhi-space-2) 0; }
+/* A paragraph in a notice is the notice's ink too, not main.css's grey,
+   which falls under 4.5:1 on the notice fills. */
+.fhi-notice p { color: inherit; }
 
 /* The small print at the foot of a page: a bordered light box. */
 .fhi-disclaimer {
@@ -3829,6 +3818,20 @@ textarea,
     background-color: #f8f9fa;
     border-radius: var(--fhi-radius);
 }
+
+/* A photograph in the column: the size its file gives it, never wider
+   than the column, at its own proportions. The fax thank-you photo is
+   1088px wide and scrolled the page sideways on a phone. */
+.fhi-photo {
+    max-width: 100%;
+    height: auto;
+}
+
+/* A video embed that keeps its 16:9 shape at any width: the box takes its
+   height from its width and the frame fills it. Bootstrap's .ratio did the
+   same with a padding trick. */
+.fhi-video { aspect-ratio: 16 / 9; }
+.fhi-video > iframe { display: block; width: 100%; height: 100%; }
 
 /* A small label. The fills clear 4.5:1 under their ink. */
 .fhi-badge {
