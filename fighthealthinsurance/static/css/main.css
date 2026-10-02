@@ -409,9 +409,15 @@ a:focus {
     width: 100%;
 }
 
+/* The caption fills its band, however tall the band's floor makes it, and
+   centres the copy in it both ways. Bootstrap's row used to stretch the
+   band for the caption's height: 100% to fill; the band is a flex column of
+   its own now, so the caption grows into it instead. */
 .slider .caption {
+    flex: 1 1 auto;
     display: flex;
     justify-content: center;
+    align-items: center;
     flex-direction: column;
     text-align: center;
     height: 100%;
@@ -420,6 +426,8 @@ a:focus {
 }
 
 .slider .item {
+    display: flex;
+    flex-direction: column;
     background-position: inherit;
     background-repeat: no-repeat;
     background-attachment: local;

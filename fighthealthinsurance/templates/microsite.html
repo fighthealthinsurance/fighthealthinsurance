@@ -8,45 +8,43 @@
 {% block content %}
 <!-- Hero Section -->
 <section id="microsite-hero" class="slider">
-    <div class="row">
-        <div class="item item-first fhi-hero-short">
-            <div class="caption d-flex flex-column align-items-center justify-content-center">
-                <div class="hero-inner {% if microsite.image %}hero-with-image{% endif %}">
-                    {% if microsite.image %}
-                    <div class="hero-content-wrapper">
-                        <div class="hero-text">
+    <div class="item item-first fhi-hero-short">
+        <div class="caption">
+            <div class="hero-inner {% if microsite.image %}hero-with-image{% endif %}">
+                {% if microsite.image %}
+                <div class="hero-content-wrapper">
+                    <div class="hero-text">
+                {% endif %}
+                <h3 class="hero-tagline">{{ microsite.tagline }}</h3>
+                <h1 class="hero-headline">{{ microsite.hero_h1 }}</h1>
+                <p class="hero-subcopy">{{ microsite.hero_subhead }}</p>
+                {% comment %} One row for every call to action, like Patient
+                Access, which links here as its sample; the row wraps to a
+                column on a phone. {% endcomment %}
+                <div class="hero-cta-group">
+                    {% if microsite.blog_post_url %}
+                    <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green secondary-cta">
+                        Read Our Guide
+                    </a>
                     {% endif %}
-                    <h3 class="hero-tagline">{{ microsite.tagline }}</h3>
-                    <h1 class="hero-headline">{{ microsite.hero_h1 }}</h1>
-                    <p class="hero-subcopy">{{ microsite.hero_subhead }}</p>
-                    {% comment %} One row for every call to action, like Patient
-                    Access, which links here as its sample; the row wraps to a
-                    column on a phone. {% endcomment %}
-                    <div class="hero-cta-group">
-                        {% if microsite.blog_post_url %}
-                        <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-green secondary-cta">
-                            Read Our Guide
-                        </a>
-                        {% endif %}
-                        {% if not microsite.medicare %}
-                        <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
-                           class="section-btn btn btn-default smoothScroll primary-cta">
-                            Start Your Appeal
-                        </a>
-                        {% endif %}
-                        <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
-                           class="btn {% if microsite.medicare %}btn-default section-btn primary-cta{% else %}btn-outline-green secondary-cta{% endif %} smoothScroll">
-                            Chat with AI Assistant
-                        </a>
-                    </div>
-                    {% if microsite.image %}
-                        </div>
-                        <div class="hero-image">
-                            <img src="{{ microsite.image }}" alt="{{ microsite.default_procedure }}" class="img-fluid rounded shadow">
-                        </div>
-                    </div>
+                    {% if not microsite.medicare %}
+                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+                       class="section-btn btn btn-default smoothScroll primary-cta">
+                        Start Your Appeal
+                    </a>
                     {% endif %}
+                    <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
+                       class="btn {% if microsite.medicare %}btn-default section-btn primary-cta{% else %}btn-outline-green secondary-cta{% endif %} smoothScroll">
+                        Chat with AI Assistant
+                    </a>
                 </div>
+                {% if microsite.image %}
+                    </div>
+                    <div class="hero-image">
+                        <img src="{{ microsite.image }}" alt="{{ microsite.default_procedure }}" class="img-fluid rounded shadow">
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
