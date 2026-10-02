@@ -14,13 +14,13 @@ Analyzing Your Denial
 {% endblock pre-roll %}
 
 {% block page_heading %}
-<h1 class="h2">Reading your letter</h1>
+<h1 class="fhi-step-title">Reading your letter</h1>
 {% endblock page_heading %}
 
 {% block formexplanation %}
-<div class="waiting-msg" id="waiting-msg" style="background:#fff3cd; padding:1.5rem; border-radius:8px; margin-bottom:1.5rem; border-left:4px solid #ffc107;">
-    <h2 class="h3" style="margin:0 0 1rem 0; display:flex; align-items:center; gap:0.5rem;">
-        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:20px; height:20px; border-width:2px;"></span>
+<div class="waiting-msg" id="waiting-msg" style="background:#fff3cd; padding:1.5rem; border-radius:8px; border-left:4px solid #ffc107;">
+    <h2 class="fhi-callout-title" style="margin:0 0 1rem 0; display:flex; align-items:center; gap:0.5rem;">
+        <span class="fhi-spinner fhi-spinner-inline" role="status" aria-hidden="true"></span>
         Analyzing your denial...
     </h2>
     <p style="margin:0 0 1rem 0;">Our AI is reading through your denial to extract key information like:</p>
@@ -34,23 +34,11 @@ Analyzing Your Denial
     </p>
 </div>
 <noscript>
-    <div class="alert-box alert-warning" style="background:#fff3cd; padding:1rem; border-radius:8px; margin-bottom:1.5rem; border-left:4px solid #ffc107;">
+    <div class="alert-box alert-box-warning" style="background:#fff3cd; padding:1rem; border-radius:8px; margin-bottom:1.5rem; border-left:4px solid #ffc107;">
         <p style="margin:0 0 0.5rem 0;"><strong>Reading your letter needs JavaScript, which is turned off.</strong></p>
         <p style="margin:0;">You can type the procedure and the diagnosis in yourself on the next page. Press <strong>Next</strong> to go there.</p>
     </div>
 </noscript>
-<style>
-.spinner-border {
-    display: inline-block;
-    border: 2px solid currentColor;
-    border-right-color: transparent;
-    border-radius: 50%;
-    animation: spinner-border .75s linear infinite;
-}
-@keyframes spinner-border {
-    to { transform: rotate(360deg); }
-}
-</style>
 {% comment %} json_script HTML-escapes, so user-derived values can never break out of the
    script context the way the old raw {{form_context}} interpolation could. {% endcomment %}
 {{ form_context|json_script:"fhi-form-context" }}

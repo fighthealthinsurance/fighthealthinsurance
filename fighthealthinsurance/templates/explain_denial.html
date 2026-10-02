@@ -20,170 +20,130 @@
 {% block content %}
 <!-- Hero Section -->
 <section id="explain-denial-hero" class="slider">
-    <div class="row">
-        <div class="item item-first fhi-hero-short">
-            <div class="caption d-flex flex-column align-items-center justify-content-center">
-                <div class="hero-inner">
-                    <h3 class="hero-tagline">Decode Your Denial</h3>
-                    <h1 class="hero-headline">Explain My Denial</h1>
-                    <p class="hero-subcopy">Paste your denial letter below. Our AI will explain what it means and what you can do next.</p>
-                </div>
+    <div class="item item-first fhi-hero-short">
+        <div class="caption">
+            <div class="hero-inner">
+                <h3 class="hero-tagline">Decode Your Denial</h3>
+                <h1 class="hero-headline">Explain My Denial</h1>
+                <p class="hero-subcopy">Paste your denial letter below. Our AI will explain what it means and what you can do next.</p>
             </div>
         </div>
     </div>
 </section>
 
 <!-- Main Form Section -->
-<section id="denial-form" class="py-5">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-10 mx-auto">
-                <div class="card shadow-sm">
-                    <div class="card-body p-4">
-                        <h2 class="card-title mb-4">Your denial letter</h2>
-                        
-                        {% if form.errors or form.non_field_errors %}
-                        <div class="alert alert-danger">
-                            {% if form.non_field_errors %}
-                                {{ form.non_field_errors }}
-                            {% endif %}
-                            {% if form.errors %}
-                                <ul class="mb-0">
-                                {% for field, errors in form.errors.items %}
-                                    {% for error in errors %}
-                                    <li>{{ field }}: {{ error }}</li>
-                                    {% endfor %}
-                                {% endfor %}
-                                </ul>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                        
-                        <form method="post" action="{% url 'explain_denial' %}" id="explain_denial_form">
-                            {% csrf_token %}
-                            
-                            <!-- Upload Denial Letter Section -->
-                            <div class="mb-4">
-                                <label for="uploader" class="form-label fw-bold">
-                                    Upload your denial letter (optional)
-                                </label>
-                                <input
-                                    type="file"
-                                    class="form-control"
-                                    id="uploader"
-                                    accept="image/*,.pdf"
-                                    multiple>
-                                <div class="form-text">
-                                    A photo or PDF, up to 20MB per file. We pull the text out for you.
-                                </div>
-                            </div>
-
-                            <!-- Denial Letter Section -->
-                            <div class="mb-4">
-                                <label for="denial_text" class="form-label fw-bold">
-                                    Your denial letter (required)
-                                </label>
-                                <textarea
-                                    class="form-control"
-                                    id="denial_text"
-                                    name="denial_text"
-                                    rows="8"
-                                    placeholder="Paste your denial letter here, or upload a file above to have the text extracted automatically..."
-                                    required>{{ denial_text|default:"" }}</textarea>
-                                <div class="form-text">
-                                    Tip: include the whole letter, especially the parts that give the reason for the denial.
-                                </div>
-                            </div>
-
-                            <hr class="my-4">
-
-                            {% include 'partials/user_consent_form_fields.html' %}
-
-                            <div class="d-grid gap-2">
-                                <button type="submit" class="btn btn-green fhi-btn-lg">
-                                    Explain my denial
-                                </button>
-                            </div>
-                        </form>
+<section id="denial-form" class="fhi-section">
+    <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-loose">
+        <div class="fhi-card">
+            <h2>Your denial letter</h2>
+            
+            {% if form.errors or form.non_field_errors %}
+            <div class="fhi-notice fhi-notice-danger">
+                {% if form.non_field_errors %}
+                    {{ form.non_field_errors }}
+                {% endif %}
+                {% if form.errors %}
+                    <ul>
+                    {% for field, errors in form.errors.items %}
+                        {% for error in errors %}
+                        <li>{{ field }}: {{ error }}</li>
+                        {% endfor %}
+                    {% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
+            {% endif %}
+            
+            <form class="fhi-stack" method="post" action="{% url 'explain_denial' %}" id="explain_denial_form">
+                {% csrf_token %}
+                
+                <!-- Upload Denial Letter Section -->
+                <div class="fhi-field-group">
+                    <label for="uploader" class="fhi-label">
+                        Upload your denial letter (optional)
+                    </label>
+                    <input
+                        type="file"
+                        class="fhi-field"
+                        id="uploader"
+                        accept="image/*,.pdf"
+                        multiple>
+                    <div class="fhi-note">
+                        A photo or PDF, up to 20MB per file. We pull the text out for you.
                     </div>
                 </div>
-            </div>
+
+                <!-- Denial Letter Section -->
+                <div class="fhi-field-group">
+                    <label for="denial_text" class="fhi-label">
+                        Your denial letter (required)
+                    </label>
+                    <textarea
+                        class="fhi-field"
+                        id="denial_text"
+                        name="denial_text"
+                        rows="8"
+                        placeholder="Paste your denial letter here, or upload a file above to have the text extracted automatically..."
+                        required>{{ denial_text|default:"" }}</textarea>
+                    <div class="fhi-note">
+                        Tip: include the whole letter, especially the parts that give the reason for the denial.
+                    </div>
+                </div>
+
+                <hr>
+
+                {% include 'partials/user_consent_form_fields.html' %}
+
+                <div class="fhi-actions">
+                    <button type="submit" class="btn btn-green fhi-btn-lg">
+                        Explain my denial
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </section>
 
 <!-- Common Denial Types Info Section -->
-<section id="common-denials" class="py-5 bg-light">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <h2 class="text-center mb-4">We can explain the most common kinds of denial</h2>
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">"Not medically necessary"</h5>
-                                <p class="card-text text-muted">The insurer says you didn't need the treatment.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">No prior approval</h5>
-                                <p class="card-text text-muted">The insurer says it had to approve the care first.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Billing or coding problems</h5>
-                                <p class="card-text text-muted">The codes on the claim don't match what the plan covers.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Not covered</h5>
-                                <p class="card-text text-muted">The plan says it leaves this treatment out.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">Experimental</h5>
-                                <p class="card-text text-muted">The insurer says the treatment isn't proven.</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">And More</h5>
-                                <p class="card-text text-muted">Out of network, step therapy, "cosmetic", and other reasons.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+<section id="common-denials" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>We can explain the most common kinds of denial</h2>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-card">
+                <h5>"Not medically necessary"</h5>
+                <p class="fhi-hint">The insurer says you didn't need the treatment.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>No prior approval</h5>
+                <p class="fhi-hint">The insurer says it had to approve the care first.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Billing or coding problems</h5>
+                <p class="fhi-hint">The codes on the claim don't match what the plan covers.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Not covered</h5>
+                <p class="fhi-hint">The plan says it leaves this treatment out.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>Experimental</h5>
+                <p class="fhi-hint">The insurer says the treatment isn't proven.</p>
+            </div>
+            <div class="fhi-card">
+                <h5>And More</h5>
+                <p class="fhi-hint">Out of network, step therapy, "cosmetic", and other reasons.</p>
             </div>
         </div>
     </div>
 </section>
 
 <!-- Disclaimer -->
-<section id="disclaimer" class="py-4">
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 mx-auto">
-                <div class="disclaimer-box p-3 bg-light border rounded">
-                    <p class="text-muted small mb-0">
-                        <strong>Please note:</strong> This explains denial letters in general. It isn't legal or medical advice. Check with your doctor and read your own plan's documents.
-                    </p>
-                </div>
-            </div>
+<section id="disclaimer" class="fhi-section fhi-section-tight">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <div class="disclaimer-box fhi-disclaimer">
+            <p class="fhi-note">
+                <strong>Please note:</strong> This explains denial letters in general. It isn't legal or medical advice. Check with your doctor and read your own plan's documents.
+            </p>
         </div>
     </div>
 </section>
@@ -226,12 +186,12 @@
         font-size: var(--fhi-text-input);
     }
     
-    #common-denials .card {
+    #common-denials .fhi-card {
         border-left: 4px solid #a5c422;
         transition: box-shadow 0.2s ease;
     }
     
-    #common-denials .card:hover {
+    #common-denials .fhi-card:hover {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
 </style>

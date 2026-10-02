@@ -10,8 +10,12 @@
   html { scroll-behavior: smooth; }
   .persona-section { padding: 2.5rem 2rem; border-radius: 8px; margin-bottom: 2rem; }
   .persona-section h2 { margin-bottom: 1.5rem; }
-  .persona-card { padding: 1.5rem; background-color: rgba(255,255,255,0.7); border-radius: 8px; height: 100%; }
+  .persona-card { padding: 1.5rem; background-color: rgba(255,255,255,0.7); border-radius: 8px; }
   .persona-card h3 { margin-bottom: 1rem; }
+  /* The two cards under Help Patients sit in a card grid, which spaces them
+     with its gap. Each used to sit in a column that carried 1.5rem under it,
+     so the grid keeps that much before the Chooser line that follows. */
+  .persona-section > .fhi-cards { margin-bottom: var(--fhi-space-6); }
 </style>
 {% endblock extra_style %}
 
@@ -44,42 +48,38 @@
 
     <section id="help-patients" class="persona-section" style="background-color: #f8f9fa;">
         <h2>Help Patients Fight Denials</h2>
-        <div class="row">
-            <div class="col-md-6" style="margin-bottom: 1.5rem;">
-                <div class="persona-card">
-                    <h3>Share the Tool</h3>
-                    <p>
-                        Know someone dealing with a health insurance denial? Share this free tool and help them fight back.
-                    </p>
-                    {% include 'partials/share_buttons.html' with share_heading_level=4 %}
-                </div>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="persona-card">
+                <h3>Share the Tool</h3>
+                <p>
+                    Know someone dealing with a health insurance denial? Share this free tool and help them fight back.
+                </p>
+                {% include 'partials/share_buttons.html' with share_heading_level=4 %}
             </div>
-            <div class="col-md-6" style="margin-bottom: 1.5rem;">
-                <div class="persona-card">
-                    <h3>Spread Awareness</h3>
-                    <p>
-                        Follow us on social media and help raise awareness about the importance of appealing
-                        unfair insurance denials. Every voice makes a difference!
-                    </p>
-                    <p style="margin-top: 1rem;">
-                        <a href="https://x.com/fighthinsurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on X/Twitter" style="margin-right: 0.75rem;">
-                            <img src="{% static 'images/twitterlogo.png' %}" alt="X/Twitter" style="width: 28px; height: 28px;">
-                        </a>
-                        <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Follow on Instagram" style="margin-right: 0.75rem;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
-                                <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path>
-                                <path d="M16.5 7.5v.01"></path>
-                            </svg>
-                        </a>
-                        <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on LinkedIn">
-                            <img src="{% static 'images/linkedinlogo.png' %}" alt="LinkedIn" style="width: 28px; height: 28px;">
-                        </a>
-                        <a href="https://www.tiktok.com/@fighthealthinsurancett" target="_blank" rel="noopener noreferrer" aria-label="Follow on TikTok" style="margin-left: 0.75rem;">
-                            <img src="{% static 'images/TikTok_logo.svg' %}" alt="TikTok" style="width: 28px; height: 28px;">
-                        </a>
-                    </p>
-                </div>
+            <div class="persona-card">
+                <h3>Spread Awareness</h3>
+                <p>
+                    Follow us on social media and help raise awareness about the importance of appealing
+                    unfair insurance denials. Every voice makes a difference!
+                </p>
+                <p style="margin-top: 1rem;">
+                    <a href="https://x.com/fighthinsurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on X/Twitter" style="margin-right: 0.75rem;">
+                        <img src="{% static 'images/twitterlogo.png' %}" alt="X/Twitter" style="width: 28px; height: 28px;">
+                    </a>
+                    <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Follow on Instagram" style="margin-right: 0.75rem;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
+                            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path>
+                            <path d="M16.5 7.5v.01"></path>
+                        </svg>
+                    </a>
+                    <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on LinkedIn">
+                        <img src="{% static 'images/linkedinlogo.png' %}" alt="LinkedIn" style="width: 28px; height: 28px;">
+                    </a>
+                    <a href="https://www.tiktok.com/@fighthealthinsurancett" target="_blank" rel="noopener noreferrer" aria-label="Follow on TikTok" style="margin-left: 0.75rem;">
+                        <img src="{% static 'images/TikTok_logo.svg' %}" alt="TikTok" style="width: 28px; height: 28px;">
+                    </a>
+                </p>
             </div>
         </div>
         <p style="margin-top: 1rem; text-align: center;">

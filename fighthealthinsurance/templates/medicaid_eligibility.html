@@ -8,23 +8,21 @@
 {% block content %}
 <!-- Hero Section -->
 <section id="medicaid-eligibility-hero" class="slider">
-    <div class="row">
-        <div class="item item-first fhi-hero-short">
-            <div class="caption d-flex flex-column align-items-center justify-content-center">
-                <div class="hero-inner" style="max-width: 900px;">
-                    <div class="mb-3">
-                        {% include "partials/experimental_badge.html" %}
-                    </div>
-                    <p class="hero-tagline">Medicaid rules are confusing&mdash;checking shouldn't be</p>
-                    <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
-                    <p class="hero-subcopy">Answer a few questions with our free, <strong>experimental</strong> AI assistant and get a rough estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required. It's an estimate only, <strong>not</strong> an official determination&mdash;always confirm with your state.</p>
-                    <div class="hero-cta-group">
-                        <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="section-btn btn btn-default primary-cta">Try the Experimental Eligibility Check</a>
-                    </div>
-                    <div class="hero-cta-group hero-cta-secondary">
-                        <a href="#how-it-works" class="btn btn-outline-green smoothScroll secondary-cta">How It Works</a>
-                        <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green tertiary-cta">Work Requirements FAQ</a>
-                    </div>
+    <div class="item item-first fhi-hero-short">
+        <div class="caption">
+            <div class="hero-inner" style="max-width: 900px;">
+                <div class="hero-badge">
+                    {% include "partials/experimental_badge.html" %}
+                </div>
+                <p class="hero-tagline">Medicaid rules are confusing&mdash;checking shouldn't be</p>
+                <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
+                <p class="hero-subcopy">Answer a few questions with our free, <strong>experimental</strong> AI assistant and get a rough estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required. It's an estimate only, <strong>not</strong> an official determination&mdash;always confirm with your state.</p>
+                <div class="hero-cta-group">
+                    <a href="{% url 'chat' %}?microsite_slug=medicaid-eligibility" class="section-btn btn btn-default primary-cta">Try the Experimental Eligibility Check</a>
+                </div>
+                <div class="hero-cta-group hero-cta-secondary">
+                    <a href="#how-it-works" class="btn btn-outline-green smoothScroll secondary-cta">How It Works</a>
+                    <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green tertiary-cta">Work Requirements FAQ</a>
                 </div>
             </div>
         </div>

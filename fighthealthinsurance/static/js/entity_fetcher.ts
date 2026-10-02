@@ -71,7 +71,6 @@ function createStatusIndicator(): HTMLElement {
     border: 2px solid #ADD100;
     border-radius: 8px;
     padding: 16px;
-    margin: 16px 0;
     text-align: center;
   `;
   statusDiv.innerHTML = `

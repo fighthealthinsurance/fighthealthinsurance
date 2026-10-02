@@ -379,7 +379,7 @@ class TheGlossaryStylesStayOnTheGlossaryTest(TestCase):
     def test_the_hover_animation_asks_first(self):
         css = self._css()
 
-        start = css.index(".term-card .card {")
+        start = css.index(".term-card .fhi-card {")
         resting = css[start : css.index("}", start)]
         self.assertNotIn("transition", resting, "the resting rule animates")
 

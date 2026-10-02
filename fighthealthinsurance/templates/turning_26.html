@@ -8,20 +8,18 @@
 {% block content %}
 <!-- Hero Section -->
 <section id="turning26-hero" class="slider">
-    <div class="row">
-        <div class="item item-first fhi-hero-short">
-            <div class="caption d-flex flex-column align-items-center justify-content-center">
-                <div class="hero-inner" style="max-width: 900px;">
-                    <h3 class="hero-tagline">Your parent's plan ends at 26&mdash;but your options don't</h3>
-                    <h1 class="hero-headline">Turning 26: Your Health Insurance Guide</h1>
-                    <p class="hero-subcopy">Aging off a parent's health plan is a qualifying life event. You have 60 days to enroll in new coverage&mdash;here's how to make the transition without gaps or surprises.</p>
-                    <div class="hero-cta-group">
-                        <a href="#coverage-options" class="section-btn btn btn-default smoothScroll primary-cta">See Your Options</a>
-                    </div>
-                    <div class="hero-cta-group hero-cta-secondary">
-                        <a href="{% url 'scan' %}" class="btn btn-outline-green smoothScroll secondary-cta">Already Denied? Generate Appeal</a>
-                        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll tertiary-cta">Ask AI Assistant</a>
-                    </div>
+    <div class="item item-first fhi-hero-short">
+        <div class="caption">
+            <div class="hero-inner" style="max-width: 900px;">
+                <h3 class="hero-tagline">Your parent's plan ends at 26&mdash;but your options don't</h3>
+                <h1 class="hero-headline">Turning 26: Your Health Insurance Guide</h1>
+                <p class="hero-subcopy">Aging off a parent's health plan is a qualifying life event. You have 60 days to enroll in new coverage&mdash;here's how to make the transition without gaps or surprises.</p>
+                <div class="hero-cta-group">
+                    <a href="#coverage-options" class="section-btn btn btn-default smoothScroll primary-cta">See Your Options</a>
+                </div>
+                <div class="hero-cta-group hero-cta-secondary">
+                    <a href="{% url 'scan' %}" class="btn btn-outline-green smoothScroll secondary-cta">Already Denied? Generate Appeal</a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll tertiary-cta">Ask AI Assistant</a>
                 </div>
             </div>
         </div>

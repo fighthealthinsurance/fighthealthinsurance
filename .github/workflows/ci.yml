@@ -190,8 +190,23 @@ jobs:
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
           restore-keys: npm-
 
+      # The Ubuntu mirror has served these at under 100 kB/s (35 minutes for
+      # 167 MB), which ran the Selenium job out of time before a test
+      # started. Keep the downloaded packages between runs; apt still
+      # installs them, and fetches only what is missing or newer.
+      - name: Cache system packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-full-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-full-${{ runner.os }}-
+
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: |
+          mkdir -p ~/apt-archives/partial
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev
+          # apt writes these as root; the cache step saves them as the runner
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - uses: actions/setup-python@v5
         with:
@@ -272,8 +287,23 @@ jobs:
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
           restore-keys: npm-
 
+      # The Ubuntu mirror has served these at under 100 kB/s (35 minutes for
+      # 167 MB), which ran the Selenium job out of time before a test
+      # started. Keep the downloaded packages between runs; apt still
+      # installs them, and fetches only what is missing or newer.
+      - name: Cache system packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-full-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-full-${{ runner.os }}-
+
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: |
+          mkdir -p ~/apt-archives/partial
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev
+          # apt writes these as root; the cache step saves them as the runner
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - uses: actions/setup-python@v5
         with:
@@ -347,8 +377,23 @@ jobs:
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
           restore-keys: npm-
 
+      # The Ubuntu mirror has served these at under 100 kB/s (35 minutes for
+      # 167 MB), which ran the Selenium job out of time before a test
+      # started. Keep the downloaded packages between runs; apt still
+      # installs them, and fetches only what is missing or newer.
+      - name: Cache system packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-full-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-full-${{ runner.os }}-
+
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: |
+          mkdir -p ~/apt-archives/partial
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev
+          # apt writes these as root; the cache step saves them as the runner
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - uses: actions/setup-python@v5
         with:
@@ -501,8 +546,23 @@ jobs:
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
           restore-keys: npm-
 
+      # The Ubuntu mirror has served these at under 100 kB/s (35 minutes for
+      # 167 MB), which ran the Selenium job out of time before a test
+      # started. Keep the downloaded packages between runs; apt still
+      # installs them, and fetches only what is missing or newer.
+      - name: Cache system packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-full-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-full-${{ runner.os }}-
+
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: |
+          mkdir -p ~/apt-archives/partial
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev
+          # apt writes these as root; the cache step saves them as the runner
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - uses: actions/setup-python@v5
         with:
@@ -586,8 +646,23 @@ jobs:
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
           restore-keys: npm-
 
+      # The Ubuntu mirror has served these at under 100 kB/s (35 minutes for
+      # 167 MB), which ran the Selenium job out of time before a test
+      # started. Keep the downloaded packages between runs; apt still
+      # installs them, and fetches only what is missing or newer.
+      - name: Cache system packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-full-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-full-${{ runner.os }}-
+
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: |
+          mkdir -p ~/apt-archives/partial
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev
+          # apt writes these as root; the cache step saves them as the runner
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - uses: actions/setup-python@v5
         with:

@@ -37,7 +37,6 @@ Other Resources
     background: #f8f9fa;
     border-radius: 8px;
     padding: 20px;
-    margin: 20px 0;
     border-left: 4px solid #a5c422;
 }
 
@@ -83,144 +82,141 @@ Other Resources
     color: var(--fhi-muted);
     margin: 0;
 }
+
+/* Where the headlines come from, ruled off below the last feed. */
+.rss-credit {
+    margin: 0;
+    padding-top: var(--fhi-space-4);
+    border-top: 1px solid var(--fhi-line);
+}
 </style>
 <div class="fhi-page-wide">
     {% include "partials/page_title.html" with title="Resources" lede="There are many other resources for fighting for a fair outcome with your health insurance provider." %}
 
-    <div class="row">
-        <div class="col-12">
-            <div class="mb-4">
-                <form action="{% url 'faq' %}" method="get" style="display:inline;">
-                    <button type="submit" class="fhi-btn me-2">FAQ</button>
-                </form>
-                <form action="{% url 'blog' %}" method="get" style="display:inline;">
-                    <button type="submit" class="fhi-btn me-2">Blog</button>
-                </form>
-                <form action="{% url 'denial-language-library' %}" method="get" style="display:inline;">
-                    <button type="submit" class="fhi-btn me-2">Denial Language Library</button>
-                </form>
-                <form action="{% url 'microsite_directory' %}" method="get" style="display:inline;">
-                    <button type="submit" class="fhi-btn">Treatment Resources</button>
-                </form>
-                {% comment %}
-                  The glossary's only way in. Without this the index and all
-                  59 term pages are reachable from the sitemap and nowhere a
-                  person can click.
-                {% endcomment %}
-                <a href="{% url 'glossary_index' %}" class="fhi-btn ms-2">Glossary</a>
+    <div class="fhi-stack fhi-stack-loose">
+        <div class="fhi-cluster">
+            <form action="{% url 'faq' %}" method="get">
+                <button type="submit" class="fhi-btn">FAQ</button>
+            </form>
+            <form action="{% url 'blog' %}" method="get">
+                <button type="submit" class="fhi-btn">Blog</button>
+            </form>
+            <form action="{% url 'denial-language-library' %}" method="get">
+                <button type="submit" class="fhi-btn">Denial Language Library</button>
+            </form>
+            <form action="{% url 'microsite_directory' %}" method="get">
+                <button type="submit" class="fhi-btn">Treatment Resources</button>
+            </form>
+            {% comment %}
+              The glossary's only way in. Without this the index and all
+              59 term pages are reachable from the sitemap and nowhere a
+              person can click.
+            {% endcomment %}
+            <a href="{% url 'glossary_index' %}" class="fhi-btn">Glossary</a>
+        </div>
+
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="fhi-stack fhi-stack-loose">
+                <h2 class="text-fhi-green">Government Resources</h2>
+                <div class="fhi-stack">
+                    <h3>State & Local Advocates</h3>
+                    <ul>
+                        <li><strong><a class="link" href="{% url 'state_help_index' %}">State-by-State Resources</a></strong> - Find your state's insurance department, consumer assistance programs, and Medicaid ombudsman</li>
+                        <li>Many states offer health insurance advocates to help navigate appeals</li>
+                        <li>Example: <a class="link" href="https://cahealthadvocates.org/appeals/">CA Health Advocates</a> for California residents</li>
+                    </ul>
+                </div>
+                <div class="fhi-stack">
+                    <h3>Medicare Assistance</h3>
+                    <ul>
+                        <li><a class="link" href="https://www.shiphelp.org/">State Health Insurance Assistance Programs (SHIP)</a> - free Medicare counseling</li>
+                    </ul>
+                </div>
+                <div class="fhi-stack">
+                    <h3>Federal Resources</h3>
+                    <ul>
+                        <li><a class="link" href="https://www.healthcare.gov/appeal-insurance-company-decision/">Healthcare.gov</a> - general appeal information</li>
+                        <li><a class="link" href="https://marketplace.cms.gov/technical-assistance-resources/how-to-appeal-a-decision.pdf">CMS.gov</a> - detailed appeal guidance</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="fhi-stack">
+                <h2 class="text-fhi-green">Condition-Specific Resources</h2>
+                <p class="fhi-note">
+                    Organizations focused on specific conditions often provide the most relevant and detailed guidance.
+                </p>
+                <ul>
+                    <li><a class="link" href="https://www.jdrf.org/">JDRF</a> - Diabetes resources and advocacy</li>
+                    <li><a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">Cancer Support Community</a> - Cancer-related appeals</li>
+                    <li><a class="link" href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">National MS Society</a> - Multiple Sclerosis resources</li>
+                </ul>
+                <p class="fhi-note">
+                    <em>These resources are often created by people in similar situations and can provide highly relevant guidance.</em>
+                </p>
             </div>
         </div>
-    </div>
 
-    <div class="row" style="flex-wrap: wrap;">
-        <div class="col-lg-6 mb-4">
-            <h2 class="text-fhi-green mb-3">Government Resources</h2>
-            <h3>State & Local Advocates</h3>
-            <ul class="mb-3">
-                <li><strong><a class="link" href="{% url 'state_help_index' %}">State-by-State Resources</a></strong> - Find your state's insurance department, consumer assistance programs, and Medicaid ombudsman</li>
-                <li>Many states offer health insurance advocates to help navigate appeals</li>
-                <li>Example: <a class="link" href="https://cahealthadvocates.org/appeals/">CA Health Advocates</a> for California residents</li>
-            </ul>
-
-            <h3>Medicare Assistance</h3>
-            <ul class="mb-3">
-                <li><a class="link" href="https://www.shiphelp.org/">State Health Insurance Assistance Programs (SHIP)</a> - free Medicare counseling</li>
-            </ul>
-
-            <h3>Federal Resources</h3>
-            <ul class="mb-3">
-                <li><a class="link" href="https://www.healthcare.gov/appeal-insurance-company-decision/">Healthcare.gov</a> - general appeal information</li>
-                <li><a class="link" href="https://marketplace.cms.gov/technical-assistance-resources/how-to-appeal-a-decision.pdf">CMS.gov</a> - detailed appeal guidance</li>
-            </ul>
-        </div>
-
-        <div class="col-lg-6 mb-4">
-            <h2 class="text-fhi-green mb-3">Condition-Specific Resources</h2>
-            <p class="small text-muted mb-3">
-                Organizations focused on specific conditions often provide the most relevant and detailed guidance.
-            </p>
-            <ul class="mb-3">
-                <li><a class="link" href="https://www.jdrf.org/">JDRF</a> - Diabetes resources and advocacy</li>
-                <li><a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">Cancer Support Community</a> - Cancer-related appeals</li>
-                <li><a class="link" href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">National MS Society</a> - Multiple Sclerosis resources</li>
-            </ul>
-            <p class="small">
-                <em>These resources are often created by people in similar situations and can provide highly relevant guidance.</em>
-            </p>
-        </div>
-    </div>
-
-    <div class="row">
-        <div class="col-12">
-            <h2 class="text-fhi-green mb-3">General Resources</h2>
-            <p class="mb-3">
+        <div class="fhi-stack">
+            <h2 class="text-fhi-green">General Resources</h2>
+            <p>
                 While general-purpose websites may not be as specific to your situation, they can provide helpful overviews:
             </p>
-            <ul class="mb-4">
+            <ul>
                 <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
                 <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
             </ul>
         </div>
-    </div>
 
-    <!-- Coping Resources Section with Link to Bingo -->
-    <div class="row">
-        <div class="col-12">
-            <h2 class="text-fhi-green mb-3">Coping Resources</h2>
-            <p class="mb-3">
+        <!-- Coping Resources Section with Link to Bingo -->
+        <div class="fhi-stack">
+            <h2 class="text-fhi-green">Coping Resources</h2>
+            <p>
                 Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
             </p>
-            <ul class="mb-4">
+            <ul>
                 <li><a href="{% url 'bingo' %}" class="link">Insurance Bullshit Bingo</a> - A humorous take on common denial reasons</li>
             </ul>
         </div>
-    </div>
 
-    <!-- Simple RSS Section -->
-    <div class="row">
-        <div class="col-12">
-            <h2 class="text-fhi-green mb-3">Latest Health Policy News</h2>
-            <p class="mb-3">Stay informed with the latest health policy news from KFF Health News:</p>
+        <!-- Simple RSS Section -->
+        <div class="fhi-stack">
+            <h2 class="text-fhi-green">Latest Health Policy News</h2>
+            <p>Stay informed with the latest health policy news from KFF Health News:</p>
             {% if rss_feeds and rss_fetched_at %}
             <p class="rss-updated">Headlines updated {{ rss_fetched_at|timesince }} ago.</p>
             {% endif %}
-            
+
             <div class="rss-section">
                 {% for feed_key, feed_data in rss_feeds.items %}
                 <div class="rss-feed">
                     <h3 class="text-fhi-green">{{ feed_data.name }}</h3>
-                    <p class="small text-muted mb-2">{{ feed_data.description }}</p>
-                    
+                    <p class="fhi-note">{{ feed_data.description }}</p>
+
                     {% if feed_data.articles %}
                         {% for article in feed_data.articles %}
                         <div class="rss-article">
                             <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
                                 {{ article.title }}
                             </a>
-                            <span class="text-muted small ms-2">{{ article.formatted_date }}</span>
-                            <span class="text-muted small ms-1">(opens in new window)</span>
+                            <span class="fhi-note">{{ article.formatted_date }}</span>
+                            <span class="fhi-note">(opens in new window)</span>
                         </div>
                         {% endfor %}
                     {% else %}
-                        <p class="text-muted small">No recent articles available</p>
+                        <p class="fhi-note">No recent articles available</p>
                     {% endif %}
                 </div>
                 {% endfor %}
-                
-                <div class="mt-3 pt-3 border-top">
-                    <p class="small text-muted mb-0">
-                        <em>RSS feeds provided by <a href="https://kffhealthnews.org/" target="_blank" rel="noopener noreferrer" class="link">KFF Health News</a></em>
-                    </p>
-                </div>
+
+                <p class="fhi-note rss-credit">
+                    <em>RSS feeds provided by <a href="https://kffhealthnews.org/" target="_blank" rel="noopener noreferrer" class="link">KFF Health News</a></em>
+                </p>
             </div>
         </div>
-    </div>
 
-    <div class="row">
-        <div class="col-12">
-            <div class="alert alert-info">
-                <strong>Help Us Improve:</strong> We're <a href="{% url 'share_denial' %}" class="link">collecting denials</a> to better understand common issues and provide more targeted assistance.
-            </div>
+        <div class="fhi-notice fhi-notice-info">
+            <strong>Help Us Improve:</strong> We're <a href="{% url 'share_denial' %}" class="link">collecting denials</a> to better understand common issues and provide more targeted assistance.
         </div>
     </div>
 </div>
