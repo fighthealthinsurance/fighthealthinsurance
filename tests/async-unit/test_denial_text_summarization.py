@@ -45,43 +45,43 @@ def _denial(
 async def test_below_threshold_returns_none_prefers_full_context():
     d = _denial("a short denial letter")
     with patch(f"{_HELPER}.ml_router") as router:
-        router.summarize = AsyncMock(return_value="should not be called")
+        router.summarize_denial_letter = AsyncMock(return_value="should not be called")
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result is None
-    router.summarize.assert_not_called()
+    router.summarize_denial_letter.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_missing_denial_text_returns_none():
     d = _denial(None)
     with patch(f"{_HELPER}.ml_router") as router:
-        router.summarize = AsyncMock()
+        router.summarize_denial_letter = AsyncMock()
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result is None
-    router.summarize.assert_not_called()
+    router.summarize_denial_letter.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_cached_summary_short_circuits():
     d = _denial(_LONG_TEXT, summary="cached summary")
     with patch(f"{_HELPER}.ml_router") as router:
-        router.summarize = AsyncMock(return_value="fresh summary")
+        router.summarize_denial_letter = AsyncMock(return_value="fresh summary")
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result == "cached summary"
-    router.summarize.assert_not_called()
+    router.summarize_denial_letter.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_above_threshold_summarizes_and_persists():
     d = _denial(_LONG_TEXT, use_external=False, denial_id=7)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=_CONDENSED)
+        router.summarize_denial_letter = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
 
     assert result == _CONDENSED
     # Privacy gate threaded through.
-    assert router.summarize.call_args.kwargs["use_external"] is False
+    assert router.summarize_denial_letter.call_args.kwargs["use_external"] is False
     # Cached back onto the denial row, gated on the letter it summarizes.
     Denial.objects.filter.assert_called_once_with(denial_id=7, denial_text=_LONG_TEXT)
     Denial.objects.filter.return_value.aupdate.assert_awaited_once_with(
@@ -93,17 +93,17 @@ async def test_above_threshold_summarizes_and_persists():
 async def test_use_external_true_is_passed_through():
     d = _denial(_LONG_TEXT, use_external=True)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=_CONDENSED)
+        router.summarize_denial_letter = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         await MLAppealContextHelper.maybe_summarize_denial_text(d)
-    assert router.summarize.call_args.kwargs["use_external"] is True
+    assert router.summarize_denial_letter.call_args.kwargs["use_external"] is True
 
 
 @pytest.mark.asyncio
 async def test_summarizer_returning_nothing_falls_back_to_full_text():
     d = _denial(_LONG_TEXT)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=None)
+        router.summarize_denial_letter = AsyncMock(return_value=None)
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result is None
     # Nothing to cache when there is no summary.
@@ -114,7 +114,7 @@ async def test_summarizer_returning_nothing_falls_back_to_full_text():
 async def test_summarizer_exception_falls_back_to_full_text():
     d = _denial(_LONG_TEXT)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(side_effect=RuntimeError("model down"))
+        router.summarize_denial_letter = AsyncMock(side_effect=RuntimeError("model down"))
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result is None
     Denial.objects.filter.assert_not_called()
@@ -132,7 +132,7 @@ async def test_degenerate_summary_is_rejected_and_not_cached(degenerate):
     ladder still handles overflow."""
     d = _denial(_LONG_TEXT)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=degenerate)
+        router.summarize_denial_letter = AsyncMock(return_value=degenerate)
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result is None
     # Nothing degenerate may reach the cache.
@@ -145,11 +145,11 @@ async def test_prewarmed_candidate_is_promoted_without_recomputing():
     returned, without calling the summarizer again."""
     d = _denial(_LONG_TEXT, candidate_summary="PREWARMED")
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value="fresh summary")
+        router.summarize_denial_letter = AsyncMock(return_value="fresh summary")
         Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result == "PREWARMED"
-    router.summarize.assert_not_called()
+    router.summarize_denial_letter.assert_not_called()
     # Promoted into the real field so later reads short-circuit, gated on the
     # letter the candidate was pre-warmed from.
     Denial.objects.filter.assert_called_once_with(denial_id=7, denial_text=_LONG_TEXT)
@@ -164,10 +164,10 @@ async def test_real_summary_wins_over_candidate():
     the candidate is ignored (no promotion write)."""
     d = _denial(_LONG_TEXT, summary="REAL", candidate_summary="PREWARMED")
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock()
+        router.summarize_denial_letter = AsyncMock()
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result == "REAL"
-    router.summarize.assert_not_called()
+    router.summarize_denial_letter.assert_not_called()
     Denial.objects.filter.assert_not_called()
 
 
@@ -177,7 +177,7 @@ async def test_prewarm_writes_candidate_field_not_real():
     never the real denial_text_summary."""
     d = _denial(_LONG_TEXT, use_external=False, denial_id=9)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=_CONDENSED)
+        router.summarize_denial_letter = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         result = await MLAppealContextHelper.prewarm_candidate_denial_text_summary(d)
     assert result == _CONDENSED
@@ -192,10 +192,10 @@ async def test_prewarm_below_threshold_is_noop():
     """Normal-sized denials are never pre-warmed (full context preferred)."""
     d = _denial("a short denial letter")
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value="should not be called")
+        router.summarize_denial_letter = AsyncMock(return_value="should not be called")
         result = await MLAppealContextHelper.prewarm_candidate_denial_text_summary(d)
     assert result is None
-    router.summarize.assert_not_called()
+    router.summarize_denial_letter.assert_not_called()
     Denial.objects.filter.assert_not_called()
 
 
@@ -205,10 +205,10 @@ async def test_prewarm_skips_when_summary_already_exists():
     doesn't recompute."""
     d = _denial(_LONG_TEXT, candidate_summary="ALREADY")
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value="fresh")
+        router.summarize_denial_letter = AsyncMock(return_value="fresh")
         result = await MLAppealContextHelper.prewarm_candidate_denial_text_summary(d)
     assert result == "ALREADY"
-    router.summarize.assert_not_called()
+    router.summarize_denial_letter.assert_not_called()
     Denial.objects.filter.assert_not_called()
 
 
@@ -225,7 +225,7 @@ async def test_prewarm_cache_write_is_gated_on_the_letter_it_summarized():
     """
     d = _denial(_LONG_TEXT, use_external=False, denial_id=11)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=_CONDENSED)
+        router.summarize_denial_letter = AsyncMock(return_value=_CONDENSED)
         # 0 rows updated == the row no longer has this denial_text.
         Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=0)
         result = await MLAppealContextHelper.prewarm_candidate_denial_text_summary(d)
@@ -242,7 +242,7 @@ async def test_live_summary_cache_write_is_gated_on_the_letter_it_summarized():
     since been replaced must not be cached as that denial's summary."""
     d = _denial(_LONG_TEXT, use_external=False, denial_id=12)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=_CONDENSED)
+        router.summarize_denial_letter = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=0)
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
 
@@ -256,7 +256,7 @@ async def test_cache_write_failure_still_returns_the_summary():
     under way still gets its condensed text."""
     d = _denial(_LONG_TEXT, use_external=False, denial_id=13)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value=_CONDENSED)
+        router.summarize_denial_letter = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock(
             side_effect=RuntimeError("db down")
         )

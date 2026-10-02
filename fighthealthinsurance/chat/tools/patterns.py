@@ -11,6 +11,9 @@ from typing import Optional
 
 # PubMed query tool - captures query terms
 # Matches: [pubmed query: terms], **pubmed_query: terms**, pubmedquery:[terms]
+# The chat system prompt advertises only **pubmed_query: terms**; the other
+# forms were advertised by earlier prompts and models still emit them, so
+# they stay accepted (tests/sync/test_chat_tools.py pins each one).
 # Mirrors RXNORM_LOOKUP_REGEX: a leading `[`/`*` marker or a word boundary, a
 # MANDATORY colon, a non-greedy capture that stops at the closing wrapper /
 # newline / end-of-string, and an optional `[...]` around the terms (the
@@ -91,6 +94,8 @@ RXNORM_LOOKUP_REGEX = (
 
 # ClinicalTrials.gov query tool - captures search terms
 # Matches: [clinical_trials_query: terms], **clinical trials query: terms**, etc.
+# The prompt advertises only **clinical_trials_query: terms**; the rest stay
+# accepted for the same reason as the PubMed forms above.
 # Useful when an insurer denies a treatment as "experimental/investigational"
 # and we need to check the public trial registry.
 # Mirrors RXNORM_LOOKUP_REGEX: requires a leading `[`/`*` marker or a word
