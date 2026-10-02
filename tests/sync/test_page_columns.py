@@ -41,6 +41,8 @@ ON_A_COLUMN = {
     "removed_data.html": "fhi-page fhi-page-centred",
     "delete_data_email_sent.html": "fhi-page fhi-page-centred",
     "share_denial.html": "fhi-page fhi-page-centred",
+    "unsubscribed.html": "fhi-page fhi-page-centred",
+    "stripe_finish_error.html": "fhi-page fhi-page-centred",
 }
 
 # Hero pages -> the class every band under the hero opens on. The first
@@ -52,7 +54,7 @@ ON_A_COLUMN = {
 BANDS_ON_A_COLUMN = {
     "state_help_index.html": "fhi-column",
     "state_help.html": "fhi-column",
-    "glossary_index.html": "fhi-page-wide",
+    "glossary_index.html": "fhi-column",
     "medicaid_eligibility.html": "fhi-column",
     "turning_26.html": "fhi-column",
     "patient_access.html": "fhi-column",

@@ -1010,9 +1010,7 @@ def _layers_from(
 # fell through to whichever <body> fill any template declares, the printable
 # letter's grey included, and three pages failed for words that sit on white.
 # Take an entry out when the component it describes leaves the site.
-BOOTSTRAP_GROUNDS: tuple[Rule, ...] = (
-    Rule(BOOTSTRAP_SOURCE, 0, ".card", (("background-color", "#fff", False),)),
-)
+BOOTSTRAP_GROUNDS: tuple[Rule, ...] = ()
 
 
 class Painter:
@@ -1599,6 +1597,10 @@ UNREACHED: tuple[Exempt, ...] = (
         "No template carries this class; it is the pill the pay-what-you-want "
         "panel used before the panel was rebuilt.",
     ),
+    # Only the blog post's breadcrumb carries .breadcrumb-item now, and
+    # blog_post.tsx renders it, so the gate cannot see its ground. The
+    # glossary term page moved to .fhi-breadcrumbs.
+    Exempt("custom.css", ".breadcrumb-item a", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-active", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-done", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-skipped", WRITTEN_AT_RUNTIME),

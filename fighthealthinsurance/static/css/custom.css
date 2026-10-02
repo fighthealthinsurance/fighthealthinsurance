@@ -430,6 +430,8 @@ textarea.fhi-field {
     /* An h1 reads --fhi-text-hero for the image hero; a page title is the
        page size, the same size the section h2s used to give these pages. */
     font-size: var(--fhi-text-page);
+    /* Even lines, not one word left alone on the second. */
+    text-wrap: balance;
     line-height: var(--fhi-line-heading);
     color: var(--fhi-ink);
     margin: 0;
@@ -573,6 +575,13 @@ a.link::after {
 a.link:hover::after {
     transform: scaleX(1);
     transform-origin: bottom left;
+}
+
+/* In a list item the link flows with the words around it. As an
+   inline-block it wraps as one box in a narrow column, so the bullet sat
+   beside its last line and the description dropped below it. */
+li > a.link {
+    display: inline;
 }
 
 .font-weight-bold {
@@ -1217,7 +1226,8 @@ a.link:hover::after {
     padding: 5px;
 }
 
-.img-fluid.img-logo {
+/* The social icons under a photo on About Us. */
+.img-logo {
     max-width: 25px;
     margin: auto;
     border: none;
@@ -1971,9 +1981,10 @@ section:not(.slider) .share-subcopy {
 }
 
 /* Running prose in the reading column is a step larger. Text that states
-   its own size (.lead, .small), sits in a card, or is a breadcrumb keeps
-   the size it was given. */
-.fhi-page :where(p, li):not(.lead, .small, .breadcrumb-item, [class*="card"] *) {
+   its own size (.lead, .small, .fhi-lead, .fhi-note), sits in a card, or
+   is a breadcrumb keeps the size it was given. Each name in the list is
+   one class, so the rule stays at two classes of specificity. */
+.fhi-page :where(p, li):not(.lead, .small, .fhi-lead, .fhi-note, .fhi-breadcrumbs *, [class*="card"] *) {
     font-size: var(--fhi-text-reading);
 }
 
@@ -2083,16 +2094,24 @@ main :where(table) {
 /* The delete flow's notes ("Don't see the email?") read best at 640px,
    which used to be an inline style on the alert. An inline style beats
    the cap above, so on a phone the note ran 373px in a 350px column.
-   Here the two limits are one rule, and the smaller wins. */
-.fhi-page-centred > .alert {
+   Here the two limits are one rule, and the smaller wins. A notice reads
+   from its left edge even in a centred column: its bullet list, centred
+   line by line, was hard to follow, which is what Bootstrap's text-start
+   on each alert used to fix. */
+.fhi-page-centred > .fhi-notice {
     max-width: min(640px, 100%);
+    text-align: start;
 }
 
 /* The support address is one word. In bold Poppins it is 320px, and a
    list item inside the phone note has 284px, so the page scrolled 5px
-   sideways. A word that cannot fit breaks; nothing else changes. */
-.fhi-page .alert,
-.fhi-page a[href^="mailto:"] {
+   sideways. A word that cannot fit breaks; nothing else changes. About
+   Us sets its addresses in cards on the wide column, as little as 240px
+   on a 320px phone, and its a.link is an inline-block, which keeps a word
+   whole unless it may break anywhere. */
+.fhi-page .fhi-notice,
+.fhi-page a[href^="mailto:"],
+.fhi-page-wide a[href^="mailto:"] {
     overflow-wrap: anywhere;
 }
 
@@ -2103,14 +2122,21 @@ main :where(table) {
     text-align: center;
 }
 
+/* The centred column spaces what it holds: each piece sits a paragraph's
+   distance above the next, as Bootstrap's paragraph and alert margins
+   did, so a notice or a form no longer touches the line under it. The
+   title block keeps its own spacing. */
+.fhi-page-centred > :not(.fhi-page-title) {
+    margin-block: 0 var(--fhi-space-4);
+}
+
 /* The press logos on About Us: a row that wraps and centres, each
    wordmark near the size the home page's featured row gives its logos
    (five to a line in the reading column, the same five centred in the
    wide one). On Bootstrap's col-md-2 they were a sixth of the
    row, which in a 760px column is a 99px wordmark nobody can read. The
-   image is capped at its link, since .img-fluid.img-thumbnail otherwise
-   lets it ask for 200px and a flex item will not shrink below its
-   content. */
+   image is capped at its link: a wordmark asks for its own width, 411px
+   to 884px here, and a flex item will not shrink below its content. */
 .fhi-logo-row {
     display: flex;
     flex-wrap: wrap;
@@ -2122,8 +2148,20 @@ main :where(table) {
     flex: 0 1 136px;
 }
 
-.fhi-logo-row .img-fluid.img-thumbnail {
+.fhi-logo-row img {
     max-width: 100%;
+    /* The small inset Bootstrap's thumbnail gave each logo, which keeps the
+       second row clear of the pink shadow under it. */
+    padding: var(--fhi-space-1);
+}
+/* A photo at the head of a card, as on About Us: centred, and no wider
+   than 200px or the card. It centres with align-self rather than auto
+   margins, which in a card stretched to its row's height would push the
+   photo down into the spare space. */
+.fhi-portrait {
+    align-self: center;
+    max-width: min(200px, 100%);
+    height: auto;
 }
 
 /* Container utilities */
@@ -2888,10 +2926,16 @@ textarea,
     pointer-events: none;
 }
 
+/* The alphabet wraps onto more rows wherever the bar is narrower than
+   twenty-six letters, each row centred under the bar. */
+.glossary-letters {
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
 .letter-header {
     border-bottom: 2px solid var(--fhi-green-ink);
     padding-bottom: var(--fhi-space-2);
-    margin-bottom: var(--fhi-space-4);
     color: var(--fhi-green-ink);
 }
 
@@ -2901,17 +2945,18 @@ textarea,
     color: inherit;
 }
 
-.term-card .card {
+.term-card .fhi-card {
+    height: 100%;
     border-left: 3px solid transparent;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-    .term-card .card {
+    .term-card .fhi-card {
         transition: all 0.2s ease;
     }
 }
 
-.term-card:hover .card {
+.term-card:hover .fhi-card {
     box-shadow: var(--fhi-shadow);
     border-left-color: var(--fhi-green-ink);
 }
@@ -2924,7 +2969,7 @@ textarea,
     border-left: 4px solid var(--fhi-green-ink);
 }
 
-.term-definition .lead {
+.term-definition .fhi-lead {
     line-height: var(--fhi-line-body);
 }
 
@@ -2935,12 +2980,6 @@ textarea,
 
 .breadcrumb-item a:hover {
     text-decoration: underline;
-}
-
-/* Scoped to the glossary: the same class is on three other pages that never
-   asked for this border, and !important would have taken theirs too. */
-.glossary-disclaimer.disclaimer-box {
-    border-color: var(--fhi-line) !important;
 }
 
 #final-cta {
@@ -3648,6 +3687,9 @@ textarea,
 /* A link in a notice is the notice's ink, bold and underlined, so it
    stands out from the text around it by more than colour. */
 .fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
+/* A list in a notice sits a step under the line that leads into it, and
+   the notice's own padding, not the list's margin, closes the box. */
+.fhi-notice > ul { margin-block: var(--fhi-space-2) 0; }
 
 /* The small print at the foot of a page: a bordered light box. */
 .fhi-disclaimer {
@@ -3657,6 +3699,26 @@ textarea,
     border: 1px solid #dee2e6;
     border-radius: var(--fhi-radius);
 }
+
+/* Where a page sits in the site: its parents as links, each after a
+   slash, then the page itself. A plain ordered list, so a screen reader
+   counts the steps, in place of Bootstrap's .breadcrumb. The grey is
+   --fhi-muted, 5.74:1 on white; the links are the green ink. */
+.fhi-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--fhi-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--fhi-muted);
+}
+.fhi-breadcrumbs > li + li::before {
+    content: "/";
+    margin-right: var(--fhi-space-2);
+}
+.fhi-breadcrumbs a { color: var(--fhi-green-ink); text-decoration: none; }
+.fhi-breadcrumbs a:hover { text-decoration: underline; }
 
 /* A light panel. */
 .fhi-panel {
