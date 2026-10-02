@@ -1217,14 +1217,6 @@ li > a.link {
     height: 5px;
 }
 
-.img-fluid.img-thumbnail {
-    max-width: 200px;
-    margin: auto;
-    border: none;
-    height: auto;
-    padding: 5px;
-}
-
 /* The social icons under a photo on About Us. */
 .img-logo {
     max-width: 25px;
@@ -1232,15 +1224,6 @@ li > a.link {
     border: none;
     height: auto;
     padding: 5px;
-}
-
-.row.align-items-center {
-    box-shadow: rgba(0, 0, 0, 0.1) 0px 10px 50px;
-}
-
-.row {
-    display: flex;
-    flex-wrap: wrap;
 }
 
 #id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
