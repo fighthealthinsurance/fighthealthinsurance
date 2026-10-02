@@ -125,7 +125,9 @@ class TestAppealQuestionsGeneration:
         # Everything after the first "?" becomes the answer
         assert len(result) == 1
         assert result[0][0] == "Was the stroke confirmed to occur during birth?"
-        assert result[0][1] == "Yes. Was it localized to the left MCA? Yes, it was."
+        # The rest of the line holds a second question, so it is not shown
+        # as a hint: a hint is an answer, not more questions.
+        assert result[0][1] == ""
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_no_question_mark(self):
@@ -144,12 +146,10 @@ class TestAppealQuestionsGeneration:
             diagnosis="Test diagnosis",
         )
 
-        # Verify the result has correct question-answer pairs
-        assert len(result) == 2
-        assert result[0][0] == "This treatment is necessary?"
-        assert result[0][1] == ""
-        assert result[1][0] == "Patient history includes condition X?"
-        assert result[1][1] == ""
+        # A line is a question only when the model wrote a question mark.
+        # Adding one to every other line is how a model's refusal ("I cannot
+        # generate specific clinical questions...") was shown as a question.
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_empty_response(self):
@@ -165,8 +165,8 @@ class TestAppealQuestionsGeneration:
             diagnosis="Test diagnosis",
         )
 
-        # Verify the result is an empty list
-        assert result == []
+        # No reply is not "nothing to ask": [] is kept for NO_QUESTIONS.
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_rationale_format(self):
@@ -187,8 +187,8 @@ class TestAppealQuestionsGeneration:
             diagnosis="Test diagnosis",
         )
 
-        # Verify the result is an empty list since we should reject responses with "Rationale for questions"
-        assert result == []
+        # Responses with "Rationale for questions" are rejected: no usable reply.
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_with_answer_prefix(self):
