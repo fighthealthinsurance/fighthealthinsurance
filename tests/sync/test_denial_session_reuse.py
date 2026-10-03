@@ -268,6 +268,7 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
                 "email": self.EMAIL,
                 "denial_text": letter,
                 "pii": "on",
+                "personalonly": "on",
                 "tos": "on",
                 "privacy": "on",
             },
