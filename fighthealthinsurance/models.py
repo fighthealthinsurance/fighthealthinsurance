@@ -2791,6 +2791,23 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # indexed: the staff page reads it by draft id, and adding an index would
     # mean a full scan of this large table while the migration holds its lock.
     prompt_version = models.CharField(max_length=16, null=True, blank=True)
+    # What the backend that wrote this draft was serving when it wrote it
+    # (ml/serving_registry.py); for a synthesized letter, the backend whose
+    # synthesis won. Null for templates, for drafts written before the
+    # registry existed or before the first sweep, and whenever what the
+    # backend serves is unknown.
+    # No database index or constraint: it is provenance, read by id, and
+    # either would mean a full scan of this large table when the column is
+    # added.
+    serving = models.ForeignKey(
+        "ServingIdentity",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_index=False,
+        db_constraint=False,
+        related_name="+",
+    )
     # Chosen rows written by the professional flow (assemble_appeal). That flow
     # keeps one pick per denial -- a re-assembly replaces the earlier pick --
     # and this marker is what limits the replacement to its own rows: nothing
@@ -3942,6 +3959,45 @@ class ChatTurn(models.Model):
 
     def __str__(self) -> str:
         return f"ChatTurn<{self.outcome} {self.winner_model or 'no winner'}>"
+
+
+class ServingIdentity(models.Model):
+    """What one backend was serving, as its model server reported it.
+
+    A model name such as ``fhi-local`` can sit in front of different weights
+    over time (a new quantization, a new release, a swapped adapter), and
+    nothing else records the change. The health sweep asks each internal
+    vLLM server what it serves and writes a row here whenever that answer
+    changes; while it stays the same, only ``last_seen`` moves. Drafts point
+    at the row that was current when they were written, so a result always
+    names real weights. Rows are never deleted.
+
+    Staff only: ``backend`` and ``endpoint`` name internal hosts. Written by
+    ml/serving_registry.py.
+    """
+
+    # sha256 of everything below except the timestamps: one row per distinct
+    # answer from one backend.
+    fingerprint = models.CharField(max_length=64, unique=True)
+    # The backend's descriptor, as ModelCallAttempt.backend and drafts record
+    # it: class, model id and host.
+    backend = models.CharField(max_length=300, db_index=True)
+    model_id = models.CharField(max_length=200)
+    endpoint = models.CharField(max_length=200, blank=True, default="")
+    # vLLM's ``root``: the weights it loaded, as a local path or a Hugging
+    # Face id. ``parent`` is the base model when an adapter is loaded.
+    weights = models.CharField(max_length=500, blank=True, default="")
+    parent = models.CharField(max_length=500, blank=True, default="")
+    max_model_len = models.IntegerField(null=True, blank=True)
+    owned_by = models.CharField(max_length=100, blank=True, default="")
+    first_seen = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-last_seen", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.backend}: {self.weights or self.model_id}"
 
 
 class LetterPromptMode(models.Model):

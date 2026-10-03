@@ -98,6 +98,7 @@ from fighthealthinsurance.medical_code_extractor import (
 )
 from fighthealthinsurance.ml import denial_triage, letter_quality
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
+from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
@@ -888,6 +889,7 @@ def mark_proposal_chosen(
     # inferred pick never guesses one, since a guess on a page that showed
     # both versions would corrupt the prompt comparison.
     prompt_version: Optional[str] = None
+    serving_id: Optional[int] = None
     if original is not None:
         model_name = original.model_name
         synthesized = original.synthesized
@@ -896,6 +898,7 @@ def mark_proposal_chosen(
         # which context level users actually pick.
         context_level = original.context_level
         prompt_version = original.prompt_version
+        serving_id = original.serving_id
     elif not arbitrary_text and not draft_unsaved:
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
@@ -956,6 +959,7 @@ def mark_proposal_chosen(
         presented_ids=shown,
         professional_pick=professional_pick,
         prompt_version=prompt_version,
+        serving_id=serving_id,
     )
     pa.save()
     return pa
@@ -6004,6 +6008,7 @@ class AppealsBackendHelper:
                     context_level=item.context_level,
                     text_fingerprint=fingerprint,
                     prompt_version=item.prompt_version,
+                    serving_id=await aserving_id_for(item.backend),
                 )
 
                 def _insert_fenced() -> None:
@@ -6632,15 +6637,22 @@ class AppealsBackendHelper:
                                 "Synthesis returned a verbatim copy of an input draft; skipping yield"
                             )
                         else:
+                            winner = synthesis_provenance.get("model")
                             saved = await save_appeal(
                                 GeneratedAppeal(
                                     text=synthesized,
                                     model_name="synthesized",
                                     synthesized=True,
                                     context_level=CONTEXT_LEVEL_SYNTHESIZED,
+                                    # So the row points at what the winner
+                                    # was serving, like any other draft.
+                                    backend=(
+                                        backend_label(winner)
+                                        if winner is not None
+                                        else ""
+                                    ),
                                 )
                             )
-                            winner = synthesis_provenance.get("model")
                             if winner is not None:
                                 # The call still succeeded when its text landed
                                 # on a stored draft, but what was served is that

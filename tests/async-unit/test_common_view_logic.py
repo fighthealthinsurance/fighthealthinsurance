@@ -1,6 +1,7 @@
 import asyncio
 import asyncio
 import json
+from types import SimpleNamespace
 import io
 from contextlib import contextmanager
 from asgiref.sync import async_to_sync
@@ -838,7 +839,22 @@ class TestCommonViewLogic(TestCase):
     def test_live_drafts_save_the_prompt_version_that_wrote_them(
         self, mock_appeal_generator
     ):
+        from fighthealthinsurance.ml import serving_registry
+
         email, denial = self._create_test_denial(18, gen_attempts=3)
+        backend = "AlphaRemoteInternal(fhi-internal @ 10.0.0.5:8000)"
+        serving_registry.reset_serving_registry_cache()
+        serving_registry.record_backends(
+            [
+                SimpleNamespace(
+                    last_model_card={"model_id": "fhi-internal", "weights": "/models/w"},
+                    serving_legs=lambda: [("primary", "http://h/v1", "fhi-internal")],
+                    backend_descriptor=lambda: backend,
+                )
+            ]
+        )
+        serving_id = async_to_sync(serving_registry.aserving_id_for)(backend)
+        self.assertIsNotNone(serving_id)
         mock_appeal_generator.make_appeals.return_value = iter(
             [
                 GeneratedAppeal(
@@ -846,6 +862,7 @@ class TestCommonViewLogic(TestCase):
                     model_name="fhi-internal",
                     context_level="full",
                     prompt_version=version,
+                    backend=backend,
                 )
                 for i, version in enumerate(["v1", "v2", None])
             ]
@@ -887,6 +904,13 @@ class TestCommonViewLogic(TestCase):
                         "A live internal appeal letter number 2 here.": None,
                     },
                 )
+                pointers = {
+                    pa.serving_id
+                    async for pa in ProposedAppeal.objects.filter(
+                        for_denial=denial, speculative=False
+                    )
+                }
+                self.assertEqual(pointers, {serving_id})
             finally:
                 await Denial.objects.filter(denial_id=18).adelete()
 
