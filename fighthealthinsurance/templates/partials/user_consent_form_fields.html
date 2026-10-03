@@ -5,7 +5,7 @@
 <!-- User Information Section -->
 <div class="fhi-stack">
     <h4>Your Information</h4>
-    <p class="fhi-note">We try to keep this in your browser, and we use it to take your name and details out of your messages before they reach our AI, as best we can.</p>
+    <p class="fhi-note">The details below go to our server when you send this form. Under each one we say what we keep, and where. Our <a href="{% url 'privacy_policy' %}" target="_blank">privacy policy</a> has the rest.</p>
 
     <div class="fhi-cards fhi-cards-roomy">
         <div class="fhi-field-group">
@@ -17,15 +17,18 @@
             {{ form.last_name }}
         </div>
     </div>
+    <p class="fhi-note">This browser keeps your name, and the chat tries to take it out of your messages before they're sent. Our server keeps the name you enter here only if you tick the news box below.</p>
 
     <div class="fhi-field-group">
         <label for="email" class="fhi-label">Email (required)</label>
         {{ form.email }}
+        <small class="fhi-note fhi-hint">Our server keeps your email with the record that you agreed to these terms. With each chat it keeps a scrambled version (a hash), so you can ask us to delete your chats. This browser keeps your email too, and the chat tries to take it out of your messages.</small>
     </div>
 
     <div class="fhi-field-group">
         <label for="phone" class="fhi-label">Phone</label>
         {{ form.phone }}
+        <small class="fhi-note fhi-hint">Our server keeps your phone number only if you tick the news box below. This browser doesn't keep it, so the chat can't take it out of your messages.</small>
     </div>
 
     <div class="fhi-field-group">
@@ -47,6 +50,7 @@
             {{ form.zip_code }}
         </div>
     </div>
+    <p class="fhi-note">This browser keeps your address, and the chat tries to take your street address, city and ZIP code out of your messages before they're sent. It leaves your state in, because the answer can depend on it. Our server doesn't keep what you enter in the address boxes.</p>
 </div>
 
 <hr>
@@ -74,6 +78,7 @@
         <label for="subscribe">
             Send me news from Fight Health Insurance and Fight Paperwork, our version for professionals. Optional, but we appreciate it!
         </label>
+        <small class="fhi-note">If you tick this, our server keeps your name, email, phone number and how you heard about us on our mailing list until you unsubscribe or ask us to delete your data.</small>
     </div>
 
     <div class="fhi-field-group">
@@ -84,7 +89,7 @@
     <div class="fhi-field-group">
         <label for="referral_source_details" class="fhi-label">Details (Optional)</label>
         {{ form.referral_source_details }}
-        <small class="fhi-note fhi-hint">For example, which search engine or who told you about us.</small>
+        <small class="fhi-note fhi-hint">For example, which search engine or who told you about us. Our server keeps both answers only if you tick the news box above.</small>
     </div>
 </div>
 
