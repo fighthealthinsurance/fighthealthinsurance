@@ -45,7 +45,12 @@ class AuditMiddleware:
         try:
             response = self.get_response(request)
         except Exception as e:
-            if is_audited_path(request.path):
+            # A view's exception was already recorded by process_exception;
+            # this catches one raised past the handler, such as from
+            # another middleware.
+            if is_audited_path(request.path) and not getattr(
+                request, "_audit_exception_logged", False
+            ):
                 self._log_exception(request, e)
             raise
 
@@ -54,6 +59,15 @@ class AuditMiddleware:
             self._log_request(request, response, start_time)
 
         return response
+
+    def process_exception(self, request: HttpRequest, exception: Exception) -> None:
+        """Record an exception a view raised. Django calls this before it
+        turns the exception into a 500 response, which is all __call__ sees.
+        Returns None, so Django's own handling carries on."""
+        if is_audited_path(request.path):
+            self._log_exception(request, exception)
+            setattr(request, "_audit_exception_logged", True)
+        return None
 
     def _log_request(
         self,

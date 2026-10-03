@@ -10,6 +10,7 @@ from django.test import TestCase, RequestFactory, override_settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.urls import reverse
+from django.urls import include, path
 
 from fhi_users.audit import (
     AuditLog,
@@ -939,3 +940,32 @@ class GeoLookupStatusTest(TestCase):
             self.audit._geo_startup_warning_emitted = False
             self.audit.warn_if_geo_lookups_disabled()
             self.audit.warn_if_geo_lookups_disabled()  # second call: no-op
+
+
+
+def _raise_from_a_view(request):
+    raise RuntimeError("a view that fails")
+
+
+# A REST path whose view raises, alongside the site's own URLs.
+urlpatterns = [
+    path("ziggy/rest/fails-for-the-audit-test/", _raise_from_a_view),
+    path("", include("fighthealthinsurance.urls")),
+]
+
+
+@override_settings(ENABLE_AUDIT_LOGGING=True, ROOT_URLCONF=__name__)
+class AnExceptionInAViewIsRecordedTest(TestCase):
+    """Through the installed middleware: Django turns a view's exception into
+    a 500 before the middleware's call returns, so process_exception is
+    where it gets its row."""
+
+    def test_a_rest_view_that_raises_gets_one_exception_row(self):
+        self.client.raise_request_exception = False
+        response = self.client.get("/ziggy/rest/fails-for-the-audit-test/")
+        self.assertEqual(response.status_code, 500)
+        rows = AuditLog.objects.filter(event_type="exception_error")
+        self.assertEqual(rows.count(), 1)
+        row = rows.get()
+        self.assertEqual(row.path, "/ziggy/rest/fails-for-the-audit-test/")
+        self.assertEqual(row.extra_data.get("error_type"), "RuntimeError")
