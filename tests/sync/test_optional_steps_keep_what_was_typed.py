@@ -284,6 +284,7 @@ class ClearingTheBoxRemovesTheHistoryTest(OptionalStepsTestCase):
 
         response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
+        self.assertEqual(response.status_code, 200)
         self.assertNotIn("To remove it", response.content.decode())
 
 
@@ -328,6 +329,7 @@ class PlanDocumentsPageCountsWhatIsThereTest(OptionalStepsTestCase):
 
         response = self.client.get(back_link(self.client, "dvc", self.denial, EMAIL))
 
+        self.assertEqual(response.status_code, 200)
         self.assertNotIn("already added", response.content.decode())
 
 

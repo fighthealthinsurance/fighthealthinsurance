@@ -49,7 +49,7 @@ somebody purges it by hand:
   this file got it wrong and said `Denial` keeps only a hashed email. It does
   not. `Denial.hashed_email` is stored for every case, `Denial.semi_sekret` is
   stored in plaintext for every case (`models.py`), and
-  `Denial.raw_email` is a plaintext `TextField` (`models.py:2387`) holding the
+  `Denial.raw_email` is a plaintext `TextField` (`models.py`) holding the
   address for anybody who opted into follow-up contact. So the email in the
   session is the part that is genuinely new: the session holds it for everyone
   who walks the flow, opt-in or not, and `email_polling_actor`'s sweep that
@@ -153,12 +153,12 @@ Melanie settled this on 2026-09-13 and it is not a reviewer call to reopen:
 1. A `clearsessions` job, or an equivalent purge. Until it exists the claim
    above holds and the retention sentence stays as written.
 2. `SESSION_COOKIE_HTTPONLY = False` and `SESSION_COOKIE_SAMESITE = "None"`
-   are set on `Base` and inherited by `Prod` (`settings.py:285-286`). Both
+   are set on `Base` and inherited by `Prod` (`settings.py`). Both
    pre-date this change and neither is touched here, but the reference scheme
    now leans on that cookie, so they are worth a second look.
 
 The referrer angle needs nothing: `SECURE_REFERRER_POLICY` is
-`"strict-origin-when-cross-origin"` (`settings.py:1058`), so the reference
+`"strict-origin-when-cross-origin"` on `Prod` (`settings.py`), so the reference
 does not travel to third parties in `Referer`.
 
 ## Why the tests are shaped the way they are
