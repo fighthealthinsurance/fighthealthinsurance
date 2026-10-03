@@ -82,6 +82,21 @@ class TheIntakePageAsksForTheLetterFirstTest(TestCase):
                     at, first_identity, "%s comes after the identity fields" % name
                 )
 
+    @override_settings(ADVANCED_OCR_OFFERED=True)
+    def test_the_file_button_leads_the_step_when_better_reading_is_offered(self):
+        """The better text recognition option is a tick box with a paragraph
+        of fine print. Above the button it pushed the letter's first control
+        most of a phone screen down, so it follows the button. It is read
+        when the file is, so it says to tick it first."""
+        self.setUp()
+        option = self._id("advanced_ocr_enabled")
+        button = self._at(self.main.find("label", attrs={"for": "uploader"}))
+        self.assertLess(self._heading("Your denial letter"), button)
+        self.assertLess(button, option, "the option sits above the file button")
+        self.assertLess(option, self._id("denial_text"))
+        section = self.main.find(id="advanced_ocr_section").get_text(" ", strip=True)
+        self.assertIn("Tick this before you choose the file.", section)
+
     def test_the_steps_are_headed_in_outline_order(self):
         """One h1, the page's own, then the steps as h2s in the order they are
         asked, and never a step down of more than one level."""

@@ -280,17 +280,73 @@ def test_a_dropped_denial_file_is_never_posted_to_the_server():
     setup = _js_function(src, "function setupScrub")
     assert 'const elm = document.getElementById("uploader");' in setup, setup
     assert 'elm.addEventListener("change", recognizeEvent);' in setup, setup
-    assert "acceptDroppedFiles(box, elm as HTMLInputElement);" in setup, setup
+    assert (
+        'acceptDroppedFiles(box.closest("section") ?? box, box, elm as HTMLInputElement);'
+        in setup
+    ), setup
+
+
+def _drop_listeners() -> "list[str]":
+    """acceptDroppedFiles cut into its listeners, each from where it is
+    declared or attached up to the next one."""
+    handler = _js_function((JS / "scrub.ts").read_text(), "function acceptDroppedFiles")
+    return re.split(
+        r"(?=\b\w+\.addEventListener\()|(?=const offerDrop)|(?=const refuseDrop)",
+        handler,
+    )
+
+
+def test_a_dropped_file_is_kept_from_the_browser():
+    """Cancelling the browser's own handling is what stops it opening the
+    file in place of the page, as well as reading it. Without it on the
+    drag-over, the browser refuses the drop and no drop event comes at all."""
+    listeners = _drop_listeners()
+    offer = next(chunk for chunk in listeners if chunk.startswith("const offerDrop"))
+    assert "event.preventDefault();" in offer, offer
+    drop = next(
+        chunk for chunk in listeners if chunk.startswith('zone.addEventListener("drop"')
+    )
+    assert "event.preventDefault();" in drop, drop
+    assert drop.index("event.preventDefault();") < drop.index("uploader.files ="), drop
+
+
+def test_a_file_dropped_on_the_file_button_is_read_too():
+    """The file button is where most people drop a file, and the input behind
+    it is hidden, so it takes no drop of its own. The handler listens on the
+    letter's whole step, and that step holds the button as well as the box."""
+    listeners = _drop_listeners()
+    for event in ("dragenter", "dragover", "dragleave", "drop"):
+        assert any(
+            chunk.startswith(f'zone.addEventListener("{event}"') for chunk in listeners
+        ), f"the step does not listen for {event}"
+    tpl = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance"
+        / "templates"
+        / "scrub.html"
+    ).read_text()
+    box = tpl.index('id="denial_text"')
+    step = tpl[tpl.rindex("<section", 0, box) : tpl.index("</section>", box)]
+    assert 'for="uploader"' in step, "the file button is outside the letter's step"
+
+
+def test_a_file_dropped_anywhere_else_is_refused_not_opened():
+    """A file let go outside the step would otherwise be opened by the
+    browser in place of the page, taking everything typed so far with it."""
+    listeners = _drop_listeners()
+    refuse = next(chunk for chunk in listeners if chunk.startswith("const refuseDrop"))
+    assert "zone.contains(event.target" in refuse, refuse
+    assert "event.preventDefault();" in refuse, refuse
+    assert 'dropEffect = "none"' in refuse, refuse
+    for event in ("dragover", "drop"):
+        assert f'window.addEventListener("{event}", refuseDrop);' in "".join(listeners)
 
 
 def test_dragging_text_into_the_letter_box_is_left_to_the_browser():
     """Only a drag that carries files is taken over. Dragging a selection of
     text into or within the box must still drop the text, so each listener
     asks before it cancels the browser's own handling."""
-    handler = _js_function((JS / "scrub.ts").read_text(), "function acceptDroppedFiles")
-    for listener in re.split(
-        r"(?=box\.addEventListener\()|(?=const offerDrop)", handler
-    ):
+    for listener in _drop_listeners():
         if "preventDefault()" not in listener:
             continue
         assert "carriesFiles(event)" in listener, listener

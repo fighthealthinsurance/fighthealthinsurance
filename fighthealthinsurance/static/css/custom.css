@@ -3992,10 +3992,10 @@ summary.fhi-nav-link::after {
     gap: var(--fhi-space-2);
 }
 /* The intake page's letter box takes the letter typed, pasted or as a file
-   dropped on it, which scrub.ts hands to the file input so it is read on the
-   device the way a chosen file is. A phone or a keyboard cannot drag, so the
-   file input is drawn as its label: a button that says what it does, beside
-   the hint. */
+   dropped on it or anywhere in its step, which scrub.ts hands to the file
+   input so it is read on the device the way a chosen file is. A phone or a
+   keyboard cannot drag, so the file input is drawn as its label: a button
+   that says what it does, beside the hint. */
 .fhi-file-pick {
     position: relative;
     display: flex;
@@ -4010,18 +4010,28 @@ summary.fhi-nav-link::after {
     outline-offset: 2px;
 }
 /* "Or drop the file on this box" only where there is a mouse to drag with;
-   on a phone it would ask for something the phone cannot do. */
+   on a phone it would ask for something the phone cannot do. "Or take a
+   photo" the other way round: a desktop's file picker has no camera. It
+   sits inside the button's one span, so it stays in the line of text rather
+   than becoming a flex item of its own. */
 .fhi-drop-hint { display: none; }
 @media (hover: hover) and (pointer: fine) {
     .fhi-drop-hint { display: inline; }
+    .fhi-photo-hint { display: none; }
 }
-/* While a file is dragged over the box: a dashed green edge and a pale
-   ground, so the box reads as the place to let go. */
+/* While a file is dragged over the letter's step: a dashed green edge and a
+   pale ground, so the box reads as the place it goes. */
 .fhi-field.fhi-drop-active {
     border-style: dashed;
     border-color: var(--fhi-green-ink);
     background-color: var(--fhi-surface);
-    outline: 2px dashed var(--fhi-green-ink);
-    outline-offset: 2px;
 }
+/* The intake form's steps: each heading sits with the fields under it, and
+   the steps sit further apart than the fields in them. */
+.main-form > form > section > h2 { padding-bottom: 0; }
+.main-form > form > section + section { margin-top: var(--fhi-space-2); }
+/* A pair of fields in a stack takes the stack's spacing, not the 10px
+   margins it carries elsewhere, so About you is spaced evenly. */
+.fhi-stack > .together-form-group { row-gap: var(--fhi-space-4); }
+.fhi-stack > .together-form-group > div { margin: 0; }
 .fhi-text-success { color: var(--fhi-green-ink); }

@@ -711,12 +711,21 @@ function carriesFiles(event: DragEvent): boolean {
   return event.dataTransfer !== null && Array.from(event.dataTransfer.types).includes("Files");
 }
 
-// The letter box is also where a file can be dropped. A dropped file is
-// handed to the uploader and read by the uploader's own change listener, so
-// it takes exactly the path a chosen file takes: read on this device by
-// recognizeEvent, and never posted, because the uploader has no name. A file
-// nothing can read fails there the way a chosen one does.
-function acceptDroppedFiles(box: HTMLTextAreaElement, uploader: HTMLInputElement): void {
+// The letter's whole step takes a dropped file, and the box lights up to show
+// where it goes. A dropped file is handed to the uploader and read by the
+// uploader's own change listener, so it takes exactly the path a chosen file
+// takes: read on this device by recognizeEvent, and never posted, because the
+// uploader has no name. A file nothing can read fails there the way a chosen
+// one does.
+//
+// The step, not only the box: the file button is where most people drop a
+// file, and the input behind it is hidden, so it takes no drop of its own.
+// Anywhere else on the page a dropped file is refused rather than opened.
+function acceptDroppedFiles(
+  zone: HTMLElement,
+  box: HTMLTextAreaElement,
+  uploader: HTMLInputElement,
+): void {
   const DROP_ACTIVE = "fhi-drop-active";
   const offerDrop = (event: DragEvent): void => {
     if (!carriesFiles(event)) {
@@ -730,10 +739,17 @@ function acceptDroppedFiles(box: HTMLTextAreaElement, uploader: HTMLInputElement
     }
     box.classList.add(DROP_ACTIVE);
   };
-  box.addEventListener("dragenter", offerDrop);
-  box.addEventListener("dragover", offerDrop);
-  box.addEventListener("dragleave", () => box.classList.remove(DROP_ACTIVE));
-  box.addEventListener("drop", (event) => {
+  zone.addEventListener("dragenter", offerDrop);
+  zone.addEventListener("dragover", offerDrop);
+  zone.addEventListener("dragleave", (event) => {
+    // Moving from one part of the step to another is not leaving it. A
+    // browser that does not say where the drag went gets the highlight back
+    // from the next dragover.
+    if (!zone.contains(event.relatedTarget as Node | null)) {
+      box.classList.remove(DROP_ACTIVE);
+    }
+  });
+  zone.addEventListener("drop", (event) => {
     box.classList.remove(DROP_ACTIVE);
     if (!carriesFiles(event) || event.dataTransfer === null) {
       return;
@@ -746,6 +762,19 @@ function acceptDroppedFiles(box: HTMLTextAreaElement, uploader: HTMLInputElement
     // Setting files fires nothing on its own.
     uploader.dispatchEvent(new Event("change", { bubbles: true }));
   });
+  // Outside the step the browser's own handling would open the file in place
+  // of the page, so there the drop is refused instead.
+  const refuseDrop = (event: DragEvent): void => {
+    if (!carriesFiles(event) || zone.contains(event.target as Node | null)) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "none";
+    }
+  };
+  window.addEventListener("dragover", refuseDrop);
+  window.addEventListener("drop", refuseDrop);
 }
 
 function setupScrub(): void {
@@ -801,7 +830,9 @@ function setupScrub(): void {
     elm.addEventListener("change", recognizeEvent);
     const box = document.getElementById("denial_text") as HTMLTextAreaElement | null;
     if (box != null) {
-      acceptDroppedFiles(box, elm as HTMLInputElement);
+      // The letter's step, so a file dropped on the button above the box is
+      // read too.
+      acceptDroppedFiles(box.closest("section") ?? box, box, elm as HTMLInputElement);
     }
   }
   const scrub = document.getElementById("scrub");

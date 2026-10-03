@@ -73,20 +73,6 @@ Upload your Health Insurance Denial
 	<section class="fhi-stack">
 	    <h2>Your denial letter</h2>
 	    {% if upload_more %}
-		{% if advanced_ocr_offered %}
-		<div class="fhi-check-row" id="advanced_ocr_section">
-		    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
-		    <label for="advanced_ocr_enabled">
-			<b>Better text recognition for photos and scans</b> <span class="fhi-hint">(experimental)</span>
-			<br><small class="fhi-hint">A small AI model that reads bad photos and faint scans much better.
-			The first time you scan with this on, your browser downloads it from Hugging Face (about 1 GB) and keeps it
-			on this device. It runs on your device, and your file never leaves it. Standard recognition is faster and
-			fine for clear scans. You can remove the downloaded model later.</small>
-		    </label>
-		    <div id="advanced_ocr_status" class="fhi-note" role="status" aria-live="polite" hidden></div>
-		    <button type="button" id="advanced_ocr_remove_model" class="fhi-button fhi-button-quiet fhi-button-small" hidden>Remove the downloaded model from this device (about 1 GB)</button>
-		</div>
-		{% endif %}
 	    <div id="image_select_magic" class="fhi-file-pick">
 		{% comment %} DELIBERATELY has no name= attribute. The browser only includes
 		   a file input in the multipart body when it has a name, and this
@@ -96,15 +82,32 @@ Upload your Health Insurance Denial
 		   read it -- an unnecessary disclosure of the exact document this
 		   flow is built to keep in the browser. The OCR binds by
 		   getElementById("uploader"), so the id is all it needs. A file
-		   dropped on the letter box is handed to this same input
-		   (acceptDroppedFiles in scrub.ts), so a drop posts nothing either.
+		   dropped on this step, the button or the box, is handed to this same
+		   input (acceptDroppedFiles in scrub.ts), so a drop posts nothing either.
 		   The input is hidden from sight only: its label is the button people
 		   see, and a keyboard still reaches the input itself. Do not add a
 		   name back without also changing what the copy below promises. {% endcomment %}
 		<input id="uploader" type="file" multiple="true" class="fhi-visually-hidden">
-		<label for="uploader" class="fhi-button fhi-button-secondary">Choose a file or take a photo</label>
+		<label for="uploader" class="fhi-button fhi-button-secondary"><span>Choose a file<span class="fhi-photo-hint"> or take a photo</span></span></label>
 		<small class="fhi-hint">Add every page. We read it on this device and put the text in the box below.</small>
 	    </div>
+	    {% comment %} After the file button, not above it: the button is the first
+	       thing in the step even when this option is on. It is read when the file
+	       is, so it says to tick it before choosing one. {% endcomment %}
+		{% if advanced_ocr_offered %}
+		<div class="fhi-check-row" id="advanced_ocr_section">
+		    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
+		    <label for="advanced_ocr_enabled">
+			<b>Better text recognition for photos and scans</b> <span class="fhi-hint">(experimental)</span>
+			<br><small class="fhi-hint">Tick this before you choose the file. A small AI model that reads bad photos and faint scans much better.
+			The first time you scan with this on, your browser downloads it from Hugging Face (about 1 GB) and keeps it
+			on this device. It runs on your device, and your file never leaves it. Standard recognition is faster and
+			fine for clear scans. You can remove the downloaded model later.</small>
+		    </label>
+		    <div id="advanced_ocr_status" class="fhi-note" role="status" aria-live="polite" hidden></div>
+		    <button type="button" id="advanced_ocr_remove_model" class="fhi-button fhi-button-quiet fhi-button-small" hidden>Remove the downloaded model from this device (about 1 GB)</button>
+		</div>
+		{% endif %}
 	    {% comment %} Sits between the file button and the letter box, where a
 	       chosen or dropped file is read: on a phone the message boxes at the
 	       bottom of the form are a full screen away, and an indicator nobody
@@ -132,7 +135,7 @@ Upload your Health Insurance Denial
 	    </div>
 	    <div class="fhi-field-group">
 		<label for="denial_text" id="denial_text_label" class="fhi-label">Paste the text of the letter here<span class="fhi-hint fhi-drop-hint">, or drop the file on this box</span></label>
-		<small class="fhi-hint">Take out your name, address and other personal details first, or use the Remove personal details button below. We keep this text to improve our AI, and people on our team may read it.</small>
+		<small class="fhi-hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
 		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
 		    placeholder="Your denial goes here"
 		    class="fhi-field">{{ocr_result}}</textarea>
@@ -180,7 +183,7 @@ Upload your Health Insurance Denial
 	       so by the box it would run before they are filled in. {% endcomment %}
 	    <div class="fhi-field-group">
 		<div>
-		    <button type="button" id="scrub-2" class="fhi-button fhi-button-primary">
+		    <button type="button" id="scrub-2" class="fhi-button fhi-button-secondary">
 		      Remove personal details
 		    </button>
 		</div>
