@@ -1,7 +1,7 @@
 """
-Simple audit logging middleware for API requests.
+Simple audit logging middleware for REST API requests.
 
-Logs API access with timing information. Only active when ENABLE_AUDIT_LOGGING is True.
+Logs REST API access with timing information. Only active when ENABLE_AUDIT_LOGGING is True.
 """
 
 import time
@@ -11,12 +11,26 @@ from django.http import HttpRequest, HttpResponse
 
 from loguru import logger
 
+# Where the REST API is mounted (see fighthealthinsurance/urls.py).
+AUDITED_PATH_PREFIX = "/ziggy/rest/"
+
+# The Kubernetes health checks call ping every 10 to 60 seconds
+# (k8s/deploy.yaml). It is never logged, so a check never waits on a database
+# write.
+UNAUDITED_PATHS = frozenset({"/ziggy/rest/ping"})
+
+
+def is_audited_path(path: str) -> bool:
+    """Whether a request to this path gets an audit row."""
+    return path.startswith(AUDITED_PATH_PREFIX) and path not in UNAUDITED_PATHS
+
 
 class AuditMiddleware:
     """
-    Middleware to log API requests for audit purposes.
+    Middleware to log REST API requests for audit purposes.
 
-    Only logs requests to API endpoints (/api/).
+    Only logs requests under AUDITED_PATH_PREFIX, apart from UNAUDITED_PATHS,
+    by path alone: no query string and no body.
     Logging is synchronous but failures are swallowed to avoid impacting requests.
     """
 
@@ -31,15 +45,29 @@ class AuditMiddleware:
         try:
             response = self.get_response(request)
         except Exception as e:
-            if request.path.startswith("/api/"):
+            # A view's exception was already recorded by process_exception;
+            # this catches one raised past the handler, such as from
+            # another middleware.
+            if is_audited_path(request.path) and not getattr(
+                request, "_audit_exception_logged", False
+            ):
                 self._log_exception(request, e)
             raise
 
-        # Log API requests only
-        if request.path.startswith("/api/"):
+        # Log REST API requests only
+        if is_audited_path(request.path):
             self._log_request(request, response, start_time)
 
         return response
+
+    def process_exception(self, request: HttpRequest, exception: Exception) -> None:
+        """Record an exception a view raised. Django calls this before it
+        turns the exception into a 500 response, which is all __call__ sees.
+        Returns None, so Django's own handling carries on."""
+        if is_audited_path(request.path):
+            self._log_exception(request, exception)
+            setattr(request, "_audit_exception_logged", True)
+        return None
 
     def _log_request(
         self,
@@ -78,7 +106,6 @@ class AuditMiddleware:
             log_exception_error(
                 request=request,
                 error_type=error.__class__.__name__,
-                error_message=str(error),
             )
         except Exception as logging_error:
             logger.warning(
