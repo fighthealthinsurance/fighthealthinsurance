@@ -12,10 +12,12 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 from asgiref.sync import async_to_sync
+from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import intake_resume, views
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
@@ -229,6 +231,39 @@ class RefusalsTest(IntakeResumeTestBase):
         )
         self.assertLinkIsDead(self.open_case(token))
 
+    def test_a_link_does_not_open_a_case_a_professional_created_or_holds(self):
+        professional = ProfessionalUser.objects.create(
+            user=get_user_model().objects.create_user(
+                username="resume-pro", email="resume-pro@clinic.example"
+            ),
+            active=True,
+            npi_number="1234567890",
+        )
+        practice = UserDomain.objects.create(
+            name="resume-practice",
+            visible_phone_number="5105550100",
+            internal_phone_number="5105550101",
+            active=True,
+            zipcode="94612",
+        )
+        for field, holder in (
+            ("creating_professional", professional),
+            ("primary_professional", professional),
+            ("domain", practice),
+        ):
+            with self.subTest(field=field):
+                held = {
+                    "creating_professional": None,
+                    "primary_professional": None,
+                    "domain": None,
+                }
+                held[field] = holder
+                Denial.objects.filter(pk=self.denial.pk).update(**held)
+                browser = Client()
+                self.assertLinkIsDead(
+                    self.open_case(self.mint(), client=browser), client=browser
+                )
+
     def test_a_link_stops_working_once_the_person_deletes_their_data(self):
         token = self.mint()
         RemoveDataHelper.remove_data_for_email(EMAIL)
@@ -278,17 +313,36 @@ class StepsTest(IntakeResumeTestBase):
         self.assertEqual(
             IntakeResumePoint.objects.get(denial=denial).step, "hh"
         )
-        self.client.post(
-            reverse("hh"),
-            {
-                "denial_id": denial.denial_id,
-                "email": "walker@example.com",
-                "semi_sekret": denial.semi_sekret,
-                "health_history": "",
-                "health_history_seen": health_history_digest("", denial.denial_id),
-                "health_history_consent": "on",
-            },
-        )
-        self.assertEqual(
-            IntakeResumePoint.objects.get(denial=denial).step, "dvc"
-        )
+        ref = {
+            "denial_id": denial.denial_id,
+            "email": "walker@example.com",
+            "semi_sekret": denial.semi_sekret,
+        }
+        # Each page's Next, and the step the case has then reached: health
+        # history, plan documents, the extraction step and the review.
+        for route, fields, reached in (
+            (
+                "hh",
+                {
+                    "health_history": "",
+                    "health_history_seen": health_history_digest(
+                        "", denial.denial_id
+                    ),
+                    "health_history_consent": "on",
+                },
+                "dvc",
+            ),
+            ("dvc", {}, "eev"),
+            ("eev", {}, "categorize_review"),
+            (
+                "find_next_steps",
+                {"procedure": "MRI", "diagnosis": "Chronic back pain"},
+                "find_next_steps",
+            ),
+        ):
+            with self.subTest(route=route):
+                response = self.client.post(reverse(route), {**ref, **fields})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    IntakeResumePoint.objects.get(denial=denial).step, reached
+                )

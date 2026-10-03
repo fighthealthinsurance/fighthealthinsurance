@@ -36,7 +36,8 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     the email carries one resume link, minted only for the claimant, which
     opens nothing without the email address the case was started with
     (intake_resume). While the intake journey is off nothing is claimed,
-    minted or sent.
+    minted or sent, and nothing is sent for a case a professional created
+    or holds.
     """
     from fighthealthinsurance import intake_outbox
 
@@ -46,6 +47,13 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     denial = await aload_denial(hashed_email, denial_uuid)
     if denial is None or not (denial.raw_email or "").strip():
         logger.info(f"Intake nudge skipped for denial {denial_uuid}: no retained email")
+        return False
+    # The email says "you started" and links to the patient form; a case a
+    # professional created or holds is finished through their pages instead.
+    if not intake_resume.started_by_the_person(denial):
+        logger.info(
+            f"Intake nudge skipped for denial {denial_uuid}: a professional's case"
+        )
         return False
     # Single-shot claim: inserting the nudge_claimed event is the claim
     # (unique per denial), so a retried or duplicated activity can never

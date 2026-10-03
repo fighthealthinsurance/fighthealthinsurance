@@ -202,11 +202,27 @@ spec:
     - name: fhi-temporal-server-side
       rules:
         # ---- ZERO WORKERS: a task arrived and nobody had polled for 2m ----
+        # The counter is created by its first count, so a matching pod's
+        # first no-poller task arrives as a new series already at 1, which
+        # increase() reads as no change. The second half catches that: a
+        # series that exists now and did not 15 minutes ago. A series that
+        # comes back after a scrape gap longer than that looks new as well,
+        # so a long gap can fire this once.
         - alert: FhiTemporalTaskQueueNoPoller
           expr: >-
-            sum by (taskqueue, task_type) (
-              increase(no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"}[15m])
-            ) > 0
+            (
+              sum by (taskqueue, task_type) (
+                increase(no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"}[15m])
+              ) > 0
+            )
+            or
+            (
+              sum by (taskqueue, task_type) (
+                no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"}
+                  unless
+                no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"} offset 15m
+              ) > 0
+            )
           for: 0m
           labels:
             severity: warning

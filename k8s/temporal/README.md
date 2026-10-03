@@ -306,8 +306,9 @@ Afterwards:
 # the operator's serviceMonitorSelector wants a different label, add it under
 # server.metrics.serviceMonitor.additionalLabels and upgrade again.
 kubectl -n totallylegitco get servicemonitor -l app.kubernetes.io/instance=temporal
-# The names the rules use are on the endpoint (no_poller_tasks and the
-# backlog gauges appear once a task queue has been used).
+# The names the rules use are on the endpoint. The backlog gauges appear
+# once a task queue has been used; no_poller_tasks appears only with its
+# first count, so a healthy cluster may not show it at all.
 kubectl -n totallylegitco port-forward deploy/temporal-matching 9090:9090 &
 curl -s localhost:9090/metrics | grep -E '^(no_poller_tasks|approximate_backlog_(count|age_seconds))'
 kubectl -n totallylegitco port-forward deploy/temporal-history 9091:9090 &

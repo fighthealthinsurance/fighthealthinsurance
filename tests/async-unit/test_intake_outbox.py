@@ -612,6 +612,27 @@ class TestNudge(TransactionTestCase):
         assert not IntakeResumePoint.objects.filter(denial=denial).exists()
         assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
 
+    def test_a_case_a_professional_created_gets_no_reminder_and_no_link(self):
+        from django.contrib.auth import get_user_model
+
+        from fhi_users.models import ProfessionalUser
+        from fighthealthinsurance.models import IntakeResumePoint
+
+        denial = _make_denial(8158)
+        professional = ProfessionalUser.objects.create(
+            user=get_user_model().objects.create_user(
+                username="nudge-pro", email="nudge-pro@clinic.example"
+            ),
+            active=True,
+            npi_number="1234567890",
+        )
+        Denial.objects.filter(pk=denial.pk).update(creating_professional=professional)
+        sent, send = self._send(denial)
+        assert sent is False
+        send.assert_not_awaited()
+        assert not IntakeResumePoint.objects.filter(denial=denial).exists()
+        assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
+
     def test_a_nudge_skipped_for_a_finished_form_mints_no_link(self):
         from fighthealthinsurance.models import IntakeResumePoint
 

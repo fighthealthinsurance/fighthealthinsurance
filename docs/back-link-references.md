@@ -141,6 +141,9 @@ reached. A back link works only in the browser that made it, and an email
 is opened somewhere else, so this link is its own scheme, in
 `fighthealthinsurance/intake_resume.py`:
 
+- It is only for a case the person started on the patient form. A case a
+  professional created or holds gets no reminder and no link, and no link
+  opens one.
 - The link is `/continue/<token>`, where the token is 32 random bytes. It
   holds no email address, hashed email, case id, uuid or case secret, and
   nothing can be decoded from it.

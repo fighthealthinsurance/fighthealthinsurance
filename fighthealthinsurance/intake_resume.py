@@ -8,6 +8,9 @@ is built to be worth as little as possible on its own:
 - Single purpose. The token opens one unfinished case at the step it had
   reached, through the resume pages and nothing else. It is not a back-link
   reference and nothing else accepts it.
+- Only for a case the person started. The link opens the patient form, so
+  a case a professional created or holds gets no reminder and no link, and
+  no link opens one (``started_by_the_person``).
 - It says nothing. The token is 32 random bytes (``secrets.token_urlsafe``).
   The URL holds no email address, hashed email, denial id, uuid or case
   secret, and nothing can be decoded out of it.
@@ -97,6 +100,21 @@ def plausible_token(token: typing.Any) -> bool:
     return isinstance(token, str) and 0 < len(token) <= _MAX_TOKEN_LENGTH
 
 
+def started_by_the_person(denial: typing.Any) -> bool:
+    """Whether the case is one a person started on the patient form.
+
+    The resume link opens the patient form, so it is only for those. A case
+    a professional created, holds or keeps in a practice is finished through
+    the professional's own pages: no link is minted for it, and no link
+    opens it.
+    """
+    return (
+        denial.creating_professional_id is None
+        and denial.primary_professional_id is None
+        and denial.domain_id is None
+    )
+
+
 def note_step(denial_id: typing.Any, step: str) -> None:
     """Record that a case has reached ``step``. Never raises.
 
@@ -164,7 +182,8 @@ def live_point(digest: typing.Any) -> typing.Optional[typing.Any]:
 
     None for a digest nobody holds (never minted, replaced, revoked, or
     deleted with the case or at the journey's closure), one past its
-    expiry, and a case whose form has been completed.
+    expiry, a case whose form has been completed, and a case a professional
+    created or holds (``started_by_the_person``).
     """
     from fighthealthinsurance.models import IntakeJourneyEvent, IntakeResumePoint
 
@@ -175,7 +194,7 @@ def live_point(digest: typing.Any) -> typing.Optional[typing.Any]:
         .filter(token_digest=digest, token_expires_at__gt=timezone.now())
         .first()
     )
-    if point is None:
+    if point is None or not started_by_the_person(point.denial):
         return None
     if IntakeJourneyEvent.objects.filter(
         denial_id=point.denial_id, event_type=IntakeJourneyEvent.FORM_COMPLETED

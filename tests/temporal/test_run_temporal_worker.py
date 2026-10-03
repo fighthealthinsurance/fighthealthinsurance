@@ -414,6 +414,33 @@ def test_server_side_rules_read_the_temporal_namespace_the_service_monitors_rela
         )
 
 
+def test_the_no_poller_rule_also_fires_on_a_counter_whose_first_sample_is_its_first_count():
+    """The server creates ``no_poller_tasks`` with its first count, so a
+    matching pod's first no-poller task arrives as a new series already at
+    1, which increase() reads as no change. The rule also matches a series
+    that exists now and did not at the start of its window."""
+    import pathlib
+    import re
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    rules = yaml.safe_load(
+        (root / "k8s" / "temporal" / "worker-alerts.yaml").read_text()
+    )
+    (rule,) = [
+        rule
+        for group in rules["spec"]["groups"]
+        for rule in group["rules"]
+        if rule.get("alert") == "FhiTemporalTaskQueueNoPoller"
+    ]
+    expr = " ".join(rule["expr"].split())
+    assert re.search(r"increase\(no_poller_tasks\{[^}]*\}\[15m\]\)", expr), expr
+    assert re.search(
+        r"no_poller_tasks\{([^}]*)\} unless no_poller_tasks\{\1\} offset 15m\b", expr
+    ), expr
+
+
 def _draining_worker_cls(shutdown_calls):
     """Worker stub whose run() only returns once shutdown() has been called,
     like the real one: this is what makes a dropped SIGTERM observable."""
