@@ -15,6 +15,8 @@ interface PatternEntry {
   label?: string;
 }
 
+const REFERENCE_DEFINITION: PatternEntry = spec.reference_links.definition;
+const REFERENCE_LINK: PatternEntry = spec.reference_links.link;
 const IGNORE: PatternEntry[] = spec.ignore;
 const PLACEHOLDERS: PatternEntry[] = spec.placeholders;
 
@@ -23,6 +25,40 @@ export const FAX_NOTICE_ID = "fax-placeholder-notice";
 
 function blankOut(match: string): string {
   return " ".repeat(match.length);
+}
+
+function everyMatchOf(entry: PatternEntry): RegExp {
+  return new RegExp(entry.pattern, (entry.flags || "") + "g");
+}
+
+// A reference link's id as it is matched: capitals and runs of spaces don't
+// count. Only A to Z fold, the same as on the server.
+function referenceId(text: string): string {
+  return text
+    .replace(/[A-Z]/g, (capital: string) => capital.toLowerCase())
+    .replace(/[ \t]+/g, " ")
+    .replace(/^ | $/g, "");
+}
+
+// Blank out each reference link the letter defines, and each definition:
+// [Coverage Policy][1] with [1]: https://example.com/policy on a line of its
+// own is a link, not a blank. A reference link to an id the letter never
+// defines is left as it is, for the placeholder patterns.
+function blankOutReferenceLinks(text: string): string {
+  const defined: string[] = [];
+  const rest = text.replace(everyMatchOf(REFERENCE_DEFINITION), (whole: string) => {
+    // The match can start with the line break before the definition, which
+    // stays, so the lines stay apart.
+    const start = whole.indexOf("[");
+    defined.push(referenceId(whole.slice(start + 1, whole.indexOf("]", start))));
+    return whole.slice(0, start) + blankOut(whole.slice(start));
+  });
+  return rest.replace(everyMatchOf(REFERENCE_LINK), (whole: string) => {
+    const inner = whole.slice(1, -1);
+    const split = inner.indexOf("][");
+    const foundId = referenceId(inner.slice(split + 2) || inner.slice(0, split));
+    return foundId && defined.indexOf(foundId) >= 0 ? blankOut(whole) : whole;
+  });
 }
 
 interface PlaceholderSpot {
@@ -36,9 +72,9 @@ interface PlaceholderSpot {
 
 // Every blank in the letter, where it is, in the order it appears.
 function findPlaceholderSpots(text: string): PlaceholderSpot[] {
-  let rest = text || "";
+  let rest = blankOutReferenceLinks(text || "");
   for (const entry of IGNORE) {
-    rest = rest.replace(new RegExp(entry.pattern, (entry.flags || "") + "g"), blankOut);
+    rest = rest.replace(everyMatchOf(entry), blankOut);
   }
   // Each pattern claims what it matches, so a later one never reports part
   // of a blank an earlier one already found. The patterns have no capturing
@@ -46,7 +82,7 @@ function findPlaceholderSpots(text: string): PlaceholderSpot[] {
   const hits: PlaceholderSpot[] = [];
   for (const entry of PLACEHOLDERS) {
     rest = rest.replace(
-      new RegExp(entry.pattern, (entry.flags || "") + "g"),
+      everyMatchOf(entry),
       (match: string, at: number) => {
         hits.push({ at: at, length: match.length, shown: entry.label || match });
         return blankOut(match);

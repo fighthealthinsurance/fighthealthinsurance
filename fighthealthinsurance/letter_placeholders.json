@@ -3,9 +3,25 @@
     "Blanks a finished letter still has in it when it is about to leave the site: printed, or faxed to an insurance company.",
     "One list for both sides. fighthealthinsurance/letter_placeholders.py reads it for the fax form on the server, and static/js/letter_placeholders.ts bundles it for the print and fax buttons.",
     "Patterns are written in the part of regular expression syntax that Python's re (with re.ASCII) and JavaScript's RegExp read the same way: no lookbehind, no \\s, no capturing groups. The only flag is i.",
+    "A Markdown reference link is never reported when the letter defines where it goes: [text][id], or [text][] where the text is the id, with a line of its own that starts [id]: https://. That definition is never reported either. Ids match whatever their capitals and spacing.",
     "Text matched by an ignore pattern is never reported. Each placeholder pattern then claims what it matches, in order, so a later pattern never reports part of something an earlier one found.",
     "A pattern here stops a fax, so each one is narrow on purpose: a citation like [1], a statute subsection like (a), an amount like $500 and a karyotype like 47,XXX all pass."
   ],
+  "reference_links": {
+    "definition": {
+      "name": "where a reference link goes: [id]: https://... at the start of a line",
+      "pattern": "(?:^|\\n) {0,3}\\[[^\\[\\]\\n]{1,200}\\]:[ \\t]{0,10}<?https?://[^ \\t\\n<>]{1,2000}>?",
+      "flags": "i"
+    },
+    "link": {
+      "name": "a reference link: [text][id], or [text][] where the text is the id",
+      "pattern": "\\[[^\\[\\]\\n]{1,200}\\]\\[[^\\[\\]\\n]{0,200}\\]"
+    },
+    "examples": [
+      "See the [Coverage Policy][1].\n\n[1]: https://example.com/policy",
+      "See the [Coverage Policy][].\n\n[Coverage Policy]: https://example.com/policy"
+    ]
+  },
   "ignore": [
     {
       "name": "a karyotype, which is a diagnosis rather than a blank",
@@ -64,10 +80,10 @@
       "examples": ["[patient's name]", "[diagnosis date]", "[doctor name]"]
     },
     {
-      "name": "brackets around a choice of pronoun",
-      "pattern": "\\[(?:he|she|him|his|her|hers)(?: ?/ ?| or )(?:he|she|him|his|her|hers|they|them|their)\\]",
+      "name": "brackets around a choice of two or more pronouns, in any order",
+      "pattern": "\\[(?:themselves|themself|theirs|their|them|they|himself|him|his|herself|hers|her|he|she|xemself|xyrs|xyr|xem|xe|zirself|zirs|zir|zie|ze|hirself|hirs|hir)(?:(?: ?/ ?| or )(?:themselves|themself|theirs|their|them|they|himself|him|his|herself|hers|her|he|she|xemself|xyrs|xyr|xem|xe|zirself|zirs|zir|zie|ze|hirself|hirs|hir))+\\]",
       "flags": "i",
-      "examples": ["[his/her]", "[he or she]"]
+      "examples": ["[his/her]", "[he or she]", "[he/she/they]", "[they or she]", "[his/her/their]"]
     },
     {
       "name": "angle brackets that start with an instruction or a detail to fill in",

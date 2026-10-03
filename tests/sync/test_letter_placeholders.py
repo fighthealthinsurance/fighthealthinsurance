@@ -96,6 +96,36 @@ CAUGHT = [
         ["[his/her]", "[he or she]"],
     ),
     (
+        "a bracketed choice of three pronouns",
+        "[he/she/they] asked [his/her/their] doctor",
+        ["[he/she/they]", "[his/her/their]"],
+    ),
+    (
+        "a bracketed choice of pronoun in any order",
+        "[they or she] told [them/him] about [themselves / herself]",
+        ["[they or she]", "[them/him]", "[themselves / herself]"],
+    ),
+    (
+        "a bracketed choice that includes neopronouns",
+        "[xe/she/they] and [zir or his]",
+        ["[xe/she/they]", "[zir or his]"],
+    ),
+    (
+        "a reference link to an id the letter never defines",
+        "Signed, [Your Name][1]",
+        ["[Your Name]"],
+    ),
+    (
+        "a blank written like a link definition, with no link in it",
+        "[Member ID]: XXXXXXX",
+        ["[Member ID]", "XXXXXXX"],
+    ),
+    (
+        "a link definition that does not start its line",
+        "Signed, [Your Name][1] [1]: https://example.com/policy",
+        ["[Your Name]"],
+    ),
+    (
         "a long bracketed name",
         "[Brief Description of Medical History and Previous Treatments Tried and Failed]",
         [
@@ -196,6 +226,21 @@ LEFT_ALONE = [
         "[member_handbook](https://example.com/handbook).",
     ),
     (
+        "a reference link",
+        "See the [Coverage Policy][1].\n\n[1]: https://example.com/policy",
+    ),
+    (
+        "a collapsed reference link defined in other capitals",
+        "See the [Coverage Policy][].\n\n[coverage  POLICY]: <https://example.com/policy>",
+    ),
+    (
+        "reference links and definitions that read like blanks",
+        "Read [Your plan's coverage policy][Policy] and [List of covered services][list].\n\n"
+        '[policy]: https://example.com/policy "Coverage policy"\n'
+        "   [List]:https://example.com/list\n"
+        "[Member Handbook]: https://example.com/handbook",
+    ),
+    (
         "lower-case alterations in a quote",
         '"[t]he service [is] covered once [the plan is] updated"',
     ),
@@ -267,6 +312,11 @@ def test_every_example_of_what_is_ignored_is_left_alone(shown, example):
     assert find_unfilled_placeholders(example) == []
 
 
+@pytest.mark.parametrize("letter", SPEC["reference_links"]["examples"])
+def test_every_example_of_a_defined_reference_link_is_left_alone(letter):
+    assert find_unfilled_placeholders(letter) == []
+
+
 @pytest.mark.parametrize(
     "letter", [t[1] for t in APPEAL_TEMPLATES], ids=[t[0] for t in APPEAL_TEMPLATES]
 )
@@ -284,7 +334,11 @@ def test_each_blank_is_listed_once_in_the_order_it_first_appears():
 
 
 @pytest.mark.parametrize(
-    "entry", SPEC["ignore"] + SPEC["placeholders"], ids=lambda entry: entry["name"]
+    "entry",
+    [SPEC["reference_links"]["definition"], SPEC["reference_links"]["link"]]
+    + SPEC["ignore"]
+    + SPEC["placeholders"],
+    ids=lambda entry: entry["name"],
 )
 def test_each_pattern_reads_the_same_in_python_and_javascript(entry):
     """No capturing groups (the browser reads the match's offset from the
@@ -379,6 +433,7 @@ def test_the_browser_finds_exactly_what_the_server_finds(compiled):
         + [c[1] for c in LEFT_ALONE]
         + [example for _, example in _examples("placeholders")]
         + [example for _, example in _examples("ignore")]
+        + SPEC["reference_links"]["examples"]
         + [letter for _, letter in APPEAL_TEMPLATES]
         + ["Ref XXX. I am [Your Name], member {{SCSID}}.\nSincerely,\n[Your Name]"]
     )
