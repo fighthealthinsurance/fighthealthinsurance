@@ -33,16 +33,6 @@ router.register(
     basename="appeal_attachments",
 )
 router.register(
-    r"mailinglist_subscribe",
-    rest_views.MailingListSubscriberViewSet,
-    basename="subscribe",
-)
-router.register(
-    r"demo_request",
-    rest_views.DemoRequestsViewSet,
-    basename="demorequest",
-)
-router.register(
     r"interested_professional",
     rest_views.InterestedProfessionalViewSet,
     basename="interested-professional",
