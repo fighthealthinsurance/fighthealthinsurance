@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from django.urls import reverse
-from django.utils import timezone
 
 from fighthealthinsurance import models
 from fighthealthinsurance.ml import denial_triage, ml_models, typesafe
@@ -24,10 +23,15 @@ HINT = "From your letter. Please check."
 ROW_DATE = datetime.date(2024, 3, 1)
 
 
+# The view reads the letter against today; the tests fix today so every run
+# reads the same dates.
+TODAY = datetime.date(2026, 10, 3)
+
+
 def letter_day():
     """A recent date for the letter, since an old one is not taken as its
     date."""
-    return timezone.localdate() - datetime.timedelta(days=30)
+    return TODAY - datetime.timedelta(days=30)
 
 
 def clear_letter():
@@ -65,6 +69,9 @@ def shown(page, name):
 
 class ReviewPageTestBase(BackLinkReferenceTestBase):
     def setUp(self):
+        today = patch("django.utils.timezone.localdate", return_value=TODAY)
+        today.start()
+        self.addCleanup(today.stop)
         super().setUp()
         self.plan_source = models.PlanSource.objects.create(name="Employer")
         self.insurer = models.InsuranceCompany.objects.create(name="Example Health")
