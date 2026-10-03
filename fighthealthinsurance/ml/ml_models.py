@@ -310,6 +310,58 @@ def _endpoint_label(url: Any) -> str:
     return f"{host}:{port}" if port else host
 
 
+def _model_card(payload: Any, model_id: Any, api_base: Any) -> Optional[dict]:
+    """What a model server says about one model it serves, from its
+    ``/models`` reply, for the serving registry (ml/serving_registry.py).
+
+    vLLM reports ``root`` (the weights it loaded: a local path or a Hugging
+    Face id), ``parent`` (the base model, for an adapter) and
+    ``max_model_len``. Other servers may report less; whatever is missing
+    stays blank. Never credentials: only these named fields are kept, and
+    the endpoint is host and port only.
+    """
+    entries: List[Any] = []
+    if isinstance(payload, dict):
+        for key in ("data", "models"):
+            if isinstance(payload.get(key), list):
+                entries.extend(payload[key])
+    elif isinstance(payload, list):
+        entries = list(payload)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if model_id not in (entry.get("id"), entry.get("name"), entry.get("model")):
+            continue
+        max_len = entry.get("max_model_len")
+        return {
+            "endpoint": _endpoint_label(api_base),
+            "model_id": str(model_id)[:200],
+            "weights": str(entry.get("root") or "")[:500],
+            "parent": str(entry.get("parent") or "")[:500],
+            "max_model_len": max_len if isinstance(max_len, int) else None,
+            "owned_by": str(entry.get("owned_by") or "")[:100],
+        }
+    return None
+
+
+def fetch_model_card(
+    api_base: Any, model_id: Any, token: Optional[str] = None, timeout: float = 5.0
+) -> Optional[dict]:
+    """GET ``{api_base}/models`` and return ``_model_card`` for ``model_id``,
+    or None on any failure. For the serving registry's second leg, run off
+    the request path and outside the health sweep."""
+    if not api_base:
+        return None
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        resp = requests.get(f"{api_base}/models", headers=headers, timeout=timeout)
+        if resp.status_code != 200:
+            return None
+        return _model_card(resp.json(), model_id, api_base)
+    except Exception:
+        return None
+
+
 # Set on an HTTP error the status handler in __infer has already filed under
 # a specific reason (context_overflow, missing_model) before re-raising it
 # for a raise_http_errors caller, so the outer handler does not file the
@@ -2278,6 +2330,11 @@ class RemoteOpenLike(RemoteModel):
         # would still be served by the backup — probe whichever exists.
         probe_base = self.api_base or self.backup_api_base
         probe_model = self.model if self.api_base else self.backup_model
+        # The serving registry reads these after the sweep; a card must only
+        # ever describe a probe that succeeded this round, so clear them
+        # before anything can fail.
+        self.last_model_card = None
+        self.last_backup_model_card = None
         if not probe_base:
             raise RuntimeError("No api_base configured for RemoteOpenLike.")
 
@@ -2349,7 +2406,29 @@ class RemoteOpenLike(RemoteModel):
             )
             return False
 
+        # Kept for the serving registry, which the health sweep feeds after
+        # each round (ml/health_status.py).
+        self.last_model_card = _model_card(payload, probe_model, probe_base)
+        legs = self.serving_legs()
+        if len(legs) > 1 and legs[1][1] == probe_base:
+            # A backup leg on the same server answers from the same list.
+            self.last_backup_model_card = _model_card(payload, legs[1][2], probe_base)
         return True
+
+    def serving_legs(self) -> List[Tuple[str, Any, Any]]:
+        """The (leg, api_base, model) pairs this backend can answer from:
+        the primary, plus a backup that is a different endpoint or model.
+        A backup-only configuration has the backup as its single leg."""
+        legs: List[Tuple[str, Any, Any]] = []
+        if self.api_base:
+            legs.append(("primary", self.api_base, self.model))
+        if self.backup_api_base and (
+            not self.api_base
+            or self.backup_api_base != self.api_base
+            or self.backup_model != self.model
+        ):
+            legs.append(("backup", self.backup_api_base, self.backup_model))
+        return legs
 
     def get_system_prompts(self, prompt_type: str, prof_pov=False) -> list[str]:
         """

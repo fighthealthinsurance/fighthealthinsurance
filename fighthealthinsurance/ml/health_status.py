@@ -102,6 +102,9 @@ class _HealthStatus:
 
         if pending_alert is not None:
             self._alert_if_all_internal_dead(*pending_alert)
+            # The first, synchronous sweep's cards are recorded too, or drafts
+            # would point at nothing until the next round an hour later.
+            self._record_serving()
 
         return {
             "alive_models": self._snapshot.alive_models,
@@ -227,6 +230,9 @@ class _HealthStatus:
             enumeration_error = f"{type(e).__name__}: {e}"
             logger.warning(f"Could not get all_models_by_cost: {e}")
             candidates = []
+        # Kept for the serving registry, which _refresh feeds after the
+        # sweep, outside the lock.
+        self._last_candidates = list(candidates)
         for m in candidates:
             if not getattr(m, "external", True):
                 internal_total += 1
@@ -302,6 +308,19 @@ class _HealthStatus:
             self._health_map = new_health
 
         return internal_total, internal_alive, internal_failures, enumeration_error
+
+    def _record_serving(self) -> None:
+        """Hand this round's model cards to the serving registry. It records
+        on its own background thread and returns at once, so the registry can
+        never delay this sweep, its next round, or a reader of the snapshot."""
+        try:
+            from fighthealthinsurance.ml.serving_registry import (
+                record_backends_async,
+            )
+
+            record_backends_async(getattr(self, "_last_candidates", []))
+        except Exception as e:
+            logger.warning(f"Serving registry update failed: {e}")
 
     def _alert_if_all_internal_dead(
         self,
@@ -425,10 +444,13 @@ class _HealthStatus:
         with self._lock:
             pending_alert = self._refresh_unlocked()
 
-        self._alert_if_all_internal_dead(*pending_alert)
-
-        # Since only one timer no need to worry about lock.
-        self._schedule_refresh()
+        try:
+            self._alert_if_all_internal_dead(*pending_alert)
+            self._record_serving()
+        finally:
+            # Since only one timer no need to worry about lock. Scheduled
+            # whatever happened above, so one bad round never ends the sweep.
+            self._schedule_refresh()
 
 
 def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any]]:

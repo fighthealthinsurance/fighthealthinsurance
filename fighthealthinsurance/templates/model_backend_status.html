@@ -16,7 +16,7 @@
     /* A wide table scrolls inside its own box on a narrow screen, so the page itself never scrolls sideways. */
     .scroll-x { overflow-x: auto; }
     .status-wrap { overflow-x: auto; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
-    table.status { width: 100%; min-width: 960px; border-collapse: collapse; background: white; }
+    table.status { width: 100%; min-width: 1120px; border-collapse: collapse; background: white; }
     table.status th, table.status td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92rem; vertical-align: top; }
     table.status th { background: #f0f4f8; }
     table.routes { width: 100%; min-width: 720px; border-collapse: collapse; }
@@ -37,6 +37,10 @@
     .mono { font-size: 0.85rem; }
     .err { color: #721c24; font-size: 0.85rem; margin-top: 4px; max-width: 360px; word-break: break-word; }
     .muted { color: #666; }
+    /* Weights paths are long; let them wrap inside the cell. */
+    .serving-leg { word-break: break-word; max-width: 260px; }
+    .serving-history summary { cursor: pointer; }
+    .serving-history summary h2 { display: inline; }
   </style>
 </head>
 <body>
@@ -149,6 +153,7 @@
         <th>Kind</th>
         <th>Routing on this pod</th>
         <th>Config</th>
+        <th>Serving</th>
         <th>Last health check</th>
         <th>Last stored generation</th>
       </tr>
@@ -183,6 +188,14 @@
           {% if r.config_detail and r.config_detail != r.last_check.error %}<div class="err">{{ r.config_detail }}</div>{% endif %}
         </td>
         <td>
+          {% for leg in r.serving %}
+            <div class="mono serving-leg">{{ leg.weights|default:leg.model_id }}</div>
+            <div class="sub muted">{% if leg.max_model_len %}context {{ leg.max_model_len }}, {% endif %}since {{ leg.first_seen|date:"Y-m-d" }}, seen {{ leg.last_seen|date:"Y-m-d H:i" }} UTC{% if r.serving|length > 1 %}, <span class="mono">{{ leg.endpoint }}</span>{% endif %}</div>
+          {% empty %}
+            <span class="muted">not reported</span>
+          {% endfor %}
+        </td>
+        <td>
           {% if r.last_check %}
             {% if r.last_check.ok %}<span class="pill pill-ok">{{ r.last_check.category }}</span>
             {% else %}<span class="pill pill-fail">{{ r.last_check.category }}</span>{% endif %}
@@ -208,10 +221,27 @@
         <td>{% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC{% else %}<span class="muted">none recorded</span>{% endif %}</td>
       </tr>
       {% empty %}
-      <tr><td colspan="6">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
+      <tr><td colspan="7">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
+
+  <details class="panel serving-history">
+    <summary><h2>Serving history</h2></summary>
+    <p class="summary-note">What each backend's model server reported serving, newest first. The hourly health sweep writes a row when a backend's answer changes; drafts point at the row that was current when they were written. Hosted APIs that don't publish this have no rows.</p>
+    <div class="scroll-x">
+      <table class="routes">
+        <thead><tr><th>Backend</th><th>Weights</th><th>Base model</th><th>Context</th><th>First seen</th><th>Last seen</th></tr></thead>
+        <tbody>
+          {% for row in serving_history %}
+            <tr><td class="mono">{{ row.backend }}</td><td class="mono">{{ row.weights|default:row.model_id }}</td><td class="mono">{{ row.parent|default:"" }}</td><td>{{ row.max_model_len|default:"" }}</td><td>{{ row.first_seen|date:"Y-m-d H:i" }}</td><td>{{ row.last_seen|date:"Y-m-d H:i" }}</td></tr>
+          {% empty %}
+            <tr><td colspan="6" class="muted">Nothing recorded yet. The health sweep fills this within an hour of a deploy.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
 </body>
 </html>

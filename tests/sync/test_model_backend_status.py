@@ -754,14 +754,14 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
 
 
 class ModelBackendStatusLayoutTest(StatusPageTestCase):
-    """Six columns that fit a 1280px window, with every fact still shown."""
+    """Seven columns that fit a 1280px window, with every fact still shown."""
 
     TEMPLATE = (
         Path(__file__).resolve().parents[2]
         / "fighthealthinsurance/templates/model_backend_status.html"
     )
 
-    def test_six_columns_inside_a_scroll_box(self):
+    def test_seven_columns_inside_a_scroll_box(self):
         response = self.get_page()
         html = response.content.decode()
         table = html[html.index('<div class="status-wrap">') :]
@@ -773,6 +773,7 @@ class ModelBackendStatusLayoutTest(StatusPageTestCase):
                 "Kind",
                 "Routing on this pod",
                 "Config",
+                "Serving",
                 "Last health check",
                 "Last stored generation",
             ],
@@ -807,8 +808,9 @@ class ModelBackendStatusLayoutTest(StatusPageTestCase):
         html = self.get_page().content.decode()
         row = html[html.index("anthropic/claude-sonnet-4-6</div>") :]
         row = row[: row.index("</tr>")]
-        # Model, Kind, Routing, Config, then the health check cell.
-        cell = row.split("<td>")[4]
+        # The rest of the Model cell, then Kind, Routing, Config and Serving,
+        # then the health check cell.
+        cell = row.split("<td>")[5]
         for fact in (
             "FAIL_TIMEOUT",
             "842 ms",
@@ -852,3 +854,40 @@ class ModelBackendStatusWordingTest(StatusPageTestCase):
         self.assertContains(response, "configured or not")
         self.assertContains(response, "Routing as seen by this pod")
         self.assertContains(response, "does not mean any request path picks it")
+
+
+class ServingColumnTest(StatusPageTestCase):
+    """The Serving column shows what the serving registry recorded for each
+    backend, matched by the backend's descriptor."""
+
+    def test_a_backend_shows_the_weights_its_server_reported(self):
+        from fighthealthinsurance.generate_appeal import backend_label
+        from fighthealthinsurance.ml import serving_registry
+
+        self.configure(**ALPHA)
+        router = ml_router_module._get_ml_router()
+        alpha = next(
+            m
+            for m in router.models_by_name["fhi-local"]
+            if isinstance(m, AlphaRemoteInternal)
+        )
+        serving_registry.record(
+            backend_label(alpha),
+            {
+                "endpoint": "alpha.example.invalid:8000",
+                "model_id": "/models/fhi-local",
+                "weights": "/models/gemma-4-26b-a4b-it-awq",
+                "max_model_len": 32768,
+            },
+        )
+        response = self.get_page()
+        legs = self.row(response, "fhi-local")["serving"]
+        self.assertEqual([leg.weights for leg in legs], ["/models/gemma-4-26b-a4b-it-awq"])
+        self.assertContains(response, "context 32768")
+        self.assertContains(response, "Serving history")
+
+    def test_hosted_backends_say_not_reported(self):
+        self.configure(**DEEPINFRA)
+        response = self.get_page()
+        self.assertEqual(self.row(response, GEMMA)["serving"], [])
+        self.assertContains(response, "not reported")

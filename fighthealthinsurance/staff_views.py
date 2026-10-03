@@ -3354,6 +3354,7 @@ class ModelBackendStatusView(generic.TemplateView):
         names = [r.model_name for r in entries]
         latest_checks = self._latest_check_by_model(names)
         last_generation = self._last_generation_by_model(names)
+        serving, serving_history = self._serving_by_backend()
 
         current_deployment = mhc.deployment_id()
         current_environment = mhc.environment_name()
@@ -3416,12 +3417,18 @@ class ModelBackendStatusView(generic.TemplateView):
                     "config_changed": check is not None and check.enabled != r.enabled,
                     "last_generation": last_generation.get(r.model_name),
                     "has_traits": t is not None,
+                    "serving": (
+                        serving.get(self._backend_label(r.router_instance), [])
+                        if r.router_instance is not None
+                        else []
+                    ),
                 }
             )
         rows.sort(key=self._row_order)
 
         ctx["title"] = "Model Backend Status"
         ctx["rows"] = rows
+        ctx["serving_history"] = serving_history
         ctx["routing"] = routing
         ctx["current_deployment_id"] = current_deployment
         ctx["current_environment"] = current_environment
@@ -3430,6 +3437,30 @@ class ModelBackendStatusView(generic.TemplateView):
             1 for row in rows if row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
+
+    @staticmethod
+    def _backend_label(instance: Any) -> str:
+        from fighthealthinsurance.generate_appeal import backend_label
+
+        return backend_label(instance)
+
+    @staticmethod
+    def _serving_by_backend() -> Tuple[Dict[str, List[Any]], List[Any]]:
+        """From the serving registry (ml/serving_registry.py): for each
+        backend descriptor, the newest row per leg, and the recent history.
+        A database read only, like the rest of this page."""
+        from fighthealthinsurance.models import ServingIdentity
+
+        rows = list(ServingIdentity.objects.order_by("-last_seen", "-id")[:300])
+        current: Dict[str, List[Any]] = {}
+        seen_legs: set = set()
+        for row in rows:
+            leg = (row.backend, row.endpoint, row.model_id)
+            if leg in seen_legs:
+                continue
+            seen_legs.add(leg)
+            current.setdefault(row.backend, []).append(row)
+        return current, rows[:100]
 
     @classmethod
     def _row_group(cls, row: Dict[str, Any]) -> int:
