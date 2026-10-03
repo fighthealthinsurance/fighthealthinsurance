@@ -360,10 +360,58 @@ def test_alert_rules_use_the_workers_temporal_namespace_and_cover_worker_loss():
         "absent(up{",
         "kube_deployment_status_replicas_available",
         "approximate_backlog_count",
+        "approximate_backlog_age_seconds",
+        "no_poller_tasks",
         "FhiTemporalFaxWorkerAbsent",
         "FhiTemporalAppealWorkerAbsent",
     ):
         assert needle in rules, f"worker-loss/server-side coverage missing: {needle}"
+
+
+def test_server_side_rules_read_the_temporal_namespace_the_service_monitors_relabel():
+    """The operator gives every scraped series a Kubernetes ``namespace``,
+    so the Temporal server's own ``namespace`` label arrives as
+    ``exported_namespace``. values.yaml turns the server's ServiceMonitors on
+    and copies that label to ``temporal_namespace``; every server-side rule
+    must match on that, with the namespace the workers use, or it can never
+    fire."""
+    import pathlib
+    import re
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    tdir = root / "k8s" / "temporal"
+    worker = (tdir / "worker.yaml").read_text()
+    ns = re.search(r'name: TEMPORAL_NAMESPACE\s*\n\s*value: "([^"]+)"', worker).group(1)
+
+    values = yaml.safe_load((tdir / "values.yaml").read_text())
+    endpoint = values["server"]["config"]["metrics"]["prometheus"]
+    assert endpoint["listenAddress"].endswith(":9090")
+    assert "framework" not in endpoint, "the rules assume the tally reporter"
+    monitor = values["server"]["metrics"]["serviceMonitor"]
+    assert monitor["enabled"] is True
+    assert {
+        "action": "replace",
+        "sourceLabels": ["exported_namespace"],
+        "targetLabel": "temporal_namespace",
+    } in monitor["metricRelabelings"]
+
+    rules = yaml.safe_load((tdir / "worker-alerts.yaml").read_text())
+    (server_side,) = [
+        group
+        for group in rules["spec"]["groups"]
+        if group["name"] == "fhi-temporal-server-side"
+    ]
+    assert server_side["rules"], "no server-side rules"
+    for rule in server_side["rules"]:
+        expr = rule["expr"]
+        assert set(re.findall(r'\btemporal_namespace="([^"]+)"', expr)) == {ns}, (
+            rule["alert"]
+        )
+        assert not re.search(r'(?<![\w])namespace="', expr), (
+            f"{rule['alert']} matches the Kubernetes namespace label"
+        )
 
 
 def _draining_worker_cls(shutdown_calls):
