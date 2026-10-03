@@ -2,13 +2,17 @@
 
 A session row holds the email the later pages post and the random secret
 back links are encrypted under. It expires SESSION_COOKIE_AGE after its last
-save, and the actor's daily loop deletes it from django_session after that. The purge runs on the
-loop's first pass, then once every 24 hours, and a failure in it leaves the
-expired email clearing that shares the loop untouched.
+save, and the actor's daily loop deletes it from django_session after that.
+The purge runs on the loop's first pass, then once every 24 hours, and a
+failure in it leaves the expired email clearing that shares the loop
+untouched. Both cleanups are checked at the top of each pass and once a
+minute through the loop's long waits, so neither a follow-up step that keeps
+failing nor the pacing between follow-up sends holds them up.
 
 The actor is built from its real class with Ray, the one second start-up
-wait and the second Django boot patched out. Each test runs the loop for a
-set number of passes: the wait at the end of the last one stops it.
+wait and the second Django boot patched out. Most tests run the loop for a
+set number of passes: the wait at the end of the last one stops it. The
+tests of the email work run it for days on a mocked clock instead.
 """
 
 import datetime
@@ -144,3 +148,103 @@ class TestTheDailyLoop:
             run_passes(actor)
 
         actor._clear_expired_emails.assert_awaited_once()
+
+
+# A cleanup falls due 24 hours after its last run. The loop checks at the top
+# of each pass and once a minute through its long waits, so a run may land up
+# to a few minutes after it falls due, never hours.
+DAY = datetime.timedelta(hours=24)
+LATE_BY_AT_MOST = datetime.timedelta(minutes=5)
+CLEANUPS = {
+    "the session purge": "_clear_expired_sessions",
+    "the expired email clearing": "_clear_expired_emails",
+}
+
+
+def run_on_a_mocked_clock(actor, days):
+    """Run the loop for the given number of days on a mocked clock.
+
+    Every wait moves the clock on by its length and nothing else does. The
+    clock starts at the actor's start-up time, and the loop stops at the end
+    of the pass that crosses the last day. Returns, for each cleanup, the
+    clock time at each of its runs.
+    """
+    start = actor.last_email_clear_check
+    clock = types.SimpleNamespace(at=start)
+    end = start + days * DAY
+    runs = {name: [] for name in CLEANUPS.values()}
+
+    def recorder(name):
+        async def record():
+            runs[name].append(clock.at)
+
+        return record
+
+    for name in CLEANUPS.values():
+        setattr(actor, name, AsyncMock(side_effect=recorder(name)))
+
+    async def fake_sleep(seconds):
+        clock.at += datetime.timedelta(seconds=seconds)
+        if clock.at >= end:
+            actor.running = False
+
+    with (
+        patch(
+            "fighthealthinsurance.email_polling_actor.asyncio",
+            types.SimpleNamespace(sleep=fake_sleep),
+        ),
+        patch(
+            "fighthealthinsurance.email_polling_actor.timezone",
+            types.SimpleNamespace(now=lambda: clock.at),
+        ),
+    ):
+        async_to_sync(actor.run)()
+    return start, runs
+
+
+def assert_runs_once_a_day(start, runs, days, first_pass):
+    """Each run lands within LATE_BY_AT_MOST of falling due, and no sooner.
+
+    The session purge is due on the first pass and the email clearing a day
+    after start-up, so over three days the purge falls due three times and
+    the email clearing twice, not counting the moment the run ends.
+    """
+    first_due = start if first_pass else start + DAY
+    assert runs, "the cleanup never ran"
+    assert first_due <= runs[0] <= first_due + LATE_BY_AT_MOST, runs[0] - start
+    gaps = [later - earlier for earlier, later in zip(runs, runs[1:])]
+    assert all(DAY < gap <= DAY + LATE_BY_AT_MOST for gap in gaps), gaps
+    assert len(runs) >= (days if first_pass else days - 1)
+
+
+class TestTheEmailWorkDoesNotHoldUpTheCleanups:
+    @pytest.mark.parametrize("cleanup", CLEANUPS)
+    def test_a_follow_up_step_that_always_raises_does_not_stop_it(self, actor, cleanup):
+        actor.followup_sender.afind_candidates = AsyncMock(
+            side_effect=RuntimeError("follow-up store unavailable")
+        )
+
+        start, runs = run_on_a_mocked_clock(actor, days=3)
+
+        assert_runs_once_a_day(
+            start,
+            runs[CLEANUPS[cleanup]],
+            days=3,
+            first_pass=cleanup == "the session purge",
+        )
+
+    @pytest.mark.parametrize("cleanup", CLEANUPS)
+    def test_the_pacing_between_follow_up_sends_does_not_delay_it(self, actor, cleanup):
+        # Ten follow-ups a pass: the pacing wait after them is 600 seconds a
+        # send plus 42, give or take a minute, so about 100 minutes a pass.
+        actor.followup_sender.afind_candidates = AsyncMock(return_value=[object()] * 10)
+        actor.followup_sender.asend_all = AsyncMock(return_value=10)
+
+        start, runs = run_on_a_mocked_clock(actor, days=3)
+
+        assert_runs_once_a_day(
+            start,
+            runs[CLEANUPS[cleanup]],
+            days=3,
+            first_pass=cleanup == "the session purge",
+        )

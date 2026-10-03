@@ -63,6 +63,11 @@ class EmailPollingActor:
         error_count = 0
         while self.running:
             await asyncio.sleep(1)  # Yield
+            # The daily cleanups come first in each pass, before any email
+            # work, and the long waits below check them too, so neither a
+            # failing email step nor the pacing between sends holds them up.
+            # _run_daily_cleanups catches its own errors.
+            await self._run_daily_cleanups()
             try:
                 # Send queued emails whose business-hours window is now open
                 # FIRST: these are time-sensitive, and the follow-up batch below
@@ -132,21 +137,6 @@ class EmailPollingActor:
                         self._logger.info(f"Sent {thankyou_sent} thank-you emails")
                         await self._jittered_send_delay(thankyou_sent)
 
-                # Clear expired sessions on the first pass and once per day
-                # after that. _clear_expired_sessions handles its own errors,
-                # so the email clearing below runs whatever happens here.
-                now = timezone.now()
-                if self.last_session_clear_check is None or (
-                    now - self.last_session_clear_check
-                ) > datetime.timedelta(hours=24):
-                    await self._clear_expired_sessions()
-                    self.last_session_clear_check = now
-
-                # Check if we should clear expired emails (once per day)
-                if (now - self.last_email_clear_check) > datetime.timedelta(hours=24):
-                    await self._clear_expired_emails()
-                    self.last_email_clear_check = now
-
                 # Jittered poll interval
                 await asyncio.sleep(random.uniform(8, 15))
                 error_count = 0
@@ -161,7 +151,7 @@ class EmailPollingActor:
                     f"Error #{error_count} while checking messages, "
                     f"backing off {total_wait:.0f}s"
                 )
-                await asyncio.sleep(total_wait)
+                await self._wait_running_daily_cleanups(total_wait)
 
         self._logger.warning("EmailPollingActor stopped running")
         return None
@@ -170,7 +160,47 @@ class EmailPollingActor:
         """Apply jittered delay proportional to emails sent."""
         base_delay = 600 * sent_count + 42
         jitter = random.uniform(-60, 60)
-        await asyncio.sleep(max(10, base_delay + jitter))
+        await self._wait_running_daily_cleanups(max(10, base_delay + jitter))
+
+    async def _wait_running_daily_cleanups(self, seconds: float) -> None:
+        """Wait the given time, running the daily cleanups as they fall due.
+
+        The wait is slept a minute at a time with a check for due cleanups
+        after each minute, so a long wait, such as the pacing after a batch
+        of sends or the backoff after an error, holds a cleanup up by a
+        minute at most.
+        """
+        remaining = seconds
+        while remaining > 0:
+            step = min(remaining, 60.0)
+            await asyncio.sleep(step)
+            remaining -= step
+            await self._run_daily_cleanups()
+
+    async def _run_daily_cleanups(self) -> None:
+        """Run each daily cleanup that is due.
+
+        Expired sessions are cleared on the first pass and then every 24
+        hours; expired emails every 24 hours from start-up. Each cleanup is
+        stamped as it starts and has its own try/except, so a failure in one
+        leaves the other and the email work running, and is tried again the
+        next day.
+        """
+        now = timezone.now()
+        try:
+            if self.last_session_clear_check is None or (
+                now - self.last_session_clear_check
+            ) > datetime.timedelta(hours=24):
+                self.last_session_clear_check = now
+                await self._clear_expired_sessions()
+        except Exception:
+            self._logger.opt(exception=True).error("Error clearing expired sessions")
+        try:
+            if (now - self.last_email_clear_check) > datetime.timedelta(hours=24):
+                self.last_email_clear_check = now
+                await self._clear_expired_emails()
+        except Exception:
+            self._logger.opt(exception=True).error("Error clearing expired emails")
 
     async def _clear_expired_sessions(self) -> None:
         """Delete sessions whose expiry date has passed.

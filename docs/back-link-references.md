@@ -60,7 +60,10 @@ session was last saved, and then until the next daily purge deletes it.
   table. `EmailPollingActor._clear_expired_sessions` deletes it: it runs the
   session engine's `clear_expired`, the same purge as
   `manage.py clearsessions`, on the actor's first pass and every 24 hours
-  after, and logs only how many rows it removed. The actor runs in production
+  after, and logs only how many rows it removed. The actor checks it at the
+  top of each pass of its loop, before any email work, and once a minute
+  through the loop's long waits, so neither a failing follow-up step nor the
+  pacing between follow-up sends holds it up. The actor runs in production
   whether or not `TEMPORAL_ENABLED` is on (`polling_actor_setup.py`). Each
   deploy recreates it, so each deploy starts with a purge, and
   `reconcile_polling_actors` relaunches it if it goes missing.
@@ -81,8 +84,9 @@ test:
   session, checks `expire_date` lands two weeks out, ages the row by hand,
   and shows the session store stops honouring it while the row itself is
   still in the table. The other runs the actor's purge on an aged row and
-  shows the row is gone. When the purge runs, and that a failure in it leaves
-  the expired email clearing alone, is tested with the actor in
+  shows the row is gone. When the purge runs, that a failure in it leaves
+  the expired email clearing alone, and that the email work does not hold it
+  up, is tested with the actor in
   `tests/async-unit/test_expired_sessions_are_cleared.py`.
 - The purge search looks for a `clearsessions` invocation, a `clear_expired`
   call, any use of the `Session` model, and a raw `DELETE FROM django_session`,

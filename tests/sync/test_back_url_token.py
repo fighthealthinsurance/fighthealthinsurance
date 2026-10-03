@@ -1057,9 +1057,10 @@ class RetentionClaimTest(TestCase):
       it is asked of the settings source instead.
     - Two tests drive the store rather than reading a setting, because the
       bullets about Django leaving an expired row in the table and the daily
-      purge deleting it are claims about behaviour. When the purge runs, and
-      that a failure in it leaves the rest of the loop alone, is pinned with
-      the actor in ``tests/async-unit/test_expired_sessions_are_cleared.py``.
+      purge deleting it are claims about behaviour. When the purge runs, that
+      a failure in it leaves the rest of the loop alone, and that the email
+      work in the loop does not hold it up, is pinned with the actor in
+      ``tests/async-unit/test_expired_sessions_are_cleared.py``.
     - The purge search finds every ``clearsessions`` invocation,
       ``clear_expired`` call and direct delete of ``Session`` rows outside
       the tests and the docs, and expects exactly one, in the actor. It
