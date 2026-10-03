@@ -33,6 +33,9 @@ from fighthealthinsurance.exceptions import (
     DocumentRegenerationError,
     MissingRequiredDataError,
 )
+from fighthealthinsurance.ml.appeal_prompt_versions import (
+    MODE_CHOICES as LETTER_PROMPT_MODE_CHOICES,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
 from fighthealthinsurance.utils import sekret_gen
@@ -2780,6 +2783,14 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # the win rate of whatever landed fourth. Null for picks recorded before
     # this existed and for flows that cannot say (share, professional).
     presented_ids = models.JSONField(null=True, blank=True)
+    # The appeal prompt version that wrote this draft, one of
+    # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2, stamped when a model
+    # writes a full letter and copied onto the chosen row. Null for rows from
+    # before versioning and for drafts no letter prompt wrote: templates,
+    # synthesized letters and medically-necessary templated drafts. Not
+    # indexed: the staff page reads it by draft id, and adding an index would
+    # mean a full scan of this large table while the migration holds its lock.
+    prompt_version = models.CharField(max_length=16, null=True, blank=True)
     # Chosen rows written by the professional flow (assemble_appeal). That flow
     # keeps one pick per denial -- a re-assembly replaces the earlier pick --
     # and this marker is what limits the replacement to its own rows: nothing
@@ -3931,6 +3942,37 @@ class ChatTurn(models.Model):
 
     def __str__(self) -> str:
         return f"ChatTurn<{self.outcome} {self.winner_model or 'no winner'}>"
+
+
+class LetterPromptMode(models.Model):
+    """Which appeal prompt version new letters are written with.
+
+    Rows are never edited: each staff change appends one and the newest
+    wins, so the table is also the record of who changed it, when, and
+    which periods ran which mode. No rows means original. Read by
+    ml/appeal_prompt_versions.current_letter_prompt_mode and changed on the
+    Model Usage dashboard (/timbit/help/model_usage).
+    """
+
+    mode = models.CharField(max_length=16, choices=LETTER_PROMPT_MODE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Who made the change. The username is copied so the record survives the
+    # account being deleted.
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    changed_by_username = models.CharField(max_length=150, blank=True, default="")
+    note = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.mode} at {self.created_at} by {self.changed_by_username}"
 
 
 class ChatRoutingPolicy(models.Model):

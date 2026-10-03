@@ -884,6 +884,10 @@ def mark_proposal_chosen(
     model_name: Optional[str] = None
     synthesized = False
     context_level: Optional[str] = None
+    # Only a matched draft says which prompt version wrote the letter: an
+    # inferred pick never guesses one, since a guess on a page that showed
+    # both versions would corrupt the prompt comparison.
+    prompt_version: Optional[str] = None
     if original is not None:
         model_name = original.model_name
         synthesized = original.synthesized
@@ -891,6 +895,7 @@ def mark_proposal_chosen(
         # dashboard/RL export (which read only chosen rows) would be blind to
         # which context level users actually pick.
         context_level = original.context_level
+        prompt_version = original.prompt_version
     elif not arbitrary_text and not draft_unsaved:
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
@@ -950,6 +955,7 @@ def mark_proposal_chosen(
         context_level=context_level,
         presented_ids=shown,
         professional_pick=professional_pick,
+        prompt_version=prompt_version,
     )
     pa.save()
     return pa
@@ -5997,6 +6003,7 @@ class AppealsBackendHelper:
                     synthesized=item.synthesized,
                     context_level=item.context_level,
                     text_fingerprint=fingerprint,
+                    prompt_version=item.prompt_version,
                 )
 
                 def _insert_fenced() -> None:
