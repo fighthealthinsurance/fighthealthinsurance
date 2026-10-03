@@ -7,7 +7,6 @@ from typing import Optional
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
-from django.core.mail import send_mail
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
 from django.http import FileResponse, StreamingHttpResponse
@@ -58,7 +57,6 @@ from fighthealthinsurance.models import (
     ChooserSkip,
     ChooserTask,
     ChooserVote,
-    DemoRequests,
     Denial,
     DenialQA,
     InterestedProfessional,
@@ -1643,163 +1641,6 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 "results": paginated_results,
             }
         )
-
-
-class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
-    """
-    ViewSet for managing mailing list subscriptions.
-
-    Allows users to subscribe to or unsubscribe from the mailing list by email.
-    """
-
-    serializer_class = serializers.MailingListSubscriberSerializer
-
-    @extend_schema(responses=serializers.StatusResponseSerializer)
-    def create(self, request: Request) -> Response:
-        """Subscribe an email to the mailing list."""
-        return super().create(request)
-
-    @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer) -> Response:
-        """Save the new mailing list subscription."""
-        serializer.save()
-        return Response(
-            serializers.StatusResponseSerializer({"status": "subscribed"}).data,
-            status=status.HTTP_201_CREATED,
-        )
-
-    @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_delete(self, request: Request, serializer):
-        """Remove an email from the mailing list."""
-        email = serializer.validated_data["email"]
-        MailingListSubscriber.objects.filter(email=email).delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
-    """
-    ViewSet for managing demo requests.
-
-    Allows users to submit requests for product demonstrations or remove
-    existing demo requests by email.
-    """
-
-    serializer_class = serializers.DemoRequestsSerializer
-
-    @extend_schema(responses=serializers.StatusResponseSerializer)
-    def create(self, request: Request) -> Response:
-        """Submit a new demo request."""
-        return super().create(request)
-
-    @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer) -> Response:
-        """Save the demo request, recording client IP/ASN, then notify sales."""
-        from fhi_users.audit import bound_client_ip, get_asn_info, get_client_ip
-
-        ip = get_client_ip(request)
-        asn, asn_name = get_asn_info(ip)
-        # bound_client_ip: the IP is taken verbatim from the client-controlled
-        # X-Forwarded-For header, so store it bounded (DemoRequests.ip_address is
-        # a CharField) rather than risk a malformed/over-long value failing the
-        # public, unauthenticated demo-request write.
-        demo = serializer.save(
-            ip_address=bound_client_ip(ip), asn=asn, asn_name=asn_name
-        )
-        self._notify_demo_request(demo)
-        self._record_interested_professional(demo)
-        return Response(
-            serializers.StatusResponseSerializer({"status": "subscribed"}).data,
-            status=status.HTTP_201_CREATED,
-        )
-
-    @staticmethod
-    def _record_interested_professional(demo: DemoRequests) -> None:
-        """Feed the demo request into the interested-professional flow.
-
-        With new Fight Paperwork signups closed (connector agreement), demo
-        requests are the professional lead intake, so mirror the web
-        /pro_version form: record an InterestedProfessional lead, notify the
-        professional-signup inbox, and send the professional_thankyou email to
-        the requester. Best-effort: the DemoRequests row is already persisted
-        and this public endpoint must not 500 over lead bookkeeping or mail."""
-        from fighthealthinsurance.followup_emails import ThankyouEmailSender
-        from fighthealthinsurance.utils import notify_interested_professional
-
-        try:
-            # Dedup by email: if this address already has a lead, don't create a
-            # duplicate InterestedProfessional, re-notify the professional inbox,
-            # or re-send the thank-you. The DemoRequests row + the support
-            # notification (_notify_demo_request) already captured this repeat
-            # submission for the team. Case-insensitive to match how the
-            # pro-connector queue collapses duplicates (email__iexact), so
-            # Jane@clinic.org resubmitting as jane@clinic.org isn't re-thanked.
-            if InterestedProfessional.objects.filter(email__iexact=demo.email).exists():
-                return
-            interested_pro = InterestedProfessional.objects.create(
-                name=demo.name or "",
-                email=demo.email,
-                business_name=demo.company or "",
-                job_title_or_provider_type=demo.role or "",
-                phone_number=demo.phone or "",
-                comments=f"Demo request (source: {demo.source or 'direct'})",
-                clicked_for_paid=False,
-            )
-            notify_interested_professional(
-                interested_pro,
-                source="a Fight Paperwork demo request",
-                subject=f"New demo request lead #{interested_pro.id}",
-            )
-            # Send the thank-you right away; dosend() sets
-            # thankyou_email_sent=True on success so the batched
-            # ThankyouEmailSender won't re-send, and it swallows mail errors.
-            ThankyouEmailSender().dosend(interested_pro=interested_pro)
-        except Exception:
-            logger.opt(exception=True).error(
-                f"Error recording interested professional for demo request {demo.id}"
-            )
-
-    @staticmethod
-    def _notify_demo_request(demo: DemoRequests) -> None:
-        """Email support42@ (plus any DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS)
-        about a new demo request. Best-effort: a mail failure must not fail the
-        request, which is already persisted."""
-        recipients = list(
-            getattr(
-                settings,
-                "DEMO_REQUEST_NOTIFICATION_EMAILS",
-                ["support42@fighthealthinsurance.com"],
-            )
-        )
-        if not recipients:
-            return
-        body = (
-            "New demo request:\n\n"
-            f"Email: {demo.email}\n"
-            f"Name: {demo.name or 'N/A'}\n"
-            f"Company: {demo.company or 'N/A'}\n"
-            f"Role: {demo.role or 'N/A'}\n"
-            f"Phone: {demo.phone or 'N/A'}\n"
-            f"Source: {demo.source or 'N/A'}\n"
-            f"IP: {demo.ip_address or 'N/A'}\n"
-            f"ASN: {demo.asn or 'N/A'} ({demo.asn_name or 'N/A'})\n"
-        )
-        try:
-            send_mail(
-                f"New demo request: {demo.email}",
-                body,
-                settings.DEFAULT_FROM_EMAIL,
-                recipients,
-            )
-        except Exception:
-            logger.opt(exception=True).error(
-                f"Error sending demo request notification for {demo.email}"
-            )
-
-    @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_delete(self, request: Request, serializer):
-        email = serializer.validated_data["email"]
-        DemoRequests.objects.filter(email=email).delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):

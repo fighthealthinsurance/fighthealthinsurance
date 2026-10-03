@@ -14,10 +14,8 @@ from fighthealthinsurance.models import (
     Appeal,
     AppealAttachment,
     ChatType,
-    DemoRequests,
     Denial,
     InterestedProfessional,
-    MailingListSubscriber,
     OngoingChat,
     PriorAuthRequest,
     ProposedAppeal,
@@ -485,26 +483,6 @@ class EmailVerifierSerializer(serializers.Serializer):
     email = serializers.EmailField()
     token = serializers.CharField()
     user_id = serializers.IntegerField()
-
-
-# Mailing list
-
-
-class MailingListSubscriberSerializer(serializers.ModelSerializer):
-    """Serializer for mailing list subscription data."""
-
-    class Meta:
-        model = MailingListSubscriber
-        fields = ["email", "name"]
-
-
-# Demo request
-class DemoRequestsSerializer(serializers.ModelSerializer):
-    """Serializer for product demo request submissions."""
-
-    class Meta:
-        model = DemoRequests
-        fields = ["email", "name", "company", "role", "source", "phone"]
 
 
 class InterestedProfessionalSerializer(serializers.ModelSerializer):
