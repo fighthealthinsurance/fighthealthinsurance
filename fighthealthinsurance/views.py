@@ -32,6 +32,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
 from django.utils.decorators import classonlymethod, method_decorator
+from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.views import View, generic
 from django.views.decorators.cache import cache_control, cache_page
@@ -64,6 +65,7 @@ from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
+from fighthealthinsurance.ml import denial_triage
 from fighthealthinsurance.media_references import (
     MEDIA_REFERENCES,
     SOCIAL_MEDIA_REFERENCES,
@@ -1122,6 +1124,74 @@ class RecommendAppeal(View):
         return render(request, "")
 
 
+def review_form(
+    denial,
+    email: str,
+    procedure,
+    *,
+    date_from_letter: bool,
+    default_condition: str = "",
+) -> core_forms.PostInferedForm:
+    """The review page's form, starting from what the denial row holds.
+
+    Every field the row has a value for starts with it, so the person checks
+    what we know rather than typing it again. On the way forward from reading
+    the letter (``date_from_letter``), the denial date is also read from the
+    letter, on this server and with nothing sent anywhere, when the row has
+    none and the letter states it plainly (see denial_triage.letter_date). A
+    field filled from the letter says so under it. The way back from the next
+    step comes after the person has answered this page, so it shows the row
+    as they left it: a date they cleared stays blank.
+
+    ``default_condition`` is the condition a treatment guide or an assistant
+    handoff carried. It fills the diagnosis only when the row has none
+    (form_valid keeps it).
+    """
+    from_letter = []
+    denial_date = denial.denial_date
+    if denial_date is None and date_from_letter:
+        denial_date = denial_triage.letter_date(
+            denial.denial_text, timezone.localdate()
+        )
+        if denial_date is not None:
+            from_letter.append("denial_date")
+    form = core_forms.PostInferedForm(
+        initial={
+            "denial_type": list(denial.denial_type.all()),
+            "denial_id": denial.denial_id,
+            "email": email,
+            "your_state": denial.your_state,
+            "procedure": procedure,
+            "diagnosis": denial.diagnosis or default_condition,
+            "semi_sekret": denial.semi_sekret,
+            "insurance_company": denial.insurance_company,
+            "plan_id": denial.plan_id,
+            "claim_id": denial.claim_id,
+            "date_of_service": denial.date_of_service,
+            "employer_name": denial.employer_name,
+            "denial_date": denial_date,
+            "plan_source": list(denial.plan_source.all()),
+            "insurance_company_obj": denial.insurance_company_obj_id,
+            "insurance_plan_obj": denial.insurance_plan_obj_id,
+            "denial_type_text": denial.denial_type_text,
+        }
+    )
+    if from_letter:
+        # The partial's own text, autoescaped when it rendered; strip() hands
+        # back a plain str, so it is marked safe again.
+        hint = mark_safe(
+            loader.render_to_string("partials/from_your_letter_hint.html").strip()
+        )
+        for name in from_letter:
+            field = form.fields[name]
+            field.help_text = (
+                format_html("{}<br>{}", field.help_text, hint)
+                if field.help_text
+                else hint
+            )
+    return form
+
+
 class CategorizeReview(View):
     """View for the categorize/review page that supports GET for back navigation."""
 
@@ -1156,24 +1226,12 @@ class CategorizeReview(View):
             procedure = default_procedure
             used_default_procedure = True
 
-        # Build the PostInferedForm with denial data
-        form = core_forms.PostInferedForm(
-            initial={
-                "denial_type": list(denial.denial_type.all()),
-                "denial_id": denial.denial_id,
-                "email": email,
-                "your_state": denial.your_state,
-                "procedure": procedure,
-                # The condition a treatment guide or an assistant handoff
-                # carried, when the letter gave none (form_valid keeps it).
-                "diagnosis": denial.diagnosis
-                or request.session.get("default_condition", ""),
-                "semi_sekret": denial.semi_sekret,
-                "insurance_company": denial.insurance_company,
-                "plan_id": denial.plan_id,
-                "claim_id": denial.claim_id,
-                "date_of_service": denial.date_of_service,
-            }
+        form = review_form(
+            denial,
+            email,
+            procedure,
+            date_from_letter=False,
+            default_condition=request.session.get("default_condition", ""),
         )
 
         context = {
@@ -2337,10 +2395,11 @@ def issue_denial_ref_token(
 
     Privacy note. The session keeps the email the later pages post, per case
     (``remember_denial_ref_email``), in the session store, which is base64
-    JSON in django_session and is not encrypted, and which nothing in this
-    repo purges. The case's ``semi_sekret`` is not in the session; it
-    travels only inside the encrypted reference. Full statement in
-    ``docs/back-link-references.md``.
+    JSON in django_session and is not encrypted. Once a session expires,
+    SESSION_COOKIE_AGE after its last save, the daily purge in
+    ``EmailPollingActor._clear_expired_sessions`` deletes its row. The case's
+    ``semi_sekret`` is not in the session; it travels only inside the
+    encrypted reference. Full statement in ``docs/back-link-references.md``.
     """
     if denial_id is None or not email or not semi_sekret:
         return None
@@ -2685,6 +2744,9 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             denial_response = common_view_logic.DenialCreatorHelper.update_denial(
                 **form.cleaned_data,
             )
+            # update_denial matched the row on the email hash and the secret,
+            # so its id is safe to read the rest of the row by.
+            denial = models.Denial.objects.get(denial_id=denial_response.denial_id)
         except models.Denial.DoesNotExist:
             # Stale ref (deleted denial / mismatched email hash): the GET
             # renders fine because the mixin validates without hashed_email,
@@ -2709,23 +2771,12 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             procedure = default_procedure
             used_default_procedure = True
 
-        new_form = core_forms.PostInferedForm(
-            initial={
-                "denial_type": denial_response.selected_denial_type,
-                "denial_id": denial_response.denial_id,
-                "email": email,
-                "your_state": denial_response.your_state,
-                "procedure": procedure,
-                # The condition a treatment guide or an assistant handoff
-                # carried, when the letter gave none (form_valid keeps it).
-                "diagnosis": denial_response.diagnosis
-                or self.request.session.get("default_condition", ""),
-                "semi_sekret": denial_response.semi_sekret,
-                "insurance_company": denial_response.insurance_company,
-                "plan_id": denial_response.plan_id,
-                "claim_id": denial_response.claim_id,
-                "date_of_service": denial_response.date_of_service,
-            }
+        new_form = review_form(
+            denial,
+            email,
+            procedure,
+            date_from_letter=True,
+            default_condition=self.request.session.get("default_condition", ""),
         )
 
         context = {

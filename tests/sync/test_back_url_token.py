@@ -28,10 +28,11 @@ import subprocess
 import time
 import types
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from urllib.parse import parse_qs, urlparse
 
+from asgiref.sync import async_to_sync
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
@@ -980,12 +981,12 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
 class RetentionClaimTest(TestCase):
     """The retention sentence an owner signs off on, pinned to the repo.
 
-    An earlier draft told the owner the stored copy of the triple lived twelve
-    hours. It does not. ``DENIAL_REF_IDLE_TTL_SECONDS`` decides only whether a
-    reference still resolves; the plaintext email and the permanent
-    ``semi_sekret`` sit in ``django_session``, whose row lifetime comes from
-    ``SESSION_COOKIE_AGE``, whose storage comes from ``SESSION_ENGINE`` and
-    whose deletion comes from a purge nobody has written.
+    ``DENIAL_REF_IDLE_TTL_SECONDS`` decides only whether a reference still
+    resolves. What the session keeps for a reference, the email the later
+    pages post and the random secret the reference is encrypted under, sits in
+    ``django_session``. A row's lifetime comes from ``SESSION_COOKIE_AGE``,
+    its storage from ``SESSION_ENGINE``, and its deletion from the daily purge
+    in ``EmailPollingActor._clear_expired_sessions``.
 
     That sentence is prose, in ``docs/back-link-references.md`` and in
     ``views.issue_denial_ref_token``, and prose rots quietly. So fail here and
@@ -1001,12 +1002,17 @@ class RetentionClaimTest(TestCase):
       django-configurations copies Django's global defaults into every
       configuration class body, so "is it set" cannot be asked of the class;
       it is asked of the settings source instead.
-    - One test drives the store rather than reading a setting, because the
-      bullet about Django not deleting expired rows is a claim about
-      behaviour.
-    - The purge search finds a ``clearsessions`` invocation or a direct delete
-      of ``Session`` rows. It cannot rule out a purge spelled some third way,
-      or one living outside this repo. Tripwire, not proof.
+    - Two tests drive the store rather than reading a setting, because the
+      bullets about Django leaving an expired row in the table and the daily
+      purge deleting it are claims about behaviour. When the purge runs, that
+      a failure in it leaves the rest of the loop alone, and that the email
+      work in the loop does not hold it up, is pinned with the actor in
+      ``tests/async-unit/test_expired_sessions_are_cleared.py``.
+    - The purge search finds every ``clearsessions`` invocation,
+      ``clear_expired`` call and direct delete of ``Session`` rows outside
+      the tests and the docs, and expects exactly one, in the actor. It
+      cannot rule out a purge spelled some third way, or one living outside
+      this repo. Tripwire, not proof.
     """
 
     # Django's own defaults, from django/conf/global_settings.py. Spelled out
@@ -1020,14 +1026,16 @@ class RetentionClaimTest(TestCase):
     SETTINGS_SOURCE = pathlib.Path("fighthealthinsurance/settings.py")
 
     # A purge, in the shapes it would actually be written in. The negative
-    # lookbehind keeps the other models in this repo whose names end in
-    # "Session" out of it.
+    # lookbehinds and the word boundary keep out the other models in this
+    # repo whose names end in "Session", and the clear_expired_emails sweep.
     PURGE_PATTERNS = (
         r"clearsessions",
+        r"(?<!\w)a?clear_expired\b",
         r"(?<![\w.])Session\.objects",
         r"from django\.contrib\.sessions\.models import Session",
         r"""(?i:delete\s+from\s+["'`]?django_session)""",
     )
+    THE_DAILY_PURGE = "fighthealthinsurance/email_polling_actor.py"
 
     @staticmethod
     def prod_configuration():
@@ -1108,11 +1116,11 @@ class RetentionClaimTest(TestCase):
             msg=f"the running configuration's SESSION_ENGINE {stale}",
         )
 
-    def test_an_expired_session_row_stops_resolving_and_stays_in_the_table(self):
-        """The "stops honouring, does not delete" bullet, exercised.
+    def test_an_expired_session_row_stops_resolving_and_waits_for_the_purge(self):
+        """The "stops honouring, leaves the row" bullet, exercised.
 
-        Everything else here reads a setting. This drives the store: a real
-        row, the expiry Django stamps on it, and what survives the clock.
+        This drives the store: a real row, the expiry Django stamps on it, and
+        what survives the clock until the daily purge runs.
         """
         store = SessionStore()
         store[views._DENIAL_REF_EMAILS_SESSION_KEY] = {"1": "someone@example.com"}
@@ -1142,18 +1150,48 @@ class RetentionClaimTest(TestCase):
             Session.objects.filter(session_key=key).exists(),
             msg=(
                 "Django deleted the expired row by itself, so the retention "
-                f"paragraph in {self.DOC} and the privacy note in "
-                "views.issue_denial_ref_token overstate what is retained"
+                f"paragraph in {self.DOC}, which says the daily purge is what "
+                "deletes it, is out of date"
             ),
         )
 
-    def test_nothing_in_the_repo_deletes_expired_session_rows(self):
-        """No ``clearsessions`` and no delete against ``Session``.
+    def test_the_daily_purge_deletes_an_expired_session_row(self):
+        """The "purged daily" bullet, exercised on a real row."""
+        from fighthealthinsurance.email_polling_actor import EmailPollingActor
 
-        Markdown is excluded because saying that nothing runs a purge is
-        exactly what the documentation does, and this file is excluded because
-        the test above deletes nothing but does name the model. Any third file
-        that matches has to be looked at by a person.
+        store = SessionStore()
+        store[views._DENIAL_REF_EMAILS_SESSION_KEY] = {"1": "someone@example.com"}
+        store.save()
+        key = store.session_key
+        Session.objects.filter(session_key=key).update(
+            expire_date=timezone.now() - timedelta(seconds=1)
+        )
+
+        metadata = getattr(EmailPollingActor, "__ray_metadata__", None)
+        actor_class = metadata.modified_class if metadata else EmailPollingActor
+        # __new__ skips the Django boot and the start-up wait in __init__; the
+        # purge needs nothing from the actor but a logger.
+        actor = actor_class.__new__(actor_class)
+        actor._logger = MagicMock()
+        async_to_sync(actor._clear_expired_sessions)()
+
+        self.assertFalse(
+            Session.objects.filter(session_key=key).exists(),
+            msg=(
+                "EmailPollingActor._clear_expired_sessions left an expired "
+                "session row in place, so the retention paragraph in "
+                f"{self.DOC} and the privacy note in "
+                "views.issue_denial_ref_token overstate what is cleared"
+            ),
+        )
+
+    def test_the_daily_purge_is_the_only_purge_in_the_repo(self):
+        """Every ``clearsessions``, ``clear_expired`` and delete of ``Session``.
+
+        Markdown is excluded because the documentation names the purge, and
+        the tests are excluded because they make and delete rows of their own.
+        Any other file that matches is a second purge, or the purge moved, and
+        the retention paragraph has to say so.
         """
         searched = repo_files()
         # A listing that came back short would make the search below pass for
@@ -1169,23 +1207,22 @@ class RetentionClaimTest(TestCase):
                 "fix the listing before believing the result below"
             ),
         )
-        this_file = pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)
         purge = re.compile("|".join(self.PURGE_PATTERNS))
         runs_it = sorted(
             str(path)
             for path in searched
             if path.suffix != ".md"
-            and path != this_file
+            and path.parts[:1] != ("tests",)
             and purge.search(read_repo_text(path))
         )
         self.assertEqual(
             runs_it,
-            [],
+            [self.THE_DAILY_PURGE],
             msg=(
-                "something may purge expired sessions now, so the retention "
-                f"paragraph in {self.DOC} and the privacy note in "
-                "views.issue_denial_ref_token understate what is cleaned up: "
-                + ", ".join(runs_it)
+                f"the retention paragraph in {self.DOC} and the privacy note "
+                "in views.issue_denial_ref_token say expired sessions are "
+                f"deleted by the daily purge in {self.THE_DAILY_PURGE}; the "
+                "files that purge sessions are now: " + (", ".join(runs_it) or "none")
             ),
         )
 
