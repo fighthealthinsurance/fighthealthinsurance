@@ -11,6 +11,10 @@ the browser keeps and what the chat takes out of a message before sending it.
 What the server keeps is read from everywhere it could keep it: every table,
 with each saved session decoded. A detail the page says the server does not
 keep must appear in none of them.
+
+The two notes under the intake page's upload form are pinned the same way,
+against the box that clears what the browser saved and against what an
+upload keeps of the email.
 """
 
 import pathlib
@@ -34,13 +38,13 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.websockets import OngoingChatConsumer
 
-USER_INFO_STORAGE = (
+JS = (
     pathlib.Path(__file__).resolve().parents[2]
     / "fighthealthinsurance"
     / "static"
     / "js"
-    / "user_info_storage.ts"
 )
+USER_INFO_STORAGE = JS / "user_info_storage.ts"
 PAGES = ("chat_consent", "explain_denial")
 
 # Values no table or fixture holds, so finding one means this form put it
@@ -59,13 +63,13 @@ ADDRESS_PARTS = (STREET, CITY, STATE, ZIP)
 
 # What the page says about each detail, word for word.
 FORM_GOES_TO_THE_SERVER = (
-    "Everything on this form goes to our server when you send it. Under each "
-    "detail we say what we keep, and where. Our privacy policy has the rest."
+    "The details below go to our server when you send this form. Under each "
+    "one we say what we keep, and where. Our privacy policy has the rest."
 )
 NAME = (
     "This browser keeps your name, and the chat tries to take it out of your "
-    "messages before they're sent. Our server keeps your name only if you "
-    "tick the news box below."
+    "messages before they're sent. Our server keeps the name you enter here "
+    "only if you tick the news box below."
 )
 EMAIL_KEPT = (
     "Our server keeps your email with the record that you agreed to these "
@@ -82,11 +86,23 @@ ADDRESS = (
     "This browser keeps your address, and the chat tries to take your street "
     "address, city and ZIP code out of your messages before they're sent. It "
     "leaves your state in, because the answer can depend on it. Our server "
-    "doesn't keep any of them."
+    "doesn't keep what you enter in the address boxes."
 )
 NEWS = (
     "If you tick this, our server keeps your name, email, phone number and "
-    "how you heard about us on our mailing list until you unsubscribe."
+    "how you heard about us on our mailing list until you unsubscribe or ask "
+    "us to delete your data."
+)
+REFERRAL_KEPT = "Our server keeps both answers only if you tick the news box above."
+# The intake page's notes under its upload form, word for word.
+INTAKE_CLEAR = (
+    "You can clear them in your browser's settings, or by unticking Remember "
+    "what I typed above."
+)
+INTAKE_EMAIL = (
+    "With your appeal we keep a scrambled version of your email (a hash), so "
+    "you can ask us to remove it later. We also keep your real email on our "
+    "server, tied to this browser, so the links back into your appeal work."
 )
 
 
@@ -135,11 +151,14 @@ def _read(html: str) -> _PageReader:
     return reader
 
 
-def _ts_function(name: str) -> str:
-    """The source of one exported function in user_info_storage.ts."""
-    source = USER_INFO_STORAGE.read_text()
-    m = re.search(rf"export function {name}\(.*?\n}}\n", source, re.DOTALL)
-    assert m, f"no {name} in user_info_storage.ts"
+def _ts_function(name: str, path: pathlib.Path = USER_INFO_STORAGE) -> str:
+    """The source of one top-level function in a TypeScript file, from its
+    signature to its closing brace."""
+    source = path.read_text()
+    m = re.search(
+        rf"^(?:export )?function {name}\(.*?\n}}\n", source, re.DOTALL | re.MULTILINE
+    )
+    assert m, f"no {name} in {path.name}"
     return m.group(0)
 
 
@@ -159,6 +178,10 @@ def _what_the_server_keeps() -> str:
 
 class ChatConsentSaysWhatItKeepsTest(TestCase):
     def _send(self, page: str, subscribe: bool) -> None:
+        """Send the form from a fresh browser, so what each page's own view
+        did is checked rather than what an earlier send left behind, and
+        check the page took the form rather than showing it again."""
+        self.client = self.client_class()
         data = {
             "first_name": FIRST,
             "last_name": LAST,
@@ -178,7 +201,12 @@ class ChatConsentSaysWhatItKeepsTest(TestCase):
         if page == "explain_denial":
             data["denial_text"] = "My MRI was denied as not medically necessary."
         response = self.client.post(reverse(page), data)
-        self.assertIn(response.status_code, (200, 302), page)
+        # A form the view turns down comes back as a 200 too, so the check is
+        # where each page goes once it has taken the form.
+        if page == "chat_consent":
+            self.assertRedirects(response, "/chat/", fetch_redirect_response=False)
+        else:
+            self.assertTemplateUsed(response, "chat_redirect.html")
         self.assertTrue(self.client.session.get("consent_completed"), page)
 
     def _assert_the_page_says(self, sentence: str) -> None:
@@ -220,6 +248,8 @@ class ChatConsentSaysWhatItKeepsTest(TestCase):
     def test_the_name_is_kept_with_the_news_box(self):
         for page in PAGES:
             with self.subTest(page=page):
+                # The row the other page made would hold the name too.
+                MailingListSubscriber.objects.all().delete()
                 self._send(page, subscribe=True)
                 self.assertIn(f"{FIRST} {LAST}", _what_the_server_keeps())
 
@@ -281,7 +311,7 @@ class ChatConsentSaysWhatItKeepsTest(TestCase):
                     for part in ADDRESS_PARTS:
                         self.assertNotIn(part, kept)
 
-    def test_the_news_box_keeps_what_it_says_until_unsubscribe(self):
+    def test_the_news_box_keeps_what_it_says_until_unsubscribe_or_delete(self):
         self._assert_the_page_says(NEWS)
         for page in PAGES:
             with self.subTest(page=page):
@@ -300,8 +330,17 @@ class ChatConsentSaysWhatItKeepsTest(TestCase):
                 self.assertFalse(
                     MailingListSubscriber.objects.filter(email=EMAIL).exists()
                 )
+                self._send(page, subscribe=True)
+                self.assertTrue(
+                    MailingListSubscriber.objects.filter(email=EMAIL).exists()
+                )
+                RemoveDataHelper.remove_data_for_email(EMAIL)
+                self.assertFalse(
+                    MailingListSubscriber.objects.filter(email=EMAIL).exists()
+                )
 
     def test_without_the_news_box_nothing_goes_on_the_mailing_list(self):
+        self._assert_the_page_says(REFERRAL_KEPT)
         for page in PAGES:
             with self.subTest(page=page):
                 self._send(page, subscribe=False)
@@ -309,3 +348,51 @@ class ChatConsentSaysWhatItKeepsTest(TestCase):
                     MailingListSubscriber.objects.filter(email=EMAIL).exists()
                 )
                 self.assertNotIn(REFERRAL_DETAILS, _what_the_server_keeps())
+
+
+class IntakeNotesSayWhatTheyKeepTest(TestCase):
+    """The notes under the intake page's upload form."""
+
+    def test_the_box_the_note_names_sits_above_it_and_clears_the_saved_name(self):
+        html = self.client.get(reverse("scan")).content.decode()
+        self.assertIn(INTAKE_CLEAR, _read(html).text)
+        box = re.search(
+            r'<label for="persistence_enabled">\s*<b>Remember what I typed</b>', html
+        )
+        self.assertIsNotNone(box, "no box called Remember what I typed")
+        self.assertLess(box.start(), html.index("by unticking Remember what I typed"))
+        # The name and street address are saved under their ids, which the
+        # clear removes.
+        for field in ("store_fname", "store_lname", "store_street"):
+            self.assertIn(f'id="{field}"', html)
+        toggle = _ts_function("setupScrub", JS / "scrub.ts")
+        self.assertRegex(
+            toggle,
+            r'getElementById\("persistence_enabled"\)[\s\S]*?'
+            r"setPersistenceEnabled\(target\.checked\);",
+        )
+        turn_off = _ts_function("setPersistenceEnabled", JS / "shared.ts")
+        self.assertRegex(turn_off, r"if \(!enabled\) \{[\s\S]*?clearFormData\(\);")
+        clear = _ts_function("clearFormData", JS / "shared.ts")
+        self.assertIn('key.startsWith("store_")', clear)
+        self.assertIn("localStorage.removeItem(key)", clear)
+
+    def test_the_appeal_keeps_the_hash_and_the_session_keeps_the_email(self):
+        html = self.client.get(reverse("scan")).content.decode()
+        self.assertIn(INTAKE_EMAIL, _read(html).text)
+        self.client.post(
+            reverse("process"),
+            {
+                "email": EMAIL,
+                "denial_text": "My MRI was denied as not medically necessary.",
+                "pii": "on",
+                "tos": "on",
+                "privacy": "on",
+            },
+        )
+        appeal = Denial.objects.filter(hashed_email=Denial.get_hashed_email(EMAIL))
+        self.assertEqual(appeal.count(), 1)
+        self.assertNotIn(EMAIL, repr(appeal.values().get()))
+        self.assertIn(EMAIL, repr(dict(self.client.session.items())))
+        RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.assertFalse(appeal.exists())
