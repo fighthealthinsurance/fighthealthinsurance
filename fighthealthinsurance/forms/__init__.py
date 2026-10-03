@@ -350,6 +350,19 @@ class FaxForm(DenialRefForm):
         required=True,
         label="Your appeal letter",
     )
+    # Some of what the blank check finds is not a blank: an acronym in
+    # brackets like [ERISA], a name typed inside the brackets, a line to sign
+    # on. Ticked, the letter is faxed as it is. The box is on the form only
+    # when the letter posted has blanks in it (see __init__), so it shows
+    # under the letter on the page that names them, and nowhere else. The
+    # appeal page's "Send anyway" posts the same name with a hidden "1".
+    send_with_placeholders = forms.BooleanField(
+        required=False,
+        label="Send it as it is: I've checked these are not blanks",
+        label_suffix="",
+        widget=forms.CheckboxInput(attrs={"value": "1"}),
+        template_name="partials/check_row_field.html",
+    )
     include_provided_health_history = forms.BooleanField(
         required=False,
         label="Include my health history in the fax",
@@ -357,25 +370,50 @@ class FaxForm(DenialRefForm):
     )
     # Note: we don't have fax_pwyw etc. so we don't overload.
 
-    def clean_completed_appeal_text(self) -> str:
-        """A letter with blanks left in it, like [Your Name], is not faxed.
+    # How many blanks the person said to fax as they are; 0 when none.
+    placeholders_sent_as_they_are: int = 0
+
+    def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        super().__init__(*args, **kwargs)
+        posted_letter = (
+            self.data.get(self.add_prefix("completed_appeal_text"))
+            if self.is_bound
+            else None
+        )
+        if not find_unfilled_placeholders(posted_letter or ""):
+            del self.fields["send_with_placeholders"]
+
+    def clean(self) -> typing.Optional[dict[str, typing.Any]]:
+        """A letter with blanks left in it, like [Your Name], is not faxed
+        unless the person ticks the box to send it as it is.
 
         The insurance company would get the blanks exactly as written. The
         appeal page's script names them before the form is sent; this holds
         for a browser that never ran it. The same pattern list drives both.
         """
-        text: str = self.cleaned_data["completed_appeal_text"]
+        cleaned_data = super().clean()
+        text = self.cleaned_data.get("completed_appeal_text")
+        if not text:
+            return cleaned_data
         found = find_unfilled_placeholders(text)
-        if found:
-            raise forms.ValidationError(
+        if not found:
+            return cleaned_data
+        if self.cleaned_data.get("send_with_placeholders"):
+            self.placeholders_sent_as_they_are = len(found)
+            return cleaned_data
+        self.add_error(
+            "completed_appeal_text",
+            forms.ValidationError(
                 "Fill in these blanks before we fax your letter: "
                 f"{describe_placeholders(found)}. Your insurance company would "
                 "get them exactly as written. Replace each one with your "
                 "details, or delete it if it doesn't apply, then send the fax "
-                "again.",
+                "again. If you've checked and these are not blanks, tick the "
+                "box under your letter to send it as it is.",
                 code="unfilled_placeholders",
-            )
-        return text
+            ),
+        )
+        return cleaned_data
 
 
 class EntityExtractForm(DenialRefForm):

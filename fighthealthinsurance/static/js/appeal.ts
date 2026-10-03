@@ -335,9 +335,10 @@ function setupAppeal() {
     completedLetterEdited = true;
   }
 
-  // A fax waits until the letter has no blanks left in it. The server
-  // refuses the same letter (FaxForm), so this check only saves the round
-  // trip and says which blanks they are, just above the button.
+  // A fax waits while the letter has blanks in it, unless the person says
+  // to send it as it is. The server holds the same letter (FaxForm), so this
+  // check saves the round trip and says which blanks they are, just above
+  // the button, with "Send anyway" for what is not really a blank.
   const faxButton = document.getElementById("fax_appeal");
   const faxForm = faxButton?.closest("form") as HTMLFormElement | null;
   if (faxButton && faxForm) {
@@ -357,9 +358,10 @@ function setupAppeal() {
         return;
       }
       // Decided inside this one submission: a letter with no blanks goes
-      // straight through, and the next press is checked afresh. Nothing
-      // re-submits the form from inside its own event.
-      if (faxMustWaitForPlaceholders(faxButton, letter)) {
+      // straight through, and the next press is checked afresh. "Send
+      // anyway" presses the button again from the notice, outside this
+      // event; nothing re-submits the form from inside it.
+      if (faxMustWaitForPlaceholders(faxForm, faxButton, letter)) {
         e.preventDefault();
       }
     });

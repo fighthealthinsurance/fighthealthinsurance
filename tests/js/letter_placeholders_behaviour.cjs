@@ -8,8 +8,9 @@
 // escalation_packet_review.ts (static/js/ under it, the shared JSON at its
 // root). The print scenarios load the regulator letter review page's own
 // script, which wires its Print button at load; the fax scenarios call the
-// check the appeal page's fax form calls. The "find" scenario reads a JSON
-// list of letters on stdin and prints what the browser finds in each.
+// check the appeal page's fax form calls, from a submit handler shaped like
+// appeal.ts's. The "find" scenario reads a JSON list of letters on stdin and
+// prints what the browser finds in each.
 //
 // Writes one JSON object to stdout; everything the page logs is swallowed.
 
@@ -61,6 +62,7 @@ for (const level of ['debug', 'log', 'info', 'warn', 'error']) {
 const doc = page.document;
 const letter = doc.getElementById('id_completed_appeal_text');
 const printButton = doc.getElementById('print_appeal');
+const faxForm = doc.getElementById('fax-form');
 const faxLetter = doc.getElementById('fax-letter');
 const faxButton = doc.getElementById('fax_appeal');
 
@@ -126,6 +128,36 @@ function report(extra) {
       ),
     ),
   );
+}
+
+// What the fax form would post besides the letter: each named input, with
+// a tick box only while it is ticked.
+function posted() {
+  const fields = {};
+  for (const input of faxForm.querySelectorAll('input')) {
+    if (input.getAttribute('type') === 'checkbox' && !input.checked) continue;
+    fields[input.getAttribute('name')] = input.getAttribute('value');
+  }
+  return fields;
+}
+
+// The fax form wired the way appeal.ts wires it: each submission asks the
+// check, and one it holds is stopped. Pressing the fax button submits the
+// form before click() returns, the way a browser does, and each submission
+// is recorded as "held" or as what it would post.
+function wireFaxForm(lib) {
+  const submissions = [];
+  faxForm.addEventListener('submit', (event) => {
+    if (lib.faxMustWaitForPlaceholders(faxForm, faxButton, faxLetter)) {
+      event.preventDefault();
+    }
+  });
+  faxButton.click = () => {
+    let held = false;
+    faxForm.dispatch('submit', {preventDefault: () => (held = true)});
+    submissions.push(held ? 'held' : posted());
+  };
+  return submissions;
 }
 
 function loadReviewPage(text) {
@@ -194,16 +226,49 @@ const scenarios = {
   'fax-blanks'() {
     const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
     faxLetter.value = WITH_BLANKS;
-    const waits = lib.faxMustWaitForPlaceholders(faxButton, faxLetter);
+    const waits = lib.faxMustWaitForPlaceholders(faxForm, faxButton, faxLetter);
     report({waits});
   },
   'fax-fixed'() {
     const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
     faxLetter.value = WITH_BLANKS;
-    const first = lib.faxMustWaitForPlaceholders(faxButton, faxLetter);
+    const first = lib.faxMustWaitForPlaceholders(faxForm, faxButton, faxLetter);
     faxLetter.value = COMPLETE;
-    const waits = lib.faxMustWaitForPlaceholders(faxButton, faxLetter);
+    const waits = lib.faxMustWaitForPlaceholders(faxForm, faxButton, faxLetter);
     report({first, waits});
+  },
+  'fax-send-anyway'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    report({submissions});
+  },
+  'fax-send-anyway-then-again'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    // Back on the page (the browser's back button), the letter unchanged.
+    faxButton.click();
+    report({submissions, leftOnTheForm: posted()});
+  },
+  'fax-box-ticked'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    // The tick box the server's page puts under the letter, ticked.
+    const box = doc.createElement('input');
+    box.id = 'id_send_with_placeholders';
+    box.setAttribute('type', 'checkbox');
+    box.setAttribute('name', 'send_with_placeholders');
+    box.setAttribute('value', '1');
+    box.checked = true;
+    faxForm.insertBefore(box, faxButton);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    report({submissions});
   },
 };
 

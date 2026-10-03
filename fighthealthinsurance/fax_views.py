@@ -178,6 +178,9 @@ class StageFaxView(generic.FormView):
     def form_valid(self, form):
         logger.debug("Valid fax form received")
         form_data = form.cleaned_data
+        # The tick to send a letter with blanks as it is was used by the
+        # form; the appeal is built from the rest, which it takes by name.
+        form_data.pop("send_with_placeholders", None)
         # Get all of the articles the user wants to send
         pubmed_checkboxes = [
             key[len("pubmed_") :]
@@ -204,6 +207,12 @@ class StageFaxView(generic.FormView):
         staged = SendFaxHelper.stage_appeal_as_fax(
             appeal=appeal, email=form_data["email"], fax_number=form_data["fax_phone"]
         )
+        if form.placeholders_sent_as_they_are:
+            # How many, and nothing else: never the letter or the blanks.
+            logger.info(
+                "Fax staged with placeholders the sender confirmed: "
+                f"{form.placeholders_sent_as_they_are}"
+            )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
         # Get fax amount from form (PWYW) with validation

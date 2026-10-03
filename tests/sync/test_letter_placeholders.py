@@ -28,6 +28,7 @@ import subprocess
 import pytest
 import yaml
 
+from fighthealthinsurance.forms import FaxForm
 from fighthealthinsurance.letter_placeholders import (
     PATTERNS_FILE,
     describe_placeholders,
@@ -528,14 +529,60 @@ def test_a_blank_with_markup_in_it_is_shown_as_text(compiled):
 
 
 @needs_node
-def test_the_fax_waits_and_the_notice_offers_no_way_past(compiled):
+def test_the_fax_waits_and_the_notice_offers_to_send_it_anyway(compiled):
     page = run_scenario(compiled, "fax-blanks")
     notice = page["faxNotice"]
     assert (page["waits"], notice["items"], notice["buttons"]) == (
         True,
         ["[Your Name]", "{{SCSID}}"],
-        [{"text": "Show me in the letter", "type": "button"}],
+        [
+            {"text": "Show me in the letter", "type": "button"},
+            {"text": "Send anyway", "type": "button"},
+        ],
     )
+
+
+@needs_node
+def test_send_anyway_sends_the_fax_with_the_answer_the_server_reads(compiled):
+    page = run_scenario(compiled, "fax-send-anyway")
+    assert (page["submissions"], page["faxNotice"]) == (
+        ["held", {"send_with_placeholders": "1"}],
+        None,
+    )
+
+
+@needs_node
+def test_after_send_anyway_the_next_press_is_checked_afresh(compiled):
+    page = run_scenario(compiled, "fax-send-anyway-then-again")
+    assert (
+        page["submissions"],
+        page["leftOnTheForm"],
+        page["faxNotice"]["items"],
+    ) == (
+        ["held", {"send_with_placeholders": "1"}, "held"],
+        {},
+        ["[Your Name]", "{{SCSID}}"],
+    )
+
+
+@needs_node
+def test_a_ticked_send_it_as_it_is_box_lets_the_fax_through(compiled):
+    page = run_scenario(compiled, "fax-box-ticked")
+    assert (page["submissions"], page["faxNotice"]) == (
+        [{"send_with_placeholders": "1"}],
+        None,
+    )
+
+
+def test_send_anyway_uses_the_fax_forms_own_name_and_box():
+    """The hidden field "Send anyway" adds, and the tick box the page reads,
+    are the fax form's: the field the server checks, and the id Django gives
+    it on the page that names the blanks."""
+    source = (JS / "letter_placeholders.ts").read_text()
+    form = FaxForm(data={"completed_appeal_text": "I am [Your Name]."})
+    box = form["send_with_placeholders"]
+    assert f'SEND_ANYWAY_FIELD = "{box.html_name}";' in source
+    assert f'SEND_ANYWAY_BOX_ID = "{box.auto_id}";' in source
 
 
 @needs_node

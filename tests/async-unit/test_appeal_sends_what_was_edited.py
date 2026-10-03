@@ -113,16 +113,17 @@ def test_the_guard_does_not_lapse_when_the_letter_is_emptied():
 
 def test_a_letter_with_blanks_is_held_and_the_next_try_is_checked_afresh():
     """The check decides inside the one submission: it stops it only while
-    blanks are left, never re-submits the form from inside its own event
-    (requestSubmit() there does nothing), and keeps no flag that would wave
-    a later press past it (review)."""
+    blanks are left, and the page never re-submits the form from inside its
+    own event (requestSubmit() there does nothing). "Send anyway" lets one
+    submission past and no later press: that is behaviour, run in node by
+    tests/sync/test_letter_placeholders.py."""
     src = _appeal_source()
     assert "skipCheck" not in src, "the skip flag is back; a later click would bypass the check"
     assert "faxForm.requestSubmit(" not in src, "the submit is re-entered from inside its own event again"
     submit = src.index('faxForm.addEventListener("submit"')
     handler = src[submit:]
     assert re.search(
-        r"if \(faxMustWaitForPlaceholders\(faxButton, letter\)\) \{\s*e\.preventDefault\(\);",
+        r"if \(faxMustWaitForPlaceholders\(faxForm, faxButton, letter\)\) \{\s*e\.preventDefault\(\);",
         handler,
     ), "a letter with blanks left in it is no longer held back from the fax"
     # An empty letter is stopped before it becomes an empty fax.
@@ -162,7 +163,7 @@ def test_the_setup_actually_runs():
 def test_the_fax_reads_the_letter_after_deciding_not_to_rebuild_it():
     src = _appeal_source()
     submit = src.index('faxForm.addEventListener("submit"')
-    handler = src[submit : src.index("faxMustWaitForPlaceholders(faxButton, letter)", submit)]
+    handler = src[submit : src.index("faxMustWaitForPlaceholders(faxForm, faxButton, letter)", submit)]
     assert "descrub();" in handler, "the details panel is no longer applied for an untouched letter"
     assert handler.count("descrub()") == 1, "the fax handler rebuilds more than once"
     assert "descrub(true)" not in handler, (

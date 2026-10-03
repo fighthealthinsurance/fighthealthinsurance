@@ -23,6 +23,18 @@ const PLACEHOLDERS: PatternEntry[] = spec.placeholders;
 export const PRINT_NOTICE_ID = "print-placeholder-notice";
 export const FAX_NOTICE_ID = "fax-placeholder-notice";
 
+// The fax form's answer to "send it as it is", by the name the server reads
+// (FaxForm.send_with_placeholders). "Send anyway" adds it as a hidden field;
+// the page the server sends back when it holds a letter offers it as a tick
+// box, under the letter, with this id.
+export const SEND_ANYWAY_FIELD = "send_with_placeholders";
+export const SEND_ANYWAY_INPUT_ID = "fax-send-anyway";
+export const SEND_ANYWAY_BOX_ID = "id_send_with_placeholders";
+
+// True only while "Send anyway" is pressing the fax button, so the one
+// submission that press starts goes without the check, and none after it.
+let sendingAnyway = false;
+
 function blankOut(match: string): string {
   return " ".repeat(match.length);
 }
@@ -112,16 +124,20 @@ export interface PlaceholderNotice {
   found: string[];
   heading: string;
   advice: string;
-  // A way past the notice, where there is one: paper can be filled in by
-  // hand, a fax cannot.
+  // A way past the notice: paper can be filled in by hand, and a fax can go
+  // as it is once the person has checked that what was found is not a blank.
   anyway?: { label: string; choose: () => void };
 }
 
-export function removePlaceholderNotice(id: string): void {
+function removeById(id: string): void {
   const old = document.getElementById(id);
   if (old && old.parentNode) {
     old.parentNode.removeChild(old);
   }
+}
+
+export function removePlaceholderNotice(id: string): void {
+  removeById(id);
 }
 
 function noticeButton(label: string, className: string): HTMLElement {
@@ -245,16 +261,40 @@ export function printUnlessPlaceholders(
   });
 }
 
+// The hidden field that tells the server to fax the letter as it is: on the
+// form for a submission "Send anyway" started, and off it for every other.
+function markSentAnyway(form: HTMLFormElement, sentAnyway: boolean): void {
+  removeById(SEND_ANYWAY_INPUT_ID);
+  if (!sentAnyway) {
+    return;
+  }
+  const field = document.createElement("input");
+  field.id = SEND_ANYWAY_INPUT_ID;
+  field.setAttribute("type", "hidden");
+  field.setAttribute("name", SEND_ANYWAY_FIELD);
+  field.setAttribute("value", "1");
+  form.appendChild(field);
+}
+
 // True when the fax has to wait: the letter still has blanks, now named just
-// above the fax button. There is no way past this one. The insurance
-// company would get the blanks exactly as written, and the server refuses
-// the same letter.
+// above the fax button. The insurance company would get them exactly as
+// written, and the server holds the same letter. Some of what the check
+// finds is not a blank (an acronym in brackets like [ERISA], a name typed
+// inside the brackets), so the notice offers "Send anyway". That presses the
+// fax button again, and the submission it starts goes without the check and
+// carries the answer the server reads. The next press is checked afresh.
+// A ticked "Send it as it is" box, on the page the server sends back, is the
+// same answer and lets every submission through while it stays ticked.
 export function faxMustWaitForPlaceholders(
+  form: HTMLFormElement,
   button: HTMLElement,
   letter: HTMLTextAreaElement | null,
 ): boolean {
   const found = findUnfilledPlaceholders(letter ? letter.value : "");
-  if (found.length === 0) {
+  const box = document.getElementById(SEND_ANYWAY_BOX_ID) as HTMLInputElement | null;
+  const ticked = box !== null && box.checked;
+  markSentAnyway(form, found.length > 0 && sendingAnyway && !ticked);
+  if (found.length === 0 || sendingAnyway || ticked) {
     removePlaceholderNotice(FAX_NOTICE_ID);
     return false;
   }
@@ -267,7 +307,24 @@ export function faxMustWaitForPlaceholders(
     advice:
       "Your insurance company would get them exactly as written." +
       " Replace each one with your details, or delete it if it doesn't apply," +
-      " then send the fax again.",
+      " then send the fax again. If you've checked and these are not blanks," +
+      " you can send it as it is.",
+    anyway: {
+      label: "Send anyway",
+      choose: () => {
+        removePlaceholderNotice(FAX_NOTICE_ID);
+        // A click on a submit button submits its form before click()
+        // returns, so the flag covers that one submission. It is cleared
+        // even when the browser stops the submission first, for a required
+        // field left empty.
+        sendingAnyway = true;
+        try {
+          button.click();
+        } finally {
+          sendingAnyway = false;
+        }
+      },
+    },
   });
   return true;
 }

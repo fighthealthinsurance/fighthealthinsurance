@@ -1,10 +1,14 @@
-"""A letter with blanks left in it is not faxed to an insurance company.
+"""A letter with blanks left in it is not faxed to an insurance company
+unless the person says to send it as it is.
 
 The appeal page names the blanks before the fax form is sent, but only in a
 browser that runs its script. The fax form checks the same pattern list on
 the server (FaxForm, through StageFaxView), so a letter still holding
 ``[Your Name]`` or ``{{SCSID}}`` comes back to the person with the blanks
-named, and nothing is staged, saved or sent.
+named, and nothing is staged, saved or sent. That page has a tick box under
+the letter, "Send it as it is", for what the check finds that is not really a
+blank; the appeal page's "Send anyway" posts the same field. With it, the
+letter is faxed, and the log says how many blanks went, never what they were.
 """
 
 from unittest.mock import patch
@@ -12,6 +16,7 @@ from unittest.mock import patch
 from django.test import Client, TestCase
 from django.urls import reverse
 
+from fighthealthinsurance.forms import FaxForm
 from fighthealthinsurance.helpers.fax_helpers import FaxHelperResults
 from fighthealthinsurance.models import Denial
 
@@ -36,7 +41,7 @@ class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
             insurance_company="Example Health",
         )
 
-    def post(self, letter: str):
+    def post(self, letter: str, **extra: str):
         with (
             patch(
                 "fighthealthinsurance.common_view_logic.AppealAssemblyHelper.create_or_update_appeal"
@@ -63,6 +68,7 @@ class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
                     "fax_phone": "15551234567",
                     "completed_appeal_text": letter,
                     "fax_pwyw": "0",
+                    **extra,
                 },
             )
         return response, assemble, stage, send
@@ -98,3 +104,80 @@ class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
         self.assertEqual(
             (response.status_code, stage.call_count, send.call_count), (200, 1, 1)
         )
+
+    def test_a_letter_with_blanks_sent_as_it_is_is_staged_and_sent(self):
+        response, _, stage, send = self.post(WITH_BLANKS, send_with_placeholders="1")
+        self.assertEqual(
+            (response.status_code, stage.call_count, send.call_count), (200, 1, 1)
+        )
+
+    def test_the_page_naming_the_blanks_offers_to_send_it_as_it_is(self):
+        response, *_ = self.post(WITH_BLANKS)
+        self.assertContains(
+            response,
+            '<input type="checkbox" name="send_with_placeholders" value="1"'
+            ' class="fhi-check" id="id_send_with_placeholders">',
+            html=True,
+        )
+
+    def test_the_box_is_labelled_with_what_ticking_it_means(self):
+        response, *_ = self.post(WITH_BLANKS)
+        self.assertContains(
+            response,
+            '<label for="id_send_with_placeholders">'
+            "Send it as it is: I've checked these are not blanks</label>",
+            html=True,
+        )
+
+    def test_the_box_sits_under_the_letter(self):
+        page = self.post(WITH_BLANKS)[0].content.decode()
+        in_order = [
+            page.index(f'id="id_{name}"')
+            for name in (
+                "completed_appeal_text",
+                "send_with_placeholders",
+                "include_provided_health_history",
+            )
+        ]
+        self.assertEqual(in_order, sorted(in_order))
+
+    def test_the_message_says_where_the_box_is(self):
+        response, *_ = self.post(WITH_BLANKS)
+        self.assertContains(
+            response,
+            "If you&#x27;ve checked and these are not blanks, tick the box "
+            "under your letter to send it as it is.",
+        )
+
+    def test_a_letter_sent_as_it_is_logs_how_many_blanks_and_not_which(self):
+        with patch("fighthealthinsurance.fax_views.logger") as logger:
+            self.post(WITH_BLANKS, send_with_placeholders="1")
+        logged = [
+            str(call.args[0])
+            for method in (logger.debug, logger.info, logger.warning)
+            for call in method.call_args_list
+        ]
+        self.assertEqual(
+            (
+                [line for line in logged if "placeholders" in line],
+                [line for line in logged if "Your Name" in line or "SCSID" in line],
+            ),
+            (["Fax staged with placeholders the sender confirmed: 2"], []),
+        )
+
+    def test_a_complete_letter_logs_nothing_about_blanks(self):
+        with patch("fighthealthinsurance.fax_views.logger") as logger:
+            self.post(COMPLETE, send_with_placeholders="1")
+        logged = [str(call.args[0]) for call in logger.info.call_args_list]
+        self.assertEqual([line for line in logged if "placeholders" in line], [])
+
+
+class SendItAsItIsBoxTest(TestCase):
+    """The box is on the fax form only with a letter that has blanks in it."""
+
+    def test_the_appeal_page_form_has_no_box(self):
+        self.assertNotIn("send_with_placeholders", FaxForm().fields)
+
+    def test_a_complete_letter_has_no_box(self):
+        form = FaxForm(data={"completed_appeal_text": COMPLETE})
+        self.assertNotIn("send_with_placeholders", form.fields)
