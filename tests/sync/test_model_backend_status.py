@@ -908,7 +908,9 @@ class ServingColumnTest(StatusPageTestCase):
         legs = self.row(response, "fhi-local")["serving"]
         self.assertEqual([leg.weights for leg in legs], [self.WEIGHTS])
         self.assertContains(response, "context 32768")
-        self.assertContains(response, "reported this round")
+        cell = self.serving_cell(response)
+        self.assertIn("reported this round", cell)
+        self.assertNotIn("not reported this round", cell)
         self.assertContains(response, "Serving history")
 
     def test_a_failed_probe_shows_the_last_answer_as_history_only(self):

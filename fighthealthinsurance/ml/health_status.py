@@ -233,6 +233,13 @@ class _HealthStatus:
         # Kept for the serving registry, which _refresh feeds after the
         # sweep, outside the lock.
         self._last_candidates = list(candidates)
+        # A card describes this round's successful probe. Clear them all
+        # first: a probe still queued at the deadline is cancelled before
+        # model_is_ok runs, so it would never clear its own.
+        for m in candidates:
+            for attr in ("last_model_card", "last_backup_model_card"):
+                if hasattr(m, attr):
+                    setattr(m, attr, None)
         for m in candidates:
             if not getattr(m, "external", True):
                 internal_total += 1

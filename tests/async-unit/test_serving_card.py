@@ -177,3 +177,21 @@ def test_the_first_synchronous_sweep_is_recorded_too():
     ) as record:
         status.get_snapshot()
     record.assert_called_once_with(["backend-a"])
+
+
+def test_a_probe_that_never_runs_leaves_no_card():
+    # A probe still queued at the sweep's deadline is cancelled before
+    # model_is_ok runs, so the sweep clears last round's cards itself.
+    from fighthealthinsurance.ml import health_status
+
+    backend = RemoteFullOpenLike("http://h:8000/v1", "", "fhi-local")
+    backend.last_model_card = {"weights": "stale"}
+    backend.last_backup_model_card = {"weights": "stale"}
+    router = MagicMock(all_models_by_cost=[backend], chat_outside_models_by_name={})
+    status = health_status._HealthStatus()
+    with patch.object(
+        health_status.ml_router_module, "ml_router", router
+    ), patch.object(backend, "model_is_ok", return_value=False):
+        status._refresh_unlocked()
+    assert backend.last_model_card is None
+    assert backend.last_backup_model_card is None
