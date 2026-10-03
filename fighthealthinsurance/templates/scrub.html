@@ -57,7 +57,7 @@ Upload your Health Insurance Denial
 	</div>
 	{% endif %}
 	<div class="main-form">
-	<form class="fhi-stack" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
+	<form class="fhi-stack fhi-stack-loose" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
 		{% if default_procedure or default_condition %}
 		<input type="hidden" name="default_procedure" value="{{ default_procedure }}">
@@ -65,100 +65,130 @@ Upload your Health Insurance Denial
 		<input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
 		<input type="hidden" name="microsite_title" value="{{ microsite_title }}">
 		{% endif %}
-	<div class="together-form-group">
-	  <div class="fhi-field-group">
-	    <label for="store_fname" class="fhi-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
-	    <input type="text" id="store_fname" class="fhi-field">
-	  </div>
-	  <div class="fhi-field-group">
-	    <label for="store_lname" class="fhi-label">Last name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
-	    <input type="text" id="store_lname" class="fhi-field">
-	  </div>
-	</div>
-	<div class="fhi-field-group">
-	    <label for="email" class="fhi-label">
-	      <div id="email-label">Email <small class="fhi-hint">(<a href="#how-we-store-your-email">how we store it</a>)</small></div>
-	      <span class="fhi-note">
-	      </span>
-	    </label>
-	    <input type="email" id="email" name="email" class="fhi-field">
-	</div>
-	<div class="together-form-group">
-	  <div class="fhi-field-group">
-	    <label for="store_street" class="fhi-label">
-	      Street address
-	      <small class="fhi-hint">(we try to keep this in your browser, e.g. 283 24th St)</small>
-	    </label>
-	    <input type="text" id="store_street" class="fhi-field">
-	  </div>
-	  <div class="fhi-field-group">
-	    <label for="store_zip" class="fhi-label">
-	      ZIP code
-	      <small class="fhi-hint">(e.g. 94103)</small>
-	    </label>
-	    <input type="text" id="store_zip" name="zip" class="fhi-field">
-	  </div>
-	</div>
-	{% if upload_more %}
-	{% if advanced_ocr_offered %}
-	<div class="fhi-check-row" id="advanced_ocr_section">
-	    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
-	    <label for="advanced_ocr_enabled">
-		<b>Better text recognition for photos and scans</b> <span class="fhi-hint">(experimental)</span>
-		<br><small class="fhi-hint">A small AI model that reads bad photos and faint scans much better.
-		The first time you scan with this on, your browser downloads it from Hugging Face (about 1 GB) and keeps it
-		on this device. It runs on your device, and your file never leaves it. Standard recognition is faster and
-		fine for clear scans. You can remove the downloaded model later.</small>
-	    </label>
-	    <div id="advanced_ocr_status" class="fhi-note" role="status" aria-live="polite" hidden></div>
-	    <button type="button" id="advanced_ocr_remove_model" class="fhi-button fhi-button-quiet fhi-button-small" hidden>Remove the downloaded model from this device (about 1 GB)</button>
-	</div>
-	{% endif %}
-	<div id="image_select_magic" class="fhi-field-group" style="visibility:visible">
-	    <label for="uploader">
-			<b>Upload your denial letter</b>
-		</label>
-		<small class="fhi-hint">Add every page. We'll turn it into text in the box below.</small>
-	    <div>
-			{% comment %} DELIBERATELY has no name= attribute. The browser only includes
-			   a file input in the multipart body when it has a name, and this
-			   input sits inside the /process form. With a name, every denial
-			   document a user attached was uploaded and buffered server-side
-			   even though BaseDenialForm has no field for it and nothing ever
-			   read it -- an unnecessary disclosure of the exact document this
-			   flow is built to keep in the browser. The OCR binds by
-			   getElementById("uploader"), so the id is all it needs. Do not
-			   add a name back without also changing what the copy below
-			   promises. {% endcomment %}
-			<input id="uploader" type="file" multiple="true" class="fhi-field">
+	{% comment %} The letter comes first, the way most sites that take a
+	   document ask for it: it is what the person came here with. One box
+	   takes it either way, pasted in or as a file dropped on it, and the file
+	   button above the box does the same for a phone or a keyboard, which
+	   cannot drag. {% endcomment %}
+	<section class="fhi-stack">
+	    <h2>Your denial letter</h2>
+	    {% if upload_more %}
+		{% if advanced_ocr_offered %}
+		<div class="fhi-check-row" id="advanced_ocr_section">
+		    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
+		    <label for="advanced_ocr_enabled">
+			<b>Better text recognition for photos and scans</b> <span class="fhi-hint">(experimental)</span>
+			<br><small class="fhi-hint">A small AI model that reads bad photos and faint scans much better.
+			The first time you scan with this on, your browser downloads it from Hugging Face (about 1 GB) and keeps it
+			on this device. It runs on your device, and your file never leaves it. Standard recognition is faster and
+			fine for clear scans. You can remove the downloaded model later.</small>
+		    </label>
+		    <div id="advanced_ocr_status" class="fhi-note" role="status" aria-live="polite" hidden></div>
+		    <button type="button" id="advanced_ocr_remove_model" class="fhi-button fhi-button-quiet fhi-button-small" hidden>Remove the downloaded model from this device (about 1 GB)</button>
+		</div>
+		{% endif %}
+	    <div id="image_select_magic" class="fhi-file-pick">
+		{% comment %} DELIBERATELY has no name= attribute. The browser only includes
+		   a file input in the multipart body when it has a name, and this
+		   input sits inside the /process form. With a name, every denial
+		   document a user attached was uploaded and buffered server-side
+		   even though BaseDenialForm has no field for it and nothing ever
+		   read it -- an unnecessary disclosure of the exact document this
+		   flow is built to keep in the browser. The OCR binds by
+		   getElementById("uploader"), so the id is all it needs. A file
+		   dropped on the letter box is handed to this same input
+		   (acceptDroppedFiles in scrub.ts), so a drop posts nothing either.
+		   The input is hidden from sight only: its label is the button people
+		   see, and a keyboard still reaches the input itself. Do not add a
+		   name back without also changing what the copy below promises. {% endcomment %}
+		<input id="uploader" type="file" multiple="true" class="fhi-visually-hidden">
+		<label for="uploader" class="fhi-button fhi-button-secondary">Choose a file or take a photo</label>
+		<small class="fhi-hint">Add every page. We read it on this device and put the text in the box below.</small>
 	    </div>
-	</div>
-	{% comment %} Sits right under the uploader, where the read is triggered: on a
-	   phone the message boxes at the bottom of the form are a full screen away
-	   from the file picker, and an indicator nobody can see is no indicator
-	   (review). Same element the submit gate toggles. {% endcomment %}
+	    {% comment %} Sits between the file button and the letter box, where a
+	       chosen or dropped file is read: on a phone the message boxes at the
+	       bottom of the form are a full screen away, and an indicator nobody
+	       can see is no indicator (review). Same element the submit gate
+	       toggles. {% endcomment %}
 	    <div class="hidden-error-message hidden-progress-message" id="ocr_in_progress" role="alert" aria-live="polite">
 	      We're reading the file you uploaded. A scanned PDF is processed a page at
-	      a time, so this can take a little while. The text will appear in "Your
-      denial letter" below when it's done. You can also type or paste the
-	      denial text yourself instead of waiting.
+	      a time, so this can take a little while. The text will appear in the
+	      box below when it's done. You can also type or paste the denial text
+	      yourself instead of waiting.
 	    </div>
-	{% endif %}
-	<div>
-	    <label for="denial_text" id="denial_text_label" class="fhi-label">
-			<b>Your denial letter</b><br>
-			<small class="fhi-hint">If you didn't upload it above, paste it here.</small><br>
-			<small class="fhi-hint">Take out your name, address and other personal details first, or use the Remove personal details button below. We keep this text to improve our AI, and people on our team may read it.</small><br>
-		</label><br>
-	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
-		placeholder="Your denial goes here"
-		class="fhi-field">{{ocr_result}}</textarea><br>
-		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small><br>
-	    <button type="button" id="scrub-2" class="fhi-button fhi-button-primary">
-	      Remove personal details
-	    </button>
+	    {% endif %}
+	    {% comment %} How the read went shows here too, for the same reason,
+	       which is also what makes their "the box below" true. {% endcomment %}
+	    <div class="hidden-error-message" id="ocr_partial" role="alert" aria-live="polite">
+	      We read some of what you uploaded but not all of it, so check the box
+	      below and add anything that's missing. Clear photos and text PDFs read
+	      better than scans.
+	    </div>
+	    <div class="hidden-error-message" id="ocr_failed" role="alert" aria-live="polite">
+	      We couldn't read your file, so there's nothing in the box below yet.
+	      Please copy and paste your denial into it. Your file is read on your
+	      own device and is never uploaded to us, so we can't read it for you
+	      on our end. Clear photos and text PDFs read better than scans.
+	    </div>
+	    <div class="fhi-field-group">
+		<label for="denial_text" id="denial_text_label" class="fhi-label">Paste the text of the letter here<span class="fhi-hint fhi-drop-hint">, or drop the file on this box</span></label>
+		<small class="fhi-hint">Take out your name, address and other personal details first, or use the Remove personal details button below. We keep this text to improve our AI, and people on our team may read it.</small>
+		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
+		    placeholder="Your denial goes here"
+		    class="fhi-field">{{ocr_result}}</textarea>
+		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
+	    </div>
+	</section>
+	<section class="fhi-stack">
+	    <h2>About you</h2>
+		<div class="together-form-group">
+		  <div class="fhi-field-group">
+		    <label for="store_fname" class="fhi-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
+		    <input type="text" id="store_fname" class="fhi-field">
+		  </div>
+		  <div class="fhi-field-group">
+		    <label for="store_lname" class="fhi-label">Last name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
+		    <input type="text" id="store_lname" class="fhi-field">
+		  </div>
 		</div>
-	    <div><b>Policies</b>:</div>
+		<div class="fhi-field-group">
+		    <label for="email" class="fhi-label">
+		      <div id="email-label">Email <small class="fhi-hint">(<a href="#how-we-store-your-email">how we store it</a>)</small></div>
+		      <span class="fhi-note">
+		      </span>
+		    </label>
+		    <input type="email" id="email" name="email" class="fhi-field">
+		</div>
+		<div class="together-form-group">
+		  <div class="fhi-field-group">
+		    <label for="store_street" class="fhi-label">
+		      Street address
+		      <small class="fhi-hint">(we try to keep this in your browser, e.g. 283 24th St)</small>
+		    </label>
+		    <input type="text" id="store_street" class="fhi-field">
+		  </div>
+		  <div class="fhi-field-group">
+		    <label for="store_zip" class="fhi-label">
+		      ZIP code
+		      <small class="fhi-hint">(e.g. 94103)</small>
+		    </label>
+		    <input type="text" id="store_zip" name="zip" class="fhi-field">
+		  </div>
+		</div>
+	    {% comment %} After the fields it reads, not by the box: it takes out
+	       whatever the name, street and ZIP fields hold when it is pressed,
+	       so by the box it would run before they are filled in. {% endcomment %}
+	    <div class="fhi-field-group">
+		<div>
+		    <button type="button" id="scrub-2" class="fhi-button fhi-button-primary">
+		      Remove personal details
+		    </button>
+		</div>
+		<small class="fhi-hint">Takes the name, street and ZIP code above out of your letter, in your browser. Check the letter afterwards for anything it missed.</small>
+	    </div>
+	</section>
+	<section class="fhi-stack">
+	    <h2>Policies</h2>
 	    <div class="fhi-check-row">
 	        <input type="checkbox" id="personalonly" name="personalonly" class="fhi-check">
 	        <label for="personalonly">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
@@ -177,7 +207,9 @@ Upload your Health Insurance Denial
 		<input type="checkbox" id="tos" name="tos" class="fhi-check">
 		<label for="tos">I agree to the <a href="{% url 'tos' %}">terms of service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition.</label>
 		</div>
-		<div><b>Optional</b>:</div>
+	</section>
+	<section class="fhi-stack">
+	    <h2>Optional choices</h2>
 			<div class="fhi-check-row">
 			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="fhi-check">
 				<label for="store_raw_email">
@@ -225,7 +257,8 @@ Upload your Health Insurance Denial
 					<br><small class="fhi-hint"><strong>Leave this off on a shared or public computer.</strong></small>
 				</label>
 			</div>
-	    </div>
+	</section>
+	<div class="fhi-stack">
 	    <div class="hidden-error-message" id="email_error" role="alert" aria-live="polite">
 	      We need your email to go on. It lets us delete your data later if you ask.
 	    </div>
@@ -236,23 +269,14 @@ Upload your Health Insurance Denial
 		Please tick the box to confirm you've taken your personal details out of the letter.
 	    </div>
 	    <div class="hidden-error-message" id="need_denial" role="alert" aria-live="polite">
-	      We need your denial in the box below. If you never got one, say so and
-	      describe what was denied (for example: the pharmacy said my PrEP was
-	      denied).
-	    </div>
-	    <div class="hidden-error-message" id="ocr_partial" role="alert" aria-live="polite">
-	      We read some of what you uploaded but not all of it, so check the box
-	      below and add anything that's missing. Clear photos and text PDFs read
-	      better than scans.
-	    </div>
-	    <div class="hidden-error-message" id="ocr_failed" role="alert" aria-live="polite">
-	      We couldn't read your file, so there's nothing in the box below yet.
-	      Please copy and paste your denial into it. Your file is read on your
-	      own device and is never uploaded to us, so we can't read it for you
-	      on our end. Clear photos and text PDFs read better than scans.
+	      We need your denial in the box at the top of the form. If you never
+	      got one, say so and describe what was denied (for example: the
+	      pharmacy said my PrEP was denied).
 	    </div>
 	    <button type="submit" class="fhi-button fhi-button-primary fhi-button-large" id="submit">Submit</button>
+	</div>
 	</form>
+	</div>
 
 	<h2 class="fhi-form-note-title">What we try to keep in your browser</h2>
 	<p>

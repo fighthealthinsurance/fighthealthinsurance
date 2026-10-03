@@ -705,6 +705,49 @@ async function improveWithOnDeviceModel(
   }
 }
 
+// A drag that carries files, as opposed to text being dragged into or within
+// the box, which is left to the browser as it always was.
+function carriesFiles(event: DragEvent): boolean {
+  return event.dataTransfer !== null && Array.from(event.dataTransfer.types).includes("Files");
+}
+
+// The letter box is also where a file can be dropped. A dropped file is
+// handed to the uploader and read by the uploader's own change listener, so
+// it takes exactly the path a chosen file takes: read on this device by
+// recognizeEvent, and never posted, because the uploader has no name. A file
+// nothing can read fails there the way a chosen one does.
+function acceptDroppedFiles(box: HTMLTextAreaElement, uploader: HTMLInputElement): void {
+  const DROP_ACTIVE = "fhi-drop-active";
+  const offerDrop = (event: DragEvent): void => {
+    if (!carriesFiles(event)) {
+      return;
+    }
+    // Without this the browser refuses the drop, or opens the file in place
+    // of the page and takes everything typed so far with it.
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    box.classList.add(DROP_ACTIVE);
+  };
+  box.addEventListener("dragenter", offerDrop);
+  box.addEventListener("dragover", offerDrop);
+  box.addEventListener("dragleave", () => box.classList.remove(DROP_ACTIVE));
+  box.addEventListener("drop", (event) => {
+    box.classList.remove(DROP_ACTIVE);
+    if (!carriesFiles(event) || event.dataTransfer === null) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer.files.length === 0) {
+      return;
+    }
+    uploader.files = event.dataTransfer.files;
+    // Setting files fires nothing on its own.
+    uploader.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 function setupScrub(): void {
   // Setup persistence toggle checkbox
   const persistenceCheckbox = document.getElementById("persistence_enabled") as HTMLInputElement;
@@ -756,6 +799,10 @@ function setupScrub(): void {
   const elm = document.getElementById("uploader");
   if (elm != null) {
     elm.addEventListener("change", recognizeEvent);
+    const box = document.getElementById("denial_text") as HTMLTextAreaElement | null;
+    if (box != null) {
+      acceptDroppedFiles(box, elm as HTMLInputElement);
+    }
   }
   const scrub = document.getElementById("scrub");
   if (scrub != null) {

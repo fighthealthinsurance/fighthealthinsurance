@@ -251,6 +251,54 @@ def test_the_denial_file_is_never_posted_to_the_server():
         assert "name=" not in other, other
 
 
+def test_a_dropped_denial_file_is_never_posted_to_the_server():
+    """The letter box takes a dropped file too, and that must not open a
+    second way out for the document. The drop handler hands the files to the
+    nameless #uploader (the test above keeps it nameless) and fires its
+    change event, so a dropped file is read by the same on-device listener
+    as a chosen one. Nothing in the handler may send the file, give it a
+    name, or build an input of its own to carry it."""
+    src = (JS / "scrub.ts").read_text()
+    handler = _js_function(src, "function acceptDroppedFiles")
+    assert "uploader.files = event.dataTransfer.files;" in handler, handler
+    assert 'uploader.dispatchEvent(new Event("change"' in handler, handler
+    for way_out in (
+        "fetch(",
+        "XMLHttpRequest",
+        "FormData",
+        "sendBeacon",
+        "WebSocket",
+        ".submit(",
+        ".name",
+        "createElement",
+        "setAttribute",
+        "appendChild",
+    ):
+        assert way_out not in handler, f"the drop handler uses {way_out}:\n{handler}"
+    # The input it is handed is the uploader, the one the change listener
+    # that reads a chosen file is bound to.
+    setup = _js_function(src, "function setupScrub")
+    assert 'const elm = document.getElementById("uploader");' in setup, setup
+    assert 'elm.addEventListener("change", recognizeEvent);' in setup, setup
+    assert "acceptDroppedFiles(box, elm as HTMLInputElement);" in setup, setup
+
+
+def test_dragging_text_into_the_letter_box_is_left_to_the_browser():
+    """Only a drag that carries files is taken over. Dragging a selection of
+    text into or within the box must still drop the text, so each listener
+    asks before it cancels the browser's own handling."""
+    handler = _js_function((JS / "scrub.ts").read_text(), "function acceptDroppedFiles")
+    for listener in re.split(
+        r"(?=box\.addEventListener\()|(?=const offerDrop)", handler
+    ):
+        if "preventDefault()" not in listener:
+            continue
+        assert "carriesFiles(event)" in listener, listener
+        assert listener.index("carriesFiles(event)") < listener.index(
+            "preventDefault()"
+        ), listener
+
+
 def test_a_superseded_selection_does_not_post_a_verdict():
     """Reading is slow enough that a user can pick again mid-run. Without a
     selection sequence a slow FAILING batch finishing after a newer
