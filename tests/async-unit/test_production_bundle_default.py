@@ -184,6 +184,38 @@ def test_the_saved_key_records_the_build_just_made():
     ), "the saved key no longer records the mode and fingerprint of the build just made"
 
 
+def _imports_from_outside_the_js_directory() -> set[str]:
+    """Repo-relative paths of what the page scripts import from above static/js."""
+    repo = JS.parents[2]
+    found = set()
+    for source in JS.iterdir():
+        if source.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
+            continue
+        for target in re.findall(
+            r"(?:from\s+|require\(\s*)[\"'](\.\./[^\"']+)[\"']", source.read_text()
+        ):
+            found.add((JS / target).resolve().relative_to(repo).as_posix())
+    return found
+
+
+def test_sources_imported_from_outside_the_js_directory_are_in_the_checksum():
+    """letter_placeholders.ts bundles fighthealthinsurance/letter_placeholders.json,
+    which the fax form also reads on the server. A change to that list alone
+    rebuilds the bundles, so the browser checks the list the server checks."""
+    loop = re.search(
+        r"for\s+IMPORTED_SOURCE\s+in\s+([^;\n]*);\s*do(.*?)\bdone\b",
+        _build_static_sh(),
+        re.S,
+    )
+    assert loop is not None, "build_static.sh no longer hashes imported sources"
+    assert re.search(
+        r"CURRENT_JS_CHECKSUM=\"\$\{CURRENT_JS_CHECKSUM\}\$\{IMPORTED_SUM\}\"",
+        loop.group(2),
+    ), "the imported sources are hashed but no longer added to the checksum"
+    hashed = set(loop.group(1).split())
+    assert _imports_from_outside_the_js_directory() - hashed == set()
+
+
 def test_no_webpack_written_build_mode_marker():
     src = _webpack_config()
     assert "BUILD_MODE" not in src, (

@@ -26,6 +26,7 @@ import shutil
 import subprocess
 
 import pytest
+import yaml
 
 from fighthealthinsurance.letter_placeholders import (
     PATTERNS_FILE,
@@ -39,6 +40,7 @@ JS = APP / "static" / "js"
 TSC = JS / "node_modules" / "typescript" / "bin" / "tsc"
 DRIVER = REPO_ROOT / "tests" / "js" / "letter_placeholders_behaviour.cjs"
 TEMPLATES = APP / "templates"
+FIXTURES = APP / "fixtures"
 
 NODE = shutil.which("node")
 
@@ -75,6 +77,60 @@ CAUGHT = [
         "bracketed address lines",
         "[Address Line 1]\n[City, State ZIP]",
         ["[Address Line 1]", "[City, State ZIP]"],
+    ),
+    (
+        "bracketed details in lower case",
+        "under the care of [doctor name] at [facility name] since [diagnosis date]",
+        ["[doctor name]", "[facility name]", "[diagnosis date]"],
+    ),
+    ("a possessive in lower case", "Re: [patient's name]", ["[patient's name]"]),
+    (
+        "bracketed instructions to provide or quote",
+        "dated [provide date] stating [quote the specific reason given in the denial letter]",
+        ["[provide date]", "[quote the specific reason given in the denial letter]"],
+    ),
+    ("a bracketed count", "for [number of years] years", ["[number of years]"]),
+    (
+        "a bracketed choice of pronoun",
+        "[his/her] doctor says [he or she] needs it",
+        ["[his/her]", "[he or she]"],
+    ),
+    (
+        "a long bracketed name",
+        "[Brief Description of Medical History and Previous Treatments Tried and Failed]",
+        [
+            "[Brief Description of Medical History and Previous Treatments Tried and Failed]"
+        ],
+    ),
+    (
+        "a long bracketed instruction",
+        "[insert a short paragraph on your medical history, the treatments you "
+        "tried and why this one is necessary for you]",
+        [
+            "[insert a short paragraph on your medical history, the treatments you "
+            "tried and why this one is necessary for you]"
+        ],
+    ),
+    (
+        "long blanks in braces and angle brackets",
+        "{{A short paragraph about your medical history and why this treatment is "
+        "necessary for you}}\n"
+        "{a short paragraph about your medical history and why this treatment is "
+        "necessary for you}\n"
+        "<insert a short paragraph on your medical history, the treatments you "
+        "tried and why this one is necessary>\n"
+        "<Patient's detailed explanation of why this medication is needed for "
+        "treatment>",
+        [
+            "{{A short paragraph about your medical history and why this treatment "
+            "is necessary for you}}",
+            "{a short paragraph about your medical history and why this treatment is "
+            "necessary for you}",
+            "<insert a short paragraph on your medical history, the treatments you "
+            "tried and why this one is necessary>",
+            "<Patient's detailed explanation of why this medication is needed for "
+            "treatment>",
+        ],
     ),
     (
         "a curly apostrophe in a bracketed name",
@@ -134,6 +190,21 @@ LEFT_ALONE = [
     ),
     ("a bracketed link", "See the [CMS Guidance](https://www.cms.gov/guidance)."),
     (
+        "bracketed links that read like blanks",
+        "See [Your plan's coverage policy](https://example.com/policy), "
+        "[List of covered services](https://example.com/list) and "
+        "[member_handbook](https://example.com/handbook).",
+    ),
+    (
+        "lower-case alterations in a quote",
+        '"[t]he service [is] covered once [the plan is] updated"',
+    ),
+    (
+        "numbers masked down to their last digits",
+        "Card ending in XXXX-1234, SSN XXX-XX-1234, account XXXXXX1234",
+    ),
+    ("a package insert in capitals", "SEE PACKAGE INSERT FOR DOSING"),
+    (
         "email addresses",
         "Write to <pat.example@example.com> or pat_example@example.com.",
     ),
@@ -148,6 +219,20 @@ LEFT_ALONE = [
         "Sincerely,\nPat Example",
     ),
 ]
+
+
+def _appeal_templates() -> list[tuple[str, str]]:
+    """(name, letter) for each appeal template the app loads and offers."""
+    templates = []
+    for fixture in ("initial.yaml", "followup.yaml"):
+        rows = yaml.safe_load((FIXTURES / fixture).read_text(encoding="utf-8"))
+        for row in rows:
+            if row["model"] == "fighthealthinsurance.appealtemplates":
+                templates.append((row["fields"]["name"], row["fields"]["appeal_text"]))
+    return templates
+
+
+APPEAL_TEMPLATES = _appeal_templates()
 
 
 def _examples(section: str) -> list[tuple[str, str]]:
@@ -180,6 +265,17 @@ def test_every_example_in_the_pattern_list_is_caught_whole(shown, example):
 @pytest.mark.parametrize("shown, example", _examples("ignore"))
 def test_every_example_of_what_is_ignored_is_left_alone(shown, example):
     assert find_unfilled_placeholders(example) == []
+
+
+@pytest.mark.parametrize(
+    "letter", [t[1] for t in APPEAL_TEMPLATES], ids=[t[0] for t in APPEAL_TEMPLATES]
+)
+def test_every_bracketed_blank_in_the_apps_own_appeal_templates_is_caught(letter):
+    """The templates are offered as letters with only some blanks filled in
+    on the server, so each bracket left in one is a blank to report."""
+    blanks = set(re.findall(r"\[[^\[\]\n]*\]", letter))
+    assert blanks
+    assert blanks - set(find_unfilled_placeholders(letter)) == set()
 
 
 def test_each_blank_is_listed_once_in_the_order_it_first_appears():
@@ -283,6 +379,7 @@ def test_the_browser_finds_exactly_what_the_server_finds(compiled):
         + [c[1] for c in LEFT_ALONE]
         + [example for _, example in _examples("placeholders")]
         + [example for _, example in _examples("ignore")]
+        + [letter for _, letter in APPEAL_TEMPLATES]
         + ["Ref XXX. I am [Your Name], member {{SCSID}}.\nSincerely,\n[Your Name]"]
     )
     browser = run_scenario(compiled, "find", json.dumps(letters))["found"]
@@ -344,6 +441,20 @@ def test_show_me_selects_the_first_blank_in_the_letter(compiled):
         "#id_completed_appeal_text",
         [at, at + len("[Your Name]")],
     )
+
+
+@needs_node
+def test_show_me_skips_the_same_letters_inside_what_is_left_alone(compiled):
+    page = run_scenario(compiled, "print-show-me-past-a-karyotype")
+    at = page["firstBlankAt"]
+    assert page["selection"] == [at, at + len("XXX")]
+
+
+@needs_node
+def test_show_me_selects_the_whole_line_to_write_on(compiled):
+    page = run_scenario(compiled, "print-show-me-a-line")
+    at = page["firstBlankAt"]
+    assert page["selection"] == [at, at + page["lineLength"]]
 
 
 @needs_node

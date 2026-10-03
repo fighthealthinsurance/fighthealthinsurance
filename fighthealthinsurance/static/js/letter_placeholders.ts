@@ -25,8 +25,17 @@ function blankOut(match: string): string {
   return " ".repeat(match.length);
 }
 
-// Each blank in the letter, once, in the order it first appears.
-export function findUnfilledPlaceholders(text: string): string[] {
+interface PlaceholderSpot {
+  // Where the blank starts in the letter, and how long it is there.
+  at: number;
+  length: number;
+  // What the notice calls it: the blank itself, or its label (a line to
+  // write on is listed as ___ however long it is).
+  shown: string;
+}
+
+// Every blank in the letter, where it is, in the order it appears.
+function findPlaceholderSpots(text: string): PlaceholderSpot[] {
   let rest = text || "";
   for (const entry of IGNORE) {
     rest = rest.replace(new RegExp(entry.pattern, (entry.flags || "") + "g"), blankOut);
@@ -34,19 +43,24 @@ export function findUnfilledPlaceholders(text: string): string[] {
   // Each pattern claims what it matches, so a later one never reports part
   // of a blank an earlier one already found. The patterns have no capturing
   // groups, so the second argument is always the offset.
-  const hits: { at: number; shown: string }[] = [];
+  const hits: PlaceholderSpot[] = [];
   for (const entry of PLACEHOLDERS) {
     rest = rest.replace(
       new RegExp(entry.pattern, (entry.flags || "") + "g"),
       (match: string, at: number) => {
-        hits.push({ at: at, shown: entry.label || match });
+        hits.push({ at: at, length: match.length, shown: entry.label || match });
         return blankOut(match);
       },
     );
   }
   hits.sort((a, b) => a.at - b.at);
+  return hits;
+}
+
+// Each blank in the letter, once, in the order it first appears.
+export function findUnfilledPlaceholders(text: string): string[] {
   const found: string[] = [];
-  for (const hit of hits) {
+  for (const hit of findPlaceholderSpots(text)) {
     if (found.indexOf(hit.shown) < 0) {
       found.push(hit.shown);
     }
@@ -84,17 +98,17 @@ function noticeButton(label: string, className: string): HTMLElement {
 }
 
 // Put the person's cursor on the first blank, selected, so typing replaces it.
-function showFirstPlaceholder(letter: HTMLTextAreaElement | null, first: string | undefined): void {
+// The letter is searched again as it is now, so the selection is the blank
+// itself even after edits, and never the same characters inside something
+// the check leaves alone (the XXX of a karyotype like 47,XXX).
+function showFirstPlaceholder(letter: HTMLTextAreaElement | null): void {
   if (!letter) {
     return;
   }
   letter.focus();
-  if (!first) {
-    return;
-  }
-  const at = letter.value.indexOf(first);
-  if (at >= 0) {
-    letter.setSelectionRange(at, at + first.length);
+  const first = findPlaceholderSpots(letter.value)[0];
+  if (first) {
+    letter.setSelectionRange(first.at, first.at + first.length);
   }
 }
 
@@ -139,8 +153,7 @@ export function showPlaceholderNotice(notice: PlaceholderNotice): HTMLElement {
   actions.className = "fhi-cluster";
   const showMe = noticeButton("Show me in the letter", "fhi-button fhi-button-secondary");
   const letter = notice.letter;
-  const first = notice.found[0];
-  showMe.addEventListener("click", () => showFirstPlaceholder(letter, first));
+  showMe.addEventListener("click", () => showFirstPlaceholder(letter));
   actions.appendChild(showMe);
   const anyway = notice.anyway;
   if (anyway) {

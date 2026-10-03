@@ -39,6 +39,12 @@ const MARKUP = `
 const WITH_BLANKS = 'Dear Example Health,\n\nI am [Your Name], member {{SCSID}}.\n\nSincerely,\n[Your Name]';
 const COMPLETE = 'Dear Example Health,\n\nI am Pat Example, member 12345.\n\nSincerely,\nPat Example';
 const WITH_MARKUP = 'Dear Example Health, from {{<img src=x onerror=alert(1)>}}.';
+// The first blank's letters also sit, earlier, inside a karyotype the check
+// leaves alone.
+const KARYOTYPE_FIRST =
+  'Dear Example Health,\n\nI have triple X syndrome (47,XXX).\nMember ID XXX\n\nSincerely,\nPat Example';
+const SIGNATURE_LINE = '______________';
+const WITH_A_LINE = 'Dear Example Health,\n\nI am Pat Example.\n\nSigned: ' + SIGNATURE_LINE + '\nPat Example';
 
 const page = buildPage(MARKUP);
 install(page);
@@ -160,6 +166,18 @@ const scenarios = {
     printButton.dispatch('click', {});
     pressNoticeButton('print-placeholder-notice', 'Show me in the letter');
     report({firstBlankAt: WITH_BLANKS.indexOf('[Your Name]')});
+  },
+  'print-show-me-past-a-karyotype'() {
+    loadReviewPage(KARYOTYPE_FIRST);
+    printButton.dispatch('click', {});
+    pressNoticeButton('print-placeholder-notice', 'Show me in the letter');
+    report({firstBlankAt: KARYOTYPE_FIRST.indexOf('ID XXX') + 'ID '.length});
+  },
+  'print-show-me-a-line'() {
+    loadReviewPage(WITH_A_LINE);
+    printButton.dispatch('click', {});
+    pressNoticeButton('print-placeholder-notice', 'Show me in the letter');
+    report({firstBlankAt: WITH_A_LINE.indexOf(SIGNATURE_LINE), lineLength: SIGNATURE_LINE.length});
   },
   'print-fixed'() {
     loadReviewPage(WITH_BLANKS);

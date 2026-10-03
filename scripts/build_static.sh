@@ -3,7 +3,8 @@
 #
 # Optimizations:
 # - Uses checksum-based caching to skip JS builds when source files haven't changed
-# - Checksum includes .ts, .tsx, .js, .jsx files (excluding .min.js & .bundle.js), package.json, and webpack.config.js
+# - Checksum includes .ts, .tsx, .js, .jsx files (excluding .min.js & .bundle.js), package.json, webpack.config.js,
+#   and the sources outside the js directory that the scripts import (the letter placeholder patterns)
 # - Uses a separate checksum for collectstatic/compress to skip when all static files are unchanged
 # - This can save 8-10 seconds on subsequent runs when no changes are made
 #
@@ -49,6 +50,15 @@ if [ -d "${JS_PATH}" ]; then
     WEBPACK_SUM=$(md5sum "${JS_PATH}/webpack.config.js" 2>/dev/null | cut -d ' ' -f 1)
     CURRENT_JS_CHECKSUM="${CURRENT_JS_CHECKSUM}${WEBPACK_SUM}"
   fi
+  # Sources the scripts import from outside the js directory. The letter
+  # placeholder patterns sit in the package so the fax form can read them on
+  # the server, and webpack bundles the same file into the page scripts.
+  for IMPORTED_SOURCE in fighthealthinsurance/letter_placeholders.json; do
+    if [ -f "${IMPORTED_SOURCE}" ]; then
+      IMPORTED_SUM=$(md5sum "${IMPORTED_SOURCE}" 2>/dev/null | cut -d ' ' -f 1)
+      CURRENT_JS_CHECKSUM="${CURRENT_JS_CHECKSUM}${IMPORTED_SUM}"
+    fi
+  done
 
   if [ -f "$JS_CHECKSUM_FILE" ]; then
     STORED_JS_CHECKSUM=$(cat "$JS_CHECKSUM_FILE")
