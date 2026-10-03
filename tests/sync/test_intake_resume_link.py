@@ -348,6 +348,7 @@ class StepsTest(IntakeResumeTestBase):
                 "email": "walker@example.com",
                 "denial_text": DENIAL_TEXT,
                 "pii": "on",
+                "personalonly": "on",
                 "tos": "on",
                 "privacy": "on",
             },
