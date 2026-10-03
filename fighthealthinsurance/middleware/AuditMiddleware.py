@@ -14,13 +14,23 @@ from loguru import logger
 # Where the REST API is mounted (see fighthealthinsurance/urls.py).
 AUDITED_PATH_PREFIX = "/ziggy/rest/"
 
+# The Kubernetes health checks call ping every 10 to 60 seconds
+# (k8s/deploy.yaml). It is never logged, so a check never waits on a database
+# write.
+UNAUDITED_PATHS = frozenset({"/ziggy/rest/ping"})
+
+
+def is_audited_path(path: str) -> bool:
+    """Whether a request to this path gets an audit row."""
+    return path.startswith(AUDITED_PATH_PREFIX) and path not in UNAUDITED_PATHS
+
 
 class AuditMiddleware:
     """
     Middleware to log REST API requests for audit purposes.
 
-    Only logs requests under AUDITED_PATH_PREFIX, by path alone: no query
-    string and no body.
+    Only logs requests under AUDITED_PATH_PREFIX, apart from UNAUDITED_PATHS,
+    by path alone: no query string and no body.
     Logging is synchronous but failures are swallowed to avoid impacting requests.
     """
 
@@ -35,12 +45,12 @@ class AuditMiddleware:
         try:
             response = self.get_response(request)
         except Exception as e:
-            if request.path.startswith(AUDITED_PATH_PREFIX):
+            if is_audited_path(request.path):
                 self._log_exception(request, e)
             raise
 
         # Log REST API requests only
-        if request.path.startswith(AUDITED_PATH_PREFIX):
+        if is_audited_path(request.path):
             self._log_request(request, response, start_time)
 
         return response

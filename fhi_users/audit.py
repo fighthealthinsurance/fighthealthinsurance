@@ -83,6 +83,8 @@ class AuditLog(models.Model):
         blank=True,
         related_name="audit_logs",
     )
+    # Stored for professionals only, like ip_address: a patient's username is
+    # usually their email address, so other rows name the account by `user`.
     username = models.CharField(max_length=255, blank=True, default="")
     is_professional = models.BooleanField(default=False)
 
@@ -107,9 +109,13 @@ class AuditLog(models.Model):
         ]
 
     def __str__(self) -> str:
-        return (
-            f"{self.event_type} by {self.username or 'anonymous'} at {self.timestamp}"
-        )
+        if self.username:
+            who = self.username
+        elif self.user_id:
+            who = f"user {self.user_id}"
+        else:
+            who = "anonymous"
+        return f"{self.event_type} by {who} at {self.timestamp}"
 
 
 def is_audit_enabled() -> bool:
@@ -224,7 +230,7 @@ def log_event(
             ),
             description=description,
             user=user if user and not isinstance(user, AnonymousUser) else None,
-            username=getattr(user, "username", "") if user else "",
+            username=getattr(user, "username", "") if is_pro else "",
             is_professional=is_pro,
             extra_data=extra_data or {},
         )

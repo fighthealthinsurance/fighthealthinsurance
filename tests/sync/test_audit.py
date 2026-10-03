@@ -28,7 +28,7 @@ from fhi_users.audit import (
     tracking_metadata_for_request,
     TrackingInfo,
 )
-from fhi_users.models import ProfessionalUser
+from fhi_users.models import PatientUser, ProfessionalUser
 from fighthealthinsurance.middleware.AuditMiddleware import (
     AUDITED_PATH_PREFIX,
     AuditMiddleware,
@@ -92,7 +92,8 @@ class AuditLoggingEnabledTest(TestCase):
         self.assertIsNotNone(log)
         self.assertEqual(log.event_type, "login_success")
         self.assertEqual(log.user, self.user)
-        self.assertEqual(log.username, "testuser")
+        # Usernames are kept for professionals only
+        self.assertEqual(log.username, "")
 
     def test_log_login_success(self):
         """Test login success logging."""
@@ -199,6 +200,8 @@ class AuditLoggingEnabledTest(TestCase):
         self.assertEqual(log.user_agent, "TestBrowser/2.0")
         # IP should be stored for professional users
         self.assertEqual(log.ip_address, "5.6.7.8")
+        # So is the username
+        self.assertEqual(log.username, "prouser")
 
 
 # Personal details a caller might put in a query string or echo in an error.
@@ -216,18 +219,34 @@ class AuditMiddlewareTest(TestCase):
 
     def setUp(self):
         self.factory = RequestFactory()
+        self.patient = User.objects.create_user(
+            username="patient@example.org🐼1",
+            email="patient@example.org",
+            password="testpass123",
+        )
+        PatientUser.objects.create(user=self.patient, active=True)
+        # A REST endpoint a patient can call: there is no such denial, so 404.
+        self.denial_path = reverse("denials-detail", args=[999999])
 
     def test_the_audited_prefix_is_where_the_rest_api_is_mounted(self):
-        self.assertTrue(reverse("ping").startswith(AUDITED_PATH_PREFIX))
+        self.assertTrue(self.denial_path.startswith(AUDITED_PATH_PREFIX))
 
     @override_settings(ENABLE_AUDIT_LOGGING=True)
     def test_a_rest_api_request_is_logged_when_audit_logging_is_on(self):
-        self.client.get(reverse("ping"))
+        self.client.force_login(self.patient)
+        self.client.get(self.denial_path)
         log = AuditLog.objects.get()
         self.assertEqual(
-            (log.event_type, log.path, log.method, log.status_code),
-            ("api_access", reverse("ping"), "GET", 204),
+            (log.event_type, log.user, log.path, log.method, log.status_code),
+            ("api_access", self.patient, self.denial_path, "GET", 404),
         )
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_the_health_check_ping_is_not_logged(self):
+        self.assertTrue(reverse("ping").startswith(AUDITED_PATH_PREFIX))
+        response = self.client.get(reverse("ping"))
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(AuditLog.objects.count(), 0)
 
     @override_settings(ENABLE_AUDIT_LOGGING=True)
     def test_a_page_request_is_not_logged(self):
@@ -237,18 +256,30 @@ class AuditMiddlewareTest(TestCase):
 
     @override_settings(ENABLE_AUDIT_LOGGING=False)
     def test_nothing_is_logged_when_audit_logging_is_off(self):
-        self.client.get(reverse("ping"))
+        self.client.force_login(self.patient)
+        self.client.get(self.denial_path)
         self.client.get(reverse("about"))
         self.assertEqual(AuditLog.objects.count(), 0)
 
     @override_settings(ENABLE_AUDIT_LOGGING=True)
     def test_a_query_string_never_appears_in_the_access_log(self):
-        self.client.get(f"{reverse('ping')}?{PERSONAL_QUERY}")
+        self.client.force_login(self.patient)
+        self.client.get(f"{self.denial_path}?{PERSONAL_QUERY}")
         log = AuditLog.objects.get()
-        self.assertEqual(log.path, reverse("ping"))
+        self.assertEqual(log.path, self.denial_path)
         stored = stored_row_text(log)
         for detail in PERSONAL_DETAILS:
             self.assertNotIn(detail, stored)
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_a_patients_email_never_appears_in_the_access_log(self):
+        self.client.force_login(self.patient)
+        self.client.get(self.denial_path)
+        log = AuditLog.objects.get()
+        self.assertEqual((log.user, log.is_professional), (self.patient, False))
+        self.assertNotIn("patient@example.org", stored_row_text(log))
+        self.assertNotIn("patient@example.org", str(log))
+        self.assertIn(f"user {self.patient.id}", str(log))
 
     @override_settings(ENABLE_AUDIT_LOGGING=True)
     def test_a_query_string_never_appears_in_the_exception_log(self):
@@ -274,9 +305,19 @@ class AuditMiddlewareTest(TestCase):
         request = self.factory.get(
             f"{AUDITED_PATH_PREFIX}denials/", HTTP_X_FORWARDED_FOR="203.0.113.7"
         )
+        request.user = self.patient
+        log = log_exception_error(request, error_type="ValueError")
+        self.assertEqual(log.user, self.patient)
+        self.assertNotIn("203.0.113.7", stored_row_text(log))
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_an_exception_log_keeps_no_client_address_for_a_visitor(self):
+        request = self.factory.get(
+            f"{AUDITED_PATH_PREFIX}denials/", HTTP_X_FORWARDED_FOR="203.0.113.9"
+        )
         request.user = AnonymousUser()
         log = log_exception_error(request, error_type="ValueError")
-        self.assertNotIn("203.0.113.7", stored_row_text(log))
+        self.assertNotIn("203.0.113.9", stored_row_text(log))
 
     @override_settings(ENABLE_AUDIT_LOGGING=True)
     def test_an_exception_log_keeps_the_client_address_for_a_professional(self):
