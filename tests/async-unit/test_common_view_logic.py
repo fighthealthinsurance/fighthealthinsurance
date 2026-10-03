@@ -1,6 +1,7 @@
 import asyncio
 import asyncio
 import json
+from types import SimpleNamespace
 import io
 from contextlib import contextmanager
 from asgiref.sync import async_to_sync
@@ -38,6 +39,8 @@ from fighthealthinsurance.models import (
 )
 import pytest
 from django.test import TestCase
+
+from tests.back_links import back_link
 
 
 @contextmanager
@@ -838,7 +841,22 @@ class TestCommonViewLogic(TestCase):
     def test_live_drafts_save_the_prompt_version_that_wrote_them(
         self, mock_appeal_generator
     ):
+        from fighthealthinsurance.ml import serving_registry
+
         email, denial = self._create_test_denial(18, gen_attempts=3)
+        backend = "AlphaRemoteInternal(fhi-internal @ 10.0.0.5:8000)"
+        serving_registry.reset_serving_registry_cache()
+        serving_registry.record_backends(
+            [
+                SimpleNamespace(
+                    last_model_card={"model_id": "fhi-internal", "weights": "/models/w"},
+                    serving_legs=lambda: [("primary", "http://h/v1", "fhi-internal")],
+                    backend_descriptor=lambda: backend,
+                )
+            ]
+        )
+        serving_id = async_to_sync(serving_registry.aserving_id_for)(backend)
+        self.assertIsNotNone(serving_id)
         mock_appeal_generator.make_appeals.return_value = iter(
             [
                 GeneratedAppeal(
@@ -846,6 +864,7 @@ class TestCommonViewLogic(TestCase):
                     model_name="fhi-internal",
                     context_level="full",
                     prompt_version=version,
+                    backend=backend,
                 )
                 for i, version in enumerate(["v1", "v2", None])
             ]
@@ -887,8 +906,83 @@ class TestCommonViewLogic(TestCase):
                         "A live internal appeal letter number 2 here.": None,
                     },
                 )
+                pointers = {
+                    pa.serving_id
+                    async for pa in ProposedAppeal.objects.filter(
+                        for_denial=denial, speculative=False
+                    )
+                }
+                self.assertEqual(pointers, {serving_id})
             finally:
                 await Denial.objects.filter(denial_id=18).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_research_for_a_letter_replaced_while_it_ran_is_not_stored(
+        self, mock_appeal_generator
+    ):
+        """The guidelines and past-review lookups finish after the person
+        submitted a different letter; what they found was about the first
+        one, so the row keeps neither."""
+        email = "test@example.com"
+        denial = Denial.objects.create(
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            denial_text="We denied the knee MRI you asked about.",
+            procedure="knee MRI",
+            diagnosis="knee pain",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts(["A live internal appeal letter about the knee MRI."])
+        )
+
+        def replaced_then(answer):
+            async def lookup(*args, **kwargs):
+                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                    denial_text="We denied the insulin pump you asked about."
+                )
+                return answer
+
+            return lookup
+
+        async def test():
+            try:
+                with patch(
+                    "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+                    new=AsyncMock(
+                        side_effect=replaced_then("guidelines for the knee MRI")
+                    ),
+                ), patch.object(
+                    common_view_logic.IMRDecisionRetriever,
+                    "get_context_for_denial",
+                    new=AsyncMock(
+                        side_effect=replaced_then("past reviews of knee MRI denials")
+                    ),
+                ), patch(
+                    "fighthealthinsurance.common_view_logic."
+                    "MLCitationsHelper.generate_citations_for_denial",
+                    new_callable=AsyncMock,
+                    return_value=None,
+                ), patch(
+                    "fighthealthinsurance.common_view_logic.AppealsBackendHelper.pmt"
+                ) as mock_pmt:
+                    mock_pmt.find_context_for_denial = AsyncMock(return_value=None)
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": denial.denial_id,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                fresh = await Denial.objects.aget(denial_id=denial.denial_id)
+                self.assertEqual(
+                    fresh.denial_text, "We denied the insulin pump you asked about."
+                )
+                self.assertEqual((fresh.rag_context, fresh.imr_context), (None, None))
+            finally:
+                await Denial.objects.filter(denial_id=denial.denial_id).adelete()
 
         async_to_sync(test)()
 
@@ -2829,18 +2923,11 @@ class ConfirmedStateTest(TestCase):
         self.assertEqual(denial.service_zip, self.CA_ZIP[:3])
 
     def test_the_review_page_renders_the_corrected_state(self):
-        from django.urls import reverse
-
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="CA")
 
         response = self.client.get(
-            reverse("categorize_review"),
-            {
-                "denial_id": denial.denial_id,
-                "email": self.EMAIL,
-                "semi_sekret": denial.semi_sekret,
-            },
+            back_link(self.client, "categorize_review", denial, self.EMAIL)
         )
 
         self.assertEqual(response.status_code, 200)

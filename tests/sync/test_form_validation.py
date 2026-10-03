@@ -260,11 +260,64 @@ class TestDenialForm(TestCase):
                 "pii": True,
                 "tos": True,
                 "privacy": True,
+                "personalonly": True,
                 "denial_text": "My denial text.",
                 "email": "test@example.com",
             }
         )
         self.assertTrue(form.is_valid())
+
+    def test_requires_the_personal_use_box(self):
+        """The intake form is for a person's own appeal; the professional
+        version is a different form."""
+        form = DenialForm(
+            data={
+                "pii": True,
+                "tos": True,
+                "privacy": True,
+                "denial_text": "My denial text.",
+                "email": "test@example.com",
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertEqual(
+            form.errors["personalonly"],
+            ["Please tick the box to confirm this is for your own appeal."],
+        )
+
+    def test_the_professional_form_does_not_ask_for_the_personal_use_box(self):
+        self.assertNotIn("personalonly", ProDenialForm().fields)
+
+    def test_each_missing_field_says_what_to_do(self):
+        """The intake page lists these at the top of a page the server sends
+        back, so each says which field it is about in the page's words."""
+        errors = DenialForm(data={}).errors
+        expected = {
+            name: [messages["required"]]
+            for name, messages in DenialForm.INTAKE_ERROR_MESSAGES.items()
+        }
+        expected["personalonly"] = [
+            "Please tick the box to confirm this is for your own appeal."
+        ]
+        self.assertEqual(dict(errors), expected)
+
+    def test_an_email_it_cannot_use_says_what_one_looks_like(self):
+        form = DenialForm(data={"email": "someone@example"})
+        self.assertEqual(
+            form.errors["email"],
+            ["Please check your email address. It should look like name@example.com."],
+        )
+
+    def test_the_zip_field_is_named_the_way_the_page_names_it(self):
+        self.assertEqual(DenialForm()["zip"].label, "ZIP code")
+
+    def test_the_professional_form_keeps_djangos_words(self):
+        """Each form has its own copy of the fields, so the intake page's
+        words never reach the professional form or the REST API on it."""
+        DenialForm(data={}).is_valid()
+        errors = ProDenialForm(data={"email": "someone@example"}).errors
+        self.assertEqual(errors["pii"], ["This field is required."])
+        self.assertEqual(errors["email"], ["Enter a valid email address."])
 
 
 class TestProDenialForm(TestCase):

@@ -43,6 +43,7 @@ from fighthealthinsurance.models import (
 )
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import PatientUser, ProfessionalUser
+from tests.back_links import back_link
 
 EMAIL = "history@example.com"
 SEMI_SEKRET = "sekret-for-the-optional-steps"
@@ -90,7 +91,7 @@ class HealthHistoryRendersWhatIsStoredTest(OptionalStepsTestCase):
     def test_back_navigation_renders_the_stored_history(self):
         """Entry path one: a GET on "hh" (PlanDocumentsView), which is where
         the Back link from the plan documents step lands."""
-        response = self.client.get(reverse("hh"), self.denial_ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -110,6 +111,7 @@ class HealthHistoryRendersWhatIsStoredTest(OptionalStepsTestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )
@@ -126,6 +128,7 @@ class HealthHistoryRendersWhatIsStoredTest(OptionalStepsTestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )
@@ -176,7 +179,7 @@ class PressingNextKeepsTheHistoryTest(OptionalStepsTestCase):
     def test_stepping_back_and_pressing_next_keeps_the_stored_history(self):
         """Step back, press Next without touching the box. On main this left
         the column empty."""
-        page = self.client.get(reverse("hh"), self.denial_ref())
+        page = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
         self.assertEqual(page.status_code, 200)
         shown = textarea_value(page.content.decode())
         self.assertEqual(shown.strip(), STORED)
@@ -263,7 +266,7 @@ class ClearingTheBoxRemovesTheHistoryTest(OptionalStepsTestCase):
         payload["health_history"] = ""
         self.client.post(reverse("hh"), payload)
 
-        response = self.client.get(reverse("hh"), self.denial_ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         body = response.content.decode()
         self.assertEqual(textarea_value(body).strip(), "")
@@ -271,7 +274,7 @@ class ClearingTheBoxRemovesTheHistoryTest(OptionalStepsTestCase):
 
     def test_the_page_says_how_to_remove_it_when_there_is_something_there(self):
         """The copy has to match what the code does."""
-        response = self.client.get(reverse("hh"), self.denial_ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         self.assertIn(
             "To remove it, clear the box and press Next",
@@ -281,8 +284,9 @@ class ClearingTheBoxRemovesTheHistoryTest(OptionalStepsTestCase):
     def test_the_page_says_nothing_about_removing_an_empty_box(self):
         Denial.objects.filter(denial_id=self.denial.denial_id).update(health_history="")
 
-        response = self.client.get(reverse("hh"), self.denial_ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
+        self.assertEqual(response.status_code, 200)
         self.assertNotIn("To remove it", response.content.decode())
 
 
@@ -296,7 +300,7 @@ class PlanDocumentsPageCountsWhatIsThereTest(OptionalStepsTestCase):
 
     def test_back_navigation_shows_the_count(self):
         """Entry path one: a GET on "dvc" (DenialCollectedView)."""
-        response = self.client.get(reverse("dvc"), self.denial_ref())
+        response = self.client.get(back_link(self.client, "dvc", self.denial, EMAIL))
 
         self.assertEqual(response.status_code, 200)
         body = response.content.decode()
@@ -316,7 +320,7 @@ class PlanDocumentsPageCountsWhatIsThereTest(OptionalStepsTestCase):
     def test_one_document_reads_as_one_document(self):
         PlanDocuments.objects.filter(denial=self.denial).first().delete()
 
-        response = self.client.get(reverse("dvc"), self.denial_ref())
+        response = self.client.get(back_link(self.client, "dvc", self.denial, EMAIL))
 
         body = response.content.decode()
         self.assertIn("1 plan document already added", body)
@@ -325,8 +329,9 @@ class PlanDocumentsPageCountsWhatIsThereTest(OptionalStepsTestCase):
     def test_a_case_with_no_documents_says_nothing(self):
         PlanDocuments.objects.filter(denial=self.denial).delete()
 
-        response = self.client.get(reverse("dvc"), self.denial_ref())
+        response = self.client.get(back_link(self.client, "dvc", self.denial, EMAIL))
 
+        self.assertEqual(response.status_code, 200)
         self.assertNotIn("already added", response.content.decode())
 
 
@@ -575,7 +580,9 @@ class PressingNextDecidesNothingItCannotAskTest(OptionalStepsTestCase):
         So the invariant is not "the form declares nothing the page omits", it
         is "nothing the page omits reaches the save".
         """
-        rendered = self.client.get(reverse("hh"), self.denial_ref()).content.decode()
+        rendered = self.client.get(
+            back_link(self.client, "hh", self.denial, EMAIL)
+        ).content.decode()
         unrendered = [
             name
             for name in core_forms.HealthHistory().fields
@@ -624,10 +631,9 @@ class WhatThePageShowsIsGatedTest(OptionalStepsTestCase):
         """A reference that does not resolve is sent to the upload page with
         an explanation, not rendered as a blank form: nothing of the case is
         shown either way."""
-        ref = self.denial_ref()
-        ref["email"] = "someone-else@example.com"
-
-        response = self.client.get(reverse("hh"), ref)
+        response = self.client.get(
+            back_link(self.client, "hh", self.denial, "someone-else@example.com")
+        )
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"].split("?")[0], reverse("scan"))
