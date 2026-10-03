@@ -44,6 +44,12 @@ def test_a_server_that_reports_only_ids_leaves_the_rest_blank():
     assert card["weights"] == "" and card["max_model_len"] is None
 
 
+def test_a_boolean_context_length_is_not_a_context_length():
+    # bool is an int subclass: true must not be stored as a context of 1.
+    reply = {"data": [{"id": "m", "max_model_len": True}]}
+    assert _model_card(reply, "m", "http://h:1/v1")["max_model_len"] is None
+
+
 def test_no_card_for_a_model_the_server_does_not_list():
     assert _model_card(VLLM_REPLY, "missing", "http://h:1/v1") is None
 

@@ -3354,7 +3354,14 @@ class ModelBackendStatusView(generic.TemplateView):
         names = [r.model_name for r in entries]
         latest_checks = self._latest_check_by_model(names)
         last_generation = self._last_generation_by_model(names)
-        serving, serving_history = self._serving_by_backend()
+        labels = {
+            id(r): self._backend_label(r.router_instance)
+            for r in entries
+            if r.router_instance is not None
+        }
+        newest_per_leg, rows_by_id, serving_history = self._serving_rows(
+            list(labels.values())
+        )
 
         current_deployment = mhc.deployment_id()
         current_environment = mhc.environment_name()
@@ -3417,11 +3424,7 @@ class ModelBackendStatusView(generic.TemplateView):
                     "config_changed": check is not None and check.enabled != r.enabled,
                     "last_generation": last_generation.get(r.model_name),
                     "has_traits": t is not None,
-                    "serving": (
-                        serving.get(self._backend_label(r.router_instance), [])
-                        if r.router_instance is not None
-                        else []
-                    ),
+                    **self._serving_cell(labels.get(id(r)), newest_per_leg, rows_by_id),
                 }
             )
         rows.sort(key=self._row_order)
@@ -3445,22 +3448,71 @@ class ModelBackendStatusView(generic.TemplateView):
         return backend_label(instance)
 
     @staticmethod
-    def _serving_by_backend() -> Tuple[Dict[str, List[Any]], List[Any]]:
-        """From the serving registry (ml/serving_registry.py): for each
-        backend descriptor, the newest row per leg, and the recent history.
-        A database read only, like the rest of this page."""
+    def _serving_rows(
+        labels: List[str],
+    ) -> Tuple[Dict[str, List[Any]], Dict[int, Any], List[Any]]:
+        """From the serving registry's table (ml/serving_registry.py): for
+        each backend descriptor in ``labels``, the newest row per leg; those
+        backends' rows by id; and the newest rows of any backend, for the
+        history panel. Database reads only, like the rest of this page."""
         from fighthealthinsurance.models import ServingIdentity
 
-        rows = list(ServingIdentity.objects.order_by("-last_seen", "-id")[:300])
-        current: Dict[str, List[Any]] = {}
+        # The registry stores the descriptor cut to the column's length.
+        stored = {label[:300]: label for label in labels}
+        newest_per_leg: Dict[str, List[Any]] = {}
+        rows_by_id: Dict[int, Any] = {}
         seen_legs: set = set()
-        for row in rows:
+        for row in ServingIdentity.objects.filter(backend__in=stored).order_by(
+            "-last_seen", "-id"
+        ):
+            rows_by_id[row.pk] = row
             leg = (row.backend, row.endpoint, row.model_id)
             if leg in seen_legs:
                 continue
             seen_legs.add(leg)
-            current.setdefault(row.backend, []).append(row)
-        return current, rows[:100]
+            newest_per_leg.setdefault(stored[row.backend], []).append(row)
+        history = list(ServingIdentity.objects.order_by("-last_seen", "-id")[:100])
+        return newest_per_leg, rows_by_id, history
+
+    @staticmethod
+    def _serving_cell(
+        label: Optional[str],
+        newest_per_leg: Dict[str, List[Any]],
+        rows_by_id: Dict[int, Any],
+    ) -> Dict[str, Any]:
+        """The Serving column for one backend: what its legs reported in the
+        latest health round this pod recorded. A leg that did not report
+        then (its check failed, or this pod has recorded no round for it)
+        shows its last recorded answer as history, never as current."""
+        from fighthealthinsurance.ml import serving_registry
+
+        current: List[Any] = []
+        reported_at: Optional[datetime.datetime] = None
+        unreported = True
+        if label is not None:
+            latest = serving_registry.this_round(label)
+            if latest is not None:
+                legs, at = latest
+                if legs is not None:
+                    reported_at = at
+                    current = [
+                        rows_by_id[i] for i in legs if i is not None and i in rows_by_id
+                    ]
+                    unreported = len(current) < len(legs)
+        last_recorded: List[Any] = []
+        if label is not None and unreported:
+            reported = {(row.endpoint, row.model_id) for row in current}
+            last_recorded = [
+                row
+                for row in newest_per_leg.get(label, [])
+                if (row.endpoint, row.model_id) not in reported
+            ]
+        return {
+            "serving": current,
+            "serving_reported_at": reported_at,
+            "serving_unreported": unreported,
+            "serving_last_recorded": last_recorded,
+        }
 
     @classmethod
     def _row_group(cls, row: Dict[str, Any]) -> int:

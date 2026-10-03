@@ -13,6 +13,23 @@ loader last read from the table (for processes that don't run the sweep). A
 backend whose primary and backup legs report different weights attributes
 nothing, since either leg may have written a given draft.
 
+A backend whose health check failed this round, or whose round could not be
+recorded, gets an explicit "nothing" from the sweep, stamped with the time,
+so its drafts stop pointing at the last answer at once. That "nothing" stays
+in force until a later round records an answer: it never ages into the
+loader's view the way an attribution does after SWEEP_TRUST_SECONDS. Each
+round that sees the check fail refreshes it, but a round can also never
+reach the registry (the router could not be read, the previous round was
+still recording, the sweep stopped), and the loader may then still hold an
+older row whose legs were seen within its window. When this process cannot
+say what a backend serves now, no attribution is the safe answer. An
+attribution still gives way to the loader in time, since the loader
+reflects other pods' sweeps.
+
+The Model Backend Status page reads ``this_round`` for what each backend's
+legs reported in the latest round this process recorded, so a row from an
+earlier round is shown as history, never as what a backend serves now.
+
 Hosted APIs that publish no such list never get a row, and their drafts
 point at nothing: there is nothing to record beyond the model id the draft
 already carries.
@@ -55,6 +72,10 @@ _IDENTITY_FIELDS = (
 _lock = threading.Lock()
 # backend descriptor -> (row id to attribute, or None; monotonic time)
 _from_sweep: Dict[str, Tuple[Optional[int], float]] = {}
+# backend descriptor -> (the row each leg reported in the latest round this
+# process recorded, None for a leg that could not be read, or None for the
+# whole backend when its check failed; when, in UTC)
+_round: Dict[str, Tuple[Optional[Tuple[Optional[int], ...]], datetime.datetime]] = {}
 # backend descriptor -> row id to attribute, or None, from the loader
 _loaded: Dict[str, Optional[int]] = {}
 # (backend, endpoint, model_id) -> the row this process last recorded for it
@@ -164,9 +185,21 @@ def _leg_cards(backend: Any) -> Optional[List[Optional[dict]]]:
     return cards
 
 
+def _note_round(
+    label: str,
+    attribute: Optional[int],
+    legs: Optional[Tuple[Optional[int], ...]],
+) -> None:
+    with _lock:
+        _from_sweep[label] = (attribute, time.monotonic())
+        _round[label] = (legs, datetime.datetime.now(datetime.timezone.utc))
+
+
 def record_backends(backends: Iterable[Any]) -> None:
     """Record every backend whose health check succeeded this round, and what
-    its drafts should point at. Never raises."""
+    its drafts should point at. A backend whose check failed, or whose round
+    could not be recorded, points its drafts at nothing until a later round
+    succeeds. Never raises."""
     from django.db import close_old_connections
 
     from fighthealthinsurance.generate_appeal import backend_label
@@ -174,22 +207,36 @@ def record_backends(backends: Iterable[Any]) -> None:
     close_old_connections()
     try:
         for backend in backends:
+            label: Optional[str] = None
             try:
+                label = backend_label(backend)
                 cards = _leg_cards(backend)
                 if cards is None:
+                    _note_round(label, None, None)
                     continue
-                label = backend_label(backend)
                 row_ids = [record(label, c) if c else None for c in cards]
                 agree = all(c is not None for c in cards) and (
                     len({_what_it_serves(_normalise(c)) for c in cards if c}) == 1
                 )
                 attribute = row_ids[0] if agree else None
-                with _lock:
-                    _from_sweep[label] = (attribute, time.monotonic())
+                _note_round(label, attribute, tuple(row_ids))
             except Exception as e:
                 logger.warning(f"Serving registry: could not record {backend}: {e}")
+                if label is not None:
+                    _note_round(label, None, None)
     finally:
         close_old_connections()
+
+
+def this_round(
+    backend: str,
+) -> Optional[Tuple[Optional[Tuple[Optional[int], ...]], datetime.datetime]]:
+    """What ``backend``'s legs reported in the latest round this process
+    recorded: the row per leg (None for a leg that could not be read, or
+    None for the whole backend when its check failed) and when, in UTC.
+    None when this process has recorded no round for it. Memory only."""
+    with _lock:
+        return _round.get(backend)
 
 
 def _background_allowed() -> bool:
@@ -305,16 +352,19 @@ async def aserving_id_for(backend: Optional[str]) -> Optional[int]:
 
     Memory only, never the database: what this process's sweep recorded in
     the last SWEEP_TRUST_SECONDS, otherwise what the background loader last
-    read. Before either has anything, None. Async so it sits naturally on
-    the save path; it never awaits anything.
+    read. A "nothing" from the sweep holds however old it is (see the module
+    docstring). Before either has anything, None. Async so it sits naturally
+    on the save path; it never awaits anything.
     """
     if not backend:
         return None
     _ensure_loader()
     with _lock:
         swept = _from_sweep.get(backend)
-        if swept is not None and time.monotonic() - swept[1] < SWEEP_TRUST_SECONDS:
-            return swept[0]
+        if swept is not None:
+            attribute, at = swept
+            if attribute is None or time.monotonic() - at < SWEEP_TRUST_SECONDS:
+                return attribute
         return _loaded.get(backend)
 
 
@@ -322,5 +372,6 @@ def reset_serving_registry_cache() -> None:
     """Forget everything this process remembers (tests)."""
     with _lock:
         _from_sweep.clear()
+        _round.clear()
         _loaded.clear()
         _last_recorded.clear()

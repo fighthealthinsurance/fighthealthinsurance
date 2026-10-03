@@ -2792,8 +2792,10 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # mean a full scan of this large table while the migration holds its lock.
     prompt_version = models.CharField(max_length=16, null=True, blank=True)
     # What the backend that wrote this draft was serving when it wrote it
-    # (ml/serving_registry.py). Null for templates, synthesized letters and
-    # drafts written before the registry existed or before the first sweep.
+    # (ml/serving_registry.py); for a synthesized letter, the backend whose
+    # synthesis won. Null for templates, for drafts written before the
+    # registry existed or before the first sweep, and whenever what the
+    # backend serves is unknown.
     # No database index or constraint: it is provenance, read by id, and
     # either would mean a full scan of this large table when the column is
     # added.

@@ -126,6 +126,20 @@ class RecordBackendsTest(RegistryTestCase):
         sr.record_backends([_Backend(BACKEND, None)])
         self.assertFalse(ServingIdentity.objects.exists())
 
+    def test_a_failed_check_withdraws_the_attribution_at_once(self):
+        backend = _Backend(BACKEND, CARD)
+        sr.record_backends([backend])
+        self.assertIsNotNone(self.lookup(BACKEND))
+        backend.last_model_card = None
+        sr.record_backends([backend])
+        self.assertIsNone(self.lookup(BACKEND))
+
+    def test_a_round_that_could_not_be_recorded_withdraws_the_attribution(self):
+        sr.record_backends([_Backend(BACKEND, CARD)])
+        with patch.object(sr, "record", side_effect=RuntimeError("db down")):
+            sr.record_backends([_Backend(BACKEND, {**CARD, "weights": "/new"})])
+        self.assertIsNone(self.lookup(BACKEND))
+
     def test_one_bad_backend_never_stops_the_others(self):
         bad = _Backend("Broken(x @ y)", {**CARD, "max_model_len": "not a number"})
         sr.record_backends([bad, _Backend(BACKEND, CARD), object()])
@@ -162,6 +176,25 @@ class LookupTest(RegistryTestCase):
 
     def test_no_backend_means_no_row(self):
         self.assertIsNone(self.lookup(""))
+
+    def test_no_attribution_from_the_sweep_never_ages_into_the_loaders(self):
+        # The sweep saw the check fail, then stopped refreshing this backend
+        # (a skipped round, a stopped timer). The loader may still hold an
+        # older row; the sweep's None must win however old it is.
+        row_id = sr.record(BACKEND, CARD)
+        long_ago = time.monotonic() - sr.SWEEP_TRUST_SECONDS - 1
+        with sr._lock:
+            sr._from_sweep[BACKEND] = (None, long_ago)
+            sr._loaded[BACKEND] = row_id
+        self.assertIsNone(self.lookup(BACKEND))
+
+    def test_an_attribution_from_the_sweep_gives_way_to_the_loader_in_time(self):
+        sr.record_backends([_Backend(BACKEND, CARD)])
+        with sr._lock:
+            row_id, at = sr._from_sweep[BACKEND]
+            sr._from_sweep[BACKEND] = (row_id, at - sr.SWEEP_TRUST_SECONDS - 1)
+            sr._loaded[BACKEND] = None
+        self.assertIsNone(self.lookup(BACKEND))
 
 
 class RecordInTheBackgroundTest(RegistryTestCase):

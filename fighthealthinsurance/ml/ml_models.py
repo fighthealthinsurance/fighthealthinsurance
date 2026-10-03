@@ -333,6 +333,9 @@ def _model_card(payload: Any, model_id: Any, api_base: Any) -> Optional[dict]:
         if model_id not in (entry.get("id"), entry.get("name"), entry.get("model")):
             continue
         max_len = entry.get("max_model_len")
+        if isinstance(max_len, bool):
+            # bool is an int subclass; true is not a context length of 1.
+            max_len = None
         return {
             "endpoint": _endpoint_label(api_base),
             "model_id": str(model_id)[:200],

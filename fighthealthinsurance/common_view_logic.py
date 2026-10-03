@@ -6637,15 +6637,22 @@ class AppealsBackendHelper:
                                 "Synthesis returned a verbatim copy of an input draft; skipping yield"
                             )
                         else:
+                            winner = synthesis_provenance.get("model")
                             saved = await save_appeal(
                                 GeneratedAppeal(
                                     text=synthesized,
                                     model_name="synthesized",
                                     synthesized=True,
                                     context_level=CONTEXT_LEVEL_SYNTHESIZED,
+                                    # So the row points at what the winner
+                                    # was serving, like any other draft.
+                                    backend=(
+                                        backend_label(winner)
+                                        if winner is not None
+                                        else ""
+                                    ),
                                 )
                             )
-                            winner = synthesis_provenance.get("model")
                             if winner is not None:
                                 # The call still succeeded when its text landed
                                 # on a stored draft, but what was served is that

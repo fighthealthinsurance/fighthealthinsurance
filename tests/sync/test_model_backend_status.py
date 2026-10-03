@@ -14,9 +14,11 @@ from fighthealthinsurance.chooser_tasks import (
     CHOOSER_NUM_CANDIDATES,
     _select_candidate_models,
 )
+from fighthealthinsurance.generate_appeal import backend_label
 from fighthealthinsurance.ml import health_status as health_status_module
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
+from fighthealthinsurance.ml import serving_registry
 from fighthealthinsurance.ml.health_status import _model_key, health_status
 from fighthealthinsurance.ml.ml_models import (
     AlphaRemoteInternal,
@@ -857,37 +859,130 @@ class ModelBackendStatusWordingTest(StatusPageTestCase):
 
 
 class ServingColumnTest(StatusPageTestCase):
-    """The Serving column shows what the serving registry recorded for each
-    backend, matched by the backend's descriptor."""
+    """The Serving column shows what each backend's legs reported in the
+    latest health round this pod recorded. An earlier answer is shown only
+    as history, with when it was last seen."""
 
-    def test_a_backend_shows_the_weights_its_server_reported(self):
-        from fighthealthinsurance.generate_appeal import backend_label
-        from fighthealthinsurance.ml import serving_registry
+    WEIGHTS = "/models/gemma-4-26b-a4b-it-awq"
 
-        self.configure(**ALPHA)
+    def setUp(self):
+        super().setUp()
+        serving_registry.reset_serving_registry_cache()
+        self.addCleanup(serving_registry.reset_serving_registry_cache)
+
+    def alpha(self, **env):
+        self.configure(**ALPHA, **env)
         router = ml_router_module._get_ml_router()
-        alpha = next(
+        return next(
             m
             for m in router.models_by_name["fhi-local"]
             if isinstance(m, AlphaRemoteInternal)
         )
-        serving_registry.record(
-            backend_label(alpha),
-            {
-                "endpoint": "alpha.example.invalid:8000",
-                "model_id": "/models/fhi-local",
-                "weights": "/models/gemma-4-26b-a4b-it-awq",
-                "max_model_len": 32768,
-            },
-        )
+
+    def card(self, **changes):
+        return {
+            "endpoint": "alpha.example.invalid:8000",
+            "model_id": "/models/fhi-local",
+            "weights": self.WEIGHTS,
+            "max_model_len": 32768,
+            **changes,
+        }
+
+    @staticmethod
+    def sweep(backend, card):
+        """One health round: the probe leaves its card (None when it
+        failed), then the registry records the round."""
+        backend.last_model_card = card
+        serving_registry.record_backends([backend])
+
+    def serving_cell(self, response):
+        html = response.content.decode()
+        row = html[html.index('<div class="mono">fhi-local</div>') :]
+        row = row[: row.index("</tr>")]
+        # The rest of the Model cell, then Kind, Routing and Config.
+        return row.split("<td>")[4]
+
+    def test_a_backend_shows_the_weights_its_server_reported(self):
+        self.sweep(self.alpha(), self.card())
         response = self.get_page()
         legs = self.row(response, "fhi-local")["serving"]
-        self.assertEqual([leg.weights for leg in legs], ["/models/gemma-4-26b-a4b-it-awq"])
+        self.assertEqual([leg.weights for leg in legs], [self.WEIGHTS])
         self.assertContains(response, "context 32768")
+        self.assertContains(response, "reported this round")
         self.assertContains(response, "Serving history")
+
+    def test_a_failed_probe_shows_the_last_answer_as_history_only(self):
+        alpha = self.alpha()
+        self.sweep(alpha, self.card())
+        self.sweep(alpha, None)
+        response = self.get_page()
+        row = self.row(response, "fhi-local")
+        self.assertEqual(row["serving"], [])
+        self.assertEqual(
+            [leg.weights for leg in row["serving_last_recorded"]], [self.WEIGHTS]
+        )
+        cell = self.serving_cell(response)
+        self.assertIn("not reported this round", cell)
+        self.assertIn("history: last recorded", cell)
+        self.assertNotIn("reported this round,", cell)
+
+    def test_an_answer_under_an_earlier_model_id_is_not_shown_as_current(self):
+        alpha = self.alpha()
+        serving_registry.record(
+            backend_label(alpha),
+            self.card(model_id="/models/older-id", weights="/models/older"),
+        )
+        self.sweep(alpha, self.card())
+        response = self.get_page()
+        row = self.row(response, "fhi-local")
+        self.assertEqual([leg.weights for leg in row["serving"]], [self.WEIGHTS])
+        self.assertEqual(row["serving_last_recorded"], [])
+        self.assertNotIn("/models/older", self.serving_cell(response))
+
+    def test_a_backend_this_pod_has_no_card_for_shows_history_only(self):
+        # Another pod recorded it; this pod's sweep has no round for it yet.
+        serving_registry.record(backend_label(self.alpha()), self.card())
+        response = self.get_page()
+        row = self.row(response, "fhi-local")
+        self.assertEqual(row["serving"], [])
+        self.assertEqual(
+            [leg.weights for leg in row["serving_last_recorded"]], [self.WEIGHTS]
+        )
+        self.assertIn("not reported this round", self.serving_cell(response))
+
+    def test_a_backup_leg_that_did_not_report_is_history_beside_the_primary(self):
+        alpha = self.alpha(
+            ALPHA_HEALTH_BACKUP_BACKEND_HOST="backup.example.invalid",
+            ALPHA_HEALTH_BACKUP_BACKEND_PORT="8000",
+        )
+        backup = self.card(
+            endpoint="backup.example.invalid:8000",
+            model_id="/app/model",
+            weights="/models/backup-weights",
+        )
+        serving_registry.record(backend_label(alpha), backup)
+        with patch(
+            "fighthealthinsurance.ml.ml_models.fetch_model_card", return_value=None
+        ):
+            self.sweep(alpha, self.card())
+        response = self.get_page()
+        row = self.row(response, "fhi-local")
+        self.assertEqual([leg.weights for leg in row["serving"]], [self.WEIGHTS])
+        self.assertEqual(
+            [leg.weights for leg in row["serving_last_recorded"]],
+            ["/models/backup-weights"],
+        )
+        self.assertIn("a leg was not reported this round", self.serving_cell(response))
 
     def test_hosted_backends_say_not_reported(self):
         self.configure(**DEEPINFRA)
         response = self.get_page()
         self.assertEqual(self.row(response, GEMMA)["serving"], [])
-        self.assertContains(response, "not reported")
+        self.assertContains(response, "not reported this round")
+
+    def test_the_history_names_each_rows_endpoint(self):
+        serving_registry.record(backend_label(self.alpha()), self.card())
+        html = self.get_page().content.decode()
+        history = html[html.index("<summary><h2>Serving history</h2></summary>") :]
+        self.assertIn("<th>Endpoint</th>", history)
+        self.assertIn('<td class="mono">alpha.example.invalid:8000</td>', history)

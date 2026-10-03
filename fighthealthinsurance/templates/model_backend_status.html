@@ -61,6 +61,9 @@
     generations. The Config column notes a model that is not registered in
     router or not in reporting. Blue chips apply only when the person
     allowed external models.
+    The Serving column shows what each backend's model server reported in
+    this pod's latest health sweep; a backend that did not report then shows
+    its last recorded answer, marked as history.
     See also the <a href="{% url 'model_usage_dashboard' %}">ML Model Usage Dashboard</a>.
   </p>
 
@@ -190,10 +193,16 @@
         <td>
           {% for leg in r.serving %}
             <div class="mono serving-leg">{{ leg.weights|default:leg.model_id }}</div>
-            <div class="sub muted">{% if leg.max_model_len %}context {{ leg.max_model_len }}, {% endif %}since {{ leg.first_seen|date:"Y-m-d" }}, seen {{ leg.last_seen|date:"Y-m-d H:i" }} UTC{% if r.serving|length > 1 %}, <span class="mono">{{ leg.endpoint }}</span>{% endif %}</div>
-          {% empty %}
-            <span class="muted">not reported</span>
+            <div class="sub muted">{% if leg.max_model_len %}context {{ leg.max_model_len }}, {% endif %}since {{ leg.first_seen|date:"Y-m-d" }}{% if r.serving|length > 1 or r.serving_unreported %}, <span class="mono">{{ leg.endpoint }}</span>{% endif %}</div>
           {% endfor %}
+          {% if r.serving %}<div class="sub muted">reported this round, {{ r.serving_reported_at|date:"Y-m-d H:i" }} UTC</div>{% endif %}
+          {% if r.serving_unreported %}
+            <div class="muted">{% if r.serving %}a leg was not reported this round{% else %}not reported this round{% endif %}</div>
+            {% for leg in r.serving_last_recorded %}
+              <div class="sub muted">history: last recorded {{ leg.last_seen|date:"Y-m-d H:i" }} UTC, <span class="mono">{{ leg.endpoint }}</span></div>
+              <div class="sub muted mono serving-leg">{{ leg.weights|default:leg.model_id }}</div>
+            {% endfor %}
+          {% endif %}
         </td>
         <td>
           {% if r.last_check %}
@@ -232,12 +241,12 @@
     <p class="summary-note">What each backend's model server reported serving, newest first. The hourly health sweep writes a row when a backend's answer changes; drafts point at the row that was current when they were written. Hosted APIs that don't publish this have no rows.</p>
     <div class="scroll-x">
       <table class="routes">
-        <thead><tr><th>Backend</th><th>Weights</th><th>Base model</th><th>Context</th><th>First seen</th><th>Last seen</th></tr></thead>
+        <thead><tr><th>Backend</th><th>Endpoint</th><th>Weights</th><th>Base model</th><th>Context</th><th>First seen</th><th>Last seen</th></tr></thead>
         <tbody>
           {% for row in serving_history %}
-            <tr><td class="mono">{{ row.backend }}</td><td class="mono">{{ row.weights|default:row.model_id }}</td><td class="mono">{{ row.parent|default:"" }}</td><td>{{ row.max_model_len|default:"" }}</td><td>{{ row.first_seen|date:"Y-m-d H:i" }}</td><td>{{ row.last_seen|date:"Y-m-d H:i" }}</td></tr>
+            <tr><td class="mono">{{ row.backend }}</td><td class="mono">{{ row.endpoint }}</td><td class="mono">{{ row.weights|default:row.model_id }}</td><td class="mono">{{ row.parent|default:"" }}</td><td>{{ row.max_model_len|default:"" }}</td><td>{{ row.first_seen|date:"Y-m-d H:i" }}</td><td>{{ row.last_seen|date:"Y-m-d H:i" }}</td></tr>
           {% empty %}
-            <tr><td colspan="6" class="muted">Nothing recorded yet. The health sweep fills this within an hour of a deploy.</td></tr>
+            <tr><td colspan="7" class="muted">Nothing recorded yet. The health sweep fills this within an hour of a deploy.</td></tr>
           {% endfor %}
         </tbody>
       </table>
