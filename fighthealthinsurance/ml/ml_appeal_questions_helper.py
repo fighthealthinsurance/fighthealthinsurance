@@ -63,6 +63,7 @@ def _claim_generated_questions_sync(
     questions: List[Tuple[str, str]],
     generated_for: str,
     used_history: bool = False,
+    for_letter: Optional[str] = None,
 ) -> Optional[List[Tuple[str, str]]]:
     with transaction.atomic():
         fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
@@ -77,7 +78,11 @@ def _claim_generated_questions_sync(
             fresh.generated_questions is not None
             and fresh.generated_questions_for == current
         ) or (fresh.generated_questions_for is None and bool(fresh.generated_questions))
-        if generated_for != current:
+        # A run asked about a letter since replaced counts as one started for
+        # inputs since corrected: the procedure and diagnosis the person
+        # typed outlast a new letter, so the fingerprint alone can match.
+        letter_replaced = for_letter is not None and fresh.denial_text != for_letter
+        if generated_for != current or letter_replaced:
             # This run was started for inputs the person has since corrected.
             # Its questions are not stored; what stands is a set for the
             # current inputs if one exists, otherwise nothing finished.
@@ -114,6 +119,7 @@ async def claim_generated_questions(
     questions: List[Tuple[str, str]],
     generated_for: str,
     used_history: bool = False,
+    for_letter: Optional[str] = None,
 ) -> Optional[List[Tuple[str, str]]]:
     """Store ``questions`` for the inputs they were generated for, and return
     what stands for the row's current inputs.
@@ -125,9 +131,13 @@ async def claim_generated_questions(
     stored as ``[]``, which Back can tell from a run that never finished.
     Returns None when nothing stands for the current inputs. Serialized
     under a row lock; ``select_for_update`` is a plain read on sqlite.
+
+    ``for_letter`` is the denial text the questions were asked about; a run
+    whose letter has been replaced stores nothing either. Every caller in
+    the app passes it; None skips that test.
     """
     stored = await database_sync_to_async(_claim_generated_questions_sync)(
-        denial_id, questions, generated_for, used_history
+        denial_id, questions, generated_for, used_history, for_letter
     )
     return cast(Optional[List[Tuple[str, str]]], stored)
 
@@ -507,7 +517,11 @@ class MLAppealQuestionsHelper:
                 # a write: a refusal landing between the two would be
                 # overwritten by the write. A row whose answer is no takes
                 # nothing from a run that was allowed to use the history.
-                candidates = Denial.objects.filter(denial_id=denial.denial_id)
+                # Likewise a row whose letter was replaced while this ran
+                # takes nothing: these questions are about the old one.
+                candidates = Denial.objects.filter(
+                    denial_id=denial.denial_id, denial_text=denial.denial_text
+                )
                 if used_history:
                     candidates = candidates.filter(still_allowed())
                 if not await candidates.aupdate(
@@ -515,14 +529,23 @@ class MLAppealQuestionsHelper:
                 ):
                     if used_history:
                         logger.info(
-                            f"Health history consent was withdrawn while "
-                            f"questions for denial {denial.denial_id} were "
-                            "being generated; keeping neither the result nor "
-                            "a copy of it"
+                            f"Health history consent was withdrawn, or the "
+                            f"letter replaced, while questions for denial "
+                            f"{denial.denial_id} were being generated; keeping "
+                            "neither the result nor a copy of it"
                         )
                         return None
+                    logger.info(
+                        f"The letter on denial {denial.denial_id} was replaced "
+                        "while its questions were being generated; not "
+                        "storing them"
+                    )
             return questions
         # Empty included: a finished run with nothing to ask is stored as [].
         return await claim_generated_questions(
-            denial.denial_id, questions, generated_for, used_history
+            denial.denial_id,
+            questions,
+            generated_for,
+            used_history,
+            for_letter=denial.denial_text,
         )

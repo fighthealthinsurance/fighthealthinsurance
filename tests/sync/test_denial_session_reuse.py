@@ -16,7 +16,7 @@ import contextlib
 import datetime
 from unittest.mock import AsyncMock, patch
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from django.db import DatabaseError
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -274,14 +274,29 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
         self.assertEqual(response.status_code, 200)
         return Denial.objects.get(uuid=self.client.session["denial_uuid"])
 
-    def _read(self, denial) -> AsyncMock:
+    def _replaced_by(self, letter):
+        """The person submitting ``letter`` on the scan page, as a coroutine
+        a stubbed model call can await while it is still running."""
+
+        async def submit():
+            await sync_to_async(self._submit)(letter)
+
+        return submit
+
+    def _read(self, denial, meanwhile=None, fails=False, retry=False) -> AsyncMock:
         """The extraction page: one run of extract_entity on the row.
 
         Returns the stubbed reader, so a test can tell whether the
-        already-done gate let the letter be read.
+        already-done gate let the letter be read. ``meanwhile`` runs inside
+        the model call, before it answers; ``fails`` makes the model call
+        raise; ``retry`` is the page's try-again button.
         """
 
         async def reads(denial_text):
+            if meanwhile is not None:
+                await meanwhile()
+            if fails:
+                raise RuntimeError("the model is down")
             return self.READS[denial_text]
 
         async def types_in(denial_text, **kwargs):
@@ -333,7 +348,7 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
                 return [
                     record
                     async for record in DenialCreatorHelper.extract_entity(
-                        denial.denial_id
+                        denial.denial_id, retry=retry
                     )
                 ]
 
@@ -351,10 +366,12 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
             candidate_generated_questions=self.QUESTIONS[denial.denial_text]
         )
 
-    def _ask(self, denial):
+    def _ask(self, denial, meanwhile=None):
         """The questions step, with the model asking about the letter."""
 
         async def specific(denial_text, **kwargs):
+            if meanwhile is not None:
+                await meanwhile()
             return self.QUESTIONS[denial_text]
 
         with patch.object(
@@ -372,10 +389,12 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
                 denial.denial_id
             )
 
-    def _cite(self, denial, speculative):
+    def _cite(self, denial, speculative, meanwhile=None):
         """The citation step on the row, with the model citing the letter."""
 
         async def cites(denial, **kwargs):
+            if meanwhile is not None:
+                await meanwhile()
             return self.CITATIONS[denial.denial_text]
 
         denial.refresh_from_db()
@@ -523,3 +542,299 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
         self.assertEqual(denial.candidate_procedure, first.candidate_procedure)
         self.assertTrue(denial.extract_procedure_diagnosis_finished)
         self.assertEqual(self._types_on(denial), {"Imaging (test)"})
+
+    def _ask_speculatively(self, denial, meanwhile=None):
+        """The speculative pass's questions, on the copy of the row it holds."""
+
+        async def specific(denial_text, **kwargs):
+            if meanwhile is not None:
+                await meanwhile()
+            return self.QUESTIONS[denial_text]
+
+        with patch.object(
+            MLAppealQuestionsHelper,
+            "generate_generic_questions",
+            new=AsyncMock(return_value=None),
+        ), patch.object(
+            MLAppealQuestionsHelper,
+            "generate_specific_questions",
+            new=AsyncMock(side_effect=specific),
+        ):
+            return async_to_sync(MLAppealQuestionsHelper.generate_questions_for_denial)(
+                denial, speculative=True
+            )
+
+    def test_a_different_letter_is_read_when_only_the_procedure_was_typed(self):
+        denial = self._first_letter_read_and_asked_about()
+        # Corrected on the review page; the diagnosis is still the one read
+        # out of the first letter.
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            procedure="knee MRI with contrast"
+        )
+
+        denial = self._submit(self.LETTER_B)
+        reader = self._read(denial)
+
+        denial.refresh_from_db()
+        self.assertEqual(reader.await_count, 1, "the new letter was not read")
+        self.assertEqual(
+            (denial.procedure, denial.diagnosis),
+            ("knee MRI with contrast", "type 1 diabetes"),
+        )
+        self.assertEqual(
+            (denial.candidate_procedure, denial.candidate_diagnosis),
+            ("insulin pump", "type 1 diabetes"),
+        )
+        self.assertEqual(self._types_on(denial), {"Equipment (test)"})
+
+    def test_a_different_letter_is_read_when_both_details_were_typed(self):
+        """Nothing is left to fill in, and the letter is still read: the
+        candidate copies and the detected types are the new letter's."""
+        denial = self._first_letter_read_and_asked_about()
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            procedure="knee MRI with contrast", diagnosis="torn meniscus"
+        )
+
+        denial = self._submit(self.LETTER_B)
+        reader = self._read(denial)
+
+        denial.refresh_from_db()
+        self.assertEqual(reader.await_count, 1, "the new letter was not read")
+        self.assertEqual(
+            (denial.procedure, denial.diagnosis),
+            ("knee MRI with contrast", "torn meniscus"),
+        )
+        self.assertEqual(
+            (denial.candidate_procedure, denial.candidate_diagnosis),
+            ("insulin pump", "type 1 diabetes"),
+        )
+        self.assertEqual(self._types_on(denial), {"Equipment (test)"})
+
+    def test_a_different_letter_is_read_again_after_a_retry_that_failed(self):
+        """The try-again button spends an attempt; it does not mark the new
+        letter read, so the next visit still reads it."""
+        denial = self._first_letter_read_and_asked_about()
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            procedure="knee MRI with contrast"
+        )
+        denial = self._submit(self.LETTER_B)
+        self._read(denial, fails=True)
+        self._read(denial, fails=True, retry=True)
+
+        reader = self._read(denial)
+
+        denial.refresh_from_db()
+        self.assertEqual(reader.await_count, 1, "the new letter was not read")
+        self.assertEqual(denial.diagnosis, "type 1 diabetes")
+
+    def test_citations_the_questions_step_kept_go_with_the_letter(self):
+        denial = self._first_letter_read_and_asked_about()
+        # The questions step's citations, which the appeal is written with.
+        self._cite(denial, speculative=False)
+        denial.refresh_from_db()
+        self.assertEqual(denial.ml_citation_context, self.CITATIONS[self.LETTER_A])
+
+        denial = self._submit(self.LETTER_B)
+        self._read(denial)
+        cited = self._cite(denial, speculative=False)
+
+        denial.refresh_from_db()
+        self.assertEqual(cited, self.CITATIONS[self.LETTER_B])
+        self.assertEqual(denial.ml_citation_context, self.CITATIONS[self.LETTER_B])
+
+    # The research the appeal step stores, each built from the procedure and
+    # diagnosis read out of the letter, or from the letter's own codes.
+    RESEARCH = {
+        "pubmed_context": "studies on the knee MRI",
+        "pubmed_ids_json": ["12345"],
+        "nice_context": "NICE guidance on the knee MRI",
+        "rag_context": "guidelines for the knee MRI codes",
+        "imr_context": "past reviews of knee MRI denials",
+    }
+
+    def test_research_built_for_the_first_letter_goes_with_it(self):
+        denial = self._first_letter_read_and_asked_about()
+        Denial.objects.filter(denial_id=denial.denial_id).update(**self.RESEARCH)
+
+        denial = self._submit(self.LETTER_B)
+
+        denial.refresh_from_db()
+        self.assertEqual(
+            {column: getattr(denial, column) for column in self.RESEARCH},
+            {column: None for column in self.RESEARCH},
+        )
+
+    def test_the_same_letter_again_keeps_its_citations_and_research(self):
+        denial = self._first_letter_read_and_asked_about()
+        self._cite(denial, speculative=False)
+        Denial.objects.filter(denial_id=denial.denial_id).update(**self.RESEARCH)
+
+        denial = self._submit(self.LETTER_A)
+
+        denial.refresh_from_db()
+        self.assertEqual(denial.ml_citation_context, self.CITATIONS[self.LETTER_A])
+        self.assertEqual(
+            {column: getattr(denial, column) for column in self.RESEARCH},
+            self.RESEARCH,
+        )
+
+    # Work for the first letter that is still running when the second one is
+    # submitted. Each step's model call submits letter B before it answers
+    # about letter A, which is the order these land in when the person is
+    # quicker than the model.
+
+    def test_a_read_of_the_first_letter_that_finishes_late_is_dropped(self):
+        denial = self._submit(self.LETTER_A)
+
+        self._read(denial, meanwhile=self._replaced_by(self.LETTER_B))
+
+        denial.refresh_from_db()
+        self.assertEqual(denial.denial_text, self.LETTER_B)
+        self.assertEqual((denial.procedure, denial.diagnosis), (None, None))
+        self.assertEqual(
+            (denial.candidate_procedure, denial.candidate_diagnosis), (None, None)
+        )
+        self.assertFalse(denial.extract_procedure_diagnosis_finished)
+        reader = self._read(denial)
+        denial.refresh_from_db()
+        self.assertEqual(reader.await_count, 1, "the new letter was not read")
+        self.assertEqual(
+            (denial.procedure, denial.diagnosis), ("insulin pump", "type 1 diabetes")
+        )
+
+    def test_denial_types_matched_in_the_first_letter_that_land_late_are_dropped(
+        self,
+    ):
+        denial = self._submit(self.LETTER_A)
+        replace = self._replaced_by(self.LETTER_B)
+
+        async def types_in(denial_text, **kwargs):
+            await replace()
+            return self.types_in[denial_text]
+
+        with patch.object(
+            DenialCreatorHelper.regex_denial_processor,
+            "get_denialtype",
+            new=AsyncMock(side_effect=types_in),
+        ):
+            async_to_sync(DenialCreatorHelper.extract_set_denialtype)(denial.denial_id)
+
+        self.assertEqual(self._types_on(denial), set())
+
+    def test_speculative_citations_for_the_first_letter_that_land_late_are_dropped(
+        self,
+    ):
+        denial = self._first_letter_read_and_asked_about()
+
+        self._cite(denial, speculative=True, meanwhile=self._replaced_by(self.LETTER_B))
+
+        denial.refresh_from_db()
+        self.assertIsNone(denial.candidate_ml_citation_context)
+        self._read(denial)
+        self.assertEqual(
+            self._cite(denial, speculative=False), self.CITATIONS[self.LETTER_B]
+        )
+
+    def test_citations_for_the_first_letter_that_land_late_are_dropped(self):
+        denial = self._first_letter_read_and_asked_about()
+
+        self._cite(
+            denial, speculative=False, meanwhile=self._replaced_by(self.LETTER_B)
+        )
+
+        denial.refresh_from_db()
+        self.assertIsNone(denial.ml_citation_context)
+        self._read(denial)
+        self.assertEqual(
+            self._cite(denial, speculative=False), self.CITATIONS[self.LETTER_B]
+        )
+
+    def test_speculative_questions_for_the_first_letter_that_land_late_are_dropped(
+        self,
+    ):
+        denial = self._submit(self.LETTER_A)
+        self._read(denial)
+        denial.refresh_from_db()
+
+        self._ask_speculatively(denial, meanwhile=self._replaced_by(self.LETTER_B))
+
+        denial.refresh_from_db()
+        self.assertIsNone(denial.candidate_generated_questions)
+
+    def test_questions_for_the_first_letter_that_land_late_are_dropped(self):
+        """Typed details survive the new letter, so the question set's stamp
+        alone would still call a set for the first letter current."""
+        denial = self._submit(self.LETTER_A)
+        self._read(denial)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            procedure="knee MRI with contrast", diagnosis="torn meniscus"
+        )
+
+        self._ask(denial, meanwhile=self._replaced_by(self.LETTER_B))
+
+        denial.refresh_from_db()
+        self.assertIsNone(denial.generated_questions)
+        self._read(denial)
+        self.assertEqual(self._ask(denial), self.QUESTIONS[self.LETTER_B])
+
+
+class ResearchForAReplacedLetterTest(TestCase):
+    """A research lookup that started on the first letter and finishes after
+    the second one replaced it stores nothing.
+
+    The lookup is handed the copy of the row it started from, as the appeal
+    step hands it one; the row has the new letter by the time it answers.
+    """
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email("research@example.com"),
+            denial_text="We denied the knee MRI you asked about.",
+            procedure="knee MRI",
+            diagnosis="knee pain",
+        )
+        self.started_on = Denial.objects.get(denial_id=denial.denial_id)
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            denial_text="We denied the insulin pump you asked about."
+        )
+        self.denial = denial
+
+    def _row(self) -> Denial:
+        return Denial.objects.get(denial_id=self.denial.denial_id)
+
+    def test_pubmed_context_for_a_replaced_letter_is_not_stored(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        with patch.object(
+            PubMedTools,
+            "_find_context_for_denial",
+            new=AsyncMock(return_value="studies on the knee MRI"),
+        ):
+            async_to_sync(PubMedTools().find_context_for_denial)(self.started_on)
+
+        self.assertIsNone(self._row().pubmed_context)
+
+    def test_pubmed_articles_for_a_replaced_letter_are_not_stored(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        self.started_on.pubmed_ids_json = ["12345"]
+        with patch.object(PubMedTools, "get_articles", new=AsyncMock(return_value=[])):
+            async_to_sync(PubMedTools()._find_context_for_denial)(self.started_on)
+
+        self.assertIsNone(self._row().pubmed_ids_json)
+
+    def test_nice_context_for_a_replaced_letter_is_not_stored(self):
+        from fighthealthinsurance.nice_tools import NICETools
+
+        with patch.object(
+            NICETools,
+            "_find_context_for_denial",
+            new=AsyncMock(return_value="NICE guidance on the knee MRI"),
+        ):
+            async_to_sync(NICETools(api_key="not-a-real-key").find_context_for_denial)(
+                self.started_on
+            )
+
+        self.assertIsNone(self._row().nice_context)

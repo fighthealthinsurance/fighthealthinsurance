@@ -291,10 +291,12 @@ class NICETools:
         """Return formatted NICE context for a denial, caching the result on the denial."""
         result = await self._find_context_for_denial(denial, timeout)
         # Only write when the value actually changed to avoid no-op UPDATEs on regen.
+        # And only while the row holds the letter on the copy this was handed:
+        # a different letter submitted meanwhile clears the stored context.
         if result and result != denial.nice_context:
-            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                nice_context=result
-            )
+            await Denial.objects.filter(
+                denial_id=denial.denial_id, denial_text=denial.denial_text
+            ).aupdate(nice_context=result)
         return result
 
     async def _find_context_for_denial(
