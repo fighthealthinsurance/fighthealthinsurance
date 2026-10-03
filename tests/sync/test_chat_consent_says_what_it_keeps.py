@@ -387,6 +387,7 @@ class IntakeNotesSayWhatTheyKeepTest(TestCase):
                 "denial_text": "My MRI was denied as not medically necessary.",
                 "pii": "on",
                 "tos": "on",
+                "personalonly": "on",
                 "privacy": "on",
             },
         )
