@@ -1,5 +1,10 @@
 {% extends 'base.html' %}
 {% load static %}
+{% block scriptmagic %}
+<script type="module">
+  import * as main from '{% static "js/dist/escalation_packet_review.bundle.js" %}';
+</script>
+{% endblock scriptmagic %}
 {% block title %}
 Fight Your Health Insurance Denial: Send your regulator letter
 {% endblock title %}
@@ -51,22 +56,4 @@ Fight Your Health Insurance Denial: Send your regulator letter
   </form>
 </div>
 </div>
-
-<script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const printButton = document.getElementById('print_appeal');
-    const textarea = document.getElementById('id_completed_appeal_text');
-    if (printButton && textarea) {
-      printButton.addEventListener('click', () => {
-        const w = window.open('', '_blank');
-        if (!w) return;
-        w.document.write('<html><head><title>Regulator letter</title></head><body><pre style="white-space:pre-wrap; font-family: Georgia, serif;">' +
-          textarea.value.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) +
-          '</pre></body></html>');
-        w.document.close();
-        setTimeout(() => w.print(), 500);
-      });
-    }
-  });
-</script>
 {% endblock content %}

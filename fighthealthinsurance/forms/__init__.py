@@ -18,6 +18,10 @@ else:
     _ReCaptchaMixinBase = object
 
 from fighthealthinsurance.form_utils import *
+from fighthealthinsurance.letter_placeholders import (
+    describe_placeholders,
+    find_unfilled_placeholders,
+)
 from fighthealthinsurance.models import (
     DenialTypes,
     InsuranceCompany,
@@ -352,6 +356,26 @@ class FaxForm(DenialRefForm):
         help_text="If you provided health history earlier, include it with your appeal.",
     )
     # Note: we don't have fax_pwyw etc. so we don't overload.
+
+    def clean_completed_appeal_text(self) -> str:
+        """A letter with blanks left in it, like [Your Name], is not faxed.
+
+        The insurance company would get the blanks exactly as written. The
+        appeal page's script names them before the form is sent; this holds
+        for a browser that never ran it. The same pattern list drives both.
+        """
+        text: str = self.cleaned_data["completed_appeal_text"]
+        found = find_unfilled_placeholders(text)
+        if found:
+            raise forms.ValidationError(
+                "Fill in these blanks before we fax your letter: "
+                f"{describe_placeholders(found)}. Your insurance company would "
+                "get them exactly as written. Replace each one with your "
+                "details, or delete it if it doesn't apply, then send the fax "
+                "again.",
+                code="unfilled_placeholders",
+            )
+        return text
 
 
 class EntityExtractForm(DenialRefForm):

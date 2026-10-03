@@ -111,29 +111,45 @@ def test_the_guard_does_not_lapse_when_the_letter_is_emptied():
     assert "value.trim() !== \"\"" not in body, "the emptiness escape is back"
 
 
-def test_confirming_the_placeholder_warning_actually_sends_and_the_next_try_is_checked():
-    """requestSubmit() called inside a submit event does nothing, so pressing
-    OK sent no fax at all, and the flag it set waved the next attempt past
-    the check entirely (review)."""
+def test_a_letter_with_blanks_is_held_and_the_next_try_is_checked_afresh():
+    """The check decides inside the one submission: it stops it only while
+    blanks are left, never re-submits the form from inside its own event
+    (requestSubmit() there does nothing), and keeps no flag that would wave
+    a later press past it (review)."""
     src = _appeal_source()
     assert "skipCheck" not in src, "the skip flag is back; a later click would bypass the check"
-    # The name may appear in the comment that explains why it is gone; what
-    # must not come back is the call.
     assert "faxForm.requestSubmit(" not in src, "the submit is re-entered from inside its own event again"
     submit = src.index('faxForm.addEventListener("submit"')
     handler = src[submit:]
-    assert re.search(r"if \(!proceed\) \{\s*e\.preventDefault\(\);", handler), (
-        "confirming no longer lets this submission through"
-    )
+    assert re.search(
+        r"if \(faxMustWaitForPlaceholders\(faxButton, letter\)\) \{\s*e\.preventDefault\(\);",
+        handler,
+    ), "a letter with blanks left in it is no longer held back from the fax"
     # An empty letter is stopped before it becomes an empty fax.
     assert re.search(r'if \(appealText\.trim\(\) === ""\) \{\s*.*e\.preventDefault\(\);', handler, re.S)
 
 
-def test_an_amount_is_not_reported_as_an_unfilled_placeholder():
+def test_the_fax_names_the_blanks_on_the_page_not_in_a_dialog():
+    assert "confirm(" not in _appeal_source(), "the fax asks about blanks in a dialog again"
+
+
+def test_print_checks_the_letter_for_blanks_first():
+    setup = _function(_appeal_source(), "setupAppeal")
+    assert re.search(
+        r"print_button\.onclick = \(\) => \{\s*printUnlessPlaceholders\(\s*print_button,\s*"
+        r'document\.getElementById\("id_completed_appeal_text"\) as HTMLTextAreaElement \| null,\s*'
+        r"printAppeal,\s*\);",
+        setup,
+    ), "Print opens the print window without checking the letter for blanks"
+
+
+def test_the_appeal_page_uses_the_shared_pattern_list():
+    """One list for the browser and the fax form on the server, so an amount
+    like $500 or a citation like [1] is treated the same on both sides
+    (tests/sync/test_letter_placeholders.py runs them side by side)."""
     src = _appeal_source()
-    assert re.search(r"text\.match\(/\\\$\[A-Za-z_\]\[A-Za-z0-9_\]\*/g\)", src) or (
-        "/\\$[A-Za-z_][A-Za-z0-9_]*/g" in src
-    ), "the dollar-placeholder pattern accepts a bare amount again"
+    assert 'from "./letter_placeholders";' in src, "appeal.ts no longer uses the shared check"
+    assert "checkForUnfilledPlaceholders" not in src, "appeal.ts has a pattern list of its own again"
 
 
 def test_the_setup_actually_runs():
@@ -146,7 +162,7 @@ def test_the_setup_actually_runs():
 def test_the_fax_reads_the_letter_after_deciding_not_to_rebuild_it():
     src = _appeal_source()
     submit = src.index('faxForm.addEventListener("submit"')
-    handler = src[submit : src.index("checkForUnfilledPlaceholders(appealText)", submit)]
+    handler = src[submit : src.index("faxMustWaitForPlaceholders(faxButton, letter)", submit)]
     assert "descrub();" in handler, "the details panel is no longer applied for an untouched letter"
     assert handler.count("descrub()") == 1, "the fax handler rebuilds more than once"
     assert "descrub(true)" not in handler, (

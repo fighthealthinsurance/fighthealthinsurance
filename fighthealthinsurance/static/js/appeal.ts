@@ -5,6 +5,10 @@ import {
   getLocalStorageItemOrDefaultEQ,
   setLocalStorageItemWithTTL,
 } from "./shared";
+import {
+  faxMustWaitForPlaceholders,
+  printUnlessPlaceholders,
+} from "./letter_placeholders";
 import { restorePersonalInfo, type UserInfo } from "./user_info_storage";
 
 async function generateAppealPDF() {
@@ -240,71 +244,6 @@ function printAppeal() {
   }
 }
 
-function checkForUnfilledPlaceholders(text: string): string[] {
-  const found: string[] = [];
-
-  // Double-brace placeholders like {{FIRST_NAME}}, {{Your Name}}, etc.
-  const braceMatches = text.match(/\{\{[^}]+\}\}/g);
-  if (braceMatches) {
-    found.push(...braceMatches);
-  }
-
-  // Generic bracket placeholders like [Diagnosis], [Patient's Name], etc.
-  // Matches [Title Case...] or [UPPER CASE...] to avoid false positives
-  // on normal bracketed text like [1] or [see above].
-  const bracketMatches = text.match(/\[[A-Z][A-Za-z' ]+\]/g);
-  if (bracketMatches) {
-    found.push(...bracketMatches);
-  }
-
-  // Single-brace placeholders like {diagnosis}, {insurance_company}
-  // Filter out {{double_brace}} matches without lookbehind (unsupported in Safari <16.4)
-  const singleBraceRe = /\{[a-z_]+\}/g;
-  let singleMatch: RegExpExecArray | null;
-  while ((singleMatch = singleBraceRe.exec(text)) !== null) {
-    const idx = singleMatch.index;
-    const end = idx + singleMatch[0].length;
-    // Skip if this is part of a {{...}} double-brace placeholder
-    if (
-      (idx > 0 && text[idx - 1] === "{") ||
-      (end < text.length && text[end] === "}")
-    ) {
-      continue;
-    }
-    found.push(singleMatch[0]);
-  }
-
-  // Dollar-prefixed template variables like $diagnosis, $DATE, $CASEID.
-  // A leading letter or underscore is required so an ordinary amount ("the
-  // treatment costs $500") is not reported as an unfilled placeholder and
-  // does not send a finished letter into the warning (review).
-  const dollarMatches = text.match(/\$[A-Za-z_][A-Za-z0-9_]*/g);
-  if (dollarMatches) {
-    found.push(...dollarMatches);
-  }
-
-  // Default placeholder values that indicate unfilled fields
-  const defaultPlaceholders: [RegExp, string][] = [
-    [/\bFirstName\b/, "FirstName"],
-    [/\bLastName\b/, "LastName"],
-    [/\bYourNameMagic\b/, "YourNameMagic"],
-    // Sentinel fallback literals from descrub() when no real value is stored
-    [/\bsubscriber_id\b/, "subscriber_id"],
-    [/\bgroup_id\b/, "group_id"],
-    [/\bclaim_id\b/, "claim_id"],
-    [/\bphone_number\b/, "phone_number"],
-    [/\bemail_address\b/, "email_address"],
-  ];
-  for (const [regex, label] of defaultPlaceholders) {
-    if (regex.test(text)) {
-      found.push(label);
-    }
-  }
-
-  // Deduplicate so the confirm dialog isn't noisy
-  return Array.from(new Set(found));
-}
-
 // Mapping from PII panel input IDs to localStorage keys
 const PII_FIELD_MAP: [string, string][] = [
   ["pii_fname", "store_fname"],
@@ -352,10 +291,16 @@ function setupAppeal() {
     };
   }
 
+  // Print checks the letter for blanks first. Paper can be filled in by
+  // hand, so the notice offers to print anyway.
   const print_button = document.getElementById("print_appeal");
   if (print_button != null) {
-    print_button.onclick = async () => {
-      await printAppeal();
+    print_button.onclick = () => {
+      printUnlessPlaceholders(
+        print_button,
+        document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement | null,
+        printAppeal,
+      );
     };
   }
 
@@ -390,42 +335,32 @@ function setupAppeal() {
     completedLetterEdited = true;
   }
 
-  // Warn before fax submission if PHI placeholders remain unfilled
+  // A fax waits until the letter has no blanks left in it. The server
+  // refuses the same letter (FaxForm), so this check only saves the round
+  // trip and says which blanks they are, just above the button.
   const faxButton = document.getElementById("fax_appeal");
   const faxForm = faxButton?.closest("form") as HTMLFormElement | null;
-  if (faxForm) {
+  if (faxButton && faxForm) {
     faxForm.addEventListener("submit", (e) => {
       // Pick up the details panel for a letter the person has not touched,
       // and leave a hand-edited letter exactly as they left it: this runs
       // one line before the text is read and posted.
       descrub();
-      const appealText =
-        (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
-          ?.value || "";
+      const letter = document.getElementById(
+        "id_completed_appeal_text",
+      ) as HTMLTextAreaElement | null;
+      const appealText = letter?.value || "";
       if (appealText.trim() === "") {
         // An empty letter would go out as an empty fax.
         e.preventDefault();
         alert("There is no letter to send. Write or rebuild your letter first.");
         return;
       }
-      const placeholders = checkForUnfilledPlaceholders(appealText);
-      if (placeholders.length > 0) {
-        const listing = placeholders.join(", ");
-        const proceed = confirm(
-          "Your appeal still contains placeholder text that should be replaced with your personal information:\n\n" +
-          listing +
-          "\n\nYou may need to fill in your PII/PHI manually — please double-check the letter before submission.\n\n" +
-          "Press OK to send the fax anyway, or Cancel to go back and fill in your information first."
-        );
-        // Decided before the submit is stopped: confirming lets this very
-        // submission through, so every other submit handler and the
-        // browser's own validation still run. Calling requestSubmit() from
-        // inside the submit event did nothing at all, so pressing OK
-        // silently sent no fax, and the skip flag it set then waved the
-        // next attempt past this check (review).
-        if (!proceed) {
-          e.preventDefault();
-        }
+      // Decided inside this one submission: a letter with no blanks goes
+      // straight through, and the next press is checked afresh. Nothing
+      // re-submits the form from inside its own event.
+      if (faxMustWaitForPlaceholders(faxButton, letter)) {
+        e.preventDefault();
       }
     });
   }

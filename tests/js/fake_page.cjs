@@ -175,7 +175,14 @@ class FakeElement {
   requestSubmit() {
     this.page.movedThePerson.push(describe(this) + '.requestSubmit()');
   }
-  focus() {}
+  focus() {
+    this.page.focused = this;
+  }
+  // A textarea's selection, held the way the browser holds it.
+  setSelectionRange(start, end) {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+  }
 }
 
 function describe(el) {
