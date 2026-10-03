@@ -70,7 +70,12 @@ jobs:
           #  - k8s/ and charts/ change DEPLOYED config (flags, STATIC_URL, CSP).
           #    That can absolutely change a real page; it cannot change the page
           #    this suite renders, which runs against a local server.
-          irrelevant='^(k8s/|charts/|docs/[^/]*\.md$|[^/]*\.md$|mypy\.ini$|\.gitignore$)'
+          #  - The other test suites' folders cannot change what the browser
+          #    sees: the suite runs only tests/selenium/, and those tests import
+          #    nothing but their own base class. tests/selenium/ itself and the
+          #    shared files directly under tests/ (conftest.py, fixtures) stay
+          #    live.
+          irrelevant='^(k8s/|charts/|docs/[^/]*\.md$|[^/]*\.md$|mypy\.ini$|\.gitignore$|tests/(sync|async|async-unit|sync-actor|temporal|js)/)'
           if echo "$files" | grep -qvE "$irrelevant"; then
             run_it
           fi
