@@ -188,6 +188,17 @@ class PublicDeleteDataForm(ReCaptchaOptionalMixin, DeleteDataForm):
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
 
 
+class IntakeResumeForm(StyledWidgetsMixin, forms.Form):
+    """The email address a resume link asks for before it opens a case."""
+
+    email = forms.EmailField(
+        required=True,
+        max_length=300,
+        label="Email address you used",
+        widget=forms.EmailInput(attrs={"autocomplete": "email"}),
+    )
+
+
 class ShareAppealForm(forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
@@ -208,7 +219,43 @@ class BaseDenialForm(forms.Form):
 
 
 class DenialForm(BaseDenialForm):
-    pass
+    # The intake page's "this is for my own appeal" box. Only this form has
+    # it: ProDenialForm is the professional version the box points people to.
+    personalonly = forms.BooleanField(
+        required=True,
+        error_messages={
+            "required": "Please tick the box to confirm this is for your own appeal."
+        },
+    )
+
+    # What the intake page says about a field it cannot take, in the list at
+    # the top of a page the server sends back, and under the email field when
+    # the address typed is not one it can use. ProDenialForm keeps Django's
+    # words: each form gets its own copy of every field, so these stay here.
+    INTAKE_ERROR_MESSAGES = {
+        "denial_text": {
+            "required": "Please paste your denial letter, or describe what was denied."
+        },
+        "email": {
+            "required": "We need your email to go on.",
+            "invalid": "Please check your email address. It should look like name@example.com.",
+        },
+        "pii": {
+            "required": "Please tick the box to confirm you've taken your personal details out of the letter."
+        },
+        "privacy": {
+            "required": "Please tick the box to confirm you've read the privacy policy."
+        },
+        "tos": {"required": "Please tick the box to agree to the terms of service."},
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, messages in self.INTAKE_ERROR_MESSAGES.items():
+            self.fields[name].error_messages.update(messages)
+        # The page's own label for it, so an error on it names the field the
+        # way the page does.
+        self.fields["zip"].label = "ZIP code"
 
 
 class ProDenialForm(BaseDenialForm):

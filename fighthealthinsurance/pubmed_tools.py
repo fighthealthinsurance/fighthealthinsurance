@@ -31,6 +31,7 @@ import PyPDF2
 # would close the connections this module's interleaved async ORM reuses.
 from asgiref.sync import async_to_sync, sync_to_async
 from django.core.cache import cache
+from django.db.models import QuerySet
 from django.utils import timezone
 from loguru import logger
 from metapub import FindIt
@@ -1263,10 +1264,21 @@ class PubMedTools(object):
     async def find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
         result = await self._find_context_for_denial(denial, timeout)
         if result is not None and len(result) > 1:
-            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                pubmed_context=result
-            )
+            await self._this_letter(denial).aupdate(pubmed_context=result)
         return result
+
+    @staticmethod
+    def _this_letter(denial: Denial) -> QuerySet[Denial]:
+        """The row, while it still holds the letter on ``denial``.
+
+        The context is built from the procedure and diagnosis on the copy it
+        was handed. A different letter submitted while it is built clears
+        what is stored here, and a write filtered on the letter leaves it
+        cleared.
+        """
+        return Denial.objects.filter(
+            denial_id=denial.denial_id, denial_text=denial.denial_text
+        )
 
     async def _find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
         """
@@ -1310,9 +1322,7 @@ class PubMedTools(object):
                     selected_pmids = list(map(lambda x: x.pmid, possible_articles))
 
                 # Use aupdate instead of asave to avoid race conditions
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                    pubmed_ids_json=selected_pmids
-                )
+                await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
                 # Directly fetch the selected articles from the database
                 articles = [
                     article
@@ -1357,9 +1367,7 @@ class PubMedTools(object):
         finally:
             if selected_pmids:
                 logger.debug(f"Writing back selected pmids {selected_pmids}")
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                    pubmed_ids_json=selected_pmids
-                )
+                await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
 
         # Format the articles for context
         if articles:

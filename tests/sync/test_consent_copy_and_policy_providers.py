@@ -1,11 +1,11 @@
 """The privacy policy names every outside AI company the site sends text to,
-and each consent line gives a couple of them as examples, open-ended.
+and the consent lines name none of them.
 
-The complete list lives in the policy. Where the person agrees, the consent
-gives a couple of well-known AI services the site uses "for example" and
-ends "among others", so it stays short (Melanie, 2026-09-29). The policy must
-name every company chat can reach, so a new outside backend fails here until
-the policy names it.
+Where the person agrees, the consent says outside AI services are used and
+gives no example companies, so the copy stays right as the providers change
+(Melanie, 2026-10-03). The complete list lives in the privacy policy. The
+policy must name every company chat can reach, so a new outside backend fails
+here until the policy names it.
 
 The chat consent also says which details the browser removes before a
 message is sent."""
@@ -24,7 +24,9 @@ from fighthealthinsurance.ml.ml_models import (
     candidate_model_backends,
 )
 
-TEMPLATES = pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "templates"
+TEMPLATES = (
+    pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "templates"
+)
 USER_INFO_STORAGE = TEMPLATES.parent / "static" / "js" / "user_info_storage.ts"
 
 
@@ -33,24 +35,29 @@ def _ai_providers(text: str) -> list[str]:
     the first provider in the policy's own sentence."""
     m = re.search(r"(?:such as|including) (Anthropic[^.<]*?)\.", text)
     assert m, "no AI provider sentence found"
-    # The consent line ends its list with "etc." so the sentence stays open;
-    # that is not a provider.
-    return [p.strip() for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1)) if p.strip() and p.strip().lower() != "etc"]
-
-
-def _examples(text: str) -> list[str]:
-    """The companies a consent gives as examples: "(for example, A and B,
-    among others)"."""
-    m = re.search(r"\(for example, ([^()]*?), among others\)", " ".join(text.split()))
-    assert m, "no '(for example, ..., among others)' in the consent"
-    return [p.strip() for p in re.split(r",\s*|\s+and\s+", m.group(1)) if p.strip()]
+    # A list that ends "etc." stays open; that is not a provider.
+    return [
+        p.strip()
+        for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1))
+        if p.strip() and p.strip().lower() != "etc"
+    ]
 
 
 class ConsentCopyTest(TestCase):
-    def test_upload_consent_gives_examples_and_stays_open_ended(self):
-        # A couple of well-known AI services the site uses, "among others"
-        # (Melanie, 2026-09-29); the complete list is the privacy policy's.
-        self.assertTrue(_examples((TEMPLATES / "scrub.html").read_text()))
+    def test_upload_consent_names_no_provider_company(self):
+        # Generic, with no example companies (Melanie, 2026-10-03); the
+        # complete list is the privacy policy's.
+        consent = _external_models_consent((TEMPLATES / "scrub.html").read_text())
+        self.assertIn("outside AI services", consent)
+        self.assertEqual(_provider_names_in(consent), [])
+        self.assertNotIn("for example", consent.lower())
+
+    def test_an_example_company_in_the_consent_fails_the_guard(self):
+        consent = (
+            "Your letter is shared with those services (for example, Google "
+            "and Anthropic, among others), under their own terms."
+        )
+        self.assertEqual(_provider_names_in(consent), ["Anthropic", "Google"])
 
     def test_upload_consent_names_no_company_the_site_stopped_using(self):
         scrub = (TEMPLATES / "scrub.html").read_text()
@@ -59,8 +66,8 @@ class ConsentCopyTest(TestCase):
 
 
 # Each outside backend chat can route a conversation to, by the name the
-# consent and the privacy policy use for the company that receives it. Azure
-# hosts both its OpenAI and its Claude deployments, so both are Microsoft Azure.
+# privacy policy uses for the company that receives it. Azure hosts both its
+# OpenAI and its Claude deployments, so both are Microsoft Azure.
 CHAT_BACKEND_PROVIDERS = {
     "DeepInfra": "DeepInfra",
     "RemoteAnthropic": "Anthropic",
@@ -72,6 +79,18 @@ CHAT_BACKEND_PROVIDERS = {
 QUALITY_CHECK_PROVIDERS = ("TypeSafe",)
 # Companies the site stopped using; no consent may name them.
 RETIRED_PROVIDERS = ("OctoAI", "TogetherAI")
+# Well-known AI companies and products a consent might reach for as an
+# example, beyond the policy's own names ("Google" was one until 2026-10-03).
+FORMER_EXAMPLES = (
+    "Google",
+    "OpenAI",
+    "ChatGPT",
+    "Microsoft",
+    "Azure",
+    "Claude",
+    "Gemini",
+    "Meta",
+)
 CHAT_CONSENT_PAGES = ("chat_consent", "explain_denial")
 # The shared classes the backends are built on. They are concrete classes, so
 # candidate_model_backends lists them, but they register no models of their
@@ -113,12 +132,30 @@ def _external_chat_backends(
     return names
 
 
-def _rendered_chat_consent(html: str) -> str:
+def _external_models_consent(html: str) -> str:
     """The external-models checkbox, its label and its help text, with the
-    whitespace collapsed."""
+    whitespace collapsed, from a template's source or a rendered page. It
+    stops before the rest of the form, whose referral choices name a search
+    engine."""
     m = re.search(r'id="use_external_models"[^>]*>(.*?)</div>', html, re.DOTALL)
     assert m, "no external-models consent on the page"
     return " ".join(m.group(1).split())
+
+
+def _provider_names_in(text: str) -> list[str]:
+    """Every provider company the text names: the privacy policy's list, the
+    companies the site stopped using and the former examples, matched as
+    whole words in any case."""
+    names = {
+        *_ai_providers((TEMPLATES / "privacy_policy.html").read_text()),
+        *RETIRED_PROVIDERS,
+        *FORMER_EXAMPLES,
+    }
+    return sorted(
+        name
+        for name in names
+        if re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE)
+    )
 
 
 def _scrub_function_body() -> str:
@@ -131,14 +168,12 @@ def _scrub_function_body() -> str:
 
 class ChatConsentCopyTest(TestCase):
     def _assert_every_external_chat_backend_is_named(self, backends):
-        self.assertEqual(
-            _external_chat_backends(backends), set(CHAT_BACKEND_PROVIDERS)
-        )
+        self.assertEqual(_external_chat_backends(backends), set(CHAT_BACKEND_PROVIDERS))
 
     def test_every_external_chat_backend_has_a_named_provider(self):
         # A new outside backend that chat can use needs its company added
-        # here, and named in the consent, before this passes, whether or not
-        # it is configured.
+        # here, and named in the privacy policy, before this passes, whether
+        # or not it is configured.
         self._assert_every_external_chat_backend_is_named(candidate_model_backends)
 
     def test_an_unconfigured_unnamed_outside_backend_fails_the_guard(self):
@@ -189,15 +224,17 @@ class ChatConsentCopyTest(TestCase):
         policy = _ai_providers((TEMPLATES / "privacy_policy.html").read_text())
         self.assertLessEqual(reachable, set(policy))
 
-    def test_rendered_chat_consent_gives_examples_and_stays_open_ended(self):
+    def test_rendered_chat_consent_names_no_provider_company(self):
+        # Generic, like the upload consent; the names checked include the
+        # companies the site stopped using.
         for page in CHAT_CONSENT_PAGES:
             with self.subTest(page=page):
-                consent = _rendered_chat_consent(
+                consent = _external_models_consent(
                     self.client.get(reverse(page)).content.decode()
                 )
-                self.assertTrue(_examples(consent))
-                for gone in RETIRED_PROVIDERS:
-                    self.assertNotIn(gone, consent)
+                self.assertIn("outside AI services", consent)
+                self.assertEqual(_provider_names_in(consent), [])
+                self.assertNotIn("for example", consent.lower())
 
     def test_rendered_chat_consent_says_what_the_browser_removes(self):
         removed = ", ".join(list(SCRUBBED_IN_THE_BROWSER)[:-1])
@@ -216,7 +253,7 @@ class ChatConsentCopyTest(TestCase):
         self.assertNotIn("userInfo.phone", scrub)
         for page in CHAT_CONSENT_PAGES:
             with self.subTest(page=page):
-                consent = _rendered_chat_consent(
+                consent = _external_models_consent(
                     self.client.get(reverse(page)).content.decode()
                 )
                 self.assertIn(sentence, consent)

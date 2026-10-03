@@ -33,6 +33,7 @@ class MicrositeSlugStorageTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 "microsite_slug": "mri-denial",
                 "default_procedure": "MRI Scan",
                 "microsite_title": "Appealing MRI Denials",
@@ -61,6 +62,7 @@ class MicrositeSlugStorageTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
         )
 

@@ -23,6 +23,7 @@ from fighthealthinsurance.microsites import (
     Microsite,
     REQUIRED_MICROSITE_KEYS,
 )
+from tests.back_links import back_link
 
 # Keys that are optional but commonly present in microsites
 # These have sensible defaults (empty lists) in the Microsite class
@@ -529,12 +530,9 @@ class MicrositeOverrideTest(TestCase):
 
         # Access the categorize review page
         response = self.client.get(
-            reverse("categorize_review"),
-            {
-                "denial_id": self.denial.denial_id,
-                "email": "test@example.com",
-                "semi_sekret": self.denial.semi_sekret,
-            },
+            back_link(
+                self.client, "categorize_review", self.denial, "test@example.com"
+            ),
             follow=True,
         )
 

@@ -58,16 +58,20 @@ class SessionRequiredMixinTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content.decode(), "Success")
 
-    def test_proceed_with_denial_id_in_get(self):
-        """Test that the mixin sets session when denial_id is in GET params."""
+    def test_redirect_with_only_denial_id_in_get(self):
+        """A case id in the GET params does not seed the session.
+
+        A GET reaches a case only through a back link's reference.
+        """
         request = self.factory.get("/test-url/?denial_id=12345")
         self._add_session_to_request(request)
 
         view = MockView.as_view()
         response = view(request)
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(int(request.session["denial_id"]), 12345)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("process"))
+        self.assertNotIn("denial_id", request.session)
 
     def test_proceed_with_denial_id_in_post(self):
         """Test that the mixin sets session when denial_id is in POST data."""

@@ -2236,12 +2236,6 @@ section:not(.slider) .share-subcopy,
     vertical-align: -0.125em;
 }
 
-/* Form validation errors */
-.form-errors {
-    color: #dc3545;
-    margin-bottom: 1rem;
-}
-
 /* ---- The page column --------------------------------------------------
    Every page's content sits in one of two columns. Bootstrap's .container
    is a layout boundary, 1320px at a desktop, and the prose pages ran text
@@ -4109,5 +4103,112 @@ summary.fhi-nav-link::after {
 .fhi-actions {
     display: grid;
     gap: var(--fhi-space-2);
+}
+/* The intake page's letter box takes the letter typed, pasted or as a file
+   dropped on it or anywhere in its step, which scrub.ts hands to the file
+   input so it is read on the device the way a chosen file is. A phone or a
+   keyboard cannot drag, so the file input is drawn as its label: a button
+   that says what it does, beside the hint. */
+.fhi-file-pick {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--fhi-space-2) var(--fhi-space-3);
+}
+/* The input is hidden from sight, not from the keyboard, so the button
+   people see carries the ring while the input has focus. */
+.fhi-file-pick > input[type="file"]:focus-visible + .fhi-button {
+    outline: 2px solid var(--fhi-green-ink);
+    outline-offset: 2px;
+}
+/* "Or drop the file on this box" only where there is a mouse to drag with;
+   on a phone it would ask for something the phone cannot do. "Or take a
+   photo" the other way round: a desktop's file picker has no camera. It
+   sits inside the button's one span, so it stays in the line of text rather
+   than becoming a flex item of its own. */
+.fhi-drop-hint { display: none; }
+@media (hover: hover) and (pointer: fine) {
+    .fhi-drop-hint { display: inline; }
+    .fhi-photo-hint { display: none; }
+}
+/* While a file is dragged over the letter's step: a dashed green edge and a
+   pale ground, so the box reads as the place it goes. */
+.fhi-field.fhi-drop-active {
+    border-style: dashed;
+    border-color: var(--fhi-green-ink);
+    background-color: var(--fhi-surface);
+}
+/* The intake form's steps: each heading sits with the fields under it, and
+   the steps sit further apart than the fields in them. */
+.main-form > form > section > h2 { padding-bottom: 0; }
+.main-form > form > section + section { margin-top: var(--fhi-space-2); }
+/* A pair of fields in a stack takes the stack's spacing, not the 10px
+   margins it carries elsewhere, so About you is spaced evenly. */
+.fhi-stack > .together-form-group { row-gap: var(--fhi-space-4); }
+.fhi-stack > .together-form-group > div { margin: 0; }
+/* A group of controls under one name, such as the intake page's four
+   agreements: no box of its own, and its legend, which holds the step's
+   heading, sits over the controls the way a heading does. The legend does
+   not float, so it is the group's name whether or not another stylesheet
+   floats legends. */
+.fhi-fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+.fhi-fieldset > legend {
+    float: none;
+    width: 100%;
+    margin: 0 0 var(--fhi-space-4);
+    padding: 0;
+}
+.fhi-fieldset > legend > h2 {
+    margin: 0;
+    padding-bottom: 0;
+}
+/* A field's message (partials/field_error.html), under the field it is
+   about, and in the danger colour, 6.91:1 on white. Empty, it stays in the
+   accessibility tree so that filling it is read out, but it takes no part
+   in the layout: a stack or a tick box's row leaves no gap for it. */
+.fhi-field-error,
+.fhi-form-errors {
+    color: var(--fhi-danger);
+    font-weight: 700;
+}
+.fhi-field-error:empty { position: absolute; }
+/* Every error on a page the server sent back, listed at the top of the
+   form in a red-edged box, each a link to its field. The line over the list
+   takes the box's colour and weight rather than a paragraph's grey. */
+.fhi-form-errors {
+    display: grid;
+    gap: var(--fhi-space-2);
+    padding: var(--fhi-space-4);
+    border: 2px solid var(--fhi-danger);
+    border-radius: var(--fhi-radius);
+}
+.fhi-form-errors > * { margin-block: 0; }
+.fhi-form-errors > p { color: inherit; font-weight: inherit; }
+.fhi-form-errors > ul {
+    display: grid;
+    gap: var(--fhi-space-1);
+    padding-inline-start: var(--fhi-space-5);
+}
+.fhi-form-errors a { color: inherit; }
+/* A link in that list lands its field, and the label over it, clear of the
+   header that stays at the top of the window: the header is up to 143px
+   tall with its menu closed, and the letter box's label and hint take 116px
+   on a phone. */
+.main-form :is(.fhi-field, .fhi-check) {
+    scroll-margin-top: calc(3 * var(--fhi-space-11) + var(--fhi-space-7));
+}
+/* A field the form cannot take as it is has its edge in the same colour. */
+.fhi-field[aria-invalid="true"] { border-color: var(--fhi-danger); }
+/* A tick box has no edge of its own to colour, so one the form still needs
+   gets a red ring instead. Keyboard focus draws its own ring in its place. */
+.fhi-check[aria-invalid="true"]:not(:focus-visible) {
+    outline: 2px solid var(--fhi-danger);
+    outline-offset: 2px;
 }
 .fhi-text-success { color: var(--fhi-green-ink); }

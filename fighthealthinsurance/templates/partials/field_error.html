@@ -1,0 +1,14 @@
+{% comment %} One field's message, under the field it is about, and empty until
+   something is wrong with that field. scrub_client_side_form.ts fills it from
+   data-message on a blocked submit and empties it once the field is filled
+   in. A page the server sends back fills it here when the form has an error
+   on that field: "errors" is that error list, and "filled" the field's value.
+   When the person gave a value and the server still refused it, such as an
+   email address it cannot use, the server's own words say why; otherwise the
+   message says what is missing. "invalid_message", when given, is what the
+   script shows for a value that is filled in but in the wrong shape.
+   It is a live region that stays in the accessibility tree while it is
+   empty, so filling it is read out. custom.css takes an empty one out of the
+   layout with :empty, so nothing, not even a space, sits between its tags
+   while it is empty. {% endcomment %}
+<div class="fhi-field-error" id="{{ id }}" aria-live="polite" data-message="{{ message }}"{% if invalid_message %} data-invalid-message="{{ invalid_message }}"{% endif %}>{% if errors %}{% if filled %}{{ errors|join:" " }}{% else %}{{ message }}{% endif %}{% endif %}</div>
