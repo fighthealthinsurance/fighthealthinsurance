@@ -33,11 +33,12 @@ from fighthealthinsurance.models import (
     Appeal,
     FaxesToSend,
     ModelCallAttempt,
+    PlanSource,
     ProposedAppeal,
     Regulator,
 )
 import pytest
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 
 @contextmanager
@@ -2519,6 +2520,54 @@ class RegulatorContactInfoTest(TestCase):
         denial.save()
         self.assertIn("HTTPS://example.gov/complaint", self._outside_help_text(denial))
 
+    def _outside_help_text_for_plan(self, plan_source_name, state):
+        """Outside-help text for a denial with one plan source and a state."""
+        plan_source = PlanSource.objects.create(
+            name=plan_source_name, regex="zzz-never-matches", negative_regex="$^"
+        )
+        denial = self._make_denial()
+        denial.your_state = state
+        denial.save()
+        denial.plan_source.set([plan_source])
+        return self._outside_help_text(denial)
+
+    def test_outside_help_includes_medicaid_work_requirement_note(self):
+        text = self._outside_help_text_for_plan("Medicaid", "GA")
+        self.assertIn("work/community-engagement requirement", text)
+        self.assertIn("Georgia", text)
+
+    def test_outside_help_includes_curated_waiver_activity_narrative(self):
+        # Georgia's medicaid_resources.csv row carries a rich curated
+        # waiver_activity narrative ("Pathways to Coverage...") -- the
+        # next-steps page should show the same narrative the chat surface
+        # (get_medicaid_info) already does, not just the bare status word.
+        text = self._outside_help_text_for_plan("Medicaid", "GA")
+        self.assertIn("Pathways to Coverage", text)
+
+    def test_outside_help_waiver_activity_renders_links_not_raw_markdown(self):
+        # Georgia's waiver_activity has [label](url) markdown links and
+        # literal "<br>" markers. A bare html_escape() would mangle both
+        # (dead bracket/paren text, literal "&lt;br&gt;"); confirm the real
+        # tags render instead.
+        text = self._outside_help_text_for_plan("Medicaid", "GA")
+        self.assertIn(
+            "<a href='https://www.medicaid.gov/medicaid/section-1115-demo/"
+            "demonstration-and-waiver-list/81441' target='_blank' "
+            "rel='noopener'>waiver</a>",
+            text,
+        )
+        self.assertIn("<br>", text)
+        self.assertNotIn("&lt;br&gt;", text)
+        self.assertNotIn("[waiver](", text)
+
+    def test_outside_help_omits_work_requirement_note_for_non_medicaid_plan(self):
+        text = self._outside_help_text_for_plan("Employer -- Private", "GA")
+        self.assertNotIn("work/community-engagement requirement", text)
+
+    def test_outside_help_omits_work_requirement_note_without_state(self):
+        text = self._outside_help_text_for_plan("Medicaid", None)
+        self.assertNotIn("work/community-engagement requirement", text)
+
     def test_migration_backfill_fills_blank_regulator_phones(self):
         """The regulator-phone data migration must backfill phones for
         pre-existing deployments whose seeded rows predate the fixture
@@ -2909,3 +2958,48 @@ class ConfirmedStateTest(TestCase):
         denial = self._submit_review_page(denial, date_of_service="")
 
         self.assertEqual(denial.date_of_service, "01/15/2024")
+
+
+class RenderWaiverActivityHtmlTest(SimpleTestCase):
+    """Unit tests for the curated waiver_activity -> safe-HTML renderer."""
+
+    def test_plain_text_is_escaped(self):
+        result = common_view_logic._render_waiver_activity_html(
+            "Legislative activity <script>alert(1)</script> ongoing."
+        )
+        self.assertNotIn("<script>", result)
+        self.assertIn("&lt;script&gt;", result)
+
+    def test_literal_br_marker_becomes_real_line_break(self):
+        result = common_view_logic._render_waiver_activity_html("First.<br>Second.")
+        self.assertIn("First.<br>Second.", result)
+        self.assertNotIn("&lt;br&gt;", result)
+
+    def test_markdown_link_becomes_anchor_tag(self):
+        result = common_view_logic._render_waiver_activity_html(
+            "See the [waiver](https://www.medicaid.gov/waiver) for details."
+        )
+        self.assertIn(
+            "<a href='https://www.medicaid.gov/waiver' target='_blank' "
+            "rel='noopener'>waiver</a>",
+            result,
+        )
+        self.assertNotIn("[waiver](", result)
+
+    def test_non_http_link_target_is_never_turned_into_a_live_link(self):
+        # The link pattern only ever matches an http(s) URL, so a
+        # javascript: target isn't recognized as link markup at all -- it's
+        # escaped as inert plain text instead of becoming a clickable (and
+        # exploitable) <a href>.
+        result = common_view_logic._render_waiver_activity_html(
+            "See the [waiver](javascript:alert(1)) for details."
+        )
+        self.assertNotIn("<a href", result)
+        self.assertIn("waiver", result)
+
+    def test_link_label_is_escaped(self):
+        result = common_view_logic._render_waiver_activity_html(
+            "[<b>waiver</b>](https://www.medicaid.gov/waiver)"
+        )
+        self.assertIn("&lt;b&gt;waiver&lt;/b&gt;", result)
+        self.assertNotIn("<b>waiver</b>", result)

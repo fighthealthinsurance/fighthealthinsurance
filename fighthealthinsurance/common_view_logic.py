@@ -1269,6 +1269,42 @@ class FollowUpHelper:
             )
 
 
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
+
+
+def _render_waiver_activity_html(text: str) -> str:
+    """Render the curated ``waiver_activity`` CSV field's tiny ad hoc markup.
+
+    The field mixes plain prose with a couple of hand-authored bits:
+    ``[label](url)`` links and literal ``<br>`` line-break markers. A bare
+    ``html_escape()`` mangles both -- the literal ``<br>`` shows up as
+    ``&lt;br&gt;`` and the link syntax shows as inert bracket/paren text --
+    so this escapes every plain-text segment (the field is CSV-sourced, not
+    hand-vetted per row, so still treated as untrusted) and re-introduces
+    exactly those two constructs: a real ``<br>`` for the literal marker,
+    and an ``<a>`` tag -- built from the already-escaped label plus an href
+    re-validated by ``sanitize_http_url`` -- for each link.
+    """
+    from fighthealthinsurance.escalation_addresses import sanitize_http_url
+
+    parts: List[str] = []
+    last = 0
+    for m in _MD_LINK_RE.finditer(text):
+        parts.append(html_escape(text[last : m.start()]).replace("&lt;br&gt;", "<br>"))
+        label, url = m.group(1), m.group(2)
+        safe_url = sanitize_http_url(url)
+        if safe_url:
+            parts.append(
+                f"<a href='{html_escape(safe_url)}' target='_blank' "
+                f"rel='noopener'>{html_escape(label)}</a>"
+            )
+        else:
+            parts.append(html_escape(label))
+        last = m.end()
+    parts.append(html_escape(text[last:]).replace("&lt;br&gt;", "<br>"))
+    return "".join(parts)
+
+
 class FindNextStepsHelper:
     @classmethod
     def _build_pharmacy_coupon_suggestion(
@@ -1412,6 +1448,50 @@ class FindNextStepsHelper:
                     " or ".join(how_to_parts) + ".",
                 )
             )
+
+        if state and denial.plan_source.filter(name__icontains="medicaid").exists():
+            from fighthealthinsurance.medicaid_api import (
+                WORK_REQUIREMENT_UNIVERSAL_YEAR,
+                get_medicaid_work_requirement_status,
+            )
+
+            work_req = get_medicaid_work_requirement_status(state)
+            if work_req:
+                headline = (
+                    f"Federal law requires {work_req['state']} Medicaid to have a "
+                    "work/community-engagement requirement in place for certain "
+                    "enrollees -- mainly working-age Medicaid expansion adults, "
+                    "with exemptions (e.g. pregnancy, disability, caregiving) -- "
+                    f"by January 1, {WORK_REQUIREMENT_UNIVERSAL_YEAR} (some states "
+                    "earlier). It is not a blanket requirement for every Medicaid "
+                    "enrollee. This is guidance only, not a determination -- "
+                    "confirm your own status with the state."
+                )
+                if work_req["work_requirement_waiver"]:
+                    headline += (
+                        f" {work_req['state']}'s own waiver status as of our last "
+                        f"review: {html_escape(work_req['work_requirement_waiver'])}."
+                    )
+                if work_req["waiver_activity"]:
+                    headline += (
+                        f"<br><br>"
+                        f"{_render_waiver_activity_html(work_req['waiver_activity'])}"
+                    )
+                how_to_parts = []
+                website = sanitize_http_url(work_req["agency_website"])
+                if website:
+                    how_to_parts.append(
+                        f"<a href='{html_escape(website)}' target='_blank' "
+                        f"rel='noopener'>Check {work_req['state']} Medicaid's "
+                        "website</a>"
+                    )
+                how_to = (
+                    " or ".join(how_to_parts)
+                    if how_to_parts
+                    else f"Contact {work_req['state']} Medicaid directly."
+                )
+                outside_help_details.append((headline, how_to))
+
         return outside_help_details
 
     @classmethod

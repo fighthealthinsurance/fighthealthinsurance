@@ -20,6 +20,7 @@ from fighthealthinsurance.medicaid_api import (
     _normalize_applying_reason,
     current_eligibility_year,
     get_medicaid_info,
+    get_medicaid_work_requirement_status,
     is_eligible,
     eligibility_timeline,
     resolve_target_year,
@@ -812,6 +813,84 @@ class TestGetMedicaidInfo(SimpleTestCase):
         with self.assertRaises(MedicaidDataUnavailableError) as caught:
             get_medicaid_info({"state": "Puerto Rico"})
         self.assertEqual(caught.exception.state, "Puerto Rico")
+
+    def test_includes_universal_federal_deadline_for_every_state(self):
+        # Every state row gets the federal-mandate line regardless of that
+        # state's own waiver history -- "no state-specific waiver activity"
+        # must never read as "the requirement doesn't apply here."
+        result = get_medicaid_info({"state": "ca"})
+        self.assertIn(str(WORK_REQUIREMENT_UNIVERSAL_YEAR), result)
+        self.assertIn("Work Requirement Status", result)
+
+    def test_includes_state_specific_waiver_status_when_known(self):
+        # Georgia's row in medicaid_resources.csv carries a curated
+        # work_requirement_waiver value ("approved") -- confirm it surfaces.
+        result = get_medicaid_info({"state": "Georgia"})
+        self.assertIn("approved", result)
+
+    def test_omits_waiver_line_when_csv_value_is_na(self):
+        # California's work_requirement_waiver is "N/A" in the CSV -- the
+        # federal deadline line should still show, but not a bogus
+        # state-specific status line built from "N/A".
+        result = get_medicaid_info({"state": "ca"})
+        self.assertNotIn("own waiver status", result)
+
+
+class TestGetMedicaidWorkRequirementStatus(SimpleTestCase):
+    """Plain-data work-requirement lookup used by the appeal "next steps" page."""
+
+    def test_unknown_state_returns_none(self):
+        self.assertIsNone(get_medicaid_work_requirement_status("Not A State"))
+
+    def test_empty_state_returns_none(self):
+        self.assertIsNone(get_medicaid_work_requirement_status(""))
+
+    def test_resolves_by_abbreviation(self):
+        result = get_medicaid_work_requirement_status("GA")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["state"], "Georgia")
+        self.assertEqual(result["work_requirement_waiver"], "approved")
+
+    def test_na_waiver_normalizes_to_empty_string(self):
+        result = get_medicaid_work_requirement_status("CA")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["work_requirement_waiver"], "")
+
+    def test_includes_agency_website_when_present(self):
+        result = get_medicaid_work_requirement_status("GA")
+        self.assertTrue(result["agency_website"])
+
+
+class TestResetMedicaidResourcesCache(SimpleTestCase):
+    """The CSV read cache can be dropped so a rewritten file is re-read.
+
+    ``medicaid_work_requirements_fetcher`` rewrites medicaid_resources.csv
+    and calls this after every successful write; a process that shares its
+    lifetime with that ingest (unlike a one-shot management command) needs
+    the next read to see the fresh file, not the process-lifetime cache.
+    """
+
+    def test_reset_clears_the_cached_dataframe(self):
+        from fighthealthinsurance import medicaid_api
+
+        df = medicaid_api._load_medicaid_resources()
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(medicaid_api._medicaid_resources_cache)
+
+        medicaid_api.reset_medicaid_resources_cache()
+
+        self.assertIsNone(medicaid_api._medicaid_resources_cache)
+
+    def test_a_read_after_reset_repopulates_the_cache(self):
+        from fighthealthinsurance import medicaid_api
+
+        medicaid_api._load_medicaid_resources()
+        medicaid_api.reset_medicaid_resources_cache()
+
+        df = medicaid_api._load_medicaid_resources()
+
+        self.assertIsNotNone(df)
+        self.assertIsNotNone(medicaid_api._medicaid_resources_cache)
 
 
 class TestDeclinedAnswersDoNotBecomeVerdicts(SimpleTestCase):
