@@ -18,6 +18,7 @@ from fighthealthinsurance.regulatory_citations import (
     PLAN_LAW_HEADER,
     classify_plan,
     get_plan_law_context,
+    plan_law_paragraphs,
 )
 
 CITATION_ALLOWLIST = {
@@ -270,6 +271,61 @@ class TestTheBlockItself:
     @pytest.mark.parametrize("block", ALL)
     def test_house_style(self, block):
         assert "\u2014" not in block
+
+
+class TestForThePerson:
+    """The public MCP server's wording: the prompt's facts and citations,
+    without "the patient" or the instructions for drafting a letter."""
+
+    SIGNALS = [
+        ((source,), {})
+        for source in (
+            "Employer -- Private",
+            "Union",
+            "Employer -- State Government",
+            "Employer -- Federal Government",
+            "State Marketplace / Affordable Care Act",
+            "Other Group",
+            "Medicare Advantage",
+            "Medicare Regular",
+            "Medicaid",
+            "Veterans Affairs",
+            "Don't know",
+        )
+    ] + [
+        ((), {"is_tpa": True}),
+        (("Medicare Advantage", "Employer -- Private"), {}),
+        (("Medicaid",), {"regulator_alt_name": "ERISA"}),
+    ]
+    DRAFTING = (
+        "patient",
+        "Argue the medical case",
+        "do not cite",
+        "Name one of them",
+        "Name ERISA only",
+        "say so",
+        "Use whichever",
+        "Use the one the denial letter",
+        "Follow the letter only",
+    )
+
+    @pytest.mark.parametrize("sources, kw", SIGNALS)
+    def test_the_same_paragraphs_and_citations(self, sources, kw):
+        prompt = plan_law_paragraphs(list(sources), **kw)
+        person = plan_law_paragraphs(list(sources), for_person=True, **kw)
+        assert len(person) == len(prompt)
+        for theirs, ours in zip(prompt, person):
+            assert _CITATION.findall(ours) == _CITATION.findall(theirs)
+
+    @pytest.mark.parametrize("sources, kw", SIGNALS)
+    def test_no_patient_and_no_drafting_instructions(self, sources, kw):
+        person = " ".join(plan_law_paragraphs(list(sources), for_person=True, **kw))
+        for phrase in self.DRAFTING:
+            assert phrase not in person, phrase
+
+    def test_the_prompt_keeps_its_drafting_instructions(self):
+        assert "Argue the medical case" in _block("Veterans Affairs")
+        assert "the patient has the right to a state fair hearing" in _block("Medicaid")
 
 
 class TestPromptWiring:

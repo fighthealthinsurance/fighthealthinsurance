@@ -33,7 +33,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
-    <link rel="dns-prefetch" href="https://www.googletagmanager.com">
+    {% if not no_third_party_scripts %}<link rel="dns-prefetch" href="https://www.googletagmanager.com">{% endif %}
 
     <!-- Poppins, including the 700 weight the stylesheets actually ask for.
          display=swap so the text is readable in the fallback face while the
@@ -66,6 +66,11 @@
       crossorigin="anonymous"
       ></script>
     {% endif %} -->
+    {% if not no_third_party_scripts %}
+    {% comment %} A page that sets no_third_party_scripts loads none of these
+       tags. The assistant handoff page (assistant_handoff.html) does: its
+       link carries a code after "#", and UET's automatic page tracking could
+       report the address before the page's own script clears it. {% endcomment %}
     <!-- Google tag (gtag.js) - Load async -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-JQNGR0JGVN"></script>
     <script>
@@ -101,6 +106,7 @@
         });
       });
     </script>
+    {% endif %}
 </head>
 
 <body id="top">

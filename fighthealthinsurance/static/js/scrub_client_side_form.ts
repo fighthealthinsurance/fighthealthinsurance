@@ -357,8 +357,8 @@ function storeInLocalStorage(): void {
 
 // Only an empty field takes what this browser kept. A field the page arrived
 // with something in keeps it: the letter the server read from an upload
-// (/server_side_ocr), the one it sends back with an error, or a microsite's
-// starting line.
+// (/server_side_ocr), the one it sends back with an error, the one an
+// assistant's handoff filled in, or a microsite's starting line.
 function retrieveFromLocalStorage(): void {
   FORM_FIELD_IDS.forEach((id) => {
     const element = document.getElementById(

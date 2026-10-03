@@ -79,6 +79,15 @@ class RegulatoryHook:
     # law and the ACA appeal rules do not bind Medicare, Medicaid, VA or FEHB
     # coverage, so for those only hooks written for the program are listed.
     public_programs: frozenset[str] = frozenset()
+    # Whether the hook also reaches plans sold on the federal marketplace
+    # (HealthCare.gov). Not a public program, so kept apart from
+    # public_programs; a state's own marketplace is not covered.
+    federal_marketplace: bool = False
+    # The summary in plain words for the person themselves, as the public MCP
+    # server shows it: what the law says and what an appeal can ask for,
+    # never instructions for drafting a letter. ``summary`` stays the
+    # prompt's wording.
+    plain_summary: str = ""
 
 
 # Federal hooks apply broadly (subject to plan type); included alongside any
@@ -104,6 +113,16 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         # issuers — not self-funded employer (ERISA) plans.
         applies_to_self_insured=False,
         public_programs=frozenset({MEDICARE_ADVANTAGE, MEDICAID}),
+        federal_marketplace=True,
+        plain_summary=(
+            "Medicare Advantage plans, Medicaid and CHIP plans, and plans "
+            "sold on HealthCare.gov must give a specific reason for every "
+            "prior authorization denial of an item or service (prescription "
+            "drugs are outside this rule), and publicly report their prior "
+            "authorization approval, denial and appeal numbers. An appeal can "
+            "ask for that specific reason and the exact criteria the plan "
+            "applied."
+        ),
     ),
     RegulatoryHook(
         name=(
@@ -127,6 +146,13 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         # commercial employer plans.
         applies_to_self_insured=False,
         public_programs=frozenset({MEDICARE_ADVANTAGE}),
+        plain_summary=(
+            "A Medicare Advantage plan may not use an algorithm or AI tool as "
+            "the only basis for denying coverage; a qualified human reviewer "
+            "has to assess the person's own case. An appeal can ask whether "
+            "any such tool was used and for the human reviewer's clinical "
+            "reasoning."
+        ),
     ),
     RegulatoryHook(
         name="ACA internal appeal and external review rights (45 C.F.R. § 147.136)",
@@ -144,6 +170,12 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         # Internal claims/appeals and external review reach non-grandfathered
         # self-insured group health plans (enforced via 29 C.F.R. 2590.715-2719).
         applies_to_self_insured=True,
+        plain_summary=(
+            "Plans that are not grandfathered must offer a full and fair "
+            "internal appeal and access to an independent external review. "
+            "A person can ask for both, and for the documents and clinical "
+            "criteria the plan relied on."
+        ),
     ),
 )
 
@@ -191,6 +223,13 @@ _EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
             "essential-health-care"
         ),
         applies_to_self_insured=False,
+        plain_summary=(
+            "Massachusetts has ended prior authorization for a defined set of "
+            "essential services, including cancer imaging, chronic-disease "
+            "medications, maternity care and primary care. For a fully insured "
+            "Massachusetts plan, a denied service on that list should be "
+            "handled without prior authorization."
+        ),
     ),
     RegulatoryHook(
         name="West Virginia continuity-of-care prior-authorization law",
@@ -207,6 +246,12 @@ _EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
             "insurance-delays-coverage-denials-state-laws-west-virginia/"
         ),
         applies_to_self_insured=False,
+        plain_summary=(
+            "Someone already approved for a treatment may switch to a "
+            "medically equivalent alternative of equal or lower cost without "
+            "a new prior authorization. It matters when a plan asks for a new "
+            "prior authorization for an equivalent therapy."
+        ),
     ),
     RegulatoryHook(
         name="Washington prior-authorization AI-oversight and transparency law",
@@ -231,6 +276,16 @@ _EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
             "improve-prior-authorization-transparency-signed-into-law/"
         ),
         applies_to_self_insured=False,
+        plain_summary=(
+            "An AI tool or algorithm may not be the only basis for denying, "
+            "delaying or changing care. A licensed provider must make any "
+            "medical-necessity denial, the tool must account for the person's "
+            "own clinical condition (not just group data), and the denial "
+            "notice must give the credentials, board certifications and "
+            "specialty of the provider who oversaw the decision. An appeal can "
+            "ask for that reviewer's clinical reasoning and credentials, and "
+            "for confirmation that AI was not the only basis for the denial."
+        ),
     ),
     RegulatoryHook(
         name=("Maryland utilization-review human-determination and AI-reporting law"),
@@ -251,6 +306,14 @@ _EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
             "https://mgaleg.maryland.gov/mgawebsite/Legislation/Details/HB1563"
         ),
         applies_to_self_insured=False,
+        plain_summary=(
+            "Only a licensed health care professional may make a "
+            "medical-necessity denial, and the insurer must report to the "
+            "state Insurance Commissioner every quarter whether it used AI in "
+            "its denials. An appeal can ask for confirmation that a licensed "
+            "professional, not an algorithm, made the decision, and that the "
+            "insurer is reporting its AI use as the law requires."
+        ),
     ),
     RegulatoryHook(
         name="Indiana law restricting AI as the sole basis for claim downcoding",
@@ -271,6 +334,14 @@ _EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
         # effective_date so it is not cited before it is in force.
         source_url="https://legiscan.com/IN/bill/HB1271/2026",
         applies_to_self_insured=False,
+        plain_summary=(
+            "An AI tool or algorithm may not be the only basis for downcoding "
+            "a claim (changing a billed code to a lower-paying one) without "
+            "review by a qualified health professional. It matters when a "
+            "claim was downcoded or a service moved to a lower level, and an "
+            "appeal can ask for confirmation that a qualified person reviewed "
+            "the change."
+        ),
     ),
     RegulatoryHook(
         name="Georgia AI utilization-review oversight law",
@@ -292,6 +363,13 @@ _EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
         # may bind only newly issued/renewed plans.
         source_url="https://legiscan.com/GA/bill/SB544/2026",
         applies_to_self_insured=False,
+        plain_summary=(
+            "An AI tool or algorithm may not be the only basis for a "
+            "utilization-review denial; a qualified person must review it. It "
+            "may apply only to plans issued, delivered or renewed on or after "
+            "January 1, 2027, so it is worth checking when the plan was issued "
+            "or renewed."
+        ),
     ),
 )
 
@@ -313,6 +391,13 @@ _AI_OVERSIGHT_HOOKS: tuple[RegulatoryHook, ...] = tuple(
         effective="enacted as of 2025-2026 (see KFF tracker)",
         source_url=_KFF_AI_TRACKER_URL,
         applies_to_self_insured=False,
+        plain_summary=(
+            f"{state_name} law says AI or an algorithm may not be the only "
+            "basis for a medical-necessity or utilization-review denial, and a "
+            "qualified human clinician must make the decision. An appeal can "
+            "ask for confirmation that a human reviewer looked at the person's "
+            "full clinical picture."
+        ),
     )
     for abbr, state_name in _AI_OVERSIGHT_STATES
 )
@@ -358,6 +443,45 @@ def _hook_in_effect(hook: RegulatoryHook, today: datetime.date) -> bool:
     return hook.effective_date is None or today >= hook.effective_date
 
 
+def applicable_hooks(
+    state: Optional[str],
+    programs: Iterable[str] = (),
+    self_insured: Optional[bool] = None,
+    as_of: Optional[datetime.date] = None,
+) -> list[RegulatoryHook]:
+    """The federal hooks in force, then the state's own hooks in force,
+    narrowed to what reaches the plan.
+
+    ``programs`` is classify_plan()'s result and ``self_insured`` is
+    self_insured_from()'s. Shared by the appeal prompt's regulatory block
+    and the public MCP server, so the two cannot disagree about which laws
+    reach a plan. With no state (or one we cannot read), only the federal
+    hooks are considered.
+    """
+    abbr = _normalize_state(state)
+    today = as_of or datetime.date.today()
+    hooks = [h for h in FEDERAL_HOOKS if _hook_in_effect(h, today)]
+    if abbr:
+        hooks += [
+            h
+            for h in STATE_HOOKS
+            if h.jurisdiction == abbr and _hook_in_effect(h, today)
+        ]
+    keys = set(programs)
+    public = keys & PUBLIC_PROGRAMS
+    # Only public coverage: keep the rules written for the program. Public
+    # AND private coverage (a Medicare Advantage member with an employer
+    # plan too): we do not know which plan denied, so the private plan's
+    # rules stay, with a sentence saying whom they reach, the same
+    # tie-break the plan-law block uses (review).
+    public_only = bool(public) and not keys & PRIVATE_COVERAGE
+    if public_only:
+        hooks = [h for h in hooks if h.public_programs & public]
+    if self_insured is True:
+        hooks = [h for h in hooks if h.applies_to_self_insured]
+    return hooks
+
+
 def get_regulatory_citation_context(
     state: Optional[str],
     denial_text: Optional[str] = None,
@@ -392,32 +516,25 @@ def get_regulatory_citation_context(
     if not abbr:
         return None
     today = as_of or datetime.date.today()
-    state_hooks = [
-        h for h in STATE_HOOKS if h.jurisdiction == abbr and _hook_in_effect(h, today)
-    ]
-    if not state_hooks:
+    if not any(
+        h.jurisdiction == abbr and _hook_in_effect(h, today) for h in STATE_HOOKS
+    ):
         return None
 
-    hooks = [h for h in FEDERAL_HOOKS if _hook_in_effect(h, today)] + state_hooks
+    # A set first: programs may be a one-shot iterable, and it is read twice.
     keys = set(programs)
-    public = keys & PUBLIC_PROGRAMS
-    # Only public coverage: keep the rules written for the program. Public
-    # AND private coverage (a Medicare Advantage member with an employer
-    # plan too): we do not know which plan denied, so the private plan's
-    # rules stay, with a sentence saying whom they reach, the same
-    # tie-break the plan-law block uses (review).
-    public_only = bool(public) and not keys & PRIVATE_COVERAGE
-    if public_only:
-        hooks = [h for h in hooks if h.public_programs & public]
-    if self_insured is True:
-        hooks = [h for h in hooks if h.applies_to_self_insured]
+    hooks = applicable_hooks(
+        abbr, programs=keys, self_insured=self_insured, as_of=today
+    )
     if not hooks:
         return None
+    public = keys & PUBLIC_PROGRAMS
+    public_only = bool(public) and not keys & PRIVATE_COVERAGE
 
     bullet_lines = "\n".join(f"- {h.name} ({h.effective}): {h.summary}" for h in hooks)
 
     label = (
-        next(_PROGRAM_LABELS[k] for k in _PROGRAM_ORDER if k in public)
+        next(PROGRAM_LABELS[k] for k in _PROGRAM_ORDER if k in public)
         if public
         else None
     )
@@ -478,7 +595,7 @@ def get_regulatory_citation_context(
 
 PLAN_LAW_HEADER = "APPLICABLE APPEAL LAW"
 
-_ERISA = (
+_ERISA_TEXT = (
     "This looks like a private employer or union plan, so ERISA governs the "
     "appeal (ERISA section 503, 29 U.S.C. § 1133, and the claims-procedure "
     "rule at 29 C.F.R. § 2560.503-1). The plan must give the specific reasons "
@@ -488,12 +605,12 @@ _ERISA = (
     "someone who did not make the original decision. If the plan is not "
     "grandfathered and the denial turns on medical judgment (medical "
     "necessity, appropriateness, level of care, or an experimental label) or "
-    "is a rescission, the patient is also owed an independent external review "
+    "is a rescission, {who} is also owed an independent external review "
     "(45 C.F.R. § 147.136, applied to group plans by 29 C.F.R. § "
     "2590.715-2719); a denial for ineligibility is not. ERISA does not apply "
     "to government or church employer plans (29 U.S.C. § 1003(b))."
 )
-_TPA_ONLY = (
+_TPA_ONLY_FACTS = (
     "The carrier administers self-funded employer plans as a third-party "
     "administrator, so this is most likely a self-funded plan. If the "
     "employer is a private company or a union, ERISA governs the appeal "
@@ -502,27 +619,25 @@ _TPA_ONLY = (
     "If the employer is a government or a church, ERISA does not apply "
     "(29 U.S.C. § 1003(b)); the plan's own appeal terms apply, and for a "
     "non-grandfathered plan the ACA internal appeal and external review rules "
-    "(45 C.F.R. § 147.136) as well. Use whichever the denial letter or the "
-    "plan documents support."
+    "(45 C.F.R. § 147.136) as well."
 )
-_OTHER_GROUP = (
+_OTHER_GROUP_FACTS = (
     "This is group coverage that is not clearly an employer or union plan. If "
     "a private employer or union sponsors it, ERISA governs (29 C.F.R. § "
     "2560.503-1); a government or church employer's plan is exempt "
     "(29 U.S.C. § 1003(b)); and if it is an association or membership plan, "
     "ERISA may not apply, and for non-grandfathered coverage the ACA internal "
     "appeal and external review rules (45 C.F.R. § 147.136) apply along with "
-    "state insurance law. Name ERISA only if the denial letter or the plan "
-    "documents show a private employer or union sponsor."
+    "state insurance law."
 )
-_ACA_MARKETPLACE = (
+_ACA_MARKETPLACE_TEXT = (
     "This is marketplace (Affordable Care Act) coverage. If it is an "
     "individual plan bought on the marketplace, ERISA does not apply; the "
     "plan owes an internal appeal and, for a denial that turns on medical "
     "judgment or is a rescission, an independent external review under the "
     "ACA (45 C.F.R. § 147.136), and it must cover the ten essential health "
-    "benefit categories (42 U.S.C. § 18022), so if the service falls in one "
-    "of them, say so. If it is small employer (SHOP) coverage, it is an "
+    "benefit categories (42 U.S.C. § 18022){say_so}. If it is small employer "
+    "(SHOP) coverage, it is an "
     "employer plan: ERISA governs it when a private employer sponsors it "
     "(29 C.F.R. § 2560.503-1), and a government or church employer's plan "
     "is exempt (29 U.S.C. § 1003(b))."
@@ -540,7 +655,7 @@ _FEDERAL_EMPLOYER = (
     "reconsideration and then to the Office of Personnel Management "
     "(5 C.F.R. § 890.105)."
 )
-_MEDICARE_ADVANTAGE = (
+_MEDICARE_ADVANTAGE_TEXT = (
     "This is a Medicare Advantage plan. Neither ERISA nor the ACA appeal rules "
     "apply. A denial of a medical service or item follows the Medicare "
     "Advantage organization determination and reconsideration process "
@@ -548,7 +663,7 @@ _MEDICARE_ADVANTAGE = (
     "upheld denial to the independent review entity. A denial of a "
     "prescription drug under the plan's Part D benefit follows the Part D "
     "process instead (42 C.F.R. Part 423, Subpart M), where after the plan's "
-    "redetermination the patient must ask the independent review entity for "
+    "redetermination {who} must ask the independent review entity for "
     "reconsideration themselves."
 )
 _MEDICARE = (
@@ -558,35 +673,27 @@ _MEDICARE = (
     "under a Part D plan follows the Part D process (42 C.F.R. Part 423, "
     "Subpart M)."
 )
-_MEDICAID = (
+_MEDICAID_TEXT = (
     "This is a Medicaid plan. Neither ERISA nor the ACA appeal rules apply; a "
     "managed care plan owes an internal appeal (42 C.F.R. Part 438, Subpart "
-    "F) and the patient has the right to a state fair hearing (42 C.F.R. "
+    "F) and {who} has the right to a state fair hearing (42 C.F.R. "
     "Part 431, Subpart E)."
 )
-_VA = (
+_VA_FACTS = (
     "This is Veterans Affairs coverage. Neither ERISA nor the ACA appeal "
     "rules apply. VA has its own processes: a clinical appeal for a decision "
     "about treatment, and a benefits decision review for a claim such as "
-    "reimbursement of care outside VA. Argue the medical case and do not cite "
-    "either law."
+    "reimbursement of care outside VA."
 )
-_UNKNOWN = (
-    "We do not know how the patient gets this coverage. If the denial letter "
+_UNKNOWN_TEXT = (
+    "We do not know how {who} gets this coverage. If the denial letter "
     "or the plan documents show it is a private employer or union plan, "
     "ERISA's claims-procedure rule (29 C.F.R. § 2560.503-1) most likely "
     "applies; if they show it is a marketplace plan or other non-grandfathered "
     "individual coverage, the ACA internal appeal and external review rules "
-    "(45 C.F.R. § 147.136) apply to a denial that turns on medical judgment. "
-    "Name one of them only when the letter itself supports it; otherwise ask "
-    "for the plan's internal appeal and, where the denial is about medical "
-    "judgment, an independent external review in plain words rather than "
-    "naming a statute."
+    "(45 C.F.R. § 147.136) apply to a denial that turns on medical judgment."
 )
-_TWO_SOURCES = (
-    "More than one coverage source was given. Use the one the denial letter "
-    "itself supports."
-)
+_TWO_SOURCES_FACT = "More than one coverage source was given."
 _INVITATION = (
     "If citing the applicable law strengthens this appeal (for example to "
     "demand the clinical criteria the plan relied on, or, only where the "
@@ -599,11 +706,9 @@ _INVITATION = (
     "deadlines, quotations, or case names beyond what is listed here."
 )
 
-_LETTER_CONFLICT = (
+_LETTER_CONFLICT_FACT = (
     "The denial letter mentions ERISA appeal rights, but the coverage source "
-    "given is one that ERISA does not govern. Follow the letter only if the "
-    "plan documents confirm a private employer or union plan; otherwise rely "
-    "on the process described above and do not cite ERISA."
+    "given is one that ERISA does not govern."
 )
 
 # (marker in the lower-cased plan source name, program). First match wins, so
@@ -623,20 +728,79 @@ _PLAN_SOURCE_PROGRAM: tuple[tuple[str, str], ...] = (
     ("other group", OTHER_GROUP),
 )
 
-_PARAGRAPHS: dict[str, str] = {
-    ERISA: _ERISA,
-    OTHER_GROUP: _OTHER_GROUP,
-    MARKETPLACE: _ACA_MARKETPLACE,
-    GOVERNMENT: _GOVERNMENT_EMPLOYER,
-    FEHB: _FEDERAL_EMPLOYER,
-    MEDICARE_ADVANTAGE: _MEDICARE_ADVANTAGE,
-    MEDICARE: _MEDICARE,
-    MEDICAID: _MEDICAID,
-    VA: _VA,
-}
+
+@dataclass(frozen=True)
+class _PlanLawWording:
+    """One audience's words for the APPLICABLE APPEAL LAW paragraphs. The
+    facts and citations are shared; only who is named and whether the
+    letter-drafting instructions are added differ."""
+
+    paragraphs: dict[str, str]
+    tpa_only: str
+    unknown: str
+    two_sources: str
+    letter_conflict: str
+
+
+# The appeal prompt: a model drafting a letter for the patient.
+_FOR_PROMPT = _PlanLawWording(
+    paragraphs={
+        ERISA: _ERISA_TEXT.format(who="the patient"),
+        OTHER_GROUP: _OTHER_GROUP_FACTS
+        + " Name ERISA only if the denial letter or the plan documents show a "
+        "private employer or union sponsor.",
+        MARKETPLACE: _ACA_MARKETPLACE_TEXT.format(
+            say_so=", so if the service falls in one of them, say so"
+        ),
+        GOVERNMENT: _GOVERNMENT_EMPLOYER,
+        FEHB: _FEDERAL_EMPLOYER,
+        MEDICARE_ADVANTAGE: _MEDICARE_ADVANTAGE_TEXT.format(who="the patient"),
+        MEDICARE: _MEDICARE,
+        MEDICAID: _MEDICAID_TEXT.format(who="the patient"),
+        VA: _VA_FACTS + " Argue the medical case and do not cite either law.",
+    },
+    tpa_only=_TPA_ONLY_FACTS
+    + " Use whichever the denial letter or the plan documents support.",
+    unknown=_UNKNOWN_TEXT.format(who="the patient")
+    + " Name one of them only when the letter itself supports it; otherwise "
+    "ask for the plan's internal appeal and, where the denial is about medical "
+    "judgment, an independent external review in plain words rather than "
+    "naming a statute.",
+    two_sources=_TWO_SOURCES_FACT + " Use the one the denial letter itself supports.",
+    letter_conflict=_LETTER_CONFLICT_FACT
+    + " Follow the letter only if the plan documents confirm a private "
+    "employer or union plan; otherwise rely on the process described above "
+    "and do not cite ERISA.",
+)
+
+# The public MCP server: an assistant explaining a plan's appeal law to the
+# person themselves, so no drafting instructions and no "the patient".
+_FOR_PERSON = _PlanLawWording(
+    paragraphs={
+        ERISA: _ERISA_TEXT.format(who="the person"),
+        OTHER_GROUP: _OTHER_GROUP_FACTS,
+        MARKETPLACE: _ACA_MARKETPLACE_TEXT.format(say_so=""),
+        GOVERNMENT: _GOVERNMENT_EMPLOYER,
+        FEHB: _FEDERAL_EMPLOYER,
+        MEDICARE_ADVANTAGE: _MEDICARE_ADVANTAGE_TEXT.format(who="the person"),
+        MEDICARE: _MEDICARE,
+        MEDICAID: _MEDICAID_TEXT.format(who="the person"),
+        VA: _VA_FACTS,
+    },
+    tpa_only=_TPA_ONLY_FACTS
+    + " The denial letter or the plan documents show which applies.",
+    unknown=_UNKNOWN_TEXT.format(who="the person")
+    + " The denial letter or the plan documents show which one applies.",
+    two_sources=_TWO_SOURCES_FACT
+    + " The denial letter shows which plan made the decision, and that plan's "
+    "rules apply.",
+    letter_conflict=_LETTER_CONFLICT_FACT
+    + " ERISA applies only if the plan documents confirm a private employer "
+    "or union plan; otherwise the process described above applies.",
+)
 
 _PROGRAM_ORDER: tuple[str, ...] = (MEDICARE_ADVANTAGE, MEDICARE, MEDICAID, VA, FEHB)
-_PROGRAM_LABELS: dict[str, str] = {
+PROGRAM_LABELS: dict[str, str] = {
     MEDICARE_ADVANTAGE: "Medicare Advantage",
     MEDICARE: "Original Medicare",
     MEDICAID: "Medicaid",
@@ -688,10 +852,29 @@ def get_plan_law_context(
     regulator. Always returns a block: an unknown plan gets the hedged
     paragraph, so the model is never left to guess in silence.
     """
+    body = "\n".join(
+        plan_law_paragraphs(
+            plan_sources, is_tpa=is_tpa, regulator_alt_name=regulator_alt_name
+        )
+    )
+    return f"{PLAN_LAW_HEADER}: {body}\n{_INVITATION}"
+
+
+def plan_law_paragraphs(
+    plan_sources: Iterable[str],
+    is_tpa: bool = False,
+    regulator_alt_name: Optional[str] = None,
+    for_person: bool = False,
+) -> list[str]:
+    """The paragraphs of the APPLICABLE APPEAL LAW block, without its header
+    or the closing invitation to cite. Never empty. ``for_person`` gives the
+    public MCP server's version: the same facts and citations, worded for the
+    person rather than as instructions for drafting a letter."""
+    wording = _FOR_PERSON if for_person else _FOR_PROMPT
     programs = classify_plan(
         plan_sources, is_tpa=is_tpa, regulator_alt_name=regulator_alt_name
     )
-    sources = [k for k in programs if k in _PARAGRAPHS]
+    sources = [k for k in programs if k in wording.paragraphs]
     paragraphs: list[str] = []
     conflict: Optional[str] = None
     # The denial letter naming ERISA rights is the strongest signal we have,
@@ -699,23 +882,22 @@ def get_plan_law_context(
     # the conflict is named (review).
     if ERISA_LETTER in programs:
         if any(k in EXCLUSIVE_OF_ERISA for k in sources):
-            conflict = _LETTER_CONFLICT
+            conflict = wording.letter_conflict
         elif ERISA not in sources:
-            paragraphs.append(_ERISA)
+            paragraphs.append(wording.paragraphs[ERISA])
     for k in sources:
-        if _PARAGRAPHS[k] not in paragraphs:
-            paragraphs.append(_PARAGRAPHS[k])
+        if wording.paragraphs[k] not in paragraphs:
+            paragraphs.append(wording.paragraphs[k])
     # A TPA administers self-funded plans, and a self-funded plan can belong
     # to a city as easily as to a company, so the flag alone does not make it
     # ERISA (review). With a plan source, the source decides; without one,
     # the hedged self-funded paragraph.
     if TPA in programs and not paragraphs:
-        paragraphs.append(_TPA_ONLY)
+        paragraphs.append(wording.tpa_only)
     if not paragraphs:
-        paragraphs.append(_UNKNOWN)
+        paragraphs.append(wording.unknown)
     elif len(paragraphs) > 1:
-        paragraphs.append(_TWO_SOURCES)
+        paragraphs.append(wording.two_sources)
     if conflict is not None:
         paragraphs.append(conflict)
-    body = "\n".join(paragraphs)
-    return f"{PLAN_LAW_HEADER}: {body}\n{_INVITATION}"
+    return paragraphs

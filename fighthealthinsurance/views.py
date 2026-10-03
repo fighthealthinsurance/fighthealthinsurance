@@ -1164,7 +1164,10 @@ class CategorizeReview(View):
                 "email": email,
                 "your_state": denial.your_state,
                 "procedure": procedure,
-                "diagnosis": denial.diagnosis,
+                # The condition a treatment guide or an assistant handoff
+                # carried, when the letter gave none (form_valid keeps it).
+                "diagnosis": denial.diagnosis
+                or request.session.get("default_condition", ""),
                 "semi_sekret": denial.semi_sekret,
                 "insurance_company": denial.insurance_company,
                 "plan_id": denial.plan_id,
@@ -2151,6 +2154,18 @@ class InitialProcessView(generic.FormView):
             self.request.session["default_condition"] = default_condition
             self.request.session["microsite_slug"] = microsite_slug
             self.request.session["microsite_title"] = microsite_title
+        elif existing_denial is None:
+            # A new case started without a guide's or an assistant's
+            # treatment must not inherit one from an earlier case in this
+            # session. A resubmission of the same case (the flow's own Back
+            # link to /scan carries no treatment) keeps it.
+            for key in (
+                "default_procedure",
+                "default_condition",
+                "microsite_slug",
+                "microsite_title",
+            ):
+                self.request.session.pop(key, None)
 
         # A resubmission reuses the session's denial, so there can already
         # be history to show.
@@ -2701,7 +2716,10 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 "email": email,
                 "your_state": denial_response.your_state,
                 "procedure": procedure,
-                "diagnosis": denial_response.diagnosis,
+                # The condition a treatment guide or an assistant handoff
+                # carried, when the letter gave none (form_valid keeps it).
+                "diagnosis": denial_response.diagnosis
+                or self.request.session.get("default_condition", ""),
                 "semi_sekret": denial_response.semi_sekret,
                 "insurance_company": denial_response.insurance_company,
                 "plan_id": denial_response.plan_id,

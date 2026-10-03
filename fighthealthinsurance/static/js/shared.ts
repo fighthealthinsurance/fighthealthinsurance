@@ -110,6 +110,23 @@ function setLocalStorageItemWithTTL(key: string, value: string): void {
   window.localStorage.setItem(key, JSON.stringify(item));
 }
 
+// The letter box an AI assistant's handoff filled in (/from-your-assistant,
+// marked data-from-assistant on the textarea). The server deleted its copy as
+// the page opened and the page is the answer to a POST, so a reload would
+// lose the text. It is saved once on load the way typing saves it: only
+// while "Remember what I typed" is on, for the same 24 hours, and a later
+// /scan restores it into the empty box. Returns whether it saved.
+function keepServerFilledText(textarea: HTMLTextAreaElement): boolean {
+  if (textarea.getAttribute("data-from-assistant") !== "true") {
+    return false;
+  }
+  if (textarea.value === "" || !isPersistenceEnabled()) {
+    return false;
+  }
+  setLocalStorageItemWithTTL(textarea.id, textarea.value);
+  return true;
+}
+
 // Get item with TTL check and default value
 function getLocalStorageItemOrDefault(
   key: string,
@@ -181,6 +198,7 @@ export {
   getLocalStorageItemOrDefaultEQ,
   getLocalStorageItemWithTTL,
   setLocalStorageItemWithTTL,
+  keepServerFilledText,
   isPersistenceEnabled,
   setPersistenceEnabled,
   clearFormData,

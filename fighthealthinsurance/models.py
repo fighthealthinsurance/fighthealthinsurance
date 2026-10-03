@@ -5179,3 +5179,24 @@ class SiteBanner(models.Model):
 def _clear_site_banner_cache(sender, **kwargs) -> None:
     """Refresh the cached banner list so admin changes show up right away."""
     SiteBanner.clear_cache()
+
+
+class AssistantHandoff(models.Model):
+    """What an AI assistant sent through the MCP server's prepare_appeal,
+    held for the person to open once at /from-your-assistant
+    (assistant_handoff.py).
+
+    Ciphertext only, locked with a key derived from the link's code. The code
+    itself is never stored, only a digest to find the row by, so the
+    database and its backups cannot open a row on their own. Deleted when it
+    is opened and swept once it expires. No IP, email, session or denial is
+    kept with it; it is not in the admin and no export reads it.
+    """
+
+    lookup = models.CharField(max_length=64, unique=True)
+    sealed = models.BinaryField()
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def __str__(self) -> str:
+        return f"AssistantHandoff({self.pk}, expires {self.expires_at:%Y-%m-%d %H:%M})"

@@ -62,6 +62,12 @@ elif [ -n "$DELIVER_INTAKE_EVENTS" ]; then
   # landed. Independent of the web/Ray processes so a crash there cannot
   # take the relay with it. Inert while the intake flags are off.
   exec python manage.py deliver_intake_events
+elif [ -n "$SWEEP_ASSISTANT_HANDOFFS" ]; then
+  # Assistant handoff sweep (k8s/assistant-handoff-sweep-cronjob.yaml, every
+  # 10 minutes): delete prepare_appeal links past their 2 hours. Runs
+  # whatever the MCP flags say, so turning the feature off still empties
+  # the table.
+  exec python manage.py sweep_assistant_handoffs
 elif [ -n "$TEMPORAL_WORKER" ]; then
   # Long-running Temporal worker hosting SendFaxWorkflow + fax activities.
   # Unlike the Ray launchers above this stays in the foreground; exec so signals

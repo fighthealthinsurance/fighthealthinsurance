@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% comment %}
+Where an AI assistant's prepare_appeal link lands (assistant_handoff_views.py).
+The view renders this with no_third_party_scripts, so base.html leaves out the
+analytics tags, and the script below is the first on the page.
+{% endcomment %}
+{% block title %}
+{% if dead %}This link doesn't open a form any more{% else %}Your appeal form is ready to check{% endif %}
+{% endblock title %}
+
+{% block scriptmagic %}
+<script>
+  // First on the page, before anything else can read the address. The link
+  // carries its code after "#", which browsers never send to a server. Here
+  // it moves into the form below and leaves the address bar and the history
+  // entry at once. Without a code that looks right, the page says the link
+  // doesn't open a form.
+  (function () {
+    var hash = window.location.hash || "";
+    var code = hash.charAt(0) === "#" ? hash.slice(1) : hash;
+    if (hash) {
+      try {
+        window.history.replaceState(null, "", window.location.pathname);
+      } catch (e) {}
+    }
+    var looksRight = /^[A-Za-z0-9_-]{43}$/.test(code);
+    document.addEventListener("DOMContentLoaded", function () {
+      var ready = document.getElementById("handoff-ready");
+      var dead = document.getElementById("handoff-dead");
+      var form = document.getElementById("handoff-form");
+      var token = document.getElementById("handoff-token");
+      var button = document.getElementById("handoff-open");
+      if (!form || !token || !button) {
+        return;
+      }
+      if (!looksRight) {
+        if (ready) {
+          ready.hidden = true;
+        }
+        if (dead) {
+          dead.hidden = false;
+        }
+        return;
+      }
+      token.value = code;
+      button.disabled = false;
+      form.addEventListener("submit", function () {
+        // The link works once, so a second press would only find it used.
+        button.disabled = true;
+      });
+    });
+  })();
+</script>
+{% endblock scriptmagic %}
+
+{% block extra_style %}
+<meta name="robots" content="noindex, nofollow">
+{% endblock extra_style %}
+
+{% block content %}
+<div class="fhi-page fhi-page-centred">
+    {% if not dead %}
+    <div id="handoff-ready">
+        {% include "partials/page_title.html" with title="Your appeal form is ready to check" %}
+        <p>
+            Your AI assistant filled in Fight Health Insurance's appeal form
+            with what you shared with it. Open it to check it, take out
+            personal details and submit it yourself. Nothing has been
+            submitted.
+        </p>
+        <p>
+            This link works once, for 2 hours after your assistant made it, so
+            open it in the browser you'll finish in.
+        </p>
+        <p>
+            <strong>If you didn't ask an AI assistant to do this, close this page.</strong>
+        </p>
+        <form method="post" action="{% url 'assistant_handoff' %}" id="handoff-form">
+            {% csrf_token %}
+            <input type="hidden" name="token" id="handoff-token" value="">
+            <button type="submit" id="handoff-open" class="fhi-button fhi-button-primary fhi-button-large" disabled>Open my appeal form</button>
+        </form>
+        <noscript>
+            <p>
+                This page needs JavaScript to open your form. You can paste
+                your letter on our <a href="{% url 'scan' %}">appeal page</a>
+                instead.
+            </p>
+        </noscript>
+    </div>
+    {% endif %}
+    <div id="handoff-dead"{% if not dead %} hidden{% endif %}>
+        {% include "partials/page_title.html" with title="This link doesn't open a form any more" %}
+        <p>
+            Each link works once, for 2 hours. We delete what your assistant
+            sent as soon as the link is opened, or soon after it runs out. Ask your
+            assistant for a new link, or paste your letter on our
+            <a href="{% url 'scan' %}">appeal page</a>.
+        </p>
+        <p>
+            If you already opened it in this browser, what it filled in may
+            still be on our appeal page.
+        </p>
+    </div>
+</div>
+{% endblock content %}
