@@ -48,7 +48,9 @@ class ConsentCopyTest(TestCase):
         # Generic, with no example companies (Melanie, 2026-10-03); the
         # complete list is the privacy policy's.
         consent = _external_models_consent((TEMPLATES / "scrub.html").read_text())
+        self.assertIn("outside AI services", consent)
         self.assertEqual(_provider_names_in(consent), [])
+        self.assertNotIn("for example", consent.lower())
 
     def test_an_example_company_in_the_consent_fails_the_guard(self):
         consent = (
@@ -77,8 +79,18 @@ CHAT_BACKEND_PROVIDERS = {
 QUALITY_CHECK_PROVIDERS = ("TypeSafe",)
 # Companies the site stopped using; no consent may name them.
 RETIRED_PROVIDERS = ("OctoAI", "TogetherAI")
-# Companies the policy does not list that a consent once gave as an example.
-FORMER_EXAMPLES = ("Google",)
+# Well-known AI companies and products a consent might reach for as an
+# example, beyond the policy's own names ("Google" was one until 2026-10-03).
+FORMER_EXAMPLES = (
+    "Google",
+    "OpenAI",
+    "ChatGPT",
+    "Microsoft",
+    "Azure",
+    "Claude",
+    "Gemini",
+    "Meta",
+)
 CHAT_CONSENT_PAGES = ("chat_consent", "explain_denial")
 # The shared classes the backends are built on. They are concrete classes, so
 # candidate_model_backends lists them, but they register no models of their
@@ -220,7 +232,9 @@ class ChatConsentCopyTest(TestCase):
                 consent = _external_models_consent(
                     self.client.get(reverse(page)).content.decode()
                 )
+                self.assertIn("outside AI services", consent)
                 self.assertEqual(_provider_names_in(consent), [])
+                self.assertNotIn("for example", consent.lower())
 
     def test_rendered_chat_consent_says_what_the_browser_removes(self):
         removed = ", ".join(list(SCRUBBED_IN_THE_BROWSER)[:-1])
