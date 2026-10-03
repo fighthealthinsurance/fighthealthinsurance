@@ -26,7 +26,13 @@ from fighthealthinsurance.models import Denial
 
 JS = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "static" / "js"
 # The scripts the page's bundle runs, and what each reads off the page.
-SCRIPTS = ("scrub.ts", "scrub_client_side_form.ts", "scrub_scrub.ts", "scrub_ocr.ts")
+SCRIPTS = (
+    "scrub.ts",
+    "scrub_client_side_form.ts",
+    "scrub_scrub.ts",
+    "scrub_ocr.ts",
+    "letter_details.ts",
+)
 # Ids those scripts look up that belong to other pages or to markup this page
 # dropped long ago (validateAndStore's form and its email_address field, an
 # old second scrub button). Every lookup of them is guarded and does nothing

@@ -4,6 +4,8 @@ import { type OnDeviceRead, containsNormalised, isAdvancedOCREnabled, recognize 
 
 import { clean } from "./scrub_scrub";
 
+import { fillDetailsFromLetter, watchLetterForDetails } from "./letter_details";
+
 import {
   addText,
   beginOcr,
@@ -190,6 +192,14 @@ const recognizeEvent = async function (evt: Event) {
   if (selection !== latestOcrSelection) {
     untrackChunk(chunk);
     return;
+  }
+
+  // The whole selection is in the box now, so the letter's addressee block
+  // can fill the About you fields still empty, in this browser only
+  // (letter_details.ts). Once, at the end, so every page is read by the
+  // same rule.
+  if (ocrChars > 0) {
+    fillDetailsFromLetter(textarea.value, setLocalStorageItemWithTTL);
   }
 
   // The on-device model, if the person turned it on, reads after the standard
@@ -825,6 +835,14 @@ function setupScrub(): void {
       if (textarea.id === "denial_text") followDenialText(textarea);
     }
   });
+
+  // After both restores, so what this browser kept for About you is in its
+  // fields first and is never written over. A pasted letter, or one the
+  // server put in the box, fills only the fields still empty.
+  const letterBox = document.getElementById("denial_text") as HTMLTextAreaElement | null;
+  if (letterBox != null) {
+    watchLetterForDetails(letterBox, setLocalStorageItemWithTTL);
+  }
 
   const elm = document.getElementById("uploader");
   if (elm != null) {
