@@ -203,6 +203,22 @@ class AuditLoggingEnabledTest(TestCase):
         # So is the username
         self.assertEqual(log.username, "prouser")
 
+    def test_a_deactivated_professional_is_logged_like_any_other_user(self):
+        pro_user = User.objects.create_user(
+            username="formerpro", email="former@example.com", password="testpass123"
+        )
+        ProfessionalUser.objects.create(user=pro_user, active=False)
+        request = self.factory.get(
+            "/", HTTP_USER_AGENT="TestBrowser/2.0", HTTP_X_FORWARDED_FOR="5.6.7.8"
+        )
+        request.user = pro_user
+
+        log = log_event(EventType.LOGIN_SUCCESS, request=request, user=pro_user)
+
+        self.assertFalse(log.is_professional)
+        self.assertEqual(log.username, "")
+        self.assertIsNone(log.ip_address)
+
 
 # Personal details a caller might put in a query string or echo in an error.
 PERSONAL_QUERY = "email=someone%40example.com&denial_id=4242"

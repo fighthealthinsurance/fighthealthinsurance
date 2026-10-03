@@ -171,7 +171,11 @@ def is_professional_user(user) -> bool:
     try:
         from .models import ProfessionalUser
 
-        is_professional = ProfessionalUser.objects.filter(user=user).exists()
+        # An account staff have deactivated is treated like any other user,
+        # so its username and address are not kept either.
+        is_professional = ProfessionalUser.objects.filter(
+            user=user, active=True
+        ).exists()
     except Exception:
         is_professional = False
 
