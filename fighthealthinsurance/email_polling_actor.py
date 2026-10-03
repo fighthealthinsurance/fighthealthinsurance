@@ -187,8 +187,8 @@ class EmailPollingActor:
 
             store = import_module(settings.SESSION_ENGINE).SessionStore
             # The database engines keep sessions in a table, so the rows about
-            # to go can be counted for the log line. Other engines expire
-            # sessions on their own and have nothing to count.
+            # to go can be counted for the log line. Other engines keep no
+            # table to count.
             expired_count: Optional[int] = None
             if hasattr(store, "get_model_class"):
                 expired_count = await (

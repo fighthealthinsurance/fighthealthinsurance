@@ -7,8 +7,8 @@ loop's first pass, then once every 24 hours, and a failure in it leaves the
 expired email clearing that shares the loop untouched.
 
 The actor is built from its real class with Ray, the one second start-up
-wait and the second Django boot patched out. The loop runs one pass at a
-time: the wait at the end of a pass stops it.
+wait and the second Django boot patched out. Each test runs the loop for a
+set number of passes: the wait at the end of the last one stops it.
 """
 
 import datetime
@@ -43,16 +43,21 @@ def actor():
     return built
 
 
-def run_one_pass(actor):
-    """Run the loop once.
+def run_passes(actor, passes=1):
+    """Run the loop the given number of times.
 
     The poll interval at the end of a clean pass is 8 to 15 seconds, and a
-    pass that raised backs off for a minute or more, so either wait stops it.
+    pass that raised backs off for a minute or more, so either wait ends a
+    pass. The loop stops at the end of the last one.
     """
+    ended = 0
 
     async def fake_sleep(seconds):
+        nonlocal ended
         if seconds >= 8:
-            actor.running = False
+            ended += 1
+            if ended >= passes:
+                actor.running = False
 
     with patch(
         "fighthealthinsurance.email_polling_actor.asyncio",
@@ -99,7 +104,14 @@ class TestTheDailyLoop:
     def test_the_first_pass_clears_expired_sessions(self, actor):
         actor._clear_expired_sessions = AsyncMock()
 
-        run_one_pass(actor)
+        run_passes(actor)
+
+        actor._clear_expired_sessions.assert_awaited_once()
+
+    def test_a_second_pass_on_the_same_day_does_not_purge_again(self, actor):
+        actor._clear_expired_sessions = AsyncMock()
+
+        run_passes(actor, passes=2)
 
         actor._clear_expired_sessions.assert_awaited_once()
 
@@ -107,7 +119,7 @@ class TestTheDailyLoop:
         actor._clear_expired_sessions = AsyncMock()
         actor.last_session_clear_check = timezone.now() - datetime.timedelta(hours=23)
 
-        run_one_pass(actor)
+        run_passes(actor)
 
         actor._clear_expired_sessions.assert_not_awaited()
 
@@ -115,7 +127,7 @@ class TestTheDailyLoop:
         actor._clear_expired_sessions = AsyncMock()
         actor.last_session_clear_check = timezone.now() - datetime.timedelta(hours=25)
 
-        run_one_pass(actor)
+        run_passes(actor)
 
         actor._clear_expired_sessions.assert_awaited_once()
 
@@ -129,6 +141,6 @@ class TestTheDailyLoop:
             "aclear_expired",
             AsyncMock(side_effect=RuntimeError("session store unavailable")),
         ):
-            run_one_pass(actor)
+            run_passes(actor)
 
         actor._clear_expired_emails.assert_awaited_once()
