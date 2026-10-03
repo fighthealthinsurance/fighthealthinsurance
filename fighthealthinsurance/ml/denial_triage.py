@@ -350,8 +350,12 @@ _GREETING = re.compile(
     r"^[ \t]*(?:dear|to whom it may concern)\b", re.IGNORECASE | re.MULTILINE
 )
 # A line that labels the value under it, as a table reads once it is
-# flattened: "Date of service:" or "Date of birth" over its date.
-_LABEL_LINE = re.compile(r":$|\b(?:date|dos|dob|birth)\b", re.IGNORECASE)
+# flattened: "Date of service:", "Dates of Service" or "Date of birth" over
+# its date.
+_LABEL_LINE = re.compile(r":$|\b(?:dates?|dos|dob|birth)\b", re.IGNORECASE)
+# A date further back than this is more likely a birth date or an old date of
+# service than the date of a letter someone is appealing now.
+_OLDEST_LETTER = datetime.timedelta(days=3 * 365)
 
 
 def letter_date(
@@ -366,14 +370,15 @@ def letter_date(
     * after a label such as "Date:", "Letter date:" or "Date of this
       notice:", with nothing else before it on the line, or on the line under
       such a label; or
-    * alone on its line above the greeting ("Dear ..."), where a letter puts
-      its date, unless the line above it labels it as something else ("Date
-      of service:" over its date).
+    * alone in its own block above the greeting ("Dear ..."), where a letter
+      puts its date: a blank line (or the top of the letter) directly above
+      it, and no label for something else ("Date of service:") heading it or
+      the list of dates it sits in.
 
     Anything else is a guess and gives None: no date marked that way, two
-    marked dates that differ, or a marked date after ``today``. The review
-    page asks the person to check the value, and the appeal deadline is
-    counted from it once they submit.
+    marked dates that differ, or a marked date after ``today`` or more than
+    about three years before it. The review page asks the person to check
+    the value, and the appeal deadline is counted from it once they submit.
     """
     text = text or ""
     greeting = _GREETING.search(text)
@@ -392,18 +397,34 @@ def letter_date(
             continue
         if text[match.end() : None if line_end == -1 else line_end].strip():
             continue
-        above = text[:line_start].rstrip().rsplit("\n", 1)[-1].strip()
+        lines_above = [line.strip() for line in text[:line_start].split("\n")[:-1]]
+        # What heads this date: the nearest line above that is neither blank
+        # nor another lone date, so every date in a list under "Date of
+        # service:" is read as a date of service.
+        heading = next(
+            (
+                line
+                for line in reversed(lines_above)
+                if line and not _ABSOLUTE.fullmatch(line)
+            ),
+            "",
+        )
         # A line carrying its own date is a value, not a label for this one.
-        if _LABEL_LINE.search(above) and not _ABSOLUTE.search(above):
-            if _LETTER_DATE_LABEL.fullmatch(above):
+        if _LABEL_LINE.search(heading) and not _ABSOLUTE.search(heading):
+            if _LETTER_DATE_LABEL.fullmatch(heading):
                 marked.add(resolved)
+            continue
+        if lines_above and lines_above[-1]:
+            # Something sits right on top of it (a heading such as "Service
+            # From", another date, an address): part of a table or a block,
+            # not a date standing on its own.
             continue
         if match.start() < greeting_at:
             marked.add(resolved)
     if len(marked) != 1:
         return None
     (only,) = marked
-    return only if only <= today else None
+    return only if today - _OLDEST_LETTER <= only <= today else None
 
 
 def build_questions(

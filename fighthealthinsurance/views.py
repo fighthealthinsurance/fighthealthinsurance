@@ -1124,19 +1124,23 @@ class RecommendAppeal(View):
         return render(request, "")
 
 
-def review_form(denial, email: str, procedure) -> core_forms.PostInferedForm:
+def review_form(
+    denial, email: str, procedure, *, date_from_letter: bool
+) -> core_forms.PostInferedForm:
     """The review page's form, starting from what the denial row holds.
 
     Every field the row has a value for starts with it, so the person checks
-    what we know rather than typing it again. The denial date is also read
-    from the letter, on this server and with nothing sent anywhere, when the
-    row has none and the letter states it plainly (see
-    denial_triage.letter_date). A field filled from the letter says so under
-    it.
+    what we know rather than typing it again. On the way forward from reading
+    the letter (``date_from_letter``), the denial date is also read from the
+    letter, on this server and with nothing sent anywhere, when the row has
+    none and the letter states it plainly (see denial_triage.letter_date). A
+    field filled from the letter says so under it. The way back from the next
+    step comes after the person has answered this page, so it shows the row
+    as they left it: a date they cleared stays blank.
     """
     from_letter = []
     denial_date = denial.denial_date
-    if denial_date is None:
+    if denial_date is None and date_from_letter:
         denial_date = denial_triage.letter_date(
             denial.denial_text, timezone.localdate()
         )
@@ -1213,7 +1217,7 @@ class CategorizeReview(View):
             procedure = default_procedure
             used_default_procedure = True
 
-        form = review_form(denial, email, procedure)
+        form = review_form(denial, email, procedure, date_from_letter=False)
 
         context = {
             "post_infered_form": form,
@@ -2716,7 +2720,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             procedure = default_procedure
             used_default_procedure = True
 
-        new_form = review_form(denial, email, procedure)
+        new_form = review_form(denial, email, procedure, date_from_letter=True)
 
         context = {
             "post_infered_form": new_form,

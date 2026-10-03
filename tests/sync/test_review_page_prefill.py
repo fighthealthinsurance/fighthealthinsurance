@@ -3,9 +3,10 @@
 Details (categorize.html) is the step where the person checks and corrects
 what we gathered. Every field the denial row holds a value for starts with
 that value, whichever way the person arrives: from reading the letter, or
-back from the questions step. The denial date is also read from the letter,
-on this server, when the row has none and the letter states it plainly, and a
-value read from the letter says so under its field.
+back from the questions step. On the way forward, the denial date is also
+read from the letter, on this server, when the row has none and the letter
+states it plainly, and a value read from the letter says so under its field.
+The way back shows the row as the person left it.
 """
 
 import datetime
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from django.urls import reverse
+from django.utils import timezone
 
 from fighthealthinsurance import models
 from fighthealthinsurance.ml import denial_triage, ml_models, typesafe
@@ -20,16 +22,29 @@ from tests.sync.test_back_url_token import EMAIL, BackLinkReferenceTestBase
 
 HINT = "From your letter. Please check."
 ROW_DATE = datetime.date(2024, 3, 1)
-# The date stands alone above the greeting, where a letter puts its own.
-CLEAR_LETTER = (
-    "Example Health Plan\n"
-    "PO Box 100\n"
-    "\n"
-    "March 4, 2024\n"
-    "\n"
-    "Dear Member,\n"
-    "We denied the MRI performed on February 20, 2024.\n"
-)
+
+
+def letter_day():
+    """A recent date for the letter, since an old one is not taken as its
+    date."""
+    return timezone.localdate() - datetime.timedelta(days=30)
+
+
+def clear_letter():
+    """A letter whose date stands alone above the greeting, where a letter
+    puts its own."""
+    day = letter_day()
+    return (
+        "Example Health Plan\n"
+        "PO Box 100\n"
+        "\n"
+        f"{day:%B} {day.day}, {day.year}\n"
+        "\n"
+        "Dear Member,\n"
+        "We denied the MRI performed on February 20, 2024.\n"
+    )
+
+
 # Two dates, neither marked as the letter's own.
 AMBIGUOUS_LETTER = (
     "Dear Member,\n"
@@ -61,7 +76,7 @@ class ReviewPageTestBase(BackLinkReferenceTestBase):
         self.denial.insurance_company_obj = self.insurer
         self.denial.insurance_plan_obj = self.plan
         self.denial.denial_type_text = "Out of network"
-        self.denial.denial_text = CLEAR_LETTER
+        self.denial.denial_text = clear_letter()
         self.denial.save()
         self.denial.plan_source.set([self.plan_source])
 
@@ -118,24 +133,28 @@ class ReviewPageStartsFromTheRowTest(ReviewPageTestBase):
                 self.assertEqual(shown(page, name), value)
 
     def test_a_stored_date_is_kept_over_the_one_in_the_letter(self):
-        self.assertEqual(shown(self.back_to_review(), "denial_date"), "2024-03-01")
+        self.assertEqual(shown(self.on_to_review(), "denial_date"), "2024-03-01")
 
 
 class ReviewPageReadsTheLetterDateTest(ReviewPageTestBase):
     def test_a_letter_with_a_clear_date_fills_an_empty_date(self):
-        self.without_a_stored_date(CLEAR_LETTER)
-        self.assertEqual(shown(self.back_to_review(), "denial_date"), "2024-03-04")
+        self.without_a_stored_date(clear_letter())
+        self.assertEqual(
+            shown(self.on_to_review(), "denial_date"), letter_day().isoformat()
+        )
 
-    def test_the_letter_date_is_filled_after_the_letter_is_read_too(self):
-        self.without_a_stored_date(CLEAR_LETTER)
-        self.assertEqual(shown(self.on_to_review(), "denial_date"), "2024-03-04")
+    def test_a_date_the_person_cleared_stays_blank_when_they_come_back(self):
+        # Continuing with the box cleared stores no date, so this is the row
+        # the way back finds after the person cleared the date we read.
+        self.without_a_stored_date(clear_letter())
+        self.assertIsNone(shown(self.back_to_review(), "denial_date"))
 
     def test_a_letter_with_an_ambiguous_date_leaves_the_date_blank(self):
         self.without_a_stored_date(AMBIGUOUS_LETTER)
-        self.assertIsNone(shown(self.back_to_review(), "denial_date"))
+        self.assertIsNone(shown(self.on_to_review(), "denial_date"))
 
     def test_reading_the_date_asks_no_outside_model(self):
-        self.without_a_stored_date(CLEAR_LETTER)
+        self.without_a_stored_date(clear_letter())
         refuse = AssertionError("the review page asked a model")
         with (
             patch.object(typesafe, "ask", side_effect=refuse) as ask,
@@ -150,8 +169,8 @@ class ReviewPageReadsTheLetterDateTest(ReviewPageTestBase):
                 ml_models.RemoteOpenLike, "_infer", side_effect=refuse
             ) as open_infer,
         ):
-            date = shown(self.back_to_review(), "denial_date")
-        self.assertEqual(date, "2024-03-04")
+            date = shown(self.on_to_review(), "denial_date")
+        self.assertEqual(date, letter_day().isoformat())
         for mock in (ask, triage, infer, infer_no_context, open_infer):
             with self.subTest(called=mock):
                 mock.assert_not_called()
@@ -159,19 +178,19 @@ class ReviewPageReadsTheLetterDateTest(ReviewPageTestBase):
 
 class FromYourLetterHintTest(ReviewPageTestBase):
     def test_the_hint_appears_only_under_the_field_filled_from_the_letter(self):
-        self.without_a_stored_date(CLEAR_LETTER)
-        page = self.back_to_review()
+        self.without_a_stored_date(clear_letter())
+        page = self.on_to_review()
         rows = [row for row in page.find_all("tr") if HINT in row.get_text(" ")]
         self.assertEqual(
             [row.find(attrs={"name": True})["name"] for row in rows], ["denial_date"]
         )
 
     def test_the_hint_is_read_out_with_its_field(self):
-        self.without_a_stored_date(CLEAR_LETTER)
-        page = self.back_to_review()
+        self.without_a_stored_date(clear_letter())
+        page = self.on_to_review()
         field = page.find(attrs={"name": "denial_date"})
         described_by = page.find(id=field["aria-describedby"])
         self.assertIn(HINT, described_by.get_text(" "))
 
     def test_no_hint_when_every_value_came_from_the_row(self):
-        self.assertNotIn(HINT, self.back_to_review().get_text(" "))
+        self.assertNotIn(HINT, self.on_to_review().get_text(" "))

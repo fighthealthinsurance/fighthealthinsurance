@@ -171,6 +171,17 @@ class TestLetterDate:
             "Service date: August 14, 2026\nDear Member,",
             "Date of service\nAugust 14, 2026\nDear Member,",
             "DOB:\n01/02/1980\nDear Member,",
+            "Example Plan\nDates of Service\n\n08/14/2026\n\nDear Member,",
+            "Example Plan\nDate of service:\n\n08/14/2026\n\n08/15/2026\n\nDear Member,",
+        ):
+            assert dt.letter_date(text, TODAY) is None, text
+
+    def test_a_date_with_a_line_right_on_top_of_it_gives_nothing(self):
+        for text in (
+            "Example Plan\nDates of Service\n08/14/2026\nDear Member,",
+            "Example Plan\nDate of service:\n08/14/2026\n08/15/2026\n\nDear Member,",
+            "Example Plan\nService From\n08/14/2026\nDear Member,",
+            "Example Plan\nReceived\n08/14/2026\nDear Member,",
         ):
             assert dt.letter_date(text, TODAY) is None, text
 
@@ -190,6 +201,13 @@ class TestLetterDate:
 
     def test_a_marked_date_after_today_gives_nothing(self):
         assert dt.letter_date("Date: October 4, 2026", TODAY) is None
+
+    def test_a_marked_date_more_than_three_years_back_gives_nothing(self):
+        assert dt.letter_date("Date: October 2, 2023", TODAY) is None
+        assert dt.letter_date("Jane Doe\n\n01/02/1980\n\nDear Jane,", TODAY) is None
+
+    def test_a_marked_date_within_three_years_is_kept(self):
+        assert dt.letter_date("Date: October 4, 2023", TODAY) == datetime.date(2023, 10, 4)
 
     def test_a_two_digit_year_gives_nothing(self):
         assert dt.letter_date("Date: 09/02/26\nDear Member,", TODAY) is None
