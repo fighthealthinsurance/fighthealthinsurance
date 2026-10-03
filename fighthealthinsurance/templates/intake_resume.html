@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}
+Continue your appeal
+{% endblock title %}
+{% block content %}
+{% comment %}
+Where the "you left before finishing" email lands (intake_resume_views). It
+shows nothing about any case: until the email address matches, the page
+cannot tell who is looking at it.
+{% endcomment %}
+<section id="intake-resume">
+    <div class="fhi-page fhi-page-centred">
+        {% if link_works %}
+        {% include "partials/page_title.html" with title="Continue your appeal" %}
+        <p>To keep your case private, type the email address you used when you started. Then we'll take you back to where you left off.</p>
+        {% if wrong_email %}
+        <div class="fhi-notice fhi-notice-danger" role="alert" id="resume-wrong-email">
+            That email address doesn't match this link. Check it for a typo and try again. After {{ tries }} wrong tries the link stops working.
+        </div>
+        {% endif %}
+        <form action="{% url 'intake_resume' %}" method="post" class="fhi-stack">
+            {% csrf_token %}
+            <div class="fhi-field-group">
+                <label for="{{ form.email.id_for_label }}" class="fhi-label">{{ form.email.label }}</label>
+                {{ form.email }}
+                {{ form.email.errors }}
+            </div>
+            <button type="submit" id="resume-submit" class="fhi-button fhi-button-primary fhi-button-large">Continue my appeal</button>
+        </form>
+        {% else %}
+        {% include "partials/page_title.html" with title="This link no longer works" %}
+        <p>The link in our reminder email works for {{ link_days }} days. It stops working once your appeal moves on to a later step or is finished, and if you ask us to delete your data.</p>
+        <p>If you're on the phone or computer you started on, your appeal may still be open there.</p>
+        <p><strong>Need help?</strong> Email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.</p>
+        <p><a href="{% url 'scan' %}">Start a new appeal</a></p>
+        {% endif %}
+    </div>
+</section>
+
+{% endblock content %}

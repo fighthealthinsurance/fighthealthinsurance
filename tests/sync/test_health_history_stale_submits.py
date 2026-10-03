@@ -22,6 +22,7 @@ from django.urls import reverse
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.models import Denial
+from tests.back_links import back_link
 
 
 class StaleHealthHistorySubmitTest(TestCase):
@@ -186,7 +187,7 @@ class StaleSubmitThroughThePagesTest(TestCase):
         return Denial.objects.get(denial_id=self.denial.denial_id).health_history
 
     def render_by_back_navigation(self):
-        page = self.client.get(reverse("hh"), self.denial_ref())
+        page = self.client.get(back_link(self.client, "hh", self.denial, self.EMAIL))
         self.assertEqual(page.status_code, 200)
         return page.content.decode()
 
@@ -213,6 +214,7 @@ class StaleSubmitThroughThePagesTest(TestCase):
             "pii": "on",
             "tos": "on",
             "privacy": "on",
+            "personalonly": "on",
         }
         first = self.client.post(reverse("process"), upload, follow=True)
         self.assertEqual(first.status_code, 200)

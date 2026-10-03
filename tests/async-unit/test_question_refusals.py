@@ -267,6 +267,26 @@ async def test_a_cached_refusal_is_not_served_and_a_clean_set_replaces_it():
 
 @pytest.mark.django_db
 @pytest.mark.asyncio
+async def test_a_cached_set_with_placeholder_hints_is_served_without_them():
+    # Real questions, but every hint the template's "[Answer if available]",
+    # cached before hints were checked.
+    procedure, diagnosis = _pair("knee brace", "torn acl")
+    await GenericQuestionGeneration.objects.acreate(
+        procedure=procedure,
+        diagnosis=diagnosis,
+        generated_questions=[[q, "[Answer if available]"] for q, _ in GOOD],
+    )
+    model, patches = _backends([])
+    with patches[0], patches[1]:
+        result = await MLAppealQuestionsHelper.generate_generic_questions(
+            procedure=procedure, diagnosis=diagnosis
+        )
+    assert result == [[q, ""] for q, _ in GOOD]
+    model.get_appeal_questions.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.asyncio
 async def test_a_set_with_junk_in_it_is_not_cached():
     procedure, diagnosis = _pair("knee mri", "knee pain")
     _, patches = _backends(GOOD + [("[Question]?", "")])

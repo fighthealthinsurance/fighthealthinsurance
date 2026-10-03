@@ -185,6 +185,13 @@ class Base(Configuration):
     TEMPORAL_INTAKE_JOURNEY_ENABLED = (
         os.getenv("TEMPORAL_INTAKE_JOURNEY_ENABLED", "false").lower() == "true"
     )
+    # When an intake journey closes unfinished (3 days, no completed form),
+    # also clear the case's health history and the caches made from it. Off
+    # by default: closing then keeps the case the way every unfinished case
+    # is kept. See intake_journey_core.close_incomplete_journey.
+    INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY = (
+        os.getenv("INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY", "false").lower() == "true"
+    )
     # The chat routing policy Schedule (ChatRoutingPolicyWorkflow, every ten
     # minutes) is gated on its own, independent of the journey flags. It
     # only takes effect when TEMPORAL_ENABLED is also true. With it on, the

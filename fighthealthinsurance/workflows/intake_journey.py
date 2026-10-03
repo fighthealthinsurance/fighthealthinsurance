@@ -132,8 +132,9 @@ class IntakeJourneyWorkflow:
 
         if not self._completed:
             # CLOSE_AFTER without completion: close and hand the uuid to the
-            # incomplete-form hygiene hook (a stub in v1; the deletion
-            # policy is its own follow-up).
+            # incomplete-form hygiene hook, which deletes the case's resume
+            # link and applies what a closed case keeps
+            # (intake_journey_core.close_incomplete_journey).
             await workflow.execute_activity(
                 intake_activities.close_incomplete_journey,
                 args=[journey.hashed_email, journey.denial_uuid],

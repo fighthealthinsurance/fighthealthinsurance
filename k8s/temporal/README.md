@@ -223,12 +223,14 @@ back to plain TLS.
    targets (operator `podMonitorSelector` caveat), kube-state-metrics is
    scraped (`kube_deployment_status_replicas_available`), the SDK series
    carry `namespace="default"` (the Temporal namespace, not the Kubernetes
-   one), and every SERVER-side metric name in the `fhi-temporal-server-side`
-   group exists on the deployed Temporal server version (`approximate_backlog_count`,
-   `task_schedule_to_start_latency`, `activity_timeout`) with the units the
-   thresholds assume. Worker-side series vanish when the last worker dies,
-   so only the worker-loss and server-side rules can page on "zero workers";
-   promote their severity once verified.
+   one; the operator's own `namespace` label can push it to
+   `exported_namespace`, as it does for the server's series, and then the
+   worker-side rules need the same relabel), and the server's own series arrive through the ServiceMonitors
+   with a `temporal_namespace` label (see "Server metrics" below). The
+   server-side metric names and units are checked against the server
+   source for the deployed version. Worker-side series vanish when the
+   last worker dies, so only the worker-loss and server-side rules can page
+   on "zero workers"; promote their severity once verified.
 
 ## Applying a values.yaml change
 
@@ -254,6 +256,68 @@ kubectl -n totallylegitco exec -i deploy/temporal-admintools -- \
   temporal operator cluster health --address temporal-frontend:7233
 ```
 
+## Server metrics
+
+The Temporal server serves Prometheus metrics on port 9090 of every server
+pod. That endpoint is the chart's default, and `values.yaml` writes it out
+(`server.config.metrics`) so a chart bump cannot move it. The cluster's
+Prometheus scrapes it through the chart's ServiceMonitors, which
+`values.yaml` turns on (`server.metrics.serviceMonitor`), one each for the
+frontend, history, matching and worker services. The
+`fhi-temporal-server-side` group in `worker-alerts.yaml` reads these
+series, and it is the group that can still fire when every worker is gone.
+
+Two things in `values.yaml` the rules depend on:
+
+- The Prometheus operator labels every series with the Kubernetes
+  `namespace`, so the server's own `namespace` label (the Temporal
+  namespace) arrives as `exported_namespace`. A `metricRelabelings` entry
+  copies it to `temporal_namespace`, and the server-side rules match
+  `temporal_namespace="default"`. A series scraped some other way (for
+  example through the chart's `prometheus.io` annotations, still on by
+  default) never gets that label, so the rules never count a copy twice.
+- No metrics `framework` is set, so the server uses its tally reporter:
+  counters keep their plain names (`no_poller_tasks`, not
+  `no_poller_tasks_total`) and timers are histograms in seconds.
+
+The names, labels and units were checked against the source of
+`temporalio/temporal` v1.31.2, the server image chart 1.6.0 ships. If the
+chart pin moves, check them again.
+
+### Applying it
+
+Check the cluster has the operator's ServiceMonitor CRD first. Without it
+`helm upgrade` fails on the new objects; add
+`--set server.metrics.serviceMonitor.enabled=false` to skip them.
+
+```sh
+kubectl get crd servicemonitors.monitoring.coreos.com
+```
+
+Then the usual `helm upgrade` (see "Applying a values.yaml change"). Rendered
+with `helm template` against chart 1.6.0, the only difference this change
+makes is the four new ServiceMonitors: the server ConfigMap and the
+Deployments render identically, so no Temporal pod restarts.
+
+Afterwards:
+
+```sh
+# The four ServiceMonitors exist and carry app: fight-health-insurance. If
+# the operator's serviceMonitorSelector wants a different label, add it under
+# server.metrics.serviceMonitor.additionalLabels and upgrade again.
+kubectl -n totallylegitco get servicemonitor -l app.kubernetes.io/instance=temporal
+# The names the rules use are on the endpoint. The backlog gauges appear
+# once a task queue has been used; no_poller_tasks appears only with its
+# first count, so a healthy cluster may not show it at all.
+kubectl -n totallylegitco port-forward deploy/temporal-matching 9090:9090 &
+curl -s localhost:9090/metrics | grep -E '^(no_poller_tasks|approximate_backlog_(count|age_seconds))'
+kubectl -n totallylegitco port-forward deploy/temporal-history 9091:9090 &
+curl -s localhost:9091/metrics | grep -E '^(activity_task_timeout|task_schedule_to_start_latency_bucket)'
+```
+
+In Prometheus, `approximate_backlog_count{temporal_namespace="default"}`
+should return series. When it does, the server-side rules are live.
+
 ## Web UI
 
 The Temporal Web UI (`temporal-web`, a ClusterIP Service) has no auth of its
@@ -278,12 +342,13 @@ required.
 ## Files
 
 - `values.yaml` — Helm values (validated against chart `temporal-1.6.0`, which
-  the install command pins): Postgres-backed, no Cassandra/Elasticsearch.
+  the install command pins): Postgres-backed, no Cassandra/Elasticsearch, with
+  the server's metrics endpoint and its ServiceMonitors (see "Server metrics").
 - `worker.yaml` — the `fhi-fax-worker` Deployment.
 - `appeal-worker.yaml` — the `fhi-appeal-worker` Deployment (dark-safe; idles until the journey flags flip).
 - `worker-pdb.yaml` — PodDisruptionBudgets (minAvailable: 1) for both worker Deployments.
 - `worker-podmonitor.yaml` — scrapes the SDK's Prometheus endpoint (`TEMPORAL_METRICS_BIND`, port 9464) on both workers.
-- `worker-alerts.yaml` — PrometheusRule: schedule-to-start latency, slot exhaustion, activity failures, frontend RPC failures.
+- `worker-alerts.yaml`: a PrometheusRule for worker loss (scrape targets, kube-state), worker-side SDK metrics (schedule-to-start latency, slot exhaustion, activity failures, frontend RPC failures), and server-side metrics (no poller, work waiting, backlog, pickup latency, activity attempt timeouts).
 
 ## What runs here today vs. next
 

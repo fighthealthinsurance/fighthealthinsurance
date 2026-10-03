@@ -419,6 +419,7 @@ class TestNICEContextFormatting:
         tools = NICETools(api_key="key")
         denial = MagicMock()
         denial.denial_id = 42
+        denial.denial_text = "We denied the knee replacement."
         denial.nice_context = ""
         denial.procedure = "knee replacement"
         denial.diagnosis = "osteoarthritis"
@@ -436,7 +437,10 @@ class TestNICEContextFormatting:
             result = await tools.find_context_for_denial(denial)
 
         assert result == expected
-        mock_denial_objs.filter.assert_called_once_with(denial_id=42)
+        # Only while the row still holds the letter it was built for.
+        mock_denial_objs.filter.assert_called_once_with(
+            denial_id=42, denial_text="We denied the knee replacement."
+        )
         qs.aupdate.assert_awaited_once_with(nice_context=expected)
 
 
