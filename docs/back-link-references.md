@@ -1,12 +1,11 @@
 # Back links carry a reference, not the case credential
 
-`build_back_url` used to urlencode `(denial_id, email, semi_sekret)` into the
-query string of every back link from step 3 onward. That triple is the whole
-credential on a case, so from step 3 to step 8 the address bar held a working
-key to somebody's medical denial. It went into browser history on a shared
-device, into reverse proxy access logs, and into any screenshot or pasted link.
+The triple `(denial_id, email, semi_sekret)` is the whole credential on a
+case, so it never goes in a link's query string, where it would reach browser
+history on a shared device, reverse proxy access logs, and any screenshot or
+pasted link.
 
-A back link now carries one parameter, `ref`. Its value is the case id and
+A back link carries one parameter, `ref`. Its value is the case id and
 the case's permanent secret, encrypted (Fernet) with a key derived from the
 site secret and a random secret kept in that browser's session, so it decrypts
 only there; it carries its own minting time, and stops resolving twelve hours
@@ -16,6 +15,12 @@ two requests minting at once have nothing to lose to each other's save. The
 code is in `fighthealthinsurance/views.py`: `issue_denial_ref_token`,
 `resolve_denial_ref_token`, `remember_denial_ref_email`,
 `denial_ref_from_query` and `unresolved_denial_ref_response`.
+
+`ref` is the only way a GET to a page in the appeal flow reaches a case. A
+query that names the case directly, with `denial_id`, `email` and
+`semi_sekret`, opens nothing on any of those pages, and neither does a bare
+`denial_id`. The forms in the flow post the triple in hidden fields, which
+keeps it in request bodies and out of the address bar.
 
 This file exists so the pull request body and whoever signs off can quote the
 two things that are easy to state wrongly: how long the copy of the triple
@@ -96,14 +101,14 @@ list below, not in a sign off sentence that says "twelve hours".
 
 ## What patients lose, and what they are told
 
-The old triple worked in any browser. Somebody could start an appeal on their
-phone and open the same link on a laptop, or text the link to themselves. A
-reference that resolves only in its own session ends that, which is the entire
-point: a link sitting in a history is no longer a key. It is still a behaviour
-change, and it lands on a person who is mid appeal.
+A reference resolves only in its own session, so a back link does not carry
+an appeal to another browser or device. Somebody who starts on their phone
+cannot open the same link on a laptop, or text it to themselves. That is the
+point: a link sitting in a history opens nothing. It still lands on a person
+who is mid appeal, so the failure has to explain itself.
 
-A reference from another session, an expired one, a tampered one, and an old
-style link once the transition window closes all redirect to the upload page
+A reference from another session, an expired one, a tampered one, and a link
+that names the case in its query string all redirect to the upload page
 with a `resume` marker, and `scrub.html` explains what happened: a back link
 works only in the browser it was made in, it goes stale about twelve hours
 after last use, the appeal is still there, reopening the link in the original
@@ -135,27 +140,19 @@ session has none yet.
 
 ## Owner decisions this rests on
 
-Melanie settled two of these on 2026-09-13 and they are not reviewer calls to
-reopen:
+Melanie settled this on 2026-09-13 and it is not a reviewer call to reopen:
 
 - The window covers one sitting plus a same day return. Twelve hours from
   minting is what that came to, with every page render minting the links it
   shows afresh, so a person who keeps working keeps holding fresh links. An
   absolute cap measured from the first link was rejected, because it puts a
   cliff in the middle of an active appeal and buys nothing for retention.
-- Old style links are accepted for one more release, so the ones already in
-  people's browser history keep working. That is item 2 below.
 
 ## Follow up list
 
 1. A `clearsessions` job, or an equivalent purge. Until it exists the claim
    above holds and the retention sentence stays as written.
-2. Set `LEGACY_DENIAL_REF_QUERY = False` in the next release. While it is True
-   an old style link is still a working credential, which is the exposure this
-   change exists to end. Links this code builds never contain the triple
-   whatever the setting says, so the legacy path cannot be used to lift a
-   secret out of a new style link.
-3. `SESSION_COOKIE_HTTPONLY = False` and `SESSION_COOKIE_SAMESITE = "None"`
+2. `SESSION_COOKIE_HTTPONLY = False` and `SESSION_COOKIE_SAMESITE = "None"`
    are set on `Base` and inherited by `Prod` (`settings.py:285-286`). Both
    pre-date this change and neither is touched here, but the reference scheme
    now leans on that cookie, so they are worth a second look.

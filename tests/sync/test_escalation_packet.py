@@ -24,6 +24,7 @@ from fighthealthinsurance.generate_regulator_letter import (
 )
 from fighthealthinsurance.models import Denial, RegulatorEscalation
 from fighthealthinsurance.state_help import StateHelp
+from tests.back_links import back_link
 
 CALIFORNIA_DATA = {
     "slug": "california",
@@ -329,14 +330,8 @@ class EscalationPacketViewTest(TestCase):
         self.assertEqual(response.status_code, 302)
 
     def test_escalation_packet_get_renders_when_valid(self):
-        url = reverse("escalation_packet")
         response = self.client.get(
-            url,
-            {
-                "denial_id": self.denial.denial_id,
-                "email": self.email,
-                "semi_sekret": self.denial.semi_sekret,
-            },
+            back_link(self.client, "escalation_packet", self.denial, self.email)
         )
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "escalation_packet.html")
@@ -349,12 +344,7 @@ class EscalationPacketViewTest(TestCase):
         number so users can call before (or instead of) mailing."""
         mock_state.return_value = StateHelp(CALIFORNIA_DATA)
         response = self.client.get(
-            reverse("escalation_packet"),
-            {
-                "denial_id": self.denial.denial_id,
-                "email": self.email,
-                "semi_sekret": self.denial.semi_sekret,
-            },
+            back_link(self.client, "escalation_packet", self.denial, self.email)
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "800-927-4357")
@@ -365,12 +355,7 @@ class EscalationPacketViewTest(TestCase):
         point is the final review page, which many users never reach.
         """
         response = self.client.get(
-            reverse("generate_appeal"),
-            {
-                "denial_id": self.denial.denial_id,
-                "email": self.email,
-                "semi_sekret": self.denial.semi_sekret,
-            },
+            back_link(self.client, "generate_appeal", self.denial, self.email)
         )
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "appeals.html")
