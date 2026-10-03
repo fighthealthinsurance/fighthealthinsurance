@@ -52,6 +52,11 @@ BOOTSTRAP_SCRIPT = re.compile(
     r"""<script\b[^>]*\bsrc\s*=\s*["'][^"']*bootstrap[^"'/]*\.js""", re.I
 )
 
+#: A <link> to any of Bootstrap's stylesheets, whether a plain path, a
+#: {% static %} tag or a CDN URL: bootstrap.css, bootstrap.min.css, and the
+#: grid, reboot and right-to-left builds.
+BOOTSTRAP_STYLESHEET = re.compile(r"<link\b[^>]*\bbootstrap[\w.-]*\.css\b", re.I)
+
 #: Bootstrap's JavaScript called by name: its constructors, or the jQuery
 #: methods it adds when it finds jQuery on the page. ".alert(" and ".tab("
 #: are left out, because window.alert and many a tab widget share them.
@@ -184,25 +189,42 @@ class NothingReachesForBootstrapsScriptTest(TestCase):
             "header and the FAQs do, a <dialog>, or a few lines of script.",
         )
 
-    def test_base_html_loads_no_bootstrap_script(self):
-        source = _live_markup(BASE.read_text())
-        self.assertEqual(BOOTSTRAP_SCRIPT.findall(source), [])
-        # Nor its stylesheet: custom.css starts every page from its own reset.
-        self.assertNotIn("bootstrap.min.css", source)
-
-    def test_no_rendered_page_loads_one_either(self):
-        """The source check misses a script that arrives by an include."""
+    def _rendered_pages(self):
         pages = [
             reverse("root"),
             reverse("coverage-changes"),
             reverse("microsite", kwargs={"slug": MICROSITE}),
         ]
         for url in pages:
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, url)
+            yield url, response.content.decode()
+
+    def test_base_html_loads_no_bootstrap_script(self):
+        source = _live_markup(BASE.read_text())
+        self.assertEqual(BOOTSTRAP_SCRIPT.findall(source), [])
+
+    def test_no_rendered_page_loads_one_either(self):
+        """The source check misses a script that arrives by an include."""
+        for url, html in self._rendered_pages():
             with self.subTest(url=url):
-                response = self.client.get(url)
-                self.assertEqual(response.status_code, 200)
-                html = response.content.decode()
                 self.assertEqual(BOOTSTRAP_SCRIPT.findall(html), [])
+
+    def test_no_page_links_bootstraps_stylesheet(self):
+        """custom.css starts every page from its own reset, so a link to
+        Bootstrap's stylesheet anywhere would quietly restyle that page."""
+        found = [
+            "%s: %s" % (key, link)
+            for key, path in _files()
+            if path.suffix == ".html"
+            for link in BOOTSTRAP_STYLESHEET.findall(
+                _live_markup(path.read_text(errors="replace"))
+            )
+        ]
+        self.assertEqual(found, [])
+        for url, html in self._rendered_pages():
+            with self.subTest(url=url):
+                self.assertEqual(BOOTSTRAP_STYLESHEET.findall(html), [])
 
     def test_no_template_or_script_calls_bootstraps_javascript(self):
         found = []
@@ -233,6 +255,20 @@ class NothingReachesForBootstrapsScriptTest(TestCase):
         )
         self.assertEqual(
             BOOTSTRAP_SCRIPT.findall('<link href="/css/bootstrap.min.css">'), []
+        )
+        for link in (
+            '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/'
+            'bootstrap@5.2.3/dist/css/bootstrap.min.css">',
+            '<link rel="stylesheet" href="{% static \'css/bootstrap.css\' %}">',
+            '<link href="/static/css/bootstrap-grid.min.css" rel="stylesheet">',
+        ):
+            self.assertEqual(len(BOOTSTRAP_STYLESHEET.findall(link)), 1, link)
+        self.assertEqual(
+            BOOTSTRAP_STYLESHEET.findall(
+                '<link rel="stylesheet" href="{% static \'css/custom.css\' %}">'
+                '<script src="/js/bootstrap.bundle.min.js"></script>'
+            ),
+            [],
         )
         self.assertTrue(BOOTSTRAP_API.search("new bootstrap.Modal(el).show()"))
         self.assertTrue(BOOTSTRAP_API.search("$('#popUpModal').modal('show')"))
