@@ -573,6 +573,31 @@ class TestShedContextPromptRebuild:
         )
         assert new_calls[0]["prompt"] == "SHED" + suffix
 
+    def test_tier1_keeps_the_v2_contract_and_the_calls_prompt_version(self):
+        # A v2 call's prompt ends with the output contract; shedding swaps the
+        # front of the prompt and must keep both the contract and the version
+        # the call drew, or a retried letter would be stored as the wrong one.
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            OUTPUT_CONTRACT,
+            PROMPT_V2,
+            apply_prompt_version,
+        )
+
+        new_calls, _ = _shed_context(
+            [
+                _make_call(
+                    prompt=apply_prompt_version("ORIGINAL", PROMPT_V2),
+                    prompt_version=PROMPT_V2,
+                )
+            ],
+            tier=1,
+            open_prompt_kwargs=_prompt_kwargs(),
+            rebuild_prompt=lambda **_: "SHED",
+            original_open_prompt="ORIGINAL",
+        )
+        assert new_calls[0]["prompt"] == "SHED\n\n" + OUTPUT_CONTRACT
+        assert new_calls[0]["prompt_version"] == PROMPT_V2
+
     def test_tier1_leaves_unrelated_prompts_alone(self):
         # The medically-necessary prompt is a separate string and must not
         # be touched by the prefix swap.

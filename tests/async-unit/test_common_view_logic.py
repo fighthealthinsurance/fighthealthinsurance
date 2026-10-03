@@ -835,6 +835,65 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_live_drafts_save_the_prompt_version_that_wrote_them(
+        self, mock_appeal_generator
+    ):
+        email, denial = self._create_test_denial(18, gen_attempts=3)
+        mock_appeal_generator.make_appeals.return_value = iter(
+            [
+                GeneratedAppeal(
+                    text=f"A live internal appeal letter number {i} here.",
+                    model_name="fhi-internal",
+                    context_level="full",
+                    prompt_version=version,
+                )
+                for i, version in enumerate(["v1", "v2", None])
+            ]
+        )
+
+        async def test():
+            try:
+                with patch(
+                    "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+                    new_callable=AsyncMock,
+                    return_value=None,
+                ), patch(
+                    "fighthealthinsurance.common_view_logic."
+                    "MLCitationsHelper.generate_citations_for_denial",
+                    new_callable=AsyncMock,
+                    return_value=None,
+                ), patch(
+                    "fighthealthinsurance.common_view_logic.AppealsBackendHelper.pmt"
+                ) as mock_pmt:
+                    mock_pmt.find_context_for_denial = AsyncMock(return_value=None)
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 18,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                saved = {
+                    pa.appeal_text: pa.prompt_version
+                    async for pa in ProposedAppeal.objects.filter(
+                        for_denial=denial, speculative=False
+                    )
+                }
+                self.assertEqual(
+                    saved,
+                    {
+                        "A live internal appeal letter number 0 here.": "v1",
+                        "A live internal appeal letter number 1 here.": "v2",
+                        "A live internal appeal letter number 2 here.": None,
+                    },
+                )
+            finally:
+                await Denial.objects.filter(denial_id=18).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_speculative_not_served_when_live_run_delivers_enough(
         self, mock_appeal_generator
     ):

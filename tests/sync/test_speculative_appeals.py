@@ -89,6 +89,24 @@ class SpeculativeAppealsHelperTest(TestCase):
         self.denial.refresh_from_db()
         self.assertTrue(self.denial.use_external)
 
+    def test_reserve_drafts_save_the_prompt_version_that_wrote_them(self):
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = iter(
+                [
+                    GeneratedAppeal(
+                        text="A sufficiently long speculative appeal letter here.",
+                        model_name="fhi-internal",
+                        context_level="full",
+                        prompt_version="v2",
+                    ),
+                ]
+            )
+            SpeculativeAppealsHelper.generate_for_denial_sync(self.denial.denial_id)
+        spec = ProposedAppeal.objects.get(for_denial=self.denial, speculative=True)
+        self.assertEqual(spec.prompt_version, "v2")
+
     def test_idempotent_when_speculative_rows_exist(self):
         ProposedAppeal.objects.create(
             for_denial=self.denial,

@@ -2787,11 +2787,10 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2, stamped when a model
     # writes a full letter and copied onto the chosen row. Null for rows from
     # before versioning and for drafts no letter prompt wrote: templates,
-    # synthesized letters and medically-necessary templated drafts. Indexed
-    # because the letter-prompt staff page compares versions by it.
-    prompt_version = models.CharField(
-        max_length=16, null=True, blank=True, db_index=True
-    )
+    # synthesized letters and medically-necessary templated drafts. Not
+    # indexed: the staff page reads it by draft id, and adding an index would
+    # mean a full scan of this large table while the migration holds its lock.
+    prompt_version = models.CharField(max_length=16, null=True, blank=True)
     # Chosen rows written by the professional flow (assemble_appeal). That flow
     # keeps one pick per denial -- a re-assembly replaces the earlier pick --
     # and this marker is what limits the replacement to its own rows: nothing

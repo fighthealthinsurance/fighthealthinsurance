@@ -87,41 +87,75 @@ def choose_prompt_version(mode: str) -> str:
 
 
 class _ModeCache:
+    """The last mode read, refreshed by one caller at a time.
+
+    The lock only guards the cached value; it is never held during the
+    database read. While one caller refreshes, every other caller gets the
+    last value read (original before the first read), so a slow read delays
+    one letter at most, never all of them.
+    """
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._value: Optional[str] = None
         self._read_at = 0.0
+        self._refreshing = False
 
     def get(self) -> str:
         with self._lock:
             now = time.monotonic()
             if self._value is not None and now - self._read_at < MODE_CACHE_SECONDS:
                 return self._value
-            self._value = _read_mode()
-            self._read_at = now
-            return self._value
+            if self._refreshing:
+                return self._value or MODE_ORIGINAL
+            self._refreshing = True
+        value = MODE_ORIGINAL
+        try:
+            value = _read_mode()
+        finally:
+            with self._lock:
+                self._value = value
+                self._read_at = time.monotonic()
+                self._refreshing = False
+        return value
 
     def reset(self) -> None:
         with self._lock:
             self._value = None
             self._read_at = 0.0
+            self._refreshing = False
+
+
+# How long the setting's query may run, waiting on a lock included, before
+# the read gives up and the letter uses the original prompt.
+MODE_READ_TIMEOUT_MS = 500
 
 
 def _read_mode() -> str:
     """The newest LetterPromptMode row's mode, or original.
 
-    Anything unexpected (no rows, a database error, an unknown value) is
-    original: a letter must never fail to be written because the setting
-    could not be read.
+    Anything unexpected (no rows, a database error, a read slower than
+    MODE_READ_TIMEOUT_MS, an unknown value) is original: a letter must never
+    fail or wait because the setting could not be read.
     """
     try:
+        from django.db import connection, transaction
+
+        from fighthealthinsurance.ml.chat_policy import _bound_statements
         from fighthealthinsurance.models import LetterPromptMode
 
-        mode = (
-            LetterPromptMode.objects.order_by("-created_at", "-id")
-            .values_list("mode", flat=True)
-            .first()
+        newest = LetterPromptMode.objects.order_by("-created_at", "-id").values_list(
+            "mode", flat=True
         )
+        if connection.in_atomic_block:
+            # The timeout is SET LOCAL, so inside a caller's transaction it
+            # would outlive this read and cut short the caller's own
+            # statements. Read without it there.
+            mode = newest.first()
+        else:
+            with transaction.atomic():
+                _bound_statements(connection, MODE_READ_TIMEOUT_MS)
+                mode = newest.first()
     except Exception as e:
         logger.warning(f"Letter prompt mode unreadable, using original: {e}")
         return MODE_ORIGINAL

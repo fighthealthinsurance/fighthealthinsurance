@@ -161,7 +161,7 @@ def compare_prompt_versions(
             id__in=shown_ids[start : start + 500], prompt_version__in=VERSIONS
         ).values_list("id", "prompt_version", "model_name"):
             draft[draft_id] = (
-                version,
+                str(version),
                 normalize_model_label(model_name) or "unknown",
             )
 
