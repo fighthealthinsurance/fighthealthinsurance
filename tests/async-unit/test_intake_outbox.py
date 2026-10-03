@@ -643,6 +643,75 @@ class TestClosure(TransactionTestCase):
         assert self._close(denial) is True
         assert not IntakeResumePoint.objects.filter(denial=denial).exists()
 
+    def _unfinished_case(self, denial_id):
+        """A case that reached the health history step and stopped there."""
+        import datetime as dt
+
+        from fighthealthinsurance.models import FollowUpSched
+
+        denial = _make_denial(denial_id)
+        Denial.objects.filter(pk=denial.pk).update(
+            health_history="Diagnosed in 2019; two prior MRIs.",
+            generated_questions=[["Which prior treatments?", ""]],
+            ml_citation_context=["a citation chosen from the history"],
+        )
+        _pending(denial, intake_outbox.INTAKE_STARTED, acked_at=timezone.now())
+        FollowUpSched.objects.create(
+            email=_EMAIL,
+            follow_up_date=dt.date.today() + dt.timedelta(days=7),
+            denial_id=denial,
+        )
+        return denial
+
+    def test_closing_a_journey_keeps_the_case_its_email_and_its_check_ins(self):
+        from fighthealthinsurance.models import FollowUpSched
+
+        denial = self._unfinished_case(8154)
+        self._close(denial)
+        denial.refresh_from_db()
+        assert denial.denial_text.startswith("Coverage for the requested MRI")
+        assert denial.raw_email == _EMAIL
+        assert FollowUpSched.objects.filter(denial_id=denial, email=_EMAIL).exists()
+        assert IntakeJourneyEvent.objects.filter(
+            denial=denial, event_type=intake_outbox.INTAKE_STARTED
+        ).exists()
+
+    def test_closing_a_journey_keeps_the_health_history_unless_asked_to_clear_it(
+        self,
+    ):
+        denial = self._unfinished_case(8155)
+        self._close(denial)
+        denial.refresh_from_db()
+        assert denial.health_history == "Diagnosed in 2019; two prior MRIs."
+
+    @override_settings(INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY=True)
+    def test_closing_a_journey_clears_the_health_history_when_asked_to(self):
+        from fighthealthinsurance.denial_history_consent import (
+            DERIVED_FROM_HEALTH_HISTORY,
+        )
+
+        denial = self._unfinished_case(8156)
+        self._close(denial)
+        denial.refresh_from_db()
+        assert denial.health_history is None
+        for cache in DERIVED_FROM_HEALTH_HISTORY:
+            assert getattr(denial, cache) is None, cache
+        assert denial.raw_email == _EMAIL
+        assert denial.denial_text.startswith("Coverage for the requested MRI")
+
+    @override_settings(INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY=True)
+    def test_closing_a_journey_whose_form_was_completed_clears_nothing(self):
+        denial = self._unfinished_case(8157)
+        _pending(denial, intake_outbox.FORM_COMPLETED)
+        self._close(denial)
+        denial.refresh_from_db()
+        assert denial.health_history == "Diagnosed in 2019; two prior MRIs."
+
+    def test_the_closed_case_setting_is_off_in_production_unless_turned_on(self):
+        from fighthealthinsurance import settings as settings_module
+
+        assert settings_module.Prod.INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY is False
+
 
 @override_settings(**_INTAKE_ON)
 class TestContactOptIn(TransactionTestCase):

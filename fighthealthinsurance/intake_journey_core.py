@@ -115,11 +115,49 @@ async def _asend_mail(subject: str, body: str, to: str) -> None:
 async def close_incomplete_journey(hashed_email: str, denial_uuid: str) -> bool:
     """CLOSE_AFTER (3 days) without completion: the incomplete-form hygiene hook.
 
-    The case can no longer be resumed from the email, so its resume point
-    (the step it reached and any link) is deleted.
+    What a closed journey keeps is what the site already says it keeps for a
+    case that never reached an appeal, and nothing the journey added:
+
+    - Deleted here: the case's resume point (the step it reached and any
+      emailed link). It exists only to bring the person back from the
+      reminder, and that is over.
+    - Kept, as for every unfinished case: the denial text (the upload page
+      says we keep it to improve our AI); the email address, only for
+      people who asked us to keep it, until the follow-ups end plus 30 days,
+      when clear_expired_emails clears it (the opt-in box says so); the
+      follow-up schedule they asked for; and the journey's event rows, which
+      hold timestamps only and keep "we won't send another reminder" true.
+      All of it goes when the person deletes their data.
+    - Cleared only when INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY is on: the
+      health history (the page says it is saved "for this appeal") and the
+      caches made from it, never for a case whose form was completed, since
+      a completion can be recorded while its signal is still in flight.
     """
+    from fighthealthinsurance import intake_outbox
+
     denial = await aload_denial(hashed_email, denial_uuid)
-    if denial is not None:
-        await intake_resume.aforget(denial)
+    if denial is None:
+        logger.info(f"Intake journey closed for denial {denial_uuid}: no case left")
+        return True
+    await intake_resume.aforget(denial)
+    if getattr(
+        settings, "INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY", False
+    ) and not await intake_outbox.ahas_event(denial, intake_outbox.FORM_COMPLETED):
+        await _aclear_health_history(denial)
     logger.info(f"Intake journey closed without completion for denial {denial_uuid}")
     return True
+
+
+async def _aclear_health_history(denial) -> None:
+    """Clear the health history and the caches made from it, in one UPDATE.
+
+    Scoped to those columns, so nothing else on the row is written back.
+    """
+    from fighthealthinsurance.denial_history_consent import (
+        DERIVED_FROM_HEALTH_HISTORY,
+    )
+    from fighthealthinsurance.models import Denial
+
+    cleared = {name: None for name in ("health_history", *DERIVED_FROM_HEALTH_HISTORY)}
+    await Denial.objects.filter(pk=denial.pk).aupdate(**cleared)
+    logger.info(f"Cleared the health history of closed denial {denial.uuid}")
