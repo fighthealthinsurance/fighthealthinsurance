@@ -47,7 +47,7 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic
+from fighthealthinsurance import common_view_logic, intake_resume
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -1269,6 +1269,7 @@ class FindNextSteps(View):
                     f"supplied email/semi_sekret; redirecting to scan"
                 )
                 return redirect("scan")
+            intake_resume.note_step(denial_id, "find_next_steps")
             denial_ref_form = core_forms.DenialRefForm(
                 initial={
                     "denial_id": denial_id,
@@ -2083,6 +2084,7 @@ class InitialProcessView(generic.FormView):
         remember_denial_ref_email(
             self.request.session, denial_response.denial_id, cleaned_data["email"]
         )
+        intake_resume.note_step(denial_response.denial_id, "hh")
 
         # Store microsite data in session for prefilling later in the flow
         default_procedure = self.request.POST.get(
@@ -2657,6 +2659,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 "EntityExtractView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(denial_response.denial_id, "categorize_review")
 
         email = form.cleaned_data["email"]
 
@@ -2771,6 +2774,7 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "PlanDocumentsView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(denial_response.denial_id, "dvc")
 
         email = form.cleaned_data["email"]
         new_form = core_forms.PlanDocumentsForm(
@@ -2833,6 +2837,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
                 "DenialCollectedView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(form.cleaned_data["denial_id"], "eev")
 
         new_form = core_forms.EntityExtractForm(
             initial={

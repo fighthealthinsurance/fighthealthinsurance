@@ -133,6 +133,39 @@ Stripe keeps a checkout page open for up to a day. Nothing new is stored in
 the session: it uses the random secret a back link uses, minted if the
 session has none yet.
 
+## The way back from the "you left before finishing" email
+
+The intake journey's one reminder email (sent 24 hours in, only to people
+who asked us to keep their email) links back to the case at the step it
+reached. A back link works only in the browser that made it, and an email
+is opened somewhere else, so this link is its own scheme, in
+`fighthealthinsurance/intake_resume.py`:
+
+- The link is `/continue/<token>`, where the token is 32 random bytes. It
+  holds no email address, hashed email, case id, uuid or case secret, and
+  nothing can be decoded from it.
+- The server stores only the token's SHA-256 digest, on the case's
+  `IntakeResumePoint` row. The token itself is only in the email.
+- It opens nothing on its own. The page asks for the email address the case
+  was started with and compares its hash with the case's. Five wrong
+  addresses revoke the link.
+- It works for 48 hours from minting (`RESUME_LINK_TTL`): the nudge goes out
+  at 24 hours and the journey closes at 3 days, and closing deletes the link
+  too. It also stops working once the case reaches a later step, once the
+  form is finished, and when the person deletes their data, because the row
+  goes with the denial. Until then it can be opened again, from a second
+  device too.
+- `/continue/<token>` moves the digest into the session and redirects to
+  `/continue`, so no page that renders, and nothing it loads, has the token
+  in its address.
+
+Once the address matches, the session key is cycled, the session is bound
+to the case the way starting it binds it (so the session holds the email
+the later pages post, as described above), and the person lands on their
+step through an ordinary back link. Nothing here runs while the intake
+journey is off: no step is recorded, no link is minted, and both pages
+answer 404.
+
 ## Owner decisions this rests on
 
 Melanie settled two of these on 2026-09-13 and they are not reviewer calls to

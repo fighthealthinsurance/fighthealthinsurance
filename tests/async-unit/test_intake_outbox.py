@@ -578,6 +578,71 @@ class TestNudge(TransactionTestCase):
         assert again is False
         send.assert_not_awaited()
 
+    def test_the_nudge_links_back_to_the_case_without_naming_it(self):
+        import hashlib
+
+        from django.urls import reverse
+
+        from fighthealthinsurance.models import IntakeResumePoint
+
+        denial = _make_denial(8150)
+        sent, send = self._send(denial)
+        assert sent is True
+        body = send.call_args.args[1]
+        point = IntakeResumePoint.objects.get(denial=denial)
+        prefix = reverse("intake_resume_link", args=["TOKEN"]).replace("TOKEN", "")
+        token = body.split(prefix, 1)[1].split()[0]
+        assert hashlib.sha256(token.encode("utf-8")).hexdigest() == point.token_digest
+        for detail in (
+            denial.hashed_email,
+            str(denial.uuid),
+            denial.semi_sekret,
+            "fighthealthinsurance.com\n",
+        ):
+            assert detail not in body, detail
+
+    def test_no_link_is_minted_or_sent_while_the_intake_journey_is_off(self):
+        from fighthealthinsurance.models import IntakeResumePoint
+
+        denial = _make_denial(8151)
+        with override_settings(TEMPORAL_INTAKE_JOURNEY_ENABLED=False):
+            sent, send = self._send(denial)
+        assert sent is False
+        send.assert_not_awaited()
+        assert not IntakeResumePoint.objects.filter(denial=denial).exists()
+        assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
+
+    def test_a_nudge_skipped_for_a_finished_form_mints_no_link(self):
+        from fighthealthinsurance.models import IntakeResumePoint
+
+        denial = _make_denial(8152)
+        _pending(denial, intake_outbox.FORM_COMPLETED)
+        self._send(denial)
+        assert not IntakeResumePoint.objects.filter(denial=denial).exists()
+
+
+@override_settings(**_INTAKE_ON)
+class TestClosure(TransactionTestCase):
+    def _close(self, denial):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance import intake_journey_core
+
+        return async_to_sync(intake_journey_core.close_incomplete_journey)(
+            denial.hashed_email, str(denial.uuid)
+        )
+
+    def test_closing_a_journey_deletes_its_resume_link(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance import intake_resume
+        from fighthealthinsurance.models import IntakeResumePoint
+
+        denial = _make_denial(8153)
+        async_to_sync(intake_resume.amint_link)(denial)
+        assert self._close(denial) is True
+        assert not IntakeResumePoint.objects.filter(denial=denial).exists()
+
 
 @override_settings(**_INTAKE_ON)
 class TestContactOptIn(TransactionTestCase):

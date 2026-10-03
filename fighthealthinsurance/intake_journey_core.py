@@ -6,19 +6,23 @@ identifiers in, all real data loaded from Django at execution time.
 
 from django.conf import settings
 from django.core.mail import send_mail
+from django.urls import reverse
 
 from loguru import logger
 
+from fighthealthinsurance import intake_resume
 from fighthealthinsurance.appeal_journey_core import aload_denial
 
 NUDGE_SUBJECT = "Your appeal on Fight Health Insurance is waiting"
-# Copy makes no resume promise: the link is the plain homepage until a real
-# resume route (signed, expiring token) exists -- see send_abandonment_nudge.
+# The link reopens the case at the step it reached, after the person types
+# the email address they used (intake_resume has the design).
 NUDGE_BODY = (
     "You started putting together an appeal on Fight Health Insurance and "
-    "didn't get to finish. If you'd like to keep going, you can return "
-    "any time:\n\n{url}\n\nIf you'd rather not continue, you can ignore "
-    "this email; we won't send another reminder."
+    "didn't get to finish. If you'd like to keep going, this link takes you "
+    "back to where you left off. To keep your case private, it asks for the "
+    "email address you used, and it works for the next {days} days:"
+    "\n\n{url}\n\nIf you'd rather not continue, you can ignore this email; "
+    "we won't send another reminder."
 )
 
 
@@ -28,10 +32,17 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     Consent gate is the RETAINED RAW EMAIL itself: it exists only when the
     user chose store_raw_email, and the clear_expired_emails sweep enforces
     its retention -- so an address that has been cleared (or was never
-    stored) simply cannot be nudged. No content from the case is included.
+    stored) simply cannot be nudged. No content from the case is included:
+    the email carries one resume link, minted only for the claimant, which
+    opens nothing without the email address the case was started with
+    (intake_resume). While the intake journey is off nothing is claimed,
+    minted or sent.
     """
     from fighthealthinsurance import intake_outbox
 
+    if not intake_resume.enabled():
+        logger.info(f"Intake nudge skipped for denial {denial_uuid}: journey is off")
+        return False
     denial = await aload_denial(hashed_email, denial_uuid)
     if denial is None or not (denial.raw_email or "").strip():
         logger.info(f"Intake nudge skipped for denial {denial_uuid}: no retained email")
@@ -62,15 +73,15 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     base = getattr(
         settings, "FHI_PUBLIC_BASE_URL", "https://www.fighthealthinsurance.com"
     )
-    # Plain homepage link: no resume handler exists yet, so a ?resume=
-    # parameter would be an inert promise -- and a denial uuid does not
-    # belong in a URL (mail clients log and preview them). A real resume
-    # link needs a signed, expiring token and its own route (external
-    # review); that lands with the resume feature itself.
+    # Minted after the claim and the completion recheck, so only the one
+    # claimant ever mints, and never for a finished form. The token carries
+    # nothing about the person or the case; only its digest is stored.
+    token = await intake_resume.amint_link(denial)
+    url = base.rstrip("/") + reverse("intake_resume_link", args=[token])
     try:
         await _asend_mail(
             NUDGE_SUBJECT,
-            NUDGE_BODY.format(url=base),
+            NUDGE_BODY.format(url=url, days=intake_resume.link_days()),
             denial.raw_email,
         )
     except Exception:
@@ -104,9 +115,11 @@ async def _asend_mail(subject: str, body: str, to: str) -> None:
 async def close_incomplete_journey(hashed_email: str, denial_uuid: str) -> bool:
     """CLOSE_AFTER (3 days) without completion: the incomplete-form hygiene hook.
 
-    v1 records the closure only; whether closed journeys' rows are
-    deleted/anonymized is a separate product decision, so nothing
-    destructive happens here.
+    The case can no longer be resumed from the email, so its resume point
+    (the step it reached and any link) is deleted.
     """
+    denial = await aload_denial(hashed_email, denial_uuid)
+    if denial is not None:
+        await intake_resume.aforget(denial)
     logger.info(f"Intake journey closed without completion for denial {denial_uuid}")
     return True

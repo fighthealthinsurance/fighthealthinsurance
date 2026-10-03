@@ -3058,6 +3058,34 @@ class IntakeJourneyEvent(models.Model):
         return f"intake_event({self.event_type}, denial={self.denial_id})"
 
 
+class IntakeResumePoint(models.Model):
+    """Where an unfinished appeal picks up again, and the emailed link back to it.
+
+    Written only while the intake journey is on (see ``intake_resume``).
+    ``step`` is the furthest page of the appeal form the person has reached,
+    stored as the name of the route that reopens it. The link fields belong
+    to the "you left before finishing" email: a SHA-256 digest of a random
+    token (the token itself exists only in that email), when it stops
+    working, and how many wrong email addresses have been typed against it.
+    Its own table rather than columns on Denial, for the reason
+    IntakeJourneyEvent gives, and it goes with the denial. The journey's
+    closure deletes it.
+    """
+
+    denial = models.OneToOneField(
+        Denial, on_delete=models.CASCADE, related_name="intake_resume_point"
+    )
+    step = models.CharField(max_length=32)
+    token_digest = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    wrong_email_attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"intake_resume_point(denial={self.denial_id}, step={self.step})"
+
+
 class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
     """
     Tracks an escalation packet generated alongside an appeal.
