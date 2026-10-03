@@ -452,6 +452,27 @@ def _summary(soup) -> "list[tuple[str, str]]":
     return items
 
 
+class TheOutsideAIChoiceComesBackAsItWasLeftTest(TestCase):
+    """The outside AI services box starts ticked, and a page the server sends
+    back shows it the way the person left it."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def box(self, soup):
+        return soup.find(id="use_external_models")
+
+    def test_a_fresh_page_starts_with_it_ticked(self):
+        self.assertIn("checked", self.box(_scan_page(self.client)).attrs)
+
+    def test_a_page_sent_back_keeps_it_unticked(self):
+        soup = _scan_page(self.client, EVERYTHING_BUT_THE_PERSONAL_USE_BOX)
+        self.assertNotIn("checked", self.box(soup).attrs)
+
+    def test_a_page_sent_back_keeps_it_ticked(self):
+        data = dict(EVERYTHING_BUT_THE_PERSONAL_USE_BOX, use_external_models="checked")
+        self.assertIn("checked", self.box(_scan_page(self.client, data)).attrs)
+
+
 class TheServerListsEveryErrorAtTheTopTest(TestCase):
     """With no script to move focus, the top of a page the server sends back
     is what the person sees first, so it lists every error there, each a
@@ -574,6 +595,8 @@ class TheLetterTheServerReadIsInTheBoxTest(TestCase):
         self.assertEqual(response.status_code, 200)
         soup = BeautifulSoup(response.content.decode(), "html.parser")
         self.assertEqual(soup.find(id="denial_text").get_text(), "Your MRI was denied.")
+        # No form here, so the outside AI box keeps its default.
+        self.assertIn("checked", soup.find(id="use_external_models").attrs)
         for message in MESSAGES:
             with self.subTest(message=message):
                 self.assertEqual(soup.find(id=message).get_text(), "")
